@@ -118,8 +118,6 @@ ignore = [
 # These exceptions document inherited, non-functional ordering debt. They are
 # intentionally narrow: undefined-name, syntax, and correctness checks remain
 # enabled, and every newly extracted module must pass without exceptions.
-"src/jrbar/settings.py" = ["I001"]
-"src/jrbar/_settings_legacy.py" = ["I001"]
 # The retained controller's import block is also the surface the facade
 # (status_bar.py forwards every read and monkeypatch here), the headless class
 # and the tests reach through: NSStatusBar is what test_core_runtime replaces

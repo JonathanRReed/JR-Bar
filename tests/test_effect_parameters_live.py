@@ -300,8 +300,8 @@ def test_a_provider_assignment_with_parameters_reaches_the_live_light() -> None:
     """``set_assignment`` for a provider stores the Effect Studio values in
     settings, and the solo light the Pro plays changes with them."""
     from jrbar import core_runtime
-    from jrbar._settings_legacy import AgentMonitorSettings
     from jrbar.effect_studio import AssignmentScope
+    from jrbar.settings import AgentMonitorSettings
 
     saved = []
     host = SimpleNamespace(
@@ -403,10 +403,10 @@ def test_clearing_an_assignment_gives_back_the_providers_own_motion() -> None:
     Pendulum, not on an Automatic nobody chose, and takes the values with
     it; a provider without a motion of its own goes back to Automatic."""
     from jrbar import core_runtime
-    from jrbar._settings_legacy import AgentMonitorSettings
     from jrbar.effect_assignment_store import EffectAssignmentRecord
     from jrbar.effect_registry import EFFECT_REGISTRY
     from jrbar.effect_studio import AssignmentScope
+    from jrbar.settings import AgentMonitorSettings
 
     class Host:
         _effect_assignment_cache = SimpleNamespace(registry=lambda: EFFECT_REGISTRY)

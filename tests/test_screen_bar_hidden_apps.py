@@ -13,8 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-from jrbar._settings_legacy import MAX_SCREEN_BAR_HIDDEN_APPS
-from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
+from jrbar.settings import MAX_SCREEN_BAR_HIDDEN_APPS, AgentMonitorSettings, load_settings, save_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 MOCK_PATH = ROOT / "app" / "scripts" / "mock-core.py"

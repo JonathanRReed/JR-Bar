@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 from test_jrbar import isolate_controller
 
-from jrbar._settings_legacy import AgentMonitorSettings
+from jrbar.settings import AgentMonitorSettings
 from jrbar.status_bar_legacy import StatusBarDevice
 
 
@@ -33,7 +33,7 @@ def _device() -> StatusBarDevice:
 def test_scale_round_trips_and_clamps(tmp_path) -> None:
     import json
 
-    from jrbar._settings_legacy import load_settings
+    from jrbar.settings import load_settings
 
     settings = AgentMonitorSettings().with_global_brightness_scale(0.5)
     assert settings.global_brightness_scale == 0.5

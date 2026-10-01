@@ -126,7 +126,7 @@ listed is a helper of the row it sits next to alphabetically.
 | History | `activity_ledger*.py`, `operator_history*.py`, `session_history.py`, `capacity_history*.py`, `effect_history*.py` |
 | Remote | `remote_peers.py` (Tailscale + SFTP viewer), `remote_observation.py`, `provider_usage_sync_*.py` (HMAC-signed usage sync over SSH), `cloud_ingest.py` (loopback bearer-token listener), `serve.py` (`GET /status.json` on loopback) |
 | Creator Micro 2 | `creator_micro_*.py` (HID, discovery, keymap, setup, lighting), `deck_*.py` (board, controls, dispatch, actions, session board) |
-| Settings and persistence | `settings.py` → `_settings_legacy.py`, `state_paths.py`, `migration.py`, `persistence_writer.py`, `private_io.py`, `*_store.py` |
+| Settings and persistence | `settings.py`, `state_paths.py`, `migration.py`, `persistence_writer.py`, `private_io.py`, `*_store.py` |
 | Scheduling | `runtime_scheduler.py`, `core_state.py`, `refresh_admission.py`, `adaptive_refresh.py`, `refresh_policy.py`, `performance_metrics.py`, `local_health.py`, `memory_probe.py` |
 | Retained controller (live: `application_composition.py` composes it and `core_runtime.build_headless_controller_class` subclasses it, running its refresh, escalation and keep-awake methods through `objc.super`; it is linted like the rest, with its import block kept as the surface the facade and tests read) | `application_composition.py`, `status_bar_legacy.py`, `_status_bar_production.py`, `status_bar.py`, `provider_usage_status_bar.py`, `usage_view.py`, `agent_browser.py`, `agent_browser_window.py` (payload types), `why_panel.py` (the text of the Why explanation) |
 

@@ -257,7 +257,7 @@ def write_timeline(path: Path, frames: list, *, cell_width: int = 26, cell_heigh
 
 def builtin_programs() -> list[tuple[str, str, int]]:
     """Every program the app can put on a strip, outside the effect registry."""
-    from jrbar._settings_legacy import AgentMonitorSettings
+    from jrbar.settings import AgentMonitorSettings
 
     settings = AgentMonitorSettings().colors
     entries: list[tuple[str, str, int]] = []
@@ -380,13 +380,13 @@ def solo_programs() -> list[tuple[str, str, int]]:
     that only plays one way shows up as a diagonal with its other half
     missing.
     """
-    from jrbar._settings_legacy import AgentMonitorSettings
     from jrbar.accessibility_display import AccessibilityDisplayPreferences
     from jrbar.presentation_policy import (
         GlanceInputs,
         compose_presentation_program,
         resolve_glance,
     )
+    from jrbar.settings import AgentMonitorSettings
 
     preferences = AccessibilityDisplayPreferences()
     resolved = resolve_glance(

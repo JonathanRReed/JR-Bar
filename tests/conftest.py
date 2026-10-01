@@ -90,14 +90,13 @@ def _mark_guard(original, label):
 
 @pytest.fixture(autouse=True)
 def isolate_live_settings_file(tmp_path):
-    """Keep all settings facades on one per-test path."""
+    """Keep settings on one per-test path."""
     isolated = tmp_path / "pytest-sidepulse-settings.json"
 
     def _isolated_path(home=None):
         return isolated
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("jrbar._settings_legacy.default_settings_path", _isolated_path)
         mp.setattr("jrbar.settings.default_settings_path", _isolated_path)
         yield
 

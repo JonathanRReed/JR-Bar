@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from jrbar._settings_legacy import AgentMonitorSettings
 from jrbar.attention import project_attention
 from jrbar.capacity_types import SourceKey
 from jrbar.collector import (
@@ -56,6 +55,7 @@ from jrbar.provider_facts import (
     _expected_safe_label,
 )
 from jrbar.providers import PROVIDER_SPECS
+from jrbar.settings import AgentMonitorSettings
 
 LAST_EVENT_AT = 1_800_000_000.0
 

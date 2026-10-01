@@ -1,26 +1,91 @@
-"""Versioned, lossless settings facade over the historical settings model.
+"""Versioned, lossless settings: the model, its validation, and the file.
 
-The original model remains in :mod:`sidepulse._settings_legacy` while the
-persistence boundary is hardened here. All callers continue importing
-``jrbar.settings``; the facade patches the durable encoders/decoders once
-and preserves the public API.
+``AgentMonitorSettings`` is the whole model; ``settings_from_data`` validates
+and defaults every field. The file layer at the bottom keeps ``settings.json``
+safe: a document from a newer version is kept and never written over, fields
+this version does not know survive a save, a file that changed under the
+daemon is refused rather than overwritten, and a file that cannot be read is
+set aside instead of destroyed.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from . import _settings_legacy as _legacy
-from .private_io import quarantine_private_file
+from .auto_dim import AutoDimSettings
+from .battery import DEFAULT_POWER_CHANGE_PREVIEW_SECONDS
+from .colors import ColorSettings
+from .dnd_policy import (
+    DndMode,
+    DndOverride,
+    DndPersistedRefusal,
+    DndSchedule,
+    ParsedDndSettings,
+    parse_dnd_settings,
+    serialize_dnd_settings,
+)
+from .dot_role import (
+    DEFAULT_DOT_ROLE,
+    DOT_LED_COUNT,
+    migrated_role_for_display,
+    normalize_dot_role,
+)
+from .led_status import (
+    DEFAULT_CHANNEL_GAIN,
+    DEFAULT_FILE_NAME,
+    led_count_for_target,
+    normalize_channel_gain,
+)
+from .presence import (
+    DEFAULT_AWAY_QUIET_MODE,
+    DEFAULT_CALL_QUIET_MODE,
+    DEFAULT_MEETING_QUIET_MODE,
+    normalize_presence_quiet_mode,
+)
+from .private_io import (
+    atomic_private_write,
+    ensure_private_directory,
+    quarantine_private_file,
+    read_private_text,
+)
 from .product_identity import PRODUCT_DISPLAY_NAME
+from .providers import PROVIDER_REGISTRY
+from .remote_peers import RemotePeerSettings
+from .scenes import (
+    DEFAULT_SCENE,
+    ScenePolicy,
+    effective_policy_for_scene,
+    scene_from_value,
+)
+from .session_actions import SESSION_OPEN_CHOICES
+from .signals import (
+    DEFAULT_ALERT_BURST,
+    DEFAULT_QUOTA_THRESHOLDS,
+    FOCUS_SIGNAL_POLICIES,
+    normalize_alert_burst,
+    normalize_provider_escalation_tiers,
+    normalize_quota_thresholds,
+)
 
+LED_DISPLAY_AGENT = "agent"
+LED_DISPLAY_BATTERY = "battery"
+LED_DISPLAY_STUDIO = "studio"
+LED_DISPLAY_QUOTA_RUNWAY = "quota_runway"
+LED_DISPLAY_CHOICES = (
+    LED_DISPLAY_AGENT,
+    LED_DISPLAY_BATTERY,
+    LED_DISPLAY_STUDIO,
+    LED_DISPLAY_QUOTA_RUNWAY,
+)
 CURRENT_SETTINGS_SCHEMA_VERSION = 2
 MIN_READABLE_SETTINGS_SCHEMA_VERSION = 1
 MIN_WRITABLE_SETTINGS_SCHEMA_VERSION = 1
@@ -59,6 +124,2867 @@ DND_SETTING_PERSISTED_FIELDS = frozenset(
         "dnd_focus_mode",
     }
 )
+#: ``menu_bar_icon_style``: the status item's picture. The daemon does not
+#: draw it -- the native app does -- so the list simply has to hold every
+#: style the app can write: ``agents`` (a dot per live session),
+#: ``meters``/``meters_percent`` (a usage column per provider),
+#: ``compact_percent`` (the tightest window's remaining percent beside its
+#: provider's mark), ``glyph`` alone, ``glyph_ring`` (the glyph inside a
+#: thin usage ring), ``glyph_label`` (the glyph beside a short text),
+#: ``orbit`` (the mark in a usage ring with session dots below) and
+#: ``hidden`` (no icon at all -- a thin invisible slot, Ice's no-icon
+#: mode; the chevron boundary and hotkeys still reveal).
+MENU_BAR_ICON_STYLES = (
+    "agents",
+    "meters",
+    "meters_percent",
+    "compact_percent",
+    "glyph",
+    "glyph_ring",
+    "glyph_label",
+    "orbit",
+    "hidden",
+)
+DEFAULT_MENU_BAR_ICON_STYLE = "glyph"
+# The consent generation the Claude plan-limits opt-in was granted under.
+# 0.2.1 shipped a build that PERSISTED `claude_plan_limits_enabled` while the
+# code documented the flag as inert, so a `true` sitting in a settings file
+# today may never have been a decision to present a Keychain credential to
+# api.anthropic.com. Only a value stamped with this generation is consent;
+# anything older is re-asked. Bump this whenever what the opt-in permits
+# changes.
+CLAUDE_PLAN_LIMITS_CONSENT_VERSION = 1
+CALIBRATION_PROFILE_SLOTS = ("Day", "Night", "Travel")
+BRACKET_STYLE_CHOICES = ("auto", "spatial", "identity", "bracket")
+SCREEN_BAR_NOTCH_PROFILE_CHOICES = (
+    "auto",
+    "macbook_air_13",
+    "macbook_air_15",
+    "macbook_pro_14",
+    "macbook_pro_16",
+    "custom",
+)
+#: The completion counts the Milestone Odometer cues on when the user has
+#: not picked its own ladder. ``milestone_odometer.MilestoneOdometerPreferences``
+#: requires at least one step while enabled, so the persisted default is a
+#: non-empty ladder and the runtime still fails closed on an empty one.
+DEFAULT_MILESTONE_ODOMETER_STEPS = (10, 25, 50, 100)
+MAX_MILESTONE_ODOMETER_STEP_COUNT = 16
+
+WEBHOOK_EVENT_KEYS = ("completion", "ask_opened", "failed", "quota_crossed")
+CLOSED_LID_AWAKE_NEVER = "never"
+CLOSED_LID_AWAKE_AGENTS = "agents"
+CLOSED_LID_AWAKE_ALWAYS = "always"
+CLOSED_LID_AWAKE_CHOICES = (
+    CLOSED_LID_AWAKE_NEVER,
+    CLOSED_LID_AWAKE_AGENTS,
+    CLOSED_LID_AWAKE_ALWAYS,
+)
+LID_ANIMATION_CLOSED = "closed"
+LID_ANIMATION_OPEN = "open"
+LID_ANIMATION_CLOSED_ACTIVE = "closed_active"
+LID_ANIMATION_OPEN_ACTIVE = "open_active"
+# Distinct out-of-the-box looks for "agents were RUNNING when the lid
+# moved" -- the whole point is that you can TELL without looking twice.
+DEFAULT_LID_CLOSED_ACTIVE_PROGRAM = (
+    "#FF9F0A 300ms pulse\n#FF9F0A 250ms cosine\n#5A3A00 350ms cosine\n#1A1200 600ms cosine"
+)
+DEFAULT_LID_OPEN_ACTIVE_PROGRAM = (
+    "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse\noff 300ms ease-out"
+)
+
+DEFAULT_IDLE_DIM_AFTER_MINUTES = 10.0
+MIN_IDLE_DIM_AFTER_MINUTES = 1.0
+MAX_IDLE_DIM_AFTER_MINUTES = 180.0
+DEFAULT_IDLE_DIM_FRACTION = 0.3
+MIN_IDLE_DIM_FRACTION = 0.05
+MAX_IDLE_DIM_FRACTION = 1.0
+DEFAULT_SLEEP_DIM_FRACTION = 0.2
+MIN_SLEEP_DIM_FRACTION = 0.05
+MAX_SLEEP_DIM_FRACTION = 1.0
+DEFAULT_IDLE_AUTO_OFF_AFTER_MINUTES = 60.0
+MIN_IDLE_AUTO_OFF_AFTER_MINUTES = 5.0
+MAX_IDLE_AUTO_OFF_AFTER_MINUTES = 1440.0
+
+# Matches keep_awake.AWAKE_GRACE_SECONDS's own long-standing default (300s)
+# exactly, so making this adjustable doesn't change anyone's existing
+# behavior until they actually touch the setting.
+DEFAULT_CLOSED_LID_GRACE_MINUTES = 5.0
+MIN_CLOSED_LID_GRACE_MINUTES = 0.0
+MAX_CLOSED_LID_GRACE_MINUTES = 60.0
+DEFAULT_LID_CLOSED_ANIMATION_PROGRAM = "\n".join(
+    [
+        "off 90ms cosine",
+        (
+            "0:#FF7A00 180ms ease; 7:#FF7A00 180ms ease; "
+            "1:#FF7A00 180ms ease 80ms; 6:#FF7A00 180ms ease 80ms"
+        ),
+        (
+            "2:#FF4A00 180ms ease; 5:#FF4A00 180ms ease; "
+            "3:#FF3000 180ms ease 80ms; 4:#FF3000 180ms ease 80ms"
+        ),
+        "off 360ms ease-out",
+    ]
+)
+DEFAULT_LID_OPEN_ANIMATION_PROGRAM = "\n".join(
+    [
+        "off 90ms cosine",
+        (
+            "3:#00E5FF 180ms ease; 4:#00E5FF 180ms ease; "
+            "2:#00E5FF 180ms ease 80ms; 5:#00E5FF 180ms ease 80ms"
+        ),
+        (
+            "1:#00FFB0 180ms ease; 6:#00FFB0 180ms ease; "
+            "0:#00FF66 180ms ease 80ms; 7:#00FF66 180ms ease 80ms"
+        ),
+        "#00FF66 220ms ease",
+        "off 320ms ease-out",
+    ]
+)
+DEFAULT_LID_CLOSED_ANIMATION_SECONDS = 0.9
+DEFAULT_LID_OPEN_ANIMATION_SECONDS = 1.0
+
+
+@dataclass(frozen=True)
+class LedAnimationSetting:
+    program: str
+    duration_seconds: float
+    # A lid look drawn per device (``lid_presets.LID_SHAPES``, the Iris
+    # looks) rather than one program for every LED count. ``program`` then
+    # holds its eight-LED form for anything that reads programs only.
+    shape: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "program": self.program,
+            "duration_seconds": self.duration_seconds,
+            "shape": self.shape,
+        }
+
+
+@dataclass(frozen=True)
+class DeviceDisplaySetting:
+    device_id: str
+    name: str
+    path: str
+    led_display: str = LED_DISPLAY_AGENT
+    brightness: int = 255
+    # When on, `brightness` above stays as the manual fallback/baseline, but
+    # actual LED writes use a brightness derived from the current screen
+    # brightness instead (see display_brightness.py) -- dim to match a dark
+    # room, brighten in daylight. Off by default: it depends on an
+    # undocumented technique, so it's opt-in rather than silently changing
+    # existing brightness behavior.
+    auto_brightness_enabled: bool = False
+    # Per-channel gain correction for this specific physical device's own
+    # LED die response (e.g. an over-bright green die making blues read
+    # greenish) -- applied only when writing to this device, never to the
+    # "true" hex shown in the Colors window or the Screen Bar preview. All
+    # default to 1.0 (no correction) so an uncalibrated device behaves
+    # exactly as before this existed. See led_status.apply_channel_gain_to_program.
+    red_gain: float = DEFAULT_CHANNEL_GAIN
+    green_gain: float = DEFAULT_CHANNEL_GAIN
+    blue_gain: float = DEFAULT_CHANNEL_GAIN
+    # A faint ember on every LED even when a segment is "off" -- makes
+    # the dots read as physical objects. 0 = classic full-dark.
+    resting_glow: float = 0.0
+    # Per-device blend-mode override (None = the global Colors-window
+    # choice) -- the Pro can run Spatial Split while the Dot relays.
+    blend_mode: str | None = None
+    # Story #16: pin this device to one provider ("claude"/"codex");
+    # None = aggregate. A pinned device shows only its provider's
+    # sessions and rests dark when none are live.
+    provider_pin: str | None = None
+    # Per-device courtesy-signal muting: "asks_only" keeps this device
+    # to agent status + asks/escalation (and low-battery, which is
+    # never muted); None = every signal. The per-Focus policy's
+    # per-DEVICE sibling.
+    signal_policy: str | None = None
+    # Which way round the strip is mounted: "forward" (LED 0 on the left)
+    # or "reversed". Every agent light drawn for this device is mirrored
+    # when reversed, so a comet still runs left to right on the desk.
+    led_direction: str = "forward"
+    # How a travelling motion moves on a two-LED device: "wipe" (LED 0
+    # rises, LED 1 rises, LED 0 falls, LED 1 falls -- a direction you can
+    # see) or "crossfade" (the older soft swap). Only a Dot reads it.
+    dot_travel_style: str = "wipe"
+
+    def to_dict(self) -> dict[str, object]:
+        payload = {
+            "id": self.device_id,
+            "name": self.name,
+            "path": self.path,
+            # quota_runway persists as-is since 2026-08-26: the JR usage
+            # plane feeds quota_runway_state, so the save-time downgrade
+            # to agent guarded a promise the app now keeps.
+            "led_display": self.led_display,
+            "brightness": self.brightness,
+            "auto_brightness_enabled": self.auto_brightness_enabled,
+            "red_gain": self.red_gain,
+            "green_gain": self.green_gain,
+            "blue_gain": self.blue_gain,
+            # Written by apply_calibration (with_device_resting_glow) and
+            # read back by the app's CalibrationSheet as
+            # devices.N.resting_glow; omitting it dropped an applied glow
+            # on save and kept reset_settings from reaching it.
+            "resting_glow": max(0.0, min(0.35, float(self.resting_glow))),
+            "blend_mode": self.blend_mode,
+            "provider_pin": self.provider_pin,
+            "signal_policy": self.signal_policy,
+            "led_direction": self.led_direction,
+            "dot_travel_style": self.dot_travel_style,
+        }
+        if set(payload) != DEVICE_SETTING_PERSISTED_FIELDS:
+            missing = sorted(DEVICE_SETTING_PERSISTED_FIELDS - set(payload))
+            extra = sorted(set(payload) - DEVICE_SETTING_PERSISTED_FIELDS)
+            raise RuntimeError(
+                f"device settings schema drifted (missing={missing}, extra={extra})"
+            )
+        return payload
+
+    def channel_gains(self) -> tuple[float, float, float]:
+        return (self.red_gain, self.green_gain, self.blue_gain)
+
+
+def _clamp_linked_dot_scale(value: object) -> float:
+    try:
+        scale = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.3
+    if scale != scale:
+        return 0.3
+    return min(1.0, max(0.05, scale))
+
+
+def _clamp_phase_trim(value: object) -> float:
+    """``linked_dot_phase_trim_ms``: ms in [-250, 250]; unreadable is 0."""
+    from .linked_sync import clamp_trim
+
+    return clamp_trim(value)
+
+
+def _clamp_sync_tolerance(value: object) -> float:
+    """``linked_sync_tolerance_ms``: ms in [20, 200]; unreadable is 40."""
+    from .linked_sync import clamp_tolerance
+
+    return clamp_tolerance(value)
+
+
+def _extend_style(value: object) -> str:
+    from .dot_role import normalize_extend_style
+
+    return normalize_extend_style(value)
+
+
+def _extend_side(value: object) -> str:
+    from .dot_role import normalize_extend_side
+
+    return normalize_extend_side(value)
+
+
+def _clamp_screen_bar_phase_offset(value: object) -> float:
+    """Milliseconds in [-1000, 1000]; anything unreadable means no nudge."""
+    try:
+        offset = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+    if offset != offset:
+        return 0.0
+    return min(1000.0, max(-1000.0, offset))
+
+
+@dataclass(frozen=True)
+class AgentMonitorSettings:
+    codex_transcripts_enabled: bool = False
+    claude_transcripts_enabled: bool = False
+    pi_transcripts_enabled: bool = False
+    gemini_transcripts_enabled: bool = False
+    led_display: str = LED_DISPLAY_AGENT
+    devices: tuple[DeviceDisplaySetting, ...] = ()
+    virtual_status_device_enabled: bool = False
+    # Agent work keeps the Mac awake — and, by default, the display too:
+    # a screen that sleeps locks, and a locked Mac reads as "it went to
+    # sleep while my agents were running" however awake the CPU stayed.
+    # Both are the owner's to turn off (a long background task on a
+    # closed lid does not need the panel on).
+    agent_keep_awake_enabled: bool = True
+    keep_display_awake: bool = True
+    closed_lid_awake_policy: str = CLOSED_LID_AWAKE_NEVER
+    # How long (minutes) to keep holding the lid-closed awake state after
+    # agent activity *looks* like it stopped, before actually letting the
+    # policy release -- a buffer against a false "done" reading (e.g. a
+    # command still running with no events emitted for a stretch) closing
+    # the lid into sleep and losing the agent's work. See
+    # keep_awake.KeepAwakeController.should_hold_for_mode.
+    closed_lid_grace_minutes: float = DEFAULT_CLOSED_LID_GRACE_MINUTES
+    # On battery, holding caffeinate -ims drains the machine for work the
+    # user may not be watching. Default keeps the historical behavior (hold
+    # everywhere); turning it off releases the hold whenever the Mac reports
+    # it is unplugged. An unknown power state never disables the hold.
+    keep_awake_on_battery: bool = True
+    lid_closed_animation: LedAnimationSetting = field(
+        default_factory=lambda: default_lid_animation(LID_ANIMATION_CLOSED)
+    )
+    lid_open_animation: LedAnimationSetting = field(
+        default_factory=lambda: default_lid_animation(LID_ANIMATION_OPEN)
+    )
+    lid_closed_active_animation: LedAnimationSetting = field(
+        default_factory=lambda: LedAnimationSetting(
+            program=DEFAULT_LID_CLOSED_ACTIVE_PROGRAM, duration_seconds=1.5
+        )
+    )
+    lid_open_active_animation: LedAnimationSetting = field(
+        default_factory=lambda: LedAnimationSetting(
+            program=DEFAULT_LID_OPEN_ACTIVE_PROGRAM, duration_seconds=1.5
+        )
+    )
+    battery_full_charge_watts: float | None = None
+    battery_show_on_power_change: bool = True
+    battery_power_change_preview_seconds: float = DEFAULT_POWER_CHANGE_PREVIEW_SECONDS
+    # Ambient charging display: while NOTHING is running and the machine
+    # is plugged in but not yet full, the bar shows the charge level
+    # filling with the wattage-paced trickle pulse (program_for_battery)
+    # instead of the idle whisper. Agents running, done, or needing
+    # attention always break through -- the claim is gated on idle.
+    battery_charging_idle_enabled: bool = True
+    # Below this percent while unplugged, every display switches to the
+    # calm slow-red "plug me in" breathe (the low_battery signal's default style)
+    # until power returns or the level recovers. Default on: a dying
+    # battery is the one signal that should outrank agent status.
+    low_battery_alert_enabled: bool = True
+    low_battery_threshold_percent: float = 5.0
+    # The same warning by time left rather than charge: a fast drain at 20%
+    # can be closer to empty than a slow one at 8%. 0 is off. While agents
+    # run on battery with keep-awake holding the Mac, it fires at twice this,
+    # so a run is warned about before it dies (battery_runtime).
+    low_battery_threshold_minutes: float = 0.0
+    # Sweep the bar in the finishing agent's color the moment ANY
+    # session completes -- the aggregate hides completions whenever
+    # another agent is still working.
+    completion_sweep_enabled: bool = True
+    # Calm purple glow starting this many minutes before a calendar
+    # event. Off by default: enabling it presents the system Calendars
+    # permission prompt (see calendar_watch.py).
+    calendar_alerts_enabled: bool = False
+    calendar_lead_minutes: float = 5.0
+    # Amber glow when a Reminder comes due. Off by default: enabling it
+    # presents the system Reminders prompt (see reminders_watch.py).
+    reminder_alerts_enabled: bool = False
+    # Named calibration/brightness profiles (Day/Night/Travel slots),
+    # switchable from the dropdown -- slot -> {device_id: snapshot}.
+    calibration_profiles: dict[str, dict] = field(default_factory=dict)
+    # The Studio: the user's own hand-written LED program (see the
+    # Studio card in the Animations pane). Persisted verbatim.
+    studio_program: str = ""
+    # Focus -> profile automation: when a Focus activates, apply this
+    # calibration/brightness profile slot (focus id -> slot name).
+    focus_profile_rules: dict[str, str] = field(default_factory=dict)
+    # Per-signal look overrides (Signal Engine). Keys/values validated
+    # by signals.SignalStyle; absent keys mean the built-in defaults.
+    signal_styles: dict[str, dict] = field(default_factory=dict)
+    # Ask escalation: how loud an ignored "agent needs you" may get
+    # (the tier is a ceiling) and when each stage kicks in.
+    escalation_tier: str = "menu_bar"
+    escalation_ramp_seconds: float = 30.0
+    escalation_menu_bar_seconds: float = 120.0
+    escalation_final_seconds: float = 300.0
+    # A ceiling per provider under the global tier: {provider id: tier}.
+    # Claude's permission asks may climb to the chime while another
+    # provider's never go past the light (signals.provider_escalation_stage).
+    escalation_tier_by_provider: dict[str, str] = field(default_factory=dict)
+    session_open_preferences: dict[str, str] = field(default_factory=dict)
+    setup_screen_completed: bool = False
+    colors: ColorSettings = field(default_factory=ColorSettings.defaults)
+    # Extends the Screen Bar's glow beyond the notch's own width, reaching
+    # toward the menu bar's edges on both sides -- an opt-in look (default
+    # off) since how much room is actually safe to use depends on how
+    # cluttered the user's own menu bar is (the app measures the real
+    # per-user safe area rather than assuming a fixed amount).
+    virtual_status_device_wraps_menu_bar: bool = False
+    # Manual Screen Bar geometry, both None = Automatic. Jonathan's ask,
+    # and the durable answer to notch-adjacent apps (Alcove) whose visual
+    # width changes at runtime, plus future Macs with different notches:
+    # the gap is the treated-as-notch span between the two risers; the
+    # wing length is each horizontal stroke's reach beyond the gap.
+    screen_bar_gap_width: float | None = None
+    screen_bar_wing_length: float | None = None
+    screen_bar_notch_profile: str = "auto"
+    screen_bar_notch_corner: float = 8.0
+    # The native app's notch wings: status slots drawn in the menu-bar
+    # areas beside the notch (the selected task and attention count on
+    # the left, the headline usage meter on the right). The daemon never
+    # reads it -- it carries the value so the setting survives restarts,
+    # syncs to other clients, and resets like its siblings, the same role
+    # menu_bar_icon_style plays for the status item.
+    screen_bar_notch_wings: bool = True
+    # How the Alcove bracket colors itself: "auto" mirrors the physical
+    # LEDs whenever at least two are lit and collapses to one identity
+    # hue otherwise; "spatial" always mirrors; "identity" always
+    # collapses. Auto keeps the ripple in sync with the light bar.
+    screen_bar_bracket_style: str = "auto"
+    # Apps the native Screen Bar steps aside for while one is frontmost,
+    # the way it does over a full-screen video: bundle ids, carried for
+    # the app like screen_bar_notch_wings (the daemon never reads it).
+    screen_bar_hidden_apps: tuple[str, ...] = ()
+    # After this many continuous minutes with nothing active (idle), LED
+    # brightness scales down by idle_dim_fraction -- a long-idle Mac
+    # shouldn't keep a bright light going on the desk. Default on: dimming
+    # further while genuinely idle is a straightforward improvement with
+    # no real downside, unlike a change that could surprise someone
+    # mid-work.
+    idle_dim_enabled: bool = True
+    idle_dim_after_minutes: float = DEFAULT_IDLE_DIM_AFTER_MINUTES
+    idle_dim_fraction: float = DEFAULT_IDLE_DIM_FRACTION
+    # Display sleep is a dim state, not an implicit hardware-off command.
+    # Auto-off remains a separate long-idle choice below.
+    sleep_dim_enabled: bool = True
+    sleep_dim_fraction: float = DEFAULT_SLEEP_DIM_FRACTION
+    # Auto-dim (replaces night warmth): off, a daily schedule, the display's
+    # own brightness, or the ambient light sensor. Feeds brightness_policy's
+    # night_dim stage; off keeps the factor at 1.0.
+    auto_dim: AutoDimSettings = field(default_factory=AutoDimSettings)
+    idle_auto_off_enabled: bool = False
+    idle_auto_off_after_minutes: float = DEFAULT_IDLE_AUTO_OFF_AFTER_MINUTES
+    # Dims/quiets the LEDs while a macOS Focus (Do Not Disturb, Work,
+    # Sleep, etc.) is active, matching the same "don't be a nagging light"
+    # spirit as idle dimming. Off by default -- detecting the active Focus
+    # requires reading a TCC-protected file the user must grant Full Disk
+    # Access to (see focus_sync.py); silently defaulting this on would
+    # look "broken" (no visible effect) for anyone who hasn't done that.
+    focus_sync_enabled: bool = False
+    # Settings > Remote's "serve status on loopback" switch: when on, the
+    # core daemon runs `jrbar serve` (serve.py: port 8737, bearer token in
+    # JRBAR_SERVE_ACCESS_TOKEN) as a supervised child. Off by default --
+    # a port that answers "what is this Mac doing" opens on explicit ask
+    # only.
+    serve_enabled: bool = False
+    # Whether that endpoint may also ANSWER an agent (POST /answer, for a
+    # Stream Deck key): approve, deny, always or a choice, through the same
+    # answer_ask path as the panel, bearer-authenticated like the rest of
+    # serve. Off by default and separate from serve_enabled -- reading the
+    # fleet and answering for the owner are different grants.
+    serve_answer_enabled: bool = False
+    # Settings > Usage's "Provider status pages" switch: when on, the daemon
+    # asks status.anthropic.com, status.openai.com and status.cursor.com
+    # (status_feeds.py) every 10 minutes, for each of those providers found
+    # on this Mac, so "the provider is down" is not read as "your fetch broke".
+    # Off by default -- it is a request that leaves the Mac, so nothing is
+    # contacted until the person turns it on.
+    provider_status_feeds_enabled: bool = False
+    # Settings > Agents' "Check for agent updates" switch: when on, the daemon asks
+    # registry.npmjs.org for the latest version of each installed agent CLI that
+    # has an npm package (provider_updates.py), every 6 hours and when the Agents
+    # page is refreshed, so a row can say "2.1.290 available". Off by default --
+    # it is a request that leaves the Mac, so nothing is contacted until the
+    # person turns it on. The Update button never needs it: it runs the CLI's own
+    # updater, and only when clicked.
+    provider_update_checks_enabled: bool = False
+    # Scenes are presentation policy only. Calm is the compatibility default:
+    # until a runtime owner consumes this policy, existing display behavior is
+    # unchanged, while every settings document has one valid active scene.
+    active_scene: str = DEFAULT_SCENE.value
+    # The installed Scene pack whose validated policy rows override the
+    # built-in scene's, or None for the built-ins. The id only names a row
+    # in the scene-pack store -- the runtime read
+    # (ScenePackStore.policy_overrides) fails closed, so a pack that was
+    # removed or no longer validates silently returns the scene to its
+    # built-in policy rather than wedging the display.
+    active_scene_pack: str | None = None
+    # Presentation-only DND policy. New installations are inactive. These
+    # remain bounded scalar fields so Settings can preserve unknown peers while
+    # compare-and-set protects one coherent transaction.
+    dnd_schedule_enabled: bool = False
+    dnd_schedule_start_minutes: int = 1320
+    dnd_schedule_end_minutes: int = 420
+    dnd_schedule_mode: str = "dark"
+    dnd_dim_fraction: float = 0.15
+    dnd_override_mode: str | None = None
+    dnd_override_created_epoch: float | None = None
+    dnd_override_until_epoch: float | None = None
+    dnd_focus_mode: str = "pause"
+    # Load-only diagnostics. Refused persisted values are not re-serialized.
+    dnd_persisted_refusals: tuple[DndPersistedRefusal, ...] = ()
+    # A call (a live microphone, camera or screen share the app reports
+    # through `presence`) quiets JR-Bar the way a busylight goes red, with
+    # no Focus and no Full Disk Access: "sounds" keeps every light and
+    # banner and drops the sounds, a DND mode word applies that mode for the
+    # call, "off" ignores calls (jrbar.presence).
+    call_quiet_mode: str = DEFAULT_CALL_QUIET_MODE
+    # The same for a calendar meeting the app reports. Off by default: a
+    # meeting on the calendar is not always a call.
+    meeting_quiet_mode: str = DEFAULT_MEETING_QUIET_MODE
+    # And for an empty desk (a locked screen, a long idle). Off by default;
+    # "asks_only" keeps the Dot beacon and every ask while the rest goes.
+    away_quiet_mode: str = DEFAULT_AWAY_QUIET_MODE
+    tips_enabled: bool = True
+    menu_bar_label_enabled: bool = False
+    # The native app's status item picture (MENU_BAR_ICON_STYLES).
+    menu_bar_icon_style: str = DEFAULT_MENU_BAR_ICON_STYLE
+    # The Screen Bar's dim floor as a USER dial. 0 = pitch black: only
+    # the moving signal shows (the relay dot ticking round, the timer
+    # filling). 0.25 preserves the pre-dial behavior.
+    screen_bar_min_glow: float = 0.25
+    # Story #14: wing tips as standing micro-gauges (quota ember left,
+    # unseen-done green right). Screen-Bar-only luxury; off by default.
+    # One light language across both surfaces: the Screen Bar renders
+    # with the SAME animation the hardware is running, so the notch and
+    # the LEDs are never two different opinions about the same moment.
+    # On by default -- a user who owns the hardware wants them to agree,
+    # and a user who does not never notices the setting exists.
+    link_screen_bar_to_hardware: bool = True
+    # Fixed phase nudge between the Screen Bar and a linked strip, in
+    # milliseconds clamped to +/-1 s. The bar snaps its clock to the
+    # strip's write-completion moment; when the two still read out of step
+    # (a slow sampler, a window-server beat) this shifts the bar's t=0 --
+    # positive holds the bar back, starting its cycle that much later.
+    screen_bar_phase_offset_ms: float = 0.0
+    # Pro + Dot as one unit: when both are mounted their programs are
+    # written back to back from the same presentation and anchor.
+    devices_linked: bool = True
+    # Fraction of the strip's brightness a linked Dot plays at. Its LEDs
+    # are physically much brighter than the strip's, so equal numbers read
+    # as a Dot that outshines the Pro.
+    linked_dot_scale: float = 0.3
+    # What a linked Dot is FOR (jrbar.dot_role): "extend" replays the
+    # strip's own program narrowed to two LEDs, "asks" turns the Dot into a
+    # dedicated attention beacon that is dark until someone is needed,
+    # "status" leaves the Dot on its own two-LED semantic display.
+    dot_role: str = DEFAULT_DOT_ROLE
+    # Whether the "asks" beacon also lights (green) for a completion nobody
+    # has looked at yet. Off: an unseen completion is not someone waiting.
+    dot_role_include_completions: bool = False
+    screen_bar_gauges_enabled: bool = False
+    # Follow Alcove's visible capsule width (alpha-measured) so an
+    # expanded live activity never outgrows the bracket. On by default;
+    # manual wing lengths always win over it.
+    screen_bar_follow_alcove: bool = True
+    # Full-screen spaces hide the menu bar; a status bar floating over a
+    # full-screen VIDEO reads as a glitch, not a feature. Off by default;
+    # the switch exists for people who want the bar everywhere.
+    screen_bar_show_in_full_screen: bool = False
+    # Off by default and opt-in by policy: reading consumer Claude limits
+    # means presenting the user's own subscription credential.
+    claude_plan_limits_enabled: bool = False
+    # Which consent generation the flag above was granted under. Zero means
+    # "no consent this build recognises" -- the state a settings file written
+    # by an older build is in, and the state a hand-forged dataclass is in.
+    claude_plan_limits_consent_version: int = 0
+    # Still legacy and still inert: threshold alerts are an outbound effect
+    # and have no authority-fed producer yet.
+    quota_alerts_enabled: bool = False
+    # Opt-in ambient cues, consumed by ambient_effect_runtime's observer.
+    # Rainstick Idle parks one dim pixel that advances every 30 s while no
+    # higher-priority signal owns the strip -- a content-free "JR-Bar is
+    # alive" -- and the Milestone Odometer plays a finite cue when the
+    # exact completion count crosses a configured step. Both default off:
+    # they are ambient decoration, not signal, so nothing should light for
+    # them until the user asks.
+    rainstick_idle_enabled: bool = False
+    # A separate consent for letting the idle pixel run inside the night
+    # scene, which withholds it by default even when Rainstick is on.
+    rainstick_night_enabled: bool = False
+    milestone_odometer_enabled: bool = False
+    # The exact completion counts that earn a cue -- positive, sorted,
+    # deduplicated, bounded (the pure planner accepts at most 16). The
+    # default ladder makes the toggle meaningful on its own.
+    milestone_odometer_steps: tuple[int, ...] = DEFAULT_MILESTONE_ODOMETER_STEPS
+    # The semantic ambient cues switched off by name (jrbar.ambient_cues):
+    # firefly, meniscus, baton and the rest play unless listed here.
+    ambient_cues_disabled: tuple[str, ...] = ()
+    # Capacity retention is a separate, explicit consent boundary. Existing
+    # transcript and broad usage settings never enable either history stream.
+    capacity_history_enabled: bool = False
+    capacity_history_retention_days: int = 7
+    # The second Mac. Off by default in every direction: nothing is
+    # discovered, nothing is fetched, nothing about this desk is written
+    # where a peer could read it, and a peer's row may not take a light
+    # here until the owner unmutes that machine by name.
+    remote_peers: RemotePeerSettings = field(default_factory=RemotePeerSettings)
+    # The loopback ingest port for off-machine agents (a cloud code
+    # review posting its own lifecycle). Off by default: it opens a
+    # listening socket, and "local" is not "trusted".
+    cloud_ingest_enabled: bool = False
+    # Zero is the explicit off state. Broad or legacy history consent never
+    # enables the metadata-only operator ledger.
+    operator_history_retention_days: int = 0
+    usage_graph_days: int = 7
+    # "tokens" leads with token counts (cost approximated in parens,
+    # the CodexBar presentation); "cost" leads with dollars.
+    usage_display_mode: str = "tokens"
+    usage_graph_providers: tuple[str, ...] = ("claude", "codex")
+    codex_percent_enabled: bool = True
+    escalation_webhook_url: str = ""
+    #: Executable run on edge-triggered usage events (usage_event_hooks).
+    usage_event_hook_path: str = ""
+    # Named Studio programs -- a shelf of looks.
+    studio_library: tuple[tuple[str, str], ...] = ()
+    # One master dial over EVERY surface's brightness -- strip and
+    # Screen Bar alike -- reachable from the dropdown. Composes with
+    # per-device brightness, auto-brightness, idle and Focus dimming.
+    global_brightness_scale: float = 1.0
+    focus_signal_policy: dict[str, str] = field(default_factory=dict)
+    # A macOS notification banner when a main session finishes. New
+    # installations remain off until the user opts in and explicitly
+    # handles the macOS permission action. Existing settings files that
+    # predate this policy preserve their prior effective choice once.
+    completion_notification_enabled: bool = False
+    notification_policy_version: int = 1
+    # Webhook bridge: which non-capacity moment events (beyond stage-3
+    # escalation, which always fires when the URL is set) also POST.
+    webhook_events: tuple[str, ...] = ()
+    # The chord the retired daemon hotkey registry held for each global action
+    # ({key_code, key_label, modifiers}). The app reads it once to adopt it;
+    # nothing in the daemon registers or writes it, and a save keeps what is there.
+    # Empty is intentional: a new installation does not claim a system chord.
+    global_action_shortcuts: dict[str, dict] = field(default_factory=dict)
+    # Sub-agent asks stay quiet by default: no light, sound, banner or
+    # answer card, and the sub-agent's own agent still shows its prompt.
+    # Turning this on lets them alert like a main session's ask does.
+    subagent_asks_alert: bool = False
+    # The owner's defaults: a nudge at 90, a real warning at 95.
+    quota_alert_thresholds: tuple[float, ...] = DEFAULT_QUOTA_THRESHOLDS
+    # The interrupt budget's one dial: how many repetitions a COURTESY
+    # signal gets before it goes back to normal. Three, per the locked
+    # law. Critical signals ignore it -- they blink until dealt with.
+    alert_burst: int = DEFAULT_ALERT_BURST
+    dismissed_tips: tuple[str, ...] = ()
+    # Per-Focus dim rules, keyed by the Focus mode identifier (e.g.
+    # "com.apple.donotdisturb.mode.default"): 1.0 = don't dim, 0.0 = LEDs
+    # fully off while that Focus is active. A Focus with no rule falls
+    # back to idle_dim_fraction, the pre-per-Focus behavior. Only
+    # meaningful while focus_sync_enabled is on.
+    focus_dim_rules: dict[str, float] = field(default_factory=dict)
+    # Linked Pro + Dot timing (jrbar.linked_sync). Clock correction retimes
+    # the Dot for its own measured clock (about 2.7% slow on the first Dot)
+    # and closes the loop from fresh reads of its ``ticks``; off, the Dot is
+    # still phased from the strip's start but never retimed or re-anchored.
+    linked_dot_clock_correction: bool = True
+    # A constant nudge of the Dot against the strip, ms in [-250, 250]: the
+    # pair's analogue of ``screen_bar_phase_offset_ms``. Positive runs the
+    # Dot ahead.
+    linked_dot_phase_trim_ms: float = 0.0
+    # How far the Dot may drift, in ms [20, 200], before a Dot-only
+    # re-anchor (at most one every 20 s). Higher means fewer Dot writes.
+    linked_sync_tolerance_ms: float = 40.0
+    # "continue" (the default) lets light run off the end of the strip into
+    # the Dot (travelling effects only; anything else mirrors); "mirror"
+    # folds the strip's eight LEDs into the Dot's two.
+    dot_extend_style: str = "continue"
+    # Continue only: the Dot sits on the strip's right as you face them
+    # ("after_last", past LED 7 on a strip running forward) or on its left
+    # ("before_first"); each device's led_direction turns its own end round.
+    dot_extend_side: str = "after_last"
+    # A linked Dot takes the strip's brightness policy times
+    # ``linked_dot_scale`` and ignores its own auto-brightness, which used
+    # to cap it (and restart it on every auto step).
+    linked_follow_brightness: bool = True
+    # --- Usage hooks and sources (lane oss, 2026-09-24) ------------------
+    # Usage hooks v2: {"enabled": bool, "rules": [...]} (usage_event_hooks).
+    # Off until the person turns it on; a v1 usage_event_hook_path
+    # migrates to one "legacy" rule on load.
+    usage_hooks: dict[str, Any] = field(
+        default_factory=lambda: {"enabled": False, "rules": []}
+    )
+    # Claude Code's statusLine as a quota source (claude_statusline_source):
+    # opt-in, set by `jrbar agent-monitor install claude-statusline`.
+    claude_statusline_source: bool = False
+    # Whether the statusline shim prints JR-Bar's line; off means it only
+    # feeds the daemon.
+    statusline_text_enabled: bool = True
+    # The CLIProxyAPI hub (cliproxy_hub): off, loopback only, every 5 min
+    # at most. Its management key lives in the Keychain, never here.
+    cliproxy_hub: dict[str, Any] = field(
+        default_factory=lambda: {
+            "enabled": False,
+            "url": "http://127.0.0.1:8317",
+            "min_interval_seconds": 300,
+        }
+    )
+    # Extra Claude and Codex homes (claude-swap and friends), absolute paths.
+    provider_extra_homes: dict[str, list[str]] = field(
+        default_factory=lambda: {"claude": [], "codex": []}
+    )
+    # Model id -> {input, output, cache_read, cache_write} USD per M tokens.
+    pricing_overrides: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Keep-awake lets go while macOS Low Power Mode is on (keep_awake).
+    keep_awake_yield_low_power_mode: bool = True
+
+    def transcript_enabled(self, provider: str) -> bool:
+        if provider == "codex":
+            return self.codex_transcripts_enabled
+        if provider == "claude":
+            return self.claude_transcripts_enabled
+        if provider == "pi":
+            return self.pi_transcripts_enabled
+        if provider == "gemini":
+            return self.gemini_transcripts_enabled
+        return False
+
+    def with_transcript_provider(self, provider: str, enabled: bool) -> AgentMonitorSettings:
+        if provider == "codex":
+            return replace(self, codex_transcripts_enabled=enabled)
+        if provider == "claude":
+            return replace(self, claude_transcripts_enabled=enabled)
+        if provider == "pi":
+            return replace(self, pi_transcripts_enabled=enabled)
+        if provider == "gemini":
+            return replace(self, gemini_transcripts_enabled=enabled)
+        raise ValueError(f"Unknown transcript provider: {provider}")
+
+    def with_led_display(self, display: str) -> AgentMonitorSettings:
+        if display not in LED_DISPLAY_CHOICES:
+            raise ValueError(f"Unknown LED display: {display}")
+        # quota_runway is honored since 2026-08-26 (producer: the JR
+        # usage plane's gated lanes).
+        return replace(self, led_display=display)
+
+    def display_for_device(self, device_id: str) -> str:
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.led_display
+        return self.led_display
+
+    def brightness_for_device(self, device_id: str) -> int:
+        for device in self.devices:
+            if device.device_id == device_id:
+                return normalize_brightness(device.brightness)
+        return 255
+
+    def with_device_display(
+        self,
+        device_id: str,
+        display: str,
+        *,
+        name: str | None = None,
+        path: str | None = None,
+    ) -> AgentMonitorSettings:
+        if display not in LED_DISPLAY_CHOICES:
+            raise ValueError(f"Unknown LED display: {display}")
+
+        devices: list[DeviceDisplaySetting] = []
+        updated = False
+        for device in self.devices:
+            if device.device_id == device_id:
+                # replace(device, ...) carries over every field not
+                # explicitly overridden (e.g. auto_brightness_enabled) --
+                # rebuilding from scratch here previously dropped any field
+                # added after this method was first written.
+                devices.append(
+                    replace(
+                        device,
+                        name=name or device.name,
+                        path=path or device.path,
+                        led_display=display,
+                    )
+                )
+                updated = True
+            else:
+                devices.append(device)
+        if not updated:
+            devices.append(
+                DeviceDisplaySetting(
+                    device_id=device_id,
+                    name=name or device_id,
+                    path=path or device_id,
+                    led_display=display,
+                    brightness=self.brightness_for_device(device_id),
+                )
+            )
+        return replace(self, devices=tuple(devices))
+
+    def with_device_brightness(
+        self,
+        device_id: str,
+        brightness: float,
+        *,
+        name: str | None = None,
+        path: str | None = None,
+    ) -> AgentMonitorSettings:
+        value = normalize_brightness(brightness)
+        devices: list[DeviceDisplaySetting] = []
+        updated = False
+        for device in self.devices:
+            if device.device_id == device_id:
+                devices.append(
+                    replace(
+                        device,
+                        name=name or device.name,
+                        path=path or device.path,
+                        brightness=value,
+                    )
+                )
+                updated = True
+            else:
+                devices.append(device)
+        if not updated:
+            devices.append(
+                DeviceDisplaySetting(
+                    device_id=device_id,
+                    name=name or device_id,
+                    path=path or device_id,
+                    led_display=self.display_for_device(device_id),
+                    brightness=value,
+                )
+            )
+        return replace(self, devices=tuple(devices))
+
+    def auto_brightness_enabled_for_device(self, device_id: str) -> bool:
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.auto_brightness_enabled
+        return False
+
+    def with_device_auto_brightness(
+        self,
+        device_id: str,
+        enabled: bool,
+        *,
+        name: str | None = None,
+        path: str | None = None,
+    ) -> AgentMonitorSettings:
+        devices: list[DeviceDisplaySetting] = []
+        updated = False
+        for device in self.devices:
+            if device.device_id == device_id:
+                devices.append(
+                    replace(
+                        device,
+                        name=name or device.name,
+                        path=path or device.path,
+                        auto_brightness_enabled=bool(enabled),
+                    )
+                )
+                updated = True
+            else:
+                devices.append(device)
+        if not updated:
+            devices.append(
+                DeviceDisplaySetting(
+                    device_id=device_id,
+                    name=name or device_id,
+                    path=path or device_id,
+                    led_display=self.display_for_device(device_id),
+                    brightness=self.brightness_for_device(device_id),
+                    auto_brightness_enabled=bool(enabled),
+                )
+            )
+        return replace(self, devices=tuple(devices))
+
+    def channel_gains_for_device(self, device_id: str) -> tuple[float, float, float]:
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.channel_gains()
+        return (DEFAULT_CHANNEL_GAIN, DEFAULT_CHANNEL_GAIN, DEFAULT_CHANNEL_GAIN)
+
+    def with_device_channel_gain(
+        self,
+        device_id: str,
+        channel: str,
+        value: float,
+        *,
+        name: str | None = None,
+        path: str | None = None,
+    ) -> AgentMonitorSettings:
+        """Sets one of "red"/"green"/"blue" gain for a device, leaving the
+        other two untouched. Three separate calls (one per slider) rather
+        than one method taking all three, since each slider in the menu
+        fires its own action independently."""
+        field_name = {"red": "red_gain", "green": "green_gain", "blue": "blue_gain"}.get(channel)
+        if field_name is None:
+            raise ValueError(f"Unknown channel: {channel}")
+        gain = normalize_channel_gain(value)
+        devices: list[DeviceDisplaySetting] = []
+        updated = False
+        for device in self.devices:
+            if device.device_id == device_id:
+                devices.append(
+                    replace(
+                        device,
+                        name=name or device.name,
+                        path=path or device.path,
+                        **{field_name: gain},
+                    )
+                )
+                updated = True
+            else:
+                devices.append(device)
+        if not updated:
+            devices.append(
+                DeviceDisplaySetting(
+                    device_id=device_id,
+                    name=name or device_id,
+                    path=path or device_id,
+                    led_display=self.display_for_device(device_id),
+                    brightness=self.brightness_for_device(device_id),
+                    auto_brightness_enabled=self.auto_brightness_enabled_for_device(device_id),
+                    **{field_name: gain},
+                )
+            )
+        return replace(self, devices=tuple(devices))
+
+    def with_device_channel_gains_reset(self, device_id: str) -> AgentMonitorSettings:
+        """Back to (1.0, 1.0, 1.0) -- a no-op correction, i.e. write the
+        true hex unmodified."""
+        devices = tuple(
+            replace(device, red_gain=DEFAULT_CHANNEL_GAIN, green_gain=DEFAULT_CHANNEL_GAIN, blue_gain=DEFAULT_CHANNEL_GAIN)
+            if device.device_id == device_id
+            else device
+            for device in self.devices
+        )
+        return replace(self, devices=devices)
+
+    def with_remembered_device(
+        self,
+        *,
+        device_id: str,
+        name: str,
+        path: str,
+    ) -> AgentMonitorSettings:
+        return self.with_device_display(
+            device_id,
+            self.display_for_device(device_id),
+            name=name,
+            path=path,
+        )
+
+    def without_device(self, device_id: str) -> AgentMonitorSettings:
+        devices = tuple(device for device in self.devices if device.device_id != device_id)
+        if devices == self.devices:
+            return self
+        return replace(self, devices=devices)
+
+    def session_open_action(self, provider: str, origin: str | None = None) -> str | None:
+        if origin:
+            action = self.session_open_preferences.get(
+                session_open_preference_key(provider, origin)
+            )
+            if action in SESSION_OPEN_CHOICES:
+                return action
+            action = self.session_open_preferences.get(
+                f"origin:{normalize_session_origin_key(origin)}"
+            )
+            if action in SESSION_OPEN_CHOICES:
+                return action
+
+        action = self.session_open_preferences.get(provider.lower())
+        if action in SESSION_OPEN_CHOICES:
+            return action
+        return None
+
+    def with_session_open_action(
+        self,
+        provider: str,
+        action: str,
+        origin: str | None = None,
+    ) -> AgentMonitorSettings:
+        if action not in SESSION_OPEN_CHOICES:
+            raise ValueError(f"Unknown session open action: {action}")
+        key = session_open_preference_key(provider, origin)
+        preferences = dict(self.session_open_preferences)
+        preferences[key] = action
+        return replace(self, session_open_preferences=preferences)
+
+    def with_provider_session_open_action(
+        self, provider: str, action: str
+    ) -> AgentMonitorSettings:
+        """Set the provider-wide opener and discard older per-origin overrides."""
+        if action not in SESSION_OPEN_CHOICES:
+            raise ValueError(f"Unknown session open action: {action}")
+        provider_key = provider.lower()
+        prefix = f"origin:{provider_key}:"
+        preferences = {
+            key: value
+            for key, value in self.session_open_preferences.items()
+            if not key.startswith(prefix)
+        }
+        preferences[provider_key] = action
+        return replace(self, session_open_preferences=preferences)
+
+    def with_battery_full_charge_watts(self, watts: float | None) -> AgentMonitorSettings:
+        if watts is not None and watts <= 0:
+            watts = None
+        return replace(self, battery_full_charge_watts=watts)
+
+    def with_battery_power_change_preview(
+        self,
+        *,
+        enabled: bool | None = None,
+        seconds: float | None = None,
+    ) -> AgentMonitorSettings:
+        preview_seconds = self.battery_power_change_preview_seconds
+        if seconds is not None:
+            preview_seconds = max(0.0, float(seconds))
+        return replace(
+            self,
+            battery_show_on_power_change=(
+                self.battery_show_on_power_change if enabled is None else enabled
+            ),
+            battery_power_change_preview_seconds=preview_seconds,
+        )
+
+    def with_battery_charging_idle(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, battery_charging_idle_enabled=bool(enabled))
+
+    def lid_animation(self, kind: str) -> LedAnimationSetting:
+        if kind == LID_ANIMATION_CLOSED:
+            return self.lid_closed_animation
+        if kind == LID_ANIMATION_OPEN:
+            return self.lid_open_animation
+        if kind == LID_ANIMATION_CLOSED_ACTIVE:
+            return self.lid_closed_active_animation
+        if kind == LID_ANIMATION_OPEN_ACTIVE:
+            return self.lid_open_active_animation
+        raise ValueError(f"Unknown lid animation: {kind}")
+
+    def lid_animation_for_context(self, closed: bool, agents_active: bool) -> str:
+        """Which lid animation KIND applies right now: the agent-aware
+        variant when any main agent was live at the transition."""
+        if closed:
+            return LID_ANIMATION_CLOSED_ACTIVE if agents_active else LID_ANIMATION_CLOSED
+        return LID_ANIMATION_OPEN_ACTIVE if agents_active else LID_ANIMATION_OPEN
+
+    def with_closed_lid_awake_policy(self, policy: str) -> AgentMonitorSettings:
+        if policy not in CLOSED_LID_AWAKE_CHOICES:
+            raise ValueError(f"Unknown closed-lid awake policy: {policy}")
+        return replace(self, closed_lid_awake_policy=policy)
+
+    def with_closed_lid_grace_minutes(self, minutes: float) -> AgentMonitorSettings:
+        return replace(self, closed_lid_grace_minutes=normalize_closed_lid_grace_minutes(minutes))
+
+    def with_agent_keep_awake_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, agent_keep_awake_enabled=bool(enabled))
+
+    def with_keep_display_awake(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, keep_display_awake=bool(enabled))
+
+    def with_keep_awake_on_battery(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, keep_awake_on_battery=bool(enabled))
+
+    def with_lid_animation(
+        self,
+        kind: str,
+        *,
+        program: str,
+        duration_seconds: float,
+        shape: str | None = None,
+    ) -> AgentMonitorSettings:
+        animation = LedAnimationSetting(
+            program=program,
+            duration_seconds=normalize_animation_duration(duration_seconds),
+            shape=_lid_shape_setting(shape),
+        )
+        if kind == LID_ANIMATION_CLOSED:
+            return replace(self, lid_closed_animation=animation)
+        if kind == LID_ANIMATION_CLOSED_ACTIVE:
+            return replace(self, lid_closed_active_animation=animation)
+        if kind == LID_ANIMATION_OPEN_ACTIVE:
+            return replace(self, lid_open_active_animation=animation)
+        if kind == LID_ANIMATION_OPEN:
+            return replace(self, lid_open_animation=animation)
+        raise ValueError(f"Unknown lid animation: {kind}")
+
+    def with_setup_screen_completed(self, completed: bool = True) -> AgentMonitorSettings:
+        return replace(self, setup_screen_completed=bool(completed))
+
+    def with_virtual_status_device(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, virtual_status_device_enabled=bool(enabled))
+
+    def with_virtual_status_device_wraps_menu_bar(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, virtual_status_device_wraps_menu_bar=bool(enabled))
+
+    def with_colors(self, colors: ColorSettings) -> AgentMonitorSettings:
+        return replace(self, colors=colors)
+
+    def with_idle_dim_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, idle_dim_enabled=bool(enabled))
+
+    def with_idle_dim_after_minutes(self, minutes: float) -> AgentMonitorSettings:
+        return replace(self, idle_dim_after_minutes=normalize_idle_dim_after_minutes(minutes))
+
+    def with_idle_dim_fraction(self, fraction: float) -> AgentMonitorSettings:
+        return replace(self, idle_dim_fraction=normalize_idle_dim_fraction(fraction))
+
+    def with_sleep_dim_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, sleep_dim_enabled=bool(enabled))
+
+    def with_sleep_dim_fraction(self, fraction: float) -> AgentMonitorSettings:
+        return replace(self, sleep_dim_fraction=normalize_sleep_dim_fraction(fraction))
+
+    def with_auto_dim(self, auto_dim: AutoDimSettings) -> AgentMonitorSettings:
+        if type(auto_dim) is not AutoDimSettings:
+            raise TypeError("auto_dim must be AutoDimSettings")
+        return replace(self, auto_dim=auto_dim)
+
+    def with_idle_auto_off_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, idle_auto_off_enabled=bool(enabled))
+
+    def with_idle_auto_off_after_minutes(self, minutes: float) -> AgentMonitorSettings:
+        return replace(
+            self,
+            idle_auto_off_after_minutes=normalize_idle_auto_off_after_minutes(minutes),
+        )
+
+    def with_subagent_asks_alert(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, subagent_asks_alert=bool(enabled))
+
+    def with_completion_notification_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(
+            self,
+            completion_notification_enabled=bool(enabled),
+            notification_policy_version=1,
+        )
+
+    def with_webhook_event(self, key: str, enabled: bool) -> AgentMonitorSettings:
+        if key not in WEBHOOK_EVENT_KEYS:
+            raise ValueError(f"Unknown webhook event: {key}")
+        events = tuple(k for k in self.webhook_events if k != key)
+        if enabled:
+            events = (*events, key)
+        return replace(self, webhook_events=events)
+
+    def with_global_brightness_scale(self, value: float) -> AgentMonitorSettings:
+        """The master dial. Clamped 0.05..1.0 -- dim is never "off in
+        disguise"; turning surfaces off is a different, explicit act."""
+        return replace(
+            self,
+            global_brightness_scale=max(0.05, min(1.0, float(value))),
+        )
+
+    def with_focus_signal_policy(self, identifier: str, policy: str) -> AgentMonitorSettings:
+        if policy not in FOCUS_SIGNAL_POLICIES:
+            raise ValueError(f"unknown focus signal policy: {policy}")
+        rules = dict(self.focus_signal_policy)
+        if policy == "all":
+            rules.pop(identifier, None)
+        else:
+            rules[identifier] = policy
+        return replace(self, focus_signal_policy=rules)
+
+    def with_studio_saved_look(self, name: str, program: str) -> AgentMonitorSettings:
+        cleaned = str(name).strip()
+        if not cleaned:
+            raise ValueError("a saved look needs a name")
+        library = tuple(
+            (existing, existing_program)
+            for existing, existing_program in self.studio_library
+            if existing != cleaned
+        )
+        return replace(self, studio_library=(*library, (cleaned, str(program))))
+
+    def without_studio_look(self, name: str) -> AgentMonitorSettings:
+        return replace(
+            self,
+            studio_library=tuple(
+                (existing, program)
+                for existing, program in self.studio_library
+                if existing != name
+            ),
+        )
+
+    def with_escalation_webhook_url(self, url: str) -> AgentMonitorSettings:
+        return replace(self, escalation_webhook_url=str(url).strip())
+
+    def with_usage_event_hook_path(self, path: str) -> AgentMonitorSettings:
+        """The legacy window's one hook path, kept in step with the
+        ``legacy`` usage-hook rule it now stands for."""
+        from .usage_source_settings import legacy_usage_hook_rule, normalize_usage_hooks
+
+        cleaned = str(path).strip()
+        hooks = normalize_usage_hooks(self.usage_hooks)
+        rules = [rule for rule in hooks["rules"] if rule["id"] != "legacy"]
+        if cleaned:
+            rules.insert(0, legacy_usage_hook_rule(cleaned))
+            hooks = {"enabled": True, "rules": rules}
+        else:
+            hooks = {"enabled": hooks["enabled"] and bool(rules), "rules": rules}
+        return replace(self, usage_event_hook_path=cleaned, usage_hooks=hooks)
+
+    def with_usage_hooks(self, hooks: object) -> AgentMonitorSettings:
+        """The rules as written. Without a ``legacy`` rule the first
+        version's path goes too, or the next load would add the rule back."""
+        from .usage_source_settings import LEGACY_RULE_ID, normalize_usage_hooks
+
+        normalized = normalize_usage_hooks(hooks)
+        path = self.usage_event_hook_path
+        if not any(rule["id"] == LEGACY_RULE_ID for rule in normalized["rules"]):
+            path = ""
+        return replace(self, usage_hooks=normalized, usage_event_hook_path=path)
+
+    def with_usage_display_mode(self, mode: str) -> AgentMonitorSettings:
+        if mode not in ("tokens", "cost", "sessions", "percent"):
+            raise ValueError(
+                "usage display mode is tokens, cost, sessions, or percent"
+            )
+        return replace(self, usage_display_mode=mode)
+
+    def with_usage_graph_providers(
+        self,
+        provider_ids: tuple[str, ...],
+    ) -> AgentMonitorSettings:
+        # Any registry provider: token/cost series exist only for the two
+        # with local transcripts, but the percent metric charts everyone,
+        # and the old {claude, codex} allowlist was why the chart looked
+        # like a two-provider app no matter what was enabled.
+        from .provider_usage_platform import provider_descriptors
+
+        allowed = {
+            descriptor.provider_id for descriptor in provider_descriptors()
+        }
+        if (
+            type(provider_ids) is not tuple
+            or not provider_ids
+            or len(provider_ids) != len(set(provider_ids))
+            or any(provider_id not in allowed for provider_id in provider_ids)
+        ):
+            raise ValueError("usage graph providers must be selected and supported")
+        return replace(self, usage_graph_providers=provider_ids)
+
+    def with_codex_percent_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, codex_percent_enabled=bool(enabled))
+
+    def with_usage_graph_days(self, days: int) -> AgentMonitorSettings:
+        if int(days) not in (7, 30, 90, 365):
+            raise ValueError("graph range is 7, 30, 90 or 365 days")
+        return replace(self, usage_graph_days=int(days))
+
+    def with_quota_alerts_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        # Un-neutered 2026-08-26. This setter used to delete its
+        # argument and force False, the loader forced False, and no
+        # switch existed -- yet FOUR alert features routed their only
+        # visible surface through the flag (quota blink, pace
+        # notifications, reset blink, connection cues), so all of them
+        # were unreachable by construction. The authority concern the
+        # old comment cited (a stale reading blinking the lights) is
+        # answered by the edge detectors themselves now: pace alerts
+        # and reset events fire on TRANSITIONS of the JR plane's own
+        # gated snapshots, not raw percentages.
+        return replace(self, quota_alerts_enabled=bool(enabled))
+
+    def with_quota_alert_thresholds(self, thresholds) -> AgentMonitorSettings:
+        # Honoured since 2026-09-10: the native Settings window edits the
+        # two steppers over the socket, and the crossing detector
+        # (status_bar_legacy.track_quota_thresholds) consumes the tuple.
+        # normalize_quota_thresholds keeps the values sane (0 < x <= 100,
+        # sorted, deduplicated, at most four) and falls back to 90/95 for
+        # anything unusable, including an empty list.
+        return replace(self, quota_alert_thresholds=normalize_quota_thresholds(thresholds))
+
+    def with_alert_burst(self, burst: object) -> AgentMonitorSettings:
+        """Honours its argument: unlike the threshold effects above, the
+        burst budget is not a raw-provider-percentage route to the
+        hardware -- it only says how many times an already-authorised
+        courtesy signal may repeat."""
+        return replace(self, alert_burst=normalize_alert_burst(burst))
+
+    def with_claude_plan_limits_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        # Honours its argument now that the consumer policy declares real
+        # lanes and claude/quota/oauth negotiates them, so there is something
+        # for capacity_authority.select_binding_lanes to authorise. It stays
+        # OFF by default: the policy is opt_in_required, and the opt-in is the
+        # user's consent to present their subscription credential at all.
+        #
+        # Only this mutator stamps consent, and only a stamp from THIS
+        # generation survives `load_settings`. That is what stops a `true`
+        # written by a build where the flag did nothing from turning into a
+        # credentialed network read on first launch after upgrading.
+        return replace(
+            self,
+            claude_plan_limits_enabled=bool(enabled),
+            claude_plan_limits_consent_version=(
+                CLAUDE_PLAN_LIMITS_CONSENT_VERSION if enabled else 0
+            ),
+        )
+
+    def with_link_screen_bar_to_hardware(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, link_screen_bar_to_hardware=bool(enabled))
+
+    def with_screen_bar_phase_offset_ms(self, offset: object) -> AgentMonitorSettings:
+        return replace(
+            self, screen_bar_phase_offset_ms=_clamp_screen_bar_phase_offset(offset)
+        )
+
+    def with_devices_linked(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, devices_linked=bool(enabled))
+
+    def with_linked_dot_scale(self, scale: float) -> AgentMonitorSettings:
+        return replace(self, linked_dot_scale=_clamp_linked_dot_scale(scale))
+
+    def with_dot_role(self, role: object) -> AgentMonitorSettings:
+        return replace(self, dot_role=normalize_dot_role(role))
+
+    def with_linked_sync(
+        self,
+        *,
+        clock_correction: bool | None = None,
+        phase_trim_ms: object = None,
+        tolerance_ms: object = None,
+        follow_brightness: bool | None = None,
+    ) -> AgentMonitorSettings:
+        """The linked pair's timing keys, each clamped; ``None`` keeps one."""
+        return replace(
+            self,
+            linked_dot_clock_correction=(
+                self.linked_dot_clock_correction if clock_correction is None else bool(clock_correction)
+            ),
+            linked_dot_phase_trim_ms=(
+                self.linked_dot_phase_trim_ms if phase_trim_ms is None else _clamp_phase_trim(phase_trim_ms)
+            ),
+            linked_sync_tolerance_ms=(
+                self.linked_sync_tolerance_ms
+                if tolerance_ms is None
+                else _clamp_sync_tolerance(tolerance_ms)
+            ),
+            linked_follow_brightness=(
+                self.linked_follow_brightness if follow_brightness is None else bool(follow_brightness)
+            ),
+        )
+
+    def with_screen_bar_gauges_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, screen_bar_gauges_enabled=bool(enabled))
+
+    def with_screen_bar_follow_alcove(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, screen_bar_follow_alcove=bool(enabled))
+
+    def with_screen_bar_show_in_full_screen(
+        self, enabled: bool
+    ) -> AgentMonitorSettings:
+        return replace(self, screen_bar_show_in_full_screen=bool(enabled))
+
+    def with_screen_bar_min_glow(self, fraction: float) -> AgentMonitorSettings:
+        return replace(
+            self, screen_bar_min_glow=max(0.0, min(1.0, float(fraction)))
+        )
+
+    def with_device_resting_glow(self, device_id: str, fraction: float) -> AgentMonitorSettings:
+        clamped = max(0.0, min(0.35, float(fraction)))
+        devices: list[DeviceDisplaySetting] = []
+        updated = False
+        for device in self.devices:
+            if device.device_id == device_id:
+                devices.append(replace(device, resting_glow=clamped))
+                updated = True
+            else:
+                devices.append(device)
+        if not updated:
+            # ``with_device_channel_gain`` has always created the row for a
+            # never-remembered device; this mutator only rewrote existing
+            # ones, so ``apply_calibration`` on a fresh strip kept the gains
+            # and silently dropped the glow it was asked to persist.
+            devices.append(
+                DeviceDisplaySetting(
+                    device_id=device_id,
+                    name=device_id,
+                    path=device_id,
+                    led_display=self.display_for_device(device_id),
+                    brightness=self.brightness_for_device(device_id),
+                    resting_glow=clamped,
+                )
+            )
+        return replace(self, devices=tuple(devices))
+
+    def resting_glow_for_device(self, device_id: str) -> float:
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.resting_glow
+        return 0.0
+
+    def with_menu_bar_label_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, menu_bar_label_enabled=bool(enabled))
+
+    def with_tips_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, tips_enabled=bool(enabled))
+
+    def with_focus_sync_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, focus_sync_enabled=bool(enabled))
+
+    def with_serve_answer_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, serve_answer_enabled=bool(enabled))
+
+    def with_provider_status_feeds_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, provider_status_feeds_enabled=bool(enabled))
+
+    def with_provider_update_checks_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, provider_update_checks_enabled=bool(enabled))
+
+    def with_active_scene(self, scene: object) -> AgentMonitorSettings:
+        selected = scene_from_value(scene)
+        if selected is None:
+            raise ValueError("invalid scene")
+        return replace(self, active_scene=selected.value)
+
+    def with_active_scene_pack(self, pack_id: object) -> AgentMonitorSettings:
+        """``None`` (or a blank value) restores the built-in scene policies.
+
+        The id is only stored, not resolved here -- whether it names an
+        installed pack is the store's question to answer at read time, so
+        a pack installed later simply starts applying.
+        """
+        if pack_id is None:
+            return replace(self, active_scene_pack=None)
+        if type(pack_id) is not str or not pack_id.strip():
+            raise ValueError("invalid scene pack")
+        return replace(self, active_scene_pack=pack_id.strip())
+
+    def with_rainstick_idle_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, rainstick_idle_enabled=bool(enabled))
+
+    def with_rainstick_night_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, rainstick_night_enabled=bool(enabled))
+
+    def with_milestone_odometer_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, milestone_odometer_enabled=bool(enabled))
+
+    def with_milestone_odometer_steps(self, steps: object) -> AgentMonitorSettings:
+        return replace(self, milestone_odometer_steps=_milestone_steps_setting(steps))
+
+    def effective_scene_policy(
+        self,
+        accessibility_preferences: object | None = None,
+    ) -> ScenePolicy | None:
+        """Return the active pure policy using a cached accessibility value."""
+        return effective_policy_for_scene(
+            self.active_scene,
+            accessibility_preferences=accessibility_preferences,
+            overrides=_active_scene_pack_overrides(self.active_scene_pack),
+        )
+
+    def dnd_settings(self) -> ParsedDndSettings:
+        parsed = parse_dnd_settings(
+            {
+                "dnd_schedule_enabled": self.dnd_schedule_enabled,
+                "dnd_schedule_start_minutes": self.dnd_schedule_start_minutes,
+                "dnd_schedule_end_minutes": self.dnd_schedule_end_minutes,
+                "dnd_schedule_mode": self.dnd_schedule_mode,
+                "dnd_dim_fraction": self.dnd_dim_fraction,
+                "dnd_override_mode": self.dnd_override_mode,
+                "dnd_override_created_epoch": self.dnd_override_created_epoch,
+                "dnd_override_until_epoch": self.dnd_override_until_epoch,
+                "dnd_focus_mode": self.dnd_focus_mode,
+            }
+        )
+        if parsed.refusals:
+            raise ValueError("invalid DND settings")
+        return replace(parsed, refusals=self.dnd_persisted_refusals)
+
+    def with_dnd_schedule(
+        self,
+        *,
+        enabled: bool,
+        start_minutes: int,
+        end_minutes: int,
+        mode: DndMode,
+    ) -> AgentMonitorSettings:
+        schedule = DndSchedule(enabled, start_minutes, end_minutes, mode)
+        return replace(
+            self,
+            dnd_schedule_enabled=schedule.enabled,
+            dnd_schedule_start_minutes=schedule.start_minutes,
+            dnd_schedule_end_minutes=schedule.end_minutes,
+            dnd_schedule_mode=schedule.mode.value,
+            dnd_persisted_refusals=(),
+        )
+
+    def with_dnd_dim_fraction(self, fraction: float) -> AgentMonitorSettings:
+        parsed = parse_dnd_settings({"dnd_dim_fraction": fraction})
+        if parsed.refusals:
+            raise ValueError("invalid DND dim fraction")
+        return replace(
+            self,
+            dnd_dim_fraction=parsed.dim_fraction,
+            dnd_persisted_refusals=(),
+        )
+
+    def with_dnd_override(self, override: DndOverride | None) -> AgentMonitorSettings:
+        if override is not None and type(override) is not DndOverride:
+            raise ValueError("invalid DND override")
+        return replace(
+            self,
+            dnd_override_mode=(
+                None
+                if override is None
+                else "resume"
+                if override.resume
+                else override.mode.value  # type: ignore[union-attr]
+            ),
+            dnd_override_created_epoch=(
+                None if override is None else override.created_epoch
+            ),
+            dnd_override_until_epoch=(None if override is None else override.until_epoch),
+            dnd_persisted_refusals=(),
+        )
+
+    def with_dnd_focus_mode(self, mode: DndMode) -> AgentMonitorSettings:
+        if type(mode) is not DndMode:
+            raise ValueError("invalid DND Focus mode")
+        return replace(
+            self,
+            dnd_focus_mode=mode.value,
+            dnd_persisted_refusals=(),
+        )
+
+    def with_screen_bar_gap_width(self, width: float | None) -> AgentMonitorSettings:
+        if width is not None:
+            width = max(120.0, min(1200.0, float(width)))
+        return replace(self, screen_bar_gap_width=width)
+
+    def with_screen_bar_wing_length(self, length: float | None) -> AgentMonitorSettings:
+        if length is not None:
+            length = max(0.0, min(400.0, float(length)))
+        return replace(self, screen_bar_wing_length=length)
+
+    def with_screen_bar_notch_profile(self, profile: object) -> AgentMonitorSettings:
+        normalized = (
+            profile
+            if isinstance(profile, str) and profile in SCREEN_BAR_NOTCH_PROFILE_CHOICES
+            else "auto"
+        )
+        return replace(self, screen_bar_notch_profile=normalized)
+
+    def with_screen_bar_notch_corner(self, corner: object) -> AgentMonitorSettings:
+        normalized = _optional_dimension(corner, 4.0, 16.0)
+        return replace(
+            self,
+            screen_bar_notch_corner=8.0 if normalized is None else normalized,
+        )
+
+    def with_screen_bar_hidden_apps(self, apps: object) -> AgentMonitorSettings:
+        return replace(self, screen_bar_hidden_apps=_screen_bar_hidden_apps_setting(apps))
+
+    def with_screen_bar_bracket_style(self, style: str) -> AgentMonitorSettings:
+        if style not in BRACKET_STYLE_CHOICES:
+            raise ValueError(f"Unknown bracket style: {style}")
+        return replace(self, screen_bar_bracket_style=style)
+
+    def device_blend_mode(self, device_id: str) -> str | None:
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.blend_mode
+        return None
+
+    def device_signal_policy(self, device_id: str) -> str | None:
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.signal_policy
+        return None
+
+    def device_led_direction(self, device_id: str) -> str:
+        """``forward`` or ``reversed``: which way round this strip is
+        mounted. A device never seen is forward."""
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.led_direction
+        return "forward"
+
+    def device_dot_travel_style(self, device_id: str) -> str:
+        """``wipe`` or ``crossfade``: how travel looks on this device when
+        it has two LEDs."""
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.dot_travel_style
+        return "wipe"
+
+    def with_device_signal_policy(
+        self, device_id: str, policy: str | None
+    ) -> AgentMonitorSettings:
+        """policy=None restores every signal."""
+        if policy is not None and policy != "asks_only":
+            raise ValueError(f"Unknown device signal policy: {policy}")
+        devices = tuple(
+            replace(device, signal_policy=policy)
+            if device.device_id == device_id
+            else device
+            for device in self.devices
+        )
+        return replace(self, devices=devices)
+
+    def device_provider_pin(self, device_id: str) -> str | None:
+        for device in self.devices:
+            if device.device_id == device_id:
+                return device.provider_pin
+        return None
+
+    def with_device_provider_pin(
+        self, device_id: str, provider: str | None
+    ) -> AgentMonitorSettings:
+        """provider=None restores the aggregate view."""
+        if provider is not None and provider not in PROVIDER_REGISTRY:
+            # Every REGISTERED provider is pinnable -- the old
+            # claude/codex whitelist predates the other eight.
+            raise ValueError(f"Unknown provider pin: {provider}")
+        devices = tuple(
+            replace(device, provider_pin=provider)
+            if device.device_id == device_id
+            else device
+            for device in self.devices
+        )
+        return replace(self, devices=devices)
+
+    def with_device_blend_mode(self, device_id: str, mode: str | None) -> AgentMonitorSettings:
+        """mode=None restores the global Colors-window blend choice."""
+        devices = tuple(
+            replace(device, blend_mode=mode) if device.device_id == device_id else device
+            for device in self.devices
+        )
+        return replace(self, devices=devices)
+
+    def with_saved_calibration_profile(self, slot: str) -> AgentMonitorSettings:
+        """Snapshots every known device's brightness + channel gains
+        into a named profile slot."""
+        payload = {
+            device.device_id: {
+                "brightness": device.brightness,
+                "red_gain": device.red_gain,
+                "resting_glow": device.resting_glow,
+                "green_gain": device.green_gain,
+                "blue_gain": device.blue_gain,
+            }
+            for device in self.devices
+        }
+        profiles = dict(self.calibration_profiles)
+        profiles[slot] = payload
+        return replace(self, calibration_profiles=profiles)
+
+    def with_applied_calibration_profile(self, slot: str) -> AgentMonitorSettings:
+        """Applies a saved profile onto matching devices; unknown ids in
+        the profile are ignored, devices missing from it are untouched."""
+        profile = self.calibration_profiles.get(slot)
+        if not isinstance(profile, dict):
+            return self
+        devices = []
+        for device in self.devices:
+            entry = profile.get(device.device_id)
+            if isinstance(entry, dict):
+                changes: dict[str, object] = {
+                    "brightness": normalize_brightness(entry.get("brightness", device.brightness)),
+                    "red_gain": normalize_channel_gain(entry.get("red_gain", device.red_gain)),
+                    "green_gain": normalize_channel_gain(entry.get("green_gain", device.green_gain)),
+                    "blue_gain": normalize_channel_gain(entry.get("blue_gain", device.blue_gain)),
+                }
+                glow = entry.get("resting_glow", device.resting_glow)
+                if isinstance(glow, (int, float)) and not isinstance(glow, bool):
+                    changes["resting_glow"] = max(0.0, min(0.35, float(glow)))
+                device = replace(device, **changes)
+            devices.append(device)
+        return replace(self, devices=tuple(devices))
+
+    def with_low_battery_alert_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, low_battery_alert_enabled=bool(enabled))
+
+    def with_low_battery_threshold_percent(self, percent: float) -> AgentMonitorSettings:
+        return replace(self, low_battery_threshold_percent=max(1.0, min(50.0, float(percent))))
+
+    def with_completion_sweep_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, completion_sweep_enabled=bool(enabled))
+
+    def with_calendar_alerts_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, calendar_alerts_enabled=bool(enabled))
+
+    def with_reminder_alerts_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, reminder_alerts_enabled=bool(enabled))
+
+    def with_capacity_history_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, capacity_history_enabled=bool(enabled))
+
+    def with_capacity_history_retention_days(self, days: int) -> AgentMonitorSettings:
+        """Only the three retentions the store will actually accept.
+
+        `HistoryRetentionPolicy` raises on anything else, and a settings
+        value that makes the store refuse to construct turns capacity
+        history off without ever saying so.
+        """
+        value = int(days)
+        if value not in (7, 30, 90):
+            raise ValueError("unsupported capacity history retention")
+        return replace(self, capacity_history_retention_days=value)
+
+    def with_studio_program(self, program: str) -> AgentMonitorSettings:
+        return replace(self, studio_program=str(program))
+
+    def with_focus_profile_rule(self, focus_identifier: str, slot: str | None) -> AgentMonitorSettings:
+        """slot=None removes the rule."""
+        if slot is not None and slot not in CALIBRATION_PROFILE_SLOTS:
+            raise ValueError(f"Unknown profile slot: {slot}")
+        rules = dict(self.focus_profile_rules)
+        if slot is None:
+            rules.pop(focus_identifier, None)
+        else:
+            rules[focus_identifier] = slot
+        return replace(self, focus_profile_rules=rules)
+
+    def with_calendar_lead_minutes(self, minutes: float) -> AgentMonitorSettings:
+        return replace(self, calendar_lead_minutes=max(1.0, min(60.0, float(minutes))))
+
+    def with_escalation_tier(self, tier: str) -> AgentMonitorSettings:
+        from .signals import ESCALATION_TIERS
+
+        if tier not in ESCALATION_TIERS:
+            raise ValueError(f"Unknown escalation tier: {tier}")
+        return replace(self, escalation_tier=tier)
+
+    def with_escalation_thresholds(
+        self,
+        ramp_seconds: float | None = None,
+        menu_bar_seconds: float | None = None,
+        final_seconds: float | None = None,
+    ) -> AgentMonitorSettings:
+        def clamp(value, low, high):
+            return max(low, min(high, float(value)))
+
+        ramp = clamp(ramp_seconds, 5.0, 600.0) if ramp_seconds is not None else self.escalation_ramp_seconds
+        menu = clamp(menu_bar_seconds, ramp, 1800.0) if menu_bar_seconds is not None else max(
+            self.escalation_menu_bar_seconds, ramp
+        )
+        final = clamp(final_seconds, menu, 3600.0) if final_seconds is not None else max(
+            self.escalation_final_seconds, menu
+        )
+        return replace(
+            self,
+            escalation_ramp_seconds=ramp,
+            escalation_menu_bar_seconds=menu,
+            escalation_final_seconds=final,
+        )
+
+    def signal_style(self, key: str):
+        """The effective SignalStyle for a signal: the user's override
+        merged over the built-in default. Continuous signals never get
+        a one-shot pattern -- it would flash once and leave the bar
+        dark for the rest of a multi-hour condition."""
+        from dataclasses import replace as _replace
+
+        from .signals import (
+            CONTINUOUS_SIGNALS,
+            DEFAULT_SIGNAL_STYLES,
+            ONE_SHOT_PATTERNS,
+            PATTERN_BREATHE,
+            SignalStyle,
+        )
+
+        fallback = DEFAULT_SIGNAL_STYLES[key]
+        style = SignalStyle.from_dict(self.signal_styles.get(key), fallback)
+        if key in CONTINUOUS_SIGNALS and style.pattern in ONE_SHOT_PATTERNS:
+            style = _replace(style, pattern=PATTERN_BREATHE)
+        return style
+
+    def with_signal_style(self, key: str, style) -> AgentMonitorSettings:
+        from .signals import DEFAULT_SIGNAL_STYLES
+
+        if key not in DEFAULT_SIGNAL_STYLES:
+            raise ValueError(f"Unknown signal: {key}")
+        styles = dict(self.signal_styles)
+        styles[key] = style.normalized().to_dict()
+        return replace(self, signal_styles=styles)
+
+    def focus_dim_fraction(self, mode_identifier: str) -> float:
+        """The brightness fraction to apply while this Focus is active --
+        its own rule if set, otherwise the shared idle-dim amount (the
+        pre-per-Focus behavior). A Sleep-type Focus with NO explicit rule
+        defaults to near-off instead: "I'm asleep" is the one Focus whose
+        meaning is unambiguous, and a bar breathing at bedroom-ceiling
+        brightness during it is a bug report waiting to happen. An
+        explicit rule -- any rule -- still wins."""
+        rule = self.focus_dim_rules.get(mode_identifier)
+        if rule is None:
+            if "sleep" in mode_identifier.lower():
+                return 0.05
+            return self.idle_dim_fraction
+        return max(0.0, min(1.0, float(rule)))
+
+    def with_focus_dim_rule(self, mode_identifier: str, fraction: float | None) -> AgentMonitorSettings:
+        """fraction=None removes the rule (back to the shared default)."""
+        rules = dict(self.focus_dim_rules)
+        if fraction is None:
+            rules.pop(mode_identifier, None)
+        else:
+            rules[mode_identifier] = max(0.0, min(1.0, float(fraction)))
+        return replace(self, focus_dim_rules=rules)
+
+    def with_remote_peers(self, remote: RemotePeerSettings) -> AgentMonitorSettings:
+        """Replace the whole peer record, normalised on the way in.
+
+        Every bound (peer count, timeouts, the published path) is enforced
+        by RemotePeerSettings itself, so nothing that reaches the transport
+        can have been widened by a settings-window control.
+        """
+        if type(remote) is not RemotePeerSettings:
+            return self
+        return replace(self, remote_peers=remote.normalized())
+
+    def with_remote_machine_muted(self, machine: str, muted: bool) -> AgentMonitorSettings:
+        """Mute or unmute ONE peer machine's rows in the interrupt budget.
+
+        The ledger keeps showing that machine either way -- this only
+        decides whether its rows may take a light on this desk.
+        """
+        current = self.remote_peers.normalized()
+        policy = current.interrupt_policy().with_machine_muted(str(machine), bool(muted))
+        return self.with_remote_peers(
+            replace(
+                current,
+                unmuted_machines=tuple(sorted(policy.unmuted_machines)),
+                muted_machines=tuple(sorted(policy.muted_machines)),
+            )
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        dnd_payload = serialize_dnd_settings(self.dnd_settings())
+        return {
+            "settings_schema_version": SETTINGS_SCHEMA_VERSION,
+            # quota_runway persists since 2026-08-26 (see the device
+            # to_dict note above).
+            "led_display": self.led_display,
+            "devices": [device.to_dict() for device in self.devices],
+            "virtual_status_device_enabled": self.virtual_status_device_enabled,
+            "virtual_status_device_wraps_menu_bar": self.virtual_status_device_wraps_menu_bar,
+            "screen_bar_gap_width": self.screen_bar_gap_width,
+            "screen_bar_wing_length": self.screen_bar_wing_length,
+            "screen_bar_notch_profile": self.screen_bar_notch_profile,
+            "screen_bar_notch_corner": self.screen_bar_notch_corner,
+            "screen_bar_notch_wings": self.screen_bar_notch_wings,
+            "screen_bar_bracket_style": self.screen_bar_bracket_style,
+            "screen_bar_hidden_apps": list(self.screen_bar_hidden_apps),
+            "agent_keep_awake_enabled": self.agent_keep_awake_enabled,
+            "keep_display_awake": self.keep_display_awake,
+            "closed_lid_awake_policy": self.closed_lid_awake_policy,
+            "closed_lid_grace_minutes": self.closed_lid_grace_minutes,
+            "keep_awake_on_battery": self.keep_awake_on_battery,
+            "lid_closed_animation": self.lid_closed_animation.to_dict(),
+            "lid_closed_active_animation": self.lid_closed_active_animation.to_dict(),
+            "lid_open_active_animation": self.lid_open_active_animation.to_dict(),
+            "lid_open_animation": self.lid_open_animation.to_dict(),
+            "transcript_monitoring": {
+                "codex": self.codex_transcripts_enabled,
+                "claude": self.claude_transcripts_enabled,
+                "pi": self.pi_transcripts_enabled,
+                "gemini": self.gemini_transcripts_enabled,
+            },
+            "battery_monitoring": {
+                "full_charge_watts": self.battery_full_charge_watts,
+                "show_on_power_change": self.battery_show_on_power_change,
+                "power_change_preview_seconds": self.battery_power_change_preview_seconds,
+                "charging_idle_enabled": self.battery_charging_idle_enabled,
+                "low_battery_alert_enabled": self.low_battery_alert_enabled,
+                "low_battery_threshold_percent": self.low_battery_threshold_percent,
+                "low_battery_threshold_minutes": self.low_battery_threshold_minutes,
+            },
+            "completion_sweep_enabled": self.completion_sweep_enabled,
+            "calendar_alerts_enabled": self.calendar_alerts_enabled,
+            "calendar_lead_minutes": self.calendar_lead_minutes,
+            "reminder_alerts_enabled": self.reminder_alerts_enabled,
+            "calibration_profiles": dict(sorted(self.calibration_profiles.items())),
+            "focus_profile_rules": dict(sorted(self.focus_profile_rules.items())),
+            "studio_program": self.studio_program,
+            "signal_styles": dict(
+                sorted(
+                    (key, value)
+                    for key, value in self.signal_styles.items()
+                    if key != "notification"
+                )
+            ),
+            "escalation_tier": self.escalation_tier,
+            "escalation_ramp_seconds": self.escalation_ramp_seconds,
+            "escalation_menu_bar_seconds": self.escalation_menu_bar_seconds,
+            "escalation_final_seconds": self.escalation_final_seconds,
+            "escalation_tier_by_provider": normalize_provider_escalation_tiers(
+                self.escalation_tier_by_provider
+            ),
+            "session_open_preferences": dict(sorted(self.session_open_preferences.items())),
+            "setup_screen_completed": self.setup_screen_completed,
+            "colors": self.colors.to_dict(),
+            "idle_dim_enabled": self.idle_dim_enabled,
+            "idle_dim_after_minutes": self.idle_dim_after_minutes,
+            "idle_dim_fraction": self.idle_dim_fraction,
+            "sleep_dim_enabled": self.sleep_dim_enabled,
+            "sleep_dim_fraction": self.sleep_dim_fraction,
+            "auto_dim": self.auto_dim.to_dict(),
+            "idle_auto_off_enabled": self.idle_auto_off_enabled,
+            "idle_auto_off_after_minutes": self.idle_auto_off_after_minutes,
+            "focus_sync_enabled": self.focus_sync_enabled,
+            "serve_enabled": self.serve_enabled,
+            "serve_answer_enabled": self.serve_answer_enabled,
+            "provider_status_feeds_enabled": self.provider_status_feeds_enabled,
+            "provider_update_checks_enabled": self.provider_update_checks_enabled,
+            "active_scene": _scene_setting(self.active_scene),
+            "active_scene_pack": (
+                self.active_scene_pack
+                if type(self.active_scene_pack) is str
+                and self.active_scene_pack.strip()
+                else None
+            ),
+            **dnd_payload,
+            "tips_enabled": self.tips_enabled,
+            "menu_bar_label_enabled": self.menu_bar_label_enabled,
+            "menu_bar_icon_style": normalize_menu_bar_icon_style(self.menu_bar_icon_style),
+            "screen_bar_min_glow": self.screen_bar_min_glow,
+            "link_screen_bar_to_hardware": self.link_screen_bar_to_hardware,
+            "screen_bar_phase_offset_ms": self.screen_bar_phase_offset_ms,
+            "devices_linked": self.devices_linked,
+            "linked_dot_scale": self.linked_dot_scale,
+            "dot_role": normalize_dot_role(self.dot_role),
+            "dot_role_include_completions": self.dot_role_include_completions,
+            "screen_bar_gauges_enabled": self.screen_bar_gauges_enabled,
+            "screen_bar_follow_alcove": self.screen_bar_follow_alcove,
+            "screen_bar_show_in_full_screen": self.screen_bar_show_in_full_screen,
+            "claude_plan_limits_enabled": self.claude_plan_limits_enabled,
+            "claude_plan_limits_consent_version": (
+                self.claude_plan_limits_consent_version
+                if type(self.claude_plan_limits_consent_version) is int
+                and self.claude_plan_limits_enabled
+                else 0
+            ),
+            "capacity_history_enabled": self.capacity_history_enabled,
+            "capacity_history_retention_days": (
+                self.capacity_history_retention_days
+                if type(self.capacity_history_retention_days) is int
+                and self.capacity_history_retention_days in (7, 30, 90)
+                else 7
+            ),
+            "remote_peers": self.remote_peers.to_dict(),
+            "cloud_ingest_enabled": self.cloud_ingest_enabled,
+            "operator_history_retention_days": (
+                self.operator_history_retention_days
+                if type(self.operator_history_retention_days) is int
+                and self.operator_history_retention_days in (0, 7, 30, 90)
+                else 0
+            ),
+            "usage_graph_days": self.usage_graph_days,
+            "usage_display_mode": self.usage_display_mode,
+            "usage_graph_providers": list(self.usage_graph_providers),
+            "codex_percent_enabled": self.codex_percent_enabled,
+            "escalation_webhook_url": self.escalation_webhook_url,
+            "usage_event_hook_path": self.usage_event_hook_path,
+            "studio_library": [list(item) for item in self.studio_library],
+            "quota_alerts_enabled": self.quota_alerts_enabled,
+            "rainstick_idle_enabled": self.rainstick_idle_enabled,
+            "rainstick_night_enabled": self.rainstick_night_enabled,
+            "milestone_odometer_enabled": self.milestone_odometer_enabled,
+            "milestone_odometer_steps": list(
+                _milestone_steps_setting(self.milestone_odometer_steps)
+            ),
+            "ambient_cues_disabled": list(_ambient_cues_disabled_setting(self.ambient_cues_disabled)),
+            "quota_alert_thresholds": list(normalize_quota_thresholds(self.quota_alert_thresholds)),
+            "global_brightness_scale": self.global_brightness_scale,
+            "focus_signal_policy": dict(self.focus_signal_policy),
+            "call_quiet_mode": normalize_presence_quiet_mode(
+                self.call_quiet_mode, DEFAULT_CALL_QUIET_MODE
+            ),
+            "meeting_quiet_mode": normalize_presence_quiet_mode(
+                self.meeting_quiet_mode, DEFAULT_MEETING_QUIET_MODE
+            ),
+            "away_quiet_mode": normalize_presence_quiet_mode(
+                self.away_quiet_mode, DEFAULT_AWAY_QUIET_MODE
+            ),
+            "completion_notification_enabled": self.completion_notification_enabled,
+            "notification_policy_version": 1,
+            "webhook_events": [
+                key for key in self.webhook_events if key in WEBHOOK_EVENT_KEYS
+            ],
+            "global_action_shortcuts": {
+                str(key): dict(value)
+                for key, value in sorted(self.global_action_shortcuts.items())
+                if isinstance(key, str) and isinstance(value, dict)
+            },
+            "subagent_asks_alert": self.subagent_asks_alert,
+            "alert_burst": normalize_alert_burst(self.alert_burst),
+            "dismissed_tips": list(self.dismissed_tips),
+            "focus_dim_rules": dict(sorted(self.focus_dim_rules.items())),
+            "linked_dot_clock_correction": self.linked_dot_clock_correction,
+            "linked_dot_phase_trim_ms": _clamp_phase_trim(self.linked_dot_phase_trim_ms),
+            "linked_sync_tolerance_ms": _clamp_sync_tolerance(self.linked_sync_tolerance_ms),
+            "dot_extend_style": _extend_style(self.dot_extend_style),
+            "dot_extend_side": _extend_side(self.dot_extend_side),
+            "linked_follow_brightness": self.linked_follow_brightness,
+            **_usage_source_settings_document(self),
+        }
+
+
+def _usage_source_settings_document(settings: AgentMonitorSettings) -> dict[str, Any]:
+    """The usage-hook and usage-source keys, each through its normaliser."""
+    from .usage_source_settings import (
+        normalize_cliproxy_hub,
+        normalize_pricing_overrides,
+        normalize_provider_extra_homes,
+        normalize_usage_hooks,
+    )
+
+    return {
+        "usage_hooks": normalize_usage_hooks(settings.usage_hooks),
+        "claude_statusline_source": bool(settings.claude_statusline_source),
+        "statusline_text_enabled": bool(settings.statusline_text_enabled),
+        "cliproxy_hub": normalize_cliproxy_hub(settings.cliproxy_hub),
+        "provider_extra_homes": normalize_provider_extra_homes(settings.provider_extra_homes),
+        "pricing_overrides": normalize_pricing_overrides(settings.pricing_overrides),
+        "keep_awake_yield_low_power_mode": bool(settings.keep_awake_yield_low_power_mode),
+    }
+
+
+def _config_home(home: Path | None) -> Path:
+    if home is None:
+        xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+        if xdg_config_home:
+            return Path(xdg_config_home).expanduser()
+    base = home or Path.home()
+    return base / ".config"
+
+
+def default_config_dir(home: Path | None = None) -> Path:
+    """``$XDG_CONFIG_HOME/jrbar`` (default ``~/.config/jrbar``), flat."""
+    return _config_home(home) / "jrbar"
+
+
+def legacy_config_dirs(home: Path | None = None) -> tuple[Path, ...]:
+    """Config directories used before the JR-Bar rename, most specific first."""
+    root = _config_home(home) / "sidepulse"
+    return (root / "agent-monitor", root)
+
+
+def default_settings_path(home: Path | None = None) -> Path:
+    return default_config_dir(home) / "settings.json"
+
+
+def _escalation_thresholds(data: dict) -> dict[str, float]:
+    """Clamped AND ordered (ramp <= menu bar <= final) -- a hand-edited
+    file with ramp=600, menu=10 must not jump straight to the finale."""
+    ramp = max(5.0, min(600.0, _float_setting(data.get("escalation_ramp_seconds"), 30.0)))
+    menu = max(ramp, min(1800.0, _float_setting(data.get("escalation_menu_bar_seconds"), 120.0)))
+    final = max(menu, min(3600.0, _float_setting(data.get("escalation_final_seconds"), 300.0)))
+    return {
+        "escalation_ramp_seconds": ramp,
+        "escalation_menu_bar_seconds": menu,
+        "escalation_final_seconds": final,
+    }
+
+
+def _escalation_tier(raw: object) -> str:
+    from .signals import ESCALATION_TIERS
+
+    if isinstance(raw, str) and raw in ESCALATION_TIERS:
+        return raw
+    return "menu_bar"
+
+
+def _signal_styles(raw: object) -> dict[str, dict]:
+    """Only known signals, each entry re-validated through SignalStyle
+    so a hand-edited file can never smuggle a bad pattern or speed."""
+    from .signals import DEFAULT_SIGNAL_STYLES, SignalStyle
+
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, dict] = {}
+    for key, value in raw.items():
+        if key == "notification":
+            continue
+        fallback = DEFAULT_SIGNAL_STYLES.get(key)
+        if fallback is None:
+            continue
+        result[key] = SignalStyle.from_dict(value, fallback).to_dict()
+    return result
+
+
+def _optional_dimension(raw: object, minimum: float, maximum: float) -> float | None:
+    """None means Automatic; a number is clamped to a sane range."""
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return max(minimum, min(maximum, float(raw)))
+    return None
+
+
+def _focus_dim_rules(raw: object) -> dict[str, float]:
+    """Sanitizes the persisted per-Focus dim rules: string identifiers to
+    0.0-1.0 fractions, anything malformed dropped rather than guessed at."""
+    if not isinstance(raw, dict):
+        return {}
+    rules: dict[str, float] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key:
+            continue
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            rules[key] = max(0.0, min(1.0, float(value)))
+    return rules
+
+
+def _scene_setting(raw: object) -> str:
+    selected = scene_from_value(raw)
+    return DEFAULT_SCENE.value if selected is None else selected.value
+
+
+def _active_scene_pack_overrides(pack_id: object):
+    """The selected pack's validated ``Scene -> ScenePolicy`` rows, or None.
+
+    Imported lazily because the pack store is a persistence owner this
+    module must not load at import time; the read itself is mtime-cached
+    inside ``ScenePackStore.policy_overrides``, so the per-tick policy
+    lookups this feeds cost one lstat. Every failure -- no pack selected,
+    the pack removed, the store unreadable -- fails closed to the
+    built-in policies rather than surfacing on the scene path.
+    """
+    if type(pack_id) is not str or not pack_id.strip():
+        return None
+    try:
+        from .scene_pack_store import ScenePackStore
+
+        return ScenePackStore().policy_overrides(pack_id.strip())
+    except Exception:
+        return None
+
+
+def _ambient_cues_disabled_setting(raw: object) -> tuple[str, ...]:
+    """Known, switchable cue ids, sorted and deduplicated. Imported late:
+    the cue catalogue reaches the ambient dispatch, which settings must not
+    load at import time."""
+    from .ambient_cues import normalize_disabled_cues
+
+    return normalize_disabled_cues(raw)
+
+
+def _milestone_steps_setting(raw: object) -> tuple[int, ...]:
+    """Positive completion counts, sorted, deduplicated and bounded.
+
+    ``bool`` is rejected explicitly: JSON ``true`` would otherwise slip in
+    as ``1`` and silently turn the toggle's own value into a milestone.
+    A missing or malformed value keeps the default ladder so the opt-in
+    toggle is meaningful by itself.
+    """
+    if not isinstance(raw, (list, tuple)):
+        return DEFAULT_MILESTONE_ODOMETER_STEPS
+    steps = tuple(
+        sorted({step for step in raw if type(step) is int and step > 0})
+    )[:MAX_MILESTONE_ODOMETER_STEP_COUNT]
+    return steps if steps else DEFAULT_MILESTONE_ODOMETER_STEPS
+
+
+def _load_settings_file(path: Path | None = None) -> AgentMonitorSettings:
+    """The plain loader: read, validate and default; a file that cannot be
+    parsed is set aside."""
+    target = (path or default_settings_path()).expanduser()
+    try:
+        target.lstat()
+        ensure_private_directory(target.parent)
+        data = json.loads(read_private_text(target))
+    except FileNotFoundError:
+        return AgentMonitorSettings()
+    except OSError:
+        return AgentMonitorSettings()
+    except Exception:
+        _preserve_corrupt_settings(target)
+        return AgentMonitorSettings()
+
+    if not isinstance(data, dict):
+        _preserve_corrupt_settings(target)
+        return AgentMonitorSettings()
+    return settings_from_data(data)
+
+
+def settings_from_data(data: dict) -> AgentMonitorSettings:
+    """The settings a settings file holding ``data`` loads as: every field
+    validated and defaulted exactly as ``load_settings`` does, with no file."""
+    transcript = data.get("transcript_monitoring")
+    if not isinstance(transcript, dict):
+        transcript = {}
+
+    battery = data.get("battery_monitoring")
+    if not isinstance(battery, dict):
+        battery = {}
+
+    led_display = _led_display_setting(data.get("led_display"), LED_DISPLAY_AGENT)
+    parsed_dnd = parse_dnd_settings(data)
+    devices = _device_display_settings(data.get("devices"), led_display)
+    return AgentMonitorSettings(
+        codex_transcripts_enabled=_bool_setting(transcript.get("codex"), False),
+        pi_transcripts_enabled=_bool_setting(transcript.get("pi"), False),
+        gemini_transcripts_enabled=_bool_setting(transcript.get("gemini"), False),
+        claude_transcripts_enabled=_bool_setting(transcript.get("claude"), False),
+        led_display=led_display,
+        devices=devices,
+        virtual_status_device_enabled=_bool_setting(
+            data.get("virtual_status_device_enabled"), False
+        ),
+        virtual_status_device_wraps_menu_bar=_bool_setting(
+            data.get("virtual_status_device_wraps_menu_bar"), False
+        ),
+        screen_bar_gap_width=_optional_dimension(data.get("screen_bar_gap_width"), 120.0, 1200.0),
+        screen_bar_wing_length=_optional_dimension(data.get("screen_bar_wing_length"), 0.0, 400.0),
+        screen_bar_notch_profile=(
+            data.get("screen_bar_notch_profile")
+            if isinstance(data.get("screen_bar_notch_profile"), str)
+            and data.get("screen_bar_notch_profile") in SCREEN_BAR_NOTCH_PROFILE_CHOICES
+            else "auto"
+        ),
+        screen_bar_notch_corner=(
+            _optional_dimension(data.get("screen_bar_notch_corner"), 4.0, 16.0)
+            or 8.0
+        ),
+        screen_bar_notch_wings=_bool_setting(data.get("screen_bar_notch_wings"), True),
+        screen_bar_bracket_style=(
+            data.get("screen_bar_bracket_style")
+            if data.get("screen_bar_bracket_style") in BRACKET_STYLE_CHOICES
+            else "auto"
+        ),
+        screen_bar_hidden_apps=_screen_bar_hidden_apps_setting(data.get("screen_bar_hidden_apps")),
+        agent_keep_awake_enabled=_bool_setting(
+            data.get("agent_keep_awake_enabled"), True
+        ),
+        keep_display_awake=_bool_setting(data.get("keep_display_awake"), True),
+        closed_lid_awake_policy=_closed_lid_awake_policy(
+            data.get("closed_lid_awake_policy"),
+        ),
+        keep_awake_on_battery=_bool_setting(
+            data.get("keep_awake_on_battery"), True
+        ),
+        closed_lid_grace_minutes=normalize_closed_lid_grace_minutes(
+            data.get("closed_lid_grace_minutes"), default=DEFAULT_CLOSED_LID_GRACE_MINUTES
+        ),
+        lid_closed_animation=_lid_animation_setting(
+            data.get("lid_closed_animation"),
+            default_lid_animation(LID_ANIMATION_CLOSED),
+        ),
+        lid_open_animation=_lid_animation_setting(
+            data.get("lid_open_animation"),
+            default_lid_animation(LID_ANIMATION_OPEN),
+        ),
+        lid_closed_active_animation=_lid_animation_setting(
+            data.get("lid_closed_active_animation"),
+            LedAnimationSetting(
+                program=DEFAULT_LID_CLOSED_ACTIVE_PROGRAM, duration_seconds=1.5
+            ),
+        ),
+        lid_open_active_animation=_lid_animation_setting(
+            data.get("lid_open_active_animation"),
+            LedAnimationSetting(
+                program=DEFAULT_LID_OPEN_ACTIVE_PROGRAM, duration_seconds=1.5
+            ),
+        ),
+        battery_full_charge_watts=_optional_float_setting(
+            battery.get("full_charge_watts"),
+        ),
+        battery_show_on_power_change=_bool_setting(
+            battery.get("show_on_power_change"),
+            True,
+        ),
+        battery_power_change_preview_seconds=_float_setting(
+            battery.get("power_change_preview_seconds"),
+            DEFAULT_POWER_CHANGE_PREVIEW_SECONDS,
+        ),
+        battery_charging_idle_enabled=_bool_setting(
+            battery.get("charging_idle_enabled"),
+            True,
+        ),
+        low_battery_alert_enabled=_bool_setting(battery.get("low_battery_alert_enabled"), True),
+        low_battery_threshold_percent=max(
+            1.0, min(50.0, _float_setting(battery.get("low_battery_threshold_percent"), 5.0))
+        ),
+        low_battery_threshold_minutes=max(
+            0.0, min(120.0, _float_setting(battery.get("low_battery_threshold_minutes"), 0.0))
+        ),
+        completion_sweep_enabled=_bool_setting(data.get("completion_sweep_enabled"), True),
+        calendar_alerts_enabled=_bool_setting(data.get("calendar_alerts_enabled"), False),
+        calendar_lead_minutes=max(
+            1.0, min(60.0, _float_setting(data.get("calendar_lead_minutes"), 5.0))
+        ),
+        reminder_alerts_enabled=_bool_setting(data.get("reminder_alerts_enabled"), False),
+        calibration_profiles=(
+            {
+                str(slot): dict(entry)
+                for slot, entry in data.get("calibration_profiles", {}).items()
+                if isinstance(entry, dict)
+            }
+            if isinstance(data.get("calibration_profiles"), dict)
+            else {}
+        ),
+        studio_program=(
+            data.get("studio_program") if isinstance(data.get("studio_program"), str) else ""
+        ),
+        focus_profile_rules=(
+            {
+                str(focus_id): slot
+                for focus_id, slot in data.get("focus_profile_rules", {}).items()
+                if isinstance(slot, str) and slot in CALIBRATION_PROFILE_SLOTS
+            }
+            if isinstance(data.get("focus_profile_rules"), dict)
+            else {}
+        ),
+        signal_styles=_signal_styles(data.get("signal_styles")),
+        escalation_tier=_escalation_tier(data.get("escalation_tier")),
+        escalation_tier_by_provider=normalize_provider_escalation_tiers(
+            data.get("escalation_tier_by_provider")
+        ),
+        **_escalation_thresholds(data),
+        session_open_preferences=_session_open_preferences(data.get("session_open_preferences")),
+        setup_screen_completed=_bool_setting(data.get("setup_screen_completed"), False),
+        colors=ColorSettings.from_dict(data.get("colors")),
+        idle_dim_enabled=_bool_setting(data.get("idle_dim_enabled"), True),
+        idle_dim_after_minutes=normalize_idle_dim_after_minutes(
+            data.get("idle_dim_after_minutes"), default=DEFAULT_IDLE_DIM_AFTER_MINUTES
+        ),
+        idle_dim_fraction=normalize_idle_dim_fraction(
+            data.get("idle_dim_fraction"), default=DEFAULT_IDLE_DIM_FRACTION
+        ),
+        sleep_dim_enabled=_bool_setting(data.get("sleep_dim_enabled"), True),
+        auto_dim=AutoDimSettings.from_dict(data.get("auto_dim")),
+        sleep_dim_fraction=normalize_sleep_dim_fraction(
+            data.get("sleep_dim_fraction"), default=DEFAULT_SLEEP_DIM_FRACTION
+        ),
+        idle_auto_off_enabled=_bool_setting(
+            data.get("idle_auto_off_enabled"), False
+        ),
+        idle_auto_off_after_minutes=normalize_idle_auto_off_after_minutes(
+            data.get("idle_auto_off_after_minutes"),
+            default=DEFAULT_IDLE_AUTO_OFF_AFTER_MINUTES,
+        ),
+        focus_sync_enabled=_bool_setting(data.get("focus_sync_enabled"), False),
+        serve_enabled=_bool_setting(data.get("serve_enabled"), False),
+        serve_answer_enabled=_bool_setting(data.get("serve_answer_enabled"), False),
+        provider_status_feeds_enabled=_bool_setting(
+            data.get("provider_status_feeds_enabled"), False
+        ),
+        provider_update_checks_enabled=_bool_setting(
+            data.get("provider_update_checks_enabled"), False
+        ),
+        active_scene=_scene_setting(data.get("active_scene")),
+        active_scene_pack=(
+            # Tolerant decode: anything that is not a non-empty string is
+            # "no pack", never a load failure.
+            data.get("active_scene_pack").strip()
+            if type(data.get("active_scene_pack")) is str
+            and data.get("active_scene_pack").strip()
+            else None
+        ),
+        dnd_schedule_enabled=parsed_dnd.schedule.enabled,
+        dnd_schedule_start_minutes=parsed_dnd.schedule.start_minutes,
+        dnd_schedule_end_minutes=parsed_dnd.schedule.end_minutes,
+        dnd_schedule_mode=parsed_dnd.schedule.mode.value,
+        dnd_dim_fraction=parsed_dnd.dim_fraction,
+        dnd_override_mode=(
+            None
+            if parsed_dnd.override is None
+            else "resume"
+            if parsed_dnd.override.resume
+            else parsed_dnd.override.mode.value  # type: ignore[union-attr]
+        ),
+        dnd_override_created_epoch=(
+            None
+            if parsed_dnd.override is None
+            else parsed_dnd.override.created_epoch
+        ),
+        dnd_override_until_epoch=(
+            None if parsed_dnd.override is None else parsed_dnd.override.until_epoch
+        ),
+        dnd_focus_mode=parsed_dnd.focus_mode.value,
+        dnd_persisted_refusals=parsed_dnd.refusals,
+        tips_enabled=_bool_setting(data.get("tips_enabled"), True),
+        menu_bar_label_enabled=_bool_setting(data.get("menu_bar_label_enabled"), False),
+        menu_bar_icon_style=normalize_menu_bar_icon_style(data.get("menu_bar_icon_style")),
+        screen_bar_min_glow=_fraction_setting(data.get("screen_bar_min_glow"), 0.25),
+        link_screen_bar_to_hardware=_bool_setting(
+            data.get("link_screen_bar_to_hardware"), True
+        ),
+        screen_bar_phase_offset_ms=_clamp_screen_bar_phase_offset(
+            data.get("screen_bar_phase_offset_ms")
+        ),
+        devices_linked=_bool_setting(data.get("devices_linked"), True),
+        linked_dot_scale=_clamp_linked_dot_scale(data.get("linked_dot_scale")),
+        dot_role=_dot_role_setting(data, devices),
+        dot_role_include_completions=_bool_setting(
+            data.get("dot_role_include_completions"), False
+        ),
+        screen_bar_gauges_enabled=_bool_setting(data.get("screen_bar_gauges_enabled"), False),
+        screen_bar_follow_alcove=_bool_setting(data.get("screen_bar_follow_alcove"), True),
+        screen_bar_show_in_full_screen=_bool_setting(
+            data.get("screen_bar_show_in_full_screen"), False
+        ),
+        # A stored `true` is honoured only when it carries this build's
+        # consent stamp. 0.2.1 persisted this key from a build whose own
+        # comments called the flag inert, so on those machines the value is
+        # not a decision to hand a Keychain credential to api.anthropic.com on
+        # a 5-minute timer -- and an upgrade must not read it as one. Absent
+        # or older stamp: off, and the user is asked again.
+        claude_plan_limits_enabled=_claude_plan_limits_consented(data),
+        claude_plan_limits_consent_version=(
+            CLAUDE_PLAN_LIMITS_CONSENT_VERSION
+            if _claude_plan_limits_consented(data)
+            else 0
+        ),
+        quota_alerts_enabled=_bool_setting(data.get("quota_alerts_enabled"), False),
+        rainstick_idle_enabled=_bool_setting(
+            data.get("rainstick_idle_enabled"), False
+        ),
+        rainstick_night_enabled=_bool_setting(
+            data.get("rainstick_night_enabled"), False
+        ),
+        milestone_odometer_enabled=_bool_setting(
+            data.get("milestone_odometer_enabled"), False
+        ),
+        milestone_odometer_steps=_milestone_steps_setting(
+            data.get("milestone_odometer_steps")
+        ),
+        ambient_cues_disabled=_ambient_cues_disabled_setting(data.get("ambient_cues_disabled")),
+        capacity_history_enabled=_bool_setting(
+            data.get("capacity_history_enabled"), False
+        ),
+        capacity_history_retention_days=(
+            data.get("capacity_history_retention_days")
+            if type(data.get("capacity_history_retention_days")) is int
+            and data.get("capacity_history_retention_days") in (7, 30, 90)
+            else 7
+        ),
+        # RemotePeerSettings.from_dict never raises and normalises every
+        # bound itself, so a hand-edited or truncated block degrades to
+        # the off-by-default record rather than to an exception on launch.
+        remote_peers=RemotePeerSettings.from_dict(data.get("remote_peers")),
+        cloud_ingest_enabled=_bool_setting(data.get("cloud_ingest_enabled"), False),
+        operator_history_retention_days=(
+            data.get("operator_history_retention_days")
+            if type(data.get("operator_history_retention_days")) is int
+            and data.get("operator_history_retention_days") in (0, 7, 30, 90)
+            else 0
+        ),
+        subagent_asks_alert=_bool_setting(data.get("subagent_asks_alert"), False),
+        # "percent" is a legal, UI-offered mode: the loader used to
+        # accept only the transcript metrics, so picking Percent left
+        # silently reverted to tokens on relaunch (audit, 2026-08-26).
+        usage_display_mode=(
+            data.get("usage_display_mode")
+            if data.get("usage_display_mode")
+            in ("tokens", "cost", "sessions", "percent")
+            else "tokens"
+        ),
+        # Any registry provider survives the round trip -- the setter
+        # was widened past {claude, codex} on 2026-08-21 but this
+        # filter kept snapping stored selections back to two.
+        usage_graph_providers=_usage_graph_providers_setting(
+            data.get("usage_graph_providers")
+        ),
+        codex_percent_enabled=_bool_setting(data.get("codex_percent_enabled"), True),
+        escalation_webhook_url=str(data.get("escalation_webhook_url") or "").strip(),
+        usage_event_hook_path=str(data.get("usage_event_hook_path") or "").strip(),
+        global_brightness_scale=max(
+            0.05, _fraction_setting(data.get("global_brightness_scale"), 1.0)
+        ),
+        focus_signal_policy=(
+            {
+                str(key): str(value)
+                for key, value in data.get("focus_signal_policy").items()
+                if str(value) in ("asks_only", "silent")
+            }
+            if isinstance(data.get("focus_signal_policy"), dict)
+            else {}
+        ),
+        call_quiet_mode=normalize_presence_quiet_mode(
+            data.get("call_quiet_mode"), DEFAULT_CALL_QUIET_MODE
+        ),
+        meeting_quiet_mode=normalize_presence_quiet_mode(
+            data.get("meeting_quiet_mode"), DEFAULT_MEETING_QUIET_MODE
+        ),
+        away_quiet_mode=normalize_presence_quiet_mode(
+            data.get("away_quiet_mode"), DEFAULT_AWAY_QUIET_MODE
+        ),
+        completion_notification_enabled=_bool_setting(
+            data.get("completion_notification_enabled"),
+            "notification_policy_version" not in data,
+        ),
+        notification_policy_version=1,
+        webhook_events=tuple(
+            key
+            for key in (data.get("webhook_events") or [])
+            if isinstance(key, str) and key in WEBHOOK_EVENT_KEYS
+        )
+        if isinstance(data.get("webhook_events"), list)
+        else (),
+        global_action_shortcuts=(
+            {
+                str(key): dict(value)
+                for key, value in data.get("global_action_shortcuts").items()
+                if isinstance(key, str) and isinstance(value, dict)
+            }
+            if isinstance(data.get("global_action_shortcuts"), dict)
+            else {}
+        ),
+        studio_library=tuple(
+            (str(item[0]), str(item[1]))
+            for item in (data.get("studio_library") or [])
+            if isinstance(item, (list, tuple))
+            and len(item) == 2
+            and str(item[0]).strip()
+        ),
+        usage_graph_days=(
+            int(data.get("usage_graph_days"))
+            if data.get("usage_graph_days") in (7, 30, 90, 365)
+            else 7
+        ),
+        quota_alert_thresholds=normalize_quota_thresholds(data.get("quota_alert_thresholds")),
+        alert_burst=(
+            normalize_alert_burst(data.get("alert_burst"))
+            if "alert_burst" in data
+            else DEFAULT_ALERT_BURST
+        ),
+        dismissed_tips=tuple(
+            str(item)
+            for item in (data.get("dismissed_tips") or [])
+            if isinstance(item, str) and item.strip()
+        ),
+        focus_dim_rules=_focus_dim_rules(data.get("focus_dim_rules")),
+        linked_dot_clock_correction=_bool_setting(
+            data.get("linked_dot_clock_correction"), True
+        ),
+        linked_dot_phase_trim_ms=_clamp_phase_trim(data.get("linked_dot_phase_trim_ms")),
+        linked_sync_tolerance_ms=_clamp_sync_tolerance(data.get("linked_sync_tolerance_ms")),
+        dot_extend_style=_extend_style(data.get("dot_extend_style")),
+        dot_extend_side=_extend_side(data.get("dot_extend_side")),
+        linked_follow_brightness=_bool_setting(data.get("linked_follow_brightness"), True),
+        **_usage_source_settings_from(data),
+    )
+
+
+def _usage_source_settings_from(data: dict) -> dict[str, Any]:
+    """Tolerant decode of the usage-hook and usage-source keys: missing or
+    mistyped values fall back to their defaults (usage_source_settings)."""
+    from .usage_source_settings import (
+        normalize_cliproxy_hub,
+        normalize_pricing_overrides,
+        normalize_provider_extra_homes,
+        normalize_usage_hooks,
+        sync_legacy_usage_hook,
+    )
+
+    legacy_path = (
+        str(data.get("usage_event_hook_path") or "") if "usage_event_hook_path" in data else None
+    )
+    hooks = normalize_usage_hooks(data.get("usage_hooks"), legacy_path=legacy_path or "")
+    if isinstance(data.get("usage_hooks"), dict):
+        # Every save writes usage_hooks, so after the first one the old key
+        # would be ignored: a new path set there must still reach the rule.
+        hooks = sync_legacy_usage_hook(hooks, legacy_path)
+    return {
+        "usage_hooks": hooks,
+        "claude_statusline_source": _bool_setting(data.get("claude_statusline_source"), False),
+        "statusline_text_enabled": _bool_setting(data.get("statusline_text_enabled"), True),
+        "cliproxy_hub": normalize_cliproxy_hub(data.get("cliproxy_hub")),
+        "provider_extra_homes": normalize_provider_extra_homes(data.get("provider_extra_homes")),
+        "pricing_overrides": normalize_pricing_overrides(data.get("pricing_overrides")),
+        "keep_awake_yield_low_power_mode": _bool_setting(
+            data.get("keep_awake_yield_low_power_mode"), True
+        ),
+    }
+
+
+def _fraction_setting(value: object, default: float) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return max(0.0, min(1.0, float(value)))
+    return default
+
+
+def _bool_setting(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    return default
+
+
+def normalize_menu_bar_icon_style(value: object) -> str:
+    """One of MENU_BAR_ICON_STYLES; anything else is the plain glyph."""
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in MENU_BAR_ICON_STYLES:
+            return lowered
+    return DEFAULT_MENU_BAR_ICON_STYLE
+
+
+def _claude_plan_limits_consented(data: dict) -> bool:
+    """Whether a persisted opt-in is consent THIS build may act on.
+
+    `type(...) is int` on purpose: JSON `true` compares equal to 1, so an
+    `is int` test is the difference between requiring a real stamp and letting
+    any truthy leftover pass for one.
+    """
+    stamp = data.get("claude_plan_limits_consent_version")
+    return (
+        _bool_setting(data.get("claude_plan_limits_enabled"), False)
+        and type(stamp) is int
+        and stamp == CLAUDE_PLAN_LIMITS_CONSENT_VERSION
+    )
+
+
+def normalize_idle_dim_after_minutes(
+    value: object, *, default: float = DEFAULT_IDLE_DIM_AFTER_MINUTES
+) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return default
+    return max(MIN_IDLE_DIM_AFTER_MINUTES, min(MAX_IDLE_DIM_AFTER_MINUTES, float(value)))
+
+
+MAX_SCREEN_BAR_HIDDEN_APPS = 64
+_BUNDLE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-_]{0,254}$")
+
+
+def _screen_bar_hidden_apps_setting(value: object) -> tuple[str, ...]:
+    """Bundle ids, in order, each once: anything that is not a plausible
+    bundle id is dropped, and the list is bounded so a bad document can't
+    grow it without end. A missing or mistyped value is no apps."""
+    if not isinstance(value, (list, tuple)):
+        return ()
+    kept = (
+        item.strip()
+        for item in value
+        if isinstance(item, str) and _BUNDLE_ID_PATTERN.match(item.strip())
+    )
+    return tuple(dict.fromkeys(kept))[:MAX_SCREEN_BAR_HIDDEN_APPS]
+
+
+def _usage_graph_providers_setting(value: object) -> tuple[str, ...]:
+    from .provider_usage_platform import provider_descriptors
+
+    allowed = {descriptor.provider_id for descriptor in provider_descriptors()}
+    if isinstance(value, list):
+        kept = tuple(
+            dict.fromkeys(
+                provider_id for provider_id in value if provider_id in allowed
+            )
+        )
+        if kept:
+            return kept
+    return ("claude", "codex")
+
+
+def normalize_idle_dim_fraction(value: object, *, default: float = DEFAULT_IDLE_DIM_FRACTION) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return default
+    return max(MIN_IDLE_DIM_FRACTION, min(MAX_IDLE_DIM_FRACTION, float(value)))
+
+
+def normalize_sleep_dim_fraction(
+    value: object, *, default: float = DEFAULT_SLEEP_DIM_FRACTION
+) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return default
+    return max(MIN_SLEEP_DIM_FRACTION, min(MAX_SLEEP_DIM_FRACTION, float(value)))
+
+
+def normalize_idle_auto_off_after_minutes(
+    value: object, *, default: float = DEFAULT_IDLE_AUTO_OFF_AFTER_MINUTES
+) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return default
+    return max(
+        MIN_IDLE_AUTO_OFF_AFTER_MINUTES,
+        min(MAX_IDLE_AUTO_OFF_AFTER_MINUTES, float(value)),
+    )
+
+
+def normalize_closed_lid_grace_minutes(
+    value: object, *, default: float = DEFAULT_CLOSED_LID_GRACE_MINUTES
+) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return default
+    return max(MIN_CLOSED_LID_GRACE_MINUTES, min(MAX_CLOSED_LID_GRACE_MINUTES, float(value)))
+
+
+def _dot_role_setting(data: dict, devices: tuple[DeviceDisplaySetting, ...]) -> str:
+    """The stored ``dot_role``, or one migrated from the Dot's old display.
+
+    Before roles existed, "do not let the Dot follow the strip" could only
+    be said by pinning the Dot to a dedicated readout -- quota runway,
+    Effect Studio, battery. That is a role in everything but name, and it
+    is the exact per-device display kind that used to survive as a stale
+    ``lights.surfaces.dot.why`` after linked mode took the render path
+    away from it. Migrated ONCE: the moment the file carries a ``dot_role``
+    key, the key is the only answer.
+    """
+    if "dot_role" in data:
+        return normalize_dot_role(data.get("dot_role"))
+    for device in devices:
+        try:
+            if led_count_for_target(Path(device.path) / DEFAULT_FILE_NAME) != DOT_LED_COUNT:
+                continue
+        except Exception:
+            continue
+        migrated = migrated_role_for_display(device.led_display)
+        if migrated is not None:
+            return migrated
+    return DEFAULT_DOT_ROLE
+
+
+def _led_display_setting(value: object, default: str) -> str:
+    # quota_runway loads as itself since 2026-08-26: the JR usage plane
+    # feeds quota_runway_state, so the load-time downgrade is retired.
+    if isinstance(value, str) and value in LED_DISPLAY_CHOICES:
+        return value
+    return default
+
+
+def _closed_lid_awake_policy(value: object) -> str:
+    if isinstance(value, str) and value in CLOSED_LID_AWAKE_CHOICES:
+        return value
+    return CLOSED_LID_AWAKE_NEVER
+
+
+def _device_display_settings(value: object, default_display: str) -> tuple[DeviceDisplaySetting, ...]:
+    if not isinstance(value, list):
+        return ()
+
+    devices: list[DeviceDisplaySetting] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        device_id = item.get("id")
+        path = item.get("path")
+        if not isinstance(device_id, str) or not device_id:
+            continue
+        if not isinstance(path, str) or not path:
+            path = device_id
+        if device_id in seen:
+            continue
+        name = item.get("name")
+        if not isinstance(name, str) or not name:
+            name = Path(path).name or device_id
+        display = _led_display_setting(item.get("led_display"), default_display)
+        brightness = normalize_brightness(item.get("brightness"))
+        auto_brightness_enabled = _bool_setting(item.get("auto_brightness_enabled"), False)
+        devices.append(
+            DeviceDisplaySetting(
+                device_id=device_id,
+                name=name,
+                path=path,
+                led_display=display,
+                brightness=brightness,
+                auto_brightness_enabled=auto_brightness_enabled,
+                red_gain=normalize_channel_gain(item.get("red_gain")),
+                green_gain=normalize_channel_gain(item.get("green_gain")),
+                blue_gain=normalize_channel_gain(item.get("blue_gain")),
+                blend_mode=_device_blend_mode_setting(item.get("blend_mode")),
+                provider_pin=(
+                    # The setter accepts every registered provider; a
+                    # loader that only kept claude/codex silently erased
+                    # a Cursor or Grok pin on relaunch (audit: the
+                    # SP-AUD-003 silent-settings-loss class).
+                    item.get("provider_pin")
+                    if item.get("provider_pin") in PROVIDER_REGISTRY
+                    else None
+                ),
+                signal_policy=(
+                    item.get("signal_policy")
+                    if item.get("signal_policy") == "asks_only"
+                    else None
+                ),
+                resting_glow=max(0.0, min(0.35, _fraction_setting(item.get("resting_glow"), 0.0))),
+                led_direction=(
+                    "reversed" if item.get("led_direction") == "reversed" else "forward"
+                ),
+                dot_travel_style=(
+                    "crossfade" if item.get("dot_travel_style") == "crossfade" else "wipe"
+                ),
+            )
+        )
+        seen.add(device_id)
+    return tuple(devices)
+
+
+def _device_blend_mode_setting(raw: object) -> str | None:
+    """Only real blend modes survive the load -- an unknown string here
+    used to reach ColorSettings.with_blend_mode at render time and
+    raise inside every refresh cycle."""
+    from .colors import BLEND_MODE_CHOICES
+
+    if isinstance(raw, str) and raw in BLEND_MODE_CHOICES:
+        return raw
+    return None
+
+
+def _session_open_preferences(value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, str] = {}
+    for provider, action in value.items():
+        if not isinstance(provider, str) or not isinstance(action, str):
+            continue
+        if action not in SESSION_OPEN_CHOICES:
+            continue
+        result[provider.lower()] = action
+    return result
+
+
+def session_open_preference_key(provider: str, origin: str | None = None) -> str:
+    if origin:
+        return f"origin:{provider.lower()}:{normalize_session_origin_key(origin)}"
+    return provider.lower()
+
+
+def normalize_session_origin_key(origin: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", origin.strip().lower()).strip("_")
+    return normalized or "unknown"
+
+
+def _optional_float_setting(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value)
+    return None
+
+
+def _float_setting(value: object, default: float) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default
+
+
+def normalize_brightness(value: object) -> int:
+    if value is None:
+        return 255
+    if isinstance(value, (int, float)):
+        return max(0, min(255, int(round(float(value)))))
+    return 255
+
+
+def default_lid_animation(kind: str) -> LedAnimationSetting:
+    if kind == LID_ANIMATION_CLOSED:
+        return LedAnimationSetting(
+            program=DEFAULT_LID_CLOSED_ANIMATION_PROGRAM,
+            duration_seconds=DEFAULT_LID_CLOSED_ANIMATION_SECONDS,
+        )
+    if kind == LID_ANIMATION_OPEN:
+        return LedAnimationSetting(
+            program=DEFAULT_LID_OPEN_ANIMATION_PROGRAM,
+            duration_seconds=DEFAULT_LID_OPEN_ANIMATION_SECONDS,
+        )
+    raise ValueError(f"Unknown lid animation: {kind}")
+
+
+def normalize_animation_duration(value: object) -> float:
+    if not isinstance(value, (int, float)):
+        return 1.0
+    return max(0.1, min(10.0, float(value)))
+
+
+def _lid_shape_setting(value: object) -> str | None:
+    """A lid shape name this build draws, or None (play the program)."""
+    from .lid_presets import LID_SHAPES
+
+    return value if isinstance(value, str) and value in LID_SHAPES else None
+
+
+def _lid_animation_setting(
+    value: object,
+    default: LedAnimationSetting,
+) -> LedAnimationSetting:
+    if not isinstance(value, dict):
+        return default
+    program = value.get("program")
+    if not isinstance(program, str) or not program.strip():
+        program = default.program
+    duration = value.get("duration_seconds")
+    if not isinstance(duration, (int, float)):
+        duration = default.duration_seconds
+    from .lid_presets import upgraded_program
+
+    # An opening look saved before they all ended dark is today's version
+    # of the same look, so it stays the one picked.
+    program, duration = upgraded_program(program, duration)
+    return LedAnimationSetting(
+        program=program,
+        duration_seconds=normalize_animation_duration(duration),
+        shape=_lid_shape_setting(value.get("shape")),
+    )
+
+
+# --- The file layer: versioned, lossless, and safe against outside edits ---------
 
 
 class SettingsWriteRefusedError(RuntimeError):
@@ -105,18 +3031,6 @@ _COMPATIBILITY_BY_PATH: dict[Path, SettingsCompatibility] = {}
 _SOURCE_DOCUMENT_BY_PATH: dict[Path, dict[str, object]] = {}
 _SOURCE_DIGEST_BY_PATH: dict[Path, str | None] = {}
 
-_ORIGINAL_DEVICE_TO_DICT = _legacy.DeviceDisplaySetting.to_dict
-_ORIGINAL_DEVICE_SETTINGS_LOADER = _legacy._device_display_settings
-_ORIGINAL_APPLY_CALIBRATION_PROFILE = (
-    _legacy.AgentMonitorSettings.with_applied_calibration_profile
-)
-_ORIGINAL_LOAD_SETTINGS = _legacy.load_settings
-
-
-def default_settings_path(home: Path | None = None) -> Path:
-    return _legacy.default_settings_path(home)
-
-
 def _settings_path(path: Path | None) -> Path:
     return (path or default_settings_path()).expanduser().absolute()
 
@@ -140,9 +3054,9 @@ def _read_document(target: Path) -> tuple[dict[str, object], str]:
     non-finite number raises ValueError here, alongside a parse error.
     """
     target.lstat()
-    _legacy.ensure_private_directory(target.parent)
+    ensure_private_directory(target.parent)
     value = json.loads(
-        _legacy.read_private_text(
+        read_private_text(
             target,
             max_bytes=SETTINGS_DOCUMENT_MAX_BYTES,
         )
@@ -150,51 +3064,6 @@ def _read_document(target: Path) -> tuple[dict[str, object], str]:
     if not isinstance(value, dict):
         raise ValueError("settings document must be an object")
     return value, _document_digest(value)
-
-
-def _device_to_dict(self) -> dict[str, object]:
-    payload = dict(_ORIGINAL_DEVICE_TO_DICT(self))
-    payload["resting_glow"] = max(0.0, min(0.35, float(self.resting_glow)))
-    if set(payload) != DEVICE_SETTING_PERSISTED_FIELDS:
-        missing = sorted(DEVICE_SETTING_PERSISTED_FIELDS - set(payload))
-        extra = sorted(set(payload) - DEVICE_SETTING_PERSISTED_FIELDS)
-        raise RuntimeError(
-            f"device settings schema drifted (missing={missing}, extra={extra})"
-        )
-    return payload
-
-
-def _device_display_settings(
-    value: object,
-    default_display: str,
-) -> tuple[object, ...]:
-    devices = _ORIGINAL_DEVICE_SETTINGS_LOADER(value, default_display)
-    return tuple(
-        replace(
-            device,
-            resting_glow=max(0.0, min(0.35, float(device.resting_glow))),
-        )
-        for device in devices
-    )
-
-
-def _with_applied_calibration_profile(self, slot: str):
-    updated = _ORIGINAL_APPLY_CALIBRATION_PROFILE(self, slot)
-    profile = self.calibration_profiles.get(slot)
-    if not isinstance(profile, dict):
-        return updated
-    devices = []
-    for device in updated.devices:
-        entry = profile.get(device.device_id)
-        if isinstance(entry, dict):
-            raw = entry.get("resting_glow", device.resting_glow)
-            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-                device = replace(
-                    device,
-                    resting_glow=max(0.0, min(0.35, float(raw))),
-                )
-        devices.append(device)
-    return replace(updated, devices=tuple(devices))
 
 
 def _settings_schema_version(data: dict[str, object]) -> int:
@@ -226,10 +3095,10 @@ def _preserve_corrupt_settings(target: Path) -> None:
     evidence, and with it the calibration profiles, studio library and
     colours. The file moves to ``settings.json.corrupt-<UTC stamp>``
     (private, the newest three kept), so a second bad file does not cost the
-    first, and a second bad file is never deleted. The legacy loader calls
-    this name too; it is replaced below."""
+    first, and a second bad file is never deleted. The plain loader calls
+    this name too."""
     try:
-        _legacy.ensure_private_directory(target.parent)
+        ensure_private_directory(target.parent)
     except OSError:
         pass
     quarantine_private_file(target, reason="it could not be read")
@@ -386,24 +3255,24 @@ def load_settings_document(
     except FileNotFoundError:
         compatibility = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
         remember(target, compatibility, {}, source_digest=None)
-        return LoadedSettings(_legacy.AgentMonitorSettings(), compatibility)
+        return LoadedSettings(AgentMonitorSettings(), compatibility)
     except OSError:
         compatibility = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
         forget(target)
-        return LoadedSettings(_legacy.AgentMonitorSettings(), compatibility)
+        return LoadedSettings(AgentMonitorSettings(), compatibility)
     except Exception:
-        _legacy._preserve_corrupt_settings(target)
+        _preserve_corrupt_settings(target)
         compatibility = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
         forget(target)
-        return LoadedSettings(_legacy.AgentMonitorSettings(), compatibility)
+        return LoadedSettings(AgentMonitorSettings(), compatibility)
 
     try:
         source_version = _settings_schema_version(data)
     except ValueError:
-        _legacy._preserve_corrupt_settings(target)
+        _preserve_corrupt_settings(target)
         compatibility = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
         forget(target)
-        return LoadedSettings(_legacy.AgentMonitorSettings(), compatibility)
+        return LoadedSettings(AgentMonitorSettings(), compatibility)
 
     if source_version > CURRENT_SETTINGS_SCHEMA_VERSION:
         compatibility = SettingsCompatibility(
@@ -411,7 +3280,7 @@ def load_settings_document(
             read_only=True,
             migrated=False,
         )
-        settings = _ORIGINAL_LOAD_SETTINGS(target)
+        settings = _load_settings_file(target)
         remember(
             target,
             compatibility,
@@ -421,10 +3290,10 @@ def load_settings_document(
         return LoadedSettings(settings, compatibility)
 
     if source_version < MIN_READABLE_SETTINGS_SCHEMA_VERSION:
-        _legacy._preserve_corrupt_settings(target)
+        _preserve_corrupt_settings(target)
         compatibility = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
         forget(target)
-        return LoadedSettings(_legacy.AgentMonitorSettings(), compatibility)
+        return LoadedSettings(AgentMonitorSettings(), compatibility)
 
     try:
         migrated = _migrate_settings_document(data, source_version)
@@ -436,14 +3305,14 @@ def load_settings_document(
             data,
             source_digest=source_digest,
         )
-        return LoadedSettings(_legacy.AgentMonitorSettings(), compatibility)
+        return LoadedSettings(AgentMonitorSettings(), compatibility)
 
     compatibility = SettingsCompatibility(
         source_version,
         read_only=False,
         migrated=source_version != CURRENT_SETTINGS_SCHEMA_VERSION,
     )
-    settings = _ORIGINAL_LOAD_SETTINGS(target)
+    settings = _load_settings_file(target)
     remember(
         target,
         compatibility,
@@ -463,23 +3332,23 @@ def settings_from_mapping(data: object):
     field validation. ``data`` is JSON-shaped (the caller round-trips it
     through ``json`` first), so it matches what a file would hold."""
     if not isinstance(data, dict):
-        return _legacy.AgentMonitorSettings()
+        return AgentMonitorSettings()
     try:
         size = len(json.dumps(data).encode("utf-8"))
         source_version = _settings_schema_version(data)
     except (TypeError, ValueError):
-        return _legacy.AgentMonitorSettings()
+        return AgentMonitorSettings()
     if size > SETTINGS_DOCUMENT_MAX_BYTES:
-        return _legacy.AgentMonitorSettings()
+        return AgentMonitorSettings()
     if source_version > CURRENT_SETTINGS_SCHEMA_VERSION:
-        return _legacy.settings_from_data(data)
+        return settings_from_data(data)
     if source_version < MIN_READABLE_SETTINGS_SCHEMA_VERSION:
-        return _legacy.AgentMonitorSettings()
+        return AgentMonitorSettings()
     try:
         _migrate_settings_document(data, source_version)
     except ValueError:
-        return _legacy.AgentMonitorSettings()
-    return _legacy.settings_from_data(data)
+        return AgentMonitorSettings()
+    return settings_from_data(data)
 
 
 class OutsideEditOutcome(str, Enum):
@@ -523,7 +3392,7 @@ def _replaced_backup(target: Path, previous) -> Path | None:
     encoded["settings_schema_version"] = CURRENT_SETTINGS_SCHEMA_VERSION
     payload = json.dumps(encoded, indent=2, sort_keys=True, allow_nan=False) + "\n"
     backup = target.with_name(target.name + REPLACED_BACKUP_SUFFIX)
-    return _legacy.atomic_private_write(backup, payload, full_sync=True)
+    return atomic_private_write(backup, payload, full_sync=True)
 
 
 def _file_signature(target: Path) -> tuple[int, int] | None:
@@ -569,7 +3438,7 @@ def adopt_outside_edit(
             return OutsideEditAdoption(
                 OutsideEditOutcome.UNSETTLED, previous, signature=signature
             )
-        _legacy._preserve_corrupt_settings(target)
+        _preserve_corrupt_settings(target)
         if target.exists():
             # Could not be moved: leave the guard unarmed so a save refuses
             # rather than overwrites.
@@ -706,7 +3575,7 @@ def save_settings(
             allow_nan=False,
         ) + "\n"
         # settings.json is small, rewritten rarely, and a person's work: flush to the drive.
-        written = _legacy.atomic_private_write(target, payload, full_sync=True)
+        written = atomic_private_write(target, payload, full_sync=True)
         current = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
         _remember_document(
             target,
@@ -715,39 +3584,3 @@ def save_settings(
             source_digest=_document_digest(document),
         )
         return written
-
-
-_legacy.CURRENT_SETTINGS_SCHEMA_VERSION = CURRENT_SETTINGS_SCHEMA_VERSION
-_legacy.MIN_READABLE_SETTINGS_SCHEMA_VERSION = MIN_READABLE_SETTINGS_SCHEMA_VERSION
-_legacy.MIN_WRITABLE_SETTINGS_SCHEMA_VERSION = MIN_WRITABLE_SETTINGS_SCHEMA_VERSION
-_legacy.SETTINGS_SCHEMA_VERSION = CURRENT_SETTINGS_SCHEMA_VERSION
-_legacy.DEVICE_SETTING_PERSISTED_FIELDS = DEVICE_SETTING_PERSISTED_FIELDS
-_legacy.DeviceDisplaySetting.to_dict = _device_to_dict
-_legacy._device_display_settings = _device_display_settings
-_legacy.AgentMonitorSettings.with_applied_calibration_profile = (
-    _with_applied_calibration_profile
-)
-_legacy.SettingsCompatibility = SettingsCompatibility
-_legacy.LoadedSettings = LoadedSettings
-_legacy.SettingsWriteRefusedError = SettingsWriteRefusedError
-_legacy.SettingsConcurrentWriteError = SettingsConcurrentWriteError
-_legacy.SettingsFileUnreadableError = SettingsFileUnreadableError
-_legacy._preserve_corrupt_settings = _preserve_corrupt_settings
-_legacy.load_settings_document = load_settings_document
-_legacy.load_settings = load_settings
-_legacy.save_settings = save_settings
-
-for _name in dir(_legacy):
-    if _name.startswith("__") or _name in globals():
-        continue
-    globals()[_name] = getattr(_legacy, _name)
-
-__all__ = tuple(
-    sorted(
-        {
-            name
-            for name in globals()
-            if not name.startswith("_") and name not in {"Any", "Path"}
-        }
-    )
-)

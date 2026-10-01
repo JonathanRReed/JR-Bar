@@ -125,8 +125,8 @@ def test_pi_session_log_is_read_as_a_transcript__and_1_more(tmp_path: Path) -> N
     assert list(iter_pi_transcript_file(other)) == []
 
     # --- scenario: transcript_switch_adds_the_pi_source
-    from jrbar._settings_legacy import AgentMonitorSettings
     from jrbar.collector import default_sources
+    from jrbar.settings import AgentMonitorSettings
 
     off = default_sources(AgentMonitorSettings())
     assert all(source.provider != PI_TRANSCRIPT_PROVIDER for source in off)

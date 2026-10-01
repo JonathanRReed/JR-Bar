@@ -410,7 +410,7 @@ def _motion_program(motion: str, color: str, parameters: Mapping[str, Any], *, l
     """The whole-strip shape one provider motion plays for ``color``: the
     same renderer the Settings thumbnails and the solo live render use,
     with every one of the effect's parameters."""
-    from ._settings_legacy import AgentMonitorSettings
+    from .settings import AgentMonitorSettings
 
     colors = AgentMonitorSettings().colors
     if motion == colors_module.MOTION_BLINK:

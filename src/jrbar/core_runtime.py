@@ -1251,7 +1251,7 @@ def _cmd_set_setting(self, args):
 
 @command("reset_settings")
 def _cmd_reset_settings(self, args):
-    from ._settings_legacy import AgentMonitorSettings, DeviceDisplaySetting
+    from .settings import AgentMonitorSettings, DeviceDisplaySetting
 
     paths = [str(path) for path in (args.get("paths") or []) if isinstance(path, str)]
     defaults = AgentMonitorSettings().to_dict()
@@ -2029,7 +2029,7 @@ def _cmd_play_lid_preset(self, args):
     """Plays one lid look on the connected strip and Dot exactly as a lid
     change would, drawn for each device, then hands the light back."""
     from . import lid_presets
-    from ._settings_legacy import LedAnimationSetting
+    from .settings import LedAnimationSetting
 
     kind = str(args.get("kind") or "")
     name = str(args.get("name") or "")

@@ -30,7 +30,7 @@ _NOW = datetime.now(timezone.utc)
 def _live_projection(state, at_epoch: float):
     """What the daemon's lights read: the monitor's snapshot of the
     canonical state at the monitor's clock, then project_attention."""
-    from jrbar._settings_legacy import AgentMonitorSettings
+    from jrbar.settings import AgentMonitorSettings
 
     snapshot = _snapshot_from_operator_state(
         state,

@@ -14,11 +14,11 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
-from jrbar._settings_legacy import DeviceDisplaySetting
 from jrbar.device_clock import DeviceClocks
 from jrbar.dot_role import plan_dot_surface
 from jrbar.linked_runtime import LinkedEpoch, LinkedSync
 from jrbar.motion_shapes import oriented_program, render_motion
+from jrbar.settings import DeviceDisplaySetting
 from tests.test_core_runtime import headless  # noqa: F401  (the headless daemon fixture)
 
 PRO = "sidepulse:pro:1"

@@ -231,7 +231,7 @@ def burn_init(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
 
 def calibration_profile(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     """Save the current calibration into a slot, apply one, or delete one."""
-    from ._settings_legacy import CALIBRATION_PROFILE_SLOTS
+    from .settings import CALIBRATION_PROFILE_SLOTS
 
     action = args.get("action")
     slot = args.get("slot")

@@ -16,7 +16,7 @@ import copy
 from pathlib import Path
 
 from jrbar import core_runtime
-from jrbar._settings_legacy import (
+from jrbar.settings import (
     CALIBRATION_PROFILE_SLOTS,
     DEFAULT_MILESTONE_ODOMETER_STEPS,
     MAX_MILESTONE_ODOMETER_STEP_COUNT,
