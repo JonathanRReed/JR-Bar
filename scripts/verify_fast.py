@@ -87,7 +87,6 @@ FOCUSED_TESTS: Final = (
     "tests/test_local_health.py",
     "tests/test_why_light_context.py",
     "tests/test_why_light_projection.py",
-    "tests/test_why_panel.py",
     # The colour model and its motion: live code that used to share test
     # files with the retired Settings window.
     "tests/test_colors_model.py",

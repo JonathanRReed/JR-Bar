@@ -1756,8 +1756,6 @@ class StatusBarController(NSObject):
         self.current_intake_report: IntakeReport | None = None
         self._intake_probes = None
         self._intake_probed_at = 0.0
-        self.why_panel_window = None
-        self.why_panel_text_view = None
         self.last_battery_snapshot = None
         self.last_battery_error = None
         self.last_power_connected = None
