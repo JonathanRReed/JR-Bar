@@ -1101,7 +1101,6 @@ def _apply_clear_agents_plan(self, kind: str, plan) -> None:
         raise CommandError("refused", f"could not save the clear receipts: {error}") from error
     self.clear_agents_state = plan.next_state
     self.current_mailbox_projection = None
-    self._menu_signature = None
     if kind == "commit":
         self._clear_agents_commit_plan = plan
     self._core_publish_state()
@@ -1204,7 +1203,6 @@ def _cmd_dismiss_session(self, args):
         raise CommandError("refused", f"could not save the dismissal: {error}") from error
     self.clear_agents_state = next_state
     self.current_mailbox_projection = None
-    self._menu_signature = None
     self._core_publish_state()
     return {"session": agent_id, "dismissed": True}
 

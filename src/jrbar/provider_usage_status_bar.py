@@ -309,21 +309,6 @@ else:
             controller = getattr(self, "_jrbar_provider_usage_window", None)
             if controller is not None:
                 controller.refresh(state)
-            # Fresh JR data must reach every surface that RENDERS it, or
-            # "Refresh Capacity" fetches and the visible line never moves
-            # until a pane switch (2026-08-27 audit). Both calls are pure
-            # re-renders of state already in hand -- the Capacity pane's
-            # no-implicit-provider-work law is untouched.
-            try:
-                self.refresh_capacity_settings_projection()
-                plan_label = (getattr(self, "settings_fields", None) or {}).get("profile_plan_label")
-                if plan_label is not None:
-                    plan_label.setStringValue_(
-                        self.jr_capacity_settings_text("claude") or getattr(self, "claude_plan_text", None) or ""
-                    )
-            except Exception as exc:
-                self._provider_usage_log(f"usage projection refresh failed: {exc}")
-            self._menu_signature = None
             if previous_state != state and getattr(self, "_runtime_started", False):
                 self.schedule_event_refresh()
 
@@ -401,16 +386,6 @@ else:
                 return
             self._jr_usage_refresh_at = now
             self._request_provider_usage(force=force, providers=tuple(providers))
-
-        def jr_capacity_settings_text(
-            self,
-            provider_id,
-            *,
-            wall_clock: Callable[[], float] = time.time,
-        ):
-            from .provider_usage_status_projection import capacity_settings_text
-
-            return capacity_settings_text(self, provider_id, wall_clock=wall_clock)
 
         def jr_plane_owns_capacity(self, provider_id: str) -> bool:
             """Claude usage polling is owned here, not by the legacy scheduler."""

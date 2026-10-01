@@ -23,7 +23,6 @@ from .ambient_effect_consumer import (
 from .battery_runtime import BatteryObservation, BatteryObservationService
 from .core_state import CoreDomain, CoreStateStore, StateDelta
 from .device_projection import light_rows_for_provider, projection_for_provider
-from .hardware_write_policy import hardware_coalesce_key
 from .intake_runtime import IntakeProbeResult, IntakeProbeService
 from .ledger_runtime import LedgerPublishResult, RemoteLedgerPublisher
 from .local_health import LocalHealthMonitor, LocalHealthSnapshot, format_local_health
@@ -565,71 +564,6 @@ else:
                     (time.perf_counter() - started) * 1000.0,
                     outcome=outcome,
                 )
-
-        def _send_calibration_test(self) -> None:
-            calibration = self.calibration_test
-            if calibration is None or calibration[0] == _legacy.VIRTUAL_DEVICE_ID:
-                return _LegacyStatusBarController._send_calibration_test(self)
-            if not getattr(self, "_hardware_write_active", False):
-                return
-            device_id, hex_color = calibration
-            device = next(
-                (
-                    entry
-                    for entry in self.status_bar_devices(remember=False)
-                    if entry.device_id == device_id and entry.connected
-                ),
-                None,
-            )
-            if device is None:
-                return
-            controller = self.agent_controller_for_device(device)
-            program = _legacy.apply_brightness(
-                f"{hex_color} 500ms\nrepeat",
-                controller.brightness,
-            )
-            snapshot = self.last_snapshot
-            request = _legacy.HardwareWriteRequest(
-                device=device,
-                mode=(
-                    snapshot.aggregate.mode
-                    if snapshot is not None
-                    else _legacy.AgentMode.IDLE_READY
-                ),
-                battery_snapshot=self.last_battery_snapshot,
-                statuses=(snapshot.statuses if snapshot is not None else ()),
-                projection=self.current_attention_projection,
-                relay_elapsed_seconds=max(
-                    0.0,
-                    time.monotonic() - self._relay_epoch,
-                ),
-                accessibility_preferences=self._accessibility_display_preferences,
-                display_kind=_legacy.LED_DISPLAY_TEST,
-                write_priority=_legacy.RuntimeWorkPriority.EXPLICIT,
-                coalesce_identity="preview-calibration",
-                override_program=program,
-                override_state=_legacy.LedDisplayState.ASK,
-            )
-            worker_key = self._hardware_worker_key(device)
-            prefix = f"{worker_key}:"
-            self._hardware_write_worker.discard_pending_prefix(prefix)
-            preview_key = hardware_coalesce_key(
-                worker_key,
-                request.coalesce_identity,
-            )
-            self._active_calibration_preview_key = preview_key
-            now = self._runtime_worker_monotonic()
-            self._hardware_write_worker.submit(
-                _legacy.RuntimeWorkCommand(
-                    domain=_legacy.RuntimeWorkerDomain.HARDWARE_WRITE,
-                    key=worker_key,
-                    generation=self._hardware_write_generation,
-                    deadline=now + 30.0,
-                    payload=request,
-                    priority=_legacy.RuntimeWorkPriority.EXPLICIT,
-                    coalesce_key=preview_key,
-                )
-            )
 
         def play_transition_flourish(self, label, animation) -> None:
             if not self.leds_enabled:

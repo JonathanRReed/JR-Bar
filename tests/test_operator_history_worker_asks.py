@@ -76,13 +76,11 @@ def _snapshot(*asks: tuple[str | None, str]):
 
 
 def _observe(snapshot, *, alert: bool):
-    """Run the history observer on a snapshot; return (reel, queued rows)."""
+    """Run the history observer on a snapshot; return the queued rows."""
     status_bar = _status_bar()
-    reel: list[str] = []
     queued: list = []
     controller = SimpleNamespace(
         settings=replace(AgentMonitorSettings(), subagent_asks_alert=alert),
-        append_operator_history_reel=lambda phrase, _key: reel.append(phrase),
         _enqueue_operator_history_events=queued.extend,
     )
     status_bar.StatusBarController.observe_operator_history_events(
@@ -90,7 +88,7 @@ def _observe(snapshot, *, alert: bool):
         snapshot.operator_events,
         snapshot.operator_state,
     )
-    return reel, queued
+    return queued
 
 
 def _needs_user(rows) -> int:
@@ -107,30 +105,26 @@ def test_a_workers_ask_adds_no_needs_user_count_while_worker_asks_are_off() -> N
     ]
     assert len(opened) == 1
 
-    reel, rows = _observe(snapshot, alert=False)
+    rows = _observe(snapshot, alert=False)
 
     assert _needs_user(rows) == 0
     assert all(row.kind is not HistoryEventKind.NEEDS_USER for row in rows)
-    # The reel still tells the plain story: a request opened.
-    assert "Request opened" in reel
 
 
 def test_a_workers_ask_counts_when_worker_asks_are_on() -> None:
     snapshot = _snapshot(("agent:worker", "request:worker"))
 
-    reel, rows = _observe(snapshot, alert=True)
+    rows = _observe(snapshot, alert=True)
 
     assert _needs_user(rows) == 1
-    assert "Request opened" in reel
 
 
 def test_a_main_ask_always_counts() -> None:
     snapshot = _snapshot((None, "request:main"))
 
     for alert in (False, True):
-        reel, rows = _observe(snapshot, alert=alert)
+        rows = _observe(snapshot, alert=alert)
         assert _needs_user(rows) == 1
-        assert "Request opened" in reel
 
 
 def test_only_the_workers_ask_is_left_out_of_a_mixed_tally() -> None:
@@ -142,9 +136,8 @@ def test_only_the_workers_ask_is_left_out_of_a_mixed_tally() -> None:
     ]
     assert len(opened) == 2
 
-    reel, rows = _observe(snapshot, alert=False)
+    rows = _observe(snapshot, alert=False)
     assert _needs_user(rows) == 1
-    assert reel.count("Request opened") == 2
 
-    _reel, rows = _observe(snapshot, alert=True)
+    rows = _observe(snapshot, alert=True)
     assert _needs_user(rows) == 2

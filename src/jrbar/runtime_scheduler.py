@@ -41,10 +41,6 @@ class RuntimeFeature(str, Enum):
     PRESENTATION_STATIC_DEADLINE = "presentation_static_deadline"
     ALCOVE_OBSERVATION = "alcove_observation"
     POINTER_PEEK = "pointer_peek"
-    SETTINGS_SIGNAL_PREVIEW = "settings_signal_preview"
-    SETTINGS_COLOR_PREVIEW = "settings_color_preview"
-    SETUP_DEMO = "setup_demo"
-    SETTINGS_MESSAGE_DEADLINE = "settings_message_deadline"
     TEST_SIGNAL_DEADLINE = "test_signal_deadline"
 
 

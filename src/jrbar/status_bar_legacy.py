@@ -96,10 +96,6 @@ from .animation import (
     errors_only,
     problems_for_program,
 )
-from .animation_store import (
-    AnimationLibrary,
-    LibraryHealth,
-)
 from .app_bundle import running_inside_bundle
 from .product_identity import PRODUCT_DISPLAY_NAME
 from .attention import (
@@ -264,11 +260,6 @@ from .installed_agent_inventory import (
     default_inventory_roots,
     execute_inventory_command,
 )
-from .installed_agents import (
-    SurfacePresence,
-    SurfaceSupportLevel,
-    installed_surface_registrations,
-)
 from .intake_health import (
     NOT_HEARING_LABEL,
     NOT_SET_UP_LABEL,
@@ -300,7 +291,6 @@ from .headless_screen_bar import (
     VIRTUAL_DEVICE_ID,
     VIRTUAL_DEVICE_NAME,
     HeadlessScreenBar,
-    monotonic_ms,
 )
 from .window_presentation import activate_app, present_window
 from .led_status import (
@@ -336,11 +326,7 @@ from .local_triage import (
     apply_local_triage_mutation,
     reconcile_local_triage,
 )
-from .macos_notifications import (
-    MacOSNotificationClient,
-    NotificationAuthorizationState,
-    start_authorization_refresh,
-)
+from .macos_notifications import MacOSNotificationClient
 from .mailbox import (
     AgentMailboxProjection,
     MailboxSectionKind,
@@ -387,12 +373,10 @@ from .signal_selection import (
 from .operator_accessibility import status_item_accessibility, status_item_title
 from .operator_history import (
     HistoryEventKind,
-    OperatorHistoryProjection,
     RuntimeHistoryEvent,
     aggregate_operator_history,
 )
 from .operator_history_store import (
-    OperatorHistoryRestoreHealth,
     OperatorHistoryStore,
     default_operator_history_path,
 )
@@ -1207,10 +1191,6 @@ PRESENTATION_TIMER_BINDINGS: tuple = (
     (RuntimeFeature.DISPLAY_ENVIRONMENT, "_display_environment_timer_fired"),
     (RuntimeFeature.CALENDAR_OBSERVATION, "_calendar_observation_timer_fired"),
     (RuntimeFeature.REMINDERS_OBSERVATION, "_reminders_observation_timer_fired"),
-    (RuntimeFeature.SETTINGS_SIGNAL_PREVIEW, "_settings_signal_preview_fired"),
-    (RuntimeFeature.SETTINGS_COLOR_PREVIEW, "_settings_color_preview_fired"),
-    (RuntimeFeature.SETUP_DEMO, "_setup_demo_fired"),
-    (RuntimeFeature.SETTINGS_MESSAGE_DEADLINE, "_settings_message_deadline_fired"),
     (RuntimeFeature.TEST_SIGNAL_DEADLINE, "_finite_ui_deadline_fired"),
     (RuntimeFeature.ESCALATION_DEADLINE, "_escalation_deadline_fired"),
 )
@@ -1233,9 +1213,6 @@ LED_DISPLAY_DND_DARK = "dnd_dark"
 LED_DISPLAY_CALENDAR = "calendar"
 LED_DISPLAY_ESCALATION = "escalation"
 LED_DISPLAY_TEST = "signal_test"
-SETTINGS_SIGNAL_PREVIEW_INTERVAL_SECONDS = 1.0 / 8.0
-SETTINGS_COLOR_PREVIEW_INTERVAL_SECONDS = 1.0 / 12.0
-SETUP_DEMO_INTERVAL_SECONDS = 1.0 / 30.0
 LED_DISPLAY_COMPLETION = "completion"
 LED_DISPLAY_REMINDERS = "reminders"
 REMINDERS_WATCH_SECONDS = 60.0
@@ -1669,12 +1646,6 @@ class StatusBarController(NSObject):
             named_focus_reader=focus_sync.active_focus_mode_identifiers,
         )
         self.notification_client = None
-        self.notification_authorization_state = (
-            NotificationAuthorizationState.UNAVAILABLE
-        )
-        self._notification_authorization_checked = False
-        self._notification_authorization_generation = 0
-        self._notification_authorization_refresh_in_flight = False
         self._notification_action_bindings: dict[
             str,
             tuple[ActionTokenBinding, SemanticEventKey],
@@ -1700,17 +1671,8 @@ class StatusBarController(NSObject):
         self._remote_peers_refresh_running = False
         self._published_ledger_signature = None
         self._published_ledger_at = None
-        # The Studio's saved looks live in their own bounded private
-        # file, loaded lazily: __init__ is on the AppKit launch path.
-        self.animation_library = AnimationLibrary()
-        self.animation_library_health = LibraryHealth.MISSING
-        self._animation_library_loaded = False
         self.status_item = None
         self.timer = None
-        self.settings_window = None
-        self._settings_window_closing = False
-        self.setup_window = None
-        self.colors_window = None
         self.agent_browser_controller = None
         self.current_operator_state = None
         self.mailbox_preferences: tuple[MailboxPreference, ...] = ()
@@ -1723,11 +1685,6 @@ class StatusBarController(NSObject):
         self.navigation_candidates_by_work_key = {}
         self.mailbox_boundary_schedule = ExactBoundarySchedule()
         self.mailbox_boundary_timer = None
-        self.settings_fields = {}
-        self.settings_buttons = {}
-        self.device_settings_controls = {}
-        self.settings_sidebar_table = None
-        self.settings_panes = {}
         # The "what did I miss" ledger. Loaded lazily on first use: __init__
         # runs on the AppKit launch path and must not block on disk, and a
         # ledger that cannot be read is only ever an empty section.
@@ -1742,55 +1699,16 @@ class StatusBarController(NSObject):
         # provider's own clock.
         self._session_active_since: dict[str, float] = {}
         self._activity_quota_percents: dict[str, float] = {}
-        self.operator_history_range_days = 1
-        self.operator_history_reel: tuple[str, ...] = ()
         self.operator_history_store = OperatorHistoryStore(
             default_operator_history_path(),
             retention_days=self.settings.operator_history_retention_days,
         )
-        self.operator_history_projection: OperatorHistoryProjection | None = None
-        self._operator_history_retention_generation = 0
-        self._operator_history_restore_started = False
-        self._operator_history_restore_pending = False
-        self.operator_history_restore_health = OperatorHistoryRestoreHealth.MISSING
-        self._operator_history_operation_status = ""
         self._operator_history_lock = threading.RLock()
         self._capacity_history_lock = threading.RLock()
         self._persistence_writer = SerialPersistenceWriter(
             receipt_handler=self._record_persistence_receipt,
         )
         self.semantic_text_scale_percent = 100
-        self._device_calibration_popover = None
-        # (device_id, hex) while a calibration test patch is lighting the
-        # device; None otherwise. See startCalibrationTest_.
-        self.calibration_test = None
-        self.setup_fields = {}
-        self.setup_buttons = {}
-        self.color_swatches = {}
-        self.color_hex_labels = {}
-        self.color_fields = {}
-        self.color_preview_rows = []
-        # Native apps apply changes immediately -- picking a color that
-        # doesn't visibly do anything until you find and flip a separate
-        # toggle reads as broken. Live-apply defaults on; the checkbox is an
-        # opt-out (e.g. to audition several changes before committing them
-        # to the physical device), not an opt-in.
-        self.color_preview_enabled = True
-        # In-window animated preview: one WASM controller per device row
-        # (led_count -> controller), stepped on a timer while the Colors
-        # window is open, so Round-Robin/Cycle/pulse actually animate in
-        # the preview instead of showing one static frame.
-        self.color_preview_wasm = {}
-        self.color_preview_programs = {}
-        # Which canned situation the preview shows -- Live Activity (the
-        # default) prefers whatever's really running and only falls back to
-        # a fixed demo when nothing is; any other choice always shows that
-        # scenario regardless of real activity, so a new user with nothing
-        # running yet (or a curious existing user) can see every blend mode
-        # against a busy team, a lone agent, two sessions of the same
-        # provider, etc. Transient UI state -- never persisted to settings.
-        self.color_preview_scenario = colors_module.PREVIEW_SCENARIO_LIVE
-        self.active_color_target = None
         self.last_snapshot = None
         self.current_attention_projection: AttentionProjection | None = None
         self._answer_contracts_by_source: dict[
@@ -1921,29 +1839,19 @@ class StatusBarController(NSObject):
         # Backlog #20: every attribute handlers previously sprang
         # into existence via getattr now has ONE canonical default
         # here -- the getattr call sites keep working, but drift
-        # between per-site defaults (current_settings_pane "" vs
-        # None, lid thumbs {} vs None) can no longer happen.
+        # between per-site defaults can no longer happen.
         self.all_clear_until = 0.0
-        self.color_panel_signal_key = None
-        self.colors_animation_thumbs = {}
-        self.colors_preview_baseline = None
         self.completion_sweep_color = None
         self.completion_sweep_until = 0.0
-        self.current_settings_pane = None
         self.display_claim_errors_logged = None
         self.escalation_webhooked = False
         self.hooks_update_in_flight = False
         self.last_active_focus_ids = set()
         self.last_agent_modes = {}
-        self.lid_animation_thumbs = {}
         self.peek_until = 0.0
-        self.studio_editor = None
-        self.studio_library_popup = None
         self.studio_preview_program = ""
-        self.studio_save_name_field = None
         self.test_signal_key = None
         self.test_signal_until = 0.0
-        self.tip_anchor_views = {}
         self.transcript_fallback_signature = None
         self.working_since = None
         self.working_since_by_agent = {}
@@ -1954,8 +1862,6 @@ class StatusBarController(NSObject):
         self._focus_observation_available: bool | None = None
         self._keepalive_poke_in_flight = False
         self._last_event_refresh_at = 0.0
-        self._menu_signature = None
-        self._pane_transition_generation = 0
         self._peek_hits = 0
         self._presentation_scheduler_state = PresentationSchedulerState()
         self._presentation_scheduler_inputs = None
@@ -1980,10 +1886,7 @@ class StatusBarController(NSObject):
         self._reminders_observation_active = False
         self._reminders_observation_fire_at = None
         self._scheduled_reminders_cue_deadline = None
-        self._scheduled_settings_message_deadline = None
         self._scheduled_escalation_deadline = None
-        self._runtime_preview_fire_at: dict[RuntimeFeature, float] = {}
-        self._settings_message_deadline_at = 0.0
         self._tip_highlight_view = None
         self._tip_highlight_until = 0.0
         self._os_poll_generation = 1
@@ -2006,9 +1909,6 @@ class StatusBarController(NSObject):
             self.reconcile_presentation_timers
         )
         self._provider_probe_at = 0.0
-        self._settings_pane_container = None
-        self._setup_no_hooks_warned = False
-        self._signal_card_rendered = None
         self._studio_validation_cache = None
         self._trailing_refresh_timer = None
         self._capacity_source_generations = {}
@@ -2116,7 +2016,6 @@ class StatusBarController(NSObject):
         if type(projection) is not DndProjection:
             return
         self._consume_restricted_finite_cues(projection)
-        self._menu_signature = None
         if (
             getattr(self, "_runtime_started", False)
             and not getattr(self, "_runtime_termination_started", False)
@@ -2368,133 +2267,6 @@ class StatusBarController(NSObject):
             client = MacOSNotificationClient()
             self.notification_client = client
         return client
-
-    def notification_authorization_status_text(self) -> str:
-        if not self._notification_authorization_checked:
-            return "Checking permission\u2026"
-        return {
-            NotificationAuthorizationState.NOT_DETERMINED: "Not requested",
-            NotificationAuthorizationState.DENIED: "Denied by macOS",
-            NotificationAuthorizationState.AUTHORIZED: "Allowed by macOS",
-            NotificationAuthorizationState.PROVISIONAL: "Provisionally allowed",
-            NotificationAuthorizationState.UNAVAILABLE: "Unavailable in this runtime",
-        }[self.notification_authorization_state]
-
-    def refresh_notification_authorization_controls(self) -> None:
-        set_field_value(
-            self.settings_fields.get("notification_authorization_status"),
-            self.notification_authorization_status_text(),
-        )
-        button = self.settings_buttons.get("notification_permission")
-        if button is not None:
-            denied = (
-                self._notification_authorization_checked
-                and self.notification_authorization_state
-                is NotificationAuthorizationState.DENIED
-            )
-            if denied:
-                # "Denied by macOS" with no route to fix it was a dead
-                # end: only System Settings can flip a denial.
-                button.setTitle_("Open System Settings\u2026")
-                button.setAction_("openNotificationSystemSettings:")
-            else:
-                button.setTitle_(
-                    "Retry Permission Check\u2026"
-                    if self._notification_authorization_checked
-                    and self.notification_authorization_state
-                    is NotificationAuthorizationState.UNAVAILABLE
-                    else "Enable Notifications\u2026"
-                )
-                button.setAction_("requestNotificationPermission:")
-            button.setHidden_(
-                not self._notification_authorization_checked
-                or (
-                    not denied
-                    and self.notification_authorization_state
-                    not in {
-                        NotificationAuthorizationState.NOT_DETERMINED,
-                        NotificationAuthorizationState.UNAVAILABLE,
-                    }
-                )
-            )
-
-    def start_notification_authorization_refresh(self) -> None:
-        start_authorization_refresh(
-            self,
-            client_factory=self._notification_client_for_use,
-            thread_factory=threading.Thread,
-        )
-
-    def _publish_notification_authorization_state(
-        self,
-        generation: int,
-        state: NotificationAuthorizationState,
-    ) -> None:
-        self.performSelectorOnMainThread_withObject_waitUntilDone_(
-            "applyNotificationAuthorizationState:",
-            {"generation": generation, "state": state},
-            False,
-        )
-
-    @objc.IBAction
-    def applyNotificationAuthorizationState_(self, payload) -> None:
-        if type(payload) is not dict or set(payload) != {"generation", "state"}:
-            return
-        generation = payload["generation"]
-        state = payload["state"]
-        if (
-            type(generation) is not int
-            or generation != self._notification_authorization_generation
-            or type(state) is not NotificationAuthorizationState
-        ):
-            return
-        self.notification_authorization_state = state
-        self._notification_authorization_checked = True
-        self._notification_authorization_refresh_in_flight = False
-        self.refresh_notification_authorization_controls()
-
-    @objc.IBAction
-    def openNotificationSystemSettings_(self, _sender) -> None:
-        """Only System Settings can flip a notification denial."""
-        try:
-            from AppKit import NSURL, NSWorkspace
-
-            NSWorkspace.sharedWorkspace().openURL_(
-                NSURL.URLWithString_(
-                    "x-apple.systempreferences:com.apple.preference.notifications"
-                )
-            )
-        except Exception:
-            pass
-
-    @objc.IBAction
-    def requestNotificationPermission_(self, _sender) -> None:
-        if (
-            self._notification_authorization_checked
-            and self.notification_authorization_state
-            is NotificationAuthorizationState.UNAVAILABLE
-        ):
-            self._notification_authorization_checked = False
-            self._notification_authorization_refresh_in_flight = False
-            self.refresh_notification_authorization_controls()
-            self.start_notification_authorization_refresh()
-            self.set_settings_message("Checking macOS notification permission.")
-            return
-        self._notification_authorization_generation += 1
-        generation = self._notification_authorization_generation
-
-        def completed(state: NotificationAuthorizationState) -> None:
-            self._publish_notification_authorization_state(generation, state)
-
-        if self._notification_client_for_use().request_authorization(completed):
-            self.set_settings_message("Waiting for macOS notification permission.")
-            return
-        self._publish_notification_authorization_state(
-            generation,
-            NotificationAuthorizationState.UNAVAILABLE,
-        )
-        self.set_settings_message("Notifications are unavailable in this runtime.")
-
 
     @objc.IBAction
     def failureSignalExpired_(self, _timer):
@@ -3011,21 +2783,6 @@ class StatusBarController(NSObject):
             resolved_glance=resolved_glance,
         )
         _t_leds = time.monotonic()
-        # A watched Profile pane must not freeze at menu-open vintage:
-        # replan transcript scans on the tick while it is visible. The
-        # planner's freshness gates and the JR plane's 120s opportunistic
-        # throttle bound the work, and this is timer-driven -- pane
-        # SELECTION still does no provider work (the pinned lazy law).
-        settings_window = getattr(self, "settings_window", None)
-        if (
-            settings_window is not None
-            and settings_window.isVisible()
-            and getattr(self, "current_settings_pane", None) == "profile"
-        ):
-            try:
-                self.maybe_refresh_usage_summary()
-            except Exception as exc:
-                log_status_bar(f"profile liveness replan failed: {exc}")
         # The settings-lag flight recorder: every refresh_ runs on the
         # MAIN thread, and settings toggles call it synchronously -- so
         # whichever stage is slow here IS the lag under the pointer.
@@ -3576,12 +3333,6 @@ class StatusBarController(NSObject):
         planner would have polled them. Base: nothing owns, nothing to do.
         """
         del providers, force
-
-    def jr_capacity_settings_text(self, provider_id: str) -> str | None:
-        """Overridden by the JR controller: the live settings-pane line
-        for a JR-owned provider. Base: None (legacy text applies)."""
-        del provider_id
-        return None
 
     def _capacity_row_enabled(self, provider_id: str) -> bool:
         """Whether this provider's capacity row is one the user asked to see.
@@ -4549,59 +4300,6 @@ class StatusBarController(NSObject):
             self.usage_hourly = shared.get("hourly") or []
         if "usage_graph" in shared and not activity_owned:
             self.usage_graph_model = shared["usage_graph"]
-        claude_model = models.get("claude")
-        codex_model = models.get("codex")
-        self.usage_summary_text = getattr(claude_model, "summary_text", None)
-        self.usage_detail_text = getattr(claude_model, "detail_text", None)
-        self.codex_summary_text = (
-            codex_model.settings_text if codex_model is not None else None
-        )
-        self.claude_plan_text = (
-            claude_model.settings_text if claude_model is not None else None
-        )
-        fields = getattr(self, "settings_fields", None) or {}
-        usage_label = fields.get("profile_usage_label")
-        if usage_label is not None:
-            usage_label.setStringValue_(
-                (current_graph.get("summary") if activity_owned else self.usage_summary_text)
-                or (
-                    "No Claude activity in this period."
-                    if self._usage_local_scan_complete
-                    else "Loading local usage history…"
-                )
-            )
-        detail_label = fields.get("profile_usage_detail")
-        if detail_label is not None:
-            detail_label.setStringValue_(self.usage_detail_text or "")
-        codex_label = fields.get("profile_codex_label")
-        if codex_label is not None:
-            codex_label.setStringValue_(self.codex_summary_text or "")
-        # Stash for panes built AFTER this publish -- the first worker
-        # cycle usually finishes before the settings window ever exists,
-        # and the graph sat empty until the next 5-minute pass.
-        graph = fields.get("profile_usage_graph")
-        if graph is not None:
-            graph.setModel_(
-                getattr(self, "usage_graph_model", None) or {}
-            )
-            if activity_owned:
-                # The Activity worker owns provider filters, heatmap and summary.
-                # A quota refresh must not replace them with its legacy projection.
-                from .usage_graph_worker import refresh_usage_graph
-
-                refresh_usage_graph(self)
-        period_label = fields.get("profile_usage_period_label")
-        if period_label is not None:
-            period_label.setStringValue_(
-                usage_stats.usage_period_label(self.settings.usage_graph_days)
-            )
-        plan_label = fields.get("profile_plan_label")
-        if plan_label is not None:
-            plan_label.setStringValue_(
-                self.jr_capacity_settings_text("claude")
-                or self.claude_plan_text
-                or ""
-            )
         self.schedule_capacity_timers(epoch_now=reset_now)
 
     def trim_oversized_state_logs(self) -> int:
@@ -4645,41 +4343,6 @@ class StatusBarController(NSObject):
         self.quota_last_percents = {}
         self.quota_blink_until = 0.0
 
-    def release_preview_engines(self) -> None:
-        """Drop EVERY preview surface's WASM engine when settings goes
-        away -- the first version swept 28 of ~98 engines (mode + lid
-        thumbs only) and left the signal cards' contexts resident.
-        Everything rebuilds lazily on next open."""
-        groups = list(getattr(self, "colors_animation_thumbs", {}).values())
-        singles = getattr(self, "lid_animation_thumbs", {})
-        for thumbs in groups:
-            for thumb in thumbs.values():
-                thumb.wasm_controller = None
-        for thumb in singles.values():
-            thumb.wasm_controller = None
-        for field_key, view in (getattr(self, "settings_fields", None) or {}).items():
-            if field_key.startswith(("signal_preview:", "signal_color:")):
-                view.wasm_controller = None
-            elif field_key.startswith("signal_thumbs:"):
-                for thumb in view.values():
-                    thumb.wasm_controller = None
-        # BOTH color-preview dicts together: clearing only the engines
-        # leaves the program-match early-return handing back stale None
-        # and silently killing the preview.
-        self.color_preview_wasm = {}
-        self.color_preview_programs = {}
-        # Rendered-style memo too, so reopened cards re-render fresh.
-        self._signal_card_rendered = {}
-
-    def windowWillClose_(self, notification):
-        if notification.object() is getattr(self, "settings_window", None):
-            self._settings_window_closing = True
-            self.reconcile_device_runtime()
-            self.release_preview_engines()
-        elif notification.object() is getattr(self, "setup_window", None):
-            self._runtime_preview_fire_at.pop(RuntimeFeature.SETUP_DEMO, None)
-            self._runtime_timer_registry.invalidate(RuntimeFeature.SETUP_DEMO)
-
     def _finish_dnd_change(
         self,
         result: DndChangeResult,
@@ -4693,7 +4356,6 @@ class StatusBarController(NSObject):
             failure = getattr(result, "failure", None)
             reason = getattr(failure, "value", "unavailable")
             self.set_settings_message(f"Could not update DND: {reason}.")
-        self._menu_signature = None
         return applied
 
     def _set_dnd_for_duration(self, mode: DndMode, seconds: float) -> bool:
@@ -4729,22 +4391,6 @@ class StatusBarController(NSObject):
         )
 
 
-    @objc.IBAction
-    def redrawSignalPreviews_(self, _timer):
-        if self.settings_window is None or not self.settings_window.isVisible():
-            return
-        for field_key, view in self.settings_fields.items():
-            if field_key.startswith("signal_preview:"):
-                if not view.isHiddenOrHasHiddenAncestor() and view.visibleRect().size.width > 0:
-                    view.setNeedsDisplay_(True)
-            elif field_key.startswith("signal_thumbs:") and isinstance(view, dict):
-                for thumb in view.values():
-                    # Viewport culling: only thumbnails actually scrolled
-                    # into view animate -- 50+ off-screen WASM steppers
-                    # were the Settings lag.
-                    if not thumb.isHiddenOrHasHiddenAncestor() and thumb.visibleRect().size.width > 0:
-                        thumb.setNeedsDisplay_(True)
-
     # NOTE: per-session identity-color OVERRIDES lost their only writer
     # when the pre-mailbox session options menu was deleted (2026-08-26).
     # Reads are still honored everywhere (colors.session_color); the next
@@ -4777,32 +4423,6 @@ class StatusBarController(NSObject):
         refresh = getattr(self, "_request_provider_usage", None)
         if callable(refresh):
             refresh(force=False)
-
-    def _send_calibration_test(self) -> None:
-        """Lights the device under calibration with the chosen reference
-        color, THROUGH the current channel gains -- so every gain-slider
-        move re-lights it and the user sees convergence live."""
-        if not self.calibration_test:
-            return
-        device_id, hex_color = self.calibration_test
-        program = f"{hex_color} 500ms\nrepeat"
-        if device_id == VIRTUAL_DEVICE_ID:
-            self.virtual_status_device.set_program(
-                apply_brightness(program, self.settings.brightness_for_device(device_id))
-            )
-            return
-        device = next(
-            (
-                entry
-                for entry in self.status_bar_devices(remember=False)
-                if entry.device_id == device_id and entry.connected
-            ),
-            None,
-        )
-        if device is None:
-            return
-        controller = self.agent_controller_for_device(device)
-        controller.sync_program(apply_brightness(program, controller.brightness), LedDisplayState.ASK)
 
     def _record_persistence_receipt(self, receipt: PersistenceReceipt) -> None:
         if (
@@ -4861,7 +4481,6 @@ class StatusBarController(NSObject):
         self._set_display_environment_active(False)
         self._set_calendar_observation_active(False)
         self._set_reminders_observation_active(False)
-        self._runtime_preview_fire_at.clear()
         self._reminders_permission_generation += 1
         self._reminders_permission_request_token = None
         self._runtime_timer_registry.invalidate_all()
@@ -4888,7 +4507,6 @@ class StatusBarController(NSObject):
         self._capacity_reset_plan = ResetBoundaryPlan(None, (), ())
         self._capacity_reset_retry_deadline = None
         self._attempted_capacity_boundary_keys = ()
-        self.release_preview_engines()
         # Same reasoning for the peer-facing ledger: the live path is
         # debounced on change plus a heartbeat, so the last word this desk
         # said to the other Mac has to be written before it goes away.
@@ -5761,25 +5379,8 @@ class StatusBarController(NSObject):
         """ColorSettings for agent rendering with the stage>=1
         quickening applied: blend cycles run at x0.75 speed, so the
         ramp stays visible even at full brightness where the boost
-        alone would clamp away to nothing.
-
-        Also honors "Preview live on device" being OFF: while the
-        Colors window is open with preview disabled, hardware keeps
-        rendering the colors from when the window opened -- edits
-        used to leak to the device within one sync tick anyway."""
+        alone would clamp away to nothing."""
         colors = self.settings.colors
-        settings_window = getattr(self, "settings_window", None)
-        if (
-            settings_window is not None
-            and settings_window.isVisible()
-            and getattr(self, "current_settings_pane", "") == "color_studio"
-            and not getattr(self, "color_preview_enabled", True)
-        ):
-            if getattr(self, "colors_preview_baseline", None) is None:
-                self.colors_preview_baseline = colors
-            colors = self.colors_preview_baseline
-        else:
-            self.colors_preview_baseline = None
         if self.current_escalation_stage() >= 1:
             quickened = max(
                 colors_module.MIN_CYCLE_SPEED_SECONDS, colors.cycle_speed_seconds * 0.75
@@ -6588,7 +6189,6 @@ class StatusBarController(NSObject):
             log_status_bar(
                 f"legacy hook protocol from {provider}: reinstall its hook from Setup"
             )
-            self._menu_signature = None
         self.schedule_event_refresh()
 
     def reap_dead_agent_processes(self) -> None:
@@ -7207,75 +6807,6 @@ class StatusBarController(NSObject):
         offset = datetime.now().astimezone().utcoffset()
         return 0 if offset is None else int(offset.total_seconds() // 60)
 
-    def _set_operator_history_status(self, message: str) -> None:
-        self._operator_history_operation_status = message
-        set_field_value(
-            self.settings_fields.get("history_operation_status"),
-            message or "No history operation in progress.",
-        )
-
-    def refresh_operator_history_projection(self) -> None:
-        projection = self.operator_history_store.project(
-            range_days=self.operator_history_range_days,
-            now=time.time(),
-            timezone_offset_minutes=self._operator_history_timezone_offset_minutes(),
-        )
-        self.operator_history_projection = projection
-        set_field_value(
-            self.settings_fields.get("history_summary"),
-            (
-                "Operator history is being restored."
-                if self._operator_history_restore_pending
-                else " ".join(projection.summary_sentences)
-            ),
-        )
-        set_field_value(
-            self.settings_fields.get("history_health"),
-            (
-                "History loading"
-                if self._operator_history_restore_pending
-                else projection.health_label
-            ),
-        )
-        set_field_value(
-            self.settings_fields.get("history_semantic_reel"),
-            "\n".join(self.operator_history_reel) or "No current-run events.",
-        )
-        retention_controls = self.settings_fields.get(
-            "history_retention_controls",
-            {},
-        )
-        for retention, control in retention_controls.items():
-            control.setState_(
-                1
-                if retention == self.settings.operator_history_retention_days
-                else 0
-            )
-        range_controls = self.settings_fields.get("history_range_controls", {})
-        for range_days, control in range_controls.items():
-            control.setState_(1 if range_days == self.operator_history_range_days else 0)
-
-    def append_operator_history_reel(self, phrase: str, _semantic_key=None) -> None:
-        allowed = {
-            "Agent became active",
-            "Agent became idle",
-            "Agent completed",
-            "Agent failed",
-            "Request opened",
-            "Request resolved",
-            "Source degraded",
-            "Source recovered",
-            "Request acknowledged locally",
-            "Request escalation resumed",
-        }
-        if type(phrase) is not str or phrase not in allowed:
-            return
-        self.operator_history_reel = (*self.operator_history_reel, phrase)[-50:]
-        set_field_value(
-            self.settings_fields.get("history_semantic_reel"),
-            "\n".join(self.operator_history_reel),
-        )
-
     def _enqueue_operator_history_events(
         self,
         events: tuple[RuntimeHistoryEvent, ...],
@@ -7298,12 +6829,6 @@ class StatusBarController(NSObject):
                     None,
                     False,
                 )
-                return
-            self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "applyOperatorHistoryProjection:",
-                None,
-                False,
-            )
 
         disposition = self._persistence_writer.submit(
             "operator-history-events",
@@ -7313,7 +6838,7 @@ class StatusBarController(NSObject):
             PersistenceDisposition.REFUSED_FULL,
             PersistenceDisposition.REFUSED_CLOSED,
         }:
-            self._set_operator_history_status("History could not be queued.")
+            log_status_bar("operator history: could not be queued")
 
     def observe_operator_history_triage(
         self,
@@ -7324,10 +6849,8 @@ class StatusBarController(NSObject):
         state: CanonicalOperatorState,
     ) -> None:
         if mutation is LocalTriageMutationKind.ACKNOWLEDGE:
-            phrase = "Request acknowledged locally"
             kind = HistoryEventKind.REQUEST_ACKNOWLEDGED
         elif mutation is LocalTriageMutationKind.RESUME_ESCALATION:
-            phrase = "Request escalation resumed"
             kind = HistoryEventKind.REQUEST_RESUMED
         else:
             return
@@ -7336,7 +6859,6 @@ class StatusBarController(NSObject):
             return
         primary_count = sum(work.parent_key is None for work in state.works)
         worker_count = len(state.works) - primary_count
-        self.append_operator_history_reel(phrase, request.key)
         self._enqueue_operator_history_events(
             (
                 RuntimeHistoryEvent(
@@ -7357,16 +6879,6 @@ class StatusBarController(NSObject):
         events: tuple[CanonicalOperatorEvent, ...],
         state: CanonicalOperatorState | None,
     ) -> None:
-        phrases = {
-            TransitionKind.BECAME_ACTIVE: "Agent became active",
-            TransitionKind.BECAME_IDLE: "Agent became idle",
-            TransitionKind.REQUEST_OPENED: "Request opened",
-            TransitionKind.REQUEST_RESOLVED: "Request resolved",
-            TransitionKind.COMPLETED: "Agent completed",
-            TransitionKind.FAILED: "Agent failed",
-            TransitionKind.SOURCE_DEGRADED: "Source degraded",
-            TransitionKind.SOURCE_RECOVERED: "Source recovered",
-        }
         history_kinds = {
             TransitionKind.BECAME_ACTIVE: HistoryEventKind.STARTED,
             TransitionKind.REQUEST_OPENED: HistoryEventKind.NEEDS_USER,
@@ -7389,9 +6901,6 @@ class StatusBarController(NSObject):
             )
         rows: list[RuntimeHistoryEvent] = []
         for event in events:
-            phrase = phrases.get(event.kind)
-            if phrase is not None:
-                self.append_operator_history_reel(phrase, event.key)
             kind = history_kinds.get(event.kind)
             if kind is None:
                 continue
@@ -7400,7 +6909,7 @@ class StatusBarController(NSObject):
                 and event.subject_key in quiet_requests
             ):
                 # With worker asks off nobody was asked, so no attention
-                # episode is counted. The reel above still says it opened.
+                # episode is counted.
                 continue
             subject = event.subject_key
             source = subject.source_key if type(subject) is WorkKey else subject.work_key.source_key
@@ -7420,11 +6929,7 @@ class StatusBarController(NSObject):
 
     @objc.IBAction
     def applyOperatorHistoryPersistenceFailure_(self, _payload) -> None:
-        self._set_operator_history_status("History could not be saved.")
-
-    @objc.IBAction
-    def applyOperatorHistoryProjection_(self, _payload) -> None:
-        self.refresh_operator_history_projection()
+        log_status_bar("operator history: could not be saved")
 
     @staticmethod
     def _save_mailbox_preferences(preferences) -> None:
@@ -7437,101 +6942,10 @@ class StatusBarController(NSObject):
     def _save_operator_triage(state) -> None:
         save_operator_triage(default_state_dir() / "operator-triage.json", state)
 
-    def stop_colors_preview_animation(self) -> None:
-        self._runtime_preview_fire_at.pop(
-            RuntimeFeature.SETTINGS_COLOR_PREVIEW,
-            None,
-        )
-        self._runtime_timer_registry.invalidate(
-            RuntimeFeature.SETTINGS_COLOR_PREVIEW
-        )
-
-    @objc.IBAction
-    def animateColorsPreviewTick_(self, _sender):
-        self.animate_colors_preview_once()
-        # The unified animation thumbnails animate on the same tick.
-        # Only the pane on screen animates: with mode, lid and preview
-        # thumbs all ticking regardless of pane, scrolling ANY pane
-        # dragged a fleet of JavaScriptCore steps behind it.
-        pane = getattr(self, "current_settings_pane", None)
-        if pane == "color_studio":
-            for thumbs in getattr(self, "colors_animation_thumbs", {}).values():
-                for thumb in thumbs.values():
-                    if not thumb.isHiddenOrHasHiddenAncestor() and thumb.visibleRect().size.width > 0:
-                        thumb.setNeedsDisplay_(True)
-        elif pane == "animations":
-            for thumb in getattr(self, "lid_animation_thumbs", {}).values():
-                if not thumb.isHiddenOrHasHiddenAncestor() and thumb.visibleRect().size.width > 0:
-                    thumb.setNeedsDisplay_(True)
-
-    def animate_colors_preview_once(self) -> None:
-        if self.settings_window is None or not self.settings_window.isVisible():
-            self.stop_colors_preview_animation()
-            self.release_preview_engines()
-            return
-        now_ms = monotonic_ms()
-        for row in self.color_preview_rows:
-            controller = self.color_preview_wasm.get(row["led_count"])
-            if controller is None:
-                continue
-            try:
-                pixels = controller.step(now_ms)
-            except Exception:
-                continue
-            for dot, pixel in zip(row["dots"], pixels[: row["led_count"]]):
-                set_preview_dot_rgb(dot, *pixel)
-
-    @objc.IBAction
-    def redrawSetupDemo_(self, _sender):
-        if self.setup_window is None or not self.setup_window.isVisible():
-            return
-        demo_view = self.setup_fields.get("demo_view")
-        if demo_view is not None:
-            demo_view.setNeedsDisplay_(True)
-
     def set_settings_message(self, message: str) -> None:
-        label = self.settings_fields.get("message")
-        set_field_value(label, message)
-        # Mirror into the Usage Center when it's the window in front of
-        # the user -- its buttons' feedback used to vanish otherwise.
-        center = getattr(self, "_jrbar_provider_usage_window", None)
-        if center is not None:
-            try:
-                if center.window.isVisible():
-                    center.show_message(message)
-            except Exception:
-                pass
-        # First run has only the Welcome window (settings_fields is
-        # empty until Settings first opens): mirror there whenever it's
-        # up, so hook install progress -- and especially failures --
-        # are visible somewhere other than the log.
-        setup_window = getattr(self, "setup_window", None)
-        if setup_window is not None and setup_window.isVisible():
-            set_field_value(self.setup_fields.get("message"), message)
+        """Say what just happened in the log: no window shows it."""
         if message:
             log_status_bar(f"settings: {message}")
-        # Toast semantics: the confirmation fades away after a beat
-        # instead of sitting as a stale label forever. 102 call sites,
-        # zero of them changed.
-        if label is not None:
-            label.setAlphaValue_(1.0)
-            self._settings_message_deadline_at = (
-                self._presentation_monotonic() + 3.5 if message else 0.0
-            )
-            self._reconcile_current_presentation_inputs()
-
-    @objc.IBAction
-    def dismissSettingsMessage_(self, _timer):
-        label = self.settings_fields.get("message")
-        if label is None:
-            return
-        from AppKit import NSAnimationContext
-
-        def _animate(context):
-            context.setDuration_(0.6)
-            label.animator().setAlphaValue_(0.0)
-
-        NSAnimationContext.runAnimationGroup_completionHandler_(_animate, None)
 
     def _mutate_device_setting(
         self,
@@ -7550,8 +6964,7 @@ class StatusBarController(NSObject):
         -> AgentMonitorSettings``; ``describe(device_label) -> str``
         runs AFTER the mutation so it may read the new settings.
         resync: "snapshot" replays the last snapshot; "refresh" runs a
-        full refresh_ pass; "calibration" re-lights the mid-flight
-        calibration test color instead of resuming live status."""
+        full refresh_ pass."""
         if not device_id:
             return
         device = next(
@@ -7573,16 +6986,6 @@ class StatusBarController(NSObject):
         self.set_settings_message(describe(device.name if device else str(device_id)))
         if resync == "refresh":
             self.refresh_(None)
-            return
-        if (
-            resync == "calibration"
-            and self.calibration_test is not None
-            and self.calibration_test[0] == str(device_id)
-        ):
-            # Mid-calibration: re-light the test color through the new
-            # gains instead of resuming live status under the user's
-            # hands -- live status returns when the popover closes.
-            self._send_calibration_test()
             return
         if self.last_snapshot is not None:
             self.sync_leds(
@@ -8498,13 +7901,11 @@ class StatusBarController(NSObject):
         # Devices under a held calibration preview are owned by it: the
         # headless core keeps the patch on the hardware for minutes while
         # the user matches by eye, and a routine refresh must not paint
-        # over it. Absent on the AppKit controller -- getattr keeps this
+        # over it. Absent on the plain controller -- getattr keeps this
         # loop shared.
         held_devices = getattr(self, "_core_held_preview_devices", lambda: frozenset())()
         requests: list[HardwareWriteRequest] = []
         for device in devices:
-            if self.calibration_test is not None and self.calibration_test[0] == device.device_id:
-                continue
             if device.device_id in held_devices:
                 continue
             device_display_kind = self.active_led_display_kind_for_device(device, battery_snapshot)
@@ -9215,75 +8616,6 @@ class StatusBarController(NSObject):
         if callable(drain):
             drain()
 
-    def refresh_installed_agents_settings_projection(self) -> None:
-        fields = getattr(self, "settings_fields", None) or {}
-        status_fields = fields.get("installed_agent_status_fields") or {}
-        if not status_fields:
-            return
-        result = getattr(self, "_installed_agent_inventory_result", None)
-        observations = (
-            {row.key: row for row in result.reduction.observations}
-            if type(result) is InstalledAgentInventoryResult
-            else {}
-        )
-        for registration in installed_surface_registrations():
-            label = status_fields.get((registration.provider_id, registration.surface_id))
-            if label is None:
-                continue
-            observation = observations.get(registration.key)
-            if observation is None or observation.presence is SurfacePresence.ABSENT:
-                presence = "Not detected"
-            elif observation.presence is SurfacePresence.CONFIGURED:
-                presence = "Configured"
-            elif observation.presence is SurfacePresence.INSTALLED:
-                presence = "Installed"
-            elif observation.presence is SurfacePresence.MIGRATION_REQUIRED:
-                presence = "Migration required"
-            else:
-                presence = "Unsupported version"
-            if registration.support in {
-                SurfaceSupportLevel.FULL,
-                SurfaceSupportLevel.LIFECYCLE,
-            }:
-                monitoring = (
-                    "Monitoring"
-                    if observation is not None
-                    and observation.presence is SurfacePresence.CONFIGURED
-                    else "Monitoring available"
-                )
-            elif registration.support is SurfaceSupportLevel.CAPACITY:
-                monitoring = "Capacity available"
-            elif registration.support is SurfaceSupportLevel.INVENTORY:
-                monitoring = "Detection only"
-            else:
-                monitoring = "Unsupported"
-            label.setStringValue_(f"{presence} · {monitoring}")
-        status = fields.get("installed_agents_refresh_status")
-        if status is not None:
-            status.setStringValue_(
-                "Inventory ready"
-                if type(result) is InstalledAgentInventoryResult
-                else "Open this pane to check installed coding agents."
-            )
-
-    def refresh_capacity_settings_projection(self) -> None:
-        fields = getattr(self, "settings_fields", None) or {}
-        live_fields = fields.get("capacity_live_fields") or {}
-        codex = live_fields.get("codex")
-        if codex is not None:
-            codex.setStringValue_(
-                self.jr_capacity_settings_text("codex")
-                or getattr(self, "codex_summary_text", None)
-                or "Not observed yet"
-            )
-        claude = live_fields.get("claude")
-        if claude is not None:
-            claude.setStringValue_(
-                self.jr_capacity_settings_text("claude")
-                or getattr(self, "claude_plan_text", None)
-                or "Not observed yet"
-            )
-
     def refresh_installed_agent_inventory(self) -> bool:
         """Submit one latest-wins, generation-fenced host inventory request."""
         if not self._runtime_started:
@@ -9465,7 +8797,6 @@ class StatusBarController(NSObject):
             and self._runtime_started
         ):
             self._installed_agent_inventory_result = result
-            self.refresh_installed_agents_settings_projection()
             return
         if (
             command.key == "lid-observation"
@@ -9985,13 +9316,12 @@ class StatusBarController(NSObject):
         return LID_OBSERVATION_ANIMATION_SECONDS
 
     def _device_inventory_interval(self) -> float:
-        # A pane the user is watching, or an inventory that is still
-        # changing, keeps the 2s rate; a stable one backs off -- the
-        # timer intent carries the cadence, so the tier lives in the
-        # reconcile comparison below to force a re-plan when it flips.
+        # An inventory that is still changing keeps the 2s rate; a stable
+        # one backs off -- the timer intent carries the cadence, so the
+        # tier lives in the reconcile comparison below to force a re-plan
+        # when it flips.
         if (
-            self._devices_pane_requests_inventory()
-            or self._device_inventory_stable_polls
+            self._device_inventory_stable_polls
             < DEVICE_INVENTORY_STABLE_POLLS_BEFORE_BACKOFF
         ):
             return STATUS_BAR_DEVICE_POLL_SECONDS
@@ -10028,15 +9358,6 @@ class StatusBarController(NSObject):
             and self._lid_observation_relevant()
         )
 
-    def _devices_pane_requests_inventory(self) -> bool:
-        window = getattr(self, "settings_window", None)
-        return bool(
-            window is not None
-            and not getattr(self, "_settings_window_closing", False)
-            and window.isVisible()
-            and getattr(self, "current_settings_pane", None) == "devices"
-        )
-
     def _device_inventory_should_run(
         self,
         inputs: PresentationSchedulerInputs,
@@ -10049,7 +9370,7 @@ class StatusBarController(NSObject):
         return bool(
             self._runtime_started
             and not inputs.app_terminating
-            and (self.leds_enabled or self._devices_pane_requests_inventory())
+            and self.leds_enabled
         )
 
     def _hardware_write_should_run(
@@ -10111,59 +9432,6 @@ class StatusBarController(NSObject):
             and not inputs.app_terminating
         )
 
-    def _preview_should_run(
-        self,
-        feature: RuntimeFeature,
-        inputs: PresentationSchedulerInputs,
-    ) -> bool:
-        preferences = self._accessibility_display_preferences
-        if (
-            not self._runtime_started
-            or inputs.display_asleep
-            or inputs.app_terminating
-            or bool(preferences is not None and preferences.reduce_motion)
-        ):
-            return False
-        if feature is RuntimeFeature.SETUP_DEMO:
-            window = self.setup_window
-            return bool(window is not None and window.isVisible())
-        if feature not in {
-            RuntimeFeature.SETTINGS_SIGNAL_PREVIEW,
-            RuntimeFeature.SETTINGS_COLOR_PREVIEW,
-        }:
-            raise ValueError("invalid preview runtime feature")
-        window = self.settings_window
-        if (
-            window is None
-            or self._settings_window_closing
-            or not window.isVisible()
-        ):
-            return False
-        pane = self.current_settings_pane
-        if feature is RuntimeFeature.SETTINGS_SIGNAL_PREVIEW:
-            return pane == "led_behavior"
-        return pane in {"color_studio", "animations"}
-
-    def _set_preview_active(
-        self,
-        feature: RuntimeFeature,
-        active: bool,
-        *,
-        now: float,
-        interval: float,
-    ) -> None:
-        was_active = feature in self._runtime_preview_fire_at
-        if active:
-            if not was_active:
-                self._runtime_preview_fire_at[feature] = now + interval
-            return
-        self._runtime_preview_fire_at.pop(feature, None)
-        if was_active and feature in {
-            RuntimeFeature.SETTINGS_SIGNAL_PREVIEW,
-            RuntimeFeature.SETTINGS_COLOR_PREVIEW,
-        }:
-            self.release_preview_engines()
-
     def _escalation_deadline(
         self,
         inputs: PresentationSchedulerInputs,
@@ -10191,43 +9459,6 @@ class StatusBarController(NSObject):
             float(blocked_since) + float(threshold) for threshold in thresholds
         )
         return next((deadline for deadline in deadlines if deadline > now), None)
-
-    def _settings_message_deadline(
-        self,
-        inputs: PresentationSchedulerInputs,
-    ) -> float | None:
-        deadline = self._settings_message_deadline_at
-        now = self._presentation_monotonic()
-        if (
-            isinstance(deadline, (int, float))
-            and not isinstance(deadline, bool)
-            and math.isfinite(float(deadline))
-            and 0.0 < float(deadline) <= now
-        ):
-            self._settings_message_deadline_at = 0.0
-            label = self.settings_fields.get("message")
-            if label is not None:
-                label.setAlphaValue_(0.0)
-            return None
-        if (
-            not self._runtime_started
-            or inputs.display_asleep
-            or inputs.app_terminating
-            or not isinstance(deadline, (int, float))
-            or isinstance(deadline, bool)
-            or not math.isfinite(float(deadline))
-            or float(deadline) <= now
-        ):
-            return None
-        window = self.settings_window
-        if (
-            window is None
-            or self._settings_window_closing
-            or not window.isVisible()
-            or self.settings_fields.get("message") is None
-        ):
-            return None
-        return float(deadline)
 
     def _clear_tip_highlight(self) -> None:
         view = self._tip_highlight_view
@@ -10443,9 +9674,6 @@ class StatusBarController(NSObject):
             self.virtual_status_device.presentation_scheduler_inputs()
         )
 
-    def reconcile_device_runtime(self) -> None:
-        self.reconcile_lid_observation()
-
     def reconcile_presentation_timers(
         self,
         inputs: PresentationSchedulerInputs,
@@ -10462,20 +9690,7 @@ class StatusBarController(NSObject):
         display_environment_active = self._display_environment_should_run(inputs)
         calendar_observation_active = self._calendar_observation_should_run(inputs)
         reminders_observation_active = self._reminders_observation_should_run(inputs)
-        signal_preview_active = self._preview_should_run(
-            RuntimeFeature.SETTINGS_SIGNAL_PREVIEW,
-            inputs,
-        )
-        color_preview_active = self._preview_should_run(
-            RuntimeFeature.SETTINGS_COLOR_PREVIEW,
-            inputs,
-        )
-        setup_demo_active = self._preview_should_run(
-            RuntimeFeature.SETUP_DEMO,
-            inputs,
-        )
         escalation_deadline = self._escalation_deadline(inputs)
-        settings_message_deadline = self._settings_message_deadline(inputs)
         finite_ui_deadline = self._finite_ui_deadline(inputs)
         if (
             inputs == self._presentation_scheduler_inputs
@@ -10486,26 +9701,9 @@ class StatusBarController(NSObject):
             and calendar_observation_active == self._calendar_observation_active
             and reminders_observation_active
             == self._reminders_observation_active
-            and signal_preview_active
-            == (
-                RuntimeFeature.SETTINGS_SIGNAL_PREVIEW
-                in self._runtime_preview_fire_at
-            )
-            and color_preview_active
-            == (
-                RuntimeFeature.SETTINGS_COLOR_PREVIEW
-                in self._runtime_preview_fire_at
-            )
-            and setup_demo_active
-            == (RuntimeFeature.SETUP_DEMO in self._runtime_preview_fire_at)
             and escalation_deadline == self._scheduled_escalation_deadline
             and finite_ui_deadline
             == self._scheduled_reminders_cue_deadline
-            and settings_message_deadline == getattr(
-                self,
-                "_scheduled_settings_message_deadline",
-                None,
-            )
             and self._lid_observation_interval()
             == self._lid_observation_scheduled_interval
             and self._device_inventory_interval()
@@ -10532,22 +9730,7 @@ class StatusBarController(NSObject):
                 current_reminders_observation_active = (
                     self._reminders_observation_should_run(current)
                 )
-                current_signal_preview_active = self._preview_should_run(
-                    RuntimeFeature.SETTINGS_SIGNAL_PREVIEW,
-                    current,
-                )
-                current_color_preview_active = self._preview_should_run(
-                    RuntimeFeature.SETTINGS_COLOR_PREVIEW,
-                    current,
-                )
-                current_setup_demo_active = self._preview_should_run(
-                    RuntimeFeature.SETUP_DEMO,
-                    current,
-                )
                 current_escalation_deadline = self._escalation_deadline(current)
-                current_settings_message_deadline = (
-                    self._settings_message_deadline(current)
-                )
                 current_finite_ui_deadline = self._finite_ui_deadline(current)
                 if (
                     current != self._presentation_scheduler_inputs
@@ -10562,28 +9745,10 @@ class StatusBarController(NSObject):
                     != self._calendar_observation_active
                     or current_reminders_observation_active
                     != self._reminders_observation_active
-                    or current_signal_preview_active
-                    != (
-                        RuntimeFeature.SETTINGS_SIGNAL_PREVIEW
-                        in self._runtime_preview_fire_at
-                    )
-                    or current_color_preview_active
-                    != (
-                        RuntimeFeature.SETTINGS_COLOR_PREVIEW
-                        in self._runtime_preview_fire_at
-                    )
-                    or current_setup_demo_active
-                    != (RuntimeFeature.SETUP_DEMO in self._runtime_preview_fire_at)
                     or current_escalation_deadline
                     != self._scheduled_escalation_deadline
                     or current_finite_ui_deadline
                     != self._scheduled_reminders_cue_deadline
-                    or current_settings_message_deadline
-                    != getattr(
-                        self,
-                        "_scheduled_settings_message_deadline",
-                        None,
-                    )
                     or self._lid_observation_interval()
                     != self._lid_observation_scheduled_interval
                     or self._device_inventory_interval()
@@ -10612,24 +9777,6 @@ class StatusBarController(NSObject):
                     self._set_reminders_observation_active(
                         current_reminders_observation_active,
                         now=now,
-                    )
-                    self._set_preview_active(
-                        RuntimeFeature.SETTINGS_SIGNAL_PREVIEW,
-                        current_signal_preview_active,
-                        now=now,
-                        interval=SETTINGS_SIGNAL_PREVIEW_INTERVAL_SECONDS,
-                    )
-                    self._set_preview_active(
-                        RuntimeFeature.SETTINGS_COLOR_PREVIEW,
-                        current_color_preview_active,
-                        now=now,
-                        interval=SETTINGS_COLOR_PREVIEW_INTERVAL_SECONDS,
-                    )
-                    self._set_preview_active(
-                        RuntimeFeature.SETUP_DEMO,
-                        current_setup_demo_active,
-                        now=now,
-                        interval=SETUP_DEMO_INTERVAL_SECONDS,
                     )
                     intents = plan.intents
                     if current_lid_active:
@@ -10703,51 +9850,12 @@ class StatusBarController(NSObject):
                                 common_modes=False,
                             ),
                         )
-                    for feature, interval in (
-                        (
-                            RuntimeFeature.SETTINGS_SIGNAL_PREVIEW,
-                            SETTINGS_SIGNAL_PREVIEW_INTERVAL_SECONDS,
-                        ),
-                        (
-                            RuntimeFeature.SETTINGS_COLOR_PREVIEW,
-                            SETTINGS_COLOR_PREVIEW_INTERVAL_SECONDS,
-                        ),
-                        (RuntimeFeature.SETUP_DEMO, SETUP_DEMO_INTERVAL_SECONDS),
-                    ):
-                        fire_at = self._runtime_preview_fire_at.get(feature)
-                        if fire_at is None:
-                            continue
-                        intents = (
-                            *intents,
-                            RuntimeTimerIntent(
-                                feature=feature,
-                                fire_at=fire_at,
-                                interval=interval,
-                                tolerance=interval * 0.1,
-                                # Default mode, like a marquee pausing while
-                                # you scroll: settings preview thumbnails
-                                # re-rendering inside the scroll gesture was
-                                # the Animation Studio's own lag.
-                                common_modes=False,
-                            ),
-                        )
                     if current_escalation_deadline is not None:
                         intents = (
                             *intents,
                             RuntimeTimerIntent(
                                 feature=RuntimeFeature.ESCALATION_DEADLINE,
                                 fire_at=current_escalation_deadline,
-                                interval=None,
-                                tolerance=0.0,
-                                common_modes=True,
-                            ),
-                        )
-                    if current_settings_message_deadline is not None:
-                        intents = (
-                            *intents,
-                            RuntimeTimerIntent(
-                                feature=RuntimeFeature.SETTINGS_MESSAGE_DEADLINE,
-                                fire_at=current_settings_message_deadline,
                                 interval=None,
                                 tolerance=0.0,
                                 common_modes=True,
@@ -10774,9 +9882,6 @@ class StatusBarController(NSObject):
                         current_escalation_deadline
                     )
                     self._scheduled_reminders_cue_deadline = current_finite_ui_deadline
-                    self._scheduled_settings_message_deadline = (
-                        current_settings_message_deadline
-                    )
                     if plan.reconcile_immediately:
                         self._presentation_static_deadline_fired()
                 current = self._presentation_reconcile_pending
@@ -10798,40 +9903,6 @@ class StatusBarController(NSObject):
 
     def _presentation_pointer_peek_fired(self) -> None:
         self.peekTick_(None)
-
-    def _settings_signal_preview_fired(self) -> None:
-        inputs = self._presentation_scheduler_inputs
-        if (
-            inputs is not None
-            and self._preview_should_run(
-                RuntimeFeature.SETTINGS_SIGNAL_PREVIEW,
-                inputs,
-            )
-        ):
-            self.redrawSignalPreviews_(None)
-
-    def _settings_color_preview_fired(self) -> None:
-        inputs = self._presentation_scheduler_inputs
-        if (
-            inputs is not None
-            and self._preview_should_run(
-                RuntimeFeature.SETTINGS_COLOR_PREVIEW,
-                inputs,
-            )
-        ):
-            # The full tick: preview strip dots AND the visible pane's
-            # animation thumbnails. Calling only animate_colors_preview_once
-            # here once froze every thumb -- the repaint half lives in
-            # animateColorsPreviewTick_ and nothing else invokes it.
-            self.animateColorsPreviewTick_(None)
-
-    def _setup_demo_fired(self) -> None:
-        inputs = self._presentation_scheduler_inputs
-        if (
-            inputs is not None
-            and self._preview_should_run(RuntimeFeature.SETUP_DEMO, inputs)
-        ):
-            self.redrawSetupDemo_(None)
 
     def _lid_observation_timer_fired(self) -> None:
         if not self._lid_observation_active:
@@ -10943,17 +10014,6 @@ class StatusBarController(NSObject):
                 ),
             )
         )
-
-    def _settings_message_deadline_fired(self) -> None:
-        deadline = self._settings_message_deadline_at
-        now = self._presentation_monotonic()
-        self._scheduled_settings_message_deadline = None
-        if deadline > now:
-            self._reconcile_current_presentation_inputs()
-            return
-        self._settings_message_deadline_at = 0.0
-        self.dismissSettingsMessage_(None)
-        self._reconcile_current_presentation_inputs()
 
     def _finite_ui_deadline_fired(self) -> None:
         inputs = self._presentation_scheduler_inputs
@@ -11395,12 +10455,6 @@ class StatusBarController(NSObject):
             not status.is_subagent and status.mode in busy
             for status in snapshot.statuses
         )
-
-    def poll_devices_once(self) -> None:
-        if not self.observe_connected_devices():
-            return
-        if self.last_snapshot is not None:
-            self.refresh_(None)
 
     def sync_keep_awake(self, mode: AgentMode) -> None:
         quota_holds = getattr(self, "_quota_power_holds", None)
@@ -12020,27 +11074,6 @@ def _canonical_operator_actions(state, target):
 
 
 _AppKitStatusBarController = StatusBarController
-
-
-def set_preview_dot_rgb(dot, red: int, green: int, blue: int) -> None:
-    """Like set_preview_dot_color, but takes raw 0-255 ints -- the shape the
-    WASM controller's step() returns, for the animated preview."""
-    try:
-        dot.setWantsLayer_(True)
-        color = NSColor.colorWithCalibratedRed_green_blue_alpha_(
-            max(0, min(255, red)) / 255.0,
-            max(0, min(255, green)) / 255.0,
-            max(0, min(255, blue)) / 255.0,
-            1.0,
-        )
-        dot.layer().setBackgroundColor_(color.CGColor())
-    except Exception:
-        pass
-
-
-def set_field_value(field, value: str) -> None:
-    if field is not None:
-        field.setStringValue_(value)
 
 
 def validate_lid_animation(animation: LedAnimationSetting) -> None:

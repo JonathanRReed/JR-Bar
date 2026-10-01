@@ -86,8 +86,9 @@ def test_every_selector_shaped_callback_is_referenced__and_1_more() -> None:
     text = (SRC / "status_bar_legacy.py").read_text()
     names = re.findall(r'\(RuntimeFeature\.\w+, "(\w+)"\)', text)
     # Floor only guards against the regex silently matching nothing; the
-    # table lost its weather and timebox rows in the 0.8 rebuild.
-    assert len(names) >= 15
+    # table lost its weather and timebox rows in the 0.8 rebuild and its
+    # Settings preview and message rows with the Settings window.
+    assert len(names) >= 10
     for name in names:
         assert re.search(rf"^    def {re.escape(name)}\(self", text, re.M), name
 

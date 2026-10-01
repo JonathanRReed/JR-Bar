@@ -44,47 +44,6 @@ class NotificationAuthorizationState(str, Enum):
     UNAVAILABLE = "unavailable"
 
 
-def start_authorization_refresh(
-    controller: object,
-    *,
-    client_factory: Callable[[], object],
-    thread_factory: Callable[..., object],
-) -> bool:
-    """Start one authorization observation or expose a retryable failure."""
-    if (
-        controller._notification_authorization_checked
-        or controller._notification_authorization_refresh_in_flight
-    ):
-        controller.refresh_notification_authorization_controls()
-        return False
-
-    controller._notification_authorization_generation += 1
-    generation = controller._notification_authorization_generation
-    controller._notification_authorization_refresh_in_flight = True
-
-    try:
-        client = client_factory()
-
-        def observe() -> None:
-            try:
-                state = client.authorization_state()
-            except Exception:
-                state = NotificationAuthorizationState.UNAVAILABLE
-            controller._publish_notification_authorization_state(generation, state)
-
-        worker = thread_factory(target=observe, daemon=True)
-        worker.start()
-    except Exception:
-        controller.notification_authorization_state = (
-            NotificationAuthorizationState.UNAVAILABLE
-        )
-        controller._notification_authorization_checked = True
-        controller._notification_authorization_refresh_in_flight = False
-        controller.refresh_notification_authorization_controls()
-        return False
-    return True
-
-
 @dataclass(frozen=True, slots=True)
 class _NotificationBridge:
     center: object
@@ -476,5 +435,4 @@ class MacOSNotificationClient:
 __all__ = [
     "MacOSNotificationClient",
     "NotificationAuthorizationState",
-    "start_authorization_refresh",
 ]

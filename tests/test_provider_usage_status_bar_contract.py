@@ -155,53 +155,14 @@ def test_session_opening_consults_exact_instance_policy_before_legacy_router__an
 
 
 _STATUS_BAR_PROBE_PREAMBLE = """
-from jrbar.provider_usage_platform import (
-    ProviderSourceState,
-    ProviderUsageSnapshot,
-    UsageLane,
-)
-from jrbar.provider_usage_runtime import ProviderUsageState
 from jrbar.provider_usage_status_bar import JRProviderUsageStatusBarController
 
 class FakeController:
-    def __init__(self, state=None):
-        self._jrbar_provider_usage_state = state
+    def __init__(self):
         self.refreshes = []
 
     def _request_provider_usage(self, **kwargs):
         self.refreshes.append(kwargs)
-
-def capacity_state():
-    lane = UsageLane(
-        provider_id="claude",
-        lane_id="weekly",
-        label="Weekly",
-        remaining_percent=74,
-        reset_at=1240,
-        scope="all",
-        model=None,
-        feature=None,
-        bindable=True,
-        source_id="fixture",
-    )
-    snapshot = ProviderUsageSnapshot(
-        provider_id="claude",
-        account_label=None,
-        observed_at=1000,
-        state=ProviderSourceState.READY,
-        reason_code=None,
-        action_label=None,
-        lanes=(lane,),
-        input_tokens=0,
-        cached_input_tokens=0,
-        output_tokens=0,
-        model_count=0,
-        estimated_cost_usd=None,
-        cache_savings_usd=None,
-        credits_remaining=None,
-        incident=None,
-    )
-    return ProviderUsageState((snapshot,), 1000, None, False)
 """
 
 
@@ -218,8 +179,7 @@ def _run_status_bar_probe(body: str) -> None:
     assert completed.returncode == 0, completed.stderr
 
 
-def test_refresh_gate_is_fresh_before_two_minutes_and_due_at_two_minutes__and_1_more() -> None:
-    # --- scenario: refresh_gate_is_fresh_before_two_minutes_and_due_at_two_minutes
+def test_refresh_gate_is_fresh_before_two_minutes_and_due_at_two_minutes() -> None:
     _run_status_bar_probe(
         """
 controller = FakeController()
@@ -237,20 +197,5 @@ JRProviderUsageStatusBarController.request_jr_usage_refresh(
     controller, ("claude",), monotonic=lambda: clock[0]
 )
 assert len(controller.refreshes) == 2
-"""
-    )
-
-    # --- scenario: capacity_projection_uses_injected_wall_clock
-    _run_status_bar_probe(
-        """
-controller = FakeController(capacity_state())
-fresh = JRProviderUsageStatusBarController.jr_capacity_settings_text(
-    controller, "claude", wall_clock=lambda: 1059.0
-)
-due = JRProviderUsageStatusBarController.jr_capacity_settings_text(
-    controller, "claude", wall_clock=lambda: 1060.0
-)
-assert "just checked" in fresh
-assert "checked 1m ago" in due
 """
     )

@@ -14,7 +14,6 @@ the controller and the core daemon address the Screen Bar by them.
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from .presentation_scheduler import PresentationSchedulerInputs
@@ -24,10 +23,6 @@ VIRTUAL_DEVICE_ID = "virtual:status-bar"
 VIRTUAL_DEVICE_NAME = "Screen Bar"
 #: LEDs in every Screen Bar program, the same eight the strip has.
 LED_COUNT = 8
-
-
-def monotonic_ms() -> int:
-    return int(time.monotonic() * 1000.0)
 
 
 class HeadlessScreenBar:

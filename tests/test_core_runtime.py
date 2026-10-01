@@ -746,6 +746,53 @@ def test_set_setting_writes_validates_and_reports_the_generation(headless, tmp_p
     assert controller.settings.alert_burst == status_bar.AgentMonitorSettings().alert_burst
 
 
+def test_the_closed_lid_policy_command_saves_the_policy_and_refreshes(headless, monkeypatch) -> None:
+    """The command runs the real controller method end to end: it names
+    only methods the daemon's class has, so nothing is stubbed but the
+    machine-wide power holder."""
+    controller = headless
+    monkeypatch.setattr(status_bar, "sleep_helper_installed", lambda: False)
+    holder = MagicMock(name="closed_lid_awake")
+    holder.active.return_value = False
+    holder.last_error = None
+    controller.closed_lid_awake = holder
+    controller.applicationDidFinishLaunching_(None)
+    controller.refresh_.reset_mock()
+
+    reply = controller._core_dispatch("set_closed_lid_policy", {"policy": "agents"})
+
+    assert reply == {"policy": "agents"}
+    assert controller.settings.closed_lid_awake_policy == "agents"
+    holder.update.assert_called_once()
+    assert holder.update.call_args.args == ("agents",)
+    controller.refresh_.assert_called_once_with(None)
+    with pytest.raises(CommandError):
+        controller._core_dispatch("set_closed_lid_policy", {"policy": "sometimes"})
+    assert controller.settings.closed_lid_awake_policy == "agents"
+
+
+def test_an_accessibility_change_from_the_os_poll_applies_and_refreshes(headless) -> None:
+    """The display-environment result a worker lands on the main thread
+    reaches the daemon's controller without a window to repaint."""
+    from jrbar.accessibility_display import AccessibilityDisplayPreferences
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    controller.refresh_.reset_mock()
+    preferences = AccessibilityDisplayPreferences(reduce_motion=True)
+
+    controller._apply_display_environment_result(
+        status_bar.DisplayEnvironmentResult(
+            brightness=None,
+            active_focus_ids=None,
+            accessibility_preferences=preferences,
+        )
+    )
+
+    assert controller._accessibility_display_preferences == preferences
+    controller.refresh_.assert_called_once_with(None)
+
+
 def test_set_setting_serves_and_validates_screen_bar_notch_shape(headless) -> None:
     controller = headless
     controller.applicationDidFinishLaunching_(None)

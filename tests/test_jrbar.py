@@ -1427,9 +1427,8 @@ for (const event of [
 
 
     def test_status_bar_device_observation_and_menus(self) -> None:
-        """A new mount resets observation, a connection change refreshes the
-        menu, closed-lid policy choices are offered, and stale statuses
-        still render when nothing is fresh."""
+        """A new mount resets observation, closed-lid policy choices are
+        offered, and stale statuses still render when nothing is fresh."""
         # --- scenario: status_bar_observe_connected_device_resets_on_new_mount
         try:
             from jrbar import status_bar
@@ -1463,25 +1462,6 @@ for (const event of [
 
             self.assertFalse(status_bar.StatusBarController.observe_connected_devices(target))
             self.assertEqual(reset_ids, ["/Volumes/SidePulsePro"])
-
-        # --- scenario: status_bar_poll_devices_refreshes_on_connection_change
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        calls: list[object] = []
-        target = SimpleNamespace(
-            observe_connected_devices=lambda: True,
-            last_snapshot=object(),
-            refresh_=lambda sender: calls.append(sender),
-            rebuild_devices_pane=lambda: None,
-        )
-
-        status_bar.StatusBarController.poll_devices_once(target)
-
-        self.assertEqual(calls, [None])
-
 
     def test_lid_animation(self) -> None:
         """The lid animation honors device brightness and forces an LED
@@ -11015,25 +10995,15 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         requests = self._prime_refreshes("codex")
         activity = {"summary": "Selected local history", "heatmap": "selected heatmap"}
         self.controller.usage_graph_model = activity
-        label = MagicMock()
-        graph = MagicMock()
-        self.controller.settings_fields = {
-            "profile_usage_label": label,
-            "profile_usage_graph": graph,
-        }
-        with patch("jrbar.usage_graph_worker.refresh_usage_graph") as refresh:
-            self.controller.applyUsageSummary_(
-                {
-                    "requests": requests,
-                    "results": self._results(codex=self._result("codex", 22)),
-                    "failures": {},
-                    "shared": {"usage_graph": {"series": "unfiltered legacy graph"}},
-                }
-            )
+        self.controller.applyUsageSummary_(
+            {
+                "requests": requests,
+                "results": self._results(codex=self._result("codex", 22)),
+                "failures": {},
+                "shared": {"usage_graph": {"series": "unfiltered legacy graph"}},
+            }
+        )
         self.assertIs(self.controller.usage_graph_model, activity)
-        label.setStringValue_.assert_called_with("Selected local history")
-        graph.setModel_.assert_called_with(activity)
-        refresh.assert_called_once_with(self.controller)
 
         # --- scenario: one_provider_failure_keeps_other_success_and_last_known_good
         self.setUp()  # fresh isolated controller per scenario
@@ -11109,7 +11079,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertFalse(window.reset_known)
         schedule = timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
         reset_calls = [
-            call for call in schedule.call_args_list if call.args[2] in {"capacityResetBoundary:", "capacityCountdown:"}
+            call for call in schedule.call_args_list if call.args[2] == "capacityResetBoundary:"
         ]
         self.assertEqual(reset_calls, [])
 
@@ -11230,7 +11200,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertIsNone(continuity.pending)
         schedule = timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
         reset_calls = [
-            call for call in schedule.call_args_list if call.args[2] in {"capacityResetBoundary:", "capacityCountdown:"}
+            call for call in schedule.call_args_list if call.args[2] == "capacityResetBoundary:"
         ]
         self.assertEqual(reset_calls, [])
 
@@ -11776,34 +11746,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertNotIn("/Users", model.settings_text)
 
     def test_capacity_copy_follows_the_latest_shared_models(self) -> None:
-        """Settings use the latest shared models, and the capacity copy
-        states remaining, reset and age without borrowing the scan's
-        coverage."""
-        # --- scenario: settings_use_the_latest_shared_models
-        self.setUp()  # fresh isolated controller per scenario
-        codex_label = MagicMock()
-        claude_label = MagicMock()
-        self.controller.settings_fields = {
-            "profile_codex_label": codex_label,
-            "profile_plan_label": claude_label,
-        }
-        requests = self._prime_refreshes("codex", "claude")
-        self.controller.applyUsageSummary_(
-            {
-                "requests": requests,
-                "results": self._results(
-                    codex=self._result("codex", 55),
-                    claude=self._result("claude", 65),
-                ),
-                "failures": {},
-            }
-        )
-
-        codex_model = self.controller._usage_provider_models["codex"]
-        claude_model = self.controller._usage_provider_models["claude"]
-        codex_label.setStringValue_.assert_called_with(codex_model.settings_text)
-        claude_label.setStringValue_.assert_called_with(claude_model.settings_text)
-
+        """The capacity copy states remaining, reset and age without
+        borrowing the scan's coverage."""
         # --- scenario: capacity_copy_states_remaining_reset_and_age_only
         self.setUp()  # fresh isolated controller per scenario
         requests = self._prime_refreshes("codex", "claude", completed_at=500.0)
@@ -13612,28 +13556,12 @@ class ModernNotificationControllerTests(unittest.TestCase):
     class RecordingClient:
         def __init__(self) -> None:
             self.deliveries: list[tuple[str, str, str, dict[str, str]]] = []
-            self.authorization_requests = 0
-            self.authorization_observations = 0
             self.delegates: list[object | None] = []
             self.closed = 0
 
         def deliver(self, identifier, title, body, user_info) -> bool:
             self.deliveries.append((identifier, title, body, dict(user_info)))
             return True
-
-        def request_authorization(self, completion=None) -> bool:
-            from jrbar.macos_notifications import NotificationAuthorizationState
-
-            self.authorization_requests += 1
-            if completion is not None:
-                completion(NotificationAuthorizationState.AUTHORIZED)
-            return True
-
-        def authorization_state(self):
-            from jrbar.macos_notifications import NotificationAuthorizationState
-
-            self.authorization_observations += 1
-            return NotificationAuthorizationState.AUTHORIZED
 
         def set_delegate(self, delegate) -> bool:
             self.delegates.append(delegate)
@@ -13889,78 +13817,8 @@ class ModernNotificationControllerTests(unittest.TestCase):
 
         self.assertEqual(presented, [1 << 2])
 
-        # --- scenario: explicit_permission_action_updates_controller_state
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.macos_notifications import NotificationAuthorizationState
-
-        self.controller.performSelectorOnMainThread_withObject_waitUntilDone_ = lambda selector, payload, _wait: (
-            getattr(
-                self.controller,
-                selector.replace(":", "_"),
-            )(payload)
-        )
-
-        self.controller.requestNotificationPermission_(None)
-
-        self.assertEqual(self.client.authorization_requests, 1)
-        self.assertIs(
-            self.controller.notification_authorization_state,
-            NotificationAuthorizationState.AUTHORIZED,
-        )
-
-    def test_authorization_refresh_lifecycle(self) -> None:
-        """Authorization refresh builds the bridge before the worker,
-        recovers when the worker cannot start, and termination clears
-        delegate bindings and the worker."""
-        # --- scenario: authorization_refresh_constructs_notification_bridge_before_worker
-        self.setUp()  # fresh isolated controller per scenario
-        main_thread = threading.get_ident()
-        construction_threads: list[int] = []
-        self.controller.notification_client = None
-
-        def build_client():
-            construction_threads.append(threading.get_ident())
-            return self.client
-
-        with (
-            patch.object(
-                self.status_bar,
-                "MacOSNotificationClient",
-                side_effect=build_client,
-            ),
-            patch.object(self.status_bar.threading, "Thread") as thread_type,
-        ):
-            self.controller.start_notification_authorization_refresh()
-
-        self.assertEqual(construction_threads, [main_thread])
-        observe = thread_type.call_args.kwargs["target"]
-        observe()
-        self.assertEqual(construction_threads, [main_thread])
-        self.assertEqual(self.client.authorization_observations, 1)
-
-        # --- scenario: authorization_refresh_recovers_when_worker_cannot_start
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.macos_notifications import NotificationAuthorizationState
-
-        thread = MagicMock()
-        thread.start.side_effect = RuntimeError("thread unavailable")
-        with (
-            patch.object(self.status_bar.threading, "Thread", return_value=thread),
-            patch.object(
-                self.controller,
-                "refresh_notification_authorization_controls",
-            ) as refresh_controls,
-        ):
-            self.controller.start_notification_authorization_refresh()
-
-        self.assertFalse(self.controller._notification_authorization_refresh_in_flight)
-        self.assertTrue(self.controller._notification_authorization_checked)
-        self.assertIs(
-            self.controller.notification_authorization_state,
-            NotificationAuthorizationState.UNAVAILABLE,
-        )
-        refresh_controls.assert_called_once_with()
-
+    def test_notification_termination_lifecycle(self) -> None:
+        """Termination clears delegate bindings and the worker."""
         # --- scenario: termination_clears_notification_delegate_bindings_and_worker
         self.setUp()  # fresh isolated controller per scenario
         self._deliver_completion()
@@ -15711,192 +15569,6 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
         values.update(changes)
         return self.status_bar.PresentationSchedulerInputs(**values)
 
-    def test_task9g_preview_lifecycle(self) -> None:
-        """Signal/color previews are pane-scoped, bounded, idempotent; engines
-        release on irrelevance/reduce-motion; setup preview stops for
-        close, sleep, and termination."""
-        # --- scenario: task9g_signal_preview_is_exact_pane_scoped_bounded_and_idempotent
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        window_state = {"visible": True}
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: window_state["visible"])
-        self.controller.current_settings_pane = "led_behavior"
-        preview = MagicMock()
-        preview.isHiddenOrHasHiddenAncestor.return_value = False
-        preview.visibleRect.return_value = SimpleNamespace(size=SimpleNamespace(width=120.0))
-        self.controller.settings_fields = {"signal_preview:calendar": preview}
-        inputs = self._inputs(screen_bar_enabled=False, visible=False)
-
-        for _ in range(100):
-            self.controller.reconcile_presentation_timers(inputs)
-
-        timer = next(
-            timer
-            for timer in self.factory.live
-            if timer.feature is self.status_bar.RuntimeFeature.SETTINGS_SIGNAL_PREVIEW
-        )
-        self.assertGreaterEqual(timer.interval, 1.0 / 30.0)
-        self.assertEqual(timer.tolerances, [timer.interval * 0.1])
-        # Default mode (2026-08-26): preview thumbnails re-rendering inside
-        # a scroll gesture was the settings window's own lag.
-        self.assertIn((timer, False), self.factory.registrations)
-        self.assertEqual(
-            sum(
-                candidate.feature is self.status_bar.RuntimeFeature.SETTINGS_SIGNAL_PREVIEW
-                for candidate in self.factory.created
-            ),
-            1,
-        )
-
-        self.clock[0] += timer.interval
-        self.controller.runtimeTimerFired_(timer)
-        preview.setNeedsDisplay_.assert_called_once_with(True)
-
-        self.controller.current_settings_pane = "profile"
-        self.controller._reconcile_current_presentation_inputs()
-        self.assertEqual(timer.invalidations, 1)
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.SETTINGS_SIGNAL_PREVIEW,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-        preview.setNeedsDisplay_.reset_mock()
-        self.controller.runtimeTimerFired_(timer)
-        preview.setNeedsDisplay_.assert_not_called()
-
-        # --- scenario: task9g_color_preview_releases_engines_on_irrelevance_and_reduce_motion
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: True)
-        self.controller.current_settings_pane = "color_studio"
-        self.controller.color_preview_rows = [{"led_count": 8, "dots": (), "legend": MagicMock()}]
-        engine = MagicMock()
-        engine.step.return_value = ()
-        self.controller.color_preview_wasm = {8: engine}
-        self.controller.color_preview_programs = {8: "#112233"}
-        inputs = self._inputs(screen_bar_enabled=False, visible=False)
-
-        self.controller.reconcile_presentation_timers(inputs)
-
-        timer = next(
-            timer
-            for timer in self.factory.live
-            if timer.feature is self.status_bar.RuntimeFeature.SETTINGS_COLOR_PREVIEW
-        )
-        self.assertGreaterEqual(timer.interval, 1.0 / 30.0)
-        self.assertIn((timer, False), self.factory.registrations)
-        self.clock[0] += timer.interval
-        self.controller.runtimeTimerFired_(timer)
-        engine.step.assert_called_once()
-
-        self.controller._accessibility_display_preferences = self.status_bar.AccessibilityDisplayPreferences(
-            reduce_motion=True
-        )
-        self.controller._reconcile_current_presentation_inputs()
-
-        self.assertEqual(timer.invalidations, 1)
-        self.assertEqual(self.controller.color_preview_wasm, {})
-        self.assertEqual(self.controller.color_preview_programs, {})
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.SETTINGS_COLOR_PREVIEW,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-
-        # --- scenario: task9g_setup_preview_stops_for_close_sleep_and_termination
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        window_state = {"visible": True}
-        self.controller.setup_window = SimpleNamespace(isVisible=lambda: window_state["visible"])
-        demo_view = MagicMock()
-        self.controller.setup_fields = {"demo_view": demo_view}
-        active = self._inputs(screen_bar_enabled=False, visible=False)
-
-        self.controller.reconcile_presentation_timers(active)
-        first = next(timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.SETUP_DEMO)
-        self.assertEqual(first.interval, 1.0 / 30.0)
-        self.assertIn((first, False), self.factory.registrations)
-
-        self.clock[0] += first.interval
-        self.controller.runtimeTimerFired_(first)
-        demo_view.setNeedsDisplay_.assert_called_once_with(True)
-
-        window_state["visible"] = False
-        self.controller._reconcile_current_presentation_inputs()
-        self.assertEqual(first.invalidations, 1)
-        demo_view.setNeedsDisplay_.reset_mock()
-        self.controller.runtimeTimerFired_(first)
-        demo_view.setNeedsDisplay_.assert_not_called()
-
-        window_state["visible"] = True
-        self.controller._reconcile_current_presentation_inputs()
-        second = next(
-            timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.SETUP_DEMO
-        )
-        self.controller.reconcile_presentation_timers(self._inputs(display_asleep=True))
-        self.assertEqual(second.invalidations, 1)
-
-        self.controller.reconcile_presentation_timers(active)
-        third = next(timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.SETUP_DEMO)
-        self.controller.reconcile_presentation_timers(self._inputs(app_terminating=True))
-        self.assertEqual(third.invalidations, 1)
-
-    def test_task9g_deadlines__and_1_more(self) -> None:
-        """The settings-message deadline is keyed, replaced on re-arm and
-        non-replaying after elapsed close or sleep, and tip and completion
-        holds share one finite deadline; dispatch never mutates tracked menu
-        hierarchy or controls."""
-        # --- scenario: task9g_settings_message_deadline_replaces_and_elapsed_close_does_not_replay
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        window_state = {"visible": True}
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: window_state["visible"])
-        label = MagicMock()
-        self.controller.settings_fields = {"message": label}
-        inputs = self._inputs(screen_bar_enabled=False, visible=False)
-        self.controller._presentation_scheduler_inputs = inputs
-
-        self.controller.set_settings_message("First")
-        first = next(
-            timer
-            for timer in self.factory.live
-            if timer.feature is self.status_bar.RuntimeFeature.SETTINGS_MESSAGE_DEADLINE
-        )
-        self.clock[0] += 1.0
-        self.controller.set_settings_message("Second")
-        second = next(
-            timer
-            for timer in self.factory.live
-            if timer.feature is self.status_bar.RuntimeFeature.SETTINGS_MESSAGE_DEADLINE
-        )
-
-        self.assertIsNot(first, second)
-        self.assertEqual(first.invalidations, 1)
-        self.assertIsNone(second.interval)
-        self.assertIn((second, True), self.factory.registrations)
-        label.setAlphaValue_.assert_called_with(1.0)
-
-        self.controller.runtimeTimerFired_(first)
-        label.animator.return_value.setAlphaValue_.assert_not_called()
-
-        window_state["visible"] = False
-        self.controller._settings_window_closing = True
-        self.controller._reconcile_current_presentation_inputs()
-        self.assertEqual(second.invalidations, 1)
-        self.clock[0] += 4.0
-        window_state["visible"] = True
-        self.controller._settings_window_closing = False
-        self.controller._reconcile_current_presentation_inputs()
-
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.SETTINGS_MESSAGE_DEADLINE,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-        self.assertEqual(label.setAlphaValue_.call_args, call(0.0))
-        label.animator.return_value.setAlphaValue_.assert_not_called()
-
     def test_task10_status_transition_coordinator(self) -> None:
         """Status transitions drive the finite coordinator with keyed
         settlement; a sleep through the production cue settles without
@@ -16946,17 +16618,15 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
 
     def test_device_inventory_gating(self) -> None:
         """A legacy virtual device never restores a poll timer; disabled LEDs
-        and a closed devices pane schedule no work; runtime reads only
+        schedule no work; runtime reads only
         worker-published inventory; the adapter refuses >16 devices;
         targets are distinct mounted per-device paths."""
-        # --- scenario: disabled_leds_and_closed_devices_pane_schedule_no_inventory_or_hardware_work
+        # --- scenario: disabled_leds_schedule_no_inventory_or_hardware_work
         self.setUp()  # fresh isolated controller per scenario
         self.controller.leds_enabled = False
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: False)
-        self.controller.current_settings_pane = "devices"
 
         with patch.object(self.status_bar, "discover_devices") as discover:
-            self.controller.reconcile_device_runtime()
+            self.controller.reconcile_lid_observation()
 
         discover.assert_not_called()
         snapshots = {snapshot.domain: snapshot for snapshot in self.controller._runtime_worker_registry.snapshot()}
@@ -17218,74 +16888,6 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         active_display.assert_not_called()
         physical.sync_program.assert_called_once_with("#FF0000 1s", LedDisplayState.FAILED)
         self.assertTrue(result.write.changed)
-
-        # --- scenario: physical_calibration_preview_uses_worker_and_excludes_live_writes
-        self.setUp()  # fresh isolated controller per scenario
-        device = self.status_bar.StatusBarDevice(
-            device_id="sidepulse-test",
-            name="SidePulse Test",
-            root=Path("/Volumes/JRBarTest"),
-            target=Path("/Volumes/JRBarTest/LEDS.LED"),
-            connected=True,
-            display=self.status_bar.LED_DISPLAY_AGENT,
-        )
-        submitted = []
-        worker = SimpleNamespace(
-            discard_pending_prefix=MagicMock(return_value=2),
-            submit=lambda command: submitted.append(command),
-        )
-        physical = MagicMock()
-        physical.brightness = 128
-        physical.sync_program.return_value = self.status_bar.LedStatusWrite(
-            LedDisplayState.ASK,
-            device.target,
-            "preview",
-            True,
-        )
-        self.controller._hardware_write_worker = worker
-        self.controller._hardware_write_active = True
-        self.controller._hardware_write_generation = 9
-        self.controller.calibration_test = (device.device_id, "#FFFFFF")
-
-        with (
-            patch.object(self.controller, "status_bar_devices", return_value=[device]),
-            patch.object(self.controller, "agent_controller_for_device", return_value=physical),
-            patch.object(self.controller, "sync_virtual_status_device"),
-            patch.object(self.status_bar, "write_led_program") as direct_writer,
-        ):
-            self.controller._send_calibration_test()
-            self.controller.sync_leds(
-                AgentMode.WORKING,
-                None,
-                self.status_bar.LED_DISPLAY_AGENT,
-                (),
-            )
-
-        self.assertEqual(len(submitted), 1)
-        command = submitted[0]
-        self.assertIs(command.priority, self.status_bar.RuntimeWorkPriority.EXPLICIT)
-        self.assertTrue(command.coalesce_key.endswith(":preview-calibration"))
-        self.assertEqual(
-            self.controller._active_calibration_preview_key,
-            command.coalesce_key,
-        )
-        self.assertEqual(command.payload.display_kind, self.status_bar.LED_DISPLAY_TEST)
-        self.assertIs(command.payload.override_state, LedDisplayState.ASK)
-        self.assertIn("#FFFFFF", command.payload.override_program)
-        worker.discard_pending_prefix.assert_called_once_with(f"{command.key}:")
-        direct_writer.assert_not_called()
-
-        with patch.object(
-            self.controller,
-            "agent_controller_for_device",
-            return_value=physical,
-        ):
-            result = self.controller._execute_hardware_write_command(command)
-        physical.sync_program.assert_called_once_with(
-            command.payload.override_program,
-            LedDisplayState.ASK,
-        )
-        self.assertIsNone(self.status_bar.hardware_presentation_sync_for_result(result))
 
     def test_transition_flourish_writer_gating__and_2_more(self) -> None:
         """The flourish cancels its generation before the detached writer,
@@ -18478,7 +18080,7 @@ class CanonicalAgentBrowserIntegrationTests(unittest.TestCase):
 
     def test_local_acknowledge_and_resume_update_content_free_history(self) -> None:
         """A local acknowledge and a resume from the deck path write content-free
-        history rows and reel phrases, leave the request phase alone, and keep
+        history rows, leave the request phase alone, and keep
         the acknowledgement out of the stored local triage state."""
         self.controller.operator_history_store.path = (
             Path(self._tmp.name) / "operator-history.json"
@@ -18523,13 +18125,6 @@ class CanonicalAgentBrowserIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(self.controller.current_operator_state.requests[0].phase, original_phase)
         self.assertEqual(self.controller.local_triage_state.acknowledgements, ())
-        self.assertEqual(
-            self.controller.operator_history_reel[-2:],
-            (
-                "Request acknowledged locally",
-                "Request escalation resumed",
-            ),
-        )
 
     def test_action_generation_fencing(self) -> None:
         """Actions revalidate generation and keep a failed save visible; the

@@ -79,7 +79,6 @@ def _prepare_terminate_controller(controller, monkeypatch):
     controller._capacity_history_store = None
     controller._capacity_history_generation = 0
     controller._installed_agent_inventory_generation = 0
-    controller._runtime_preview_fire_at = []
     controller.monitor = None
     controller.virtual_status_device = SimpleNamespace(
         terminate=MagicMock(name="terminate")
@@ -89,7 +88,6 @@ def _prepare_terminate_controller(controller, monkeypatch):
     )
     controller.keep_awake = SimpleNamespace(release=MagicMock(name="release"))
     controller.stop_remote_peer_timer = MagicMock(name="stop_remote_peer_timer")
-    controller.release_preview_engines = MagicMock(name="release_preview_engines")
     controller.publish_local_ledger_now = MagicMock(name="publish_local_ledger_now")
     controller.stop_cloud_ingest_server = MagicMock(name="stop_cloud_ingest_server")
     controller.stop_hook_ingress = MagicMock(name="stop_hook_ingress")
@@ -151,7 +149,6 @@ def test_application_will_terminate_only_closes_once_when_called_twice(
     target._usage_refresh_workers.close_all.assert_called_once_with(
         timeout_seconds=1.0
     )
-    target.release_preview_engines.assert_called_once_with()
     target.stop_remote_peer_timer.assert_called_once_with()
     target.publish_local_ledger_now.assert_called_once_with(())
     target.stop_cloud_ingest_server.assert_called_once_with()
