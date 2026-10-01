@@ -281,7 +281,7 @@ public final class CoreModel {
         guard let result = reply.result else {
             throw CoreReplyError(code: "bad_reply", message: "list_roster: missing result")
         }
-        return try ReplyDecoding.decode(CoreRoster.self, from: result)
+        return try await ReplyDecoding.decodeOffMain(CoreRoster.self, from: result)
     }
 
     /// `session_timeline`: the session's provider transcript as bounded
@@ -302,7 +302,7 @@ public final class CoreModel {
         guard let result = reply.result else {
             throw CoreReplyError(code: "bad_reply", message: "session_timeline: missing result")
         }
-        return try ReplyDecoding.decode(CoreTimelinePage.self, from: result)
+        return try await ReplyDecoding.decodeOffMain(CoreTimelinePage.self, from: result)
     }
 
     /// `compare_sessions`: two runs side by side on retained facts —

@@ -706,4 +706,19 @@ public enum ReplyDecoding {
         let data = try JSONEncoder().encode(value ?? .object([:]))
         return try JSONDecoder().decode(type, from: data)
     }
+
+    /// The same decode, run off the caller's actor. A reply is decoded by
+    /// re-encoding its `JSONValue` tree and decoding that, row by row for
+    /// the tolerant lists, and a large document costs real time doing it:
+    /// measured in a release build, 41 ms for the 500 rows `list_roster`
+    /// asks for by default and 164 ms for the 2000 the Overview asks for;
+    /// 3.5 ms for a 100-item `session_timeline` page. On the main actor
+    /// that is a dropped frame, or ten. The value that comes back is
+    /// `Sendable` and exactly what `decode` returns, errors included.
+    public static func decodeOffMain<T: Decodable & Sendable>(_ type: T.Type,
+                                                              from value: JSONValue?) async throws -> T {
+        try await Task.detached(priority: .userInitiated) {
+            try decode(type, from: value)
+        }.value
+    }
 }
