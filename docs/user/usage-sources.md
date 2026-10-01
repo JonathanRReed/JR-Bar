@@ -160,6 +160,14 @@ A key matches when it appears inside the model name, and the longest key
 wins. An override always beats the snapshot. A model neither knows stays
 unpriced, never $0.
 
+Each record is priced by the model it ran, not by the agent that wrote it.
+Pi, OpenClaw and OpenCode run models from several makers, so a GPT model
+takes OpenAI's prices, a Gemini model Google's, and a Claude model
+Anthropic's, whichever agent ran it. The Gemini CLI uses Google's and Codex
+OpenAI's. When the cost graph meets a model with no price, its summary line
+says "No price for" and names it: those tokens are still counted, and only
+their dollars are left out.
+
 ## Reset credits
 
 Some providers give an account a few credits that reset a limit early.
