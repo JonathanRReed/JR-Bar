@@ -30,6 +30,17 @@ hand-written examples.
   on the daemon side so no raw newline ever appears). Max frame 1 MiB in
   both directions: an oversize outbound frame is dropped and counted, an
   oversize inbound frame closes that client.
+- Numbers: a number that is not finite (NaN, `+Infinity`, `-Infinity`) is
+  never written as a bare token, which is not JSON and would cost the app
+  the whole frame. The daemon writes `null` in its place, in every frame
+  kind and at any depth, and counts the frame (`sanitized_frames`). `null`
+  already means "no reading" wherever the protocol allows it
+  (`used_pct: null`), so a consumer needs no new case. The app's decoder
+  also reads the quoted strings `"inf"`, `"-inf"` and `"nan"`, but the
+  daemon never sends them: the app turns some of these doubles into an
+  `Int`, which traps on an infinity, and `null` cannot. A frame that cannot be written at all (an object
+  JSON has no form for) is dropped and counted (`dropped_unencodable`),
+  and the connection carries on.
 - Clients: up to 4 at once; the fifth is refused.
 - Lifecycle: the app launches the daemon as a child when `JRBAR_CORE_EXEC`
   is set (`CoreSupervisor`), otherwise it connects to whatever listens.

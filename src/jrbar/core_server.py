@@ -17,6 +17,7 @@ blocks the caller on socket I/O.
 from __future__ import annotations
 
 import json
+import math
 import os
 import socket
 import stat
@@ -135,10 +136,59 @@ def default_core_socket_path() -> Path:
     return default_state_dir() / CORE_SOCKET_NAME
 
 
+def _without_non_finite(value: Any, replaced: list[int]) -> Any:
+    """A copy of ``value`` with every NaN and infinity replaced by ``None``.
+
+    ``replaced[0]`` counts them. Only containers JSON writes (dicts, lists,
+    tuples) are rebuilt; everything else is returned as it came, so a value
+    ``json`` cannot write still fails loudly in the encoder.
+    """
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        replaced[0] += 1
+        return None
+    if isinstance(value, dict):
+        return {key: _without_non_finite(item, replaced) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_without_non_finite(item, replaced) for item in value]
+    return value
+
+
+def _dump(document: Any) -> bytes:
+    text = json.dumps(document, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+    return (text + "\n").encode("ascii")
+
+
+def encode_frame_counting(document: dict[str, Any]) -> tuple[bytes, int]:
+    """``encode_frame`` and how many non-finite numbers it had to replace.
+
+    A document nobody built a NaN into costs one ``json.dumps`` and nothing
+    more; only a document that holds one is walked and rewritten.
+    """
+    try:
+        return _dump(document), 0
+    except ValueError:
+        # Either a NaN or infinity somewhere in the document (the encoder
+        # refuses them) or something worse, which the second pass raises
+        # again for the caller to count as a drop.
+        replaced = [0]
+        clean = _without_non_finite(document, replaced)
+        return _dump(clean), replaced[0]
+
+
 def encode_frame(document: dict[str, Any]) -> bytes:
     """One NDJSON line. ``t`` and ``v`` must be present; the result never
-    contains a raw newline because ``ensure_ascii`` escapes them."""
-    return (json.dumps(document, separators=(",", ":"), ensure_ascii=True) + "\n").encode("ascii")
+    contains a raw newline because ``ensure_ascii`` escapes them.
+
+    A number that is not finite (NaN, +inf, -inf) goes out as ``null``: a bare
+    ``NaN`` or ``Infinity`` token is not JSON, and the app drops the whole
+    frame that holds one. ``null`` reads as "no reading" everywhere the
+    protocol already says so (``used_pct: null``). Raises ``TypeError`` or
+    ``ValueError`` for a document that cannot be written at all, which the
+    server turns into a counted drop (``CoreServer._encode``).
+    """
+    return encode_frame_counting(document)[0]
 
 
 def _envelope(kind: str, document: dict[str, Any]) -> dict[str, Any]:
@@ -315,7 +365,8 @@ class CoreServer:
         self.stats = {"frames_out": 0, "commands": 0, "dropped_oversize": 0,
                       "refused_clients": 0, "deduped_frames": 0,
                       "dropped_queue": 0, "journal_dropped": 0,
-                      "slow_lane": 0, "slow_lane_refused": 0}
+                      "slow_lane": 0, "slow_lane_refused": 0,
+                      "sanitized_frames": 0, "dropped_unencodable": 0}
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -612,10 +663,8 @@ class CoreServer:
             self._flush_condition.notify_all()
 
     def _enqueue_locked(self, body: dict[str, Any]) -> None:
-        try:
-            frame = encode_frame(body)
-        except (TypeError, ValueError) as exc:
-            self._log(f"core frame not serialisable: {exc}")
+        frame = self._encode(body, body.get("t"))
+        if frame is None:
             return
         if len(frame) > MAX_FRAME_BYTES:
             self.stats["dropped_oversize"] += 1
@@ -645,10 +694,8 @@ class CoreServer:
                 for kind in ready:
                     body = self._pending.pop(kind)
                     self._last_sent[kind] = self._clock()
-                    try:
-                        frame = encode_frame(body)
-                    except (TypeError, ValueError) as exc:
-                        self._log(f"core {kind} not serialisable: {exc}")
+                    frame = self._encode(body, kind)
+                    if frame is None:
                         continue
                     if len(frame) > MAX_FRAME_BYTES:
                         self.stats["dropped_oversize"] += 1
@@ -773,14 +820,18 @@ class CoreServer:
             self._drop_clients([client])
 
     def _greet(self, client: _Client) -> None:
-        client.send(encode_frame(self.hello_document()))
+        hello = self._encode(self.hello_document(), "hello")
+        if hello is not None:
+            client.send(hello)
         for document in self._initial_documents():
             if not client.alive:
                 break
             kind = document.get("t")
             if not isinstance(kind, str):
                 continue
-            frame = encode_frame(_envelope(kind, document))
+            frame = self._encode(_envelope(kind, document), kind)
+            if frame is None:
+                continue
             if len(frame) > MAX_FRAME_BYTES:
                 self._log(f"core skipped oversize initial {document.get('t')} frame")
                 continue
@@ -788,7 +839,9 @@ class CoreServer:
         for event in self.recent_reset_events():
             if not client.alive:
                 break
-            frame = encode_frame(event)
+            frame = self._encode(event, "quota_reset")
+            if frame is None:
+                continue
             if len(frame) > MAX_FRAME_BYTES:
                 self._log("core skipped oversize initial quota_reset frame")
                 continue
@@ -901,6 +954,36 @@ class CoreServer:
             reply["result"] = {"repr": repr(result)[:2000]}
         return reply
 
+    def _encode(self, document: dict[str, Any], kind: object) -> bytes | None:
+        """The wire bytes for ``document``, or ``None`` after a counted,
+        logged drop when it cannot be written at all.
+
+        A non-finite number is sent as ``null`` (``encode_frame``) and the
+        frame is counted in ``sanitized_frames``. Nothing here raises: a
+        document that cannot be encoded costs that one frame, never the
+        flusher, a reader thread or the client's connection.
+        """
+        try:
+            frame, replaced = encode_frame_counting(document)
+        except Exception as exc:
+            self.stats["dropped_unencodable"] += 1
+            self._log(f"core could not encode a {kind} frame, dropped: {exc.__class__.__name__}: {str(exc)[:200]}")
+            return None
+        if replaced:
+            self._note_sanitized(kind, replaced)
+        return frame
+
+    def _note_sanitized(self, kind: object, replaced: int) -> None:
+        self.stats["sanitized_frames"] += 1
+        count = self.stats["sanitized_frames"]
+        # A producer of NaN would repeat on every state build; say it once,
+        # then rarely.
+        if count == 1 or count % 256 == 0:
+            self._log(
+                f"core sent null for {replaced} non-finite number(s) in a {kind} frame "
+                f"({count} frame(s) so far)"
+            )
+
     @staticmethod
     def _reply(
         command_id: str | None,
@@ -969,4 +1052,5 @@ __all__ = [
     "CoreServer",
     "default_core_socket_path",
     "encode_frame",
+    "encode_frame_counting",
 ]
