@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from jrbar.answer_decisions import DecisionBroker, permission_facts
-from jrbar.hook import HookProcessingOutcome, process_hook_payload
+from jrbar.hook import HookProcessingOutcome, process_hook_payload, routed_hook_payload
 from jrbar.hook_ingress import HookIngressService
 from jrbar.hook_ingress_protocol import HookIngressRequest
 from jrbar.models import HookEvent
@@ -27,7 +27,6 @@ from jrbar.operator_state import (
 )
 from jrbar.provider_facts import ProviderRequestState, WorkLifecycle
 from jrbar.providers import parse_log_line
-from jrbar.hook import routed_hook_payload
 from tests.test_provider_adapters import _batch
 
 BOOT = BootIdentifier("boot:01")

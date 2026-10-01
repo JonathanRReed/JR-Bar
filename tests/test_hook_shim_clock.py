@@ -19,8 +19,10 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -32,12 +34,32 @@ from jrbar.hook_ingress_protocol import (
     decode_hook_ingress_request,
     encode_hook_ingress_response,
 )
-from tests.test_hook_shim import _FakeIngress, shim, sock_dir  # noqa: F401  (the shim and socket-dir fixtures)
+from tests.test_hook_shim import _FakeIngress
 
 ROOT = Path(__file__).resolve().parents[1]
+SHIM = ROOT / "hook" / "build" / "jrbar-hook"
 HOUR = 3600
 # Bounds a hang, never a slow machine: a shim that works returns well inside it.
 HANG_BOUND_SECONDS = 15.0
+
+
+@pytest.fixture
+def sock_dir():
+    """AF_UNIX paths are capped at 104 bytes; pytest's tmp_path is too long."""
+    path = Path(tempfile.mkdtemp(prefix="jrbar-", dir=tempfile.gettempdir()))
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+@pytest.fixture(scope="module")
+def shim() -> Path:
+    if not Path("/usr/bin/clang").exists() and shutil.which("clang") is None:
+        pytest.skip("clang not available")
+    if not SHIM.exists() or SHIM.stat().st_mtime < (ROOT / "hook" / "jrbar-hook.c").stat().st_mtime:
+        subprocess.run([str(ROOT / "hook" / "build.sh")], check=True, capture_output=True)
+    return SHIM
 
 
 @pytest.fixture(scope="module")
