@@ -1425,7 +1425,12 @@ JRBARHOOK\x01 + be32(header length) + be32(payload length)
 ```
 
 It waits up to 200 ms for the disposition and exits 0; everything after it
-has read stdin is capped at 250 ms. Measured on this Mac (2026-09-09, 100 invocations from a
+has read stdin is capped at 250 ms. Every such budget, the spool lock wait
+and the 50 s decide wait are timed on a clock that only moves forward
+(`CLOCK_UPTIME_RAW`, the one `poll(2)` and the daemon's own hold use), never
+the wall clock, so a clock correction cannot stretch a wait and a wake from
+sleep cannot make it look spent; the only wall-clock read is the
+`queued_at_ms` stamped on a spooled record. Measured on this Mac (2026-09-09, 100 invocations from a
 shell loop): 6.2 ms wall per invocation of which 3.3 ms is the bare
 fork/exec (`/usr/bin/true` in the same loop), so the shim's own work is
 about 3 ms; from Python's `subprocess.run` the median is 5.7 ms; the

@@ -58,10 +58,10 @@
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <time.h>
 #include <unistd.h>
 
 #define MAX_PAYLOAD (1024 * 1024)
@@ -87,10 +87,27 @@
 #define THEN_BUDGET_MS 3000
 #define THEN_OUTPUT_BYTES 4096
 
+/* Every deadline and elapsed time in this file runs on now_ms(), a clock
+ * that only moves forward and that nothing sets: an NTP correction or the
+ * owner changing the date cannot lengthen a 250 ms wait by the size of the
+ * step, and a wake from sleep cannot make a 50 s decide window look spent.
+ * CLOCK_UPTIME_RAW rather than CLOCK_MONOTONIC because on macOS the latter
+ * keeps counting through sleep: UPTIME_RAW is the clock poll(2) times its own
+ * timeout on, and the daemon's time.monotonic() and the agents' hook timers
+ * run on it too, so all of them agree about how much of a wait is left. */
 static uint64_t now_ms(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (uint64_t)tv.tv_sec * 1000u + (uint64_t)tv.tv_usec / 1000u;
+    struct timespec ts = { 0, 0 };
+    clock_gettime(CLOCK_UPTIME_RAW, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+/* The wall clock, for the one thing that is a date rather than a duration:
+ * the time stamped on a spooled record, so a late drain logs the event when
+ * it happened. Never used for a budget. */
+static uint64_t wall_ms(void) {
+    struct timespec ts = { 0, 0 };
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
 }
 
 /* JSON-escape src into dst (which must hold 6*len+1 bytes). */
@@ -494,7 +511,7 @@ static void run_then(const char *command, const char *payload, size_t len) {
 }
 
 int main(int argc, char **argv) {
-    uint64_t started = now_ms();
+    uint64_t queued_at = wall_ms();
     const char *provider = NULL, *log = NULL, *then = NULL;
     int emit_empty = 0, decide = 0, statusline = 0;
     for (int i = 1; i < argc; i++) {
@@ -532,7 +549,7 @@ int main(int argc, char **argv) {
     /* The budget starts once the payload is in hand. The time an agent
      * takes to write and close stdin is its own; counting it left a shim
      * spawned well before its payload arrived no time to wait out another
-     * shim's append (200 shims spawned before any was fed). `started`
+     * shim's append (200 shims spawned before any was fed). `queued_at`
      * stays the event's queued time. */
     uint64_t received = now_ms();
     uint64_t deadline = received + HARD_BUDGET_MS;
@@ -582,7 +599,7 @@ int main(int argc, char **argv) {
         free(payload);
         return 0;
     }
-    if (result != 0) queue_pending(dir, provider, ppid, ppid_start, started, payload, len, deadline);
+    if (result != 0) queue_pending(dir, provider, ppid, ppid_start, queued_at, payload, len, deadline);
     if (reply) {
         const char *verdict = NULL;
         size_t verdict_len = decide_verdict(reply, reply_len, &verdict);
