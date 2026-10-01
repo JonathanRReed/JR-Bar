@@ -512,6 +512,14 @@ class AgentMonitorSettings:
     # Off by default -- it is a request that leaves the Mac, so nothing is
     # contacted until the person turns it on.
     provider_status_feeds_enabled: bool = False
+    # Settings > Agents' "Check for agent updates" switch: when on, the daemon asks
+    # registry.npmjs.org for the latest version of each installed agent CLI that
+    # has an npm package (provider_updates.py), every 6 hours and when the Agents
+    # page is refreshed, so a row can say "2.1.290 available". Off by default --
+    # it is a request that leaves the Mac, so nothing is contacted until the
+    # person turns it on. The Update button never needs it: it runs the CLI's own
+    # updater, and only when clicked.
+    provider_update_checks_enabled: bool = False
     # Scenes are presentation policy only. Calm is the compatibility default:
     # until a runtime owner consumes this policy, existing display behavior is
     # unchanged, while every settings document has one valid active scene.
@@ -1436,6 +1444,9 @@ class AgentMonitorSettings:
     def with_provider_status_feeds_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, provider_status_feeds_enabled=bool(enabled))
 
+    def with_provider_update_checks_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, provider_update_checks_enabled=bool(enabled))
+
     def with_active_scene(self, scene: object) -> AgentMonitorSettings:
         selected = scene_from_value(scene)
         if selected is None:
@@ -1929,6 +1940,7 @@ class AgentMonitorSettings:
             "serve_enabled": self.serve_enabled,
             "serve_answer_enabled": self.serve_answer_enabled,
             "provider_status_feeds_enabled": self.provider_status_feeds_enabled,
+            "provider_update_checks_enabled": self.provider_update_checks_enabled,
             "active_scene": _scene_setting(self.active_scene),
             "active_scene_pack": (
                 self.active_scene_pack
@@ -2382,6 +2394,9 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
         serve_answer_enabled=_bool_setting(data.get("serve_answer_enabled"), False),
         provider_status_feeds_enabled=_bool_setting(
             data.get("provider_status_feeds_enabled"), False
+        ),
+        provider_update_checks_enabled=_bool_setting(
+            data.get("provider_update_checks_enabled"), False
         ),
         active_scene=_scene_setting(data.get("active_scene")),
         active_scene_pack=(

@@ -700,6 +700,82 @@ final class UsageCenterStore {
         }
     }
 
+    // MARK: Fix sign-in
+
+    /// Providers waiting on `provider_sign_in`, keyed by identity — the
+    /// button spins while the daemon works (a Claude renewal is a real call
+    /// the daemon allows 90 s).
+    private(set) var fixingSignIn: Set<String> = []
+
+    /// What the last Fix sign-in click said, on the card where it was
+    /// clicked: the daemon's own sentence, kept long enough to read and to
+    /// act on (the banner clears after four seconds).
+    struct SignInNote: Equatable {
+        /// How the sentence reads: a thing that is done, something left for
+        /// the person (finish the sign-in in the terminal that opened, read
+        /// the advice), or plain information (a staged action's own words).
+        enum Tone: Equatable { case done, todo, info }
+        let text: String
+        let tone: Tone
+        var needsPerson: Bool { tone == .todo }
+    }
+    private(set) var signInNotes: [String: SignInNote] = [:]
+    @ObservationIgnored private var signInNoteClear: [String: DispatchWorkItem] = [:]
+    /// How long a note stays under its card.
+    nonisolated static let signInNoteLife: TimeInterval = 45
+
+    func isFixingSignIn(_ provider: CoreProviderUsage) -> Bool {
+        fixingSignIn.contains(provider.identity)
+    }
+
+    /// What a Fix sign-in reply is shown as: the daemon's sentence as it is,
+    /// or a plain fallback if it sent none.
+    nonisolated static func signInNote(for result: ProviderSignInResult) -> SignInNote {
+        let words = result.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tone: SignInNote.Tone = result.outcome == .staged ? .info : (result.outcome.needsPerson ? .todo : .done)
+        return SignInNote(text: words.isEmpty ? "Checked \(result.provider)'s sign-in." : words, tone: tone)
+    }
+
+    /// "Fix sign-in": asks the daemon to do the best automatic thing for
+    /// this provider — re-read what its tooling holds, ask Claude Code to
+    /// renew its own sign-in, or open your terminal on the provider's own
+    /// login — and shows the sentence it answers with. A click, never run
+    /// on open. Afterwards the card is read again; the daemon has already
+    /// forced the provider's usage refresh, so the card flips on its own
+    /// the moment the new sign-in lands. A `sign_in_url` means the remedy is
+    /// a page only the person can sign in to, and it is opened for them.
+    func fixSignIn(_ provider: CoreProviderUsage) {
+        guard core.isLive, !fixingSignIn.contains(provider.identity) else { return }
+        fixingSignIn.insert(provider.identity)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.fixingSignIn.remove(provider.identity) }
+            do {
+                let result = try await self.core.signInProvider(
+                    provider.id,
+                    instance: provider.instance == "default" ? nil : provider.instance
+                )
+                self.note(signIn: Self.signInNote(for: result), for: provider.identity)
+                if let urlString = result.signInURL, let url = URL(string: urlString) {
+                    NSWorkspace.shared.open(url)
+                }
+                self.loadProviderRows()
+            } catch {
+                self.note(signIn: SignInNote(text: Self.describe(error), tone: .todo), for: provider.identity)
+            }
+        }
+    }
+
+    private func note(signIn note: SignInNote, for identity: String) {
+        signInNotes[identity] = note
+        signInNoteClear[identity]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.signInNotes[identity] = nil }
+        }
+        signInNoteClear[identity] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.signInNoteLife, execute: work)
+    }
+
     /// Revokes one exact consent; the daemon removes the imported
     /// credential only while it is still the imported one.
     func revokeConsent(providerID: String, consent: ProviderConsentRow) {

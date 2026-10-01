@@ -1191,6 +1191,39 @@ final class SettingsStore {
         }
     }
 
+    // MARK: Provider updates
+
+    /// Providers whose Update click is waiting on the daemon's reply. The
+    /// reply comes at once (the updater runs on a daemon thread); the run
+    /// itself shows in `core.providerUpdates`, so a second click is also
+    /// refused while that says `running`.
+    private(set) var updateBusy: Set<String> = []
+
+    /// `provider_update`: runs the provider's own updater. Explicit only: a
+    /// click on a row's Update button. A refusal (no updater, not installed,
+    /// busy) is the reply's own sentence on the row, as an install's is.
+    func updateProvider(_ provider: String) {
+        guard !updateBusy.contains(provider), core.providerUpdates[provider]?.isRunning != true else { return }
+        guard core.isLive else {
+            noteHook(provider, "Monitor offline", isError: true)
+            return
+        }
+        updateBusy.insert(provider)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.updateBusy.remove(provider) }
+            do {
+                let start = try await self.core.updateProvider(provider)
+                if !start.started {
+                    self.noteHook(provider, start.message.isEmpty ? "Not started" : start.message, isError: true)
+                }
+            } catch {
+                let words = (error as? CoreReplyError).map { $0.message ?? $0.code } ?? String(describing: error)
+                self.noteHook(provider, words, isError: true)
+            }
+        }
+    }
+
     // MARK: Claude plan limits
 
     /// `claude_plan_limits_enabled` is consent-gated: the daemon persists

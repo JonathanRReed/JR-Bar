@@ -441,10 +441,17 @@ def test_a_backlog_of_scans_does_not_make_a_short_read_busy(
 
 
 def test_every_slow_lane_command_belongs_to_exactly_one_lane() -> None:
-    from jrbar.core_server import READ_LANE_COMMANDS, SCAN_LANE_COMMANDS, SLOW_LANE_COMMANDS
+    from jrbar.core_server import (
+        ACTION_LANE_COMMANDS,
+        READ_LANE_COMMANDS,
+        SCAN_LANE_COMMANDS,
+        SLOW_LANE_COMMANDS,
+    )
 
     assert SCAN_LANE_COMMANDS == {"usage_graph", "usage_history"}
+    assert ACTION_LANE_COMMANDS == {"provider_sign_in"}
     assert not SCAN_LANE_COMMANDS & READ_LANE_COMMANDS
-    assert SCAN_LANE_COMMANDS | READ_LANE_COMMANDS == SLOW_LANE_COMMANDS
+    assert not ACTION_LANE_COMMANDS & (SCAN_LANE_COMMANDS | READ_LANE_COMMANDS)
+    assert SCAN_LANE_COMMANDS | READ_LANE_COMMANDS | ACTION_LANE_COMMANDS == SLOW_LANE_COMMANDS
     # History's pair shares a lane: the mark must wait behind the read.
     assert {"list_history", "mark_history_seen"} <= READ_LANE_COMMANDS

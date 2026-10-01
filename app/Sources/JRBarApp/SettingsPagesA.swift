@@ -383,15 +383,32 @@ struct AgentsPage: View {
         .task {
             doctor.refresh(core: store.core)
             t3.refresh(core: store.core)
+            // Free while "Check for agent updates" is off: the daemon asks nothing.
+            store.core.checkProviderUpdates()
         }
         .onChange(of: store.hookBusy) { before, after in
             // An install, repair or removal just finished: read again.
             if after.count < before.count { doctor.refresh(core: store.core) }
         }
+        .onChange(of: store.core.providerUpdates) { before, after in
+            // An update just finished: the CLI's own version moved.
+            let wasRunning = before.values.contains { $0.isRunning }
+            if wasRunning, !after.values.contains(where: { $0.isRunning }) { doctor.refresh(core: store.core) }
+        }
         .onChange(of: store.isLive) { _, live in
             guard live else { return }
             doctor.refresh(core: store.core)
             t3.refresh(core: store.core)
+            store.core.checkProviderUpdates()
+        }
+
+        SettingGroup("Updates", note: "Each row's Update button runs that CLI's own updater, and only when you click it.") {
+            SettingToggle(store, "Check for agent updates", subtitle: ProviderUpdateChecksCopy.subtitle,
+                          path: "provider_update_checks_enabled")
+        }
+        .onChange(of: store.values.bool("provider_update_checks_enabled") ?? false) { _, on in
+            // Turned on: look now, not at the next tick.
+            if on { store.core.checkProviderUpdates() }
         }
 
         SettingGroup("Transcripts", note: "Reads each agent's local transcript files for token and cost figures.") {
@@ -457,6 +474,10 @@ struct AgentRow: View {
                         .lineLimit(1)
                 }
                 statusLine
+                if !cliMissing, ProviderUpdateWords.isRelevant(provider) {
+                    ProviderUpdateLine(store: store, provider: provider, version: doctor?.version,
+                                       versionShownAbove: versionShownByStatusLine)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if busy {
@@ -470,6 +491,13 @@ struct AgentRow: View {
             actions
         }
         .padding(.vertical, 1)
+    }
+
+    /// The doctor's line is what `statusLine` shows when no click note and no
+    /// repair is in the way, and it already carries the CLI's version.
+    private var versionShownByStatusLine: Bool {
+        guard store.hookNotes[provider] == nil, let doctor, HooksDoctor.repairReason(doctor) == nil else { return false }
+        return HooksDoctor.lineShowsVersion(doctor)
     }
 
     /// The full-width line under the name — the last click's answer, the
@@ -611,6 +639,13 @@ struct UsagePage: View {
 /// are named because turning this on is what lets JR-Bar contact them.
 enum ProviderStatusPagesCopy {
     nonisolated static let subtitle = "Checks status.anthropic.com, status.openai.com and status.cursor.com every 10 minutes for incidents. Off by default; nothing is contacted until you turn it on."
+}
+
+/// The words under Agents' "Check for agent updates" switch, shared with the
+/// Settings search index. The host is named because turning this on is what
+/// lets JR-Bar contact it.
+enum ProviderUpdateChecksCopy {
+    nonisolated static let subtitle = "Asks registry.npmjs.org for the newest version of each installed agent every 6 hours, so a row can say an update is available. Off by default; nothing is contacted until you turn it on."
 }
 
 /// `quota_alert_thresholds`: a nudge and a warning, as two steppers.

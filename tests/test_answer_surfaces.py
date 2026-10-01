@@ -822,6 +822,51 @@ def test_new_session_starts_the_agent_in_the_owners_terminal__and_3_more(tmp_pat
     assert error.value.code == "unsupported"
 
 
+def test_a_command_is_typed_into_the_owners_terminal_the_way_a_new_session_is(tmp_path: Path) -> None:
+    from jrbar.answer_surfaces import run_command_in_terminal
+
+    home = tmp_path / "my home"
+    home.mkdir()
+    recorder = SurfaceRecorder(path=tmp_path / "s.json", runner=FakeRunner(permitted=None), synchronous=True)
+    recorder._store("claude", "old", host_bundle="com.mitchellh.ghostty", terminal_id=None, cwd="/x")
+
+    # The terminal the last session ran in: a Ghostty tab, the command typed into the owner's shell.
+    runner = FakeRunner()
+    reply = run_command_in_terminal(str(home), "'/opt/bin/grok' login", runner=runner, recorder=recorder)
+    assert (reply["raised"], reply["app"], reply["bundle_id"]) == ("new_tab", "Ghostty", "com.mitchellh.ghostty")
+    assert runner.calls == [("ghostty-new-tab", str(home), "'/opt/bin/grok' login\n")]
+
+    # A named terminal wins; a window gets the directory quoted for its shell.
+    runner = FakeRunner()
+    reply = run_command_in_terminal(
+        str(home), "'/opt/bin/grok' login", terminal="com.apple.Terminal", runner=runner, recorder=recorder
+    )
+    assert reply["raised"] == "new_window"
+    assert runner.calls == [("launch", "com.apple.Terminal", f"cd '{home}' && '/opt/bin/grok' login")]
+
+    # Typed into the owner's shell, so a control character is refused before anything is sent: Ctrl-C,
+    # a bracketed-paste end, a return and a newline would each be input on the Ghostty path.
+    for command in ("x\x03", "x\x1b[201~ && rm -rf ~", "x\r", "x\ny", "x\ty", "", "x" * 9000):
+        runner = FakeRunner()
+        with pytest.raises(CommandError) as error:
+            run_command_in_terminal(str(home), command, runner=runner, recorder=recorder)
+        assert error.value.code == "invalid_args", repr(command)
+        assert runner.calls == [], "nothing reached the terminal"
+    with pytest.raises(CommandError) as error:
+        run_command_in_terminal(str(home) + "\x1b", "ok", runner=FakeRunner(), recorder=recorder)
+    assert error.value.code == "invalid_args"
+
+    # Only a real directory, only a reviewed terminal, and a terminal that cannot open says so.
+    for directory, terminal, runner, code in (
+        (str(tmp_path / "missing"), None, FakeRunner(), "not_found"),
+        (str(home), "com.example.term", FakeRunner(), "invalid_args"),
+        (str(home), "com.apple.Terminal", FakeRunner(launch=False), "unsupported"),
+    ):
+        with pytest.raises(CommandError) as error:
+            run_command_in_terminal(directory, "x", terminal=terminal, runner=runner, recorder=recorder)
+        assert error.value.code == code
+
+
 # --- is the owner looking at it -------------------------------------------------
 
 TERMINAL_CODEX = _table(

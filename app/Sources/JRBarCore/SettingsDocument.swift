@@ -171,6 +171,9 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             // Agents
             SettingsKey(.agents, "subagent_asks_alert", .bool),
             SettingsKey(.agents, "session_open_preferences", .object),
+            // "Update available" for the agent CLIs (registry.npmjs.org): a
+            // request that leaves the Mac, so off until turned on.
+            SettingsKey(.agents, "provider_update_checks_enabled", .bool),
             // Usage
             SettingsKey(.usage, "usage_graph_providers", .stringList),
             SettingsKey(.usage, "usage_display_mode", .string),

@@ -95,6 +95,65 @@ granted with `--browser chrome --profile Default` instead. The same card
 shows the grant and lets you revoke it. Background repair is a separate
 `--background-repair` option on the grant command.
 
+## Fix sign-in
+
+When a card is stale or signed out, **Fix sign-in** is the button to press. It
+does the best automatic thing for that provider, tells you in one sentence what
+it did, and starts a fresh read so the card recovers within seconds. Nothing
+runs until you click it.
+
+- **Claude.** JR-Bar reads Claude's usage with a copy of the sign-in that
+  Claude Code keeps in the Keychain. If you mostly use the Claude desktop app,
+  nothing renews that copy and it goes stale after a few hours. When that has
+  happened and Claude Code says you are logged in, Fix sign-in asks Claude Code
+  to renew its own sign-in. It runs one tiny `claude -p` call in a throwaway
+  folder, with a 90 second limit. The call spends a handful of tokens, registers
+  no session in JR-Bar, and its output is neither kept nor shown. JR-Bar never
+  touches Claude Code's refresh token. If Claude Code is logged out, JR-Bar opens
+  your terminal on `claude auth login` instead.
+- **Grok.** Opens your terminal on `grok login`. JR-Bar notices on its own when
+  the CLI saves the new sign-in.
+- **Codex and OpenCode.** Opens your terminal on `codex login` or `opencode
+  providers login`, but only when the card says signed out. A card that is stale
+  for another reason is told so instead.
+- **Devin and Cursor.** Their usage comes from a session or token JR-Bar holds,
+  not from a CLI login, so Fix sign-in does what the card's old Reconnect button
+  did: it clears the rejected stored token, imports your browser session again
+  where you have allowed that, and otherwise opens the provider's token page and
+  says what to copy.
+- **Gemini CLI and Antigravity.** Their sign-in does not go through a login
+  command JR-Bar can open, so Fix sign-in says where to sign in.
+
+The terminal is the one you used last (Ghostty, Terminal or iTerm), opened in
+your home folder. JR-Bar types the CLI's full path and its login command; you
+finish signing in there. A second account is only re-read, never signed in
+through the CLI.
+
+## Update a provider's CLI
+
+**Settings > Agents** shows each installed agent CLI's version with an **Update**
+button. It runs the CLI's own updater (`claude update`, `codex update`, `grok
+update`, `devin update`, `opencode upgrade`) and then shows the result in one
+line: "Updated 2.1.285 to 2.1.290", "Already up to date", or why it failed. The
+updater runs with the full path to the CLI, no input and a ten minute limit, and
+only one per provider and two at a time. If an updater asks for a terminal,
+JR-Bar opens yours on the same command. Devin's updater asks before it installs,
+so its Update button always opens your terminal on `devin update`. Gemini CLI has no updater of its own, so
+its row says how to update it the way you installed it.
+
+JR-Bar contacts nothing for this. The button only runs the tool already on your
+Mac, and only when you click it.
+
+### Update available
+
+A row can also say "2.1.290 available". That needs one more request, so it is
+off. Turn on **Check for agent updates** in Settings > Agents and JR-Bar will ask
+`registry.npmjs.org` for the latest version of each installed CLI that has an npm
+package: Claude Code, Codex, Grok, Gemini CLI and OpenCode (Devin has none). It
+asks every 6 hours and when you refresh the Agents page, with one plain request
+that carries nothing about your Mac. Turn it off and no request is made. The
+Update button never depends on it.
+
 ## More sources
 
 - [Where the usage numbers come from](usage-sources.md): OpenCode Go,

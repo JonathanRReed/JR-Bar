@@ -221,12 +221,7 @@ struct ProviderUsageCard: View {
                 .controlSize(.small)
                 .toggleStyle(.checkbox)
                 .help("Enable or disable this provider's quota collection")
-                if let action = provider.action, !action.isEmpty {
-                    Button(action) { store.runProviderAction(provider) }
-                        .controlSize(.small)
-                        .help(provider.reason?.replacingOccurrences(of: "_", with: " ") ?? action)
-                }
-                ResignInButton(provider: provider, store: store)
+                ProviderFixControls(provider: provider, store: store)
                 Spacer()
                 if row.supportsInstances {
                     AddAccountButton(providerID: provider.id, row: row, store: store)
@@ -237,6 +232,9 @@ struct ProviderUsageCard: View {
                         .foregroundStyle(.tertiary)
                         .help("This credential came from a consented browser import; revoking the consent removes it while it is still the imported value.")
                 }
+            }
+            if let note = store.signInNotes[provider.identity] {
+                SignInNoteLine(note: note)
             }
             if !row.consents.isEmpty {
                 ForEach(Array(row.consents.enumerated()), id: \.offset) { _, consent in
@@ -676,7 +674,7 @@ struct SignedOutRow: View {
                 .frame(width: 30)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Sign in via the CLI").font(.callout.weight(.medium))
-                Text("The monitor reads \(name)'s quota from the CLI's own login. Run its login command in a terminal and the windows appear here on the next refresh.")
+                Text("The monitor reads \(name)'s quota from the CLI's own login. Fix sign-in opens it for you where it can; the windows appear here once you have signed in.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -688,10 +686,13 @@ struct SignedOutRow: View {
                             .controlSize(.small)
                             .help("Writes claude_plan_limits_enabled so the monitor may read Claude's plan-limit source")
                     }
-                    ResignInButton(provider: provider, store: store)
+                    FixSignInButton(provider: provider, store: store)
                     Button("Usage settings…") { store.openUsageSettings() }
                         .controlSize(.small)
                         .help("Opens Settings › Usage, where metering per provider lives")
+                }
+                if let note = store.signInNotes[provider.identity] {
+                    SignInNoteLine(note: note)
                 }
             }
         }
@@ -804,7 +805,7 @@ struct CombinedUsageCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                ResignInButton(provider: provider, store: store)
+                FixSignInButton(provider: provider, store: store)
             } else if provider.windows.isEmpty {
                 Text(Self.emptyRowWord(provider))
                     .font(.caption)
@@ -920,6 +921,120 @@ struct ResignInButton: View {
             return "Re-check and refresh — the sign-in itself belongs to this provider's own app or CLI"
         default:
             return "Re-check this provider's sign-in and refresh its usage"
+        }
+    }
+}
+
+/// The manage row's fix controls. A card whose problem is a sign-in leads
+/// with the one **Fix sign-in** button, and the daemon's own fix-it
+/// ("Reconnect Claude", "Run grok login") stays beside it as the explanation,
+/// not as the action. Any other card keeps the daemon's staged action and the
+/// plain re-read.
+struct ProviderFixControls: View {
+    let provider: CoreProviderUsage
+    @Bindable var store: UsageCenterStore
+
+    var body: some View {
+        if provider.offersSignInFix {
+            FixSignInButton(provider: provider, store: store)
+            if let action = provider.action, !action.isEmpty {
+                Text(action)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help(provider.reason?.replacingOccurrences(of: "_", with: " ") ?? action)
+            }
+        } else {
+            if let action = provider.action, !action.isEmpty {
+                Button(action) { store.runProviderAction(provider) }
+                    .controlSize(.small)
+                    .help(provider.reason?.replacingOccurrences(of: "_", with: " ") ?? action)
+            }
+            ResignInButton(provider: provider, store: store)
+        }
+    }
+}
+
+/// "Fix sign-in": the one button for a card whose problem is a sign-in. It
+/// asks the daemon to do the best automatic thing for this provider and shows
+/// the sentence the daemon answers with. Nothing runs until it is clicked.
+struct FixSignInButton: View {
+    let provider: CoreProviderUsage
+    @Bindable var store: UsageCenterStore
+
+    private var name: String { ProviderStyle.style(for: provider.id).name }
+
+    var body: some View {
+        Button {
+            store.fixSignIn(provider)
+        } label: {
+            if store.isFixingSignIn(provider) {
+                DelayedWait { Label("Fix sign-in", systemImage: "wrench.and.screwdriver") }
+            } else {
+                Label("Fix sign-in", systemImage: "wrench.and.screwdriver")
+            }
+        }
+        .controlSize(.small)
+        .buttonStyle(.borderedProminent)
+        .disabled(store.isFixingSignIn(provider) || !store.isLive)
+        .help(Self.help(for: provider.id))
+        .accessibilityLabel(store.isFixingSignIn(provider) ? "Fixing \(name) sign-in" : "Fix \(name) sign-in")
+        .accessibilityHint(Self.help(for: provider.id))
+    }
+
+    /// What the click does for this provider, in the words the daemon's
+    /// own table backs: nothing here promises more than that.
+    static func help(for providerID: String) -> String {
+        switch providerID {
+        case "claude":
+            return "Asks Claude Code to renew its own sign-in, or opens your terminal on `claude auth login`"
+        case "grok":
+            return "Opens your terminal on `grok login`; JR-Bar notices when you finish"
+        case "codex":
+            return "Opens your terminal on `codex login` when the card says signed out"
+        case "opencode":
+            return "Opens your terminal on `opencode providers login` when the card says signed out"
+        case "devin":
+            return "Clears the rejected session, imports your browser session again, or opens the token page"
+        case "cursor":
+            return "Clears the rejected token and opens Cursor's settings page"
+        default:
+            return "Re-checks this provider's sign-in and says what to do next"
+        }
+    }
+}
+
+/// What the last Fix sign-in click said, under the card it was clicked on.
+struct SignInNoteLine: View {
+    let note: UsageCenterStore.SignInNote
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: Self.symbol(note.tone))
+                .font(.caption)
+                .foregroundStyle(Self.tint(note.tone))
+                .accessibilityHidden(true)
+            Text(note.text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    static func symbol(_ tone: UsageCenterStore.SignInNote.Tone) -> String {
+        switch tone {
+        case .done: return "checkmark.circle"
+        case .todo: return "arrow.up.forward.app"
+        case .info: return "info.circle"
+        }
+    }
+
+    static func tint(_ tone: UsageCenterStore.SignInNote.Tone) -> Color {
+        switch tone {
+        case .done: return .green
+        case .todo: return .orange
+        case .info: return .secondary
         }
     }
 }

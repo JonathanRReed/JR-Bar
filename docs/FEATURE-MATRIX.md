@@ -108,6 +108,9 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 | Quota alerts: threshold effects, pace notifications, reset sunrise sweep and banner | Implemented | Off |
 | Reset countdown on the quota ear (drain arc inside the ring + words in the peek and island card) | Implemented | On |
 | Provider incident badges from the public status pages of Anthropic, OpenAI and Cursor (ear tone, panel row, Usage Center header): one request per found provider every 10 minutes | Implemented | Off (Settings › Usage › Provider status pages; nothing is contacted until you turn it on) |
+| Fix sign-in on a stale or signed-out card: re-reads the provider's sign-in, asks Claude Code to renew its own expired Keychain item with one quiet `claude -p` call, or opens your terminal on the CLI's own login (`grok login`, `codex login`, `opencode providers login`) | Implemented, unverified live (the terminal flows and the renewal need a hand check) | On click only |
+| Update a provider's CLI from Settings › Agents: runs its own updater (`claude update`, `codex update`, `grok update`, `devin update`, `opencode upgrade`) and shows old → new version | Implemented, unverified live | On click only |
+| "Update available" on an agent CLI's row from `registry.npmjs.org`, once per 6 hours and on the Agents refresh | Implemented | Off (Settings › Agents › Check for agent updates; nothing is contacted until you turn it on) |
 | Quota Runway device display | Implemented | Selectable per device |
 | Capacity history and operator history behind retention consent | Implemented | Off |
 | Devin browser-session import: exact CLI consent, Usage Center import and revoke, token in Keychain | Implemented | Off |

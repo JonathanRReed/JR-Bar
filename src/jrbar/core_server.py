@@ -2,9 +2,10 @@
 
 One accept thread, one reader thread per client, one flusher thread that
 coalesces the ``state`` / ``lights`` / ``settings`` documents (latest wins,
-bounded rate) and fans every frame out to every connected client, and two
-slow-lane workers for the heavy reads: one for the minutes-long usage scans,
-one for the short reads a person waits on.
+bounded rate) and fans every frame out to every connected client, and three
+slow-lane workers for the heavy reads and the one click that can wait on a
+provider: one for the minutes-long usage scans, one for the short reads a
+person waits on, one for Fix sign-in.
 
 The server knows nothing about AppKit or the controller. Commands arrive on
 a client's reader thread and are handed to ``dispatch(name, args)``; the
@@ -121,10 +122,20 @@ READ_LANE_COMMANDS: Final = frozenset(
         "doctor",
     }
 )
-SLOW_LANE_COMMANDS: Final = SCAN_LANE_COMMANDS | READ_LANE_COMMANDS
+# The ACTION lane holds a click that can wait on a provider's own tool: Fix
+# sign-in asks Claude Code to renew its sign-in with a real call the daemon
+# allows 90 s. It is not a read, so it has a worker of its own: it must not
+# make History, a doctor run or a comparison wait, nor wait behind a scan.
+ACTION_LANE_COMMANDS: Final = frozenset({"provider_sign_in"})
+SLOW_LANE_COMMANDS: Final = SCAN_LANE_COMMANDS | READ_LANE_COMMANDS | ACTION_LANE_COMMANDS
 _SCAN_LANE: Final = "scan"
 _READ_LANE: Final = "read"
-_LANE_THREAD_NAMES: Final = {_SCAN_LANE: "JRBarCoreScanLane", _READ_LANE: "JRBarCoreReadLane"}
+_ACTION_LANE: Final = "action"
+_LANE_THREAD_NAMES: Final = {
+    _SCAN_LANE: "JRBarCoreScanLane",
+    _READ_LANE: "JRBarCoreReadLane",
+    _ACTION_LANE: "JRBarCoreActionLane",
+}
 # Stamped into a slow-lane command's args when it is queued (epoch
 # seconds), so a command that records "now" -- mark_history_seen's
 # watermark -- can record when it was sent, not when a scan ahead of it
@@ -321,6 +332,7 @@ class CoreServer:
         clock: Callable[[], float] = time.monotonic,
         slow_commands: Iterable[str] = SLOW_LANE_COMMANDS,
         scan_commands: Iterable[str] = SCAN_LANE_COMMANDS,
+        action_commands: Iterable[str] = ACTION_LANE_COMMANDS,
         slow_lane_setup: Callable[[], None] | None = None,
     ) -> None:
         if not callable(dispatch) or not callable(initial_documents):
@@ -340,9 +352,10 @@ class CoreServer:
         self._log = log or (lambda _line: None)
         self._clock = clock
         self._slow_commands = frozenset(slow_commands)
-        # The slow commands that take a long scan's lane; every other slow
-        # command takes the read lane.
+        # The slow commands that take a long scan's lane, and the ones that
+        # take the action lane; every other slow command takes the read lane.
         self._scan_commands = frozenset(scan_commands)
+        self._action_commands = frozenset(action_commands)
         # Runs once on each lane's worker before its first command (the
         # runtime drops it to utility QoS there, never on a client's reader
         # thread).
@@ -351,6 +364,7 @@ class CoreServer:
         self._slow_queues: dict[str, deque[tuple[_Client, str | None, str, dict[str, Any]]]] = {
             _SCAN_LANE: deque(),
             _READ_LANE: deque(),
+            _ACTION_LANE: deque(),
         }
         self._slow_workers: list[threading.Thread] = []
         # Bumped at each start: a worker left finishing a scan from before a
@@ -442,7 +456,7 @@ class CoreServer:
                     name=_LANE_THREAD_NAMES[lane],
                     daemon=True,
                 )
-                for lane in (_SCAN_LANE, _READ_LANE)
+                for lane in (_SCAN_LANE, _READ_LANE, _ACTION_LANE)
             ]
             self._accept_thread.start()
             self._flusher.start()
@@ -937,7 +951,12 @@ class CoreServer:
         self._send_reply(client, self.run_command(command_id, name, args), name)
 
     def _queue_slow(self, client: _Client, command_id: str | None, name: str, args: dict[str, Any]) -> None:
-        lane = _SCAN_LANE if name in self._scan_commands else _READ_LANE
+        if name in self._action_commands:
+            lane = _ACTION_LANE
+        elif name in self._scan_commands:
+            lane = _SCAN_LANE
+        else:
+            lane = _READ_LANE
         queue = self._slow_queues[lane]
         with self._slow_condition:
             if len(queue) < MAX_SLOW_LANE_QUEUED:
@@ -1126,6 +1145,7 @@ class CommandRouter:
 
 
 __all__ = [
+    "ACTION_LANE_COMMANDS",
     "CORE_SOCKET_NAME",
     "DEFAULT_CAPABILITIES",
     "MAX_CLIENTS",

@@ -1181,6 +1181,7 @@ def default_settings_document() -> dict:
         "notification_policy_version": 1,
         "operator_history_retention_days": 0,
         "provider_status_feeds_enabled": False,
+        "provider_update_checks_enabled": False,
         "quota_alert_thresholds": [90.0, 95.0],
         "quota_alerts_enabled": True,
         "rainstick_idle_enabled": False,
@@ -1535,6 +1536,10 @@ class World:
             "cursor": {"h5": None, "d7": None, "d30": None, "fidelity": "manual", "pace": None, "rate": 0.0, "state": "not_signed_in"},
         }
         self.usage_refreshed_at = now - 45
+        # `state.provider_updates`: what each agent CLI's updater last did, and
+        # how long the mock's pretend updater takes (the real one is a daemon thread).
+        self.provider_updates: dict[str, dict] = {}
+        self.update_delay = 0.25
         self.effects_generation = 1
         self.effect_packs: dict[str, dict] = {SAMPLE_PACK["id"]: validate_pack(SAMPLE_PACK)}
         self.scene_packs: dict[str, dict] = {
@@ -1797,6 +1802,7 @@ class World:
             "catalog_generation": self.effects_generation,
             "settings_generation": self.settings_generation,
             "hidden_count": self.hidden_count,
+            "provider_updates": self.provider_updates_view(),
             "deck": self.deck_state(),
             # Forward-compatibility bait: the app must ignore this.
             "x_mock_extra": {"note": "unknown keys are fine"},
@@ -2308,6 +2314,52 @@ class World:
             self.generation += 1
             document = self.state()
         self.broadcast(document)
+
+    # -- provider sign-in and updates (docs/CORE-PROTOCOL.md) ---------------------------
+
+    #: What Fix sign-in answers per provider: (outcome, command, message, sign_in_url).
+    SIGN_IN_ANSWERS = {
+        "claude": ("renewed", None, "Claude Code renewed its sign-in, so Claude usage is refreshing now.", None),
+        "grok": ("opened_terminal", "grok login",
+                 "Opened Ghostty on `grok login`: finish signing in there, JR-Bar notices on its own.", None),
+        "codex": ("opened_terminal", "codex login",
+                  "Opened Ghostty on `codex login`: finish signing in there, JR-Bar notices on its own.", None),
+        "opencode": ("opened_terminal", "opencode providers login",
+                     "Opened Ghostty on `opencode providers login`: finish signing in there, then refresh this card.", None),
+        # The staged action behind "Reconnect Devin": the rejected token is cleared and the
+        # token page comes back for the app to open.
+        "devin": ("staged", None, "The stored Devin session was rejected and has been cleared. Copy a fresh API key "
+                  "(page opened), then click 'Import Devin browser session'.",
+                  "https://app.devin.ai/settings/api-keys"),
+        "gemini": ("unavailable", None, "Gemini's sign-in belongs to the gemini CLI. Run `gemini` once in a terminal.", None),
+    }
+    UPDATABLE = ("claude", "codex", "grok", "devin", "opencode")
+    GEMINI_ADVICE = ("Gemini CLI has no updater of its own: update it the way you installed it "
+                     "(for example `brew upgrade gemini-cli` or `npm install -g @google/gemini-cli`).")
+
+    def known_provider(self, provider) -> bool:
+        return isinstance(provider, str) and (provider in self.usage or provider in self.SIGN_IN_ANSWERS)
+
+    def provider_updates_view(self) -> dict:
+        """The state key: `latest_version` only while update checks are on."""
+        checks = self.document.get("provider_update_checks_enabled") is True
+        view = {}
+        for provider, record in self.provider_updates.items():
+            row = dict(record)
+            if not checks:
+                row["latest_version"] = None
+            if row["phase"] == "idle" and row["latest_version"] is None:
+                continue
+            view[provider] = row
+        return view
+
+    def finish_update(self, provider: str) -> None:
+        with self.lock:
+            record = self.provider_updates.get(provider, {})
+            record.update(phase="updated", from_version="2.1.285", to_version="2.1.290", latest_version=None,
+                          message="Updated 2.1.285 to 2.1.290", finished_at=time.time())
+            self.provider_updates[provider] = record
+        self.push_state()
 
     def push_lights(self, semantic: str) -> None:
         with self.lock:
@@ -3010,6 +3062,60 @@ class World:
                 self.document["closed_lid_awake_policy"] = str(args.get("policy", "never"))
             self.push_settings()
             result = {"policy": self.document["closed_lid_awake_policy"]}
+        elif name == "provider_sign_in":
+            provider = args.get("provider")
+            if not isinstance(provider, str) or not provider:
+                return self._error(cid, "invalid_args", "provider is required")
+            if not self.known_provider(provider):
+                return self._error(cid, "unknown_provider", f"unknown provider {provider!r}")
+            outcome, command, message, url = self.SIGN_IN_ANSWERS.get(
+                provider, ("unavailable", None, f"{provider}'s sign-in is managed by its own app.", None))
+            result = {"provider": provider, "instance": args.get("instance") or "default", "outcome": outcome,
+                      "message": message, "command": command, "sign_in_url": url}
+        elif name == "provider_update":
+            provider = args.get("provider")
+            if not isinstance(provider, str) or not provider:
+                return self._error(cid, "invalid_args", "provider is required")
+            if not self.known_provider(provider):
+                return self._error(cid, "unknown_provider", f"unknown provider {provider!r}")
+            if provider not in self.UPDATABLE:
+                message = self.GEMINI_ADVICE if provider == "gemini" else f"JR-Bar has no updater to run for {provider}."
+                result = {"provider": provider, "started": False, "reason": "no_updater", "message": message}
+            elif provider == "devin":
+                # `devin update` asks before it installs, so the daemon opens the terminal on it
+                # rather than running it blind.
+                with self.lock:
+                    self.provider_updates[provider] = {
+                        "phase": "needs_terminal", "from_version": "3000.3.27", "to_version": None,
+                        "latest_version": None, "finished_at": time.time(),
+                        "message": "Devin's updater needs a terminal: opened Ghostty on `devin update`. "
+                                   "Finish the update there."}
+                self.push_state()
+                result = {"provider": provider, "started": True, "reason": None, "message": "Updating Devin…"}
+            elif self.provider_updates.get(provider, {}).get("phase") == "running":
+                result = {"provider": provider, "started": False, "reason": "busy",
+                          "message": f"An update for {provider} is already running."}
+            else:
+                with self.lock:
+                    latest = self.provider_updates.get(provider, {}).get("latest_version")
+                    self.provider_updates[provider] = {
+                        "phase": "running", "from_version": None, "to_version": None, "latest_version": latest,
+                        "message": f"Updating {provider}…", "finished_at": None}
+                self.push_state()
+                timer = threading.Timer(self.update_delay, self.finish_update, args=(provider,))
+                timer.daemon = True
+                timer.start()
+                result = {"provider": provider, "started": True, "reason": None, "message": f"Updating {provider}…"}
+        elif name == "provider_update_check":
+            enabled = self.document.get("provider_update_checks_enabled") is True
+            if enabled:
+                with self.lock:
+                    record = self.provider_updates.setdefault("claude", {
+                        "phase": "idle", "from_version": None, "to_version": None, "latest_version": None,
+                        "message": "", "finished_at": None})
+                    record["latest_version"] = "2.1.290"
+                self.push_state()
+            result = {"enabled": enabled, "started": enabled}
         elif name == "refresh_usage":
             providers = [p for p in (args.get("providers") or []) if isinstance(p, str)]
             with self.lock:

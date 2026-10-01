@@ -797,7 +797,7 @@ def test_a_slow_read_never_holds_up_a_later_command_on_the_same_socket__and_2_mo
         assert order == ["a", "b"]
         assert threads["usage_graph"] == threads["usage_history"] == "JRBarCoreScanLane"
         # Each lane's worker drops to utility QoS before its first command.
-        assert sorted(setup_threads) == ["JRBarCoreReadLane", "JRBarCoreScanLane"]
+        assert sorted(setup_threads) == ["JRBarCoreActionLane", "JRBarCoreReadLane", "JRBarCoreScanLane"]
 
         # --- scenario: past the queue bound a slow read is refused busy at once
         release.clear()
