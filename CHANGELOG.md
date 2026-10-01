@@ -218,6 +218,15 @@ All notable changes to JR-Bar are documented here.
   Python hook client sends the same cut-down record for an oversize payload as
   the compiled shim. Claude's pid files are found under a moved
   `CLAUDE_CONFIG_DIR`.
+- Under the hood, the daemon's LED, battery, collector, settings, device-writer,
+  integration-settings and terminal-launch code is one module each instead of a
+  "legacy" file behind a copying wrapper, so a patch can no longer leave two
+  modules holding different versions of one function. The firmware check on
+  every device write always uses the device's own parser on the exact bytes it
+  writes; before, which parser it used depended on the order two internal
+  modules happened to load. The retired "show meters" menu switch no longer
+  shows up as a changed setting (an old settings file that carries it still
+  loads and is written back unchanged).
 - Docs and tests: CORE-PROTOCOL.md names every command and state field the
   daemon sends, and a contract test in `make fast` keeps commands from
   drifting out of it. The state cadence is described as it runs. The README
