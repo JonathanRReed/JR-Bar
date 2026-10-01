@@ -24,9 +24,10 @@ Open the Usage Center and read the source note on the affected provider.
 
 - For Codex local evidence, finish one Codex prompt so its rollout records a
   new reading.
-- For Claude's official usage source, use **Reconnect Claude**. Claude Code
-  owns the sign-in, so sign in there first if JR-Bar reports authentication
-  required.
+- For a provider that says its sign-in is stale or required, press **Fix
+  sign-in** on its card. For Claude it asks Claude Code to renew its own
+  sign-in; for Grok, Codex and OpenCode it opens your terminal on the CLI's own
+  login. [What it does for each provider](providers.md#fix-sign-in).
 - A rate-limited provider needs time. JR-Bar backs off and retries later.
 
 JR-Bar keeps a last good reading only when it can prove the account is the
