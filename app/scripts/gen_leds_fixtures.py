@@ -61,7 +61,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
-from jrbar import _led_status_legacy as led_status  # noqa: E402
+from jrbar import led_status  # noqa: E402
 from jrbar.animation import errors_only, read_program  # noqa: E402
 from jrbar.flash_analysis import analyse  # noqa: E402
 

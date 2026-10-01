@@ -33,10 +33,10 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO / "src") not in sys.path:
     sys.path.insert(0, str(REPO / "src"))
 
-from jrbar import _led_status_legacy as led_status  # noqa: E402
 from jrbar import (  # noqa: E402
     celebrations,
     core_effects,
+    led_status,
     motion_shapes,
 )
 from jrbar import colors as colors_module  # noqa: E402

@@ -127,7 +127,7 @@ def test_refresh_builds_each_projection_once(headless) -> None:
 def test_hardware_write_result_still_publishes_lights_immediately(headless) -> None:
     """Outside a refresh, a completed hardware write publishes at once --
     the deferral only exists inside the refresh pass."""
-    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
     from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
 

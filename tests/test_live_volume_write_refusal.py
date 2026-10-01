@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-from jrbar import _battery_legacy, _device_writer_legacy, _led_status_legacy, cli, device_writer, write_health
+from jrbar import _battery_legacy, _device_writer_legacy, cli, device_writer, led_status, write_health
 from jrbar.firmware_validation import (
     FirmwareValidationUnavailableError,
     require_firmware_program,
@@ -98,7 +98,7 @@ def test_a_refusal_is_an_os_error_not_a_device_write_error() -> None:
 @pytest.mark.parametrize(
     "writer",
     (
-        _led_status_legacy.write_led_program,
+        led_status.write_led_program,
         _battery_legacy.write_led_program,
         cli.write_led_program,
     ),
@@ -136,7 +136,7 @@ def test_autodiscovery_lands_on_the_same_refusal(monkeypatch) -> None:
         lambda **_keywords: [candidate],
     )
     with pytest.raises(OSError, match="live device write under test"):
-        _led_status_legacy.write_led_program(TWO_LED_PROGRAM)
+        led_status.write_led_program(TWO_LED_PROGRAM)
 
 
 @guarded

@@ -132,7 +132,7 @@ def test_the_slowest_motion_still_fits_under_a_brightness_line() -> None:
     strip's brightness line in front of what Effect Studio rendered. At the
     longest cycle, with every knob at either end, that still fits the
     firmware: a slow Pendulum came to 520 bytes and the strip refused it."""
-    from jrbar._led_status_legacy import apply_brightness
+    from jrbar.led_status import apply_brightness
 
     longest = colors_module.MAX_CYCLE_SPEED_SECONDS
     for effect in PROVIDER_ANIMATION_EFFECTS:

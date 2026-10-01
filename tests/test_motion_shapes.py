@@ -527,8 +527,8 @@ def test_the_relay_on_a_dot_travels_the_way_its_travel_row_says() -> None:
     of eight never changes."""
     from datetime import datetime, timezone
 
-    from jrbar._led_status_legacy import rolling_program
     from jrbar.colors import ColorSettings, program_for_snapshot
+    from jrbar.led_status import rolling_program
     from jrbar.models import AgentMode, AgentStatus
 
     wipe = rolling_program(COLOR, led_count=2)

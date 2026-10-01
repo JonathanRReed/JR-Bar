@@ -32,9 +32,9 @@ def start_check(runtime: Any, args: dict[str, Any]) -> dict[str, Any]:
     """``linked_sync_check {seconds?}``: write the flash to both devices and
     hold them for ``seconds`` (60 by default, 10-120)."""
     from . import core_runtime
-    from ._led_status_legacy import LedDisplayState, apply_brightness, led_count_for_target
     from .core_server import CommandError
     from .dot_role import DotRole, normalize_dot_role
+    from .led_status import LedDisplayState, apply_brightness, led_count_for_target
 
     legacy = runtime._core_legacy()
     try:
@@ -115,7 +115,7 @@ def _withdraw(runtime: Any) -> None:
 
 
 def _write_dot(runtime: Any, dot: Any, *, reason: str):
-    from ._led_status_legacy import LedDisplayState
+    from .led_status import LedDisplayState
 
     controller = runtime.agent_controller_for_device(dot)
     plan = runtime._core_dot_plan(controller, device=dot)

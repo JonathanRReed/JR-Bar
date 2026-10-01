@@ -64,7 +64,7 @@ def _note_latency(target: Path, milliseconds: float) -> None:
 def _led_count_for_target(target: Path) -> int:
     # One classification, not two: delegate to led_status's table-driven
     # rule so the write path can never disagree with the display path.
-    # (Function-level import: _led_status_legacy imports this module.)
+    # (Function-level import: led_status imports this module.)
     from .led_status import led_count_for_target
 
     return led_count_for_target(target)

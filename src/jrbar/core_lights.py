@@ -156,12 +156,12 @@ def burn_init(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     each device would get and every warning. INIT.LED replays at every boot,
     so the write is the one thing here a person cannot undo by looking away.
     """
-    from ._led_status_legacy import led_count_for_target
     from .animation import (
         AnimationValidationError,
         burn_power_up_animation,
         parse_animation,
     )
+    from .led_status import led_count_for_target
 
     program = args.get("program")
     if type(program) is not str or not program.strip():

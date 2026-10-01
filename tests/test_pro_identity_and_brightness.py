@@ -265,7 +265,7 @@ def test_long_thinking_turn_survives_the_post_tool_window__and_1_more() -> None:
     #010101 rendered as a clearly GREEN glow -- 'why is the SidePulse
     green when it should be off.' A whole LED whose brightest drive
     lands below STRIP_HUE_HOLDING_DRIVE goes dark instead of lying."""
-    from jrbar._led_status_legacy import (
+    from jrbar.led_status import (
         NEUTRAL_CHANNEL_GAINS,
         apply_strip_transfer_to_hex,
     )

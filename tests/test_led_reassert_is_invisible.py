@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jrbar._led_status_legacy import (
+from jrbar.led_status import (
     AgentLedController,
     LedDisplayState,
     _steady_state_variant,

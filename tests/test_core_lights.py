@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from jrbar import _led_status_legacy, ambient_effect_runtime, core_runtime, device_writer, focus_sync
+from jrbar import ambient_effect_runtime, core_runtime, device_writer, focus_sync, led_status
 from jrbar.ambient_cues import (
     AMBIENT_CUES,
     SWITCHABLE_CUE_IDS,
@@ -170,7 +170,7 @@ def test_burn_init_plans_per_device_and_writes_only_when_confirmed(
     devices = _devices(tmp_path)
     daemon.status_bar_devices = lambda remember=True: devices
     monkeypatch.setattr(
-        _led_status_legacy,
+        led_status,
         "led_count_for_target",
         lambda target: 2 if "PulseDot" in str(target) else 8,
     )
@@ -202,7 +202,7 @@ def test_burn_init_reports_a_bad_program_and_refuses_what_it_cannot_do(
 ) -> None:
     devices = _devices(tmp_path)
     daemon.status_bar_devices = lambda remember=True: devices
-    monkeypatch.setattr(_led_status_legacy, "led_count_for_target", lambda target: 8)
+    monkeypatch.setattr(led_status, "led_count_for_target", lambda target: 8)
     monkeypatch.setattr(
         device_writer,
         "write_led_program",
