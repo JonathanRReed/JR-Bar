@@ -962,6 +962,7 @@ def _scan_codex_lines(
     initial_totals: tuple[int, int, int, int] | None = None,
     initial_parent_id: str | None = None,
     initial_root_id: str | None = None,
+    initial_model: str | None = None,
 ):
     """Parse Codex token deltas and logical lineage from a rollout.
 
@@ -980,7 +981,10 @@ def _scan_codex_lines(
     rate_limit_windows: tuple[dict, ...] = ()
     malformed_lines = 0
     eof_newline = True
-    current_model = "codex"
+    # A rollout names its model in a ``turn_context`` row and the token events
+    # after it say nothing, so a read that resumes mid-turn starts from the
+    # model the cached part of the file ended on.
+    current_model = initial_model or "codex"
     for line in handle:
         if line is _OVERSIZED_LINE:
             malformed_lines += 1
@@ -1648,6 +1652,7 @@ def _parse_file_tail(
     codex_previous_totals: tuple[int, int, int, int] | None = None,
     codex_parent_id: str | None = None,
     codex_root_id: str | None = None,
+    codex_model: str | None = None,
 ) -> _ParseResult:
     """Parse only the bytes appended past ``resume_offset``.
 
@@ -1671,6 +1676,7 @@ def _parse_file_tail(
                 initial_totals=codex_previous_totals,
                 initial_parent_id=codex_parent_id,
                 initial_root_id=codex_root_id,
+                initial_model=codex_model,
             )
         )
         if not snapshot.read_ok:
@@ -2271,6 +2277,11 @@ def _scan_inventory_usage_with_index(
                             _codex_context_from_dedupe(base_records[-1][8])
                             if source.provider_id == "codex" and base_records
                             else (None, None)
+                        ),
+                        (
+                            base_records[-1][2]
+                            if source.provider_id == "codex" and base_records
+                            else None
                         ),
                     )
                     if tail.read_ok:
