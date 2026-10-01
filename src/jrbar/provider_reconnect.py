@@ -100,18 +100,21 @@ _KEYCHAIN_FINGERPRINT_TTL_SECONDS = 60.0
 _KEYCHAIN_FINGERPRINT_CACHE: dict[str, tuple[float, tuple]] = {}
 
 
-def keychain_fingerprint(service: str, *, now: float | None = None) -> tuple:
+def keychain_fingerprint(service: str, *, now: float | None = None, fresh: bool = False) -> tuple:
     """Modification/creation stamps of a Keychain item, no secret read.
 
     `security find-generic-password` WITHOUT -w returns attributes only,
     so this raises no consent dialog and costs no password access.
+    ``fresh`` skips the 60 s cache for one look (the sign-in fix asks "did
+    Claude Code just renew its item?") and stores the answer, so the
+    terminal gate sees the same change on its next look.
     """
     import subprocess
     import time as _time
 
     stamp = _time.monotonic() if now is None else float(now)
     cached = _KEYCHAIN_FINGERPRINT_CACHE.get(service)
-    if cached is not None and stamp - cached[0] < _KEYCHAIN_FINGERPRINT_TTL_SECONDS:
+    if not fresh and cached is not None and stamp - cached[0] < _KEYCHAIN_FINGERPRINT_TTL_SECONDS:
         return cached[1]
     parts: tuple = ()
     try:
@@ -137,7 +140,7 @@ def keychain_fingerprint(service: str, *, now: float | None = None) -> tuple:
     return parts
 
 
-def credential_fingerprint(home: Path, provider_id: str) -> tuple | None:
+def credential_fingerprint(home: Path, provider_id: str, *, fresh: bool = False) -> tuple | None:
     """A cheap identity for the provider's credential source.
 
     None means "no source exists at all". Any change in the tuple -- a
@@ -155,7 +158,7 @@ def credential_fingerprint(home: Path, provider_id: str) -> tuple | None:
         parts.append((relative, int(info.st_mtime_ns), int(info.st_size), int(info.st_ino)))
     service = KEYCHAIN_SOURCE_SERVICES.get(provider_id)
     if service:
-        parts.extend(keychain_fingerprint(service))
+        parts.extend(keychain_fingerprint(service, fresh=fresh))
     return tuple(parts) or None
 
 
@@ -972,6 +975,10 @@ class ResignInResult:
     sign_in_url: str | None = None
     #: True when a stored credential changed -- the caller force-refreshes.
     changed: bool = False
+    #: What the re-read found, for the providers whose own tooling can say
+    #: (Claude, Grok); ``None`` for the others. ``provider_sign_in`` decides
+    #: its next step from it, never from the sentence.
+    outcome: RepairOutcome | None = None
 
 
 def reconnect_provider(
@@ -1032,6 +1039,7 @@ def reconnect_provider(
                 return ResignInResult(
                     provider_id,
                     f"Could not read the Claude Code sign-in: {exc}",
+                    outcome=RepairOutcome.UNAVAILABLE,
                 )
             if not result.ok:
                 message = {
@@ -1047,7 +1055,15 @@ def reconnect_provider(
                     result.outcome,
                     "Claude Code's sign-in was not found in the Keychain.",
                 )
-                return ResignInResult(provider_id, message)
+                declined = result.outcome in (
+                    CredentialOutcome.DENIED,
+                    CredentialOutcome.COOLING_DOWN,
+                )
+                return ResignInResult(
+                    provider_id,
+                    message,
+                    outcome=RepairOutcome.BLOCKED if declined else RepairOutcome.UNAVAILABLE,
+                )
             secret = result.secret
 
             def reader() -> str:
@@ -1063,8 +1079,14 @@ def reconnect_provider(
             return ResignInResult(
                 provider_id,
                 f"Could not re-read the Claude Code sign-in: {exc}",
+                outcome=RepairOutcome.UNAVAILABLE,
             )
-        return ResignInResult(provider_id, repair.message, changed=repair.changed)
+        return ResignInResult(
+            provider_id,
+            repair.message,
+            changed=repair.changed,
+            outcome=repair.outcome,
+        )
 
     if provider_id == "grok":
         try:
@@ -1074,12 +1096,18 @@ def reconnect_provider(
                 now=stamp,
                 server_rejected=reason_code == "authentication_required",
             )
-            return ResignInResult(provider_id, repair.message, changed=repair.changed)
+            return ResignInResult(
+                provider_id,
+                repair.message,
+                changed=repair.changed,
+                outcome=repair.outcome,
+            )
         except Exception:
             return ResignInResult(
                 provider_id,
                 f"Run `grok login` in a terminal — {PRODUCT_DISPLAY_NAME} reads the "
                 "CLI's sign-in automatically on the refresh this click started.",
+                outcome=RepairOutcome.NEEDS_SIGN_IN,
             )
 
     if provider_id == "codex":
