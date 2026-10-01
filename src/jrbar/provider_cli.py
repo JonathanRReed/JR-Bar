@@ -113,6 +113,11 @@ PROVIDER_CLIS: Final[Mapping[str, ProviderCli]] = MappingProxyType({
     # never from the CLI's login, so opening it would not fix the card. Fix
     # sign-in imports the session or opens app.devin.ai instead
     # (provider_reconnect.reconnect_provider).
+    # `devin update --help` says "Check for updates and optionally install
+    # them" and offers only `--force` (re-install): there is no non-interactive
+    # install. With no input it may check, exit 0 and install nothing, which
+    # would read as "already up to date", so Devin's Update opens a terminal
+    # on the command instead of running it blind.
     "devin": ProviderCli(
         provider="devin",
         label="Devin",
@@ -121,6 +126,7 @@ PROVIDER_CLIS: Final[Mapping[str, ProviderCli]] = MappingProxyType({
         update=("update",),
         npm_package=None,
         watches_sign_in=False,
+        update_needs_terminal=True,
     ),
     "opencode": ProviderCli(
         provider="opencode",

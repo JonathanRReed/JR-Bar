@@ -121,7 +121,8 @@ update`, `devin update`, `opencode upgrade`) and then shows the result in one
 line: "Updated 2.1.285 to 2.1.290", "Already up to date", or why it failed. The
 updater runs with the full path to the CLI, no input and a ten minute limit, and
 only one per provider and two at a time. If an updater asks for a terminal,
-JR-Bar opens yours on the same command. Gemini CLI has no updater of its own, so
+JR-Bar opens yours on the same command. Devin's updater asks before it installs,
+so its Update button always opens your terminal on `devin update`. Gemini CLI has no updater of its own, so
 its row says how to update it the way you installed it.
 
 JR-Bar contacts nothing for this. The button only runs the tool already on your

@@ -52,6 +52,8 @@ def test_the_command_table_is_fixed_and_says_what_each_cli_can_do() -> None:
     assert PROVIDER_CLIS["devin"].npm_package is None
     assert PROVIDER_CLIS["grok"].sign_in_display() == "grok login"
     assert PROVIDER_CLIS["opencode"].update_display() == "opencode upgrade"
+    # Devin's updater asks before it installs and has no non-interactive flag, so it is opened, not run.
+    assert {name for name, cli in PROVIDER_CLIS.items() if cli.update_needs_terminal} == {"devin"}
     packages = {name: cli.npm_package for name, cli in PROVIDER_CLIS.items()}
     assert packages == {
         "claude": "@anthropic-ai/claude-code",

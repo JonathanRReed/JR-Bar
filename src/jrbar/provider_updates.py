@@ -64,16 +64,11 @@ MESSAGE_LIMIT: Final = 240
 _NEEDS_TERMINAL_MARKERS: Final = (
     "[y/n]",
     "(y/n)",
-    "[y/n/",
     "(yes/no)",
     "press enter",
     "not a tty",
     "not a terminal",
-    "no tty",
-    "stdin is not",
-    "interactive terminal",
-    "requires a terminal",
-    "in a terminal",
+    "stdin is not a",
     "inappropriate ioctl",
     "raw mode is not supported",
 )

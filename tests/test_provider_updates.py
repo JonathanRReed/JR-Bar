@@ -199,8 +199,8 @@ def test_a_click_returns_at_once_and_the_updater_runs_on_a_worker(tmp_path: Path
 
 def test_the_updater_is_the_tables_argv_run_with_a_closed_stdin_in_the_owners_environment(tmp_path: Path) -> None:
     b = bench(tmp_path)
-    for provider, tail in (("claude", "update"), ("codex", "update"), ("grok", "update"), ("devin", "update"),
-                           ("opencode", "upgrade")):
+    # Devin is not here: its updater asks before it installs, so it gets a terminal (below).
+    for provider, tail in (("claude", "update"), ("codex", "update"), ("grok", "update"), ("opencode", "upgrade")):
         b.started.clear()
         b.updates.update(provider)
         run_started(b)
@@ -248,9 +248,9 @@ def test_unchanged_failed_and_unreadable_results_say_so(tmp_path: Path) -> None:
     assert len(record["message"]) <= 240
 
     unreadable = bench(tmp_path / "unreadable", environment={"FAKE_NEW_VERSION": "not a version"})
-    unreadable.updates.update("devin")
+    unreadable.updates.update("grok")
     run_started(unreadable)
-    record = unreadable.updates.document()["devin"]
+    record = unreadable.updates.document()["grok"]
     assert record["phase"] == "unchanged"
     assert "could not be read" in record["message"]
 
@@ -269,9 +269,37 @@ def test_a_hung_updater_is_killed_at_the_timeout(tmp_path: Path, monkeypatch: py
 
 
 def test_an_updater_that_wants_a_terminal_gets_one(tmp_path: Path) -> None:
-    b = bench(tmp_path, environment={"FAKE_EXIT": "1", "FAKE_OUTPUT": "Install 3000.4.0? [y/N]"})
-    b.updates.update("devin")
+    b = bench(tmp_path, environment={"FAKE_EXIT": "1", "FAKE_OUTPUT": "Install 2.2.0? [y/N]"})
+    b.updates.update("codex")
 
+    run_started(b)
+
+    record = b.updates.document()["codex"]
+    assert record["phase"] == "needs_terminal"
+    assert record["message"] == (
+        "Codex's updater needs a terminal: opened Ghostty on `codex update`. Finish the update there."
+    )
+    assert b.terminal.calls == [(str(b.home), f"{shlex.quote(b.tools['codex'])} update")]
+
+    refused = bench(
+        tmp_path / "refused",
+        environment={"FAKE_EXIT": "1", "FAKE_OUTPUT": "stdin is not a terminal"},
+    )
+    refused.terminal.error = CommandError("unsupported", "that terminal could not be opened")
+    refused.updates.update("codex")
+    run_started(refused)
+    assert refused.updates.document()["codex"]["phase"] == "failed"
+    assert "Run `codex update` yourself" in refused.updates.document()["codex"]["message"]
+
+
+def test_devins_updater_is_never_run_blind_because_it_would_read_as_up_to_date(tmp_path: Path) -> None:
+    # `devin update` checks and only optionally installs, and has no non-interactive flag: run with no
+    # input it can exit 0 having installed nothing, which would say "Already up to date" when it is not.
+    b = bench(tmp_path, environment={"FAKE_OUTPUT": "A new version is available. Install it? "})
+    assert PROVIDER_CLIS["devin"].update_needs_terminal is True
+    assert not any(cli.update_needs_terminal for name, cli in PROVIDER_CLIS.items() if name != "devin")
+
+    b.updates.update("devin")
     run_started(b)
 
     record = b.updates.document()["devin"]
@@ -280,16 +308,24 @@ def test_an_updater_that_wants_a_terminal_gets_one(tmp_path: Path) -> None:
         "Devin's updater needs a terminal: opened Ghostty on `devin update`. Finish the update there."
     )
     assert b.terminal.calls == [(str(b.home), f"{shlex.quote(b.tools['devin'])} update")]
+    assert not (b.directory / "devin.run").exists(), "the updater was not run with no one to answer it"
 
-    refused = bench(
-        tmp_path / "refused",
-        environment={"FAKE_EXIT": "1", "FAKE_OUTPUT": "stdin is not a terminal"},
-    )
-    refused.terminal.error = CommandError("unsupported", "that terminal could not be opened")
-    refused.updates.update("devin")
-    run_started(refused)
-    assert refused.updates.document()["devin"]["phase"] == "failed"
-    assert "Run `devin update` yourself" in refused.updates.document()["devin"]["message"]
+
+def test_a_failure_that_merely_says_terminal_is_not_a_prompt(tmp_path: Path) -> None:
+    # Broad phrases ("in a terminal", "interactive terminal") are in ordinary failure text; they must not
+    # re-run the updater in a visible terminal.
+    for text in (
+        "Could not reach the server. Try again in a terminal later.",
+        "An interactive terminal session is not required for this step.",
+        "This command requires a terminal emulator to be installed? no",
+    ):
+        b = bench(tmp_path / str(abs(hash(text))), environment={"FAKE_EXIT": "1", "FAKE_OUTPUT": text})
+        b.updates.update("grok")
+
+        run_started(b)
+
+        assert b.updates.document()["grok"]["phase"] == "failed", text
+        assert b.terminal.calls == [], text
 
 
 def test_a_plain_failure_does_not_open_a_terminal(tmp_path: Path) -> None:
