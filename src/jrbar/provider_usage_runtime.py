@@ -71,6 +71,11 @@ DEFAULT_MAX_CONCURRENT_COLLECTORS = 4
 #: provider's worst case, which is what a refresh used to cost.
 DEFAULT_COLLECTOR_DEADLINE_SECONDS = 45.0
 
+#: The longest the refresh's thread blocks on its collectors before it looks
+#: up again. A refresh that has been replaced (a newer request, or the service
+#: closing) notices within this long and stops waiting.
+SUPERSESSION_POLL_SECONDS = 0.25
+
 #: How long a refresh waits before it shows the providers that have already
 #: answered while others are still being asked. A refresh that finishes
 #: sooner publishes once, as it always did; a slower one shows the quick
@@ -446,7 +451,10 @@ class _CollectionRound:
     on: the round reports a failure for it and moves on. Python cannot stop
     a thread, so the late answer, if it ever comes, is dropped. A thread
     that never returns is a daemon and costs one idle thread, where before
-    it would have held every later refresh behind it for good.
+    it would have held every later refresh behind it for good. Until that
+    thread ends its provider stays busy for the rest of the round, so a
+    second instance of the same provider is not started beside it; it is
+    reported as timed out too, since that provider is still not answering.
     """
 
     def __init__(
@@ -458,10 +466,16 @@ class _CollectionRound:
         max_concurrent: int,
         deadline_seconds: float,
         monotonic: Callable[[], float],
+        poll_seconds: float = SUPERSESSION_POLL_SECONDS,
     ) -> None:
         self._pending: deque[_CollectJob] = deque(jobs)
         #: slot -> (job, monotonic time its deadline passes)
         self._running: dict[int, tuple[_CollectJob, float]] = {}
+        #: slot -> the thread running it, while it is running.
+        self._threads: dict[int, threading.Thread] = {}
+        #: (provider id, thread) for collectors given up on or abandoned
+        #: whose thread has not ended yet.
+        self._given_up: list[tuple[str, threading.Thread]] = []
         self._results: queue.SimpleQueue[tuple[int, ProviderUsageSnapshot]] = (
             queue.SimpleQueue()
         )
@@ -470,6 +484,7 @@ class _CollectionRound:
         self._max_concurrent = max_concurrent
         self._deadline_seconds = deadline_seconds
         self._monotonic = monotonic
+        self._poll_seconds = poll_seconds
 
     @property
     def finished(self) -> bool:
@@ -480,9 +495,21 @@ class _CollectionRound:
         """How many collectors are running and not yet given up on."""
         return len(self._running)
 
-    def stop_starting(self) -> None:
-        """Let what is running finish, but ask no one else."""
+    def abandon(self) -> None:
+        """Stop waiting: ask no one else and give up on what is running.
+
+        For a refresh that has been replaced, whose answers would be thrown
+        away anyway. Nothing is interrupted (a thread cannot be): each
+        running collector finishes on its own daemon thread and its late
+        answer goes to this round's queue, which nobody reads. So an
+        abandoned collector can briefly overlap the replacing refresh's
+        collector for the same provider; that is the price of not holding a
+        newer request, such as a click on Fix sign-in, behind the slowest
+        provider of an older one.
+        """
         self._pending.clear()
+        for slot in tuple(self._running):
+            self._give_up_on(slot)
 
     def settled_all(self, provider_id: str) -> bool:
         """True when no job for ``provider_id`` is waiting or running."""
@@ -510,8 +537,12 @@ class _CollectionRound:
             wake = min(wake, wake_at)
         outcomes: list[tuple[int, ProviderUsageSnapshot]] = []
         try:
+            # Never block longer than the poll: the caller looks up between
+            # calls to see whether this refresh was replaced.
             outcomes.append(
-                self._results.get(timeout=max(0.0, wake - self._monotonic()))
+                self._results.get(
+                    timeout=max(0.0, min(wake - self._monotonic(), self._poll_seconds))
+                )
             )
         except queue.Empty:
             pass
@@ -524,18 +555,47 @@ class _CollectionRound:
         for slot, candidate in outcomes:
             entry = self._running.pop(slot, None)
             if entry is not None:
+                self._threads.pop(slot, None)
                 finished.append((entry[0], candidate))
         now = self._monotonic()
         for slot, (job, deadline) in tuple(self._running.items()):
             if deadline <= now:
-                del self._running[slot]
+                self._give_up_on(slot)
+                finished.append((job, self._unanswered(job, "response_timed_out")))
+        # A job whose provider still has a collector that was given up on, and
+        # none running, will not get a turn this round: that provider is not
+        # answering, so it times out too rather than waiting for a thread that
+        # may never return.
+        running = {job.provider_id for job, _deadline in self._running.values()}
+        stuck = self._stuck_providers() - running
+        for job in tuple(self._pending):
+            if job.provider_id in stuck:
+                self._pending.remove(job)
                 finished.append((job, self._unanswered(job, "response_timed_out")))
         self._start_eligible()
         return finished
 
+    def _give_up_on(self, slot: int) -> None:
+        """Stop counting ``slot`` as running; remember its thread until it ends."""
+        job, _deadline = self._running.pop(slot)
+        thread = self._threads.pop(slot, None)
+        if thread is not None:
+            self._given_up.append((job.provider_id, thread))
+
+    def _stuck_providers(self) -> set[str]:
+        """Providers with a collector, given up on, whose thread still runs."""
+        self._given_up = [
+            (provider_id, thread)
+            for provider_id, thread in self._given_up
+            if thread.is_alive()
+        ]
+        return {provider_id for provider_id, _thread in self._given_up}
+
     def _start_eligible(self) -> None:
         while self._pending and len(self._running) < self._max_concurrent:
-            busy = {job.provider_id for job, _deadline in self._running.values()}
+            busy = {
+                job.provider_id for job, _deadline in self._running.values()
+            } | self._stuck_providers()
             chosen = next(
                 (job for job in self._pending if job.provider_id not in busy),
                 None,
@@ -548,13 +608,16 @@ class _CollectionRound:
                 self._monotonic() + self._deadline_seconds,
             )
             try:
-                threading.Thread(
+                thread = threading.Thread(
                     target=self._collect,
                     args=(chosen,),
                     name=f"JRBarProviderCollect-{chosen.provider_id}",
                     daemon=True,
-                ).start()
+                )
+                self._threads[chosen.slot] = thread
+                thread.start()
             except Exception:
+                self._threads.pop(chosen.slot, None)
                 # No thread to run it on: a failure for this provider now,
                 # not a wait for a deadline that nothing is counting down to.
                 self._results.put(
@@ -1005,18 +1068,22 @@ class ProviderUsageService:
         )
         unpublished = False
         if superseded:
-            collection.stop_starting()
+            collection.abandon()
         while not collection.finished:
             if not superseded and generation is not None:
                 with self._lock:
                     superseded = self._closed or generation != self._refresh_generation
                 if superseded:
-                    # What is already running cannot be interrupted; it is
-                    # awaited, as it always was, but nothing new is asked.
-                    collection.stop_starting()
-            showing_partials = partial_due is not None and not superseded
+                    # This refresh's answers would only be thrown away, so stop
+                    # waiting for them at once. A newer request, such as a click
+                    # on Fix sign-in, must not sit behind this refresh's slowest
+                    # provider. The running collectors cannot be interrupted:
+                    # they finish on their own threads, and one can briefly
+                    # overlap the newer refresh's collector for the same provider.
+                    collection.abandon()
+                    break
             answered = collection.advance(
-                wake_at=partial_due if showing_partials and unpublished else None
+                wake_at=partial_due if unpublished else None
             )
             for job, candidate in answered:
                 slots[job.slot] = self._settle_candidate(
@@ -1028,7 +1095,6 @@ class ProviderUsageService:
             unpublished = unpublished or bool(answered)
             if (
                 partial_due is not None
-                and showing_partials
                 and unpublished
                 and not collection.finished
                 and self._monotonic() >= partial_due
@@ -1054,32 +1120,35 @@ class ProviderUsageService:
                     settings_revision=settings_revision,
                 )
                 unpublished = False
-        self._decide_incidents(books, observed_at)
-        ordered = tuple(self._with_incident_decisions(current_snapshots(), books))
-        if self._extra_source is not None:
-            ordered = self._with_extra_snapshots(
+        state: ProviderUsageState | None = None
+        cadence_plan: AdaptiveRefreshPlan | None = None
+        if not superseded:
+            self._decide_incidents(books, observed_at)
+            ordered = tuple(self._with_incident_decisions(current_snapshots(), books))
+            if self._extra_source is not None:
+                ordered = self._with_extra_snapshots(
+                    ordered,
+                    previous_state,
+                    observed_at=observed_at,
+                    force=force,
+                    wanted=selected is None or bool({"claude", "codex"} & selected_provider_ids),
+                )
+            cadence_plan = plan_adaptive_refresh_cadence(
                 ordered,
-                previous_state,
                 observed_at=observed_at,
-                force=force,
-                wanted=selected is None or bool({"claude", "codex"} & selected_provider_ids),
+                menu_last_opened_at=getattr(self, "_menu_last_opened_at", None),
+                constrained=_machine_is_constrained(),
+                ambient_usage_visible=bool(
+                    getattr(self, "_ambient_usage_visible", False)
+                ),
+                reset_confirm_until=getattr(self, "_reset_confirm_until", None),
             )
-        cadence_plan = plan_adaptive_refresh_cadence(
-            ordered,
-            observed_at=observed_at,
-            menu_last_opened_at=getattr(self, "_menu_last_opened_at", None),
-            constrained=_machine_is_constrained(),
-            ambient_usage_visible=bool(
-                getattr(self, "_ambient_usage_visible", False)
-            ),
-            reset_confirm_until=getattr(self, "_reset_confirm_until", None),
-        )
-        state = ProviderUsageState(
-            snapshots=ordered,
-            refreshed_at=observed_at,
-            next_refresh_at=observed_at + cadence_plan.interval_seconds,
-            refreshing=False,
-        )
+            state = ProviderUsageState(
+                snapshots=ordered,
+                refreshed_at=observed_at,
+                next_refresh_at=observed_at + cadence_plan.interval_seconds,
+                refreshing=False,
+            )
         # State publication and its durable save are one revision-fenced
         # critical section. An explicit settings edit cannot land between
         # the check and the save, and an older worker therefore cannot leak
@@ -1096,7 +1165,9 @@ class ProviderUsageService:
             ):
                 publication_outcome = RefreshPublicationOutcome.SUPERSEDED
                 result = self._state
-            elif settings_revision != self._settings_revision:
+            elif state is None or settings_revision != self._settings_revision:
+                # `state` is None only for a replaced refresh, which the two
+                # checks above already caught; this is the defensive net.
                 publication_outcome = RefreshPublicationOutcome.SUPERSEDED
                 result = self._state
             else:

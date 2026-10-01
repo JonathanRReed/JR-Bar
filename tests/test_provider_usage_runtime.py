@@ -2091,3 +2091,183 @@ def test_a_partial_state_is_published_only_by_the_run_it_belongs_to(tmp_path) ->
         settings_revision=revision,
     )
     assert _percent(service.snapshot(), "codex") == 10
+
+
+# --- A replaced refresh stops waiting; a stuck provider stays busy ----------
+
+
+def test_a_forced_scoped_request_does_not_wait_behind_an_older_refreshs_slowest_provider(
+    tmp_path,
+) -> None:
+    # The Fix sign-in click is exactly this: a forced request for one provider,
+    # landing while an older refresh waits on a provider that does not answer.
+    settings = default_provider_usage_settings()
+    cursor_running = threading.Event()
+    release_cursor = threading.Event()
+
+    def hung_cursor(_pref, _home, observed, _credentials):
+        cursor_running.set()
+        assert release_cursor.wait(30.0)
+        return snapshot("cursor", observed=observed)
+
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={
+            "cursor": hung_cursor,
+            "claude": lambda _pref, _home, observed, _credentials: snapshot(
+                "claude", remaining=77, observed=observed
+            ),
+        },
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000.0,
+        incident_lookup=lambda *_args: None,
+        # Far past the test's own bound: only abandoning the old refresh can
+        # let the new one through in time.
+        collector_deadline_seconds=600.0,
+        partial_publish_after_seconds=None,
+    )
+    try:
+        service.request(callback=_Published(), providers=("cursor",), force=True)
+        assert cursor_running.wait(30.0)
+
+        published = _Published()
+        service.request(callback=published, providers=("claude",), force=True)
+        final = published.wait_for(lambda state: not state.refreshing)
+
+        # The scoped result is out while the old refresh's provider is still hung.
+        assert not release_cursor.is_set()
+        assert final.by_provider("claude").state is ProviderSourceState.READY
+        assert _percent(final, "claude") == 77
+    finally:
+        release_cursor.set()
+        service.close()
+
+
+def test_closing_the_service_does_not_wait_for_a_hung_provider(tmp_path) -> None:
+    settings = default_provider_usage_settings()
+    running = threading.Event()
+    release = threading.Event()
+
+    def hung(_pref, _home, observed, _credentials):
+        running.set()
+        assert release.wait(30.0)
+        return snapshot("codex", observed=observed)
+
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={"codex": hung},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000.0,
+        incident_lookup=lambda *_args: None,
+        collector_deadline_seconds=600.0,
+    )
+    service.request(callback=lambda _state: None, providers=("codex",), force=True)
+    assert running.wait(30.0)
+    workers = tuple(service._workers)
+    assert workers
+
+    service.close()  # joins for at most a second
+
+    try:
+        assert not any(worker.is_alive() for worker in workers)
+    finally:
+        release.set()
+
+
+def test_a_round_that_is_abandoned_stops_waiting_and_drops_late_answers() -> None:
+    hung = _round_job(0, "claude")
+    running = threading.Event()
+    release = threading.Event()
+
+    def run(job):
+        running.set()
+        assert release.wait(30.0)
+        return snapshot(job.provider_id)
+
+    collection = _CollectionRound(
+        [hung, _round_job(1, "codex")],
+        run=run,
+        unanswered=lambda job, reason: snapshot(job.provider_id),
+        max_concurrent=1,
+        deadline_seconds=45.0,
+        monotonic=lambda: 0.0,
+    )
+    assert collection.advance(wake_at=-1.0) == []
+    assert running.wait(30.0)
+    assert collection.in_flight == 1 and not collection.finished
+
+    collection.abandon()
+
+    # Nothing running, nothing waiting: the caller is done at once, and the
+    # job that never started never will.
+    assert collection.in_flight == 0
+    assert collection.finished
+    release.set()
+    assert collection.advance() == []
+
+
+def test_a_round_never_blocks_longer_than_its_poll() -> None:
+    import time
+
+    release = threading.Event()
+    collection = _CollectionRound(
+        [_round_job(0, "claude")],
+        run=lambda job: (release.wait(30.0), snapshot(job.provider_id))[1],
+        unanswered=lambda job, reason: snapshot(job.provider_id),
+        max_concurrent=1,
+        # The fake clock never moves, so the deadline is 45 s away: only the
+        # poll can bring advance() back.
+        deadline_seconds=45.0,
+        monotonic=lambda: 0.0,
+        poll_seconds=0.01,
+    )
+    started = time.monotonic()
+    try:
+        assert collection.advance() == []
+        assert time.monotonic() - started < 10.0
+    finally:
+        release.set()
+
+
+def test_a_provider_whose_collector_was_given_up_on_stays_busy_for_the_round() -> None:
+    clock = {"now": 0.0}
+    first, second = _round_job(0, "claude", "default"), _round_job(1, "claude", "work")
+    running = threading.Event()
+    release = threading.Event()
+    ran: list[int] = []
+
+    def run(job):
+        ran.append(job.slot)
+        running.set()
+        assert release.wait(30.0)
+        return snapshot(job.provider_id)
+
+    reasons: list[tuple[int, str]] = []
+
+    def unanswered(job, reason):
+        reasons.append((job.slot, reason))
+        return snapshot(job.provider_id, state=ProviderSourceState.UNAVAILABLE)
+
+    collection = _CollectionRound(
+        [first, second],
+        run=run,
+        unanswered=unanswered,
+        max_concurrent=4,
+        deadline_seconds=45.0,
+        monotonic=lambda: clock["now"],
+    )
+    assert collection.advance(wake_at=-1.0) == []
+    assert running.wait(30.0)
+
+    clock["now"] = 46.0
+    answers = collection.advance()
+
+    # The first instance timed out and its thread is still running, so the
+    # second is not started beside it: it times out too, unasked.
+    assert sorted(job.slot for job, _candidate in answers) == [0, 1]
+    assert reasons == [(0, "response_timed_out"), (1, "response_timed_out")]
+    assert ran == [0]
+    assert collection.finished
+    release.set()
