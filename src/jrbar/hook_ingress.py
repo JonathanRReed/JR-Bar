@@ -66,7 +66,8 @@ HOOK_DECISION_SEND_TIMEOUT_SECONDS: Final = 1.0
 # While the daemon's launch finishes draining the shim's spool (hook_pending),
 # live hooks are accepted but processed after it, so a spooled prompt never
 # lands on top of the Stop that followed it. A drain that is somehow still
-# going after this long stops holding them rather than starve live state.
+# going this long after the hold began ends the hold (for every hook, not one
+# at a time) rather than starve live state.
 HOOK_BACKLOG_HOLD_LIMIT_SECONDS: Final = 300.0
 # How often a held worker looks up from the hold to see whether the service
 # is closing.
@@ -415,6 +416,12 @@ class HookIngressService:
         # the daemon is still draining goes first (hook_pending). ``None`` is
         # no hold.
         self._hold_until = hold_until
+        # When the current hold was first waited on, and whether it has
+        # outlived ``HOOK_BACKLOG_HOLD_LIMIT_SECONDS``: the limit belongs to
+        # the hold, not to each hook that meets it. Both reset when the hold
+        # is released.
+        self._hold_started: float | None = None
+        self._hold_expired = False
 
         self._condition = threading.Condition()
         self._pending: deque[_AcceptedHook] = deque()
@@ -750,25 +757,38 @@ class HookIngressService:
 
     def _backlog_held(self) -> bool:
         hold = self._hold_until
-        return hold is not None and not hold.is_set()
+        return hold is not None and not hold.is_set() and not self._hold_expired
 
     def _wait_for_backlog(self) -> None:
         """Let the backlog the daemon is draining go first. Returns when the
         hold is released, when the service is closing (the hooks still queued
         are processed, not abandoned), or once the hold has lasted
-        ``HOOK_BACKLOG_HOLD_LIMIT_SECONDS``."""
+        ``HOOK_BACKLOG_HOLD_LIMIT_SECONDS`` since the first hook waited on
+        it: after that no hook waits, until the hold is released."""
         hold = self._hold_until
-        if hold is None or hold.is_set():
+        if hold is None:
             return
-        deadline = self._now() + HOOK_BACKLOG_HOLD_LIMIT_SECONDS
+        if hold.is_set():
+            self._hold_started = None
+            self._hold_expired = False
+            return
+        if self._hold_expired:
+            return
+        if self._hold_started is None:
+            self._hold_started = self._now()
+        deadline = self._hold_started + HOOK_BACKLOG_HOLD_LIMIT_SECONDS
         while not hold.is_set():
             with self._condition:
                 if not self._accepting:
                     return
             remaining = deadline - self._now()
             if remaining <= 0.0:
+                self._hold_expired = True
                 return
             hold.wait(min(remaining, HOOK_BACKLOG_HOLD_POLL_SECONDS))
+        # Released while this hook waited: the next hold starts afresh.
+        self._hold_started = None
+        self._hold_expired = False
 
     def _serve(self) -> None:
         while True:

@@ -387,6 +387,60 @@ def test_the_hold_has_a_limit_so_a_stuck_drain_cannot_starve_live_hooks(tmp_path
         assert service.close(timeout_seconds=WAIT)
 
 
+def test_the_hold_limit_belongs_to_the_hold_not_to_each_hook(tmp_path: Path) -> None:
+    """A hold that is never released ends once, 300 s after it began: the
+    second hook does not wait its own 300 s behind the first."""
+    from jrbar.hook_ingress import HOOK_BACKLOG_HOLD_LIMIT_SECONDS
+
+    clock = {"now": 0.0}
+    waits = {"count": 0}
+
+    def look_at_the_hold() -> None:
+        # Each look at the hold lets two thirds of the limit pass.
+        waits["count"] += 1
+        clock["now"] += HOOK_BACKLOG_HOLD_LIMIT_SECONDS * 2 / 3
+
+    gate = _Gate(on_wait=look_at_the_hold)
+    waits_when_processed: list[int] = []
+    both = threading.Event()
+
+    def process(_request: HookIngressRequest) -> None:
+        waits_when_processed.append(waits["count"])
+        if len(waits_when_processed) == 2:
+            both.set()
+
+    service = _service(tmp_path, process, gate, monotonic=lambda: clock["now"])
+    try:
+        service.submit(_request(n=1))
+        service.submit(_request(n=2))
+        assert both.wait(WAIT)
+        # The first hook looked twice (two thirds, then past the limit); the
+        # second looked never. A per-hook limit would have made it four.
+        assert waits_when_processed == [2, 2]
+        # And once the hold has expired it holds nothing else either.
+        assert service._backlog_held() is False
+        assert not gate.is_set()
+    finally:
+        assert service.close(timeout_seconds=WAIT)
+
+
+def test_a_released_hold_starts_its_limit_afresh(tmp_path: Path) -> None:
+    gate = _Gate()
+    clock = {"now": 0.0}
+    processed = threading.Event()
+    service = _service(tmp_path, lambda _request: processed.set(), gate, monotonic=lambda: clock["now"])
+    try:
+        service.submit(_request())
+        assert gate.waiting.wait(WAIT)
+        gate.set()
+        assert processed.wait(WAIT)
+        # Released: nothing is held, and nothing is remembered as expired.
+        assert service._backlog_held() is False
+        assert service._hold_started is None and service._hold_expired is False
+    finally:
+        assert service.close(timeout_seconds=WAIT)
+
+
 def test_a_service_with_no_hold_is_unchanged(tmp_path: Path) -> None:
     processed: list[int] = []
     service = _service(tmp_path, lambda _request: processed.append(1), None)
