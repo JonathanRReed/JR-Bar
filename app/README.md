@@ -210,7 +210,7 @@ LEDSFlashAnalysis.analyse(steps, ledCount: 8)   // port of flash_analysis.py: me
 
 Colour note: the sampler's floats are the firmware codes over 255. The strip
 PWMs those linearly; the Screen Bar paints them straight into an sRGB context
-("identity transfer", see `_led_status_legacy.py`). The app does this in the
+("identity transfer", see `led_status.py`). The app does this in the
 sRGB colour space, so the hex codes mean what a colour picker says they mean.
 `LEDSTransfer.srgbToLinear` and `linearToSRGB` are the exact IEC 61966-2-1
 curve for anyone who needs light.
