@@ -127,20 +127,25 @@ def test_refreshing_state_has_stable_title__and_2_more() -> None:
     projection = project_usage_menu(state, now=1000)
     assert projection.title == "Usage · refreshing…"
 
-    # --- scenario: lane_lines_render_codebar_style_meters
+    # --- scenario: lane_lines_are_numbers_and_words_never_block_characters
     row = project_usage_menu(
         ProviderUsageState((snapshot("claude", "5-hour", 74),), 1000, 1100, False),
         now=1000,
     ).rows[0]
-    assert row.lane_lines == ("▰▰▰▰▰▰▱▱  5-hour · 74% left · resets in 33m · surplus",)
+    assert row.lane_lines == ("5-hour · 74% left · resets in 33m · surplus",)
 
-    # --- scenario: lane_meter_never_shows_empty_while_something_remains
-    from jrbar.provider_usage_qol import format_lane_meter as _lane_meter
+    # The meter option no longer changes a line: there is no bar to draw.
+    from jrbar.provider_usage_settings import MenuUsageDisplay
 
-    assert _lane_meter(100.0) == "▰▰▰▰▰▰▰▰"
-    assert _lane_meter(50.0) == "▰▰▰▰▱▱▱▱"
-    assert _lane_meter(2.0) == "▰▱▱▱▱▱▱▱"  # almost-out still shows one cell
-    assert _lane_meter(0.0) == "▱▱▱▱▱▱▱▱"
+    for show_meters in (True, False):
+        again = project_usage_menu(
+            ProviderUsageState((snapshot("claude", "5-hour", 2), snapshot("codex", "Weekly", 0)), 1000, 1100, False),
+            now=1000,
+            display=MenuUsageDisplay(show_meters=show_meters),
+        )
+        for projected in again.rows:
+            for line in projected.lane_lines:
+                assert not any(char in line for char in "▰▱▮▯█▓▒░"), line
 
 
 
@@ -158,7 +163,7 @@ def test_lane_without_percent_still_lists_its_reset__and_2_more() -> None:
     assert row.lane_lines == ()  # snapshot() builds no lanes when remaining is None
     assert row.title == "Claude · ready"
 
-    # --- scenario: display_flags_curate_meters_totals_cost_and_detail_lanes
+    # --- scenario: display_flags_curate_totals_cost_and_detail_lanes
     from jrbar.provider_usage_settings import MenuUsageDisplay
 
     state = ProviderUsageState((snapshot("claude", "5-hour", 74),), 1000, 1100, False)

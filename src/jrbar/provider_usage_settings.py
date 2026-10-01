@@ -33,6 +33,9 @@ class ProviderUsageSettingsWriteRefusedError(ProviderUsageSettingsError):
 #: the durable keys used by ``with_menu_flag`` and the settings document.
 @dataclass(frozen=True, slots=True)
 class MenuUsageDisplay:
+    #: Kept so a saved settings document still loads and round-trips. The
+    #: block-character meter it once switched is gone: a lane line is numbers
+    #: and words, whatever this says.
     show_meters: bool = True
     show_totals: bool = True
     show_cost: bool = True
