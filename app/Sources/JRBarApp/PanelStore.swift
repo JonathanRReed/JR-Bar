@@ -739,13 +739,14 @@ final class PanelStore {
         // so it cannot share its parent's row (which may hold an ask of its
         // own). With the setting off no worker ask is published and none of
         // these rows exist.
-        let asking = state.askingWorkers
-        let rows = (state.mainSessions + asking).map { session in
+        let listed: [CoreSession] = state.mainSessions + state.askingWorkers
+        let built: [SessionRow] = listed.map { session in
             var row = SessionRow(session: session, pinnedAsk: pinned[session.id],
                                  document: document, style: style(for: session.provider))
             row.usage = usage[session.id]
             return row
-        } + orphans
+        }
+        let rows: [SessionRow] = built + orphans
         func rank(_ row: SessionRow) -> Int {
             row.ask != nil ? 0 : row.activity.sortRank
         }

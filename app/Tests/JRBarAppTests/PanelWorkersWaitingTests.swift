@@ -102,6 +102,28 @@ struct PanelWorkersWaitingTests {
         #expect(none.help(now: Date(timeIntervalSince1970: Self.now))?.contains("waiting") != true)
     }
 
+    @Test("a change in nothing but the waiting count rebuilds the rows once and shows it")
+    func waitingCountRebuildsTheRows() throws {
+        func frame(_ waiting: Int) -> CoreState {
+            CoreState(generation: 1, now: Self.now, aggregate: CoreAggregate(mode: "working", active: 1),
+                      sessions: [Self.mainRow(waiting: waiting), Self.workerRow()])
+        }
+        let core = CoreModel(socketPath: "/tmp/jrbar-test-none.sock")
+        core.handle(.connected)
+        core.apply(.state(frame(0)))
+        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: "jrbar.test.\(UUID())")!,
+                               screenBarShown: false)
+        let before = store.rowsComputations
+        #expect(try #require(store.rows.first).workersWaitingText == nil)
+        #expect(store.rowsComputations == before + 1)
+        _ = store.rows
+        #expect(store.rowsComputations == before + 1, "a second read shares the build")
+        // Same generation, same clock, same everything else.
+        core.apply(.state(frame(1)))
+        #expect(try #require(store.rows.first).workersWaitingText == "1 worker waiting")
+        #expect(store.rowsComputations == before + 2)
+    }
+
     // MARK: the setting off
 
     @Test("off: the parent row says one worker is waiting, and that is all it does")
@@ -172,6 +194,22 @@ struct PanelWorkersWaitingTests {
                 == .ask(id: Self.workerID))
         #expect(PanelStore.chordTarget(.deny, typingInField: false, selectedID: nil, askRows: store.askRows)
                 == .ask(id: Self.workerID))
+    }
+
+    @Test("on: a main's ask beside a worker's is two cards, and a chord with none selected acts on neither")
+    func onChordsNeverActOnAnUnseenCard() throws {
+        var state = Self.onState
+        state.asks.append(Self.askFor(Self.mainID))
+        state.sessions[0] = Self.mainRow(waiting: 0, ask: Self.askFor(Self.mainID))
+        let store = Self.makeStore(state)
+        #expect(store.askRows.count == 2)
+        for chord in [PanelStore.AskChord.approve, .deny] {
+            #expect(PanelStore.chordTarget(chord, typingInField: false, selectedID: nil, askRows: store.askRows)
+                    == .ambiguous)
+            // Moving to the worker's card is what makes a chord answer it.
+            #expect(PanelStore.chordTarget(chord, typingInField: false, selectedID: Self.workerID,
+                                           askRows: store.askRows) == .ask(id: Self.workerID))
+        }
     }
 
     @Test("on: every ask in the state lands on a row, so no alert fires for something unshown")
