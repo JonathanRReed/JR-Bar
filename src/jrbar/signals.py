@@ -7,7 +7,7 @@ status -- is a *signal* with a `SignalStyle`: color, pattern, speed,
 intensity. One renderer (`led_status.style_to_program`) turns any style
 into the device DSL, one precedence order decides which signal wins,
 and the Signals pane's style cards edit these values with live
-previews. See docs/superpowers/specs/2026-08-11-signal-engine-design.md.
+previews.
 
 The DEFAULT_SIGNAL_STYLES here are chosen so that rendering them
 reproduces the pre-engine bespoke programs BYTE-FOR-BYTE -- the
