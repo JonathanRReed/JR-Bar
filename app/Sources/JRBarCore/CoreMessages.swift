@@ -1272,6 +1272,15 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         return action
     }
 
+    /// The card's problem is a sign-in, so **Fix sign-in** is its one button:
+    /// the provider is signed out, or its last read failed on authentication
+    /// (a stale card whose copy of the sign-in expired). Any other not-ready
+    /// state keeps the daemon's own fix-it.
+    public var offersSignInFix: Bool {
+        if isSignedOut { return true }
+        return reason?.lowercased() == "authentication_required"
+    }
+
     /// The window every surface leads with — the Usage Center's
     /// headline, the menu-bar meter, the notch card's meter, the Screen
     /// Bar's ear ring: the daemon's `constrained` pick when it names a
@@ -1735,13 +1744,17 @@ public struct CoreState: Codable, Hashable, Sendable {
     public var peers: [CorePeer]?
     /// `presence`: on a call, in a meeting, away; nil from an older daemon.
     public var presence: CorePresence?
+    /// `provider_updates`: what each agent CLI's updater last did, keyed by
+    /// provider id. Absent from an older daemon, and a provider with no
+    /// entry has never been updated or checked: both read as unknown.
+    public var providerUpdates: [String: ProviderUpdateStatus]
 
     public init(generation: Int = 0, now: Double? = nil, aggregate: CoreAggregate = CoreAggregate(),
                 sessions: [CoreSession] = [], asks: [CoreAsk] = [], devices: [CoreDevice] = [], usage: CoreUsage? = nil,
                 power: CorePower? = nil, focus: CoreFocus? = nil, escalation: CoreEscalation? = nil,
                 health: JSONValue? = nil, settingsGeneration: Int? = nil, deck: DeckState? = nil, hiddenCount: Int? = nil,
                 catalogGeneration: Int? = nil, unseenCompletions: [String] = [], peers: [CorePeer]? = nil,
-                presence: CorePresence? = nil) {
+                presence: CorePresence? = nil, providerUpdates: [String: ProviderUpdateStatus] = [:]) {
         self.generation = generation
         self.now = now
         self.aggregate = aggregate
@@ -1760,10 +1773,12 @@ public struct CoreState: Codable, Hashable, Sendable {
         self.unseenCompletions = unseenCompletions
         self.peers = peers
         self.presence = presence
+        self.providerUpdates = providerUpdates
     }
 
     enum CodingKeys: String, CodingKey {
         case generation, now, aggregate, sessions, asks, devices, usage, power, focus, escalation, health, deck
+        case providerUpdates = "provider_updates"
         case settingsGeneration = "settings_generation"
         case hiddenCount = "hidden_count"
         case catalogGeneration = "catalog_generation"
@@ -1809,6 +1824,9 @@ public struct CoreState: Codable, Hashable, Sendable {
         peers = tolerantRows(CorePeer.self, try c.decodeIfPresent([JSONValue].self, forKey: .peers))
         // A malformed presence reads as "no report", never a lost state.
         presence = try? c.decodeIfPresent(CorePresence.self, forKey: .presence)
+        // One malformed entry is one provider with nothing to say, never a lost state.
+        let updates = try? c.decodeIfPresent([String: JSONValue].self, forKey: .providerUpdates)
+        providerUpdates = (updates ?? [:]).compactMapValues { ProviderUpdateStatus($0) }
     }
 
     /// Sessions the panel lists: `kind == "main"`. Workers roll up into their parent's badge.
@@ -2449,6 +2467,166 @@ public struct ProviderResignInResult: Hashable, Sendable {
     public init(message: String, signInURL: String? = nil) {
         self.message = message
         self.signInURL = signInURL
+    }
+}
+
+/// What `provider_sign_in` did (`docs/CORE-PROTOCOL.md`). The app shows
+/// `message` as it is; the outcome only decides how it is styled and
+/// whether a page is opened. A word this build does not know reads as
+/// `unavailable`: the sentence still tells the person what happened.
+public enum ProviderSignInOutcome: String, Codable, Hashable, Sendable {
+    /// A stored or CLI-held sign-in is current again.
+    case renewed
+    /// The owner's terminal is open on the provider's own sign-in command.
+    case openedTerminal = "opened_terminal"
+    /// The sign-in was already current; the card refreshes.
+    case alreadyOK = "already_ok"
+    /// Nothing JR-Bar can do; `message` is the advice.
+    case unavailable
+    /// The renewal timed out, or the terminal could not be opened.
+    case failed
+
+    public init(wire: String?) {
+        self = wire.flatMap(ProviderSignInOutcome.init(rawValue:)) ?? .unavailable
+    }
+
+    /// Whether the person has something left to do themselves.
+    public var needsPerson: Bool { self == .openedTerminal || self == .unavailable || self == .failed }
+}
+
+/// The reply to `provider_sign_in`.
+public struct ProviderSignInResult: Hashable, Sendable {
+    public var provider: String
+    public var instance: String
+    public var outcome: ProviderSignInOutcome
+    public var message: String
+    /// The command a terminal was opened on, as a person types it
+    /// (`grok login`); nil otherwise.
+    public var command: String?
+    public var signInURL: String?
+
+    public init(provider: String, instance: String = "default", outcome: ProviderSignInOutcome,
+                message: String, command: String? = nil, signInURL: String? = nil) {
+        self.provider = provider
+        self.instance = instance
+        self.outcome = outcome
+        self.message = message
+        self.command = command
+        self.signInURL = signInURL
+    }
+
+    /// Tolerant: a reply missing a field still yields what it has.
+    public init(_ value: JSONValue?, provider: String) {
+        self.init(
+            provider: value?["provider"]?.stringValue ?? provider,
+            instance: value?["instance"]?.stringValue ?? "default",
+            outcome: ProviderSignInOutcome(wire: value?["outcome"]?.stringValue),
+            message: value?["message"]?.stringValue ?? "",
+            command: value?["command"]?.stringValue,
+            signInURL: value?["sign_in_url"]?.stringValue
+        )
+    }
+}
+
+/// `state.provider_updates[provider].phase`. A phase this build does not
+/// know reads as `idle`.
+public enum ProviderUpdatePhase: String, Codable, Hashable, Sendable {
+    case idle, running, updated, unchanged, failed
+    /// The updater wanted a terminal and the daemon opened one on it.
+    case needsTerminal = "needs_terminal"
+
+    public init(wire: String?) {
+        self = wire.flatMap(ProviderUpdatePhase.init(rawValue:)) ?? .idle
+    }
+}
+
+/// What one agent CLI's updater last did (`state.provider_updates`).
+public struct ProviderUpdateStatus: Codable, Hashable, Sendable {
+    public var phase: ProviderUpdatePhase
+    public var fromVersion: String?
+    public var toVersion: String?
+    /// A newer version the npm registry offers. Set only while the person
+    /// has turned on update checks, and only when it is newer than the one
+    /// installed: non-nil means "an update is available".
+    public var latestVersion: String?
+    /// One plain sentence, ready to show ("Updated 2.1.285 to 2.1.290").
+    public var message: String
+    public var finishedAt: Double?
+
+    public init(phase: ProviderUpdatePhase = .idle, fromVersion: String? = nil, toVersion: String? = nil,
+                latestVersion: String? = nil, message: String = "", finishedAt: Double? = nil) {
+        self.phase = phase
+        self.fromVersion = fromVersion
+        self.toVersion = toVersion
+        self.latestVersion = latestVersion
+        self.message = message
+        self.finishedAt = finishedAt
+    }
+
+    /// Tolerant: absent fields are nil, an unknown phase is `idle`, and
+    /// something that is not an object is no entry at all.
+    public init?(_ value: JSONValue) {
+        guard value.objectValue != nil else { return nil }
+        func text(_ key: String) -> String? {
+            guard let string = value[key]?.stringValue, !string.isEmpty else { return nil }
+            return string
+        }
+        self.init(
+            phase: ProviderUpdatePhase(wire: value["phase"]?.stringValue),
+            fromVersion: text("from_version"),
+            toVersion: text("to_version"),
+            latestVersion: text("latest_version"),
+            message: value["message"]?.stringValue ?? "",
+            finishedAt: value["finished_at"]?.doubleValue
+        )
+    }
+
+    public init(from decoder: Decoder) throws {
+        let value = try JSONValue(from: decoder)
+        guard let status = ProviderUpdateStatus(value) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "provider_updates entry is not an object"))
+        }
+        self = status
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case phase, message
+        case fromVersion = "from_version"
+        case toVersion = "to_version"
+        case latestVersion = "latest_version"
+        case finishedAt = "finished_at"
+    }
+
+    public var isRunning: Bool { phase == .running }
+
+    /// An update is on offer: a newer version is known and none is running.
+    public var updateAvailable: Bool { latestVersion != nil && phase != .running }
+}
+
+/// The reply to `provider_update`: the worker started, or a plain refusal
+/// that is a sentence to show, not an error to throw.
+public struct ProviderUpdateStart: Hashable, Sendable {
+    public var provider: String
+    public var started: Bool
+    /// `no_updater`, `not_installed` or `busy` when it did not start.
+    public var reason: String?
+    public var message: String
+
+    public init(provider: String, started: Bool, reason: String? = nil, message: String = "") {
+        self.provider = provider
+        self.started = started
+        self.reason = reason
+        self.message = message
+    }
+
+    public init(_ value: JSONValue?, provider: String) {
+        self.init(
+            provider: value?["provider"]?.stringValue ?? provider,
+            started: value?["started"]?.boolValue ?? false,
+            reason: value?["reason"]?.stringValue,
+            message: value?["message"]?.stringValue ?? ""
+        )
     }
 }
 

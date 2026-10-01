@@ -651,6 +651,58 @@ public final class CoreModel {
         )
     }
 
+    /// How long a `provider_sign_in` reply may take: a Claude renewal is a
+    /// real call the daemon allows 90 s, and the command waits on the
+    /// daemon's slow lane so nothing else the app sends waits with it.
+    public nonisolated static let signInReplyTimeout: TimeInterval = 120
+
+    /// The args `provider_sign_in` takes: a provider, its instance and the
+    /// terminal when one is named. Never a command: the daemon's own table
+    /// says what a provider signs in with.
+    public nonisolated static func signInArgs(provider: String, instance: String? = nil,
+                                              terminal: String? = nil) -> [String: JSONValue] {
+        var args: [String: JSONValue] = ["provider": .string(provider)]
+        if let instance, !instance.isEmpty, instance != "default" { args["instance"] = .string(instance) }
+        if let terminal, !terminal.isEmpty { args["terminal"] = .string(terminal) }
+        return args
+    }
+
+    /// `provider_sign_in`: "Fix sign-in". The daemon does the best
+    /// automatic thing (re-read, ask Claude Code to renew its own sign-in,
+    /// or open the owner's terminal on the provider's own login) and answers
+    /// with one sentence to show as it is. Explicit only: a click.
+    public func signInProvider(_ provider: String, instance: String? = nil,
+                               terminal: String? = nil) async throws -> ProviderSignInResult {
+        let reply = try await send(
+            "provider_sign_in",
+            args: Self.signInArgs(provider: provider, instance: instance, terminal: terminal),
+            timeout: Self.signInReplyTimeout
+        )
+        guard reply.ok else {
+            throw reply.error ?? CoreReplyError(code: "error", message: "provider_sign_in failed")
+        }
+        return ProviderSignInResult(reply.result, provider: provider)
+    }
+
+    /// `provider_update`: runs the provider's own updater on a daemon
+    /// thread and answers at once. Only a provider id goes on the wire; the
+    /// result arrives in `providerUpdates`. A plain refusal (no updater,
+    /// not installed, busy) is a result to show, not a thrown error.
+    public func updateProvider(_ provider: String) async throws -> ProviderUpdateStart {
+        let reply = try await send("provider_update", args: ["provider": .string(provider)], timeout: 10)
+        guard reply.ok else {
+            throw reply.error ?? CoreReplyError(code: "error", message: "provider_update failed")
+        }
+        return ProviderUpdateStart(reply.result, provider: provider)
+    }
+
+    /// `provider_update_check`: asks for a fresh "update available" look.
+    /// The daemon does nothing at all unless the person turned update
+    /// checks on, so this is safe to send whenever Agents is refreshed.
+    public func checkProviderUpdates() {
+        post("provider_update_check")
+    }
+
     /// `provider_action` runs the staged flow behind the provider's
     /// current action label (clipboard import, reconnect, repair). The
     /// reply carries the message the daemon surfaced; `unsupported`
@@ -976,6 +1028,9 @@ public final class CoreModel {
     public private(set) var presence: CorePresence?
     public private(set) var deck: DeckState?
     public private(set) var health: JSONValue?
+    /// `state.provider_updates`: what each agent CLI's updater last did,
+    /// keyed by provider id; empty from an older daemon.
+    public private(set) var providerUpdates: [String: ProviderUpdateStatus] = [:]
     /// `state.catalog_generation` and `state.settings_generation`: what
     /// the Effect Studio reloads on.
     public private(set) var catalogGeneration: Int?
@@ -1001,6 +1056,7 @@ public final class CoreModel {
         assign(\.presence, state?.presence)
         assign(\.deck, state?.deck)
         assign(\.health, state?.health)
+        assign(\.providerUpdates, state?.providerUpdates ?? [:])
         assign(\.catalogGeneration, state?.catalogGeneration)
         assign(\.stateSettingsGeneration, state?.settingsGeneration)
     }
