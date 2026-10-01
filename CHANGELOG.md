@@ -67,8 +67,13 @@ All notable changes to JR-Bar are documented here.
   window. Usage > Sessions draws the days before a hook-only provider's first
   retained event as gaps, not zeros. A signed-out Gemini card clears on the
   next refresh once the Gemini CLI saves its sign-in.
-  A month too busy to fit the scan cache no longer shows a partial total as
-  30 days: Claude shows nothing and Codex counts the days that are whole.
+  The Claude and Codex cards total a whole month however busy it was: every
+  scan keeps the last 30 local days as per-day totals beside the cache's
+  per-file records, so a month that overflows the 8 MiB cache and a 7-day
+  graph scan no longer blank the Claude card or cut the Codex card to ten
+  days. The first scan after this update rebuilds the cache, so the Claude
+  card is empty until the core's own 30-day scan finishes. A resumed Codex
+  rollout keeps the model of the turn it was in.
   `jrbar usage`, `providers status` and cross-Mac sync no longer show a
   saved invented Antigravity lane or a lapsed window as the tightest one.
   Rebuilding the Sessions graph reads each hook ledger once, not twice.
