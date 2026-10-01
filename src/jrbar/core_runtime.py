@@ -4223,6 +4223,10 @@ def build_headless_controller_class() -> type:
             # A save that lost to an outside edit of settings.json, waiting
             # for the run loop to take the file (any thread may set it).
             self._core_settings_conflict: str | None = None
+            # (size, mtime_ns) of an unparsable settings.json at the last
+            # look: the file is set aside only if the next look finds it
+            # unchanged (an editor's save may still be in progress).
+            self._core_settings_unsettled: tuple[int, int] | None = None
             # The last refusal logged, so one that can never succeed is said
             # once, not on every refresh.
             self._core_settings_refusal: str | None = None
@@ -6847,13 +6851,15 @@ def build_headless_controller_class() -> type:
                 # landing its older document over the file just taken.
                 with self._core_settings_save_lock:
                     previous = self.settings
-                    adoption = settings_module.adopt_outside_edit(previous)
+                    adoption = settings_module.adopt_outside_edit(
+                        previous, unsettled=self._core_settings_unsettled
+                    )
                     if adoption.outcome is OutsideEditOutcome.ADOPTED:
                         self._core_settings_dirty = False
                         self.settings = adoption.settings
                     elif adoption.outcome is OutsideEditOutcome.UNCHANGED:
                         self._core_settings_dirty = False
-                    else:
+                    elif adoption.outcome is not OutsideEditOutcome.UNSETTLED:
                         self._core_settings_dirty = True
             except Exception as exc:
                 self._core_settings_conflict = reason
@@ -6862,8 +6868,21 @@ def build_headless_controller_class() -> type:
                     self._core_settings_refusal = message
                     legacy.log_status_bar(message)
                 return
-            self._core_settings_refusal = None
             outcome = adoption.outcome
+            if outcome is OutsideEditOutcome.UNSETTLED:
+                # Could be an editor's save still in progress: look once more
+                # on the next refresh before setting anything aside. At quit
+                # there is no next refresh, so the file is left as it is.
+                if quitting:
+                    legacy.log_status_bar(
+                        "core: settings.json was changed outside JR-Bar and cannot be read; left as it is"
+                    )
+                else:
+                    self._core_settings_conflict = reason
+                    self._core_settings_unsettled = adoption.signature
+                return
+            self._core_settings_unsettled = None
+            self._core_settings_refusal = None
             if outcome is OutsideEditOutcome.ADOPTED:
                 kept = (
                     "your previous settings are in settings.json.replaced"
@@ -6881,7 +6900,7 @@ def build_headless_controller_class() -> type:
             elif outcome is OutsideEditOutcome.INVALID:
                 legacy.log_status_bar(
                     "core: settings.json was changed outside JR-Bar and could not be read; "
-                    "set it aside as settings.json.corrupt and will save the current settings"
+                    "set it aside as settings.json.corrupt-<time> and will save the current settings"
                 )
             elif outcome is OutsideEditOutcome.MISSING:
                 legacy.log_status_bar("core: settings.json was removed outside JR-Bar; saving the current settings again")

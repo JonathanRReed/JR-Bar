@@ -100,9 +100,9 @@ class _Daemon:
     def replaced(self) -> Path:
         return self.path.with_name(self.path.name + ".replaced")
 
-    @property
-    def corrupt(self) -> Path:
-        return self.path.with_name(self.path.name + ".corrupt")
+    def kept(self) -> list[Path]:
+        """The ``.corrupt-<stamp>`` copies of the settings file."""
+        return sorted(self.path.parent.glob(f"{self.path.name}.corrupt-*"))
 
     def toggle(self, value: int) -> None:
         """The person changes Alert burst in the app: it replies at once and queues the save."""
@@ -210,7 +210,9 @@ def test_a_conflict_on_another_file_is_not_the_daemons_to_adopt(daemon: _Daemon,
     assert daemon.controller._core_settings_conflict is None
 
 
-def test_an_invalid_outside_edit_is_set_aside_and_memory_is_saved_again(daemon: _Daemon) -> None:
+def test_an_invalid_outside_edit_is_set_aside_after_a_second_look_and_memory_is_saved_again(
+    daemon: _Daemon,
+) -> None:
     controller = daemon.controller
     daemon.toggle(6)
     daemon.path.write_text("{ not json", encoding="utf-8")
@@ -218,15 +220,47 @@ def test_an_invalid_outside_edit_is_set_aside_and_memory_is_saved_again(daemon: 
 
     _tick(controller)
 
+    # The first look moves nothing: an editor may still be saving.
+    assert daemon.path.read_text(encoding="utf-8") == "{ not json" and daemon.kept() == []
+    assert controller._core_settings_conflict is not None
+    assert daemon.lines_about_the_file() == []
+
+    _tick(controller)
+
     assert controller.settings.alert_burst == 6, "an invalid file is never adopted"
-    assert daemon.corrupt.read_text(encoding="utf-8") == "{ not json"
+    (kept,) = daemon.kept()
+    assert kept.read_text(encoding="utf-8") == "{ not json"
     assert not daemon.replaced.exists()
+    assert controller._core_settings_conflict is None
     assert controller._core_settings_dirty is True
     assert len(daemon.lines_about_the_file()) == 1 and "set it aside" in daemon.lines_about_the_file()[0]
     daemon.monkeypatch.setattr(daemon.writer, "submit", daemon.inline_submit)
     _tick(controller)
     assert json.loads(daemon.path.read_text(encoding="utf-8"))["alert_burst"] == 6
     assert controller._core_settings_dirty is False
+
+
+def test_an_editors_half_written_save_is_waited_for_not_moved_out_from_under_it(daemon: _Daemon) -> None:
+    controller = daemon.controller
+    daemon.toggle(6)
+    daemon.path.write_text('{"alert_burst": 9, "tips_', encoding="utf-8")
+    assert controller._core_flush_settings() is False
+
+    _tick(controller)
+    # The editor is still writing: the file changes between the looks.
+    daemon.path.write_text('{"alert_burst": 9, "tips_enabled": fal', encoding="utf-8")
+    _tick(controller)
+    assert daemon.kept() == [] and daemon.path.exists()
+    assert controller._core_settings_conflict is not None
+
+    # The editor finishes. Its file is adopted whole; nothing was set aside.
+    daemon.path.write_text(json.dumps({"alert_burst": 9, "tips_enabled": False}), encoding="utf-8")
+    _tick(controller)
+
+    assert controller.settings.alert_burst == 9 and controller.settings.tips_enabled is False
+    assert daemon.kept() == []
+    assert json.loads(daemon.replaced.read_text(encoding="utf-8"))["alert_burst"] == 6
+    assert controller._core_settings_conflict is None and controller._core_settings_unsettled is None
 
 
 def test_a_deleted_settings_file_is_written_again_from_memory(daemon: _Daemon) -> None:
@@ -277,6 +311,18 @@ def test_a_conflict_found_at_quit_still_keeps_what_memory_held(daemon: _Daemon) 
 
     assert json.loads(daemon.path.read_text(encoding="utf-8")) == edited
     assert json.loads(daemon.replaced.read_text(encoding="utf-8"))["alert_burst"] == 6
+
+
+def test_a_file_that_is_unreadable_at_the_first_look_is_left_alone_at_quit(daemon: _Daemon) -> None:
+    controller = daemon.controller
+    controller.applicationDidFinishLaunching_(None)
+    daemon.toggle(6)
+    daemon.path.write_text('{"half": ', encoding="utf-8")
+    assert controller._core_flush_settings() is False
+
+    controller._core_quit_flush()
+
+    assert daemon.path.read_text(encoding="utf-8") == '{"half": ' and daemon.kept() == []
 
 
 def test_a_refused_settings_save_is_not_retried_every_refresh(

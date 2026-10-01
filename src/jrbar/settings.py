@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from . import _settings_legacy as _legacy
+from .private_io import quarantine_private_file
 from .product_identity import PRODUCT_DISPLAY_NAME
 
 CURRENT_SETTINGS_SCHEMA_VERSION = 2
@@ -210,6 +211,22 @@ def _migrate_settings_document(
             continue
         raise ValueError("unsupported settings migration")
     return migrated
+
+
+def _preserve_corrupt_settings(target: Path) -> None:
+    """Set a settings file that cannot be read aside, never destroy it.
+
+    Returning defaults means the very next save would overwrite the
+    evidence, and with it the calibration profiles, studio library and
+    colours. The file moves to ``settings.json.corrupt-<UTC stamp>``
+    (private, the newest three kept), so a second bad file does not cost the
+    first, and a second bad file is never deleted. The legacy loader calls
+    this name too; it is replaced below."""
+    try:
+        _legacy.ensure_private_directory(target.parent)
+    except OSError:
+        pass
+    quarantine_private_file(target, reason="it could not be read")
 
 
 def _remember_document(
@@ -466,8 +483,12 @@ class OutsideEditOutcome(str, Enum):
     UNCHANGED = "unchanged"
     #: The file is gone: memory stays and the file should be written again.
     MISSING = "missing"
-    #: The file did not parse or validate: it was set aside, memory stays.
+    #: The file did not parse or validate and has stopped changing: it was set
+    #: aside, memory stays.
     INVALID = "invalid"
+    #: The file did not parse, but it may be an editor's save still in
+    #: progress. Nothing was moved; look again (see ``unsettled``).
+    UNSETTLED = "unsettled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -479,6 +500,9 @@ class OutsideEditAdoption:
     backup: Path | None = None
     #: A backup was wanted and could not be written.
     backup_failed: bool = False
+    #: (size, mtime_ns) of the file at this look (outcome UNSETTLED): pass it
+    #: back as ``unsettled`` on the next look.
+    signature: tuple[int, int] | None = None
 
 
 REPLACED_BACKUP_SUFFIX = ".replaced"
@@ -496,22 +520,64 @@ def _replaced_backup(target: Path, previous) -> Path | None:
     return _legacy.atomic_private_write(backup, payload, full_sync=True)
 
 
-def adopt_outside_edit(previous, path: Path | None = None) -> OutsideEditAdoption:
+def _file_signature(target: Path) -> tuple[int, int] | None:
+    """(size, mtime_ns) of the settings file, or None when there is none."""
+    try:
+        info = target.lstat()
+    except OSError:
+        return None
+    return (info.st_size, info.st_mtime_ns)
+
+
+def adopt_outside_edit(
+    previous,
+    path: Path | None = None,
+    *,
+    unsettled: tuple[int, int] | None = None,
+    signature_of: Callable[[Path], tuple[int, int] | None] = _file_signature,
+) -> OutsideEditAdoption:
     """Take the settings file as it stands after somebody else changed it.
 
     ``previous`` is what the caller holds. A file that parses and validates
     wins over stale memory: the caller's copy is kept as
     ``settings.json.replaced`` and the file is read as a deliberate reload, so
-    the next save is judged against what was just taken. A file that does not
-    parse or validate is never adopted: it is set aside the way the loader
-    sets one aside, and memory stays. A missing file keeps memory too. A read
-    that fails for a reason that may pass (an ``OSError``) raises, so the
-    caller can try again."""
+    the next save is judged against what was just taken. A missing file keeps
+    memory. A read that fails for a reason that may pass (an ``OSError``)
+    raises, so the caller can try again.
+
+    A file that does not parse or validate is never adopted, but it is not set
+    aside on the first look either: an editor that saves in place leaves a
+    half-written file for a moment, and moving it would send the editor's last
+    write into the moved file. The first look returns ``UNSETTLED`` with the
+    file's ``(size, mtime_ns)``; the caller passes it back as ``unsettled`` on
+    its next look, and only a file that has not changed in between is set aside
+    (see ``_preserve_corrupt_settings``). ``signature_of`` is the stat reader,
+    injected so a test needs no sleep."""
     target = _settings_path(path)
-    try:
-        data, digest = _read_document(target)
-        source_version = _settings_schema_version(data)
-    except FileNotFoundError:
+
+    def invalid() -> OutsideEditAdoption:
+        signature = signature_of(target)
+        if signature is None:
+            return missing()
+        if signature != unsettled:
+            return OutsideEditAdoption(
+                OutsideEditOutcome.UNSETTLED, previous, signature=signature
+            )
+        _legacy._preserve_corrupt_settings(target)
+        if target.exists():
+            # Could not be moved: leave the guard unarmed so a save refuses
+            # rather than overwrites.
+            _forget_document(target)
+        else:
+            _remember_document(
+                target,
+                SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION),
+                {},
+                source_digest=None,
+            )
+        return OutsideEditAdoption(OutsideEditOutcome.INVALID, previous)
+
+    def missing() -> OutsideEditAdoption:
         _remember_document(
             target,
             SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION),
@@ -519,16 +585,18 @@ def adopt_outside_edit(previous, path: Path | None = None) -> OutsideEditAdoptio
             source_digest=None,
         )
         return OutsideEditAdoption(OutsideEditOutcome.MISSING, previous)
+
+    try:
+        data, digest = _read_document(target)
+        source_version = _settings_schema_version(data)
+    except FileNotFoundError:
+        return missing()
     except OSError as error:
         if "exceeds maximum size" not in str(error):
             raise
-        _legacy._preserve_corrupt_settings(target)
-        _forget_document(target)
-        return OutsideEditAdoption(OutsideEditOutcome.INVALID, previous)
+        return invalid()
     except Exception:
-        _legacy._preserve_corrupt_settings(target)
-        _forget_document(target)
-        return OutsideEditAdoption(OutsideEditOutcome.INVALID, previous)
+        return invalid()
 
     if source_version > CURRENT_SETTINGS_SCHEMA_VERSION:
         compatibility = SettingsCompatibility(source_version, read_only=True)
@@ -537,9 +605,7 @@ def adopt_outside_edit(previous, path: Path | None = None) -> OutsideEditAdoptio
         try:
             document = _migrate_settings_document(data, source_version)
         except ValueError:
-            _legacy._preserve_corrupt_settings(target)
-            _forget_document(target)
-            return OutsideEditAdoption(OutsideEditOutcome.INVALID, previous)
+            return invalid()
         compatibility = SettingsCompatibility(
             source_version,
             migrated=source_version != CURRENT_SETTINGS_SCHEMA_VERSION,
@@ -659,6 +725,7 @@ _legacy.SettingsCompatibility = SettingsCompatibility
 _legacy.LoadedSettings = LoadedSettings
 _legacy.SettingsWriteRefusedError = SettingsWriteRefusedError
 _legacy.SettingsConcurrentWriteError = SettingsConcurrentWriteError
+_legacy._preserve_corrupt_settings = _preserve_corrupt_settings
 _legacy.load_settings_document = load_settings_document
 _legacy.load_settings = load_settings
 _legacy.save_settings = save_settings

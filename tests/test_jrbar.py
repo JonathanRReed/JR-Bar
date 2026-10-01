@@ -8942,12 +8942,12 @@ class PrivateStateSecurityTests(unittest.TestCase):
                 self.assertEqual(self._mode(path), 0o600, path)
 
     def test_hook_payload_redaction(self) -> None:
-        """Corrupt-settings recovery is private and keeps the first capture;
+        """Corrupt-settings recovery is private and keeps every capture (newest three);
         redacted hook lines still classify asks/completions/grok; hook
         mains redact before IPC/storage and persist only opaque
         identity or typed outcomes; append compacts the tail and skips
         symlinked jsonl."""
-        # --- scenario: corrupt_settings_recovery_is_private_and_keeps_first_capture
+        # --- scenario: corrupt_settings_recovery_is_private_and_keeps_every_capture
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             base.chmod(0o777)
@@ -8956,7 +8956,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
             path.chmod(0o644)
 
             self.assertEqual(load_settings(path), AgentMonitorSettings())
-            backup = base / "settings.json.corrupt"
+            (backup,) = base.glob("settings.json.corrupt-*")
             self.assertEqual(backup.read_text(), "{broken")
             self.assertEqual(self._mode(base), 0o700)
             self.assertEqual(self._mode(backup), 0o600)
@@ -8964,6 +8964,10 @@ class PrivateStateSecurityTests(unittest.TestCase):
             path.write_text("[]", encoding="utf-8")
             load_settings(path)
             self.assertEqual(backup.read_text(), "{broken")
+            self.assertEqual(
+                sorted(item.read_text() for item in base.glob("settings.json.corrupt-*")),
+                ["[]", "{broken"],
+            )
             self.assertFalse(path.exists())
 
         # --- scenario: redacted_hook_lines_still_classify_asks_completions_and_grok
@@ -13876,14 +13880,14 @@ class ResilienceHardeningTests(unittest.TestCase):
             path.write_text("{ this is not json", encoding="utf-8")
             loaded = load_settings(path)
             self.assertEqual(loaded, AgentMonitorSettings())
-            backup = path.with_name("settings.json.corrupt")
-            self.assertTrue(backup.exists())
+            (backup,) = path.parent.glob("settings.json.corrupt-*")
             self.assertEqual(backup.read_text(), "{ this is not json")
             self.assertFalse(path.exists())
-            # A second corruption never clobbers the FIRST capture.
+            # A second corruption never clobbers the first capture, and is kept too.
             path.write_text("[]", encoding="utf-8")
             load_settings(path)
             self.assertEqual(backup.read_text(), "{ this is not json")
+            self.assertEqual(len(list(path.parent.glob("settings.json.corrupt-*"))), 2)
             self.assertFalse(path.exists())
 
         # --- scenario: led_write_leaves_no_scratch_and_lands_content

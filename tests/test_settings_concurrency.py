@@ -68,6 +68,10 @@ def test_external_edit_after_load_is_never_silently_overwritten__and_2_more(tmp_
 
 
 
+def _kept_copies(target: Path) -> list[Path]:
+    return sorted(target.parent.glob(f"{target.name}.corrupt-*"))
+
+
 # --- an incidental read is not a reload ---------------------------------------
 
 
@@ -132,7 +136,7 @@ def test_an_untracked_load_of_a_corrupt_file_still_sets_it_aside_but_keeps_the_b
     result = settings_module.load_settings_document(target, track=False)
 
     assert result.settings == AgentMonitorSettings()
-    assert not target.exists() and target.with_name("settings.json.corrupt").exists()
+    assert not target.exists() and len(_kept_copies(target)) == 1
     assert target.absolute() in settings_module._COMPATIBILITY_BY_PATH
     assert loaded is not None
 
@@ -298,12 +302,15 @@ def test_an_invalid_outside_edit_is_never_adopted_and_memory_survives(
     memory = replace(AgentMonitorSettings(), alert_burst=6)
     target.write_text(ruined, encoding="utf-8")
 
-    adoption = adopt_outside_edit(memory, target)
+    first = adopt_outside_edit(memory, target)
+    assert first.outcome is OutsideEditOutcome.UNSETTLED and target.exists()
+    adoption = adopt_outside_edit(memory, target, unsettled=first.signature)
 
     assert adoption.outcome is OutsideEditOutcome.INVALID
     assert adoption.settings is memory
     assert not target.exists(), "set aside the way the loader sets one aside"
-    assert target.with_name("settings.json.corrupt").read_text(encoding="utf-8") == ruined
+    (kept,) = _kept_copies(target)
+    assert kept.read_text(encoding="utf-8") == ruined
     assert not target.with_name("settings.json.replaced").exists()
     # With the file gone, memory can be written out again.
     save_settings(memory, target)
@@ -409,3 +416,152 @@ def test_a_lost_save_tells_the_registered_observer_once(tmp_path: Path) -> None:
         assert "unexpected" not in heard
     finally:
         settings_module.set_write_conflict_observer(None)
+
+
+# --- a typo'd edit is never destroyed, and an editor's half-written save is waited for ---
+
+
+def _signature_reader(*signatures):
+    """A stat reader that reports one signature per look, so a test needs no sleeps."""
+    looks = iter(signatures)
+
+    def read(_target: Path):
+        return next(looks)
+
+    return read
+
+
+def test_two_invalid_edits_in_a_row_both_survive_as_timestamped_copies(tmp_path: Path) -> None:
+    """The first ``.corrupt`` used to be kept and the next invalid file was
+    unlinked, leaving no settings.json and one stale copy."""
+    from jrbar.settings import adopt_outside_edit
+
+    target = tmp_path / "settings.json"
+    save_settings(AgentMonitorSettings(), target)
+    load_settings_document(target)
+    memory = AgentMonitorSettings()
+    stat_same = lambda _target: (1, 1)  # noqa: E731 - the same look twice: settled
+
+    for text in ('{"typo": ', "[1, 2"):
+        target.write_text(text, encoding="utf-8")
+        adoption = adopt_outside_edit(memory, target, unsettled=(1, 1), signature_of=stat_same)
+        assert adoption.outcome.value == "invalid"
+        assert not target.exists()
+        # A save writes memory out again; the next outside edit starts over.
+        save_settings(memory, target)
+        load_settings_document(target)
+
+    assert sorted(path.read_text(encoding="utf-8") for path in _kept_copies(target)) == [
+        "[1, 2",
+        '{"typo": ',
+    ]
+    assert all((path.lstat().st_mode & 0o777) == 0o600 for path in _kept_copies(target))
+
+
+def test_the_loader_keeps_every_corrupt_file_not_just_the_first(tmp_path: Path) -> None:
+    target = tmp_path / "settings.json"
+    for text in ("{broken", "[]", "also broken"):
+        target.write_text(text, encoding="utf-8")
+        load_settings_document(target)
+        assert not target.exists()
+
+    assert sorted(path.read_text(encoding="utf-8") for path in _kept_copies(target)) == [
+        "[]",
+        "also broken",
+        "{broken",
+    ]
+    for index in range(4):
+        target.write_text(f"newer {index}", encoding="utf-8")
+        load_settings_document(target)
+    assert len(_kept_copies(target)) == 3, "only the newest three are kept"
+    assert sorted(path.read_text(encoding="utf-8") for path in _kept_copies(target)) == [
+        "newer 1",
+        "newer 2",
+        "newer 3",
+    ]
+
+
+def test_an_unparsable_file_is_looked_at_twice_before_it_is_set_aside(tmp_path: Path) -> None:
+    from jrbar.settings import OutsideEditOutcome, adopt_outside_edit
+
+    target = tmp_path / "settings.json"
+    save_settings(AgentMonitorSettings(), target)
+    load_settings_document(target)
+    memory = replace(AgentMonitorSettings(), alert_burst=6)
+    target.write_text('{"alert_burst": 9, "tips_', encoding="utf-8")  # an editor mid-save
+
+    first = adopt_outside_edit(memory, target, signature_of=_signature_reader((20, 111)))
+
+    assert first.outcome is OutsideEditOutcome.UNSETTLED
+    assert first.signature == (20, 111) and first.settings is memory
+    assert target.exists() and _kept_copies(target) == [], "the first look moves nothing"
+
+    # Still changing under us: wait again.
+    again = adopt_outside_edit(
+        memory, target, unsettled=first.signature, signature_of=_signature_reader((27, 222))
+    )
+    assert again.outcome is OutsideEditOutcome.UNSETTLED and again.signature == (27, 222)
+    assert target.exists() and _kept_copies(target) == []
+
+    # The editor finished and the file is whole: it is adopted, never set aside.
+    target.write_text('{"alert_burst": 9}', encoding="utf-8")
+    done = adopt_outside_edit(
+        memory, target, unsettled=again.signature, signature_of=_signature_reader((18, 333))
+    )
+    assert done.outcome is OutsideEditOutcome.ADOPTED and done.settings.alert_burst == 9
+    assert _kept_copies(target) == []
+
+
+def test_an_unparsable_file_that_has_stopped_changing_is_set_aside(tmp_path: Path) -> None:
+    from jrbar.settings import OutsideEditOutcome, adopt_outside_edit
+
+    target = tmp_path / "settings.json"
+    save_settings(AgentMonitorSettings(), target)
+    load_settings_document(target)
+    target.write_text("{ truly broken", encoding="utf-8")
+
+    adoption = adopt_outside_edit(
+        AgentMonitorSettings(),
+        target,
+        unsettled=(14, 5),
+        signature_of=_signature_reader((14, 5)),
+    )
+
+    assert adoption.outcome is OutsideEditOutcome.INVALID
+    (kept,) = _kept_copies(target)
+    assert kept.read_text(encoding="utf-8") == "{ truly broken"
+
+
+def test_a_file_that_vanishes_between_the_looks_is_a_missing_file(tmp_path: Path) -> None:
+    from jrbar.settings import OutsideEditOutcome, adopt_outside_edit
+
+    target = tmp_path / "settings.json"
+    save_settings(AgentMonitorSettings(), target)
+    load_settings_document(target)
+    target.write_text("{", encoding="utf-8")
+
+    adoption = adopt_outside_edit(
+        AgentMonitorSettings(), target, signature_of=_signature_reader(None)
+    )
+
+    assert adoption.outcome is OutsideEditOutcome.MISSING
+
+
+def test_after_an_invalid_file_is_set_aside_a_new_file_is_still_caught_by_the_guard(
+    tmp_path: Path,
+) -> None:
+    """The baseline becomes "no file", not "forgotten": a valid file an editor
+    then writes is an outside edit to adopt, not something a save overwrites."""
+    from jrbar.settings import adopt_outside_edit
+
+    target = tmp_path / "settings.json"
+    save_settings(AgentMonitorSettings(), target)
+    load_settings_document(target)
+    memory = replace(AgentMonitorSettings(), alert_burst=6)
+    target.write_text("{", encoding="utf-8")
+    adopt_outside_edit(memory, target, unsettled=(1, 1), signature_of=lambda _t: (1, 1))
+    target.write_text(json.dumps({"alert_burst": 9}), encoding="utf-8")
+
+    with pytest.raises(SettingsConcurrentWriteError):
+        save_settings(memory, target)
+    assert json.loads(target.read_text(encoding="utf-8")) == {"alert_burst": 9}
