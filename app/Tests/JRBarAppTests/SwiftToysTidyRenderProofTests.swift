@@ -48,18 +48,18 @@ struct SwiftToysTidyRenderProofTests {
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write PNGs"))
     func keyTiles() throws {
         let core = CoreModel()
-        let open = Fixture.openAsk()
+        let openAsk = Fixture.openAsk()
         core.apply(.state(CoreState(
             sessions: [
                 CoreSession(id: "claude:session:tests", provider: "claude", label: "run the tests",
-                            mode: "waiting", ask: CoreAsk(summary: open.summary)),
+                            mode: "waiting", ask: CoreAsk(summary: openAsk.summary)),
                 CoreSession(id: Fixture.session, provider: "claude", label: "release cleanup",
                             mode: "waiting", ask: CoreAsk(summary: "Run the cleanup")),
             ],
             asks: [
-                CoreAsk(session: "claude:session:tests", kind: "permission", openedAt: open.openedAt,
-                        summary: open.summary, answerable: true, request: "r-open",
-                        decision: open.decision, preview: open.preview),
+                CoreAsk(session: "claude:session:tests", kind: "permission", openedAt: openAsk.openedAt,
+                        summary: openAsk.summary, answerable: true, request: "r-open",
+                        decision: openAsk.decision, preview: openAsk.preview),
                 Fixture.decidedAsk(),
             ])))
         let store = DeckStore(core: core)

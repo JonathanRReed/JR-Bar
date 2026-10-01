@@ -152,8 +152,8 @@ struct PanelDecidedAskRenderProofTests {
     @Test("the session menu keeps an open ask's verbs and a held question's options and Deny")
     func menuKeepsTheOpenVerbs() {
         typealias Fixture = DecidedAskFixture
-        let open = SessionContextMenu.askVerbs(Fixture.openAsk())
-        #expect(open == SessionContextMenu.AskMenuVerbs(approve: true, alwaysAllow: true, deny: true))
+        let openVerbs = SessionContextMenu.askVerbs(Fixture.openAsk())
+        #expect(openVerbs == SessionContextMenu.AskMenuVerbs(approve: true, alwaysAllow: true, deny: true))
         let plain = SessionContextMenu.askVerbs(Fixture.openAsk(always: false))
         #expect(plain == SessionContextMenu.AskMenuVerbs(approve: true, deny: true))
         let question = SessionContextMenu.askVerbs(Fixture.heldQuestion())
