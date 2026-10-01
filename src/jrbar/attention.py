@@ -168,10 +168,7 @@ def stable_event_key(status: AgentStatus) -> str:
 def actionable_request(status: AgentStatus, settings: AgentMonitorSettings) -> bool:
     if status.is_subagent and not settings.subagent_asks_alert:
         return False
-    return status.mode == AgentMode.WAITING_FOR_INPUT and status.event_name in {
-        "PermissionRequest",
-        "Notification",
-    }
+    return status.is_hard_ask
 
 
 def quiet_worker_request_keys(

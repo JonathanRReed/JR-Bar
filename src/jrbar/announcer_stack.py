@@ -15,7 +15,7 @@ from .announcer_content import (
     _single_line,
 )
 from .attention import ProjectedAgentRow
-from .models import AgentMode, AgentStatus
+from .models import DIALOG_ASK_EVENT_NAMES, AgentMode, AgentStatus
 from .operator_state import CanonicalOperatorState, RequestPhase
 from .provider_facts import (
     NextActor,
@@ -238,6 +238,9 @@ ANNOUNCER_PRIORITY_BY_KIND: Final[dict[RequestKind, AnnouncerAlertPriority]] = {
     RequestKind.UNKNOWN: AnnouncerAlertPriority.UNKNOWN,
     RequestKind.DIALOG: AnnouncerAlertPriority.INPUT,
 }
+# Every event ``models.ASK_EVENT_NAMES`` calls an ask has a priority here
+# (tests/test_ask_and_worker_identity.py pins it); the plan and review names
+# are the announcer's own.
 _LEGACY_PRIORITY_BY_EVENT: Final[dict[str, AnnouncerAlertPriority]] = {
     "PermissionRequest": AnnouncerAlertPriority.PERMISSION,
     "PlanApproval": AnnouncerAlertPriority.APPROVAL,
@@ -245,6 +248,8 @@ _LEGACY_PRIORITY_BY_EVENT: Final[dict[str, AnnouncerAlertPriority]] = {
     "ReviewRequest": AnnouncerAlertPriority.REVIEW,
     "ReviewRequested": AnnouncerAlertPriority.REVIEW,
     "Notification": AnnouncerAlertPriority.INPUT,
+    # An MCP server's dialog reads as input, like the canonical DIALOG kind.
+    "Elicitation": AnnouncerAlertPriority.INPUT,
     "InputRequest": AnnouncerAlertPriority.INPUT,
     "AskUserQuestion": AnnouncerAlertPriority.INPUT,
 }
@@ -304,12 +309,20 @@ def legacy_announcer_alert_identity(
 
 
 def legacy_announcer_status_is_answerable(status: object) -> bool:
+    """Whether a key or a line of text can answer this status in its terminal.
+
+    A dialog an MCP server draws (``DIALOG_ASK_EVENT_NAMES``) is an ask, and
+    is announced as one, but it is never answered in place.
+    """
     return bool(
         type(status) is AgentStatus
         and status.mode is AgentMode.WAITING_FOR_INPUT
         and (
             status.tool_name == "ExitPlanMode"
-            or status.event_name in _LEGACY_PRIORITY_BY_EVENT
+            or (
+                status.event_name in _LEGACY_PRIORITY_BY_EVENT
+                and status.event_name not in DIALOG_ASK_EVENT_NAMES
+            )
         )
     )
 
