@@ -40,6 +40,11 @@ os.environ["XDG_STATE_HOME"] = str(_TEST_STATE)
 os.environ["XDG_CACHE_HOME"] = str(_TEST_CACHE)
 os.environ["JRBAR_TESTING"] = "1"
 os.environ["JRBAR_TEST_VOLUME_ROOT"] = str(_TEST_VOLUMES)
+# Where an agent keeps its config follows these two variables (provider_homes),
+# so a developer's moved home must not steer a test at their real account. A
+# test that wants an alternate home sets the variable itself.
+for _moved_home in ("CLAUDE_CONFIG_DIR", "CODEX_HOME"):
+    os.environ.pop(_moved_home, None)
 
 # The suite must NEVER take the desktop away from a person using this
 # machine. AppKit tests once exercised product code that called

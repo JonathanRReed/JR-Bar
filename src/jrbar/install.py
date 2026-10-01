@@ -63,6 +63,8 @@ from .providers import (
     PROVIDER_REGISTRY,
     _is_jrbar_hook_invocation,
     default_antigravity_config_path,
+    default_claude_config_path,
+    default_codex_config_path,
     default_cursor_config_path,
     default_devin_config_path,
     default_gemini_config_path,
@@ -435,7 +437,7 @@ def install_codex_hooks(
     python_executable: str | None = None,
     preserve_activation: bool = False,
 ) -> InstallResult:
-    config = config_path or Path.home() / ".codex" / "config.toml"
+    config = config_path or default_codex_config_path()
     target_log = (log_path or detect_log_path("codex")).expanduser()
     config_leaf = _validated_optional_config(config, dry_run=dry_run)
     original = _decode_config(config_leaf)
@@ -550,7 +552,7 @@ def install_claude_hooks(
     python_executable: str | None = None,
     preserve_activation: bool = False,
 ) -> InstallResult:
-    config = config_path or Path.home() / ".claude" / "settings.json"
+    config = config_path or default_claude_config_path()
     target_log = (log_path or detect_log_path("claude")).expanduser()
 
     config_leaf = _validated_optional_config(config, dry_run=dry_run)
@@ -1863,7 +1865,7 @@ def uninstall_codex_hooks(
     config_path: Path | None = None,
     dry_run: bool = False,
 ) -> InstallResult:
-    config = config_path or Path.home() / ".codex" / "config.toml"
+    config = config_path or default_codex_config_path()
     target_log = (log_path or detect_log_path("codex")).expanduser()
     original = _read_optional_text(config, tighten=not dry_run)
 
@@ -1885,7 +1887,7 @@ def uninstall_claude_hooks(
     config_path: Path | None = None,
     dry_run: bool = False,
 ) -> InstallResult:
-    config = config_path or Path.home() / ".claude" / "settings.json"
+    config = config_path or default_claude_config_path()
     target_log = (log_path or detect_log_path("claude")).expanduser()
 
     original_text = _read_optional_text(config, tighten=not dry_run)
@@ -2257,7 +2259,7 @@ def codex_hook_block(
 
 
 def should_refresh_codex_hook_trust(config: Path, explicit_config: Path | None) -> bool:
-    default_config = Path.home() / ".codex" / "config.toml"
+    default_config = default_codex_config_path()
     try:
         return config.expanduser().resolve() == default_config.expanduser().resolve()
     except OSError:

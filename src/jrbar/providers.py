@@ -1059,8 +1059,16 @@ def default_log_path(provider: str, home: Path | None = None) -> Path:
 
 
 def default_codex_config_path(home: Path | None = None) -> Path:
-    base = home or Path.home()
-    return base / ".codex" / "config.toml"
+    """Codex's ``config.toml``. With no ``home`` it is the default instance's:
+    inside ``CODEX_HOME`` when the environment names a folder, else
+    ``~/.codex`` (provider_homes). A given ``home`` stands in for the user's
+    home folder (a test, a dry run elsewhere), and the environment is not
+    consulted for it."""
+    if home is None:
+        from .provider_homes import primary_codex_home
+
+        return primary_codex_home() / "config.toml"
+    return home / ".codex" / "config.toml"
 
 
 def detect_codex_config(home: Path | None = None) -> ProviderConfig:
@@ -1148,8 +1156,15 @@ def codex_hooks_feature_enabled(text: str) -> bool:
 
 
 def default_claude_config_path(home: Path | None = None) -> Path:
-    base = home or Path.home()
-    return base / ".claude" / "settings.json"
+    """Claude Code's ``settings.json``. With no ``home`` it is the default
+    instance's: inside ``CLAUDE_CONFIG_DIR`` when the environment names a
+    folder, else ``~/.claude`` (provider_homes). A given ``home`` stands in
+    for the user's home folder, and the environment is not consulted."""
+    if home is None:
+        from .provider_homes import primary_claude_home
+
+        return primary_claude_home() / "settings.json"
+    return home / ".claude" / "settings.json"
 
 
 def detect_json_hook_config(

@@ -6087,6 +6087,7 @@ class StatusBarController(NSObject):
             receipt_handler=self._record_hook_ingress_receipt,
             statusline_enabled=lambda: bool(getattr(self.settings, "claude_statusline_source", False)),
             subagent_asks_alert=lambda: bool(getattr(self.settings, "subagent_asks_alert", False)),
+            hold_until=getattr(self, "_core_backlog_gate", None),
         )
         self.hook_ingress_service = service
         try:

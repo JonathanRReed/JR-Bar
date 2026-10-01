@@ -19,15 +19,26 @@ A record queued inside ``PENDING_REPLAY_HORIZON_SECONDS`` replays as a live
 one, stamped when it is drained; one older than that keeps the time the
 shim queued it and reaches the log without waking the live monitor
 (hook_ingress).
+
+The drain the daemon runs at launch is bounded. Each line costs about 4 ms,
+so a backlog of 5000 lines kept a launch that drained it whole deaf for
+about 21 s per provider. ``PendingHookDrainer`` with a
+``first_pass_budget_seconds`` drains until the budget is spent, tells the
+daemon to hold live hooks behind the rest (``hold_live``), and lets its
+worker finish the same pass: the same files, the same lines, the same order.
+The worker puts back what it never reached when it is stopped, and releases
+the live hooks when the pass is over.
 """
 
 from __future__ import annotations
 
 import fcntl
 import json
+import math
 import os
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Final
@@ -61,6 +72,10 @@ MAX_SPOOL_BYTES: Final = 16 * 1024 * 1024
 # A nudged drain waits this long first: a shim told refused_full appends
 # within its 250 ms budget, and the drain should find the line there.
 PENDING_NUDGE_SETTLE_SECONDS: Final = 0.3
+# How long the daemon's launch drains the spool before it opens its sockets.
+# Long enough for the usual backlog (a restart's few hundred lines) to land
+# whole, short enough that a long outage's does not leave the app waiting.
+PENDING_STARTUP_BUDGET_SECONDS: Final = 1.5
 
 _drainers_lock = threading.Lock()
 _running_drainers: set[PendingHookDrainer] = set()
@@ -363,6 +378,166 @@ def nudge_pending_drains() -> None:
         drainer.nudge()
 
 
+class _SpoolFile:
+    """One spool file in the middle of a pass: its lines, how far the pass
+    got, and what it owes back to disk when it ends."""
+
+    __slots__ = ("draining", "head_bytes", "index", "limit", "lines", "rejected", "retry")
+
+    def __init__(self, draining: Path, lines: list[str], head_bytes: int) -> None:
+        self.draining = draining
+        self.lines = lines
+        # A pass reads at most this many lines of a file; the rest are put
+        # back for the next one.
+        self.limit = min(len(lines), MAX_PENDING_LINES_PER_DRAIN)
+        self.index = 0
+        self.head_bytes = head_bytes
+        self.retry: list[str] = []
+        self.rejected: list[str] = []
+
+
+class _PendingDrain:
+    """One pass over the spool: the files in order, each file's lines in order.
+
+    ``run`` submits until the spool is done or the caller says it is out of
+    time, and can be called again to carry on from the same line of the same
+    file, so a pass can start on one thread and finish on another with
+    nothing skipped or repeated. A file that is not finished stays on disk
+    under its draining name until its last line has been submitted.
+    """
+
+    def __init__(
+        self,
+        submit: Callable[[HookIngressRequest], object],
+        *,
+        state_dir: Path | None,
+        log_path_for: Callable[[str], str],
+        log: Callable[[str], None],
+    ) -> None:
+        self._submit = submit
+        self._log_path_for = log_path_for
+        self._log = log
+        # A drain file left behind by a process that died mid-read is adopted
+        # before the fresh pending files, so its records keep their order.
+        self._paths = deque([*orphaned_drain_files(state_dir), *pending_hook_files(state_dir)])
+        self._current: _SpoolFile | None = None
+        self.submitted = 0
+
+    def run(
+        self,
+        *,
+        out_of_time: Callable[[], bool] = lambda: False,
+        after_file: Callable[[], object] | None = None,
+    ) -> bool:
+        """Submit until the spool is drained (True) or ``out_of_time()`` is
+        true between two lines (False). ``after_file`` runs when a file's
+        last line has been submitted and the file is settled."""
+        while True:
+            if self._current is None:
+                if not self._paths:
+                    return True
+                if out_of_time():
+                    return False
+                self._current = self._open(self._paths.popleft())
+                if self._current is None:
+                    continue
+            spool = self._current
+            while spool.index < spool.limit:
+                if out_of_time():
+                    return False
+                line = spool.lines[spool.index]
+                spool.index += 1
+                if not line.strip():
+                    continue
+                request = request_from_pending_line(line, log_path_for=self._log_path_for)
+                if request is None:
+                    spool.rejected.append(line)
+                    continue
+                try:
+                    self._submit(request)
+                except Exception:
+                    spool.retry.append(line)
+                    continue
+                except BaseException:
+                    # Torn down mid-line: this line was not delivered, so
+                    # ``abandon`` puts it back with the rest (the token
+                    # dedupe makes one that did land harmless to replay).
+                    spool.index -= 1
+                    raise
+                self.submitted += 1
+            self._current = None
+            self._finish(spool)
+            if after_file is not None:
+                after_file()
+
+    def abandon(self) -> None:
+        """Put back what a stopped pass never reached: the rest of the file in
+        hand goes back to its pending file in order, behind the lines that
+        failed. Files not yet opened were never touched."""
+        spool, self._current = self._current, None
+        if spool is not None:
+            self._finish(spool)
+
+    def _open(self, path: Path) -> _SpoolFile | None:
+        adopted = DRAINING_INFIX in path.name
+        draining = path.with_name(
+            f"{path.name}{DRAINING_INFIX}{os.getpid()}-{int(time.time() * 1000)}"
+            if not adopted
+            else path.name
+        )
+        try:
+            if not adopted:
+                path.rename(draining)
+                _settle(draining)
+            text, head_bytes = _read_newest(draining, MAX_PENDING_FILE_BYTES)
+        except OSError:
+            return None
+        return _SpoolFile(draining, spool_lines(text), head_bytes)
+
+    def _finish(self, spool: _SpoolFile) -> None:
+        """Settle a file: what was rejected is kept, what failed or was never
+        reached goes back to the pending file, an oversized file's head is
+        kept as the overflow generation, and the draining file goes."""
+        draining = spool.draining
+        # What a finished file never reached is the lines past the per-pass
+        # cap; what a stopped pass never reached is everything from where it
+        # stopped. Both are put back after the lines that failed.
+        retry = [*spool.retry, *spool.lines[spool.index :]]
+        if spool.rejected:
+            rejected_path = _sibling(draining, REJECTED_SUFFIX)
+            # One rotation, bounded: an earlier rejected file this size has
+            # already said what it had to say.
+            try:
+                if rejected_path.stat().st_size > MAX_REJECTED_FILE_BYTES:
+                    rejected_path.unlink()
+            except OSError:
+                pass
+            if not _append_lines(rejected_path, spool.rejected):
+                self._log(f"hook_pending could not retain {len(spool.rejected)} rejected lines for {rejected_path.name}")
+        if retry:
+            pending_path = draining.with_name(_pending_name(draining.name))
+            if not _append_lines(pending_path, retry):
+                # The write failed -- keep the draining file so the records
+                # survive as an orphan for the next drain to adopt.
+                self._log(f"hook_pending could not requeue {len(retry)} lines; keeping {draining.name}")
+                return
+        if spool.head_bytes:
+            overflow = _sibling(draining, OVERFLOW_SUFFIX)
+            try:
+                os.truncate(draining, spool.head_bytes)
+                draining.replace(overflow)
+                self._log(
+                    f"hook_pending oversized file: drained its newest lines, kept {spool.head_bytes} older bytes in {overflow.name}"
+                )
+                return
+            except OSError:
+                pass
+        try:
+            draining.unlink()
+        except OSError:
+            pass
+
+
 def drain_pending_hooks(
     submit: Callable[[HookIngressRequest], object],
     *,
@@ -382,77 +557,29 @@ def drain_pending_hooks(
     same file the shim rotates into) -- the newest events are the ones live
     state needs, where quarantining the whole file replayed none of them.
     """
-    log = log or (lambda _line: None)
-    submitted = 0
-    # A drain file left behind by a process that died mid-read is adopted
-    # before the fresh pending files, so its records keep their order.
-    for path in [*orphaned_drain_files(state_dir), *pending_hook_files(state_dir)]:
-        adopted = DRAINING_INFIX in path.name
-        draining = path.with_name(
-            f"{path.name}{DRAINING_INFIX}{os.getpid()}-{int(time.time() * 1000)}"
-            if not adopted
-            else path.name
-        )
-        try:
-            if not adopted:
-                path.rename(draining)
-                _settle(draining)
-            text, head_bytes = _read_newest(draining, MAX_PENDING_FILE_BYTES)
-        except OSError:
-            continue
-        lines = spool_lines(text)
-        retry: list[str] = []
-        rejected: list[str] = []
-        for line in lines[:MAX_PENDING_LINES_PER_DRAIN]:
-            if not line.strip():
-                continue
-            request = request_from_pending_line(line, log_path_for=log_path_for)
-            if request is None:
-                rejected.append(line)
-                continue
-            try:
-                submit(request)
-            except Exception:
-                retry.append(line)
-                continue
-            submitted += 1
-        retry.extend(lines[MAX_PENDING_LINES_PER_DRAIN:])
-        if rejected:
-            rejected_path = _sibling(draining, REJECTED_SUFFIX)
-            # One rotation, bounded: an earlier rejected file this size has
-            # already said what it had to say.
-            try:
-                if rejected_path.stat().st_size > MAX_REJECTED_FILE_BYTES:
-                    rejected_path.unlink()
-            except OSError:
-                pass
-            if not _append_lines(rejected_path, rejected):
-                log(f"hook_pending could not retain {len(rejected)} rejected lines for {rejected_path.name}")
-        if retry:
-            pending_path = draining.with_name(_pending_name(draining.name))
-            if not _append_lines(pending_path, retry):
-                # The write failed -- keep the draining file so the records
-                # survive as an orphan for the next drain to adopt.
-                log(f"hook_pending could not requeue {len(retry)} lines; keeping {draining.name}")
-                continue
-        if head_bytes:
-            overflow = _sibling(draining, OVERFLOW_SUFFIX)
-            try:
-                os.truncate(draining, head_bytes)
-                draining.replace(overflow)
-                log(f"hook_pending oversized file: drained its newest lines, kept {head_bytes} older bytes in {overflow.name}")
-                continue
-            except OSError:
-                pass
-        try:
-            draining.unlink()
-        except OSError:
-            pass
-    return submitted
+    drain = _PendingDrain(
+        submit,
+        state_dir=state_dir,
+        log_path_for=log_path_for,
+        log=log or (lambda _line: None),
+    )
+    drain.run()
+    return drain.submitted
 
 
 class PendingHookDrainer:
-    """A daemon thread that drains at start and then on an interval."""
+    """A daemon thread that drains at start and then on an interval.
+
+    With ``first_pass_budget_seconds`` the first ``drain_now`` (the daemon's
+    launch pass, before its sockets open) stops once the budget is spent on
+    ``clock`` and calls ``hold_live``: the daemon holds live hooks behind the
+    rest of the backlog, because a spooled prompt replayed after the live
+    Stop that followed it would land on top of it. The thread ``start`` runs
+    then finishes that same pass -- the same files and lines, in the same
+    order, through the same deduplicators -- and calls ``release_live`` when
+    it is over, or when it is stopped, after putting back what it never
+    reached.
+    """
 
     def __init__(
         self,
@@ -462,7 +589,18 @@ class PendingHookDrainer:
         interval_seconds: float = PENDING_DRAIN_INTERVAL_SECONDS,
         after_drain: Callable[[], object] | None = None,
         log: Callable[[str], None] | None = None,
+        first_pass_budget_seconds: float | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        hold_live: Callable[[], object] | None = None,
+        release_live: Callable[[], object] | None = None,
     ) -> None:
+        if first_pass_budget_seconds is not None and not (
+            isinstance(first_pass_budget_seconds, (int, float))
+            and not isinstance(first_pass_budget_seconds, bool)
+            and math.isfinite(float(first_pass_budget_seconds))
+            and first_pass_budget_seconds >= 0.0
+        ):
+            raise ValueError("invalid first pass budget")
         self._submit = submit
         # Runs once at the end of every pass, whatever it submitted: the
         # daemon applies the refresh hints the pass held back here.
@@ -470,6 +608,13 @@ class PendingHookDrainer:
         self._state_dir = state_dir
         self._interval = max(1.0, float(interval_seconds))
         self._log = log or (lambda _line: None)
+        self._first_pass_budget = first_pass_budget_seconds
+        self._clock = clock
+        self._hold_live = hold_live
+        self._release_live = release_live
+        # The first pass, when its budget ran out before the spool did.
+        self._resume: _PendingDrain | None = None
+        self._resume_lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
@@ -493,6 +638,15 @@ class PendingHookDrainer:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout_seconds)
         self._thread = None
+        # A first pass nobody finished (the worker never started): put back
+        # what it never reached and let the live hooks go.
+        drain = self._take_resume()
+        if drain is not None:
+            try:
+                drain.abandon()
+            except Exception as exc:
+                self._log(f"hook_pending could not put back the unfinished startup drain: {exc}")
+            self._release()
 
     def nudge(self) -> None:
         """Run the next pass now (after ``PENDING_NUDGE_SETTLE_SECONDS``)
@@ -500,22 +654,101 @@ class PendingHookDrainer:
         self._wake.set()
 
     def drain_now(self) -> int:
+        budget, self._first_pass_budget = self._first_pass_budget, None
+        if budget is not None:
+            return self._drain_first_pass(budget)
         try:
             count = drain_pending_hooks(self._submit, state_dir=self._state_dir, log=self._log)
         finally:
-            if self._after_drain is not None:
-                try:
-                    self._after_drain()
-                except Exception as exc:
-                    self._log(f"hook_pending after-drain failed: {exc}")
+            self._after_pass()
         if count:
             self._log(f"hook_pending drained={count}")
         return count
 
+    def _after_pass(self) -> None:
+        if self._after_drain is not None:
+            try:
+                self._after_drain()
+            except Exception as exc:
+                self._log(f"hook_pending after-drain failed: {exc}")
+
+    def _drain_first_pass(self, budget_seconds: float) -> int:
+        deadline = self._clock() + budget_seconds
+        drain = _PendingDrain(
+            self._submit,
+            state_dir=self._state_dir,
+            log_path_for=_default_log_path,
+            log=self._log,
+        )
+        try:
+            done = drain.run(out_of_time=lambda: self._clock() >= deadline)
+        except BaseException:
+            # Whatever the pass had in hand goes back to its pending file: a
+            # draining file owned by this live process is never adopted.
+            try:
+                drain.abandon()
+            finally:
+                self._after_pass()
+            raise
+        self._after_pass()
+        if not done:
+            with self._resume_lock:
+                self._resume = drain
+            if self._hold_live is not None:
+                try:
+                    self._hold_live()
+                except Exception as exc:
+                    self._log(f"hook_pending could not hold live hooks: {exc}")
+            self._log(
+                f"hook_pending startup drain: {drain.submitted} lines inside the budget, the rest continues on the worker"
+            )
+        elif drain.submitted:
+            self._log(f"hook_pending drained={drain.submitted}")
+        return drain.submitted
+
+    def _take_resume(self) -> _PendingDrain | None:
+        with self._resume_lock:
+            drain, self._resume = self._resume, None
+        return drain
+
+    def _release(self) -> None:
+        if self._release_live is not None:
+            try:
+                self._release_live()
+            except Exception as exc:
+                self._log(f"hook_pending could not release live hooks: {exc}")
+
+    def _finish_first_pass(self) -> None:
+        """Carry on with the first pass where the launch left off, on this
+        thread: no budget now, the same order. Stopping puts the rest back."""
+        drain = self._take_resume()
+        if drain is None:
+            return
+        try:
+            if not drain.run(out_of_time=self._stop.is_set, after_file=self._after_pass):
+                drain.abandon()
+        except BaseException as exc:
+            self._log(f"hook_pending startup drain failed: {exc!r}")
+            try:
+                drain.abandon()
+            except Exception:
+                pass
+            if not isinstance(exc, Exception):
+                raise
+        finally:
+            self._after_pass()
+            self._release()
+        self._log(f"hook_pending startup drain finished: {drain.submitted} more lines")
+
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                self.drain_now()
+                self._finish_first_pass()
+                # A stop that cut the first pass short has put its rest back
+                # for the next daemon; draining it again here would not.
+                if not self._stop.is_set():
+                    self.drain_now()
+                    self._finish_first_pass()
             except Exception as exc:
                 self._log(f"hook_pending drain failed: {exc}")
             self._wake.wait(self._interval)
@@ -528,6 +761,7 @@ class PendingHookDrainer:
 __all__ = [
     "PENDING_DRAIN_INTERVAL_SECONDS",
     "PENDING_REPLAY_HORIZON_SECONDS",
+    "PENDING_STARTUP_BUDGET_SECONDS",
     "PENDING_SUFFIX",
     "PendingHookDrainer",
     "drain_pending_hooks",

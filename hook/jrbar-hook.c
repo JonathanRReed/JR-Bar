@@ -12,7 +12,9 @@
  * file rotates to <provider>.overflow.jsonl at MAX_SPOOL_BYTES. Nothing here
  * can block an agent: everything after the payload is read is bounded by
  * HARD_BUDGET_MS -- by DECIDE_WAIT_MS for the verdict wait of --decide,
- * below -- and every failure path exits 0.
+ * below -- timed on a monotonic clock, and every failure path exits 0.
+ * A payload past MAX_PAYLOAD is not forwarded whole: for Claude and Codex a
+ * small "payload_truncated" record stands in for it (see build_metadata).
  *
  *   jrbar-hook --provider <id> [--log <path>] [--decide]
  *
@@ -58,10 +60,10 @@
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <time.h>
 #include <unistd.h>
 
 #define MAX_PAYLOAD (1024 * 1024)
@@ -87,10 +89,27 @@
 #define THEN_BUDGET_MS 3000
 #define THEN_OUTPUT_BYTES 4096
 
+/* Every deadline and elapsed time in this file runs on now_ms(), a clock
+ * that only moves forward and that nothing sets: an NTP correction or the
+ * owner changing the date cannot lengthen a 250 ms wait by the size of the
+ * step, and a wake from sleep cannot make a 50 s decide window look spent.
+ * CLOCK_UPTIME_RAW rather than CLOCK_MONOTONIC because on macOS the latter
+ * keeps counting through sleep: UPTIME_RAW is the clock poll(2) times its own
+ * timeout on, and the daemon's time.monotonic() and the agents' hook timers
+ * run on it too, so all of them agree about how much of a wait is left. */
 static uint64_t now_ms(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (uint64_t)tv.tv_sec * 1000u + (uint64_t)tv.tv_usec / 1000u;
+    struct timespec ts = { 0, 0 };
+    clock_gettime(CLOCK_UPTIME_RAW, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+/* The wall clock, for the one thing that is a date rather than a duration:
+ * the time stamped on a spooled record, so a late drain logs the event when
+ * it happened. Never used for a budget. */
+static uint64_t wall_ms(void) {
+    struct timespec ts = { 0, 0 };
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
 }
 
 /* JSON-escape src into dst (which must hold 6*len+1 bytes). */
@@ -125,6 +144,191 @@ static double parent_start_time(pid_t ppid) {
     struct proc_bsdinfo info;
     if (proc_pidinfo(ppid, PROC_PIDTBSDINFO, 0, &info, sizeof info) != (int)sizeof info) return -1.0;
     return (double)info.pbi_start_tvsec + (double)info.pbi_start_tvusec / 1e6;
+}
+
+/* ---- A payload past MAX_PAYLOAD ----------------------------------------
+ *
+ * It is never forwarded or spooled whole. Dropping it silently left the
+ * daemon blind to the event: a PostToolUse carrying base64 screenshots was a
+ * tool that never seemed to finish, a PermissionRequest for a very large Write
+ * was an ask nobody saw. For Claude Code and Codex the shim builds a small
+ * record instead -- the event, the session, the tool and
+ * "payload_truncated":true -- from one pass over the head it already holds
+ * (the first MAX_PAYLOAD bytes; nothing more is buffered). The scan walks the
+ * top-level object only: it steps over every value it does not want by
+ * tracking strings and nesting, so a key spelled inside a tool's output or
+ * inside a string is never mistaken for a top-level one.
+ *
+ * What is kept: plain printable-ASCII strings (a session id, a tool name) of
+ * bounded length, copied verbatim, so the record is valid JSON and valid UTF-8
+ * by construction; and the call's own tool_input when it is a whole object of
+ * at most META_INPUT_BYTES. The input is what names the request a PostToolUse
+ * resolves (the daemon derives the request id from the turn, the tool and
+ * this input), and a screenshot tool's input is a few bytes while its
+ * response is the megabyte. When the input is too large to keep (or the head
+ * ends inside it) the record carries instead a 64-bit FNV-1a fingerprint of
+ * the first META_INPUT_BYTES of its text, in 16 hex digits: two different
+ * huge calls in one session then differ, and a call's ask and its
+ * PostToolUse, both cut down, agree. Everything else, the content included,
+ * is left behind. When the head does not name both the event and the session
+ * the payload is dropped, as before: the daemon could not place it. */
+#define META_VALUE_BYTES 256
+#define META_PATH_BYTES 1024
+#define META_INPUT_BYTES (64 * 1024)
+#define META_RECORD_BYTES (META_INPUT_BYTES + 4096)
+
+struct meta_key { const char *name; size_t cap; };
+/* Order is the order they are written. The first two are required;
+ * transcript_path stays only because the daemon tells a Grok session that
+ * reached it through Claude's hook slot from a Claude one by it. */
+static const struct meta_key META_KEYS[] = {
+    { "hook_event_name", META_VALUE_BYTES },
+    { "session_id", META_VALUE_BYTES },
+    { "tool_name", META_VALUE_BYTES },
+    { "turn_id", META_VALUE_BYTES },
+    { "agent_id", META_VALUE_BYTES },
+    { "transcript_path", META_PATH_BYTES },
+};
+#define META_KEY_COUNT (sizeof META_KEYS / sizeof META_KEYS[0])
+
+/* FNV-1a, 64 bit: no secret, no security claim, just a stable short name
+ * for the leading bytes of a call's input. */
+static uint64_t fnv1a64(const char *p, size_t n) {
+    uint64_t hash = 14695981039346656037ULL;
+    for (size_t i = 0; i < n; i++) {
+        hash ^= (unsigned char)p[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+static int metadata_provider(const char *provider) {
+    return !strcmp(provider, "claude") || !strcmp(provider, "codex");
+}
+
+static size_t json_skip_ws(const char *b, size_t i, size_t n) {
+    while (i < n && (b[i] == ' ' || b[i] == '\t' || b[i] == '\n' || b[i] == '\r')) i++;
+    return i;
+}
+
+/* `i` is at an opening quote. The index after the closing one, or 0 when the
+ * buffer ends first. */
+static size_t json_skip_string(const char *b, size_t i, size_t n) {
+    for (i++; i < n; i++) {
+        if (b[i] == '\\') { if (++i >= n) return 0; continue; }
+        if (b[i] == '"') return i + 1;
+    }
+    return 0;
+}
+
+/* The index after the value at `i`, or 0 when the buffer ends inside it. */
+static size_t json_skip_value(const char *b, size_t i, size_t n) {
+    if (i >= n) return 0;
+    if (b[i] == '"') return json_skip_string(b, i, n);
+    if (b[i] == '{' || b[i] == '[') {
+        size_t depth = 0;
+        while (i < n) {
+            char c = b[i];
+            if (c == '"') { i = json_skip_string(b, i, n); if (!i) return 0; continue; }
+            i++;
+            if (c == '{' || c == '[') depth++;
+            else if ((c == '}' || c == ']') && --depth == 0) return i;
+        }
+        return 0;
+    }
+    while (i < n && b[i] != ',' && b[i] != '}' && b[i] != ']'
+           && b[i] != ' ' && b[i] != '\t' && b[i] != '\n' && b[i] != '\r') i++;
+    return i < n ? i : 0;
+}
+
+static int meta_put(char *out, size_t cap, size_t *o, const char *s, size_t n) {
+    if (*o + n >= cap) return 0;
+    memcpy(out + *o, s, n);
+    *o += n;
+    return 1;
+}
+
+/* The metadata record for `b[0..n)` in `out`: its length, or 0 when the head
+ * does not name an event and a session. */
+static size_t build_metadata(const char *b, size_t n, char *out, size_t cap) {
+    struct { size_t at, len; int seen; } found[META_KEY_COUNT];
+    memset(found, 0, sizeof found);
+    size_t input_at = 0, input_len = 0;
+    int input_seen = 0, has_fingerprint = 0;
+    uint64_t fingerprint = 0;
+    size_t i = json_skip_ws(b, 0, n);
+    if (i >= n || b[i] != '{') return 0;
+    i++;
+    for (;;) {
+        i = json_skip_ws(b, i, n);
+        if (i >= n || b[i] == '}') break;
+        if (b[i] == ',') { i++; continue; }
+        if (b[i] != '"') break;
+        size_t key_at = i + 1;
+        size_t after_key = json_skip_string(b, i, n);
+        if (!after_key) break;
+        size_t key_len = after_key - 1 - key_at;
+        i = json_skip_ws(b, after_key, n);
+        if (i >= n || b[i] != ':') break;
+        i = json_skip_ws(b, i + 1, n);
+        if (i >= n) break;
+        size_t end = json_skip_value(b, i, n);
+        int is_input = key_len == strlen("tool_input") && !memcmp(b + key_at, "tool_input", key_len);
+        if (is_input && !input_seen) {
+            input_seen = 1;
+            if (b[i] == '{') {
+                /* A value the head ends inside runs to the end of the head. */
+                size_t span = end ? end - i : n - i;
+                if (end && span <= META_INPUT_BYTES) { input_at = i; input_len = span; }
+                else {
+                    fingerprint = fnv1a64(b + i, span < META_INPUT_BYTES ? span : META_INPUT_BYTES);
+                    has_fingerprint = 1;
+                }
+            }
+        }
+        if (!end) break;
+        if (!is_input) {
+            for (size_t k = 0; k < META_KEY_COUNT; k++) {
+                if (key_len != strlen(META_KEYS[k].name) || memcmp(b + key_at, META_KEYS[k].name, key_len)) continue;
+                if (found[k].seen) break;
+                found[k].seen = 1;
+                if (b[i] != '"') break;
+                size_t value_len = end - i - 2;
+                if (value_len == 0 || value_len > META_KEYS[k].cap) break;
+                int plain = 1;
+                for (size_t v = i + 1; v < end - 1; v++) {
+                    unsigned char c = (unsigned char)b[v];
+                    if (c < 0x20 || c > 0x7e || c == '\\') { plain = 0; break; }
+                }
+                if (plain) { found[k].at = i + 1; found[k].len = value_len; }
+                break;
+            }
+        }
+        i = end;
+    }
+    if (!found[0].len || !found[1].len) return 0;
+    size_t o = 0;
+    if (!meta_put(out, cap, &o, "{", 1)) return 0;
+    int first = 1;
+    for (size_t k = 0; k < META_KEY_COUNT; k++) {
+        if (!found[k].len) continue;
+        if (!first && !meta_put(out, cap, &o, ",", 1)) return 0;
+        first = 0;
+        if (!meta_put(out, cap, &o, "\"", 1) || !meta_put(out, cap, &o, META_KEYS[k].name, strlen(META_KEYS[k].name))
+            || !meta_put(out, cap, &o, "\":\"", 3) || !meta_put(out, cap, &o, b + found[k].at, found[k].len)
+            || !meta_put(out, cap, &o, "\"", 1)) return 0;
+    }
+    if (input_len) {
+        if (!meta_put(out, cap, &o, ",\"tool_input\":", strlen(",\"tool_input\":"))
+            || !meta_put(out, cap, &o, b + input_at, input_len)) return 0;
+    }
+    if (has_fingerprint) {
+        char text[48];
+        int written = snprintf(text, sizeof text, ",\"payload_fingerprint\":\"%016llx\"", (unsigned long long)fingerprint);
+        if (written <= 0 || (size_t)written >= sizeof text || !meta_put(out, cap, &o, text, (size_t)written)) return 0;
+    }
+    if (!meta_put(out, cap, &o, ",\"payload_truncated\":true}", strlen(",\"payload_truncated\":true}"))) return 0;
+    return o;
 }
 
 /* The verdict in a --decide reply, or 0 for "print nothing". The reply is
@@ -494,7 +698,7 @@ static void run_then(const char *command, const char *payload, size_t len) {
 }
 
 int main(int argc, char **argv) {
-    uint64_t started = now_ms();
+    uint64_t queued_at = wall_ms();
     const char *provider = NULL, *log = NULL, *then = NULL;
     int emit_empty = 0, decide = 0, statusline = 0;
     for (int i = 1; i < argc; i++) {
@@ -520,6 +724,22 @@ int main(int argc, char **argv) {
             len += (size_t)n;
         }
     }
+    if (payload && len > MAX_PAYLOAD && !statusline && metadata_provider(provider)) {
+        /* The record replaces the payload for everything below: it is
+         * delivered or spooled like any other. It is never --decide: an ask
+         * whose input cannot be shown is not held for a verdict, so the shim
+         * prints nothing and the agent's own prompt carries on. */
+        char *meta = malloc(META_RECORD_BYTES);
+        size_t meta_len = meta ? build_metadata(payload, len, meta, META_RECORD_BYTES) : 0;
+        if (meta_len) {
+            free(payload);
+            payload = meta;
+            len = meta_len;
+            decide = 0;
+        } else {
+            free(meta);
+        }
+    }
     if (!payload || len > MAX_PAYLOAD) {
         if (statusline) {
             char quick[2048];
@@ -532,7 +752,7 @@ int main(int argc, char **argv) {
     /* The budget starts once the payload is in hand. The time an agent
      * takes to write and close stdin is its own; counting it left a shim
      * spawned well before its payload arrived no time to wait out another
-     * shim's append (200 shims spawned before any was fed). `started`
+     * shim's append (200 shims spawned before any was fed). `queued_at`
      * stays the event's queued time. */
     uint64_t received = now_ms();
     uint64_t deadline = received + HARD_BUDGET_MS;
@@ -582,7 +802,7 @@ int main(int argc, char **argv) {
         free(payload);
         return 0;
     }
-    if (result != 0) queue_pending(dir, provider, ppid, ppid_start, started, payload, len, deadline);
+    if (result != 0) queue_pending(dir, provider, ppid, ppid_start, queued_at, payload, len, deadline);
     if (reply) {
         const char *verdict = NULL;
         size_t verdict_len = decide_verdict(reply, reply_len, &verdict);

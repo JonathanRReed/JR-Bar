@@ -19,6 +19,7 @@ from enum import Enum
 from typing import Final
 
 from .capacity_types import CapacityValidationError, SourceKey
+from .hook_ingress_protocol import PAYLOAD_FINGERPRINT_FIELD, PAYLOAD_TRUNCATED_FIELD
 from .models import _CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE, HookEvent
 from .provider_contracts import (
     AdapterIdentifier,
@@ -1009,6 +1010,8 @@ def _request_identifier(value: object) -> RequestIdentifier | None:
 # tool call: Codex puts its escalation justification in tool_input as
 # ``description``, so PermissionRequest and PostToolUse would disagree.
 _REQUEST_SIGNATURE_IGNORED_INPUT: Final = frozenset({"description", "justification"})
+# The shim's fingerprint of an input it could not keep: 16 lowercase hex digits.
+_PAYLOAD_FINGERPRINT: Final = re.compile(r"[0-9a-f]{16}")
 # Claude's AskUserQuestion is asked without ``answers`` and runs with them
 # (the owner's picks, from its own prompt or through the decide lane's
 # updatedInput): the question is the same request either way.
@@ -1024,13 +1027,27 @@ def _derived_request_identifier(record: HookEvent) -> RequestIdentifier | None:
     fields. The identity is the turn and the exact call, so the request a
     PermissionRequest opens is the one the matching PostToolUse resolves,
     and a different command in the same turn is a different question.
-    A payload without a tool name and input still gets no identity.
+    A payload without a tool name and input still gets no identity, except
+    one the compiled shim cut down because it passed 1 MiB
+    (``payload_truncated``): when even its input was too large to keep, the
+    call is "the one that was cut down", so a very large Write's
+    PermissionRequest still opens a request and its PostToolUse, cut down the
+    same way, resolves it. A cut-down payload that kept its (small) input
+    names the same request as the whole one would have. The shim also sends
+    a fingerprint of the input it could not keep (``payload_fingerprint``),
+    which joins the identity, so two different huge calls in one session are
+    two requests and a call's ask and its PostToolUse still agree.
     """
     raw = record.raw if type(record.raw) is dict else {}
     tool_name = raw.get("tool_name")
     if type(tool_name) is not str or not tool_name:
         tool_name = record.tool_name
     tool_input = raw.get("tool_input")
+    if type(tool_input) is not dict and raw.get(PAYLOAD_TRUNCATED_FIELD) is True:
+        tool_input = {PAYLOAD_TRUNCATED_FIELD: True}
+        fingerprint = raw.get(PAYLOAD_FINGERPRINT_FIELD)
+        if type(fingerprint) is str and _PAYLOAD_FINGERPRINT.fullmatch(fingerprint):
+            tool_input[PAYLOAD_FINGERPRINT_FIELD] = fingerprint
     if type(tool_name) is not str or not tool_name or type(tool_input) is not dict:
         return None
     scope = raw.get("turn_id")

@@ -62,6 +62,7 @@ from .core_projection import (
 from .core_server import SLOW_LANE_RECEIVED_AT, CommandError, CoreServer, default_core_socket_path
 from .core_usage_samples import SAMPLES_FILE_NAME, UsageSampleBuffer
 from .hook_pending import (
+    PENDING_STARTUP_BUDGET_SECONDS,
     PendingHookDrainer,
     orphaned_drain_files,
     pending_hook_files,
@@ -4236,6 +4237,9 @@ def build_headless_controller_class() -> type:
             self._core_command_in_flight: str | None = None
             self._core_started_at = time.time()
             self._core_pending_drainer = None
+            # Clear while the launch's spool drain is unfinished: the ingress
+            # holds live hooks behind it (hook_pending).
+            self._core_backlog_gate: threading.Event | None = None
             self._core_last_clear_batch = None
             self._core_housekeeping_timer = None
             self._core_supervision_timer = None
@@ -4348,19 +4352,30 @@ def build_headless_controller_class() -> type:
             # install locations is unknown, not "not installed".
             default_login_shell_probe().ensure_started(on_done=self._core_login_path_ready)
             # The backlog the shim spooled while the daemon was down drains
-            # once here, before the ingress socket opens. A fresh replay is
+            # here, before the ingress socket opens. A fresh replay is
             # stamped when it is drained (hook_ingress._replay_arguments),
             # so the order it reaches the monitor in is the order it counts
             # in: drained after the session's own first live hook, a spooled
-            # prompt would land on top of the Stop that followed it. The
-            # thread that drains on the interval starts further down. Its
-            # refresh hints wait for the end of each pass, so the monitor
+            # prompt would land on top of the Stop that followed it. A long
+            # outage leaves thousands of lines (about 4 ms each), so this
+            # pass stops at a budget, the sockets open, and the thread that
+            # drains on the interval (started further down) finishes the same
+            # pass. Live hooks that arrive meanwhile are accepted but held
+            # behind it (``_core_backlog_gate``, read by the ingress service).
+            # Its refresh hints wait for the end of each pass, so the monitor
             # rereads each provider's log once per drain, not once per hook.
             from .hook_ingress import DeferredRefreshHints
 
+            self._core_backlog_gate = threading.Event()
+            self._core_backlog_gate.set()
             self._core_pending_hints = DeferredRefreshHints(self.handle_hook_event_message)
             self._core_pending_drainer = PendingHookDrainer(
-                self._core_submit_pending, after_drain=self._core_pending_hints.flush, log=legacy.log_status_bar
+                self._core_submit_pending,
+                after_drain=self._core_pending_hints.flush,
+                log=legacy.log_status_bar,
+                first_pass_budget_seconds=PENDING_STARTUP_BUDGET_SECONDS,
+                hold_live=self._core_backlog_gate.clear,
+                release_live=self._core_backlog_gate.set,
             )
             try:
                 self._core_pending_drainer.drain_now()

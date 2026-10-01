@@ -21,6 +21,7 @@ from typing import Any
 from .core_server import default_core_socket_path
 from .hook_pending import pending_hook_files, pending_line_count
 from .install import hook_command_arguments, hook_shim_path
+from .provider_homes import environment_names_home
 from .providers import (
     HOOK_CLIENT_MODULES,
     HOOK_SHIM_NAME,
@@ -166,6 +167,14 @@ def hook_doctor_report(
         try:
             config = spec.detector(home)
             entry["config_path"] = str(config.config_path)
+            # Where the agent's config lives: inside a folder the daemon's
+            # environment names (CLAUDE_CONFIG_DIR, CODEX_HOME), or the
+            # default. A variable set only in a shell profile never reaches
+            # a daemon the app launched, which is the one case this cannot
+            # see: the installed path is then the default one.
+            entry["config_home"] = (
+                "environment" if home is None and environment_names_home(spec.provider) else "default"
+            )
             entry["installed"] = bool(config.exists and config.hook_events)
             entry["hook_events"] = len(config.hook_events)
             registered = registered_commands(config.config_path, spec.provider)
@@ -281,6 +290,8 @@ def render_hook_doctor(report: dict[str, Any]) -> str:
             f"next install={entry.get('would_install')}{decide}"
         )
         lines.append(f"      version {version}" + (f" ({note})" if note else ""))
+        if entry.get("config_home") == "environment":
+            lines.append(f"      config {entry.get('config_path')} (the home your environment names)")
         for command in entry.get("registered_commands", []):
             lines.append(f"      {command}")
     return "\n".join(lines)
