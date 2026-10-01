@@ -95,3 +95,18 @@ def test_only_a_real_true_turns_the_coordinator_on(value) -> None:
 
     assert updates.check(forced=True) == {"enabled": False, "started": False}
     assert started == []
+
+
+def test_the_apps_settings_key_is_a_key_the_daemon_serves() -> None:
+    import re
+    from pathlib import Path
+
+    from jrbar.settings import AgentMonitorSettings
+
+    catalogue = Path(__file__).parents[1] / "app" / "Sources" / "JRBarCore" / "SettingsDocument.swift"
+    keys = set(
+        re.findall(r'SettingsKey\(\.\w+, "([^"]+)", \.\w+\)', catalogue.read_text(encoding="utf-8"))
+    )
+
+    assert "provider_update_checks_enabled" in keys
+    assert "provider_update_checks_enabled" in AgentMonitorSettings().to_dict()
