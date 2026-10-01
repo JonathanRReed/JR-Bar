@@ -85,7 +85,24 @@ final class OverviewStore {
             guard let core else { throw CoreClientError.notConnected }
             return try await core.usageGraph(days: days, metric: metric, providers: providers)
         }
+        self.fetchRoster = { [weak core] in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.listRoster(scope: "all", limit: 2000)
+        }
+        self.fetchTimeline = { [weak core] id, before, provider, session, cwd in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.sessionTimeline(id: id, before: before, provider: provider,
+                                                  session: session, cwd: cwd)
+        }
     }
+
+    /// Where the roster comes from — the daemon's `list_roster`; a test
+    /// hands in a reply it releases by hand.
+    @ObservationIgnored var fetchRoster: @MainActor () async throws -> CoreRoster
+    /// Where a transcript page comes from — `session_timeline`, with the
+    /// row's provider, session and folder so an aged-out row still resolves.
+    @ObservationIgnored var fetchTimeline: @MainActor (_ id: String, _ before: Int?, _ provider: String?,
+                                            _ session: String?, _ cwd: String?) async throws -> CoreTimelinePage
 
     /// Approve, Deny, Always allow and a held question's picks go through
     /// the panel's shared desk (one pending set, one set of picks across
@@ -504,6 +521,12 @@ final class OverviewStore {
     func load(userInitiated: Bool = false) async {
         loadWork?.cancel()
         loadWork = nil
+        // Loads overlap (an event burst, the stale tick, ⌘R, a pin), and
+        // each reply is decoded off the main actor, so they can finish out
+        // of order. Only the load started last may write what it read: an
+        // older one landing late would leave the table a reply behind.
+        loadSerial += 1
+        let mine = loadSerial
         let showSpinner = userInitiated || roster.isEmpty
         if showSpinner { loading = true }
         defer { if showSpinner { loading = false } }
@@ -511,7 +534,8 @@ final class OverviewStore {
             // The Overview is the everything-workspace: ask for the
             // daemon's ROSTER_MAX_LIMIT so a long-retained set is not
             // truncated at the interactive default of 500.
-            let document = try await core.listRoster(scope: "all", limit: 2000)
+            let document = try await fetchRoster()
+            guard mine == loadSerial else { return }
             roster = document.sessions
             counts = document.counts
             coverageNote = document.coverage?["note"]?.stringValue
@@ -522,9 +546,14 @@ final class OverviewStore {
                 select(pending)
             }
         } catch {
+            guard mine == loadSerial else { return }
             self.error = Self.describe(error)
         }
     }
+
+    /// Bumped by every `load`; the load holding the latest number is the
+    /// only one whose answer is shown.
+    @ObservationIgnored private var loadSerial = 0
 
     // MARK: Live tail
 
@@ -1271,6 +1300,9 @@ final class OverviewStore {
     var timelinePage: CoreTimelinePage?
     var timelineLoading = false
     var timelineSessionID: String?
+    /// Bumped when a newest-page load starts; a read begun before it is
+    /// dropped when it lands.
+    @ObservationIgnored private var timelineSerial = 0
     /// The last load ended in the error path — reselecting retries.
     var timelineFailed = false
 
@@ -1279,6 +1311,11 @@ final class OverviewStore {
         // A failed load leaves a gaps-only page — reselecting the row
         // must retry rather than trusting the error artifact forever.
         guard timelineSessionID != id || timelinePage == nil || timelineFailed else { return }
+        // Reselecting while the first read is still out starts a second one;
+        // the later start is the one whose page is shown, however the
+        // off-main decodes finish.
+        timelineSerial += 1
+        let mine = timelineSerial
         timelineSessionID = id
         timeline = []
         timelinePage = nil
@@ -1288,10 +1325,8 @@ final class OverviewStore {
         let fallback = timelineFallback(for: id)
         archivedTimeline = nil
         do {
-            let page = try await core.sessionTimeline(
-                id: id, provider: fallback.provider,
-                session: fallback.session, cwd: fallback.cwd)
-            guard timelineSessionID == id else { return }
+            let page = try await fetchTimeline(id, nil, fallback.provider, fallback.session, fallback.cwd)
+            guard timelineSessionID == id, mine == timelineSerial else { return }
             timeline = page.events
             timelinePage = page
             if page.gaps.contains("transcript_not_found") {
@@ -1300,7 +1335,7 @@ final class OverviewStore {
                 await loadProxyEvidence(for: id)
             }
         } catch {
-            guard timelineSessionID == id else { return }
+            guard timelineSessionID == id, mine == timelineSerial else { return }
             timelinePage = CoreTimelinePage(gaps: [Self.describe(error)])
             timelineFailed = true
         }
@@ -1331,11 +1366,10 @@ final class OverviewStore {
         timelineLoading = true
         defer { timelineLoading = false }
         let fallback = timelineFallback(for: id)
+        let mine = timelineSerial
         do {
-            let older = try await core.sessionTimeline(
-                id: id, before: before, provider: fallback.provider,
-                session: fallback.session, cwd: fallback.cwd)
-            guard timelineSessionID == id else { return }
+            let older = try await fetchTimeline(id, before, fallback.provider, fallback.session, fallback.cwd)
+            guard timelineSessionID == id, mine == timelineSerial else { return }
             // A re-sequenced or overlapping page must not double a seq —
             // the list's ForEach ids on seq and duplicate ids corrupt it.
             let known = Set(timeline.map(\.seq))
@@ -1371,11 +1405,10 @@ final class OverviewStore {
         timelineLoading = true
         defer { timelineLoading = false }
         let fallback = timelineFallback(for: id)
+        let mine = timelineSerial
         do {
-            let fresh = try await core.sessionTimeline(
-                id: id, provider: fallback.provider,
-                session: fallback.session, cwd: fallback.cwd)
-            guard timelineSessionID == id else { return }
+            let fresh = try await fetchTimeline(id, nil, fallback.provider, fallback.session, fallback.cwd)
+            guard timelineSessionID == id, mine == timelineSerial else { return }
             let olderCount = max(0, timeline.count - page.events.count)
             // Dedupe the join: a transcript that grew since the older page
             // was pulled can push its items onto the fresh page — the same
@@ -1394,7 +1427,7 @@ final class OverviewStore {
                 file: fresh.file ?? page.file,
                 gaps: fresh.gaps + page.gaps.filter { !fresh.gaps.contains($0) })
         } catch {
-            guard timelineSessionID == id else { return }
+            guard timelineSessionID == id, mine == timelineSerial else { return }
             self.error = Self.describe(error)
         }
     }
