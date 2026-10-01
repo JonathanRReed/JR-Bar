@@ -192,6 +192,24 @@ A reset waiting for its second read survives a restart. The celebration,
 the `quota_reset` event and the hooks share one `event_id`, so one reset
 is never announced twice.
 
+## When Claude's usage read is refused
+
+Claude's usage endpoint answers three kinds of "no", and the card tells
+them apart:
+
+- **Rate limited** (a 429): wait. JR-Bar backs off and asks again later.
+- **Signed out** (a 401): the sign-in is not accepted any more. The card
+  says "Reconnect Claude · authentication required".
+- **No usage permission** (a 403): the sign-in is known, but it was not
+  granted the permission that reading usage needs, for example a token
+  made for running prompts only. The card says "Reconnect Claude · usage
+  permission missing". Asking again with the same token gets the same
+  answer, so JR-Bar waits until the sign-in changes, and signing in to
+  Claude again is the fix.
+
+Only a network failure or a server error (a 5xx) reads as "network
+unavailable", and only those are retried on a timer.
+
 ## Two more sources
 
 - [Claude Code's status line](claude-statusline.md) stands in when

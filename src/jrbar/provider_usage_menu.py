@@ -157,7 +157,7 @@ def _staleness_marker(snapshot: ProviderUsageSnapshot) -> str:
     act on "stale". Both mean the figure beside it is a LAST-KNOWN
     reading, not a live one.
     """
-    if snapshot.reason_code == "authentication_required":
+    if snapshot.reason_code in {"authentication_required", "usage_permission_missing"}:
         return "reconnect"
     return "stale"
 

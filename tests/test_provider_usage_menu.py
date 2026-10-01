@@ -728,6 +728,10 @@ def test_a_stale_reading_says_so_on_the_row_itself__and_2_more() -> None:
     )
     assert _titles(expired) == ["Claude · 71% left · reconnect"]
 
+    # A sign-in that may not read usage is a reconnect too, not a bare stale.
+    unpermitted = dataclasses.replace(expired, reason_code="usage_permission_missing")
+    assert _titles(unpermitted) == ["Claude · 71% left · reconnect"]
+
     # --- scenario: a_live_reading_carries_no_marker
     fresh = snapshot("devin", "Weekly", 100)
     assert _titles(fresh) == ["Devin · 100% left"]

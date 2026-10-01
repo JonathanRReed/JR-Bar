@@ -45,6 +45,10 @@ from .reset_policy import parse_reset_epoch
 MAX_CLAUDE_WINDOWS = 32
 CLAUDE_REMOTE_QUOTA_UNSUPPORTED = "claude_remote_quota_unsupported"
 CLAUDE_REMOTE_QUOTA_UNAUTHORIZED = "claude_remote_quota_unauthorized"
+#: A 403: the server knows the token and refuses it this endpoint (a sign-in
+#: that was not granted the profile scope usage needs). Retrying the same
+#: token cannot work, so it is told apart from a server error.
+CLAUDE_REMOTE_QUOTA_FORBIDDEN = "claude_remote_quota_forbidden"
 CLAUDE_REMOTE_QUOTA_RATE_LIMITED = "claude_remote_quota_rate_limited"
 CLAUDE_REMOTE_QUOTA_SERVER_ERROR = "claude_remote_quota_server_error"
 CLAUDE_REMOTE_QUOTA_NETWORK = "claude_remote_quota_network"
@@ -351,6 +355,8 @@ def fetch_windows(
         raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_NETWORK) from None
     if status == 401:
         raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_UNAUTHORIZED)
+    if status == 403:
+        raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_FORBIDDEN)
     if status == 429:
         raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_RATE_LIMITED)
     if status != 200:

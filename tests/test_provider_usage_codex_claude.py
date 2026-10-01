@@ -329,3 +329,49 @@ def test_claude_cached_local_scan_reuses_bounded_aggregate__and_1_more(
     )
     assert result.state.value == "needs_consent"
     assert result.action_label == "Connect Claude usage"
+
+
+def _claude_failing_with(tmp_path: Path, status: int):
+    """collect_claude over the real fetch_windows with a fake HTTP answer."""
+    from jrbar.claude_quota import fetch_windows
+
+    write_claude_account(tmp_path, "fixture@example.invalid")
+
+    def requester(url, *, method, headers, body=None, timeout):
+        return status, b'{"type":"error"}'
+
+    return collect_claude(
+        preference("claude"),
+        home=tmp_path,
+        observed_at=1000,
+        credentials=FixtureCredentials(
+            {("claude", "oauth-token"): "fixture-claude-session"}
+        ),
+        quota_fetcher=lambda token: fetch_windows(access_token=token, requester=requester),
+        local_scanner=lambda _home, _observed: None,
+        statusline_reader=lambda _observed: None,
+    )
+
+
+def test_a_claude_403_names_the_missing_usage_permission_not_the_network(tmp_path: Path) -> None:
+    result = _claude_failing_with(tmp_path, 403)
+
+    # A sign-in that may not read usage is fixed by signing in again, and it
+    # arms the terminal retry gate: asking again with the same token cannot work.
+    assert result.state.value == "needs_sign_in"
+    assert result.reason_code == "usage_permission_missing"
+    assert result.action_label == "Reconnect Claude"
+
+
+def test_claude_server_errors_stay_transient_and_a_401_stays_a_sign_in(tmp_path: Path) -> None:
+    server = _claude_failing_with(tmp_path, 503)
+    assert server.state.value == "unavailable"
+    assert server.reason_code == "network_unavailable"
+    assert server.action_label == "Retry"
+
+    rejected = _claude_failing_with(tmp_path, 401)
+    assert rejected.state.value == "needs_sign_in"
+    assert rejected.reason_code == "authentication_required"
+
+    limited = _claude_failing_with(tmp_path, 429)
+    assert limited.state.value == "rate_limited"

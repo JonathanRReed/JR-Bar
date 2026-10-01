@@ -99,8 +99,12 @@ def test_the_usage_read_does_not_ride_urllib__and_2_more() -> None:
     # --- scenario: http_failures_map_to_reason_codes
     for code, expected in [
         (401, claude_quota.CLAUDE_REMOTE_QUOTA_UNAUTHORIZED),
+        # A 403 is the server saying THIS sign-in may not read usage (a token
+        # without the profile scope): not a server error, and not transient.
+        (403, claude_quota.CLAUDE_REMOTE_QUOTA_FORBIDDEN),
         (429, claude_quota.CLAUDE_REMOTE_QUOTA_RATE_LIMITED),
         (500, claude_quota.CLAUDE_REMOTE_QUOTA_SERVER_ERROR),
+        (503, claude_quota.CLAUDE_REMOTE_QUOTA_SERVER_ERROR),
     ]:
         def requester(url, *, method, headers, body=None, timeout):
             return code, b"boom"
