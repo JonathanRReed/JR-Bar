@@ -18,11 +18,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from jrbar import core_runtime
-from jrbar.attention import project_attention, quiet_waiting_worker_ids
+from jrbar.attention import project_attention, quiet_waiting_worker_ids, quiet_worker_request_keys
 from jrbar.core_projection import aggregate_counts, aggregate_mode, build_state_document
 from jrbar.models import AgentMode
+from jrbar.operator_state import RequestPhase
 from jrbar.provider_facts import RequestIdentifier, RequestKey, SourceKey, WorkIdentifier, WorkKey
 from jrbar.settings import AgentMonitorSettings
+from tests.test_attention import _canonical_permission_request_snapshot
 from tests.test_core_projection import CLAUDE_ID, CLAUDE_SID, CLAUDE_WORKER_ID, NOW, _at, _status
 from tests.test_core_runtime import headless  # noqa: F401  (the headless daemon fixture)
 
@@ -188,6 +190,31 @@ def test_a_stale_worker_or_one_the_state_no_longer_holds_live_is_not_quiet_waiti
     assert quiet_waiting_worker_ids((keyed,), settings, live_request_keys=frozenset()) == frozenset()
 
 
+def test_the_two_definitions_of_quiet_agree_on_a_real_canonical_snapshot() -> None:
+    """``quiet_waiting_worker_ids`` reads the status (``is_subagent``) and
+    ``quiet_worker_request_keys`` reads the canonical work (``parent_key``).
+    Carried through the real ingest path they name the same request."""
+    worker = _canonical_permission_request_snapshot(session_id="session:main", agent_id="agent:worker")
+    main = _canonical_permission_request_snapshot(session_id="session:main", agent_id=None)
+
+    for name, snapshot in (("worker", worker), ("main", main)):
+        live = frozenset(request.key for request in snapshot.operator_state.requests)
+        for alert in (False, True):
+            settings = replace(AgentMonitorSettings(), subagent_asks_alert=alert)
+            ids = quiet_waiting_worker_ids(snapshot.statuses, settings, live_request_keys=live)
+            keys = quiet_worker_request_keys(snapshot.operator_state, subagent_asks_alert=alert)
+            expected = name == "worker" and not alert
+            label = f"{name}, worker asks {'on' if alert else 'off'}"
+
+            assert bool(ids) == expected, label
+            assert bool(keys) == expected, label
+            # The same request: each quiet status holds one of the quiet keys.
+            held = {status.request_key for status in snapshot.statuses if status.agent_id in ids}
+            assert held == set(keys), label
+            # Without the canonical live set the status's own word gives the same answer.
+            assert quiet_waiting_worker_ids(snapshot.statuses, settings) == ids, label
+
+
 # --- the setting on: a worker's ask is a real ask ----------------------------
 
 
@@ -255,6 +282,65 @@ def test_the_daemon_publishes_the_quiet_count_and_the_on_state_ask(headless) -> 
     assert [ask["session"] for ask in on["asks"]] == [CLAUDE_WORKER_ID]
     assert on["aggregate"]["needs_you"] == 1
     assert on["aggregate"]["mode"] == "needs_you"
+
+
+def test_a_request_the_state_has_resolved_is_no_longer_a_waiting_worker(headless) -> None:  # noqa: F811
+    """The runtime hands the helper the canonical live request keys, so a
+    worker whose request the reducer resolved stops counting even while its
+    status still reads waiting."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    canonical = _canonical_permission_request_snapshot(session_id="session:main", agent_id="agent:worker")
+    worker = canonical.statuses[0]
+    assert worker.is_subagent and worker.is_hard_ask and worker.request_key is not None
+    parent = _main(agent_id=worker.parent_agent_id, session_id="session:main", work_key="wk-parent")
+    state = canonical.operator_state
+
+    def count() -> int:
+        return _row(controller._core_build_state(), parent.agent_id)["workers_waiting"]
+
+    _feed(controller, parent, worker)
+    # No canonical state yet: the status's own word stands.
+    controller.current_operator_state = None
+    assert count() == 1
+    # The state holds the request live: still waiting, quietly.
+    controller.current_operator_state = state
+    assert count() == 1
+    # The state resolved it; the status has not caught up.
+    resolved = replace(
+        state,
+        requests=tuple(replace(request, phase=RequestPhase.RESOLVED) for request in state.requests),
+    )
+    controller.current_operator_state = resolved
+    assert count() == 0
+
+
+def test_a_failure_to_count_is_logged_once_and_leaves_the_rows_without_a_count(headless) -> None:  # noqa: F811
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    lines: list[str] = []
+    controller._core_log = lines.append
+    _feed(controller, _main(), _worker(CLAUDE_WORKER_ID, waiting=True))
+
+    def broken():
+        raise RuntimeError("synthetic failure")
+
+    controller._live_actionable_request_keys = broken
+    for _ in range(2):
+        document = controller._core_build_state()
+        # Unknown, not zero: the key is absent.
+        assert "workers_waiting" not in _row(document, CLAUDE_ID)
+        assert document["asks"] == []
+    assert [line for line in lines if "workers_waiting" in line] == [
+        "core: workers_waiting unavailable: RuntimeError"
+    ]
+
+    # Recovered: the count is back, and a later failure is logged again.
+    controller._live_actionable_request_keys = lambda: None
+    assert _row(controller._core_build_state(), CLAUDE_ID)["workers_waiting"] == 1
+    controller._live_actionable_request_keys = broken
+    controller._core_build_state()
+    assert len([line for line in lines if "workers_waiting" in line]) == 2
 
 
 def test_the_roster_rows_carry_the_same_quiet_count(headless) -> None:  # noqa: F811

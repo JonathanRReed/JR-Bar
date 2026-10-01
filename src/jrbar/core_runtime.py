@@ -3259,13 +3259,25 @@ def _quiet_worker_ids(controller, statuses) -> frozenset[str] | None:
         return None
     live_keys = getattr(controller, "_live_actionable_request_keys", None)
     try:
-        return quiet_waiting_worker_ids(
+        quiet = quiet_waiting_worker_ids(
             statuses,
             settings,
             live_request_keys=live_keys() if callable(live_keys) else None,
         )
-    except Exception:
+    except Exception as exc:
+        # Not fatal (the rows carry no count), but never silent: one line the
+        # first time, and again only after it recovered and failed anew.
+        log = getattr(controller, "_core_log", None)
+        if callable(log) and not getattr(controller, "_core_quiet_ids_failing", False):
+            log(f"core: workers_waiting unavailable: {exc.__class__.__name__}")
+        try:
+            controller._core_quiet_ids_failing = True
+        except Exception:
+            pass
         return None
+    if getattr(controller, "_core_quiet_ids_failing", False):
+        controller._core_quiet_ids_failing = False
+    return quiet
 
 
 def _roster_document(
