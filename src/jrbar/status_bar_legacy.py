@@ -83,7 +83,7 @@ from .agent_browser import (
     build_agent_browser_documents,
     project_agent_browser,
 )
-from .agent_browser_window import (
+from .agent_browser_payloads import (
     AgentBrowserActionPayload,
     AgentBrowserAnswerPayload,
 )

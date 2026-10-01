@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from jrbar import agent_browser_window
-from jrbar.agent_browser_window import AgentBrowserActionPayload
+from jrbar import agent_browser_payloads
+from jrbar.agent_browser_payloads import AgentBrowserActionPayload
 from jrbar.capacity_types import SourceKey
 from jrbar.navigation_policy import OperatorActionKind
 from jrbar.provider_facts import WorkIdentifier, WorkKey
@@ -51,7 +51,7 @@ def test_a_payload_needs_a_real_work_key_generation_and_kind() -> None:
 
 
 def test_the_payload_module_draws_nothing_and_imports_no_appkit() -> None:
-    tree = ast.parse(Path(agent_browser_window.__file__).read_text(encoding="utf-8"))
+    tree = ast.parse(Path(agent_browser_payloads.__file__).read_text(encoding="utf-8"))
     imported = {
         (node.module or "").split(".")[0]
         for node in ast.walk(tree)

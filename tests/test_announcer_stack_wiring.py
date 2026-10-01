@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from jrbar import status_bar
-from jrbar.agent_browser_window import AgentBrowserAnswerPayload
+from jrbar.agent_browser_payloads import AgentBrowserAnswerPayload
 from jrbar.announcer_stack import (
     AnnouncerStackAction,
     AnnouncerStackIntent,

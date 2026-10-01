@@ -588,7 +588,7 @@ def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused__and_2_mor
     it must reach every family actually snoozed. The old target list —
     the ask statuses — silently missed a snoozed session that was
     quietly working, leaving it dark forever."""
-    from jrbar.agent_browser_window import AgentBrowserActionPayload
+    from jrbar.agent_browser_payloads import AgentBrowserActionPayload
     from jrbar.capacity_types import SourceKey
     from jrbar.mailbox_preferences import MailboxPreference
     from jrbar.navigation_policy import OperatorActionKind

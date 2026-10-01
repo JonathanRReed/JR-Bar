@@ -22,7 +22,7 @@ from unittest.mock import MagicMock, call, patch
 from jrbar import cli as cli_module
 from jrbar import collector as collector_module
 from jrbar import colors as colors_module
-from jrbar.agent_browser_window import AgentBrowserActionPayload
+from jrbar.agent_browser_payloads import AgentBrowserActionPayload
 from jrbar.battery import (
     BATTERY_CHARGING_MINT,
     BatteryLedController,
@@ -12854,7 +12854,7 @@ class SnoozeScopeControllerTests(unittest.TestCase):
         from datetime import datetime as _datetime
 
         from jrbar import status_bar_legacy
-        from jrbar.agent_browser_window import (
+        from jrbar.agent_browser_payloads import (
             AgentBrowserActionPayload,
             OperatorActionKind,
         )
@@ -12896,7 +12896,7 @@ class SnoozeScopeControllerTests(unittest.TestCase):
         self.assertIn("codex:session:main", row_ids)
 
     def test_agent_browser_answer_payload_requires_exact_identity_and_reply_shape(self) -> None:
-        from jrbar.agent_browser_window import AgentBrowserAnswerPayload
+        from jrbar.agent_browser_payloads import AgentBrowserAnswerPayload
         from jrbar.answer_in_place import AnswerActionKind
 
         key = self._work_key("main")

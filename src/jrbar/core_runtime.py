@@ -941,7 +941,7 @@ def _set_run_snooze(self, status, seconds: float) -> bool:
 
 @command("snooze")
 def _cmd_snooze(self, args):
-    from .agent_browser_window import AgentBrowserActionPayload
+    from .agent_browser_payloads import AgentBrowserActionPayload
     from .navigation_policy import OperatorActionKind
 
     seconds = float(args.get("seconds") or 0)

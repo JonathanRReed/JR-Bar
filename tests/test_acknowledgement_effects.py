@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 from test_jrbar import isolate_controller
 
-from jrbar.agent_browser_window import AgentBrowserActionPayload
+from jrbar.agent_browser_payloads import AgentBrowserActionPayload
 from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
 from jrbar.capacity_types import SourceKey
 from jrbar.local_triage import LocalAcknowledgement, LocalTriageState
