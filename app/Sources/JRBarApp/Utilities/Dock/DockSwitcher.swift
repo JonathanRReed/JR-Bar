@@ -71,7 +71,32 @@ struct DockAXBackoff {
     }
 }
 
+/// What the switcher reads of a running app when it indexes them by pid.
+/// `NSRunningApplication` is the real one; a test hands in stand-ins,
+/// because a quit app's object cannot be made on demand.
+protocol DockRunningApp {
+    var processIdentifier: pid_t { get }
+    var isTerminated: Bool { get }
+}
+
+extension NSRunningApplication: DockRunningApp {}
+
 enum DockSwitcherList {
+    /// The running apps keyed by pid. A quit app's object lingers in
+    /// `NSWorkspace.runningApplications` for a turn and reads pid -1 (see
+    /// `RunningAppsLedger`), so two apps quitting as ⌥⇥ is pressed would
+    /// repeat that key; `Dictionary(uniqueKeysWithValues:)` traps on a
+    /// repeat. A quit app is no row's owner, so it is left out, and a pid
+    /// listed twice keeps its first object instead of ending the app.
+    static func appsByPID<App: DockRunningApp>(_ apps: [App]) -> [pid_t: App] {
+        var byPID: [pid_t: App] = [:]
+        for app in apps where !app.isTerminated {
+            let pid = app.processIdentifier
+            if pid > 0, byPID[pid] == nil { byPID[pid] = app }
+        }
+        return byPID
+    }
+
     /// The z-order `CGWindowList` reports (front to back) cut to
     /// normal windows of regular apps — the switcher's recency.
     static func onScreenRows(
@@ -1564,8 +1589,7 @@ final class DockSwitcherController {
     private func readList() -> ListRead {
         let rows = DockSwitcherList.onScreenRows()
         let offRows = DockSwitcherList.offScreenRows()
-        let apps = Dictionary(uniqueKeysWithValues:
-            NSWorkspace.shared.runningApplications.map { ($0.processIdentifier, $0) })
+        let apps = DockSwitcherList.appsByPID(NSWorkspace.shared.runningApplications)
         let now = ProcessInfo.processInfo.systemUptime
         let own = ProcessInfo.processInfo.processIdentifier
         var asked = Set<pid_t>()
@@ -1721,7 +1745,7 @@ final class DockSwitcherController {
             $0.activationPolicy == .regular && !$0.isTerminated
                 && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
         }
-        let byPID = Dictionary(uniqueKeysWithValues: apps.map { ($0.processIdentifier, $0) })
+        let byPID = DockSwitcherList.appsByPID(apps)
         var ordered: [pid_t] = []
         var seen = Set<pid_t>()
         /// Each app's front window — its card's still, so the ⌘⇥ strip
