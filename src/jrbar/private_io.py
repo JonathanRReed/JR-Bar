@@ -278,7 +278,7 @@ _QUARANTINE_SUFFIX = re.compile(r"\.corrupt-(\d{8}T\d{6}Z)(?:-(\d+))?\Z")
 _QUARANTINE_COPY_MAX_BYTES = 4 * 1024 * 1024
 
 
-def _daemon_log_line(message: str) -> None:
+def daemon_log_line(message: str) -> None:
     """One line in the shape the daemon's own log uses."""
     stamp = datetime.now().astimezone().isoformat(timespec="seconds")
     try:
@@ -369,7 +369,7 @@ def quarantine_private_file(
     right after a failed read; they are each the only writer of their file.
     """
     target = Path(path).expanduser()
-    emit = _daemon_log_line if log is None else log
+    emit = daemon_log_line if log is None else log
     moment = time.time() if now is None else float(now)
     try:
         with _private_parent(target, tighten=False) as (target, parent_descriptor, name):

@@ -4763,3 +4763,35 @@ def test_the_keepalive_touches_only_sd_reader_devices(headless, tmp_path: Path) 
     assert controller.status_keepalive_targets() == [pro.target]
     controller.current_led_targets = lambda: []
     assert controller.status_keepalive_targets() == [pro.target]
+
+
+def test_a_stray_file_in_the_pack_folder_leaves_the_daemons_pack_list_cached(
+    headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A Finder ``.DS_Store`` or a scratch file an interrupted write left
+    behind used to make the whole store unavailable; the cached list, keyed
+    on the store's fingerprint, still serves and still follows real changes."""
+    from jrbar.effect_pack_store import EffectPackStore
+
+    controller, root = _effects_daemon(headless, monkeypatch, tmp_path)
+    store = EffectPackStore(root)
+    assert store.install(_effect_pack_payload("calm-pack")).accepted
+    (root / ".DS_Store").write_bytes(b"\x00")
+    (root / "calm-pack.json.4242.1.0123456789abcdef0123456789abcdef.tmp").write_text("{")
+    lines: list[str] = []
+    controller._core_log = lines.append
+    reads = _PackReads(monkeypatch)
+
+    assert [pack.pack_id for pack in core_runtime._effect_packs(controller)] == ["calm-pack"]
+    core_runtime._effect_packs(controller)
+    core_runtime._effect_packs(controller)
+
+    assert reads.count == 1, "the list is kept under the store's fingerprint"
+    assert controller._core_effect_packs_cache is not None
+    assert [line for line in lines if "unavailable" in line] == []
+    assert store.install(_effect_pack_payload("second-pack", "Second Pack")).accepted
+    assert {pack.pack_id for pack in core_runtime._effect_packs(controller)} == {
+        "calm-pack",
+        "second-pack",
+    }
+    assert reads.count == 2

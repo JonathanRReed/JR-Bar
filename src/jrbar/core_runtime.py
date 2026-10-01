@@ -1745,9 +1745,10 @@ def _effect_packs(self) -> tuple:
     build. The store still fails closed: one pack that is not canonical
     makes every pack unavailable, and that verdict is cached under the
     fingerprint too, so it is logged once per change to the files and not
-    once per build. A store that cannot even be stamped (a link, a foreign
-    entry) and an error that may pass (an ``OSError``) are logged and never
-    cached.
+    once per build. A store that cannot even be stamped (a link, an unsafe
+    pack file) and an error that may pass (an ``OSError``) are logged and
+    never cached. A file that is not a pack (``.DS_Store``, a scratch file an
+    interrupted write left) is skipped by the store and does not count.
     """
     from .effect_pack_store import EffectPackStore, EffectPackStoreError
 
