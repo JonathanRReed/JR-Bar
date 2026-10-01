@@ -59,11 +59,6 @@ def test_provider_animation_catalog_is_authoritative_and_keeps_ui_order__and_2_m
 
     assert all(effect.role != "general" for effect in effects)
     assert all(effect.parameter_metadata for effect in effects)
-    assert all(
-        tuple(adaptation.surface for adaptation in effect.surface_adaptations)
-        == effect.surfaces
-        for effect in effects
-    )
     assert tuple(parameter.name for parameter in get_effect("chase").parameter_metadata) == (
         "duration_seconds",
         "direction",

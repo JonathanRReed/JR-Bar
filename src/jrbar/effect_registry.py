@@ -170,28 +170,6 @@ class EffectParameter:
 
 
 @dataclass(frozen=True, slots=True)
-class SurfaceAdaptation:
-    """How an effect preserves its meaning on one presentation surface."""
-
-    surface: str
-    mode: str
-    shared_segments: str
-    description: str
-
-    def __post_init__(self) -> None:
-        if any(
-            type(value) is not str or not value
-            for value in (
-                self.surface,
-                self.mode,
-                self.shared_segments,
-                self.description,
-            )
-        ):
-            raise EffectRegistryError("surface adaptation fields are required")
-
-
-@dataclass(frozen=True, slots=True)
 class BlinkCadence:
     """A named hard-blink cadence that cannot exceed the existing 2 Hz limit."""
 
@@ -246,7 +224,6 @@ class EffectDefinition:
     catalog: str = "general"
     role: str = "general"
     parameter_metadata: tuple[EffectParameter, ...] = ()
-    surface_adaptations: tuple[SurfaceAdaptation, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.identifier or not self.label or not self.meaning:
@@ -262,9 +239,7 @@ class EffectDefinition:
         if len(set(self.parameters)) != len(self.parameters):
             raise EffectRegistryError("effect parameters must be unique")
         parameter_metadata = tuple(self.parameter_metadata)
-        surface_adaptations = tuple(self.surface_adaptations)
         object.__setattr__(self, "parameter_metadata", parameter_metadata)
-        object.__setattr__(self, "surface_adaptations", surface_adaptations)
         parameter_names = tuple(parameter.name for parameter in parameter_metadata)
         if len(set(parameter_names)) != len(parameter_names):
             raise EffectRegistryError("effect parameter metadata must be unique")
@@ -280,15 +255,6 @@ class EffectDefinition:
             raise EffectRegistryError("effect catalog is required")
         if not self.role:
             raise EffectRegistryError("effect role is required")
-        adaptation_surfaces = tuple(
-            adaptation.surface for adaptation in surface_adaptations
-        )
-        if len(set(adaptation_surfaces)) != len(adaptation_surfaces):
-            raise EffectRegistryError("effect surface adaptations must be unique")
-        if any(surface not in self.surfaces for surface in adaptation_surfaces):
-            raise EffectRegistryError(
-                "effect adaptations must reference a supported surface"
-            )
 
     @property
     def parameter_defaults(self) -> Mapping[str, object]:
@@ -763,54 +729,6 @@ _PROVIDER_ROLES = {
     colors_module.MOTION_BLINK: "attention",
 }
 
-_PROVIDER_ADAPTATION_MODES: dict[str, tuple[str, str]] = {
-    colors_module.PROVIDER_ANIMATION_AUTO: ("resolve_current_mapping", "preserve_urgent_override"),
-    colors_module.MOTION_BREATHE: ("phase_aligned_swell", "static_luminous_base"),
-    colors_module.MOTION_DUOTONE: ("alternating_tones", "interleaved_tones"),
-    colors_module.MOTION_CHASE: ("travelling_wave", "directional_wave"),
-    colors_module.MOTION_GRADIENT: ("per_led_gradient", "bounded_gradient_flare"),
-    colors_module.MOTION_HEARTBEAT: ("decorative_lub_dub", "decorative_lub_dub"),
-    colors_module.MOTION_SCANNER: ("sweeping_beam", "narrow_flare"),
-    colors_module.MOTION_KITT: ("wide_overlapping_eye", "narrow_flare"),
-    colors_module.MOTION_COMET: ("head_and_trail", "narrow_flare"),
-    colors_module.MOTION_FLICKER: ("seeded_luminance", "seeded_luminance"),
-    colors_module.MOTION_STACK: ("sequential_fill", "hard_pile_on"),
-    colors_module.MOTION_TWINKLE: ("sparse_seeded_sparkle", "sparse_seeded_sparkle"),
-    colors_module.MOTION_DRIFT: ("detuned_swell", "reduced_sample_swell"),
-    colors_module.MOTION_CONVERGE: ("meeting_fronts", "block_center_meet"),
-    colors_module.MOTION_AURORA: ("layered_waves", "layered_luminous_base"),
-    colors_module.MOTION_TIDE: ("rising_fill", "full_segment_swell"),
-    colors_module.MOTION_MARQUEE: ("rotating_palette", "narrow_flare"),
-    colors_module.MOTION_EMBER: ("weighted_unison_swell", "warm_bed_swell"),
-    colors_module.MOTION_BLOOM: ("center_out_spread", "full_segment_swell"),
-    colors_module.MOTION_FRONTIER: ("held_fill_breathing_tip", "lit_bed_tip_pulse"),
-    colors_module.MOTION_GLINT: ("thin_pass_lit_strip", "narrow_flare_lit_bed"),
-    colors_module.MOTION_RIPPLE: ("center_out_rings", "unison_swell"),
-    colors_module.MOTION_PENDULUM: ("eased_bounce", "narrow_flare"),
-    colors_module.MOTION_STEADY: ("persistent_hold", "persistent_hold"),
-    colors_module.MOTION_BLINK: ("named_hard_blink", "named_hard_blink"),
-}
-
-
-def _surface_adaptations(identifier: str) -> tuple[SurfaceAdaptation, ...]:
-    mode, shared_segments = _PROVIDER_ADAPTATION_MODES[identifier]
-    label = colors_module.PROVIDER_ANIMATION_LABELS[identifier]
-    return (
-        SurfaceAdaptation(
-            "screen_bar",
-            mode,
-            shared_segments,
-            f"Render {label} across the available Screen Bar topology.",
-        ),
-        SurfaceAdaptation(
-            "settings_preview",
-            mode,
-            shared_segments,
-            f"Preview {label} deterministically without device access.",
-        ),
-    )
-
-
 def _provider_animation_effect(identifier: str) -> EffectDefinition:
     return _effect(
         identifier,
@@ -835,7 +753,6 @@ def _provider_animation_effect(identifier: str) -> EffectDefinition:
         catalog="provider_animation",
         role=_PROVIDER_ROLES[identifier],
         parameter_metadata=_PROVIDER_PARAMETER_METADATA[identifier],
-        surface_adaptations=_surface_adaptations(identifier),
     )
 
 
@@ -963,7 +880,6 @@ __all__ = [
     "EffectParameter",
     "EffectRegistry",
     "EffectRegistryError",
-    "SurfaceAdaptation",
     "blink_cadence",
     "get_effect",
     "list_effects",
