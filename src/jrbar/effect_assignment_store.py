@@ -11,7 +11,12 @@ from typing import Final
 
 from .effect_registry import EFFECT_REGISTRY, EffectRegistry
 from .effect_studio import AssignmentScope, plan_assignment
-from .private_io import atomic_private_write, read_private_text
+from .private_io import (
+    atomic_private_write,
+    private_file_identity,
+    quarantine_private_file,
+    read_private_text,
+)
 from .scenes import Scene
 from .semantic_effect_router import URGENT_SEMANTICS, SemanticEventKind
 from .state_paths import default_state_dir
@@ -53,6 +58,8 @@ class EffectAssignmentStoreError(ValueError):
 
 class AssignmentRestoreHealth(str, Enum):
     HEALTHY = "healthy"
+    #: Some rows did not read and were dropped; the good rows were kept.
+    PARTIAL = "partial"
     MISSING = "missing"
     OVERSIZED = "oversized"
     CORRUPT = "corrupt"
@@ -245,6 +252,8 @@ def resolve_effect_assignment(
 class EffectAssignmentRestore:
     document: EffectAssignmentDocument
     health: AssignmentRestoreHealth
+    #: Rows that did not read and were left out (health PARTIAL).
+    dropped: int = 0
 
 
 def default_effect_assignment_path(home: Path | None = None) -> Path:
@@ -264,7 +273,13 @@ def _reject_constant(_value: str) -> None:
     raise EffectAssignmentStoreError("effect assignment JSON is invalid")
 
 
-def _decode(raw: str) -> EffectAssignmentDocument:
+def _decode(raw: str) -> tuple[EffectAssignmentDocument, int]:
+    """The document and how many rows did not read.
+
+    A row that is not valid on its own (wrong fields, an unknown scope, an
+    effect that would break the alert safeguard) is dropped and counted. A
+    document that is wrong as a whole (not an object, another version, over
+    its bound, two rows for one scope) raises."""
     value = json.loads(
         raw,
         object_pairs_hook=_strict_object,
@@ -278,10 +293,11 @@ def _decode(raw: str) -> EffectAssignmentDocument:
     if type(rows) is not list or len(rows) > MAX_EFFECT_ASSIGNMENTS:
         raise EffectAssignmentStoreError("effect assignments exceed their bound")
     assignments = []
+    dropped = 0
     for row in rows:
-        if type(row) is not dict or frozenset(row) != _ASSIGNMENT_FIELDS:
-            raise EffectAssignmentStoreError("effect assignment row is invalid")
         try:
+            if type(row) is not dict or frozenset(row) != _ASSIGNMENT_FIELDS:
+                raise EffectAssignmentStoreError("effect assignment row is invalid")
             assignments.append(
                 EffectAssignmentRecord(
                     effect_id=row["effect_id"],
@@ -289,17 +305,20 @@ def _decode(raw: str) -> EffectAssignmentDocument:
                     target_id=row["target_id"],
                 )
             )
-        except (TypeError, ValueError) as error:
-            raise EffectAssignmentStoreError(
-                "effect assignment row is invalid"
-            ) from error
-    return EffectAssignmentDocument(tuple(assignments))
+        except (TypeError, ValueError):
+            dropped += 1
+    return EffectAssignmentDocument(tuple(assignments)), dropped
 
 
 def load_effect_assignments(path: Path | None = None) -> EffectAssignmentRestore:
+    """Restore the assignments, and never let a bad file or row cost the person
+    their work: an unreadable file is moved aside as
+    ``effect-assignments.json.corrupt-<stamp>`` before the next save can
+    overwrite it, and one bad row costs only itself."""
     target = default_effect_assignment_path() if path is None else Path(path)
+    seen = private_file_identity(target)
     try:
-        document = _decode(
+        document, dropped = _decode(
             read_private_text(target, max_bytes=MAX_EFFECT_ASSIGNMENT_STORE_BYTES)
         )
     except FileNotFoundError:
@@ -308,16 +327,42 @@ def load_effect_assignments(path: Path | None = None) -> EffectAssignmentRestore
             AssignmentRestoreHealth.MISSING,
         )
     except OSError as error:
-        health = (
-            AssignmentRestoreHealth.OVERSIZED
-            if "exceeds maximum size" in str(error)
-            else AssignmentRestoreHealth.UNAVAILABLE
+        if "exceeds maximum size" not in str(error):
+            return EffectAssignmentRestore(
+                EffectAssignmentDocument(), AssignmentRestoreHealth.UNAVAILABLE
+            )
+        quarantine_private_file(
+            target,
+            reason="it is larger than the store allows",
+            expected_identity=seen,
         )
-        return EffectAssignmentRestore(EffectAssignmentDocument(), health)
+        return EffectAssignmentRestore(
+            EffectAssignmentDocument(), AssignmentRestoreHealth.OVERSIZED
+        )
     except (RecursionError, TypeError, UnicodeError, ValueError):
+        quarantine_private_file(
+            target, reason="it did not decode", expected_identity=seen
+        )
         return EffectAssignmentRestore(
             EffectAssignmentDocument(),
             AssignmentRestoreHealth.CORRUPT,
+        )
+    if dropped and not document.assignments:
+        quarantine_private_file(
+            target, reason="no row in it was readable", expected_identity=seen
+        )
+        return EffectAssignmentRestore(
+            EffectAssignmentDocument(), AssignmentRestoreHealth.CORRUPT
+        )
+    if dropped:
+        quarantine_private_file(
+            target,
+            copy=True,
+            reason=f"{dropped} unreadable row(s) were dropped",
+            expected_identity=seen,
+        )
+        return EffectAssignmentRestore(
+            document, AssignmentRestoreHealth.PARTIAL, dropped
         )
     return EffectAssignmentRestore(document, AssignmentRestoreHealth.HEALTHY)
 
