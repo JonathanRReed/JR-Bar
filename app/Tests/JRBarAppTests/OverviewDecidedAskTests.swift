@@ -127,4 +127,31 @@ struct OverviewDecidedAskTests {
         }
         #expect(log.answers.isEmpty, "no verdict left the desk")
     }
+
+    @Test("a decided ask's chip and State row say Answered, not the loud Waiting on you")
+    func inspectorStateWord() {
+        for ask in [Fixture.decidedAsk(), Fixture.olderDaemonDecidedAsk()] {
+            #expect(OverviewSessionInspector.stateWord(.waiting, ask: ask) == Fixture.answered)
+            #expect(OverviewStatePill(activity: .waiting, answered: true).word == Fixture.answered)
+        }
+    }
+
+    @Test("an open ask, a held question and a row with no ask read Waiting on you, as before")
+    func inspectorStateWordUnchanged() {
+        for ask in [Fixture.openAsk(), Fixture.heldQuestion()] {
+            #expect(OverviewSessionInspector.stateWord(.waiting, ask: ask) == "Waiting on you")
+        }
+        #expect(OverviewSessionInspector.stateWord(.waiting, ask: nil) == "Waiting on you")
+        #expect(OverviewStatePill(activity: .waiting).word == "Waiting on you")
+        #expect(OverviewStatePill(activity: .waiting, answered: false).word == "Waiting on you")
+    }
+
+    @Test("only a waiting row changes its word: a failed run with a decided ask is still Failed")
+    func inspectorOtherStatesKeepTheirWords() {
+        let decided = Fixture.decidedAsk()
+        for activity in SessionActivity.allCases where activity != .waiting {
+            #expect(OverviewSessionInspector.stateWord(activity, ask: decided) == activity.word)
+            #expect(OverviewStatePill(activity: activity, answered: true).word == activity.word)
+        }
+    }
 }
