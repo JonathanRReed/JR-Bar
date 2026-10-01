@@ -1242,7 +1242,7 @@ BRIGHTNESS_WATCH_MIN_DELTA = 3
 STATUS_BAR_DEVICE_POLL_SECONDS = 2.0
 # A stable volume inventory needs no 2s cadence: nothing about /Volumes
 # changes on a machine whose devices are already known, and the fast rate
-# exists for plug/unplug edges plus a Devices pane the user is watching.
+# exists for plug/unplug edges.
 STATUS_BAR_DEVICE_IDLE_POLL_SECONDS = 10.0
 DEVICE_INVENTORY_STABLE_POLLS_BEFORE_BACKOFF = 15
 # Animation-only lid observation gets a slower cadence; the 1s poll is
@@ -1874,8 +1874,6 @@ class StatusBarController(NSObject):
         self._reminders_observation_fire_at = None
         self._scheduled_reminders_cue_deadline = None
         self._scheduled_escalation_deadline = None
-        self._tip_highlight_view = None
-        self._tip_highlight_until = 0.0
         self._os_poll_generation = 1
         self._installed_agent_inventory_generation = 1
         self._installed_agent_inventory_result = None
@@ -8469,7 +8467,7 @@ class StatusBarController(NSObject):
         """Everything wrong with a program, as sentences with step numbers.
 
         This is the as-you-type call: it never raises and it never touches
-        hardware, so the Settings window can run it on every keystroke.
+        hardware, so a caller can run it on every keystroke.
         """
         count = self.studio_led_count() if led_count is None else int(led_count)
         return problems_for_program(program, led_count=count)
@@ -9434,19 +9432,6 @@ class StatusBarController(NSObject):
         )
         return next((deadline for deadline in deadlines if deadline > now), None)
 
-    def _clear_tip_highlight(self) -> None:
-        view = self._tip_highlight_view
-        self._tip_highlight_view = None
-        self._tip_highlight_until = 0.0
-        if view is None:
-            return
-        try:
-            layer = view.layer()
-            if layer is not None:
-                layer.setBackgroundColor_(None)
-        except Exception:
-            pass
-
     def _retire_elapsed_ui_deadlines(
         self,
         inputs: PresentationSchedulerInputs,
@@ -9470,10 +9455,6 @@ class StatusBarController(NSObject):
                     changed = True
         if self.test_signal_until <= 0.0 and self.test_signal_key is not None:
             self.test_signal_key = None
-            changed = True
-        tip_until = self._tip_highlight_until
-        if tip_until > 0.0 and (withdraw_all or tip_until <= now):
-            self._clear_tip_highlight()
             changed = True
         return changed
 
@@ -9504,7 +9485,6 @@ class StatusBarController(NSObject):
             self.all_clear_until,
             self.quota_blink_until,
             self.battery_preview_until,
-            self._tip_highlight_until,
             self._status_cue_deadline,
         ]
         if self.settings.reminder_alerts_enabled and not self._reminders_permission_failed:

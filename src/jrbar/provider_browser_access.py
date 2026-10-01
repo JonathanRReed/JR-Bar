@@ -490,9 +490,10 @@ def perform_provider_usage_action(
     )
     if message is None:
         return None
-    # The message MUST land somewhere visible. set_settings_message's
-    # only sink is empty until Settings has been opened once, which is
-    # how "Reconnect Grok" spent months answering into the void.
+    # The message MUST land somewhere a person can find it. A controller
+    # that has a feedback sink uses it (the daemon logs the provider
+    # action); the plain settings message is only the fallback, which is
+    # how "Reconnect Grok" once spent months answering into the void.
     feedback = getattr(controller, "_show_provider_usage_feedback", None)
     if callable(feedback):
         try:
