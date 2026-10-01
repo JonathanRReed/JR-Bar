@@ -3,7 +3,7 @@ import Foundation
 import JRBarCore
 
 extension AgentAggregateState {
-    /// The mode colours from `_led_status_legacy.py`; nil keeps the menu
+    /// The mode colours from `led_status.py`; nil keeps the menu
     /// bar's own tint. `tintHex` is the value the tests pin.
     var tint: NSColor? { tintHex.flatMap { NSColor(hex: $0) } }
 }

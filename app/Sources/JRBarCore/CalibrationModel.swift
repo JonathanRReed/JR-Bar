@@ -55,7 +55,7 @@ public struct CalibrationModel: Equatable, Sendable {
 
     /// Mirrors `CALIBRATION_NUDGE_STEP` in `status_bar_legacy.py`.
     public static let nudgeStep = 0.04
-    /// Mirrors `MIN/MAX_CHANNEL_GAIN` in `_led_status_legacy.py`.
+    /// Mirrors `MIN/MAX_CHANNEL_GAIN` in `led_status.py`.
     public static let gainRange = 0.3...1.5
     /// Mirrors the resting-glow clamp in the settings layer
     /// (`with_device_resting_glow`).

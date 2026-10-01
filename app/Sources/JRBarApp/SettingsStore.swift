@@ -1228,7 +1228,7 @@ final class SettingsStore {
 
     /// `claude_plan_limits_enabled` is consent-gated: the daemon persists
     /// it only together with this build's `claude_plan_limits_consent_version`
-    /// stamp (`_settings_legacy._claude_plan_limits_consented`). The stamp is
+    /// stamp (`settings._claude_plan_limits_consented`). The stamp is
     /// written first so a consent-aware core sees it already in the
     /// document; a core that applies the stamp itself answers with the
     /// normalised `value`, and a bounce is said out loud instead of the

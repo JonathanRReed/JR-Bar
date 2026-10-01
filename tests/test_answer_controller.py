@@ -159,6 +159,7 @@ def test_answer_controller_module_is_appkit_free__and_2_more() -> None:
 
     assert "AppKit" not in source
     assert "import objc" not in source
+    assert "agent_browser_payloads" not in source
 
     # --- scenario: controller_projects_exact_capability_and_dispatches_exact_handler
     source, _work, _request, operator_state, status, row = _truth()

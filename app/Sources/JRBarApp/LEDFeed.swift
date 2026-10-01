@@ -37,8 +37,8 @@ final class LEDFeed {
         }
     }
 
-    /// The daemon's device vocabulary (`_device_writer_legacy.DEVICE_NAME_HINTS`,
-    /// `_led_status_legacy`): a volume counts as a device when its mount name
+    /// The daemon's device vocabulary (`device_writer.DEVICE_NAME_HINTS`,
+    /// `led_status`): a volume counts as a device when its mount name
     /// carries a hint or the firmware's own STATUS.TXT sits beside LEDS.LED;
     /// the STATUS.TXT serial prefix (SPP strip, SPD Dot) outranks the name.
     /// "sidepulse" is not in the daemon's hint table, but the live Pro mounts
@@ -139,7 +139,7 @@ final class LEDFeed {
         return pending.first?.path
     }
 
-    /// The idle breath from `_led_status_legacy._render_full_strip`, lifted to a
+    /// The idle breath from `led_status._render_full_strip`, lifted to a
     /// soft neutral ember so a bare screen still shows a living band. The
     /// hardware idle colour (#020204) is invisible at screen contrast.
     static let idleProgram = "off 160ms cosine\n#2B2F36 1900ms cosine\noff 2550ms cosine\noff 850ms none\nrepeat"

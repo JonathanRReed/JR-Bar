@@ -103,7 +103,7 @@ public enum AgentAggregateState: String, Equatable, Sendable, CaseIterable {
         }
     }
 
-    /// The mode colours from `_led_status_legacy.py`; nil keeps the menu
+    /// The mode colours from `led_status.py`; nil keeps the menu
     /// bar's own tint. Failed is a true red, never the ask's orange-red:
     /// a crash is not a question, and drawing them the same made a dead
     /// run read as "waiting on you" everywhere the aggregate landed.

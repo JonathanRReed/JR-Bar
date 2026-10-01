@@ -36,7 +36,7 @@ public struct RGB8: Hashable, Sendable, Codable {
 /// The values are the firmware channel codes divided by 255. The strip PWMs
 /// those codes linearly, so on the hardware they are linear light; the Python
 /// Screen Bar paints the same numbers straight into an sRGB drawing context
-/// (its "identity transfer" reconciliation, see `_led_status_legacy.py`). Use
+/// (its "identity transfer" reconciliation, see `led_status.py`). Use
 /// `LEDSTransfer.srgbToLinear` when a consumer genuinely needs the
 /// IEC 61966-2-1 decode, for example to blend in linear light.
 public struct RGB: Hashable, Sendable {

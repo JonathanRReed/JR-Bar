@@ -127,7 +127,7 @@ public func normalizedColorHex(_ text: String) -> String? {
 
 /// Every setting the Settings window can read or write, by page. Paths are
 /// the Python `AgentMonitorSettings` document keys (see
-/// `src/jrbar/_settings_legacy.py`); a row whose key the daemon's document
+/// `src/jrbar/settings.py`); a row whose key the daemon's document
 /// does not carry is shown disabled (`isProvided`).
 public struct SettingsKey: Hashable, Sendable, Identifiable {
     public enum Page: String, CaseIterable, Sendable {
@@ -342,13 +342,13 @@ extension SettingsKey {
         SettingsKey(.devices, "devices[].blend_mode", .nullableString),
     ]
 
-    /// `_settings_legacy.CALIBRATION_PROFILE_SLOTS`: the only names the
+    /// `settings.CALIBRATION_PROFILE_SLOTS`: the only names the
     /// daemon keeps a Focus → profile rule for.
     public static let calibrationProfileSlots = ["Day", "Night", "Travel"]
 
-    /// `_settings_legacy.MAX_MILESTONE_ODOMETER_STEP_COUNT`.
+    /// `settings.MAX_MILESTONE_ODOMETER_STEP_COUNT`.
     public static let maxMilestoneSteps = 16
-    /// `_settings_legacy.DEFAULT_MILESTONE_ODOMETER_STEPS`.
+    /// `settings.DEFAULT_MILESTONE_ODOMETER_STEPS`.
     public static let defaultMilestoneSteps = [10, 25, 50, 100]
 
     /// The daemon's own normalisation of `milestone_odometer_steps`:

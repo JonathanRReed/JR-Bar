@@ -29,8 +29,8 @@ from pathlib import Path
 import pytest
 
 from jrbar import core_power
-from jrbar._collector_legacy import LiveAgentMonitor
 from jrbar.attention import LifecycleMode, actionable_request, project_attention
+from jrbar.collector import LiveAgentMonitor
 from jrbar.hook import HookProcessingOutcome, process_hook_payload, routed_hook_payload
 from jrbar.models import AgentMode, AgentStatus
 from jrbar.settings import AgentMonitorSettings
