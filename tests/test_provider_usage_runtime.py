@@ -2271,3 +2271,13 @@ def test_a_provider_whose_collector_was_given_up_on_stays_busy_for_the_round() -
     assert ran == [0]
     assert collection.finished
     release.set()
+
+
+def test_the_default_deadline_covers_the_slowest_source_that_can_still_succeed() -> None:
+    # Gemini makes three requests in a row (token refresh, project lookup,
+    # quota), each allowed HTTP_TIMEOUT_SECONDS per socket operation. A
+    # shorter deadline would time it out on every slow-network refresh.
+    from jrbar import provider_usage_collectors
+    from jrbar.provider_usage_runtime import DEFAULT_COLLECTOR_DEADLINE_SECONDS
+
+    assert DEFAULT_COLLECTOR_DEADLINE_SECONDS > 3 * provider_usage_collectors.HTTP_TIMEOUT_SECONDS

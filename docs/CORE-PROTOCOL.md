@@ -416,7 +416,7 @@ Vocabulary:
   N ago" from `read_at`, and treats a missing key (an older daemon) as
   `observed_at`.
 - `usage.refreshing` (2026-10-01) is true while a refresh is still asking
-  providers. A refresh asks up to four at a time, each under a 45 second
+  providers. A refresh asks up to four at a time, each under a 75 second
   deadline, so one slow provider no longer holds up the rest. While it waits,
   `usage` can arrive more than once with `refreshing: true`: a provider that
   has answered carries its new reading, and one still being asked keeps the

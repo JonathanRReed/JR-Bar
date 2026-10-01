@@ -14,7 +14,7 @@ answers at once. A slower one shows the providers that have answered after
 about a second and a half, and each of the others as it lands; a provider
 still being asked keeps the reading it had until its answer arrives.
 
-Each provider has 45 seconds to answer. A provider that does not is given up
+Each provider has 75 seconds to answer. A provider that does not is given up
 on for that refresh only: its card keeps its last good reading, marked stale,
 with "response timed out" as the reason, and JR-Bar asks again later on the
 same backoff as any other failure. A provider that fails or is rate limited

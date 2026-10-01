@@ -66,10 +66,12 @@ DEFAULT_MAX_CONCURRENT_COLLECTORS = 4
 #: The longest one provider may take in one refresh. Past it the provider
 #: counts as a transient failure for this refresh only: it keeps its last good
 #: reading, marked stale, and the others are unaffected. It sits above the
-#: slowest source that normally succeeds (a Cursor or Gemini sign-in plus
-#: usage request, each bounded at 20 s) and well under the sum of every
-#: provider's worst case, which is what a refresh used to cost.
-DEFAULT_COLLECTOR_DEADLINE_SECONDS = 45.0
+#: slowest source that can still succeed: Gemini makes three requests in a row
+#: (token refresh, project lookup, quota), each allowed 20 s per socket
+#: operation, and Cursor makes two. It stays well under the sum of every
+#: provider's worst case, which is what a refresh used to cost, and the quick
+#: providers are shown long before it.
+DEFAULT_COLLECTOR_DEADLINE_SECONDS = 75.0
 
 #: The longest the refresh's thread blocks on its collectors before it looks
 #: up again. A refresh that has been replaced (a newer request, or the service
