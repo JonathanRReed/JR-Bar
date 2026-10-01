@@ -23,7 +23,12 @@ from .clear_agents import (
     CompletionPresentationKey,
     CompletionPresentationReceipt,
 )
-from .private_io import atomic_private_write, read_private_text
+from .private_io import (
+    atomic_private_write,
+    private_file_identity,
+    quarantine_private_file,
+    read_private_text,
+)
 from .state_paths import default_state_dir
 
 CLEAR_AGENTS_STORE_NAME: Final = "clear-agents.json"
@@ -88,9 +93,18 @@ def default_clear_agents_path(home: Path | None = None) -> Path:
 
 
 def load_clear_agents_state(path: Path | None = None) -> ClearAgentsRestore:
-    """Restore strict receipt state with typed, content-free failure health."""
+    """Restore strict receipt state with typed, content-free failure health.
+
+    A file that cannot be restored (corrupt, from a newer version, or over
+    its size bound) is moved aside as ``clear-agents.json.corrupt-<stamp>``
+    before the next save can overwrite it."""
 
     target = default_clear_agents_path() if path is None else Path(path)
+    seen = private_file_identity(target)
+
+    def set_aside(reason: str) -> None:
+        quarantine_private_file(target, reason=reason, expected_identity=seen)
+
     try:
         raw = read_private_text(target, max_bytes=MAX_CLEAR_AGENTS_STORE_BYTES)
         document = _decode_document(raw)
@@ -98,10 +112,14 @@ def load_clear_agents_state(path: Path | None = None) -> ClearAgentsRestore:
     except FileNotFoundError:
         return _degraded_restore(ClearAgentsRestoreHealth.MISSING)
     except _UnsupportedClearAgentsStore:
+        set_aside("it is from a newer version")
         return _degraded_restore(ClearAgentsRestoreHealth.UNSUPPORTED)
-    except OSError:
+    except OSError as error:
+        if "exceeds maximum size" in str(error):
+            set_aside("it is larger than the store allows")
         return _degraded_restore(ClearAgentsRestoreHealth.UNAVAILABLE)
     except (RecursionError, TypeError, UnicodeError, ValueError):
+        set_aside("it did not decode")
         return _degraded_restore(ClearAgentsRestoreHealth.CORRUPT)
     return ClearAgentsRestore(state, ClearAgentsRestoreHealth.HEALTHY)
 
