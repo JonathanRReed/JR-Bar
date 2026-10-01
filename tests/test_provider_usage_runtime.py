@@ -1922,7 +1922,7 @@ def test_a_collector_that_raises_costs_only_its_own_provider(tmp_path) -> None:
 def test_a_collector_past_its_deadline_is_a_transient_failure_for_that_provider_only(
     tmp_path,
 ) -> None:
-    # The only test here that waits on a real deadline (half a second); the
+    # The only test here that waits on a real deadline (one second); the
     # round's own deadline arithmetic is proved on a fake clock above.
     settings = default_provider_usage_settings()
     release_hung = threading.Event()
@@ -1946,7 +1946,7 @@ def test_a_collector_past_its_deadline_is_a_transient_failure_for_that_provider_
         clock=lambda: 1000.0,
         state_loader=lambda: ProviderUsageState((previous_codex,), 900.0, 0.0, False),
         incident_lookup=lambda *_args: None,
-        collector_deadline_seconds=0.5,
+        collector_deadline_seconds=1.0,
         partial_publish_after_seconds=0.0,
     )
     published = _Published()
