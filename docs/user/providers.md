@@ -40,9 +40,11 @@ them.
 ## Grok
 
 Grok runs each sub-agent in a session of its own. JR-Bar groups it under the
-session that started it, and its asks follow the Sub-agent asks setting, as
-OpenCode's do. A sub-agent that was already running when JR-Bar started shows
-as a session of its own until it ends.
+session that started it, so it is not a second main session and does not hold
+the Mac awake on its own. Grok's notifications show as Waiting and raise no
+alert for any session; an approval ask that carries a request id follows the
+Sub-agent asks setting, as OpenCode's do. A sub-agent that was already running
+when JR-Bar started shows as a session of its own until it ends.
 
 ## OpenCode
 

@@ -80,8 +80,9 @@ class GrokChildLinks:
             above = self._ancestors(parent)
             if above is None or child in above or len(above) + 1 > MAX_LINK_DEPTH:
                 return False
-            # Re-inserting moves the link to the newest end, so a child that
-            # keeps sending events is never the one evicted.
+            # Re-inserting moves the link to the newest end; ``root_of`` does
+            # the same on every event, so a child that keeps sending events is
+            # never the one evicted.
             self._parents.pop(child, None)
             self._parents[child] = parent
             while len(self._parents) > self._limit:
@@ -110,6 +111,10 @@ class GrokChildLinks:
         the chain is a loop or deeper than the cap."""
         with self._lock:
             above = self._ancestors(session_id)
+            if above and session_id in self._parents:
+                # A child that keeps sending events stays the newest link, so
+                # the busiest children are the last to be evicted.
+                self._parents.move_to_end(session_id)
         return above[-1] if above else None
 
 

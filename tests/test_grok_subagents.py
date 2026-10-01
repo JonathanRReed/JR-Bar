@@ -422,6 +422,22 @@ def test_the_table_is_bounded_and_keeps_the_child_that_keeps_talking() -> None:
         GrokChildLinks(limit=0)
 
 
+def test_a_child_that_only_sends_events_is_not_evicted_before_a_quiet_one() -> None:
+    """Only SubagentStart creates a link, so recency must also follow the
+    child's own later events (root_of), or the busiest child goes first."""
+    from jrbar.grok_children import GrokChildLinks
+
+    links = GrokChildLinks(limit=3)
+    for index in range(3):
+        links.remember(f"child-{index}", PARENT)
+    for _ in range(5):
+        assert links.root_of("child-0") == PARENT  # events from child-0, no new link
+    links.remember("child-3", PARENT)
+
+    assert links.root_of("child-0") == PARENT, "the busy child stays"
+    assert links.root_of("child-1") is None, "the quietest link is the one evicted"
+
+
 def test_stamping_copies_the_line_and_leaves_everything_else_alone() -> None:
     from jrbar.grok_children import GrokChildLinks, stamp_child_identity
 
