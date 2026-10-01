@@ -153,7 +153,8 @@ struct NotchCapsuleTests {
         presenter.surface = { .glass }
         presenter.focus = { ScreenBarFocus(style: nil, label: "JR-Bar",
                                            word: "Working", clickSession: nil) }
-        presenter.anchor = { NSRect(x: 0, y: 0, width: 180, height: 6) }
+        // No anchor: the pin installs its Esc watch and draws nothing.
+        presenter.anchor = { nil }
         presenter.pin()
         #expect(presenter.isPinned)
         #expect(presenter.listensForEscape, "a pinned card must close on Esc")

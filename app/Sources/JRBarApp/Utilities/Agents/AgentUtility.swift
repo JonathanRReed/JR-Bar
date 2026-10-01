@@ -16,10 +16,10 @@ final class AgentUtility: Toy {
     /// Live read of the persisted settings — the store wires it to
     /// `state.agents`, so the card's observation of the store's `state`
     /// still registers through the closure.
-    @ObservationIgnored var settings: @MainActor () -> AgentOrganizerSettings = { AgentOrganizerSettings() }
+    @ObservationIgnored var settings: @MainActor () -> AgentOverviewSettings = { AgentOverviewSettings() }
     /// The card's write path: a mutated copy lands in the store's
     /// `state`, whose `didSet` persists it.
-    @ObservationIgnored var onSettingsChange: (@MainActor (AgentOrganizerSettings) -> Void)?
+    @ObservationIgnored var onSettingsChange: (@MainActor (AgentOverviewSettings) -> Void)?
     /// The "Open the Overview" button's target — the delegate wires it
     /// to `OverviewWindowController.show()`. Left unset the button hides,
     /// so the utility stands alone.
@@ -81,14 +81,14 @@ final class AgentUtility: Toy {
     /// A card edit: mutate a copy of the persisted settings and hand it
     /// to the store, whose `state` write persists it — the same shape
     /// `MenuBarUtility` uses.
-    func update(_ mutate: (inout AgentOrganizerSettings) -> Void) {
+    func update(_ mutate: (inout AgentOverviewSettings) -> Void) {
         var draft = settings()
         mutate(&draft)
         onSettingsChange?(draft)
     }
 
     /// A binding into the persisted settings.
-    func bind<T>(_ keyPath: WritableKeyPath<AgentOrganizerSettings, T>) -> Binding<T> {
+    func bind<T>(_ keyPath: WritableKeyPath<AgentOverviewSettings, T>) -> Binding<T> {
         Binding(
             get: { self.settings()[keyPath: keyPath] },
             set: { value in self.update { $0[keyPath: keyPath] = value } })

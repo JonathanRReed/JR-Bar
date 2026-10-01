@@ -243,15 +243,15 @@ struct AgentAlertRulesTests {
                                                state: Self.state) == .nothing)
     }
 
-    @Test("rules persist inside the organizer settings, missing keys follow the global policy")
+    @Test("rules persist inside the Agent Overview settings, missing keys follow the global policy")
     func persistence() throws {
-        var settings = AgentOrganizerSettings()
+        var settings = AgentOverviewSettings()
         settings.alertRules = ["grok": AgentAlertRule(asks: false, escalationCeiling: 9)]
         let data = try JSONEncoder().encode(settings)
-        let decoded = try JSONDecoder().decode(AgentOrganizerSettings.self, from: data)
+        let decoded = try JSONDecoder().decode(AgentOverviewSettings.self, from: data)
         #expect(decoded.alertRules["grok"]?.asks == false)
         #expect(decoded.alertRules["grok"]?.escalationCeiling == 3)
-        let old = try JSONDecoder().decode(AgentOrganizerSettings.self, from: Data(#"{"enabled":true}"#.utf8))
+        let old = try JSONDecoder().decode(AgentOverviewSettings.self, from: Data(#"{"enabled":true}"#.utf8))
         #expect(old.alertRules.isEmpty)
         let partial = try JSONDecoder().decode(AgentAlertRule.self, from: Data(#"{"sounds":false}"#.utf8))
         #expect(partial.asks && partial.failures && !partial.sounds && partial.completions == nil)

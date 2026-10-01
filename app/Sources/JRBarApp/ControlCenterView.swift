@@ -466,15 +466,22 @@ struct KeyCap: View {
         .animation(.easeOut(duration: 0.12), value: pressed)
         .animation(.easeOut(duration: 0.15), value: targeted)
         .animation(store.reduceMotion ? .linear(duration: 0.01) : .easeOut(duration: 0.2), value: lit)
-        .help("\(slot.title) · \(slot.subtitle)" + (slot.pinned ? " · pinned" : ""))
+        .help("\(slot.title) · \(subtitle)" + (slot.pinned ? " · pinned" : ""))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(slot.navigable ? .isButton : [])
     }
 
+    /// The key's open ask, when this key is asking: the one its second
+    /// line says was answered or not.
+    private var ask: CoreAsk? { store.ask(for: slot) }
+
+    /// The second line, in the tooltip and for VoiceOver.
+    private var subtitle: String { DeckStore.keySubtitle(slot, ask: ask) }
+
     private var accessibilityText: String {
-        var parts = ["Key \(slot.index + 1)", slot.title, slot.subtitle]
-        if askAge != nil { parts.append("waiting on you") }
+        var parts = ["Key \(slot.index + 1)", slot.title, subtitle]
+        if askAge != nil, subtitle != DeckStore.answeredSubtitle { parts.append("waiting on you") }
         if slot.pinned { parts.append("pinned") }
         return parts.joined(separator: ", ")
     }
@@ -519,7 +526,7 @@ struct KeyCap: View {
                         .transition(.opacity)
                 } else {
                     Circle().fill(color).frame(width: 6, height: 6).opacity(glow ? 1 : 0.35)
-                    Text(slot.shortSubtitle)
+                    Text(DeckStore.keySubtitle(slot, ask: ask, short: true))
                         .foregroundStyle(Color.white.opacity(dim ? 0.4 : 0.7))
                 }
             }
@@ -550,6 +557,18 @@ struct KeyCap: View {
         }
         .padding(7)
         .animation(.easeOut(duration: 0.12), value: hovered)
+    }
+}
+
+extension DeckStore {
+    /// The second line of a key tile (its tooltip, its VoiceOver label and
+    /// the short form drawn on the key). A key whose ask JR-Bar already
+    /// answered says "Answered", as the rail's pill does, instead of "Needs
+    /// you" above nothing asked. It is the label only: the key is the same
+    /// state, lit the same and counted the same.
+    nonisolated static func keySubtitle(_ slot: DeckSlot, ask: CoreAsk?, short: Bool = false) -> String {
+        let line = railSubtitle(slot, ask: ask)
+        return line == answeredSubtitle || !short ? line : slot.shortSubtitle
     }
 }
 

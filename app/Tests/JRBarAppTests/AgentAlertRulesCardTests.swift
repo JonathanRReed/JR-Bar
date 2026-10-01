@@ -7,10 +7,10 @@ import JRBarCore
 /// settings seat, and a rule edited back to "follow" is removed.
 @MainActor
 @Suite struct AgentAlertRulesCardTests {
-    @Test("a rule lands in the organizer settings, and editing it back to default removes it")
+    @Test("a rule lands in the Agent Overview settings, and editing it back to default removes it")
     func writes() {
         let utility = AgentUtility(core: CoreModel())
-        var stored = AgentOrganizerSettings()
+        var stored = AgentOverviewSettings()
         utility.settings = { stored }
         utility.onSettingsChange = { stored = $0 }
 
@@ -26,7 +26,7 @@ import JRBarCore
     @Test("the table lists providers with rules or sessions, in the settings' order")
     func providers() {
         let utility = AgentUtility(core: CoreModel())
-        var stored = AgentOrganizerSettings()
+        var stored = AgentOverviewSettings()
         stored.alertRules = ["kiro": AgentAlertRule(sounds: false), "claude": AgentAlertRule(failures: false)]
         utility.settings = { stored }
         #expect(utility.alertProviders == ["claude", "kiro"])
@@ -35,7 +35,7 @@ import JRBarCore
     @Test("quiet while you watch writes through, and the card's one way to the sessions is the Overview")
     func quietAndOverview() {
         let utility = AgentUtility(core: CoreModel())
-        var stored = AgentOrganizerSettings()
+        var stored = AgentOverviewSettings()
         utility.settings = { stored }
         utility.onSettingsChange = { stored = $0 }
         utility.bind(\.quietWhenPaneFrontmost).wrappedValue = false

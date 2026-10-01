@@ -1,6 +1,7 @@
 import AppKit
 import JRBarCore
 import JRBarLEDS
+import JRBarUI
 import SwiftUI
 
 /// The buddy itself: one of ten drawn characters (`BuddyCharacter`)
@@ -45,8 +46,12 @@ struct NotchBuddyView: View {
         // second while anything moves, a slow breath's worth asleep
         // (`NotchBuddyToy.frameInterval`). The interval is read out
         // here, off observable state, so the schedule changes the
-        // moment the fleet wakes or a beat starts.
-        TimelineView(.animation(minimumInterval: toy.frameInterval(scale: scale),
+        // moment the fleet wakes or a beat starts. The Mac asking for
+        // restraint (Low Power Mode, a hot machine) halves the rate
+        // (`PowerPolicy`); the pose, the badge and the care mood still
+        // read the same state every frame.
+        let interval = PowerConditions.shared.policy.interval(toy.frameInterval(scale: scale))
+        TimelineView(.animation(minimumInterval: interval,
                                 paused: reduceMotion || !visible)) { context in
             // One reduce per tick: the pose, the badge, the tints, the
             // care mood and the hover line all read the same summary.

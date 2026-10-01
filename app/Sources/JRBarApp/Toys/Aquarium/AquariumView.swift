@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 /// The tank (docs/TOYS.md), painted in depth order: a still far pass
@@ -165,6 +166,13 @@ struct AquariumView: View {
         let paused = ambient ? !ambientVisible
             : (toy?.windowOccluded ?? fixture?.paused ?? false)
         let stillTick = stillPassTick(settings)
+        // The Mac's power state, read here so a change redraws the tank:
+        // Low Power Mode or a hot machine halves the passes' rates, and a
+        // critical one stills the passes that only decorate.
+        let power = PowerConditions.shared.policy
+        let rates = AquariumFrameRates(power: power, reduceMotion: reduceMotion, stillTick: stillTick)
+        let decorationPaused = AquariumFrameRates.decorationPaused(power: power, occluded: paused)
+        let livePaused = AquariumFrameRates.livePaused(power: power, occluded: paused)
         ZStack {
             // The far tank: water, the back wall, the far bank and the
             // back row of bought pieces — everything behind the plants.
@@ -172,7 +180,7 @@ struct AquariumView: View {
             // breathing (quicker while a Light & Dark flip eases in —
             // `stillPassTick`); `.drawingGroup` rasterizes the result, so each
             // live frame costs one texture composite, not the paths.
-            TimelineView(.animation(minimumInterval: stillTick, paused: paused)) { context in
+            TimelineView(.animation(minimumInterval: rates.still, paused: decorationPaused)) { context in
                 Canvas { canvas, size in
                     let t = context.date.timeIntervalSince1970
                     drawWater(canvas: &canvas, size: size, t: t)
@@ -193,8 +201,8 @@ struct AquariumView: View {
             // so a stand grows up behind the castle and in front of the
             // wreck. Its own canvas, the only thing in it; a slow sway
             // is smooth at twenty frames a second.
-            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 20.0,
-                                    paused: paused)) { context in
+            TimelineView(.animation(minimumInterval: rates.plants,
+                                    paused: decorationPaused)) { context in
                 let empty = fish.isEmpty || fish.allSatisfy { $0.isRetired(at: context.date) }
                 Canvas { canvas, size in
                     let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
@@ -205,7 +213,7 @@ struct AquariumView: View {
             // The near bed: the lit sand and every piece on it that
             // doesn't sway, on the same slow tick (which also keeps the
             // caption's decor culling in step with retiring fish).
-            TimelineView(.animation(minimumInterval: stillTick, paused: paused)) { context in
+            TimelineView(.animation(minimumInterval: rates.still, paused: decorationPaused)) { context in
                 Canvas { canvas, size in
                     let t = context.date.timeIntervalSince1970
                     drawSand(canvas: &canvas, size: size, t: t)
@@ -227,8 +235,8 @@ struct AquariumView: View {
             // composites additively over the tank, so these read as
             // light, not pale decals. Everything in it moves a few
             // points a second, so twelve frames a second is smooth.
-            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 12.0,
-                                    paused: paused)) { context in
+            TimelineView(.animation(minimumInterval: rates.light,
+                                    paused: decorationPaused)) { context in
                 let t = context.date.timeIntervalSince1970
                 Canvas { canvas, size in
                     drawGodRays(canvas: &canvas, size: size, t: t)
@@ -244,8 +252,8 @@ struct AquariumView: View {
             // sink to mouths, completions still serve their meals, a
             // visitor's still portrait still comes and goes) without
             // paying a display-rate redraw for a scene that doesn't move.
-            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 30.0,
-                                    paused: paused)) { context in
+            TimelineView(.animation(minimumInterval: rates.live,
+                                    paused: livePaused)) { context in
                 let t = context.date.timeIntervalSince1970
                 // The card's measured frame rate.
                 let _ = toy?.meter.tick()

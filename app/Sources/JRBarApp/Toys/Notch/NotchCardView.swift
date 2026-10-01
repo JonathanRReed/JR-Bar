@@ -10,10 +10,14 @@ import UniformTypeIdentifiers
 @Observable
 final class NotchCardModel {
     var focus = ScreenBarFocus(style: nil, label: "JR-Bar", word: "Idle", clickSession: nil)
+    /// The popovers open on the card — while one is up a hover-grown card
+    /// does not fold (`CardPopoverHold`). Released when the card folds.
+    @ObservationIgnored let popoverHold = CardPopoverHold()
     /// Pinned: the card holds open and its controls take clicks — a
     /// band click's deliberate focus, or the island's hover.
     var pinned = false {
         didSet {
+            if !pinned { popoverHold.releaseAll() }
             // The lens is a peek, not a standing row: folding the card
             // puts it away, and the next open starts without it.
             if !pinned {
@@ -551,6 +555,7 @@ struct NotchCardView: View {
         .padding(.bottom, style == .island
             ? Self.islandBottomContentInset - verticalPad : 0)
         .frame(width: width)
+        .environment(\.cardPopoverHold, model.popoverHold)
         .onDrop(of: [UTType.fileURL, UTType.url, UTType.plainText],
                 isTargeted: dropHover("card")) { providers in
             guard model.tray.shelfEnabled() else { return false }
@@ -672,6 +677,7 @@ struct NotchCardView: View {
             .popover(isPresented: $timerEntryShown, arrowEdge: .bottom) {
                 timerEntry
             }
+            .holdsCard(model.popoverHold, id: "timerEntry", while: timerEntryShown)
             // The Mirror is a peek on demand, never a standing row: the
             // lens opens here (or on ⌥-click at the notch) and closes
             // with the card.
@@ -2032,6 +2038,7 @@ private struct ShelfStackChip: View {
     let dissolve: () -> Void
 
     @ViewState private var open = false
+    @Environment(\.cardPopoverHold) private var popoverHold
 
     var body: some View {
         VStack(spacing: 4) {
@@ -2083,6 +2090,7 @@ private struct ShelfStackChip: View {
         .popover(isPresented: $open, arrowEdge: .bottom) {
             grid
         }
+        .holdsCard(popoverHold, id: "stack:\(stack.id)", while: open)
     }
 
     /// The opened stack: every member as a tile, each one its own
@@ -2332,6 +2340,7 @@ struct ShelfRemindersRow: View {
     let style: NotchCardStyle
     @ViewState private var adding = false
     @ViewState private var draft = ""
+    @Environment(\.cardPopoverHold) private var popoverHold
 
     /// The check-off circles' column: they sit on the card's leading
     /// edge, where the calendar's rules do.
@@ -2414,6 +2423,7 @@ struct ShelfRemindersRow: View {
             .padding(10)
             .frame(width: 230)
         }
+        .holdsCard(popoverHold, id: "reminder", while: adding)
     }
 
     private func save() {

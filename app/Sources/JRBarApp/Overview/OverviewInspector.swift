@@ -145,6 +145,16 @@ struct OverviewSessionInspector: View {
 
     private var style: ProviderStyle { ProviderStyle.style(for: entry.session.provider) }
     private var activity: SessionActivity { SessionActivity.reduce(entry.session) }
+    /// JR-Bar already answered this session's ask and the agent has not
+    /// moved on: the chip and the State row say so, as the ask card does.
+    private var answered: Bool { entry.session.ask?.isDecided ?? false }
+
+    /// The State fact and the chip's word. An ask already answered is
+    /// "Answered" — nothing is asked of the person any more — and never the
+    /// loud "Waiting on you" the ask card beneath it has dropped.
+    static func stateWord(_ activity: SessionActivity, ask: CoreAsk?) -> String {
+        activity == .waiting && (ask?.isDecided ?? false) ? OverviewStatePill.answeredWord : activity.word
+    }
 
     var body: some View {
         SnapshotScrollView {
@@ -202,7 +212,7 @@ struct OverviewSessionInspector: View {
                     .lineLimit(2)
                     .textSelection(.enabled)
                 HStack(spacing: 6) {
-                    OverviewStatePill(activity: activity)
+                    OverviewStatePill(activity: activity, answered: answered)
                     Text(subtitle)
                         .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
@@ -229,7 +239,7 @@ struct OverviewSessionInspector: View {
         return Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
             // S7.3: every fact names its evidence class — what the provider
             // reported vs what the daemon derived vs what nobody can say.
-            OverviewFactRow(name: "State", value: activity.word, evidence: .derived)
+            OverviewFactRow(name: "State", value: Self.stateWord(activity, ask: session.ask), evidence: .derived)
             OverviewFactRow(name: "Outcome", value: entry.axes?.outcome ?? "—", evidence: .derived)
             OverviewFactRow(name: "Review", value: entry.axes?.review ?? "—", evidence: .derived)
             OverviewFactRow(name: "Freshness", value: entry.axes?.freshness ?? (session.stale ? "stale" : "live"), evidence: .derived)
@@ -656,21 +666,30 @@ struct OverviewSessionInspector: View {
 /// A session's state as a small tinted capsule: its dot and its word.
 struct OverviewStatePill: View {
     let activity: SessionActivity
+    /// The ask under a waiting row was already answered through the agent's
+    /// hook: the chip is calm and says "Answered" instead of the loud
+    /// "Waiting on you".
+    var answered = false
 
-    private var calm: Bool { activity == .idle || activity == .ended }
+    static let answeredWord = "Answered"
+
+    private var shown: Bool { answered && activity == .waiting }
+    var word: String { shown ? Self.answeredWord : activity.word }
+    private var tint: Color { shown ? .secondary : activity.tint }
+    private var calm: Bool { shown || activity == .idle || activity == .ended }
 
     var body: some View {
         HStack(spacing: 4) {
-            Circle().fill(activity.tint).frame(width: 6, height: 6)
-            Text(activity.word)
+            Circle().fill(tint).frame(width: 6, height: 6)
+            Text(word)
                 .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(activity.wordIsLoud ? activity.tint : Color.primary.opacity(0.8))
+                .foregroundStyle(activity.wordIsLoud && !shown ? tint : Color.primary.opacity(0.8))
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 2)
-        .background(Capsule().fill(activity.tint.opacity(calm ? 0.10 : 0.14)))
+        .background(Capsule().fill(tint.opacity(calm ? 0.10 : 0.14)))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("State: \(activity.word)")
+        .accessibilityLabel("State: \(word)")
     }
 }
 

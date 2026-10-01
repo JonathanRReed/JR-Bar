@@ -81,4 +81,32 @@ struct RailDecidedSubtitleTests {
         #expect(asking.state.railMark == "!")
         #expect(asking.state.lightingHex == DeckLighting.askHex)
     }
+
+    @Test("a key tile whose ask was answered says Answered in its tooltip, VoiceOver line and short form")
+    func keyTileSaysAnswered() {
+        for ask in [Fixture.decidedAsk(), Fixture.olderDaemonDecidedAsk()] {
+            #expect(DeckStore.keySubtitle(asking, ask: ask) == "Answered")
+            #expect(DeckStore.keySubtitle(asking, ask: ask, short: true) == "Answered")
+        }
+    }
+
+    @Test("every other key tile reads as it always did")
+    func keyTileOtherwiseUnchanged() {
+        for ask in [Fixture.openAsk(), Fixture.heldQuestion(), nil] {
+            #expect(DeckStore.keySubtitle(asking, ask: ask) == "Needs you")
+            #expect(DeckStore.keySubtitle(asking, ask: ask, short: true) == "Needs you")
+        }
+        let working = DeckSlot(index: 1, identity: "key-1", session: Fixture.session, state: .active)
+        #expect(DeckStore.keySubtitle(working, ask: Fixture.decidedAsk()) == "Working")
+        let empty = DeckSlot(index: 2)
+        #expect(DeckStore.keySubtitle(empty, ask: nil) == "No session assigned")
+        #expect(DeckStore.keySubtitle(empty, ask: nil, short: true) == "No session")
+        let reserved = DeckSlot(index: 3, identity: "abc")
+        #expect(DeckStore.keySubtitle(reserved, ask: nil) == "Session not observed")
+        #expect(DeckStore.keySubtitle(reserved, ask: nil, short: true) == "Not observed")
+        var peer = Fixture.decidedAsk()
+        peer.session = "remote:studio:claude:s1"
+        let remote = DeckSlot(index: 4, identity: "key-4", session: peer.session, state: .inputRequired)
+        #expect(DeckStore.keySubtitle(remote, ask: peer) == "Needs you", "a peer's ask is the peer's to describe")
+    }
 }

@@ -8,6 +8,8 @@ enum DecidedAskFixture {
     static let session = "claude:session:cleanup"
     /// What every surface says where the verbs were.
     static let words = "Answered, waiting for the agent"
+    /// The short word a chip, a key or a subtitle says instead of "Waiting on you".
+    static let answered = "Answered"
 
     /// The ask as the daemon publishes it once the answer went out; the
     /// arguments say what an older daemon would still claim.

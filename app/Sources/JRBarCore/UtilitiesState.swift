@@ -18,7 +18,7 @@ public struct UtilitiesState: Codable, Equatable, Sendable {
     public var dock: DockSettings
     /// The Agent Overview utility's card: per-provider alert rules and
     /// "quiet while you watch" (docs/UTILITIES.md).
-    public var agents: AgentOrganizerSettings
+    public var agents: AgentOverviewSettings
     public var dataHoarderEnabled: Bool
     /// The hoarder's capture dials — which sources stream in, whether full
     /// content is consented to, and the pause switch.
@@ -30,7 +30,7 @@ public struct UtilitiesState: Codable, Equatable, Sendable {
 
     public init(enabled: Bool = true, menuBar: MenuBarSettings = MenuBarSettings(),
                 dock: DockSettings = DockSettings(),
-                agents: AgentOrganizerSettings = AgentOrganizerSettings(),
+                agents: AgentOverviewSettings = AgentOverviewSettings(),
                 dataHoarderEnabled: Bool = false,
                 dataHoarder: DataHoarderSettings = DataHoarderSettings()) {
         self.enabled = enabled
@@ -50,7 +50,7 @@ public struct UtilitiesState: Codable, Equatable, Sendable {
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
         menuBar = (try? c.decodeIfPresent(MenuBarSettings.self, forKey: .menuBar)) ?? MenuBarSettings()
         dock = (try? c.decodeIfPresent(DockSettings.self, forKey: .dock)) ?? DockSettings()
-        agents = (try? c.decodeIfPresent(AgentOrganizerSettings.self, forKey: .agents)) ?? AgentOrganizerSettings()
+        agents = (try? c.decodeIfPresent(AgentOverviewSettings.self, forKey: .agents)) ?? AgentOverviewSettings()
         dataHoarderEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .dataHoarderEnabled)) ?? false
         dataHoarder = (try? c.decodeIfPresent(DataHoarderSettings.self, forKey: .dataHoarder)) ?? DataHoarderSettings()
         commandUses = (try? c.decodeIfPresent(PaletteUsage.self, forKey: .commandUses)) ?? PaletteUsage()
@@ -590,7 +590,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
 /// organizer this card once had (grouping, which rows to show, a row
 /// cap). Nothing reads them: they are ignored on decode and gone on the
 /// next save.
-public struct AgentOrganizerSettings: Codable, Equatable, Sendable {
+public struct AgentOverviewSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     /// When the ask's own terminal pane is already frontmost the
     /// escalation ladder stays quiet — no pulse, no chime, no sound

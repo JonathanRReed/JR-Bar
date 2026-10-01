@@ -22,6 +22,52 @@ struct DockSwitcherTests {
                           fullScreen: nil, frame: frame, thumbnail: nil, element: nil)
     }
 
+    private struct FakeApp: DockRunningApp, Equatable {
+        let processIdentifier: pid_t
+        var isTerminated = false
+        var name = ""
+    }
+
+    @Test("two quit apps both read pid -1: the index drops them instead of trapping on the repeat")
+    func indexSurvivesQuitApps() {
+        // A quit app's object lingers for a turn and reads pid -1; two of
+        // them in one list were a duplicate key for `uniqueKeysWithValues`.
+        let apps = [
+            FakeApp(processIdentifier: 410, name: "Notes"),
+            FakeApp(processIdentifier: -1, isTerminated: true, name: "Quit one"),
+            FakeApp(processIdentifier: 722, name: "Mail"),
+            FakeApp(processIdentifier: -1, isTerminated: true, name: "Quit two"),
+        ]
+        let byPID = DockSwitcherList.appsByPID(apps)
+        #expect(byPID.keys.sorted() == [410, 722])
+        #expect(byPID[410]?.name == "Notes" && byPID[722]?.name == "Mail")
+        #expect(byPID[-1] == nil)
+    }
+
+    @Test("an object that quit between the filter and the read cannot repeat a key either")
+    func indexDropsATerminatedAppThatStillHasAPid() {
+        let apps = [
+            FakeApp(processIdentifier: 410, isTerminated: true, name: "Quit, pid not yet cleared"),
+            FakeApp(processIdentifier: 410, name: "Relaunched"),
+            FakeApp(processIdentifier: 900, name: "First"),
+            FakeApp(processIdentifier: 900, name: "Second"),
+            FakeApp(processIdentifier: 0, name: "No pid"),
+        ]
+        let byPID = DockSwitcherList.appsByPID(apps)
+        #expect(byPID.keys.sorted() == [410, 900])
+        #expect(byPID[410]?.name == "Relaunched", "the quit object is not the owner")
+        #expect(byPID[900]?.name == "First", "a repeat keeps the first object")
+    }
+
+    @Test("an ordinary list is indexed as it always was")
+    func indexOfLiveAppsIsUnchanged() {
+        let apps = (1...5).map { FakeApp(processIdentifier: pid_t($0 * 100), name: "App\($0)") }
+        let byPID = DockSwitcherList.appsByPID(apps)
+        #expect(byPID.count == 5)
+        for app in apps { #expect(byPID[app.processIdentifier] == app) }
+        #expect(DockSwitcherList.appsByPID([FakeApp]()).isEmpty)
+    }
+
     @Test("on-screen windows lead in z-order, AX leftovers follow by app recency")
     func ordering() {
         let rows = [
