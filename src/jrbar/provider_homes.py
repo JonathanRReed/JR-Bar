@@ -146,6 +146,44 @@ def codex_session_roots(**kwargs) -> tuple[Path, ...]:
     return _dedupe_existing(root / "sessions" for root in codex_homes(**kwargs))
 
 
+def _named_home(variable: str, env: Mapping[str, str] | None) -> Path | None:
+    """The folder ``variable`` names when it is an absolute path to a folder
+    that exists; otherwise None. A variable that names nothing real is
+    ignored, so a stale export never sends a scan or an install to a folder
+    the agent is not using."""
+    configured = _absolute(_environment(env).get(variable))
+    return configured if configured is not None and configured.is_dir() else None
+
+
+def primary_claude_home(
+    *, env: Mapping[str, str] | None = None, home: Path | str | None = None
+) -> Path:
+    """The Claude Code config folder the default instance uses:
+    ``CLAUDE_CONFIG_DIR`` when it names a folder, else ``~/.claude``.
+
+    The usage scan reads its ``projects`` folder and the hook installer, the
+    detectors and ``hooks doctor`` read and write its ``settings.json``, so
+    the transcripts and the hooks are always found in the same place.
+    """
+    return _named_home("CLAUDE_CONFIG_DIR", env) or _home(home) / ".claude"
+
+
+def primary_codex_home(
+    *, env: Mapping[str, str] | None = None, home: Path | str | None = None
+) -> Path:
+    """The Codex folder the default instance uses: ``CODEX_HOME`` when it
+    names a folder, else ``~/.codex``. Its ``config.toml`` holds the hooks."""
+    return _named_home("CODEX_HOME", env) or _home(home) / ".codex"
+
+
+def environment_names_home(provider_id: str, *, env: Mapping[str, str] | None = None) -> bool:
+    """Whether the environment, not the default folder, is where this
+    provider's default instance keeps its config (what ``hooks doctor``
+    reports as ``config_home``)."""
+    variable = {"claude": "CLAUDE_CONFIG_DIR", "codex": "CODEX_HOME"}.get(provider_id)
+    return variable is not None and _named_home(variable, env) is not None
+
+
 def primary_claude_projects(
     *, env: Mapping[str, str] | None = None, home: Path | str | None = None
 ) -> Path:
@@ -154,18 +192,14 @@ def primary_claude_projects(
     Unlike the lists above this always returns a path, so a scan of a Mac
     with no Claude data still has somewhere to look and finds nothing.
     """
-    configured = _absolute(_environment(env).get("CLAUDE_CONFIG_DIR"))
-    base = configured if configured is not None and configured.is_dir() else _home(home) / ".claude"
-    return base / "projects"
+    return primary_claude_home(env=env, home=home) / "projects"
 
 
 def primary_codex_sessions(
     *, env: Mapping[str, str] | None = None, home: Path | str | None = None
 ) -> Path:
     """The folder the default scan reads: ``CODEX_HOME``, else ``~/.codex``."""
-    configured = _absolute(_environment(env).get("CODEX_HOME"))
-    base = configured if configured is not None and configured.is_dir() else _home(home) / ".codex"
-    return base / "sessions"
+    return primary_codex_home(env=env, home=home) / "sessions"
 
 
 def extra_scan_roots(
@@ -315,11 +349,14 @@ __all__ = [
     "codex_homes",
     "codex_session_roots",
     "configured_extra_homes",
+    "environment_names_home",
     "extra_scan_roots",
     "home_scan_roots",
     "normalized_extra_homes",
     "opencode_data_root",
+    "primary_claude_home",
     "primary_claude_projects",
+    "primary_codex_home",
     "primary_codex_sessions",
     "scan_usage_all_homes",
 ]

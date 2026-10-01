@@ -21,6 +21,22 @@ inactive flags and custom managed log paths.
 "Newer than verified" is a note, not an error. It means nobody has
 checked that version yet.
 
+### A moved Claude Code or Codex home
+
+If you moved either one with `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, JR-Bar
+installs, refreshes, removes and checks its hooks in that folder (`settings.json`
+for Claude Code, `config.toml` for Codex), the same folder its usage scans
+read, and leaves `~/.claude` and `~/.codex` alone. `jrbar hooks doctor --json`
+names the file under `config_path` and says `"config_home": "environment"`.
+
+The app starts its daemon with the environment the app itself has, and a
+variable exported only in your shell profile is not in it when the app opens
+from Finder or at login. Set it with `launchctl setenv CLAUDE_CONFIG_DIR
+<folder>` and open JR-Bar again, or run `jrbar agent-monitor install claude`
+from the shell that has it. Other account homes you list under
+`provider_extra_homes` are read for usage only; JR-Bar installs no hooks into
+them.
+
 ## OpenCode
 
 OpenCode reports through a small plugin in `~/.config/opencode/plugins/`,
