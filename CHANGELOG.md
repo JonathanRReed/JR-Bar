@@ -140,6 +140,50 @@ All notable changes to JR-Bar are documented here.
   keeps unused grouping settings, and `examples/audio_monitor.py` and
   `scripts/install-user.sh` are gone. Old plans and research moved to
   `docs/archive`.
+- Provider cards that are stale or signed out have one **Fix sign-in**
+  button. For Claude it asks Claude Code to renew its own expired sign-in
+  with one tiny quiet call (hooks are diverted, so no phantom session shows),
+  which fixes a card stuck stale because you use the desktop app, and the card
+  refreshes at once. For Grok, Codex and OpenCode it opens your terminal on
+  the CLI's own login, and JR-Bar notices when you finish. For Devin and
+  Cursor it clears the rejected token and re-reads your browser session.
+- **Settings > Agents** shows each agent CLI's version with an **Update**
+  button that runs the CLI's own updater and says what changed ("Updated
+  2.1.285 to 2.1.290", "Already up to date", or why it failed). Gemini CLI has
+  no updater, so its row says how to update it. A **Check for agent updates**
+  switch, off by default, lets a row say "2.1.290 available"; it asks
+  registry.npmjs.org every 6 hours and when you refresh Agents, and nothing is
+  contacted until you turn it on.
+- Usage refreshes ask providers together, so Claude's numbers no longer wait
+  behind a slow Cursor, Gemini or Grok; quick providers show after about a
+  second and a half. A provider that does not answer in 75 seconds keeps its
+  last good reading, marked stale. A Claude sign-in without usage permission
+  says so instead of "network unavailable". A usage window a provider lists
+  twice no longer throws away the whole reading, and the usage graph prices the
+  GPT and Gemini models that Pi, OpenClaw, OpenCode and the Gemini CLI run.
+- Hooks: a tool result or ask too large for the hook (a screenshot, a very
+  large file write) reaches JR-Bar as a small cut-down event instead of
+  vanishing, so its ask still shows and its tool finishing resolves it. The
+  shim's timings no longer move when the Mac's clock changes or it wakes from
+  sleep. Hooks follow a moved `CLAUDE_CONFIG_DIR` or `CODEX_HOME`. After a long
+  outage the daemon opens its sockets within about 1.5 seconds and replays the
+  queued hooks in order while it runs.
+- The daemon's protocol is sturdier: a number it cannot represent (NaN or
+  infinity) arrives as "no reading" instead of making the app drop the update;
+  a reply too big for one frame fails its command at once; History and session
+  timelines no longer wait behind the Overview's usage scan; changing deck
+  settings mid-inspection answers "try again" at once; an MCP server's dialog
+  with no id counts as an ask everywhere; and a main session whose id happens
+  to contain ":agent:" is no longer mistaken for its own worker.
+- Saved files are safer. A file JR-Bar cannot read (effect assignments, pins
+  and snoozes, acknowledged requests, cleared completions) is moved aside as
+  `<name>.corrupt-<date>` instead of being overwritten, and one damaged row no
+  longer costs the good rows beside it. A stray file in the effect-pack folder
+  no longer hides every pack. Settings and the activity ledger are flushed to
+  the drive itself, so they survive a power cut. If you edit `settings.json`
+  while JR-Bar runs, JR-Bar takes your edit the next time it saves a setting
+  and keeps what it held as `settings.json.replaced`; a half-written edit is
+  given a second look before it is set aside.
 - Docs and tests: CORE-PROTOCOL.md names every command and state field the
   daemon sends, and a contract test in `make fast` keeps commands from
   drifting out of it. The state cadence is described as it runs. The README
