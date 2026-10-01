@@ -55,3 +55,26 @@ allows it. Grant only the features you want.
 If a permission was granted to a development build, the installed app may ask
 again. macOS ties grants to the signed app. The full list is in the
 [permissions table](../../README.md#permissions).
+
+## A saved file could not be read
+
+JR-Bar keeps your own choices (effect assignments, pins and snoozes,
+acknowledged requests, cleared completions) in small files under
+`~/.local/state/jrbar`. When one of them cannot be read, JR-Bar does not
+overwrite it. It moves the file aside as `<name>.corrupt-<date and time>`
+(for example `effect-assignments.json.corrupt-20260901T120000Z`) and starts
+that list empty. If only some rows were damaged, it keeps the good rows and
+leaves a copy of the original beside them. The three newest copies of each
+file are kept, and each is private to you. The daemon log has one line
+saying which file was set aside.
+
+To get a file back, quit JR-Bar, copy the `.corrupt-` file over the original
+name, and open JR-Bar again. If it is still unreadable it will be set aside
+again.
+
+Settings follow the same rule with their own names. If `settings.json` is
+changed outside JR-Bar while it runs (by hand, by a restore, or by
+`jrbar battery configure`), JR-Bar takes the file as it is and keeps the
+settings it held as `settings.json.replaced`. A file that does not parse is set
+aside as `settings.json.corrupt` and the settings JR-Bar holds are written
+out again.
