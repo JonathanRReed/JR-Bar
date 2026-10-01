@@ -138,6 +138,8 @@ Unix epoch seconds.
  "unseen_completions":["gemini:session:…"],
  "settings_generation":17,
  "catalog_generation":42,
+ "provider_updates":{"grok":{"phase":"updated","from_version":"1.0.44","to_version":"1.0.46","latest_version":null,
+                             "message":"Updated 1.0.44 to 1.0.46","finished_at":1788982800.0}},
  "deck":{…}}
 ```
 
@@ -583,6 +585,24 @@ Vocabulary:
   registry, installed packs or assignments change, so a client can decide
   to reload its catalog without reconnecting. Absent until the catalog has
   been built once.
+- `provider_updates` is what each agent CLI's updater last did, keyed by
+  provider id (`claude`, `codex`, `grok`, `devin`, `opencode`, `gemini`):
+  `{phase, from_version, to_version, latest_version, message, finished_at}`.
+  `phase` is `idle` (nothing has run; the entry exists only to carry
+  `latest_version`), `running`, `updated`, `unchanged`, `failed` or
+  `needs_terminal` (the updater wanted a terminal and one was opened on it).
+  `from_version` and `to_version` are the CLI's own `--version` before and
+  after (null where it could not be read). `latest_version` is set only
+  while update checks are on (`provider_update_checks_enabled`) and only
+  when the npm registry offers a version newer than the installed one, so
+  a non-null value means "an update is available"; it is null otherwise
+  and always null while the setting is off. `message` is one plain
+  sentence, the one the app shows. `finished_at` is when the last run
+  ended and is null while `running` or `idle`. A provider with no entry has
+  never been updated or checked since the daemon started; a client reads
+  that as unknown and an unrecognised `phase` as `idle`. Only a change of
+  phase, version or message moves the document: a running update never
+  broadcasts progress.
 
 #### The Creator Micro 2 deck (`state.deck`)
 
@@ -1043,6 +1063,20 @@ never costs the rest of the file):
   feed is stopped on the next usage refresh, and no `incident` string is
   stamped from a feed. Read live on every refresh; a non-boolean value
   loads as `false`.
+- `provider_update_checks_enabled` (default false): "update available" for
+  the agent CLIs. While this is exactly `true`, and only then, the daemon
+  asks the npm registry (`https://registry.npmjs.org/<package>/latest`: one
+  plain GET, a 5 s timeout, no cookies, no credentials, no redirects, a
+  plain `JR-Bar/update-check` User-Agent, nothing about this Mac in it) for
+  each installed CLI that has a package -- `@anthropic-ai/claude-code`,
+  `@openai/codex`, `@xai-official/grok`, `@google/gemini-cli`,
+  `opencode-ai`; Devin has none and is never checked -- every 6 hours and
+  when `provider_update_check` arrives (at most once a minute). A newer
+  version becomes `state.provider_updates[provider].latest_version`. Off, no
+  request is made and no thread is started; it is read live, so turning it
+  off stops the next check and clears `latest_version`. A non-boolean value
+  loads as `false`. The Update button (`provider_update`) never needs this:
+  it runs the CLI's own updater, which is the person's click.
 - `claude_statusline_source` (default false) lets Claude Code's statusLine
   readings stand in for OAuth; `statusline_text_enabled` (default true)
   keeps `statusline.txt` written while the source is on.
@@ -1155,7 +1189,10 @@ among themselves (two scans never overlap), and each replies by `id` when
 it is done, so a reply to a later command can arrive first and a scan never
 holds up an `answer_ask`. `mark_history_seen` queues on the same lane (it
 still runs on the main thread when its turn comes), so a `list_history`
-sent before it computes `unseen` against the old watermark. Past 32
+sent before it computes `unseen` against the old watermark.
+`provider_sign_in` queues there too: it is a click, not a read, but it can
+wait up to 90 s on Claude Code, and nothing else the app sends should wait
+with it (a client allows it a reply time of about two minutes). Past 32
 queued, a new one is refused `busy`.
 `install_hooks` / `uninstall_hooks` run on the socket thread because the
 Codex trust handshake can take seconds, and so do `open_session` and
@@ -1187,6 +1224,9 @@ the main thread). Unknown args are ignored.
 | `provider_add_instance` | provider, instance, label? | Configures one more account for a provider (a second Codex or Claude sign-in, say). The instance starts enabled and metered with browser sources off; `label` is optional, not blank, at most 128 characters with no control characters, and defaults to `<Provider> · <instance>`. It is written through the settings document's optimistic concurrency, like `set_provider_enabled`, and forces a usage refresh for that provider. `{provider}` is the new row in the `list_providers` shape. `unknown_provider` for an unregistered id, `unsupported` for a provider that reads this Mac's own sign-in and has no per-instance source (a second account would report the first one twice), `invalid_args` for a missing or malformed `provider`, `instance` or `label` and for the `default` instance every provider already has, `already_exists` for an instance already configured, `settings_changed` for a concurrent settings edit. |
 | `provider_consent` | action (`list`/`grant`/`revoke`), provider?, browser?, profile?, instance?, background_repair? | The exact-scope consent store. `grant` binds provider + browser + profile + the provider's declared domain/field allowlist and imports nothing — the import remains its own action. `list` returns `{consents[]}`; grant/revoke return `{consent}` with the bound scope, `was_granted`, and on revoke `imported_data`: `removed`/`replaced`/`retained`/`none` — the imported credential is deleted only while the stored value still matches the import's digest, so a user-replaced token survives. `unsupported` for providers with no consented browser source. |
 | `provider_action` | provider, instance? | Runs the staged flow behind the provider's CURRENT action label — clipboard/LevelDB import, reconnect, repair — and returns `{provider, instance, message}` with the exact string the daemon surfaced (it may be a success note, not only an error). `unsupported` when no staged action matches the live state, `unknown_provider` for an unregistered id. Ownership is preserved: a credential the provider's own CLI owns (Grok's auth.json, Gemini's oauth_creds.json) produces a message pointing at that CLI, never a JR-Bar-side rewrite. |
+| `provider_sign_in` | provider, instance?, terminal? | The Usage Center's **Fix sign-in**: the best automatic thing for a provider whose card is not ready, tried in this order, always ending in one plain sentence the app shows verbatim. (1) Re-read what the provider's own tooling holds (the same re-pull as `provider_action` with `action: "resign_in"`). (2) Claude only, default instance: when that read finds Claude Code's Keychain copy expired and `claude auth status` (JSON, bounded) says Claude Code is logged in, ask Claude Code to renew its own Keychain item with one tiny real call, `claude -p "reply with the single word ok" --max-turns 1`: an argv list and never a shell, the resolved absolute path of `claude`, a fresh private (0700) temporary directory as its working directory, the owner's environment with every `JRBAR_*` variable removed and `JRBAR_STATE_DIR` pointing inside that directory (the hook shim honours it, so the call spools there and registers no session with this daemon), stdin closed, a hard 90 s timeout, output read only to keep the pipe clear, capped at 4 KB and never logged or returned. The directory is removed afterwards. It counts as renewed when the credential source's fingerprint changed (the Keychain item's modification stamps and `~/.claude/.credentials.json`; no secret is read, and the 60 s attribute cache is bypassed for the check); JR-Bar never touches Claude Code's refresh token. A second renewal inside 60 s is refused. A hung call is killed and reported as failed; a CLI that says it is not logged in, or a call that exits without renewing, falls through to (3). (3) Otherwise open the owner's own terminal on the provider's sign-in command, through the same opener as `new_session` (`terminal` as there; else the terminal of the most recent session, else Ghostty when installed, else Terminal.app), in the home folder. The command comes from a table fixed in the daemon and the executable is the CLI's resolved absolute path; the client sends neither: `claude auth login`, `grok login`, `codex login`, `devin auth login`, `opencode providers login`. Gemini CLI has no login command of its own, so it and any provider with no CLI get advice instead. (4) The outcome watch is armed and the provider's usage refresh is forced, as for `provider_action`, so the card recovers the moment the CLI saves its new sign-in. A second account (`instance` other than `default`) is only re-read: its sign-in is never the CLI's. `{provider, instance, outcome, message, command, sign_in_url}`: `outcome` is `renewed` (a stored or CLI-held sign-in is current again), `opened_terminal`, `already_ok` (the sign-in is current; `message` says what was refreshed), `unavailable` (nothing JR-Bar can do: `message` is the advice, `sign_in_url` a page to open or null, and a renewal inside 60 s of the last is refused this way) or `failed` (the call timed out, or the terminal could not be opened). `command` is the command as the person would type it (`grok login`) when a terminal was opened, else null. `unknown_provider` and `invalid_args` as for `provider_action`. Explicit only: a click, never a timer. Queued on the slow lane. |
+| `provider_update` | provider | T3 Code's "Update now": runs the provider's own updater on a worker thread and returns at once. The argv comes from a table fixed in the daemon (`claude update`, `codex update`, `grok update`, `devin update`, `opencode upgrade`) and the client sends only a provider id; the executable is the CLI's resolved absolute path, with the owner's environment plus the login shell's `PATH`, stdin closed and a hard 600 s timeout. One update per provider at a time and at most two at once. The CLI's `--version` is read before and after (bounded), the output is kept as its last 20 lines and 4 KB with anything that looks like a token removed, and the result lands in `state.provider_updates[provider]`: `updated` (old to new), `unchanged`, or `failed` with the exit code and the last lines. An updater that exits asking for a terminal (a prompt, "not a terminal") gets one: `needs_terminal`, and the terminal is opened on the command through the opener `provider_sign_in` uses. `{provider, started, reason, message}`: `started: true` when the worker began; otherwise `started: false` with `reason` `no_updater` (Gemini CLI has none: `message` says to update it the way it was installed), `not_installed`, or `busy` and a sentence. `unknown_provider` and `invalid_args` as for `provider_action`. Never run unless clicked: no timer and no setting starts an updater. |
+| `provider_update_check` | | The Settings › Agents refresh asks whether newer CLI versions exist. Does nothing at all unless `provider_update_checks_enabled` is exactly `true`: then, off the main thread and at most once a minute, it asks the npm registry (see that setting) and the answer lands in `state.provider_updates[provider].latest_version`. `{enabled, started}`; with the setting off `{enabled: false, started: false}` and no request is made. |
 | `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider: install registers the hook command (with the compiled shim when available and the Codex trust hash recomputed); uninstall removes the managed hook blocks the installer wrote. `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, `null` while the daemon has not finished looking (see `health.detected`), and an install then goes ahead: only an explicit `false`, a CLI that was looked for and never found, is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success (uninstall has no such gate: it removes what is there). |
 | `refresh_hooks` | | Refreshes only integrations still owned by JR-Bar when the command executes. The daemon detects ownership and updates under the same cross-process mutation lock used by app and CLI installs/removals. It preserves provider-level disabled flags and leaves foreign hooks and removed integrations alone. Returns `{providers, results{provider: {ok, changed, config_path, codex_trust, warning}}}`. Per-provider failures remain failures; the app advances its build stamp only after the selected batch succeeds. No caller-supplied provider snapshot authorizes a refresh. |
 | `set_closed_lid_policy` | policy | `never`, `agents`, `always`. |
