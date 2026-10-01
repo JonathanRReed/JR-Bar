@@ -23,11 +23,15 @@ from jrbar.providers import (
     is_jrbar_hook_command,
 )
 
+#: Every wait below only bounds a hang. A wait that returns early costs nothing,
+#: and a short bound fails on a slow or loaded machine, not on a real bug.
+_HANG_BOUND = 30
+
 
 def _hold_hook_lock(state: str, ready, release) -> None:
     from jrbar.install import hook_mutation_lock
 
-    with hook_mutation_lock(state_dir=Path(state), timeout=1):
+    with hook_mutation_lock(state_dir=Path(state), timeout=_HANG_BOUND):
         ready.send(True)
         release.recv()
 
@@ -360,7 +364,7 @@ def test_hook_lock_orders_two_processes(tmp_path: Path) -> None:
         args=(str(state), ready_child, release_child),
     )
     process.start()
-    assert ready_parent.poll(2) and ready_parent.recv() is True
+    assert ready_parent.poll(_HANG_BOUND) and ready_parent.recv() is True
     started = time.monotonic()
     try:
         with __import__("jrbar.install", fromlist=["hook_mutation_lock"]).hook_mutation_lock(
@@ -371,7 +375,8 @@ def test_hook_lock_orders_two_processes(tmp_path: Path) -> None:
         pass
     assert time.monotonic() - started >= 0.04
     release_parent.send(True)
-    process.join(2)
+    process.join(_HANG_BOUND)
+    assert not process.is_alive()
     assert process.exitcode == 0
 
 
@@ -383,13 +388,13 @@ def test_refresh_and_remove_share_one_bounded_lock(tmp_path: Path, monkeypatch) 
     release = threading.Event()
 
     def held_refresh(**kwargs):
-        with install.hook_mutation_lock(state_dir=state, timeout=1):
+        with install.hook_mutation_lock(state_dir=state, timeout=_HANG_BOUND):
             entered.set()
-            assert release.wait(1)
+            assert release.wait(_HANG_BOUND)
 
     thread = threading.Thread(target=held_refresh)
     thread.start()
-    assert entered.wait(1)
+    assert entered.wait(_HANG_BOUND)
     try:
         try:
             with install.hook_mutation_lock(state_dir=state, timeout=0.01):
@@ -398,7 +403,7 @@ def test_refresh_and_remove_share_one_bounded_lock(tmp_path: Path, monkeypatch) 
             pass
     finally:
         release.set()
-        thread.join(1)
+        thread.join(_HANG_BOUND)
     assert not thread.is_alive()
 
 
@@ -415,7 +420,7 @@ def test_remove_that_gets_lock_first_stays_removed(tmp_path: Path, monkeypatch) 
 
     def held_remove(**kwargs):
         entered.set()
-        assert release.wait(1)
+        assert release.wait(_HANG_BOUND)
         return original(**kwargs)
 
     monkeypatch.setitem(install.UNINSTALLERS, "claude", held_remove)
@@ -425,11 +430,12 @@ def test_remove_that_gets_lock_first_stays_removed(tmp_path: Path, monkeypatch) 
     refresher = threading.Thread(target=lambda: refresher_result.update(
         install.refresh_managed_hooks(home=tmp_path, state_dir=state, python_executable=sys.executable)))
     remover.start()
-    assert entered.wait(1)
+    assert entered.wait(_HANG_BOUND)
     refresher.start()
     release.set()
-    remover.join(2)
-    refresher.join(2)
+    remover.join(_HANG_BOUND)
+    refresher.join(_HANG_BOUND)
+    assert not remover.is_alive() and not refresher.is_alive()
     assert refresher_result == {}
     assert not detect_claude_config(tmp_path).managed
 
@@ -447,7 +453,7 @@ def test_remove_that_waits_for_refresh_runs_last(tmp_path: Path, monkeypatch) ->
 
     def held_refresh(**kwargs):
         entered.set()
-        assert release.wait(1)
+        assert release.wait(_HANG_BOUND)
         return original(**kwargs)
 
     monkeypatch.setitem(install.INSTALLERS, "claude", held_refresh)
@@ -456,9 +462,10 @@ def test_remove_that_waits_for_refresh_runs_last(tmp_path: Path, monkeypatch) ->
     remover = threading.Thread(target=lambda: install.uninstall_provider_hooks(
         "claude", log_path=log, config_path=config, state_dir=state))
     refresher.start()
-    assert entered.wait(1)
+    assert entered.wait(_HANG_BOUND)
     remover.start()
     release.set()
-    refresher.join(2)
-    remover.join(2)
+    refresher.join(_HANG_BOUND)
+    remover.join(_HANG_BOUND)
+    assert not remover.is_alive() and not refresher.is_alive()
     assert not detect_claude_config(tmp_path).managed
