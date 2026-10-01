@@ -425,7 +425,14 @@ final class ScreenBarPeek {
     private(set) var isPinned = false
     private var panel: ScreenBarPeekPanel?
     private var hosting: NSHostingView<ScreenBarPeekView>?
-    private var keyMonitors: [Any] = []
+    /// Esc while the peek is pinned (`CardEscapeWatch`): only an Esc no
+    /// other JR-Bar window owns is taken.
+    private var escape: CardEscapeWatch?
+    /// Where the Esc presses come from — AppKit's monitors; a test hands
+    /// in a fake.
+    var keySource: CardEscapeWatch.Source = .system
+    /// Esc is being listened for — only while the peek is pinned.
+    var listensForEscape: Bool { escape?.isListening == true }
 
     /// The panel's frame while it hangs.
     var frame: NSRect? { isShown ? panel?.frame : nil }
@@ -471,7 +478,7 @@ final class ScreenBarPeek {
         if panel.frame != frame { panel.setFrame(frame, display: true) }
     }
 
-    private func makePanel() -> ScreenBarPeekPanel {
+    func makePanel() -> ScreenBarPeekPanel {
         let panel = ScreenBarPeekPanel()
         let hosting = NSHostingView(rootView: ScreenBarPeekView(model: model))
         hosting.sizingOptions = []
@@ -482,27 +489,26 @@ final class ScreenBarPeek {
     }
 
     /// A pinned peek folds on Esc, whichever app is in front — the
-    /// Item Bar's own key; an outside click is the interaction's.
-    private func installKeyMonitors() {
+    /// Item Bar's own key; an outside click is the interaction's. The
+    /// local monitor takes only an Esc the peek's own window or no window
+    /// owns: Esc in a Settings sheet or a field stays that window's.
+    func installKeyMonitors() {
         removeKeyMonitors()
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            guard event.keyCode == UInt16(kVK_Escape) else { return }
-            Task { @MainActor [weak self] in self?.hide() }
-        }) { keyMonitors.append(global) }
-        if let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            guard event.keyCode == UInt16(kVK_Escape), let self, self.isShown else { return event }
-            self.hide()
-            return nil
-        }) { keyMonitors.append(local) }
+        let watch = CardEscapeWatch(
+            source: keySource,
+            ownWindows: { [weak self] in [self?.panel] },
+            onEscape: { [weak self] in self?.hide() })
+        escape = watch
+        watch.start()
     }
 
     private func removeKeyMonitors() {
-        for monitor in keyMonitors { NSEvent.removeMonitor(monitor) }
-        keyMonitors = []
+        escape?.stop()
+        escape = nil
     }
 
     isolated deinit {
-        for monitor in keyMonitors { NSEvent.removeMonitor(monitor) }
+        escape?.stop()
         panel?.orderOut(nil)
     }
 }
