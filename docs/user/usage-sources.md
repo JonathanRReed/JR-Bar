@@ -135,9 +135,9 @@ usage scans already worked out and never scan the transcripts themselves.
   share. Codex keeps the primary home in that case.
 - **A month it cannot hold says so.** On rare input the month's totals
   cannot be kept: a transcript that names more than 256 different models in
-  30 days, or a timestamp no calendar day holds. The scan then writes no
-  totals, and the Claude card shows nothing instead of a total that leaves
-  those days out. The usage graph is not affected: it reads the full scan.
+  30 days, a timestamp no calendar day holds, or a project folder JR-Bar has
+  no permission to read. The scan then writes no totals, and the Claude card
+  shows nothing instead of a total that leaves those days out. The usage graph is not affected: it reads the full scan.
 
 ## Token history for Pi, Grok, Gemini CLI and OpenClaw
 

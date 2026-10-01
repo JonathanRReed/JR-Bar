@@ -161,7 +161,16 @@ def test_dropped_entries_with_nothing_inside_the_window_cost_the_card_nothing(
 
 @pytest.mark.parametrize(
     "damage",
-    ["missing", "since-text", "negative-count", "wrong-provider", "days-not-a-map", "bad-day"],
+    [
+        "missing",
+        "since-text",
+        "negative-count",
+        "huge-count",
+        "too-many-models",
+        "wrong-provider",
+        "days-not-a-map",
+        "bad-day",
+    ],
 )
 def test_a_card_section_that_cannot_be_trusted_is_never_summed(
     tmp_path: Path, damage: str
@@ -180,6 +189,12 @@ def test_a_card_section_that_cannot_be_trusted_is_never_summed(
         daily["since"] = "soon"
     elif damage == "negative-count":
         daily["days"][first_day][first_model][1] = -5
+    elif damage == "huge-count":
+        daily["days"][first_day][first_model][1] = 10**30
+    elif damage == "too-many-models":
+        counts = daily["days"][first_day][first_model]
+        for number in range(usage_stats.USAGE_CARD_MAX_MODELS + 1):
+            daily["days"][first_day][f"made-up-{number}"] = list(counts)
     elif damage == "wrong-provider":
         daily["provider"] = "codex"
     elif damage == "days-not-a-map":

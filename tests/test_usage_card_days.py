@@ -246,6 +246,30 @@ def test_reading_a_day_later_slides_the_window_over_the_same_cache(tmp_path: Pat
     assert tomorrow is not None and tomorrow["input_tokens"] == 20, "the first day is no longer in the window"
 
 
+def test_a_message_late_on_the_first_day_leaves_with_that_day_not_the_next_one(
+    tmp_path: Path,
+) -> None:
+    # 23:30 on the window's first local day is already the next day in UTC.
+    # A day keyed on the UTC date would keep this message in the card for a
+    # day after its local day left the window.
+    start = usage_stats.card_window_start(NOW)
+    _transcript(
+        tmp_path,
+        "session.jsonl",
+        [
+            _claude_line("s1", "late-first-day", start + 23.5 * 3600),
+            _claude_line("s1", "today", NOW - 60),
+        ],
+    )
+    _scan(tmp_path, since=start)
+
+    today = _card(tmp_path)
+    tomorrow = _card(tmp_path, NOW + DAY)
+
+    assert today is not None and today["input_tokens"] == 20
+    assert tomorrow is not None and tomorrow["input_tokens"] == 10
+
+
 def test_a_codex_card_with_no_per_day_totals_keeps_its_windows_and_counts_nothing(
     tmp_path: Path,
 ) -> None:

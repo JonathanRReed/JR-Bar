@@ -112,6 +112,9 @@ USAGE_CARD_DAYS = 30
 USAGE_CARD_MAX_MODELS = 256
 USAGE_CARD_MAX_BYTES = 512 * 1024
 _CARD_DAYS_SCHEMA = 1
+#: The largest count a card day can hold (2**53: exact as a float and as the
+#: Swift side's Double). A figure beyond it is a damaged file, not a month.
+_CARD_COUNT_LIMIT = 2**53
 # Conservative per-record cost: a serialized record plus its amortized share of
 # the interning tables. Measured at ~80 bytes/record; budgeted at 110 so the
 # estimate overshoots and the cap binds early rather than late.
@@ -997,7 +1000,10 @@ def _scan_codex_lines(
     eof_newline = True
     # A rollout names its model in a ``turn_context`` row and the token events
     # after it say nothing, so a read that resumes mid-turn starts from the
-    # model the cached part of the file ended on.
+    # model of the last cached record. That is the model of the turn the
+    # cached part ended in unless a ``turn_context`` for a new model landed
+    # after its last token event and before the scan; a full rescan corrects
+    # that one case.
     current_model = initial_model or "codex"
     for line in handle:
         if line is _OVERSIZED_LINE:
@@ -3050,7 +3056,9 @@ def cache_card_days(cache: dict, provider_id: str) -> CardDays | None:
                 or not isinstance(counts, list)
                 or len(counts) != 5
                 or any(
-                    isinstance(value, bool) or not isinstance(value, int) or value < 0
+                    isinstance(value, bool)
+                    or not isinstance(value, int)
+                    or not 0 <= value <= _CARD_COUNT_LIMIT
                     for value in counts
                 )
             ):

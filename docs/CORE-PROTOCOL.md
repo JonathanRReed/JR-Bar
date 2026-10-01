@@ -473,8 +473,10 @@ Vocabulary:
   discarded and rebuilt; so is one that cannot be read, and a `daily` that
   does not parse is never summed); a Codex reading counts only the days its
   caches' `daily` covers, never more. In the rare case that `daily` cannot
-  be held (more than 256 distinct model keys, or a timestamp no calendar day
-  holds) the scan writes none and the Claude card stays empty.
+  be held (more than 256 distinct model keys, a `daily` past 512 KiB, or a
+  timestamp no calendar day holds), or the scan could not list every folder
+  (one it has no permission to read), the scan writes none and the Claude
+  card stays empty.
   `estimated_cost_usd` is null unless every counted record was priced.
 - `usage.providers[].forecast` is the CodexBar reading for the provider's
   primary window (the `5h` one when reported, else the first; `window_id`
