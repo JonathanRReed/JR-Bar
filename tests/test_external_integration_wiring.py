@@ -6,7 +6,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STATUS_BAR = ROOT / "src" / "jrbar" / "status_bar.py"
 BACKGROUND_MODULES = (
-    "_integration_settings_legacy.py",
     "integration_compatibility.py",
     "integration_settings.py",
     "t3_compat.py",

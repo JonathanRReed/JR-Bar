@@ -132,10 +132,8 @@ def isolate_integration_settings_file(tmp_path_factory):
         return isolated
 
     with pytest.MonkeyPatch.context() as mp:
-        # The facade forwards attribute writes to the legacy module; modules
-        # that bound the name at import time are patched where already loaded.
+        # Modules that bound the name at import time are patched where already loaded.
         mp.setattr("jrbar.integration_settings.default_integration_settings_path", _isolated_path)
-        mp.setattr("jrbar._integration_settings_legacy.default_integration_settings_path", _isolated_path)
         for module_name in ("jrbar.deck_board_store", "jrbar.deck_control_settings", "jrbar.integration_cli"):
             module = sys.modules.get(module_name)
             if module is not None and hasattr(module, "default_integration_settings_path"):

@@ -194,7 +194,7 @@ def test_refresh_kicks_the_worker_when_its_sweep_is_stale_or_absent(headless) ->
 
 
 def test_refresh_reads_integration_settings_once_per_change(headless, monkeypatch) -> None:
-    from jrbar import _integration_settings_legacy as integ
+    from jrbar import integration_settings as integ
 
     controller = _refreshable(headless)
     target = integ.default_integration_settings_path()
