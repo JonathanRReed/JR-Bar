@@ -401,7 +401,7 @@ struct MenuBarIconMirrorTests {
     @MainActor
     @Test("the walk's records go once; the seed lands only while none exists — a ⌘-drag is never overwritten")
     func seedMigration() throws {
-        let suite = "jrbar.tests.statusItemSeat.\(UUID().uuidString)"
+        let suite = ScratchDefaults.suiteName("jrbar.tests.statusItemSeat")
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { Self.discardSuite(suite, defaults) }
         let key = StatusItemController.preferredPositionKey

@@ -98,7 +98,7 @@ import JRBarCore
 
     @Test("the panel's light log keeps the events that moved a light, newest first")
     func lightLog() {
-        let panel = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.test.lightlog.\(UUID().uuidString)")!,
+        let panel = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.test.lightlog"))!,
                                screenBarShown: false)
         panel.noteEvent(CoreEvent(id: "a", kind: "device_connected", at: 1))
         panel.noteEvent(CoreEvent(id: "b", kind: "completed", label: "JR-Bar", at: 2, provider: "claude"))
@@ -112,7 +112,7 @@ import JRBarCore
 
     @Test("a done watch is spent by the run's ending and only by it")
     func doneWatch() {
-        let panel = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.test.done.\(UUID().uuidString)")!,
+        let panel = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.test.done"))!,
                                screenBarShown: false)
         let row = SessionRow(session: CoreSession(id: "claude:run", provider: "claude", mode: "working"), pinnedAsk: nil)
         panel.toggleDoneWatch(row)

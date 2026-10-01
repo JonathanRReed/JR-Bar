@@ -144,7 +144,7 @@ struct WindowsRenderProofTests {
 
     static func panelStore(_ state: CoreState) -> PanelStore {
         let store = PanelStore(core: liveCore(state),
-                               draftsDefaults: UserDefaults(suiteName: "jrbar.proof.\(UUID())")!,
+                               draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.proof"))!,
                                screenBarShown: true)
         store.now = now
         store.isOpen = true
@@ -212,7 +212,7 @@ struct WindowsRenderProofTests {
         let heavy = Self.panelStore(CoreState(now: Self.t, aggregate: CoreAggregate(mode: "working", active: 2),
                                               sessions: Array(busy.sessions.prefix(2)),
                                               devices: Self.devices, usage: Self.usage(heavy: true)))
-        let offline = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.proof.\(UUID())")!,
+        let offline = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.proof"))!,
                                  screenBarShown: true)
         offline.now = Self.now
         offline.isOpen = true

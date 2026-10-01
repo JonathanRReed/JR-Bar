@@ -242,7 +242,7 @@ import JRBarCore
     // MARK: Saved filters
 
     @Test func savedFiltersRoundTripAsDefinitions() {
-        let defaults = UserDefaults(suiteName: "OverviewTests.\(UUID().uuidString)")!
+        let defaults = UserDefaults(suiteName: ScratchDefaults.suiteName("OverviewTests"))!
         let saved = [SavedOverviewFilter(name: "JR-Bar asks",
                                          filter: OverviewFilter(preset: .thisProject, project: "Code/JR-Bar"))]
         OverviewSavedFilters.save(saved, defaults: defaults)

@@ -233,7 +233,7 @@ struct AskSurfacesTests {
 
     @Test("a verb's ticket hears the toasts it raised — now or from its task — and no other")
     func ticketHearsOnlyItsVerb() async {
-        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
+        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.tests"))!,
                                screenBarShown: false)
         let ticket = PaletteVerbTicket()
         PaletteVerbScope.$ticket.withValue(ticket) {
@@ -247,7 +247,7 @@ struct AskSurfacesTests {
 
     @Test("a verb run from a key monitor — no task around it — still passes its ticket to the tasks it starts")
     func ticketOutsideATask() async {
-        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
+        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.tests"))!,
                                screenBarShown: false)
         let ticket = PaletteVerbTicket()
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
@@ -288,7 +288,7 @@ struct AskSurfacesTests {
 
     @Test("⌘↩ on a held question sends nothing and says to pick an option")
     func panelApproveOnQuestion() {
-        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
+        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.tests"))!,
                                screenBarShown: false)
         store.approve(held(choices: [Self.single]))
         #expect(store.toast == "Pick one of its options")
@@ -310,7 +310,7 @@ struct AskSurfacesTests {
                                    lifecycle: "active", since: opened,
                                    ask: CoreAsk(kind: "permission", openedAt: opened, summary: "Run"))],
             asks: [CoreAsk(session: "codex:1", kind: "permission", openedAt: opened, summary: "Run")])))
-        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
+        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.tests"))!,
                                screenBarShown: false)
         // The panel last closed an hour ago: its clock stopped there.
         store.now = Date().addingTimeInterval(-3_600)

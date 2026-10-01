@@ -1,9 +1,12 @@
 import Foundation
 
 /// A throwaway `UserDefaults` suite for one test. `body` gets a fresh
-/// suite named `jrbar.tests.<label>.<uuid>`; on the way out the domain is
-/// removed and the plist cfprefsd wrote under ~/Library/Preferences is
-/// deleted, so a run of the suite leaves no `jrbar.tests.*` files behind.
+/// suite whose plist lives in the temporary folder, named
+/// `jrbar.tests.<label>.<uuid>`; on the way out the domain and its plist are
+/// removed. A suite named by a path never reaches ~/Library/Preferences, so
+/// a run of the suite leaves nothing in the person's real preferences
+/// folder (a plain name did: the preferences daemon wrote an emptied domain
+/// back after the file was deleted, 72 files a run).
 @discardableResult
 func withScratchDefaults<T>(_ label: String = #function, _ body: (UserDefaults) throws -> T) rethrows -> T {
     let suite = ScratchDefaults.suiteName(label)
@@ -24,11 +27,17 @@ func withScratchDefaults<T>(_ label: String = #function,
 enum ScratchDefaults {
     static let prefix = "jrbar.tests."
 
-    /// "jrbar.tests.draftsSurviveRelaunch.<uuid>": the label's letters
-    /// and digits, so a `#function` name makes a legal domain.
+    /// Where scratch suites keep their plists.
+    static let directory = NSTemporaryDirectory() + "jrbar-test-defaults"
+
+    /// "<temp>/jrbar-test-defaults/jrbar.tests.draftsSurviveRelaunch.<uuid>":
+    /// the label's letters and digits, so a `#function` name makes a legal
+    /// domain. The path is the suite name; the plist is that path plus
+    /// ".plist".
     static func suiteName(_ label: String) -> String {
         let word = String(label.filter { $0.isASCII && ($0.isLetter || $0.isNumber) }.prefix(48))
-        return "\(prefix)\(word.isEmpty ? "scratch" : word).\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        return "\(directory)/\(prefix)\(word.isEmpty ? "scratch" : word).\(UUID().uuidString)"
     }
 
     static func open(_ suite: String) -> UserDefaults {
@@ -40,15 +49,18 @@ enum ScratchDefaults {
     }
 
     /// Removes the suite's domain and its plist. Only a scratch suite:
-    /// anything else is left alone.
+    /// anything else is left alone. The removal is flushed before the file
+    /// goes so the preferences daemon has nothing left to write back.
     static func remove(_ suite: String) {
-        guard suite.hasPrefix(prefix), !suite.contains("/") else { return }
-        UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+        guard suite.hasPrefix(directory + "/\(prefix)"), !suite.contains("..") else { return }
+        let defaults = UserDefaults(suiteName: suite)
+        defaults?.removePersistentDomain(forName: suite)
+        defaults?.synchronize()
         try? FileManager.default.removeItem(at: plist(suite))
     }
 
-    /// Where cfprefsd keeps a suite's plist.
+    /// Where the preferences daemon keeps a suite's plist.
     static func plist(_ suite: String) -> URL {
-        FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Preferences/\(suite).plist")
+        URL(fileURLWithPath: suite + ".plist")
     }
 }

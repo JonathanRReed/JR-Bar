@@ -700,7 +700,7 @@ struct DataHoarderModelTests {
         #expect(imported.provider == nil || imported.provider == "other")
         let model = DataHoarderModel(archive: archive, capture: capture)
         model.enabled = true
-        let suite = "DataHoarderModelTests.\(UUID().uuidString)"
+        let suite = ScratchDefaults.suiteName("DataHoarderModelTests")
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         await model.relabelSourceRecords(sources: [source], defaults: defaults)

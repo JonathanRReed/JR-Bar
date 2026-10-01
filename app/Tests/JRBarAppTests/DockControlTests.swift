@@ -30,7 +30,7 @@ import Testing
         // Isolated persistence — the crash-safe mirror defaults to
         // `.standard`, which parallel tests would share and corrupt.
         let persistence = UserDefaults(
-            suiteName: "DockControlTests.\(UUID().uuidString)")!
+            suiteName: ScratchDefaults.suiteName("DockControlTests"))!
         if let saved { persistence.set(saved, forKey: Self.savedAutohideKey) }
         let control = AppleDockControl(defaults: defaults, persistence: persistence)
         let restarter = Restarter()

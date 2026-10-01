@@ -97,7 +97,7 @@ struct ReplyDraftTests {
     @Test("a scratch suite's values are gone once its test is done")
     func scratchSuiteIsRemoved() {
         let suite = ScratchDefaults.suiteName("draftsBounded()")
-        #expect(suite.hasPrefix("jrbar.tests.draftsBounded."))
+        #expect(URL(fileURLWithPath: suite).lastPathComponent.hasPrefix("jrbar.tests.draftsBounded."))
         let defaults = ScratchDefaults.open(suite)
         defaults.set("half typed", forKey: "probe")
         #expect(defaults.string(forKey: "probe") == "half typed")

@@ -449,7 +449,7 @@ import Testing
 
     @MainActor
     @Test func theLegacyKeyIsAdoptedOnceAndNeverOverAChoice() throws {
-        let suite = "AppCommandTests.\(UUID().uuidString)"
+        let suite = ScratchDefaults.suiteName("AppCommandTests")
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let hotkeys = AppHotkeys()

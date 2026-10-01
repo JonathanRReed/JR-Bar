@@ -48,7 +48,7 @@ struct PanelHeaderTests {
         let core = CoreModel()
         core.handle(.connected)
         core.apply(.state(CoreState(now: t, aggregate: CoreAggregate(mode: "working", active: 2), sessions: sessions)))
-        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
+        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.tests"))!,
                                screenBarShown: false)
         store.now = Date(timeIntervalSince1970: t)
         #expect(store.headerWord == "Working")

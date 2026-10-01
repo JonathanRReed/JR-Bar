@@ -23,7 +23,7 @@ struct PanelRowsMemoTests {
         let core = CoreModel(socketPath: "/tmp/jrbar-test-none.sock")
         core.handle(.connected)
         core.apply(.state(state(1, sessions)))
-        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: "jrbar.test.\(UUID())")!,
+        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.test"))!,
                                screenBarShown: false)
         store.animationsArmed = false
         return (core, store)

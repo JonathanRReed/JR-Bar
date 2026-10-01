@@ -525,7 +525,7 @@ struct WaitEffectsTests {
 
     @Test("the ask card's beam runs only while the panel is open, and its mark's clock always")
     func askBeamNeedsAnOpenPanel() async {
-        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
+        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.tests"))!,
                                screenBarShown: false)
         let sent = Self.start.addingTimeInterval(7)
         let probe = WaitPanelProbe()

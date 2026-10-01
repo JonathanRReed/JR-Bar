@@ -202,7 +202,7 @@ struct UtilityParityRenderProofTests {
     /// A hold the daemon has: a countdown with a little under 42 minutes
     /// left from `now`, so every line that rounds it up says 42.
     private static func heldToggles(now: Date) throws -> SystemTogglesStore {
-        let suite = "UtilityParityRenderProofTests.\(UUID().uuidString)"
+        let suite = ScratchDefaults.suiteName("UtilityParityRenderProofTests")
         let defaults = try #require(UserDefaults(suiteName: suite))
         let state = SystemTogglesStore.State(dockDriver: nil, defaults: defaults)
         state.sendLease = { _ in .taken }

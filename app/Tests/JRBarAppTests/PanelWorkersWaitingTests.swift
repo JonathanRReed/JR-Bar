@@ -39,7 +39,7 @@ struct PanelWorkersWaitingTests {
         let core = CoreModel(socketPath: "/tmp/jrbar-test-none.sock")
         core.handle(.connected)
         core.apply(.state(state))
-        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: "jrbar.test.\(UUID())")!,
+        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.test"))!,
                                screenBarShown: false)
         store.animationsArmed = false
         return store
@@ -111,7 +111,7 @@ struct PanelWorkersWaitingTests {
         let core = CoreModel(socketPath: "/tmp/jrbar-test-none.sock")
         core.handle(.connected)
         core.apply(.state(frame(0)))
-        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: "jrbar.test.\(UUID())")!,
+        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.test"))!,
                                screenBarShown: false)
         let before = store.rowsComputations
         #expect(try #require(store.rows.first).workersWaitingText == nil)

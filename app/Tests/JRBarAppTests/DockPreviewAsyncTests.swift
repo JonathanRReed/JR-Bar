@@ -107,7 +107,7 @@ private final class Bench {
     let controller: DockEnhanceController
 
     init(agents: [DockAgentMark] = []) {
-        let defaults = UserDefaults(suiteName: "jrbar-dock-preview-async-\(UUID().uuidString)")!
+        let defaults = UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar-dock-preview-async"))!
         // No driver: releasing or taking the hold can never touch the
         // real Dock's autohide.
         let hold = DockAutohideHold(driver: nil, persistence: defaults, fallbackWrite: { _ in })

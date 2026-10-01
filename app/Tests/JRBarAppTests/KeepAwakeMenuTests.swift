@@ -26,7 +26,7 @@ import Testing
     }
 
     private func isolatedDefaults() throws -> (UserDefaults, String) {
-        let suite = "KeepAwakeMenuTests.\(UUID().uuidString)"
+        let suite = ScratchDefaults.suiteName("KeepAwakeMenuTests")
         return (try #require(UserDefaults(suiteName: suite)), suite)
     }
 

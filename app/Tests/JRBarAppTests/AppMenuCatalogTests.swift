@@ -53,7 +53,7 @@ struct AppMenuCatalogTests {
         let core = CoreModel()
         core.handle(.connected)
         core.apply(.state(CoreState(deck: deck)))
-        return PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
+        return PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.tests"))!,
                           screenBarShown: false)
     }
 

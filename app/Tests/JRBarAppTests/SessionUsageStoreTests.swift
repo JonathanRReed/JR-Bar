@@ -214,7 +214,7 @@ import JRBarCore
 
     @Test("the find query narrows, backspaces and clears; closing the panel forgets it")
     func findLifecycle() {
-        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: "jrbar.test.find.\(UUID().uuidString)")!,
+        let store = PanelStore(core: CoreModel(), draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.test.find"))!,
                                screenBarShown: false)
         store.appendFind("o")
         store.appendFind("p")

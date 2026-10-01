@@ -65,7 +65,7 @@ import Testing
     }
 
     @Test func theDefaultsDistinguishNeverSetFromCleared() throws {
-        let suite = "HotkeyCenterTests.\(UUID().uuidString)"
+        let suite = ScratchDefaults.suiteName("HotkeyCenterTests")
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         #expect(HotkeyChordDefaults.chord(for: "panel", fallback: Self.chordJ, defaults: defaults) == Self.chordJ)

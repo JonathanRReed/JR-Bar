@@ -25,7 +25,7 @@ struct PanelUsageTests {
     }
 
     private func makeStore(_ core: CoreModel, asked: Log) -> PanelStore {
-        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: "jrbar.tests.\(UUID())")!,
+        let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.tests"))!,
                                screenBarShown: false)
         store.sparklineWait = 0.05
         store.fetchUsageHistory = { provider, _ in

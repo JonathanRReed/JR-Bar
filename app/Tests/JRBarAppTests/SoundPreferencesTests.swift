@@ -29,7 +29,7 @@ import Testing
     }
 
     @Test func choicesVolumeAndDeviceSurviveARelaunch() throws {
-        let suite = "SoundPreferencesTests.\(UUID().uuidString)"
+        let suite = ScratchDefaults.suiteName("SoundPreferencesTests")
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         #expect(SoundPreferences.load(from: defaults) == SoundPreferences())
@@ -62,7 +62,7 @@ import Testing
     }
 
     @Test func quietOnCallsSurvivesARelaunch() throws {
-        let suite = "SoundPreferencesTests.\(UUID().uuidString)"
+        let suite = ScratchDefaults.suiteName("SoundPreferencesTests")
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         var preferences = SoundPreferences()

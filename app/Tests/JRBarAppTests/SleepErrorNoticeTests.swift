@@ -19,7 +19,7 @@ struct SleepErrorNoticeTests {
 
     @Test("one failure is said once; a new failure is said again; none says nothing")
     func oncePerFailure() throws {
-        let suite = "jrbar.tests.sleep-error.\(UUID().uuidString)"
+        let suite = ScratchDefaults.suiteName("jrbar.tests.sleep-error")
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let coordinator = EventCoordinator(core: CoreModel(), hudAnchor: { nil })

@@ -86,7 +86,7 @@ struct UtilityOffCostTests {
 
     @Test("the Keep Awake card switched off holds nothing and runs no clock")
     func keepAwakeOff() throws {
-        let suite = "UtilityOffCostTests.\(UUID().uuidString)"
+        let suite = ScratchDefaults.suiteName("UtilityOffCostTests")
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let state = SystemTogglesStore.State(dockDriver: nil, defaults: defaults)

@@ -21,7 +21,7 @@ import Testing
     }
 
     private func isolatedDefaults() throws -> (UserDefaults, String) {
-        let suite = "SystemTogglesStoreTests.\(UUID().uuidString)"
+        let suite = ScratchDefaults.suiteName("SystemTogglesStoreTests")
         return (try #require(UserDefaults(suiteName: suite)), suite)
     }
 
