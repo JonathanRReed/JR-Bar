@@ -139,6 +139,20 @@ rendering it", "No lid-angle sensor on this Mac").
 `SettingsStore`. `SettingsStore` gets `weak var toys: ToysStore?` so the
 page can reach it.
 
+## Power and heat
+
+Decorative motion eases off when the Mac asks for restraint. Under Low Power
+Mode or a serious thermal state the tank (its plants, light and live pass),
+the island's breathing, the playing bars and the buddy's walk run at half
+their frame rate, and at a critical thermal state the passes that only
+decorate stand still while the fish and the buddy keep moving at half rate.
+They go back to full rate on their own when the Mac recovers, and at normal
+power nothing changes. Nothing functional is affected: alerts, counts,
+readings and the Fold's screen warp never read the power state, and Reduce
+Motion keeps its own slow heartbeat. The rule is one small policy,
+`PowerPolicy` in `JRBarUI`, fed by the system's Low Power Mode and thermal
+notifications, with no timer of its own.
+
 ## Fold (native)
 
 Closing the lid folds the desktop. Two looks, picked on the card:
