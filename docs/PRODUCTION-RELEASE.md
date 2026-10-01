@@ -308,3 +308,12 @@ an isolated system-uninstall receipt were not completed. The
 [0.9.15 release notes](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.15)
 disclose these limits. This exception did not change the fail-closed release
 scripts or create a passing manifest.
+
+Version 0.9.16 was published the same way, at Jonathan's direction: built and
+signed by `make package`, run through the gate's receipts that this Mac can
+produce, and uploaded by hand in the order `scripts/publish_release.sh` uses
+(draft release, assets, publish, then the `updates` feed). The controlled
+performance budget and the system-uninstall receipt were not completed, so no
+`release-verification.json` exists for it. Its
+[release notes](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.16)
+list the receipts that ran.

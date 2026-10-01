@@ -19,7 +19,7 @@ bundled inside it owns the facts.
 
 ## Build and install
 
-[Download the signed JR-Bar 0.9.15 installer](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.15)
+[Download the signed JR-Bar 0.9.16 installer](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.16)
 for an Apple silicon Mac running macOS 26 or newer. Open the PKG to install
 JR-Bar in `~/Applications` without an administrator password.
 

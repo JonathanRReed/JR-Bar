@@ -2,7 +2,7 @@
 
 All notable changes to JR-Bar are documented here.
 
-## Unreleased
+## 0.9.16
 
 - A sub-agent's ask stays quiet while Sub-agent asks is off. Its permission
   request or notification no longer pulses the Ask colour on the Screen Bar

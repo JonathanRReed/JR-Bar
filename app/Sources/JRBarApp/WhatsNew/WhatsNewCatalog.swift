@@ -33,55 +33,54 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "0.9.15"
+    static let releaseID = "0.9.16"
 
     /// The header's one line.
-    static let headline = "Provider choices survive upgrades, and timeline and Screen Bar work is bounded."
+    static let headline = "Sub-agent asks stay quiet, sign-in and updates are one click, and token totals cover the month."
 
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
 
     static let entries: [WhatsNewEntry] = [
         WhatsNewEntry(
-            id: "hooks", symbol: "checklist",
-            title: "Hooks stay your choice",
-            detail: "Fresh setup connects chosen providers, and upgrades preserve disabled integrations and custom log destinations.",
+            id: "subagents", symbol: "person.2",
+            title: "Sub-agent asks stay quiet",
+            detail: "While Sub-agent asks is off, a worker's prompt stays quiet and its session says how many are waiting.",
+            tryIt: .settings(page: "agents"), opens: "Opens Settings › Agents, where Sub-agent asks is"),
+        WhatsNewEntry(
+            id: "signin", symbol: "key",
+            title: "Fix sign-in in one click",
+            detail: "A stale or signed-out provider card has a Fix sign-in button for Claude's renewal or the CLI's login.",
+            tryIt: .window(.usage), opens: "Opens Usage, where the provider cards are"),
+        WhatsNewEntry(
+            id: "updates", symbol: "arrow.down.circle",
+            title: "Update agent CLIs",
+            detail: "Settings › Agents shows each CLI's version with an Update button that runs its own updater.",
             tryIt: .settings(page: "agents"), opens: "Opens Settings › Agents"),
         WhatsNewEntry(
-            id: "fold", symbol: "laptopcomputer",
-            title: "Fold returns to rest",
-            detail: "Resting-angle mode relearns a still lid with any parking delay and eases back to the desktop.",
-            tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where the Fold card is"),
+            id: "tokens", symbol: "chart.bar",
+            title: "Token totals cover the month",
+            detail: "The Claude and Codex cards add up all 30 days, however busy, and never show a partial total.",
+            tryIt: .window(.usage), opens: "Opens Usage"),
         WhatsNewEntry(
             id: "aquarium", symbol: "fish",
-            title: "Fish share frame work",
-            detail: "Swimming and drawing reuse completion meals, including pellets eaten in the current frame.",
+            title: "Toys rest on low power",
+            detail: "The Aquarium, Notch Buddy and island halve or pause decorative motion in Low Power Mode or heat.",
             tryIt: .aquarium, opens: "Opens the Aquarium"),
         WhatsNewEntry(
-            id: "drag", symbol: "menubar.rectangle",
-            title: "Menu clicks reach the icon",
-            detail: "A click accepted by JR-Bar's icon still opens it if the panel moves before the action runs.",
-            keys: "⌘ drag"),
-        WhatsNewEntry(
             id: "dot", symbol: "light.strip.2",
-            title: "Screen Bar plans off-main",
-            detail: "One active plan and the latest pending program keep hidden bars from starting new planning work.",
+            title: "Screen Bar flash stays safe",
+            detail: "A 5 Hz preview is slowed to the flash limit, and the Dot no longer holds a pulse's peak.",
             tryIt: .settings(page: "devices"), opens: "Opens Settings › Devices, where Pro & Dot is"),
         WhatsNewEntry(
-            id: "resets", symbol: "party.popper",
-            title: "Early weekly resets celebrate",
-            detail: "Stable readings confirm early weekly refills without carrying reset comparisons between Claude accounts.",
-            tryIt: .settings(page: "toys"), opens: "Opens Settings › Toys, where Confetti is"),
+            id: "esc", symbol: "escape",
+            title: "Esc stays with its window",
+            detail: "Esc folds the notch card only from its own window, so Settings text fields keep their Esc.",
+            keys: "Esc"),
         WhatsNewEntry(
-            id: "archive", symbol: "archivebox",
-            title: "Timelines use less memory",
-            detail: "Reconstruction streams transcript lines and indexes failure-story tools while preserving timeline order.",
-            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where Data Hoarder is"),
-        WhatsNewEntry(
-            id: "dock", symbol: "dock.rectangle",
-            title: "Dock previews fit their windows",
-            detail: "Long names stay within the thumbnail width, and Tight previews center their controls below the name.",
-            tryIt: .settings(page: "utilities"), opens: "Opens Settings › Utilities, where Dock is"),
+            id: "saved", symbol: "externaldrive",
+            title: "Saved files survive damage",
+            detail: "A file JR-Bar cannot read is set aside as corrupt, not overwritten, and good rows survive."),
     ]
 }
 

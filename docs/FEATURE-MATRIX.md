@@ -1,6 +1,6 @@
 # JR-Bar feature matrix
 
-Updated 2026-09-28. [Version 0.9.15](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.15)
+Updated 2026-10-01. [Version 0.9.16](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.16)
 is public. Its app and installer are Developer ID signed, notarized and
 stapled. The release notes disclose the checks that remain open.
 
@@ -45,7 +45,7 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 | Effect Studio: library, inspector with parameters and live preview, preview on hardware, assignments by scope, scenes, pack import/export | Implemented | Settings › Lighting › Effects… |
 | Control Center and the Rail for the Creator Micro 2 | Implemented, unverified live (pad verified powered off only) | ⌘K |
 | Notifications: ask banners with Approve / Deny, completion banners, quota banners; system sounds; notch HUD for device and peer events | Implemented | Permission asked on first banner |
-| Sparkle updates: manual check, opt-in automatic checks, stable/beta channel, feed on this repository's releases | Implemented; the signed 0.9.15 feed and archive are public. An update between two public versions has not yet been observed live. | Automatic checks off |
+| Sparkle updates: manual check, opt-in automatic checks, stable/beta channel, feed on this repository's releases | Implemented; the signed 0.9.16 feed and archive are public. An update between two public versions has not yet been observed live. | Automatic checks off |
 | Login item (`SMAppService`) | Implemented | On, registered on first launch |
 | Daemon supervision: restart with backoff, "Core crashed" with Restart, orderly quit | Implemented | Always |
 
@@ -130,7 +130,7 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 
 | Capability | Status | Default |
 | --- | --- | --- |
-| `make package`: one signed bundle (app, frozen daemon as a nested helper app, shim, pinned Sparkle), PKG for `/` or `~`, Sparkle ZIP, signed appcast when the key is in the keychain | Implemented; the published 0.9.15 PKG and app are Developer ID signed, notarized and stapled, and the PKG passed a home install. The full release-verification manifest remains open. | Manual |
+| `make package`: one signed bundle (app, frozen daemon as a nested helper app, shim, pinned Sparkle), PKG for `/` or `~`, Sparkle ZIP, signed appcast when the key is in the keychain | Implemented; the published 0.9.16 PKG and app are Developer ID signed, notarized and stapled, and the PKG passed a home install. The full release-verification manifest remains open. | Manual |
 | `make clean-install`: home-directory install without a password | Implemented | Manual |
 | Doctor: `jrbar doctor` and Settings › Advanced (commit the daemon was built from, memory, sockets, hooks, devices, checks) | Implemented | Manual |
 | SidePulse → JR-Bar migration of config, state, data, hooks, LaunchAgents, Keychain items | Implemented | Automatic, once |

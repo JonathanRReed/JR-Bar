@@ -1,6 +1,6 @@
 # JR-Bar roadmap
 
-Updated 2026-09-28. [Version 0.9.15](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.15)
+Updated 2026-10-01. [Version 0.9.16](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.16)
 is public with a signed, notarized and stapled installer. Its release notes
 name the acceptance checks that remain open.
 [FEATURE-MATRIX.md](FEATURE-MATRIX.md) describes implemented capabilities;
@@ -24,13 +24,13 @@ a source path is not a physical acceptance receipt.
    installed candidate, but they cannot certify the release budget. The
    native renderer needs a current exporter before the
    [Screen Bar profile matrix](SCREEN-BAR-PROFILING.md) can be completed.
-4. Finish release acceptance. The published 0.9.15 installer is signed,
+4. Finish release acceptance. The published 0.9.16 installer is signed,
    notarized, stapled and verified through a home install. Controlled
-   performance, a strict upgrade from an older installed version and the
-   system uninstall receipt remain open. Test uninstall in isolation so real
-   provider configurations stay intact. Optional hardware and provider checks
-   remain open too. The [production release gate](PRODUCTION-RELEASE.md)
-   remains fail-closed for future releases; 0.9.15's exceptions are public.
+   performance and the system uninstall receipt remain open. Test uninstall
+   in isolation so real provider configurations stay intact. Optional
+   hardware and provider checks remain open too. The
+   [production release gate](PRODUCTION-RELEASE.md) remains fail-closed for
+   future releases; the exceptions for 0.9.15 and 0.9.16 are public.
 5. Keep the public entry current. The signed installer, update archive,
    setup guide and support route are live. Recheck their links and content
    with each release.

@@ -82,7 +82,7 @@ hand-written examples.
 
 ### hello
 ```json
-{"t":"hello","v":1,"core_version":"0.9.15","pid":123,
+{"t":"hello","v":1,"core_version":"0.9.16","pid":123,
  "capabilities":["sessions","lights","usage","devices","power","effects","calibration","history","peers","ingest","deck","roster","event_replay"],
  "stream":"1234-abc123","cursor":"1234-abc123:ev-42"}
 ```

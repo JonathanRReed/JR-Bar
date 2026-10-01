@@ -34,13 +34,15 @@ fail-closed by construction: it writes `release-verification.json` only when
 every receipt kind is present, passed and bound to the same candidate, and
 `scripts/publish_release.sh` will not publish without it.
 
-**As of 2026-09-29 no release meets that bar.** Version 0.9.15 was published
-by hand at the owner's direction. Its app, installer and update archive passed
-signing, notarization and Gatekeeper checks, but the controlled performance,
-strict older-version upgrade and system-uninstall receipts were not completed,
-so it is not production-supported under this policy. The
-[0.9.15 release notes](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.15)
-say so, and the fail-closed scripts were not loosened for it.
+**As of 2026-10-01 no release meets that bar.** Versions 0.9.15 and 0.9.16
+were published by hand at the owner's direction. Their apps, installers and
+update archives passed signing, notarization and Gatekeeper checks, but the
+controlled performance and system-uninstall receipts were not completed (and
+0.9.15's strict older-version upgrade receipt was not either), so neither is
+production-supported under this policy. The
+[0.9.16 release notes](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.16)
+list which receipts ran and which did not, and the fail-closed scripts were
+not loosened for either release.
 
 Updates arrive through Sparkle from a feed pinned in the app
 (`SUFeedURL`, an asset of the durable `updates` release) with `SUPublicEDKey`,
