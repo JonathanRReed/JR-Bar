@@ -228,7 +228,10 @@ def _request_identity(provider: str, payload_text: str) -> tuple[str, Any] | Non
 def permission_facts(provider: object, payload_text: object) -> PermissionFacts | None:
     """The facts to park, or ``None`` when this payload is not a request
     the lane can decide: another provider or event, a tool whose answer is
-    not a yes/no, or no request identity to pin an answer to."""
+    not a yes/no, no request identity to pin an answer to, or a payload the
+    shim cut down for its size (the input the person would be deciding on is
+    not there to show, so the agent's own prompt carries on)."""
+    from .hook_ingress_protocol import PAYLOAD_TRUNCATED_FIELD
     from .provider_adapters import hook_request_identity
 
     if type(provider) is not str or provider not in DECIDE_PROVIDERS:
@@ -242,6 +245,8 @@ def permission_facts(provider: object, payload_text: object) -> PermissionFacts 
     if actual != provider or record.event_name != "PermissionRequest":
         return None
     raw = record.raw if isinstance(record.raw, dict) else {}
+    if raw.get(PAYLOAD_TRUNCATED_FIELD) is True:
+        return None
     tool_name = record.tool_name or raw.get("tool_name")
     tool_input = raw.get("tool_input")
     session_id = record.session_id

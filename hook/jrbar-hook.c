@@ -144,6 +144,161 @@ static double parent_start_time(pid_t ppid) {
     return (double)info.pbi_start_tvsec + (double)info.pbi_start_tvusec / 1e6;
 }
 
+/* ---- A payload past MAX_PAYLOAD ----------------------------------------
+ *
+ * It is never forwarded or spooled whole. Dropping it silently left the
+ * daemon blind to the event: a PostToolUse carrying base64 screenshots was a
+ * tool that never seemed to finish, a PermissionRequest for a very large Write
+ * was an ask nobody saw. For Claude Code and Codex the shim builds a small
+ * record instead -- the event, the session, the tool and
+ * "payload_truncated":true -- from one pass over the head it already holds
+ * (the first MAX_PAYLOAD bytes; nothing more is buffered). The scan walks the
+ * top-level object only: it steps over every value it does not want by
+ * tracking strings and nesting, so a key spelled inside a tool's output or
+ * inside a string is never mistaken for a top-level one.
+ *
+ * What is kept: plain printable-ASCII strings (a session id, a tool name) of
+ * bounded length, copied verbatim, so the record is valid JSON and valid UTF-8
+ * by construction; and the call's own tool_input when it is a whole object of
+ * at most META_INPUT_BYTES. The input is what names the request a PostToolUse
+ * resolves (the daemon derives the request id from the turn, the tool and
+ * this input), and a screenshot tool's input is a few bytes while its
+ * response is the megabyte. Everything else, the content included, is left
+ * behind. When the head does not name both the event and the session the
+ * payload is dropped, as before: the daemon could not place it. */
+#define META_VALUE_BYTES 256
+#define META_PATH_BYTES 1024
+#define META_INPUT_BYTES (64 * 1024)
+#define META_RECORD_BYTES (META_INPUT_BYTES + 4096)
+
+struct meta_key { const char *name; size_t cap; };
+/* Order is the order they are written. The first two are required;
+ * transcript_path stays only because the daemon tells a Grok session that
+ * reached it through Claude's hook slot from a Claude one by it. */
+static const struct meta_key META_KEYS[] = {
+    { "hook_event_name", META_VALUE_BYTES },
+    { "session_id", META_VALUE_BYTES },
+    { "tool_name", META_VALUE_BYTES },
+    { "turn_id", META_VALUE_BYTES },
+    { "agent_id", META_VALUE_BYTES },
+    { "transcript_path", META_PATH_BYTES },
+};
+#define META_KEY_COUNT (sizeof META_KEYS / sizeof META_KEYS[0])
+
+static int metadata_provider(const char *provider) {
+    return !strcmp(provider, "claude") || !strcmp(provider, "codex");
+}
+
+static size_t json_skip_ws(const char *b, size_t i, size_t n) {
+    while (i < n && (b[i] == ' ' || b[i] == '\t' || b[i] == '\n' || b[i] == '\r')) i++;
+    return i;
+}
+
+/* `i` is at an opening quote. The index after the closing one, or 0 when the
+ * buffer ends first. */
+static size_t json_skip_string(const char *b, size_t i, size_t n) {
+    for (i++; i < n; i++) {
+        if (b[i] == '\\') { if (++i >= n) return 0; continue; }
+        if (b[i] == '"') return i + 1;
+    }
+    return 0;
+}
+
+/* The index after the value at `i`, or 0 when the buffer ends inside it. */
+static size_t json_skip_value(const char *b, size_t i, size_t n) {
+    if (i >= n) return 0;
+    if (b[i] == '"') return json_skip_string(b, i, n);
+    if (b[i] == '{' || b[i] == '[') {
+        size_t depth = 0;
+        while (i < n) {
+            char c = b[i];
+            if (c == '"') { i = json_skip_string(b, i, n); if (!i) return 0; continue; }
+            i++;
+            if (c == '{' || c == '[') depth++;
+            else if ((c == '}' || c == ']') && --depth == 0) return i;
+        }
+        return 0;
+    }
+    while (i < n && b[i] != ',' && b[i] != '}' && b[i] != ']'
+           && b[i] != ' ' && b[i] != '\t' && b[i] != '\n' && b[i] != '\r') i++;
+    return i < n ? i : 0;
+}
+
+static int meta_put(char *out, size_t cap, size_t *o, const char *s, size_t n) {
+    if (*o + n >= cap) return 0;
+    memcpy(out + *o, s, n);
+    *o += n;
+    return 1;
+}
+
+/* The metadata record for `b[0..n)` in `out`: its length, or 0 when the head
+ * does not name an event and a session. */
+static size_t build_metadata(const char *b, size_t n, char *out, size_t cap) {
+    struct { size_t at, len; int seen; } found[META_KEY_COUNT];
+    memset(found, 0, sizeof found);
+    size_t input_at = 0, input_len = 0;
+    int input_seen = 0;
+    size_t i = json_skip_ws(b, 0, n);
+    if (i >= n || b[i] != '{') return 0;
+    i++;
+    for (;;) {
+        i = json_skip_ws(b, i, n);
+        if (i >= n || b[i] == '}') break;
+        if (b[i] == ',') { i++; continue; }
+        if (b[i] != '"') break;
+        size_t key_at = i + 1;
+        size_t after_key = json_skip_string(b, i, n);
+        if (!after_key) break;
+        size_t key_len = after_key - 1 - key_at;
+        i = json_skip_ws(b, after_key, n);
+        if (i >= n || b[i] != ':') break;
+        i = json_skip_ws(b, i + 1, n);
+        size_t end = json_skip_value(b, i, n);
+        if (!end) break;
+        if (key_len == strlen("tool_input") && !memcmp(b + key_at, "tool_input", key_len)) {
+            if (!input_seen) {
+                input_seen = 1;
+                if (b[i] == '{' && end - i <= META_INPUT_BYTES) { input_at = i; input_len = end - i; }
+            }
+        } else {
+            for (size_t k = 0; k < META_KEY_COUNT; k++) {
+                if (key_len != strlen(META_KEYS[k].name) || memcmp(b + key_at, META_KEYS[k].name, key_len)) continue;
+                if (found[k].seen) break;
+                found[k].seen = 1;
+                if (b[i] != '"') break;
+                size_t value_len = end - i - 2;
+                if (value_len == 0 || value_len > META_KEYS[k].cap) break;
+                int plain = 1;
+                for (size_t v = i + 1; v < end - 1; v++) {
+                    unsigned char c = (unsigned char)b[v];
+                    if (c < 0x20 || c > 0x7e || c == '\\') { plain = 0; break; }
+                }
+                if (plain) { found[k].at = i + 1; found[k].len = value_len; }
+                break;
+            }
+        }
+        i = end;
+    }
+    if (!found[0].len || !found[1].len) return 0;
+    size_t o = 0;
+    if (!meta_put(out, cap, &o, "{", 1)) return 0;
+    int first = 1;
+    for (size_t k = 0; k < META_KEY_COUNT; k++) {
+        if (!found[k].len) continue;
+        if (!first && !meta_put(out, cap, &o, ",", 1)) return 0;
+        first = 0;
+        if (!meta_put(out, cap, &o, "\"", 1) || !meta_put(out, cap, &o, META_KEYS[k].name, strlen(META_KEYS[k].name))
+            || !meta_put(out, cap, &o, "\":\"", 3) || !meta_put(out, cap, &o, b + found[k].at, found[k].len)
+            || !meta_put(out, cap, &o, "\"", 1)) return 0;
+    }
+    if (input_len) {
+        if (!meta_put(out, cap, &o, ",\"tool_input\":", strlen(",\"tool_input\":"))
+            || !meta_put(out, cap, &o, b + input_at, input_len)) return 0;
+    }
+    if (!meta_put(out, cap, &o, ",\"payload_truncated\":true}", strlen(",\"payload_truncated\":true}"))) return 0;
+    return o;
+}
+
 /* The verdict in a --decide reply, or 0 for "print nothing". The reply is
  * the disposition line, then at most one more line: the whole line must be
  * there, must follow an "accepted" disposition and must open a
@@ -535,6 +690,22 @@ int main(int argc, char **argv) {
             ssize_t n = read(STDIN_FILENO, payload + len, MAX_PAYLOAD + 1 - len);
             if (n <= 0) break;
             len += (size_t)n;
+        }
+    }
+    if (payload && len > MAX_PAYLOAD && !statusline && metadata_provider(provider)) {
+        /* The record replaces the payload for everything below: it is
+         * delivered or spooled like any other. It is never --decide: an ask
+         * whose input cannot be shown is not held for a verdict, so the shim
+         * prints nothing and the agent's own prompt carries on. */
+        char *meta = malloc(META_RECORD_BYTES);
+        size_t meta_len = meta ? build_metadata(payload, len, meta, META_RECORD_BYTES) : 0;
+        if (meta_len) {
+            free(payload);
+            payload = meta;
+            len = meta_len;
+            decide = 0;
+        } else {
+            free(meta);
         }
     }
     if (!payload || len > MAX_PAYLOAD) {

@@ -27,6 +27,12 @@ MAX_HOOK_INGRESS_WIRE_BYTES: Final = (
 )
 MAX_HOOK_INGRESS_RESPONSE_BYTES: Final = 64
 MAX_HOOK_LOG_PATH_BYTES: Final = 4096
+#: A top-level ``true`` in the payload of a frame the compiled shim built for
+#: a hook payload past ``MAX_HOOK_INGRESS_PAYLOAD_BYTES`` (hook/jrbar-hook.c).
+#: The event, the session, the tool and a small ``tool_input`` survive; the
+#: content does not. The daemon treats the record as the event it names, and
+#: never holds such an ask for a verdict: its input cannot be shown.
+PAYLOAD_TRUNCATED_FIELD: Final = "payload_truncated"
 
 _MAGIC: Final = b"JRBARHOOK\x01"
 _LENGTHS = struct.Struct("!II")
@@ -487,6 +493,7 @@ __all__ = [
     "MAX_HOOK_INGRESS_RESPONSE_BYTES",
     "MAX_HOOK_INGRESS_WIRE_BYTES",
     "MIN_HOOK_DECISION_WAIT_MS",
+    "PAYLOAD_TRUNCATED_FIELD",
     "HookIngressDisposition",
     "HookIngressRequest",
     "candidate_hook_ingress_socket_paths",

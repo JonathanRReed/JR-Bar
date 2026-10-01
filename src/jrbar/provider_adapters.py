@@ -19,6 +19,7 @@ from enum import Enum
 from typing import Final
 
 from .capacity_types import CapacityValidationError, SourceKey
+from .hook_ingress_protocol import PAYLOAD_TRUNCATED_FIELD
 from .models import _CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE, HookEvent
 from .provider_contracts import (
     AdapterIdentifier,
@@ -1024,13 +1025,21 @@ def _derived_request_identifier(record: HookEvent) -> RequestIdentifier | None:
     fields. The identity is the turn and the exact call, so the request a
     PermissionRequest opens is the one the matching PostToolUse resolves,
     and a different command in the same turn is a different question.
-    A payload without a tool name and input still gets no identity.
+    A payload without a tool name and input still gets no identity, except
+    one the compiled shim cut down because it passed 1 MiB
+    (``payload_truncated``): when even its input was too large to keep, the
+    call is "the one that was cut down", so a very large Write's
+    PermissionRequest still opens a request and its PostToolUse, cut down the
+    same way, resolves it. A cut-down payload that kept its (small) input
+    names the same request as the whole one would have.
     """
     raw = record.raw if type(record.raw) is dict else {}
     tool_name = raw.get("tool_name")
     if type(tool_name) is not str or not tool_name:
         tool_name = record.tool_name
     tool_input = raw.get("tool_input")
+    if type(tool_input) is not dict and raw.get(PAYLOAD_TRUNCATED_FIELD) is True:
+        tool_input = {PAYLOAD_TRUNCATED_FIELD: True}
     if type(tool_name) is not str or not tool_name or type(tool_input) is not dict:
         return None
     scope = raw.get("turn_id")
