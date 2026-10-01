@@ -80,17 +80,17 @@ def _post_tool_use(**overrides: object) -> dict[str, object]:
     return document
 
 
-def _run(shim: Path, state_dir: Path, provider: str, payload: str, *extra: str) -> subprocess.CompletedProcess:
+def _run(shim: Path, state_dir: Path, provider: str, payload: str | bytes, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [str(shim), "--provider", provider, *extra],
-        input=payload.encode("utf-8"),
+        input=payload if isinstance(payload, bytes) else payload.encode("utf-8"),
         capture_output=True,
         env=dict(os.environ, JRBAR_STATE_DIR=str(state_dir)),
         timeout=HANG_BOUND_SECONDS,
     )
 
 
-def _delivered(shim: Path, state_dir: Path, provider: str, payload: str, *extra: str):
+def _delivered(shim: Path, state_dir: Path, provider: str, payload: str | bytes, *extra: str):
     """Run the shim against a fake ingress; the decoded request it received."""
     ingress = _FakeIngress(state_dir)
     try:
@@ -276,6 +276,67 @@ def test_values_that_could_not_be_copied_safely_are_left_out(shim: Path, sock_di
     record = json.loads(request.payload_text)
     assert record["session_id"] == "session-1" and record["hook_event_name"] == "PostToolUse"
     assert "tool_name" not in record and "turn_id" not in record and "agent_id" not in record
+
+
+def test_a_value_that_is_not_ascii_is_left_out_as_raw_utf8_and_as_no_utf8_at_all(
+    shim: Path, sock_dir: Path
+) -> None:
+    """The record is copied byte for byte, so a value is kept only when every
+    byte is printable ASCII: raw UTF-8 (a JSON writer that does not escape it)
+    and bytes that are not UTF-8 would otherwise reach the daemon, which
+    refuses a frame it cannot decode."""
+    raw_utf8 = json.dumps(_post_tool_use(tool_name="caf\u00e9"), separators=(",", ":"), ensure_ascii=False)
+    record = json.loads(_delivered(shim, sock_dir, "claude", raw_utf8.encode("utf-8")).payload_text)
+    assert "tool_name" not in record
+    assert record["session_id"] == "session-1" and record["payload_truncated"] is True
+    (sock_dir / "hook-ingress.sock").unlink()
+
+    not_utf8 = _compact(_post_tool_use()).encode("utf-8").replace(b"mcp__shots__capture", b"mcp__\xff\xfe__capture")
+    record = json.loads(_delivered(shim, sock_dir, "claude", not_utf8).payload_text)
+    assert "tool_name" not in record and record["hook_event_name"] == "PostToolUse"
+    (sock_dir / "hook-ingress.sock").unlink()
+
+    # A session id that is not plain ASCII leaves nothing to place the event
+    # by: it is dropped, whichever way it is not ASCII.
+    ingress = _FakeIngress(sock_dir)
+    try:
+        raw_session = json.dumps(_post_tool_use(session_id="s\u00e9"), separators=(",", ":"), ensure_ascii=False)
+        bad_session = _compact(_post_tool_use()).encode("utf-8").replace(b"session-1", b"sess\xffion")
+        for payload in (raw_session.encode("utf-8"), bad_session):
+            result = _run(shim, sock_dir, "claude", payload)
+            assert result.returncode == 0 and result.stdout == b""
+        assert not ingress.wait_for_request(0.5)
+    finally:
+        ingress.close()
+    assert not (sock_dir / "claude.pending.jsonl").exists()
+
+
+def _payload_of_exactly(size: int) -> bytes:
+    """A PostToolUse that is exactly ``size`` bytes, the padding in its response."""
+    empty = _compact(_post_tool_use(tool_response={"image": ""})).encode("ascii")
+    padded = _compact(_post_tool_use(tool_response={"image": "A" * (size - len(empty))})).encode("ascii")
+    assert len(padded) == size
+    return padded
+
+
+def test_a_payload_of_exactly_the_cap_is_kept_whole_and_one_byte_more_becomes_the_record(
+    shim: Path, sock_dir: Path
+) -> None:
+    """The cap is a size the payload may reach, not one it must stay under:
+    1 MiB goes through whole, 1 MiB + 1 is cut down."""
+    spool = sock_dir / "claude.pending.jsonl"
+    whole = _payload_of_exactly(MIB)
+    assert _run(shim, sock_dir, "claude", whole).returncode == 0
+    rows = [json.loads(line) for line in spool.read_text().splitlines()]
+    assert [row["payload"] for row in rows] == [whole.decode("ascii")]
+    spool.unlink()
+
+    over = _payload_of_exactly(MIB + 1)
+    assert _run(shim, sock_dir, "claude", over).returncode == 0
+    rows = [json.loads(line) for line in spool.read_text().splitlines()]
+    assert len(rows) == 1
+    record = json.loads(rows[0]["payload"])
+    assert record["payload_truncated"] is True and len(rows[0]["payload"]) < 4096
 
 
 def test_an_oversize_payload_whose_identity_is_not_in_the_head_is_still_dropped(
