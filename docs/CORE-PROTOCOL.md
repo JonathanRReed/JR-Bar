@@ -1147,8 +1147,11 @@ Studio commands add `unknown_effect`, `invalid_scope`, `invalid_target`,
 (`connection_required`, `device_conflict`, `recovery_required`,
 `keymap_changed`, `readback_mismatch`, `backup_failed`, `backup_invalid`,
 `backup_conflict`, `approved_device_changed`, `previous_owner_stopping`,
-`unsupported_file_protocol`, `setup_failed`, …) whose `message` is the
-Python app's sentence for that receipt.
+`unsupported_file_protocol`, `setup_failed`, `superseded`, …) whose
+`message` is the Python app's sentence for that receipt. `superseded` means
+the deck's settings changed (or the daemon began stopping) while a setup
+was running, so its result was dropped; the command answers at once and
+asking again is safe.
 
 ### log
 Content-free diagnostics for the app's log view: every `log_status_bar`

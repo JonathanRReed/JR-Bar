@@ -5868,17 +5868,38 @@ def build_headless_controller_class() -> type:
         def applyCreatorMicroSetupResult_(self, result) -> None:
             """The setup thread's answer, without the Python alerts: the
             inspection is cached for planning and the pad is handed back to
-            the output service; an apply or restore records its receipt."""
-            from .creator_micro_setup_controller import SetupPreview
+            the output service; an apply or restore records its receipt.
 
-            if (
-                getattr(result, "generation", None) is not getattr(self, "_creator_micro_setup_generation", None)
-                or getattr(self, "_runtime_termination_started", False)
-                or getattr(self, "_deck_runtime_stopping", False)
-            ):
+            The socket thread parked in ``_core_deck_run_setup`` is always
+            released, whatever happens in here."""
+            if getattr(result, "generation", None) is not getattr(self, "_creator_micro_setup_generation", None):
+                # An older setup's result: the waiter, if there is one, is
+                # parked on the setup that replaced it.
                 return
+            try:
+                self._core_apply_setup_result(result)
+            finally:
+                # Last, once this handler is finished with the shared setup
+                # state: a release from a handler still running would land on
+                # the next operation's wait, which clears the flag first.
+                self._core_deck_setup_done.set()
+
+        def _core_apply_setup_result(self, result) -> None:
+            from .creator_micro_setup_controller import SetupPreview, SetupResult
+
             self._creator_micro_setup_busy = False
-            if getattr(self, "_deck_runtime_generation", None) is not result.generation:
+            if (
+                getattr(self, "_runtime_termination_started", False)
+                or getattr(self, "_deck_runtime_stopping", False)
+                or getattr(self, "_deck_runtime_generation", None) is not result.generation
+            ):
+                # The deck runtime was reconfigured, or is stopping, since this
+                # setup began. The change that overtook it owns the pad (it
+                # restarts the output service itself), so nothing here may
+                # restart it or record a receipt; the waiter hears
+                # "superseded" now instead of sleeping out its timeout.
+                self._core_deck_setup_result = SetupResult(result.generation, result.operation, "superseded")
+                legacy.log_status_bar(f"deck: {result.operation} -> superseded")
                 return
             code = str(result.code)
             if code == "inspection_ready":
@@ -5899,7 +5920,6 @@ def build_headless_controller_class() -> type:
                 if code == "keymap_verified":
                     self._core_deck_set_input_check(True)
             self._core_deck_setup_result = result
-            self._core_deck_setup_done.set()
             self._core_publish_state()
 
         # The deck selectors of deck_status_bar.install_deck_status_bar, so the
