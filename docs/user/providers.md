@@ -52,8 +52,10 @@ Sub-agent asks setting. With it off, a sub-agent's approval raises no card,
 light, sound or banner. Its session keeps reading Working and says "1 worker
 waiting" beside its workers, so a stuck sub-agent is not passed off as a busy
 one; the agent still shows its own prompt. With it on, the approval is an
-ordinary ask: it counts in the header and gets a row of its own in the panel,
-with Approve and Deny.
+ordinary ask: it counts in the header and gets a row of its own in the panel.
+Approve and Deny are offered on a row only where JR-Bar can deliver the answer,
+which today means Claude and Codex. For OpenCode the row opens the session, and
+you answer in OpenCode's own prompt.
 
 ## Usage cards
 

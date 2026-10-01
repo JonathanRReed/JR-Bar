@@ -387,8 +387,11 @@ Vocabulary:
   counts it: `needs_you` is the number of asks in `asks`, whichever listed
   session each names, while `total`, `active` and `failed` stay counts of
   main sessions. A client that lists only main sessions gives such an ask a
-  row of its own, carrying the same `ask` and the same `answer_ask` verbs, so
-  an alert is never raised for an ask the panel cannot show. With the
+  row of its own, carrying the same `ask`, so an alert is never raised for an
+  ask the panel cannot show. The ask's `answerable` still says whether
+  Approve and Deny are offered: they are only where the provider's hook can
+  deliver the answer (Claude and Codex), and the row opens the session
+  otherwise. With the
   setting off a worker's request is not in `asks` at all, and
   `workers_waiting` is the only place it shows.
 - Device ids are the Python device ids; the Screen Bar row is `screen-bar`
