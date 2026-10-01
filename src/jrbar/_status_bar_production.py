@@ -510,23 +510,6 @@ else:
             started = time.perf_counter()
             outcome = "ok"
             try:
-                if request.override_program is not None:
-                    controller = self.agent_controller_for_device(request.device)
-                    write = controller.sync_program(
-                        request.override_program,
-                        request.override_state,
-                    )
-                    return _legacy.HardwareWriteResult(
-                        request=request,
-                        write=write,
-                        label=(
-                            f"{request.device.name} Ambient effect"
-                            if request.coalesce_identity.startswith("ambient-")
-                            else f"{request.device.name} Calibration preview"
-                        ),
-                        agent_display_rendered=False,
-                        completed_at=self._runtime_worker_monotonic(),
-                    )
                 if request.display_kind == _legacy.LED_DISPLAY_AGENT:
                     controller = self.agent_controller_for_device(request.device)
                     preferences = request.accessibility_preferences

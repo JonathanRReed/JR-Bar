@@ -1912,7 +1912,6 @@ def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> 
     controller.agent_controller_for_device = lambda device: FakeDotController()
     ambient = HardwareWriteRequest(
         dot_device, AgentMode.WORKING, None, (), None, 0.5,
-        override_program="0:#001B22 1:#14732D", override_state=LedDisplayState.WORKING,
         coalesce_identity="ambient-dot-heartbeat",
     )
     result = controller._sync_hardware_device(ambient)
@@ -1929,7 +1928,6 @@ def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> 
 
     preview = HardwareWriteRequest(
         dot_device, AgentMode.WORKING, None, (), None, 0.5,
-        override_program="#FFFFFF 500ms\nrepeat", override_state=LedDisplayState.ASK,
         coalesce_identity="preview-effect-studio", preview_session_id="s",
     )
     assert controller._core_linked_dot_follows(preview) is False
