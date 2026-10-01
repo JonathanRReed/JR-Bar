@@ -209,12 +209,11 @@ LEDSFlashAnalysis.analyse(steps, ledCount: 8)   // port of flash_analysis.py: me
 ```
 
 Colour note: the sampler's floats are the firmware codes over 255. The strip
-PWMs those linearly; the Python Screen Bar paints them straight into an sRGB
-context ("identity transfer", see `_led_status_legacy.py`). The app does the
-same, in the sRGB colour space rather than the Python's DeviceRGB, so the hex
-codes mean what a colour picker says they mean. `LEDSTransfer.srgbToLinear`
-and `linearToSRGB` are the exact IEC 61966-2-1 curve for anyone who needs
-light.
+PWMs those linearly; the Screen Bar paints them straight into an sRGB context
+("identity transfer", see `_led_status_legacy.py`). The app does this in the
+sRGB colour space, so the hex codes mean what a colour picker says they mean.
+`LEDSTransfer.srgbToLinear` and `linearToSRGB` are the exact IEC 61966-2-1
+curve for anyone who needs light.
 
 ### Keyframes
 
@@ -701,13 +700,14 @@ three layers):
   Center says "OpenAI API", not "Openai-api" under a question mark);
   unknown providers get a neutral tile and a capitalised name.
 * Screen Bar: a borderless non-activating `NSPanel` at `.statusBar` level on
-  all Spaces, click-through, sized by the ports of
-  `virtual_window_frame_for_screen` / `rounded_band_bounds` /
-  `screen_bar_design.py`: the notch slot from `auxiliaryTopLeftArea` /
+  all Spaces, click-through, sized by the Swift ports (`ScreenBarGeometry`) of
+  the retired Python bar's window frame, band bounds and design constants: the
+  notch slot from `auxiliaryTopLeftArea` /
   `auxiliaryTopRightArea`, 14 pt auto wings, a 4 pt band with rounded ends
   1 pt below the notch (197 pt on this MacBook Pro). The eight LED samples
-  become one horizontal `CAGradientLayer` through the Python's raised-cosine
-  inter-LED blend (2 pt columns, 1/1024 quantised, coalesced runs), plus a
+  become one horizontal `CAGradientLayer` through the retired Python bar's
+  raised-cosine inter-LED blend (2 pt columns, 1/1024 quantised, coalesced
+  runs), plus a
   GPU-blurred copy underneath as the halo and the design's faint outline.
   There is never a per-LED segment.
 * Motion: the program goes to Core Animation once, as `CAKeyframeAnimation`s

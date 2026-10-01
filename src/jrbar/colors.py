@@ -4491,7 +4491,7 @@ CURATED_PALETTES: dict[str, dict[str, dict[str, str]]] = {
 # The four official brand colours, in one place, as (name, hex) -- the
 # single source of truth for BOTH the brand-seeded palettes below and the
 # named "Brand" swatch group every provider row leads with. They used to be
-# restated as an anonymous literal in settings_window.BRAND_SWATCHES, which
+# restated as an anonymous literal in the retired Settings window, which
 # is how the Agent Colors card came to claim "the first four swatches are
 # the brand colours" while actually rendering systemRed/Blue/Green/Purple.
 #
@@ -4535,9 +4535,9 @@ PROVIDER_PALETTES: dict[str, dict[str, dict[str, str]]] = {
 
 # --- Colour / Animation Studio model ---------------------------------------
 #
-# Everything the Studio pane draws is decided HERE, in plain data, and the
-# AppKit code in settings_window.py is a renderer over it. That split exists
-# because the bug this replaced was a MODEL bug wearing a view costume: the
+# Everything a Studio surface draws is decided HERE, in plain data, and the
+# view is only a renderer over it. That split exists because the bug this
+# replaced was a MODEL bug wearing a view costume: the
 # Agent Colors card told the user "the first four swatches are the brand
 # colours" while the strip it actually drew was CURATED_PALETTE, whose first
 # four are red/blue/green/purple. A sentence of body copy and a hover tooltip

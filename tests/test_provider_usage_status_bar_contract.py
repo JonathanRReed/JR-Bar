@@ -7,12 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "src" / "jrbar" / "provider_usage_status_bar.py"
-SETTINGS_CATEGORY_MODULE = ROOT / "src" / "jrbar" / "settings_category_runtime.py"
-SETTINGS_WINDOW_MODULE = ROOT / "src" / "jrbar" / "settings_window.py"
-ONBOARDING_MODULE = ROOT / "src" / "jrbar" / "onboarding_runtime.py"
-RESET_ACTION_MODULE = ROOT / "src" / "jrbar" / "provider_reset_settings_action.py"
 STATUS_PROJECTION_MODULE = ROOT / "src" / "jrbar" / "provider_usage_status_projection.py"
-SETTINGS_REFRESH_MODULE = ROOT / "src" / "jrbar" / "settings_destination_refresh.py"
 FEEDBACK_ACTIONS_MODULE = ROOT / "src" / "jrbar" / "provider_usage_feedback_actions.py"
 
 
@@ -102,65 +97,7 @@ def test_provider_usage_runs_through_background_service_and_main_thread_apply__a
     assert "load_provider_usage_settings" not in menu_settings_calls
 
 
-def test_usage_summary_and_checkbox_repaint_do_not_reload_settings__and_2_more() -> None:
-    # --- scenario: usage_summary_and_checkbox_repaint_do_not_reload_settings
-    summary_calls = _calls(
-        _function(SETTINGS_CATEGORY_MODULE, "refresh_native_usage_summary")
-    )
-    checkbox_calls = _calls(
-        _function(SETTINGS_CATEGORY_MODULE, "_sync_usage_menu_checkboxes")
-    )
-
-    assert "_sync_usage_menu_checkboxes" in summary_calls
-    assert "load_provider_usage_settings" not in summary_calls
-    assert "load_provider_usage_settings" not in checkbox_calls
-
-    # --- scenario: settings_navigation_uses_cached_page_refreshes_only
-    forbidden = {
-        "reconcile_device_runtime",
-        "refresh_settings_window",
-        "load_provider_usage_settings",
-    }
-    for name in (
-        "tableViewSelectionDidChange_",
-        "selectSettingsCategoryPage_",
-        "select_settings_pane",
-        "show_settings_window",
-    ):
-        calls = set(_calls(_method(name)))
-        assert not (calls & forbidden), (name, calls & forbidden)
-
-    assert "_refresh_settings_destination" in _calls(
-        _method("tableViewSelectionDidChange_")
-    )
-    assert "_refresh_settings_destination" in _calls(
-        _method("selectSettingsCategoryPage_")
-    )
-    show_source = ast.unparse(_method("show_settings_window"))
-    assert "_BaseStatusBarController.show_settings_window" not in show_source
-    assert "build_settings_window" in show_source
-
-    # --- scenario: settings_destination_refresh_policy_is_extracted_and_narrow
-    controller_calls = set(_calls(_method("_refresh_settings_destination")))
-    helper_calls = set(
-        _calls(_function(SETTINGS_REFRESH_MODULE, "refresh_settings_destination"))
-    )
-
-    assert "refresh_settings_destination" in controller_calls
-    assert "refresh_native_usage_summary" in helper_calls
-    assert "refresh_installed_agents_settings_projection" in helper_calls
-    assert "reconcile_installed_agent_inventory" in helper_calls
-    assert "refresh_capacity_settings_projection" in helper_calls
-    assert "refresh_colors_window" in helper_calls
-    assert not helper_calls & {
-        "load_provider_usage_settings",
-        "reconcile_device_runtime",
-        "refresh_settings_window",
-    }
-
-
-def test_provider_feedback_dispatch_is_extracted_behind_controller_methods__and_2_more() -> None:
-    # --- scenario: provider_feedback_dispatch_is_extracted_behind_controller_methods
+def test_provider_feedback_dispatch_is_extracted_behind_controller_methods() -> None:
     delegates = {
         "_alert_new_critical_pace": "alert_new_critical_pace",
         "_report_reconnect_outcome": "report_reconnect_outcome",
@@ -172,73 +109,11 @@ def test_provider_feedback_dispatch_is_extracted_behind_controller_methods__and_
         assert _calls(_method(method_name)).count(helper_name) == 1
         _function(FEEDBACK_ACTIONS_MODULE, helper_name)
 
-    # --- scenario: first_run_display_does_not_scan_system_provider_or_device_state
-    calls = set(_calls(_function(ONBOARDING_MODULE, "refresh_setup_window")))
 
-    assert not calls & {
-        "launch_agent_installed",
-        "sd_eject_guard_installed",
-        "sleep_helper_installed",
-        "provider_hooks_installed",
-        "configured_focus_modes",
-        "status_bar_devices",
-    }
-
-    # --- scenario: first_run_and_lighting_use_exact_sleep_and_idle_policies
-    setup_source = ast.unparse(_function(ONBOARDING_MODULE, "run_first_launch_setup"))
-    sleep_source = ast.unparse(_function(ONBOARDING_MODULE, "set_sleep_dim"))
-    idle_source = ast.unparse(_function(ONBOARDING_MODULE, "set_idle_auto_off"))
-
-    assert "with_sleep_dim_enabled" in setup_source
-    assert "with_idle_auto_off_enabled" in setup_source
-    assert "with_focus_sync_enabled" not in setup_source
-    assert "with_idle_dim_enabled" not in setup_source
-    assert "with_sleep_dim_enabled" in sleep_source
-    assert "with_idle_auto_off_enabled" in idle_source
-
-
-def test_settings_panes_consume_device_and_alcove_caches_without_probing__and_2_more() -> None:
-    # --- scenario: settings_panes_consume_device_and_alcove_caches_without_probing
-    devices_calls = set(_calls(_function(SETTINGS_WINDOW_MODULE, "_build_devices_pane")))
-    alcove_calls = set(_calls(_function(SETTINGS_WINDOW_MODULE, "alcove_follow_projection")))
-
-    assert "status_bar_devices" not in devices_calls
-    assert "_cached_settings_devices" in devices_calls
-    assert "alcove_follow_blocker" not in alcove_calls
-    assert "latest_alcove_status" in alcove_calls
-
-    # --- scenario: local_usage_settings_mutations_refresh_all_cached_projections
-    assert "apply_provider_usage_settings_snapshot" in _calls(
-        _method("toggleUsageMenuElement_")
-    )
-    provider_calls = _calls(_method("toggleUsageMenuProvider_"))
-    assert "toggle_provider_menu_visibility" in provider_calls
-    assert "load_provider_usage_settings" not in provider_calls
-
-    # --- scenario: per_provider_reset_selector_persists_master_and_each_channel
-    method = _function(RESET_ACTION_MODULE, "toggle_provider_reset_setting")
-    source = ast.unparse(method)
-
-    assert "with_reset_celebrations" in source
-    assert "with_reset_channel" in source
-    assert "save_provider_usage_settings" in source
-    assert "apply_provider_usage_settings_snapshot" in source
-    assert "refresh_native_usage_summary" in source
-
-
-def test_profile_settings_selector_delegates_save_and_ui_freshness_as_one_action__and_1_more() -> None:
-    # --- scenario: profile_settings_selector_delegates_save_and_ui_freshness_as_one_action
-    calls = _calls(_method("updateProviderInstanceProfile_"))
-
-    assert "save_provider_instance_profile_setting" in calls
-    assert "update_provider_instance_profile" not in calls
-
-    # --- scenario: usage_center_and_why_panel_forward_the_user_privacy_setting
-    source = MODULE.read_text(encoding="utf-8")
+def test_why_panel_forwards_the_user_privacy_setting() -> None:
     why_method = _method("why_panel_body")
     why_helper = _function(STATUS_PROJECTION_MODULE, "provider_usage_why_panel_body")
 
-    assert "controller.set_privacy_mode(settings.menu_display.privacy_mode)" in source
     assert _calls(why_method).count("provider_usage_why_panel_body") == 1
     assert "privacy_mode=privacy_mode" in ast.unparse(why_helper)
 
@@ -278,53 +153,14 @@ def test_session_opening_consults_exact_instance_policy_before_legacy_router__an
 
 
 _STATUS_BAR_PROBE_PREAMBLE = """
-from jrbar.provider_usage_platform import (
-    ProviderSourceState,
-    ProviderUsageSnapshot,
-    UsageLane,
-)
-from jrbar.provider_usage_runtime import ProviderUsageState
 from jrbar.provider_usage_status_bar import JRProviderUsageStatusBarController
 
 class FakeController:
-    def __init__(self, state=None):
-        self._jrbar_provider_usage_state = state
+    def __init__(self):
         self.refreshes = []
 
     def _request_provider_usage(self, **kwargs):
         self.refreshes.append(kwargs)
-
-def capacity_state():
-    lane = UsageLane(
-        provider_id="claude",
-        lane_id="weekly",
-        label="Weekly",
-        remaining_percent=74,
-        reset_at=1240,
-        scope="all",
-        model=None,
-        feature=None,
-        bindable=True,
-        source_id="fixture",
-    )
-    snapshot = ProviderUsageSnapshot(
-        provider_id="claude",
-        account_label=None,
-        observed_at=1000,
-        state=ProviderSourceState.READY,
-        reason_code=None,
-        action_label=None,
-        lanes=(lane,),
-        input_tokens=0,
-        cached_input_tokens=0,
-        output_tokens=0,
-        model_count=0,
-        estimated_cost_usd=None,
-        cache_savings_usd=None,
-        credits_remaining=None,
-        incident=None,
-    )
-    return ProviderUsageState((snapshot,), 1000, None, False)
 """
 
 
@@ -341,8 +177,7 @@ def _run_status_bar_probe(body: str) -> None:
     assert completed.returncode == 0, completed.stderr
 
 
-def test_refresh_gate_is_fresh_before_two_minutes_and_due_at_two_minutes__and_1_more() -> None:
-    # --- scenario: refresh_gate_is_fresh_before_two_minutes_and_due_at_two_minutes
+def test_refresh_gate_is_fresh_before_two_minutes_and_due_at_two_minutes() -> None:
     _run_status_bar_probe(
         """
 controller = FakeController()
@@ -360,20 +195,5 @@ JRProviderUsageStatusBarController.request_jr_usage_refresh(
     controller, ("claude",), monotonic=lambda: clock[0]
 )
 assert len(controller.refreshes) == 2
-"""
-    )
-
-    # --- scenario: capacity_projection_uses_injected_wall_clock
-    _run_status_bar_probe(
-        """
-controller = FakeController(capacity_state())
-fresh = JRProviderUsageStatusBarController.jr_capacity_settings_text(
-    controller, "claude", wall_clock=lambda: 1059.0
-)
-due = JRProviderUsageStatusBarController.jr_capacity_settings_text(
-    controller, "claude", wall_clock=lambda: 1060.0
-)
-assert "just checked" in fresh
-assert "checked 1m ago" in due
 """
     )

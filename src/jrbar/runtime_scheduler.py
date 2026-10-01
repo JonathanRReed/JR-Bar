@@ -41,10 +41,6 @@ class RuntimeFeature(str, Enum):
     PRESENTATION_STATIC_DEADLINE = "presentation_static_deadline"
     ALCOVE_OBSERVATION = "alcove_observation"
     POINTER_PEEK = "pointer_peek"
-    SETTINGS_SIGNAL_PREVIEW = "settings_signal_preview"
-    SETTINGS_COLOR_PREVIEW = "settings_color_preview"
-    SETUP_DEMO = "setup_demo"
-    SETTINGS_MESSAGE_DEADLINE = "settings_message_deadline"
     TEST_SIGNAL_DEADLINE = "test_signal_deadline"
 
 
@@ -620,17 +616,6 @@ class LatestWinsWorker:
         if first_start:
             return SubmissionDisposition.STARTED
         return SubmissionDisposition.QUEUED
-
-    def discard_pending(self, coalesce_key: str) -> bool:
-        """Discard one exact semantic slot without cancelling the generation."""
-
-        normalized = _normalize_work_key(coalesce_key)
-        with self._condition:
-            removed = self._pending.pop(normalized, None) is not None
-            if removed:
-                self._increment("cancelled")
-                self._condition.notify_all()
-            return removed
 
     def discard_pending_prefix(self, coalesce_prefix: str) -> int:
         """Discard every bounded slot under one opaque resource prefix."""

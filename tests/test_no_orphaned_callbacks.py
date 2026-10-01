@@ -12,8 +12,18 @@ structurally.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
+
+from test_controller_attributes import (
+    CONTROLLER_CLASSES,
+    CONTROLLER_MODULES,
+    _composed_daemon_class,
+)
+
+# The deck layer is one more class in the composed controller's chain.
+SELF_CALL_CLASSES = CONTROLLER_CLASSES | {"JRDeckStatusBarController"}
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "jrbar"
 
@@ -31,16 +41,6 @@ FRAMEWORK_CALLBACKS = frozenset(
         # NSApplication invokes this delegate callback directly during
         # activation. It is intentionally framework-owned, not orphaned.
         "applicationDidBecomeActive_",
-        "drawRect_",
-        "menuDidClose_",
-        "numberOfRowsInTableView_",
-        "popoverDidClose_",
-        "tableViewSelectionDidChange_",
-        "tableView_isGroupRow_",
-        "tableView_shouldSelectRow_",
-        "tableView_viewForTableColumn_row_",
-        "textDidChange_",
-        "textDidEndEditing_",
     }
 )
 
@@ -58,21 +58,9 @@ def test_every_selector_shaped_callback_is_referenced__and_1_more() -> None:
         for match in re.finditer(r"^    def (_\w*_fired)\(self", text, re.M):
             defined.setdefault(match.group(1), name)
 
-    # Selectors built dynamically from the provider registry
-    # (settings_window and the setup window both do
-    # f"install{provider.title()}Hooks:").
-    from jrbar.providers import HOOK_PROVIDERS
-
-    dynamic = set()
-    for provider in HOOK_PROVIDERS:
-        dynamic.add(f"install{provider.title()}Hooks_")
-        dynamic.add(f"uninstall{provider.title()}Hooks_")
-
     orphans: list[str] = []
     for method, home in sorted(defined.items()):
         if method.startswith("__") or method in FRAMEWORK_CALLBACKS:
-            continue
-        if method in dynamic:
             continue
         selector = method[:-1] + ":" if method.endswith("_") else None
         references = blob.count(f".{method}(") + blob.count(f"self.{method}")
@@ -98,8 +86,90 @@ def test_every_selector_shaped_callback_is_referenced__and_1_more() -> None:
     text = (SRC / "status_bar_legacy.py").read_text()
     names = re.findall(r'\(RuntimeFeature\.\w+, "(\w+)"\)', text)
     # Floor only guards against the regex silently matching nothing; the
-    # table lost its weather and timebox rows in the 0.8 rebuild.
-    assert len(names) >= 15
+    # table lost its weather and timebox rows in the 0.8 rebuild and its
+    # Settings preview and message rows with the Settings window.
+    assert len(names) >= 10
     for name in names:
         assert re.search(rf"^    def {re.escape(name)}\(self", text, re.M), name
 
+
+# Cocoa methods the controller inherits from NSObject. PyObjC resolves them
+# lazily, so they never show up in a class's own namespace.
+COCOA_CALLS = frozenset(
+    {
+        "performSelectorOnMainThread_withObject_waitUntilDone_",
+        "performSelector_withObject_afterDelay_",
+    }
+)
+
+
+def _self_calls_and_assignments(path: Path) -> tuple[dict[str, list[str]], set[str]]:
+    """``self.name(...)`` calls, and every ``self.name = ...`` store, inside
+    the controller's classes and the command functions in core_runtime that
+    take the controller as ``self``."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    calls: dict[str, list[str]] = {}
+    stores: set[str] = set()
+
+    def visit(node: ast.AST, inside: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            here = inside
+            if isinstance(child, ast.ClassDef):
+                here = inside or child.name in SELF_CALL_CLASSES
+            elif (
+                isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and isinstance(node, ast.Module)
+                and path.name == "core_runtime.py"
+            ):
+                params = child.args.posonlyargs + child.args.args
+                here = bool(params) and params[0].arg == "self"
+            if here:
+                if (
+                    isinstance(child, ast.Attribute)
+                    and isinstance(child.ctx, ast.Store)
+                    and isinstance(child.value, ast.Name)
+                    and child.value.id == "self"
+                ):
+                    stores.add(child.attr)
+                if (
+                    isinstance(child, ast.Call)
+                    and isinstance(child.func, ast.Attribute)
+                    and isinstance(child.func.value, ast.Name)
+                    and child.func.value.id == "self"
+                ):
+                    calls.setdefault(child.func.attr, []).append(
+                        f"{path.name}:{child.lineno}"
+                    )
+            visit(child, here)
+
+    visit(tree, False)
+    return calls, stores
+
+
+def test_every_self_call_names_a_method_the_controller_has() -> None:
+    """The opposite failure to an orphan: a method deleted while a call to
+    it stayed behind. Python reports that as an AttributeError on the path
+    nothing exercised, and the controller's call sites are many and spread
+    over four files. Every ``self.name(...)`` must name something the
+    composed daemon class defines, a callable some method stores on
+    ``self``, or a Cocoa method in COCOA_CALLS."""
+    composed = _composed_daemon_class()
+    known = set(composed["declared"]) | set(composed["chain"]) | set(composed["own"])
+    stored: set[str] = set()
+    calls: dict[str, list[str]] = {}
+    for module in (*CONTROLLER_MODULES, "deck_status_bar.py"):
+        found, stores = _self_calls_and_assignments(SRC / module)
+        stored |= stores
+        for name, sites in found.items():
+            calls.setdefault(name, []).extend(sites)
+    # The scan must have found the controller; an empty result would pass.
+    assert len(calls) > 150
+    undefined = {
+        name: sites
+        for name, sites in sorted(calls.items())
+        if name not in known and name not in stored and name not in COCOA_CALLS
+    }
+    assert undefined == {}, (
+        "self.name(...) calls to methods no controller class defines:\n  "
+        + "\n  ".join(f"{name}: {', '.join(sites[:3])}" for name, sites in undefined.items())
+    )

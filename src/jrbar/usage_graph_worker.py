@@ -1,4 +1,4 @@
-"""Build the settings usage chart directly, off-main, on demand.
+"""Build the usage graph the ``usage_graph`` command answers.
 
 The chart model used to ride the capacity-refresh acceptance protocol:
 built inside the shared refresh worker, delivered only when that batch's
@@ -6,8 +6,8 @@ generations all matched, dropped wholesale on a stale generation. The
 result was a chart that showed "No activity in this range" for data
 that a direct scan finds in seconds -- the acceptance plane exists to
 keep capacity READINGS honest, and the local activity chart never
-needed it. This worker owns the chart now: scan (incremental, cached),
-project, land on the main thread, done.
+needed it. The scan (incremental, cached) runs on the server's slow lane,
+off the main thread, and the reply is one JSON document.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ import json
 import os
 import sqlite3
 import stat
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,16 +27,6 @@ from .provider_homes import home_scan_roots, opencode_data_root, scan_usage_all_
 from .providers import default_state_dir
 from .t3_compat import T3ReadOnlyPolicy, _open_read_only, t3_database_path
 from .usage_heatmap import build_usage_heatmap
-
-_IN_FLIGHT_ATTR = "_usage_graph_worker_in_flight"
-_RESCAN_PENDING_ATTR = "_usage_graph_rescan_pending"
-_LAST_BUILD_ATTR = "_usage_graph_last_build"
-
-#: A landed model younger than this for the SAME (days, metric,
-#: providers) is served from memory instead of rescanned. Pane
-#: switches used to re-pay the full transcript scan (~9s warm, ~30s
-#: cold, all of it GIL time the menus feel) for identical inputs.
-_MODEL_REUSE_SECONDS = 60.0
 
 #: Persisted answer cache for the ``usage_graph`` socket command. The
 #: build itself is the expensive part (~30-65s cold over a large corpus);
@@ -535,18 +524,6 @@ def _build_payload(
     return model, summary
 
 
-def build_usage_graph_model(
-    settings,
-    *,
-    t3_policy: T3ReadOnlyPolicy | None = None,
-) -> dict:
-    """The chart model for the CURRENT metric, straight from the sources."""
-    snapshot = _settings_snapshot(settings)
-    if t3_policy is None:
-        return _build_payload(snapshot)[0]
-    return _build_payload(snapshot, t3_policy=t3_policy)[0]
-
-
 _VALID_DOCUMENT_DAYS = (7, 30, 90, 365)
 _VALID_DOCUMENT_METRICS = ("tokens", "cost", "sessions", "percent")
 
@@ -918,20 +895,6 @@ def _heatmap_document(heatmap) -> dict:
     }
 
 
-def scanning_placeholder(settings) -> dict:
-    settings = _settings_snapshot(settings)
-    days = settings.usage_graph_days
-    return {
-        "days": days,
-        "period_label": usage_stats.usage_period_label(days),
-        "metric": settings.usage_display_mode,
-        "labels": (),
-        "series": (),
-        "scale_max": 1.0,
-        "empty_text": "Scanning local activity…",
-    }
-
-
 def _build_key(
     settings,
     t3_policy: T3ReadOnlyPolicy | None = None,
@@ -969,190 +932,7 @@ def _drop_to_utility_qos() -> None:
         pass
 
 
-def refresh_usage_graph(
-    target,
-    *,
-    monotonic: Callable[[], float] = time.monotonic,
-    t3_policy: T3ReadOnlyPolicy | None = None,
-) -> None:
-    """Fire-and-forget rebuild; lands on main via AppHelper.callAfter."""
-    if t3_policy is None:
-        candidate = getattr(target, "_t3_read_only_policy", None)
-        if type(candidate) is T3ReadOnlyPolicy:
-            t3_policy = candidate
-    fields = getattr(target, "settings_fields", {}) or {}
-    graph = fields.get("profile_usage_graph")
-    heatmap_view = fields.get("profile_usage_heatmap")
-    settings = _settings_snapshot(target.settings)
-    key = _build_key(settings, t3_policy)
-
-    # Same inputs, recent result: serve the landed model without paying
-    # the scan again (a pane switch rebuilds the view but not the data).
-    last = getattr(target, _LAST_BUILD_ATTR, None)
-    model = getattr(target, "usage_graph_model", None)
-    if (
-        model is not None
-        and last is not None
-        and last[0] == key
-        and monotonic() - last[1] < _MODEL_REUSE_SECONDS
-    ):
-        if graph is not None:
-            try:
-                graph.setModel_(model)
-            except Exception:
-                pass
-        if heatmap_view is not None and model.get("heatmap") is not None:
-            try:
-                heatmap_view.setHeatmap_(model["heatmap"])
-            except Exception:
-                pass
-        label = fields.get("profile_usage_label")
-        if label is not None and model.get("summary"):
-            try:
-                label.setStringValue_(model["summary"])
-            except Exception:
-                pass
-        return
-
-    # Feedback FIRST, gating second: whatever else happens, the person
-    # who just picked "Year" must see SCANNING, never a stale range and
-    # never "No activity in this range". The old gate skipped this
-    # whenever any model had ever landed, so a range change showed the
-    # previous range's chart (or an empty one) for the whole scan.
-    if graph is not None and (
-        model is None
-        or model.get("days") != key[0]
-        or model.get("metric") != key[1]
-    ):
-        try:
-            graph.setModel_(scanning_placeholder(settings))
-        except Exception:
-            pass
-
-    if getattr(target, _IN_FLIGHT_ATTR, False):
-        # A scan is running for OLDER settings. Dropping this request
-        # silently was how a mid-scan range change landed the wrong
-        # chart; remember it and re-fire when the current scan lands.
-        setattr(target, _RESCAN_PENDING_ATTR, True)
-        return
-    setattr(target, _IN_FLIGHT_ATTR, True)
-
-    def _work() -> None:
-        _drop_to_utility_qos()
-        model = None
-        summary = None
-        # Build from the same immutable scalar snapshot used for admission.
-        # A settings update during the scan marks a pending refresh, which
-        # captures a new snapshot after this one lands.
-        built_key = key
-        # Fingerprint BEFORE the scan: the cached document claims the
-        # corpus as of scan start, so a mid-scan write lands as a miss
-        # on the next request rather than a stale claim.
-        doc_meta_key = None
-        doc_fingerprint = None
-        try:
-            doc_meta = _usage_doc_cache_meta(settings, t3_policy)
-            doc_meta_key = json.dumps(doc_meta, sort_keys=True, separators=(",", ":"))
-            doc_fingerprint = _corpus_fingerprint(settings, t3_policy=t3_policy)
-        except Exception:
-            doc_meta_key = None
-        try:
-            if t3_policy is None:
-                model, summary = _build_payload(settings)
-            else:
-                model, summary = _build_payload(settings, t3_policy=t3_policy)
-            if doc_meta_key is not None and doc_fingerprint is not None:
-                try:
-                    document = _project_graph_document(
-                        model, summary, settings.usage_graph_providers
-                    )
-                    _usage_doc_cache_store(doc_meta_key, doc_fingerprint, document)
-                except Exception:
-                    pass
-            model = {**model, "summary": summary}
-        except Exception:
-            model = None
-        finally:
-            def _apply() -> None:
-                setattr(target, _IN_FLIGHT_ATTR, False)
-                pending = bool(getattr(target, _RESCAN_PENDING_ATTR, False))
-                setattr(target, _RESCAN_PENDING_ATTR, False)
-                if model is not None:
-                    target.usage_graph_model = model
-                    target._usage_local_scan_complete = True
-                    setattr(target, _LAST_BUILD_ATTR, (built_key, monotonic()))
-                    fields = getattr(target, "settings_fields", {}) or {}
-                    view = fields.get("profile_usage_graph")
-                    if view is not None:
-                        try:
-                            view.setModel_(model)
-                        except Exception:
-                            pass
-                    heatmap_view = fields.get("profile_usage_heatmap")
-                    if heatmap_view is not None and model.get("heatmap") is not None:
-                        try:
-                            heatmap_view.setHeatmap_(model["heatmap"])
-                        except Exception:
-                            pass
-                    # This label describes the local chart, not the separate
-                    # provider summary. Replace loading and prior retry errors.
-                    if summary:
-                        label = fields.get("profile_usage_label")
-                        if label is not None:
-                            try:
-                                label.setStringValue_(summary)
-                            except Exception:
-                                pass
-                else:
-                    # A failed worker is no longer scanning. Clear any old
-                    # result so reopening the page retries instead of reusing it.
-                    target.usage_graph_model = None
-                    target._usage_local_scan_complete = False
-                    setattr(target, _LAST_BUILD_ATTR, None)
-                    message = "Local activity couldn't be loaded. Reopen Activity to retry."
-                    failed_model = {**scanning_placeholder(settings), "empty_text": message}
-                    unavailable = build_usage_heatmap(
-                        [], days=settings.usage_graph_days,
-                        provider_ids=settings.usage_graph_providers,
-                    )
-                    fields = getattr(target, "settings_fields", {}) or {}
-                    for name, method, value in (
-                        ("profile_usage_graph", "setModel_", failed_model),
-                        ("profile_usage_heatmap", "setHeatmap_", unavailable),
-                        ("profile_usage_label", "setStringValue_", message),
-                    ):
-                        field = fields.get(name)
-                        if field is not None:
-                            try:
-                                getattr(field, method)(value)
-                            except Exception:
-                                pass
-                if pending:
-                    refresh_usage_graph(
-                        target,
-                        monotonic=monotonic,
-                        t3_policy=t3_policy,
-                    )
-
-            try:
-                # AppHelper.callAfter is the PyObjC-blessed main-thread
-                # dispatch; NSOperationQueue.addOperationWithBlock_ accepted
-                # the Python callable but the block NEVER FIRED in-app --
-                # the stuck "Loading local usage history…" card was this.
-                from PyObjCTools import AppHelper
-
-                AppHelper.callAfter(_apply)
-            except Exception:
-                _apply()
-
-    threading.Thread(
-        target=_work, name="JRBarUsageGraph", daemon=True
-    ).start()
-
-
 __all__ = [
-    "build_usage_graph_model",
-    "refresh_usage_graph",
     "scan_t3_activity_statistics",
-    "scanning_placeholder",
+    "usage_graph_document",
 ]

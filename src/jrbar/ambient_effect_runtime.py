@@ -1462,6 +1462,13 @@ def _source_health_by_key(
     return health
 
 
+# The Screen Bar is the app's surface, so the daemon cannot see whether it is
+# showing. It plans the ember and the rainstick for it as visible. This used
+# to read "a status item or a Screen Bar object exists", which was true for
+# the same reason: the headless daemon always has the object.
+_SCREEN_BAR_SURFACE_VISIBLE = True
+
+
 def _observe_turn_starts(
     controller: object,
     events: tuple[CanonicalOperatorEvent, ...],
@@ -1499,17 +1506,13 @@ def _observe_turn_starts(
         if bool(getattr(controller, "_ambient_serious_thermal", False))
         else ThermalState.NOMINAL
     )
-    surface_visible = any(
-        getattr(controller, attribute, None) is not None
-        for attribute in ("status_item", "virtual_status_device")
-    )
     setattr(
         controller,
         "_turn_length_ember_plan",
         plan_turn_length_ember(
             elapsed_seconds=max(0.0, time.time() - started),
             turn_active=True,
-            surface_visible=surface_visible,
+            surface_visible=_SCREEN_BAR_SURFACE_VISIBLE,
             reduce_motion=reduce_motion,
             low_power=bool(getattr(controller, "_ambient_low_power", False)),
             thermal=thermal,
@@ -1664,10 +1667,6 @@ def _observe_dot_and_rainstick(
 
     scene = scene_from_value(getattr(settings, "active_scene", None)) or DEFAULT_SCENE
     admission, _environment_plan = _scene_pack_environment(controller, settings, scene)
-    surface_visible = any(
-        getattr(controller, attribute, None) is not None
-        for attribute in ("status_item", "virtual_status_device")
-    )
     thermal = (
         RainstickThermalState.SERIOUS
         if bool(getattr(controller, "_ambient_serious_thermal", False))
@@ -1689,7 +1688,7 @@ def _observe_dot_and_rainstick(
                 scene.value != "night"
                 or bool(getattr(settings, "rainstick_night_enabled", False))
             ),
-            surface_visible=surface_visible,
+            surface_visible=_SCREEN_BAR_SURFACE_VISIBLE,
             display_asleep=bool(getattr(controller, "display_asleep", False)),
             low_power=bool(getattr(controller, "_ambient_low_power", False)),
             thermal=thermal,

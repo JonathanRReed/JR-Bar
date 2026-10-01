@@ -39,31 +39,6 @@ def screen_bar_quota_ember_level(controller, *, wall_clock=time.time) -> float:
         return 0.0
 
 
-def capacity_settings_text(controller, provider_id, *, wall_clock=time.time):
-    state = getattr(controller, "_jrbar_provider_usage_state", None)
-    snapshot = next(
-        (row for row in getattr(state, "snapshots", ()) if row.provider_id == provider_id),
-        None,
-    )
-    if snapshot is None or not snapshot.lanes:
-        return None
-    from .provider_usage_qol import format_reset_countdown
-
-    now = float(wall_clock())
-    parts = []
-    for lane in snapshot.lanes[:3]:
-        part = lane.label if lane.remaining_percent is None else f"{lane.label} {lane.remaining_percent:.0f}% left"
-        if lane.reset_at:
-            part += f" · {format_reset_countdown(lane.reset_at, now=now)}"
-        parts.append(part)
-    if not parts:
-        return None
-    age_minutes = max(0, int((now - snapshot.observed_at) // 60))
-    checked = "just checked" if age_minutes < 1 else f"checked {age_minutes}m ago"
-    state_note = "" if snapshot.state.value == "ready" else f" · {snapshot.state.value}"
-    return " · ".join(parts) + f" · {checked}{state_note}"
-
-
 def active_usage_providers(controller, legacy) -> frozenset[str]:
     snapshot = getattr(controller, "last_snapshot", None)
     if snapshot is None:
@@ -156,7 +131,6 @@ def provider_usage_why_panel_body(controller, body: str, *, wall_clock=time.time
 __all__ = [
     "active_usage_providers",
     "append_quota_to_status_title",
-    "capacity_settings_text",
     "provider_usage_why_panel_body",
     "screen_bar_quota_ember_level",
 ]

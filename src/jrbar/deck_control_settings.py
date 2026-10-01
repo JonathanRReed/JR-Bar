@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 from .deck_actions import DeckAction
@@ -169,14 +169,6 @@ class DeckControlSettings:
             if scope not in ordered:
                 ordered.append(scope)
         return tuple(ordered)
-
-    def with_binding(self, key: int, action: DeckAction | None) -> DeckControlSettings:
-        if type(key) is not int or not 0 <= key <= 23:
-            raise ValueError("invalid deck key")
-        bindings = tuple((index, value) for index, value in self.bindings if index != key)
-        if action is not None:
-            bindings += ((key, action),)
-        return replace(self, bindings=tuple(sorted(bindings)))
 
     def to_dict(self) -> dict[str, object]:
         return {

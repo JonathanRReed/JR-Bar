@@ -40,7 +40,6 @@ _IMMUTABLE: Final = (type(None), bool, int, float, str, tuple, frozenset)
 DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
     {
         # Read before, or without, anything setting them.
-        "_active_calibration_preview_key": None,
         "_ambient_bar": None,
         "_ambient_low_power": False,
         "_ambient_serious_thermal": False,
@@ -82,9 +81,7 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "_jrbar_provider_presentation_settings": None,
         "_jrbar_provider_usage_service": None,
         "_jrbar_provider_usage_settings_snapshot": None,
-        "_jrbar_provider_usage_window": None,
         "_jrbar_reset_delivery_timer": None,
-        "_jrbar_usage_menu_boxes": None,
         "_keepalive_fresh_stamps": None,
         "_keychain_consent_ledger": None,
         "_last_claude_quota_log": None,
@@ -108,7 +105,6 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "_request_provider_usage": None,
         "_screen_bar_ask_latch": False,
         "_screen_bar_fleet_plan": None,
-        "_studio_builder_duration_labels": None,
         "_studio_led_count_cache": None,
         "_t3_read_only_policy": None,
         "_t3_snapshot_service": None,
@@ -129,8 +125,6 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "provider_usage_state": None,
         "quota_reset_celebration_provider": None,
         "quota_reset_celebration_until": 0.0,
-        "studio_builder_loop": True,
-        "studio_problem_label": None,
         "usage_graph_model": None,
         # Set by ``init``, and read with a getattr default before that on a
         # later controller (tests build several).
@@ -155,19 +149,15 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "_keepalive_poke_in_flight": False,
         "_last_event_refresh_at": 0.0,
         "_liveness_sweep_running": False,
-        "_operator_history_operation_status": "",
-        "_pane_transition_generation": 0,
         "_peek_hits": 0,
         "_production_force_refresh": False,
         "_production_last_full_refresh": 0.0,
         "_production_refresh_active": False,
         "_production_refresh_pending": False,
-        "_production_why_panel_refresh_pending": False,
         "_provider_probe_at": 0.0,
         "_refresh_led_write_seconds": 0.0,
         "_runtime_started": False,
         "_runtime_termination_started": False,
-        "_settings_window_closing": False,
         "_status_cue_candidates": (),
         "_usage_local_scan_complete": False,
         "all_clear_until": 0.0,
@@ -179,11 +169,9 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "hooks_update_in_flight": False,
         "leds_enabled": False,
         "mailbox_preferences": (),
-        "operator_history_range_days": 1,
         "peek_until": 0.0,
         "quota_blink_until": 0.0,
         "semantic_text_scale_percent": 100,
-        "status_menu_open": False,
         "studio_preview_program": "",
         "test_signal_until": 0.0,
     }
@@ -194,15 +182,11 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
 # read answers.
 UNDECLARED: Final[Mapping[str, str]] = MappingProxyType(
     {
-        "_calibration_compare_baseline": "a fresh {} per read",
-        "_calibration_compare_stash": "a fresh {} per read",
         "_core_pack_paths": "initialised behind hasattr",
         "_deck_settings_save_generation": "read with 0 here and None in deck_settings_controller",
         "_installed_agent_inventory_roots": "the default is computed per read",
         "_jrbar_provider_usage_edge_baseline": "the default is computed per read",
         "_keepalive_logged_targets": "a fresh set() per read",
-        "_settings_category_children": "initialised behind hasattr",
-        "studio_builder_steps": "read with a computed default in studio_builder",
         # Set by ``init``, but a getattr somewhere reads them with a mutable
         # or computed default, or with defaults that disagree.
         "_activity_quota_percents": "a fresh {} per read",
@@ -225,21 +209,12 @@ UNDECLARED: Final[Mapping[str, str]] = MappingProxyType(
         "_usage_provider_states": "a fresh {} per read",
         "_usage_transcript_states": "a fresh {} per read",
         "ask_blocked_by_agent": "a fresh {} per read",
-        "color_preview_enabled": "read with True and with False",
-        "color_preview_scenario": "the default is computed per read",
-        "colors_animation_thumbs": "a fresh {} per read",
-        "current_settings_pane": "read with None and with ''",
         "last_agent_modes": "a fresh {} per read",
         "last_led_display_kind_by_device": "a fresh {} per read",
-        "lid_animation_thumbs": "read with None and with {}",
         "local_triage_state": "read with None and with a computed default",
         "mailbox_retained_order": "read with None and with {}",
         "mailbox_seen_completion_ids": "a fresh set() per read",
         "navigation_candidates_by_work_key": "a fresh {} per read",
-        "settings_buttons": "read with None and with {}",
-        "settings_fields": "read with None and with {}",
-        "settings_panes": "read with None and with {}",
-        "tip_anchor_views": "tested with hasattr",
         "working_since_by_agent": "a fresh {} per read",
     }
 )

@@ -106,32 +106,41 @@ stay as they are.
 
 ## Map actions
 
-Under **Settings › Devices**, pick the logical key, pick an action, **Save
-mapping**. Actions include an installed app, a recorded shortcut for that
-frontmost app, revealing the current ask, Agent Browser, Usage Center, Control
-Center, bank changes, and a named macOS Shortcut.
+Each auxiliary control, the dial and the joystick, has a picker in the Control
+Center, and the four analog joystick sectors get one when **analog joystick
+sectors** is on. A picker offers next and previous bank, next and previous
+scope, revealing the current ask, Agent Browser, Usage Center and Control
+Center. **Unset** leaves the input to light up and nothing more. The picker
+sends `deck_set_settings`. The session keys are not mapped here: they belong to
+the sessions on the board.
 
-App shortcuts need Accessibility permission and the exact mapped application
-frontmost. A macOS Shortcut runs by its exact name through `/usr/bin/shortcuts`
-with fixed argv and no shell expansion; its receipt distinguishes queued,
-finished, failed, expired and timed out. Cancelling the runner cannot undo side
-effects a started Shortcut has already performed. Device events and provider
-text never supply executable code or command arguments.
+A mapping to an installed app, a recorded shortcut for that frontmost app, or a
+named macOS Shortcut could only be made in the retired Python Settings window,
+and nothing in the app makes one now. One already in `deck-controls.json` still
+runs, and `deck_set_settings` leaves it alone. App shortcuts need Accessibility
+permission and the exact mapped application frontmost. A macOS Shortcut runs by
+its exact name through `/usr/bin/shortcuts` with fixed argv and no shell
+expansion; its receipt distinguishes queued, finished, failed, expired and timed
+out. Cancelling the runner cannot undo side effects a started Shortcut has
+already performed. Device events and provider text never supply executable code
+or command arguments.
 
-**Run selected mapping…** is the explicit virtual-input path: it confirms first
-and uses the same bounded dispatcher as physical input, and Input check pauses
-it too. Actions expire rather than replay after a delayed UI, a reconnect, a
-remapping, a bank change or a termination. Queue overload is counted.
+Clicking a key, in the Control Center or on the compact rail, is the explicit
+virtual-input path. It sends `deck_press`, which does what a physical press of
+that control does: an explicit mapping first, otherwise approving or revealing
+the session. It asks no confirmation, it runs at once instead of queueing, and
+Input check pauses it too (the daemon refuses with `input_check`). Physical
+input goes through a bounded dispatcher instead: its actions expire rather than
+replay after a delayed UI, a reconnect, a remapping, a bank change or a
+termination, and queue overload is counted.
 
-**Import mappings…** reads one explicitly chosen JSON file, previews its
-actions, and imports with actions disabled. **Export mappings…** writes the
-data-only host mappings. Neither is a general firmware file editor, and none is
+Import and export of the data-only host mappings went with the retired Python
+Settings window; the app has no file editor for mappings, and none is
 implemented here.
 
 ## Recovery and uninstall
 
-Use **Export original keymap…** to keep your own copy before experimenting. The
-first original stays in a private device-identity-scoped backup beside the
+The first original stays in a private device-identity-scoped backup beside the
 integration settings, and a separate `.recovery.json` records interrupted
 operations. Do not delete either while a recovery is pending.
 

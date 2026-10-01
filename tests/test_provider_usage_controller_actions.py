@@ -3,8 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import pytest
-
 import jrbar.provider_usage_controller_actions as actions
 from jrbar import provider_usage_sync_cache as sync_cache
 from jrbar.capacity_types import SourceKey
@@ -16,102 +14,7 @@ from jrbar.provider_usage_settings import default_provider_usage_settings
 from jrbar.provider_usage_sync import MergedProviderSync
 
 
-class _Sender:
-    def __init__(self, payload=None, identifier="", state=0) -> None:
-        self._payload = payload
-        self._identifier = identifier
-        self._state = state
-
-    def representedObject(self):
-        return self._payload
-
-    def identifier(self):
-        return self._identifier
-
-    def state(self):
-        return self._state
-
-
-class _Controller:
-    def __init__(self, *, action_label="Retry") -> None:
-        snapshot = SimpleNamespace(
-            identity=("claude", "work"),
-            action_label=action_label,
-        )
-        self.provider_usage_state = SimpleNamespace(snapshots=(snapshot,))
-        self.refreshes = []
-        self.opened = []
-
-    def _request_provider_usage(self, **kwargs) -> None:
-        self.refreshes.append(kwargs)
-
-    def openProviderUsageCenter_(self, sender) -> None:
-        self.opened.append(sender)
-
-
-def test_sender_identity_and_refresh_scope_preserve_exact_instance():
-    sender = _Sender(
-        {"provider_id": "claude", "source_instance_id": "work"},
-        "ignored",
-    )
-
-    assert actions.provider_action_identity(sender) == ("claude", "work")
-    assert actions.provider_refresh_scope("claude", "work") == (
-        ("claude", "work"),
-    )
-    assert actions.provider_refresh_scope("claude", "default") == ("claude",)
-
-
-def test_generic_action_fallback_refreshes_and_opens_exact_instance__and_1_more(monkeypatch) -> None:
-    # --- scenario: generic_action_fallback_refreshes_and_opens_exact_instance
-    controller = _Controller()
-    sender = _Sender({"provider_id": "claude", "source_instance_id": "work"})
-    monkeypatch.setattr(actions, "run_provider_usage_action", lambda *_args: False)
-
-    actions.perform_provider_usage_action(
-        controller,
-        sender,
-        open_center=True,
-        log=lambda _message: None,
-    )
-
-    assert controller.refreshes == [
-        {"force": True, "providers": (("claude", "work"),)}
-    ]
-    assert controller.opened == [sender]
-
-    # --- scenario: connect_action_is_armed_before_instance_scoped_claude_flow
-    monkeypatch.undo()
-    controller = _Controller(action_label="Reconnect Claude")
-    sender = _Sender({"provider_id": "claude", "source_instance_id": "work"})
-    connected = []
-    monkeypatch.setattr(
-        actions,
-        "connect_claude_usage",
-        lambda target, *, log, source_instance_id: connected.append(
-            (target, log, source_instance_id)
-        ),
-    )
-
-    def log(_message):
-        return None
-
-    actions.perform_provider_usage_action(
-        controller,
-        sender,
-        open_center=False,
-        log=log,
-        wall_clock=lambda: 1234.5,
-    )
-
-    assert controller._jrbar_reconnect_watch == ("claude", "work", 1234.5)
-    assert connected == [(controller, log, "work")]
-    assert controller.refreshes == []
-
-
-
-def test_settings_snapshot_cache_projects_all_consumer_domains__and_1_more() -> None:
-    # --- scenario: settings_snapshot_cache_projects_all_consumer_domains
+def test_settings_snapshot_cache_projects_all_consumer_domains() -> None:
     settings = (
         default_provider_usage_settings()
         .with_profile(
@@ -124,13 +27,9 @@ def test_settings_snapshot_cache_projects_all_consumer_domains__and_1_more() -> 
         .with_menu_flag("privacy_mode", True)
     )
     service_updates = []
-    privacy_updates = []
     controller = SimpleNamespace(
         _jrbar_provider_usage_service=SimpleNamespace(
             note_settings_updated=service_updates.append,
-        ),
-        _jrbar_provider_usage_window=SimpleNamespace(
-            set_privacy_mode=privacy_updates.append,
         ),
     )
 
@@ -150,41 +49,6 @@ def test_settings_snapshot_cache_projects_all_consumer_domains__and_1_more() -> 
         == "Claude Work"
     )
     assert service_updates == [settings]
-    assert privacy_updates == [True]
-
-    # --- scenario: provider_menu_toggle_updates_only_the_exact_instance
-    settings = default_provider_usage_settings().with_profile(
-        ProviderInstanceProfile(
-            ProviderInstanceKey("claude", "work"),
-            "Claude Work",
-        )
-    )
-    loaded = SimpleNamespace(settings=settings)
-    writes = []
-    service_updates = []
-    controller = SimpleNamespace(
-        _jrbar_provider_usage_service=SimpleNamespace(
-            note_settings_updated=service_updates.append,
-        )
-    )
-    sender = _Sender(
-        {"provider_id": "claude", "source_instance_id": "work"},
-        state=0,
-    )
-
-    updated = actions.toggle_provider_menu_visibility(
-        controller,
-        sender,
-        loader=lambda: loaded,
-        saver=lambda value, *, loaded: writes.append((value, loaded)),
-    )
-
-    assert updated.preference("claude", "default").menu_visible is True
-    assert updated.preference("claude", "work").menu_visible is False
-    assert writes == [(updated, loaded)]
-    assert controller._jrbar_provider_usage_settings_snapshot is updated
-    assert service_updates == [updated]
-
 
 
 def test_settings_snapshot_change_invalidates_merged_sync_for_old_sharing_policy(
@@ -256,8 +120,7 @@ def test_nonsharing_settings_change_preserves_fresh_merged_sync(monkeypatch) -> 
     assert sync_cache.cached_merged_sync(state, monotonic=lambda: 100.0) is merged
 
 
-def test_profile_session_action_overrides_only_an_exact_nondefault_status__and_2_more() -> None:
-    # --- scenario: profile_session_action_overrides_only_an_exact_nondefault_status
+def test_profile_session_action_overrides_only_an_exact_nondefault_status() -> None:
     settings = default_provider_usage_settings().with_profile(
         ProviderInstanceProfile(
             ProviderInstanceKey("claude", "work"),
@@ -284,96 +147,3 @@ def test_profile_session_action_overrides_only_an_exact_nondefault_status__and_2
 
     assert actions.profile_session_action(controller, status, None) == "terminal"
     assert actions.profile_session_action(controller, status, "app") == "app"
-
-    # --- scenario: profile_control_update_saves_only_the_exact_instance
-    settings = default_provider_usage_settings().with_profile(
-        ProviderInstanceProfile(
-            ProviderInstanceKey("claude", "work"),
-            "Claude Work",
-        )
-    )
-    loaded = SimpleNamespace(settings=settings)
-    writes = []
-    sender = SimpleNamespace(
-        representedObject=lambda: {
-            "provider_id": "claude",
-            "source_instance_id": "work",
-            "field_key": "label",
-            "value": "Claude Work",
-        },
-        stringValue=lambda: "Client Claude",
-    )
-    controller = SimpleNamespace()
-
-    updated = actions.update_provider_instance_profile(
-        controller,
-        sender,
-        loader=lambda: loaded,
-        saver=lambda value, *, loaded: writes.append((value, loaded)),
-    )
-
-    assert updated.profile("claude", "work").label == "Client Claude"
-    assert updated.profile("claude").label == "Claude"
-    assert writes == [(updated, loaded)]
-    assert controller._jrbar_provider_usage_settings_snapshot is updated
-
-    # --- scenario: privacy_mode_rejects_profile_name_save_without_overwriting_alias
-    settings = (
-        default_provider_usage_settings()
-        .with_profile(
-            ProviderInstanceProfile(
-                ProviderInstanceKey("claude", "work"),
-                "Client Claude",
-            )
-        )
-        .with_menu_flag("privacy_mode", True)
-    )
-    writes = []
-    sender = SimpleNamespace(
-        representedObject=lambda: {
-            "provider_id": "claude",
-            "source_instance_id": "work",
-            "field_key": "label",
-            "value": "Claude Account 2",
-        },
-        stringValue=lambda: "Claude Account 2",
-    )
-
-    with pytest.raises(ValueError, match="privacy mode"):
-        actions.update_provider_instance_profile(
-            SimpleNamespace(),
-            sender,
-            loader=lambda: SimpleNamespace(settings=settings),
-            saver=lambda value, *, loaded: writes.append((value, loaded)),
-        )
-
-    assert settings.profile("claude", "work").label == "Client Claude"
-    assert writes == []
-
-
-
-def test_profile_popup_update_reads_selected_exact_choice() -> None:
-    settings = default_provider_usage_settings().with_profile(
-        ProviderInstanceProfile(ProviderInstanceKey("claude", "work"), "Claude Work")
-    )
-    selected = SimpleNamespace(
-        representedObject=lambda: {
-            "provider_id": "claude",
-            "source_instance_id": "work",
-            "field_key": "retention_days",
-            "value": 30,
-        }
-    )
-    sender = SimpleNamespace(
-        representedObject=lambda: None,
-        selectedItem=lambda: selected,
-    )
-
-    updated = actions.update_provider_instance_profile(
-        SimpleNamespace(),
-        sender,
-        loader=lambda: SimpleNamespace(settings=settings),
-        saver=lambda _value, *, loaded: None,
-    )
-
-    assert updated.profile("claude", "work").retention_days == 30

@@ -262,26 +262,6 @@ def project_clearable_sessions(
     )
 
 
-def _current_rows_by_id(
-    statuses: Iterable[AgentStatus],
-) -> tuple[dict[str, AgentStatus], tuple[str, ...]]:
-    selected: dict[str, AgentStatus] = {}
-    ordered_ids: list[str] = []
-    for status in statuses:
-        existing = selected.get(status.agent_id)
-        if existing is None:
-            ordered_ids.append(status.agent_id)
-        if existing is None or (
-            _as_utc(status.updated_at),
-            status.mode != AgentMode.COMPLETED,
-        ) > (
-            _as_utc(existing.updated_at),
-            existing.mode != AgentMode.COMPLETED,
-        ):
-            selected[status.agent_id] = status
-    return selected, tuple(ordered_ids)
-
-
 def _source_bound_identity(status: AgentStatus) -> tuple[object | None, str]:
     """Keep source instances distinct while retaining a safe unkeyed fallback."""
 
@@ -385,7 +365,6 @@ def select_unseen_completions(
     *,
     collected_at: datetime,
     within_seconds: float,
-    menu_last_opened_at: datetime | None,
     acknowledged_keys: Collection[CompletionPresentationKey],
     attended_prompt_monotonic: Mapping[str, float],
     now_monotonic: float,
@@ -405,11 +384,6 @@ def select_unseen_completions(
             if identity not in current_by_identity
         ),
     )
-    opened_at = (
-        _as_utc(menu_last_opened_at)
-        if menu_last_opened_at is not None
-        else None
-    )
     unseen: list[AgentStatus] = []
     for status in candidates:
         if not _completion_is_eligible(
@@ -422,8 +396,6 @@ def select_unseen_completions(
         key = completion_presentation_key(status)
         if key is not None and key in acknowledged_keys:
             continue
-        if opened_at is not None and _as_utc(status.updated_at) <= opened_at:
-            continue
         prompted_at = attended_prompt_monotonic.get(status.agent_id)
         if (
             prompted_at is not None
@@ -435,32 +407,6 @@ def select_unseen_completions(
     return tuple(unseen)
 
 
-def plan_seen_completion_ids(
-    visible_statuses: Iterable[AgentStatus],
-    previously_seen_ids: Collection[str],
-    *,
-    limit: int = 100,
-) -> tuple[str, ...]:
-    """Plan bounded completion acknowledgement for one menu visit."""
-
-    selected_by_id, _ = _current_rows_by_id(visible_statuses)
-    visible_ids = [
-        status.agent_id
-        for status in sorted(
-            (
-                status
-                for status in selected_by_id.values()
-                if status.mode == AgentMode.COMPLETED
-                and status.event_name != "SessionEnd"
-            ),
-            key=lambda status: (
-                -_as_utc(status.updated_at).timestamp(),
-                status.agent_id,
-            ),
-        )
-    ]
-    retained_ids = sorted(set(previously_seen_ids).difference(visible_ids))
-    return tuple((*visible_ids, *retained_ids)[: max(0, int(limit))])
 __all__ = [
     "ACKNOWLEDGED_EPSILON",
     "COMPLETED_VISIBLE_SECONDS",
@@ -472,7 +418,6 @@ __all__ = [
     "VISIBLE_LIVE",
     "acknowledged_epoch_by_session",
     "filter_visible_sessions",
-    "plan_seen_completion_ids",
     "project_clearable_sessions",
     "select_clearable_completions",
     "select_unseen_completions",

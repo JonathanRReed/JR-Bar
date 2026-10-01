@@ -55,11 +55,11 @@ class PresentationSchedulerInputs:
     alcove_enabled: bool
     alcove_relevant: bool
     pointer_interaction_relevant: bool
-    #: The Screen Bar's REAL frame interval while animating (seconds).
-    #: None keeps the historical 60 Hz fallback. Carrying the actual
-    #: cadence here is the fix the virtual_device known-hole comment
-    #: prescribed: the resting 30 fps breathe no longer wakes the app
-    #: 60 times a second to render nothing.
+    #: The surface's REAL frame interval while animating (seconds).
+    #: None keeps the historical 60 Hz fallback. A surface that knows its
+    #: cadence reports it here, so a resting 30 fps breathe does not wake
+    #: the app 60 times a second to render nothing. The daemon's Screen Bar
+    #: never draws and leaves this None.
     frame_interval: float | None = None
 
     def __post_init__(self) -> None:

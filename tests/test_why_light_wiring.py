@@ -6,7 +6,6 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import jrbar.status_bar_legacy as status_bar_legacy
 from jrbar.accessibility_display import AccessibilityDisplayPreferences
 from jrbar.core_state import StateDelta
 from jrbar.dnd_policy import (
@@ -38,6 +37,7 @@ from jrbar.why_light_context import (
     ReduceMotionDecision,
     ValueAvailability,
     WinningPriority,
+    format_why_light_context,
 )
 from tests.test_jrbar import isolate_controller
 
@@ -354,7 +354,7 @@ class WhyLightWiringTests(unittest.TestCase):
         )
         self.assertIn(
             "Hardware write latency: latest 6.0 ms",
-            status_bar_legacy.format_why_light_context(context),
+            format_why_light_context(context),
         )
 
     def test_renderer_timing_stays_unavailable_when_only_refresh_duration_exists(
@@ -410,22 +410,21 @@ class WhyLightWiringTests(unittest.TestCase):
         self.assertIn("Current light context", body)
         self.assertIn("Local Health (current run, never sent)", body)
 
-    def test_live_refresh_repaints_panel_after_current_refresh_metric(self) -> None:
+    def test_live_refresh_records_its_metric_before_the_local_health_snapshot(self) -> None:
         events: list[tuple[str, bool]] = []
         delta = StateDelta(1, 0, 0, frozenset(), False)
+        real_snapshot = self.controller.local_health_snapshot
 
         def legacy_refresh(controller, _sender):
             events.append(
                 ("legacy", controller._performance().snapshot().metric("refresh") is not None)
             )
-            controller.refresh_why_panel()
 
-        def repaint(controller):
+        def health(*args, **kwargs):
             events.append(
-                ("panel", controller._performance().snapshot().metric("refresh") is not None)
+                ("health", self.controller._performance().snapshot().metric("refresh") is not None)
             )
-            controller.local_health_snapshot()
-            return True
+            return real_snapshot(*args, **kwargs)
 
         self.controller._production_force_refresh = True
         self.controller._production_refresh_active = False
@@ -434,24 +433,13 @@ class WhyLightWiringTests(unittest.TestCase):
             patch.object(self.controller, "_observe_refresh_state", return_value=delta),
             patch.dict(
                 refresh.__globals__,
-                {
-                    "_LegacyStatusBarController": SimpleNamespace(
-                    refresh_=legacy_refresh,
-                    refresh_why_panel=repaint,
-                    )
-                },
+                {"_LegacyStatusBarController": SimpleNamespace(refresh_=legacy_refresh)},
             ),
-            patch.object(
-                self.controller,
-                "local_health_snapshot",
-                wraps=self.controller.local_health_snapshot,
-            ) as health,
+            patch.object(self.controller, "local_health_snapshot", side_effect=health),
         ):
             refresh(self.controller, None)
 
-        self.assertEqual(events, [("legacy", False), ("panel", True)])
-        self.assertEqual(health.call_count, 1)
-
+        self.assertEqual(events, [("legacy", False), ("health", True)])
 
     def test_display_poll_caches_focus_observation_availability(self) -> None:
         command = self.status_bar.RuntimeWorkCommand(

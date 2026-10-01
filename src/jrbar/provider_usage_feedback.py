@@ -1,19 +1,16 @@
-"""Visible outcomes for provider connect/reconnect actions.
+"""Visible outcomes for provider usage events.
 
 Extracted from the status-bar facade (which has a size ratchet for
-exactly this reason). Three jobs, all AppKit-free enough to test:
+exactly this reason). The jobs, all AppKit-free enough to test:
 
-  * `show_provider_usage_feedback` -- the guaranteed-visible sink every
-    action message lands in. set_settings_message's only sink is empty
-    until Settings has been opened once; the Usage Center banner is only
-    rendered if the message is set BEFORE show(). This function owns
-    that ordering so no call site can get it wrong again.
   * `alert_connection_loss` -- one attention cue when a provider that
     WAS healthy stops being healthy, through the same interrupt gates
     as every other courtesy signal.
-  * `connect_claude_usage` -- the Claude connect flow: a Keychain read
-    that may prompt (user-initiated only), then an honest repair that
-    checks expiry and the signed-out shape before claiming success.
+  * `alert_new_critical_pace` and `celebrate_quota_resets` -- the pace
+    and refill cues.
+  * `report_reconnect_outcome` -- what a reconnect actually achieved.
+  * `deliver_reset_channels` -- each requested reset channel's own
+    outcome.
 """
 
 from __future__ import annotations
@@ -143,35 +140,6 @@ def deliver_reset_channels(
                 pass
         receipts.append(ResetChannelReceipt(channel, outcome, reason, float(now)))
     return tuple(receipts)
-
-
-def show_provider_usage_feedback(controller, message: str) -> None:
-    text = str(message or "")
-    if not text:
-        return
-    try:
-        controller.set_settings_message(text)
-    except Exception:
-        pass
-    try:
-        log = getattr(controller, "_provider_usage_log", None)
-        if callable(log):
-            log(f"provider action: {text}")
-    except Exception:
-        pass
-    try:
-        from .provider_usage_window import ProviderUsageWindowController
-
-        window = getattr(controller, "_jrbar_provider_usage_window", None)
-        if window is None:
-            window = ProviderUsageWindowController(action_target=controller)
-            controller._jrbar_provider_usage_window = window
-        # Order is load-bearing: show() renders whatever message is
-        # already set; a message set after show() is dropped.
-        window.show_message(text)
-        window.show(controller.provider_usage_state)
-    except Exception:
-        pass
 
 
 def alert_connection_loss(
@@ -465,13 +433,6 @@ def report_reconnect_outcome(controller, state, *, log) -> None:
             "reconnect outcome: "
             f"{provider_id}/{source_instance_id} -> {value}"
         )
-        window = getattr(controller, "_jrbar_provider_usage_window", None)
-        if window is not None:
-            try:
-                if window.window.isVisible():
-                    window.show_message(message)
-            except Exception:
-                pass
         try:
             controller.set_settings_message(message)
         except Exception:
@@ -483,79 +444,10 @@ def report_reconnect_outcome(controller, state, *, log) -> None:
             pass
 
 
-def connect_claude_usage(
-    controller,
-    *,
-    log,
-    source_instance_id: str = "default",
-) -> None:
-    """The Claude connect flow behind the Connect/Reconnect click.
-
-    The original sin here was optimism: whatever token the Keychain
-    held was re-stored -- expired, empty-but-refreshable, it did not
-    matter -- and the message said "Claude usage connected." while the
-    usage endpoint kept rejecting it."""
-    message = "Claude usage connected."
-    try:
-        from .credentials import (
-            CLAUDE_CODE_KEYCHAIN,
-            CredentialOutcome,
-            KeychainConsentLedger,
-            read_keychain_secret,
-        )
-        from .provider_credential_store import ProviderCredentialStore
-        from .provider_reconnect import repair_claude_credential
-        from .providers import default_state_dir
-
-        result = read_keychain_secret(
-            CLAUDE_CODE_KEYCHAIN,
-            allow_prompt=True,
-            ledger=KeychainConsentLedger(
-                default_state_dir() / "keychain-consent.json"
-            ),
-        )
-        if not result.ok:
-            message = {
-                CredentialOutcome.DENIED: (
-                    "Keychain access was declined — click Connect again "
-                    "and choose Allow."
-                ),
-                CredentialOutcome.COOLING_DOWN: (
-                    "Keychain access was declined recently — try again "
-                    "in a few minutes."
-                ),
-            }.get(
-                result.outcome,
-                "Claude Code's sign-in was not found in the Keychain.",
-            )
-        else:
-            repair = repair_claude_credential(
-                ProviderCredentialStore(),
-                now=time.time(),
-                keychain_payload_reader=lambda: result.secret,
-                source_instance_id=source_instance_id,
-            )
-            message = repair.message
-            if repair.changed or repair.outcome.value == "already_healthy":
-                scope = (
-                    ("claude",)
-                    if source_instance_id == "default"
-                    else (("claude", source_instance_id),)
-                )
-                controller._request_provider_usage(
-                    force=True, providers=scope
-                )
-    except Exception as exc:
-        message = f"Could not read the Claude Code sign-in: {exc}"
-    try:
-        log(f"claude usage connect: {message}")
-    except Exception:
-        pass
-    show_provider_usage_feedback(controller, message)
-
-
 __all__ = [
     "alert_connection_loss",
-    "connect_claude_usage",
-    "show_provider_usage_feedback",
+    "alert_new_critical_pace",
+    "celebrate_quota_resets",
+    "deliver_reset_channels",
+    "report_reconnect_outcome",
 ]

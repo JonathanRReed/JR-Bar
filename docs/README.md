@@ -43,7 +43,7 @@ install it. This page lists everything else.
 - [Top-of-screen contract](TOP-OF-SCREEN.md): how Notch, Screen Bar, Menu
   Bar and Dock share the top of the display
 - [Effect authoring guide](EFFECT-AUTHORING-GUIDE.md)
-- [Screen Bar profiling](SCREEN-BAR-PROFILING.md)
+- [Screen Bar profiling](SCREEN-BAR-PROFILING.md): the Instruments scenarios
 - [Packaging and signing](../packaging/README.md), and
   [running the app from a checkout](../app/README.md)
 

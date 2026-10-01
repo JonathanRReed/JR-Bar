@@ -75,6 +75,40 @@ def test_reassert_write_omits_the_approach_frame(tmp_path: Path) -> None:
     assert controller.last_nominal_program == _steady_state_variant(program)
 
 
+def test_the_strip_keeps_its_phase_free_dedupe(tmp_path: Path) -> None:
+    """The strip's firmware loops the program, so phase must NOT write.
+
+    A text compare here differs on essentially every call, the 60s reassert
+    never engages, and the device is rewritten every refresh at about 30
+    syscalls plus an fsync and a readback, to USB mass storage.
+    """
+    from datetime import datetime, timezone
+
+    from jrbar.colors import BLEND_MODE_RELAY, ColorSettings
+    from jrbar.models import AgentMode, AgentStatus
+
+    statuses = tuple(
+        AgentStatus(
+            provider=provider,
+            agent_id=f"{provider}:session:{provider}",
+            display_name=provider,
+            mode=AgentMode.WORKING,
+            updated_at=datetime(2026, 8, 14, tzinfo=timezone.utc),
+            event_name="PreToolUse",
+            session_id=provider,
+        )
+        for provider in ("claude", "codex")
+    )
+    colors = ColorSettings.defaults().with_blend_mode(BLEND_MODE_RELAY)
+    controller = AgentLedController(device_path=tmp_path, file_name="LEDS.LED")
+
+    first = controller.sync_snapshot(statuses, colors, relay_elapsed_seconds=0.0)
+    later = controller.sync_snapshot(statuses, colors, relay_elapsed_seconds=0.37)
+
+    assert first.changed is True
+    assert later.changed is False
+
+
 def test_a_done_agent_rests_dark_beside_a_working_one() -> None:
     """The completion sweep is the celebration; a done agent's LEDs must
     not hold bright for the 20-minute visibility window afterwards."""

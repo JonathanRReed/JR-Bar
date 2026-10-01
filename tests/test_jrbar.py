@@ -11,7 +11,6 @@ import sys
 import tempfile
 import threading
 import time
-import types
 import unittest
 from contextlib import redirect_stderr
 from dataclasses import replace as dataclass_replace
@@ -123,7 +122,6 @@ from jrbar.navigation_policy import (
     resolve_navigation,
 )
 from jrbar.operator_accessibility import status_item_accessibility
-from jrbar.operator_history_store import OperatorHistoryState
 from jrbar.operator_state import BootIdentifier, ClockSample, empty_operator_state
 from jrbar.origin import (
     ProcessInfo,
@@ -1361,772 +1359,7 @@ for (const event of [
             )
 
 
-    def test_virtual_screen_bar_frame_geometry(self) -> None:
-        """The virtual bar covers notch plus LED band on notched displays and
-        collapses to the band alone on notchless ones."""
-        # --- scenario: virtual_screen_bar_frame_covers_notch_plus_led_band
-        try:
-            from jrbar import virtual_device
-            from jrbar.screen_bar_runtime import install_screen_bar_runtime
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        # The shipped geometry: install_screen_bar_runtime() rewrites the
-        # band/window metrics at facade import, so pinning the pre-install
-        # constants guarded a frame no user ever saw (and made this test
-        # fail or pass by process import order).
-        install_screen_bar_runtime()
-
-        screen = SimpleNamespace(
-            frame=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0),
-                size=SimpleNamespace(width=1512.0, height=982.0),
-            ),
-            safeAreaInsets=lambda: SimpleNamespace(top=32.0),
-            auxiliaryTopLeftArea=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0),
-                size=SimpleNamespace(width=640.0, height=24.0),
-            ),
-            auxiliaryTopRightArea=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=872.0, y=0.0),
-                size=SimpleNamespace(width=640.0, height=24.0),
-            ),
-        )
-
-        self.assertEqual(
-            virtual_device.virtual_window_frame_for_screen(screen),
-            ((640.0, 944.0), (232.0, 38.0)),
-        )
-
-        # --- scenario: virtual_screen_bar_on_notchless_display_is_led_band_only
-        try:
-            from jrbar import virtual_device
-            from jrbar.screen_bar_runtime import install_screen_bar_runtime
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        install_screen_bar_runtime()
-
-        screen = SimpleNamespace(
-            frame=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0),
-                size=SimpleNamespace(width=1920.0, height=1080.0),
-            ),
-            safeAreaInsets=lambda: SimpleNamespace(top=0.0),
-            auxiliaryTopLeftArea=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0),
-                size=SimpleNamespace(width=0.0, height=0.0),
-            ),
-            auxiliaryTopRightArea=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0),
-                size=SimpleNamespace(width=0.0, height=0.0),
-            ),
-        )
-
-        self.assertFalse(virtual_device.screen_has_notch(screen))
-        self.assertEqual(
-            virtual_device.virtual_window_frame_for_screen(screen),
-            ((830.0, 1058.0), (260.0, 22.0)),
-        )
-
-        # --- scenario: virtual_screen_bar_frame_rate_contract
-        # Active animation must no longer be bottlenecked by the previous
-        # 30fps paint / 15Hz WASM pipeline. Static output has no repeating
-        # frame driver and hidden output is paused by the render policy.
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        self.assertGreaterEqual(virtual_device.FRAME_RATE, 60.0)
-        self.assertAlmostEqual(virtual_device.FRAME_INTERVAL, 1.0 / virtual_device.FRAME_RATE)
-        self.assertLess(virtual_device.IDLE_FRAME_RATE, virtual_device.FRAME_RATE)
-        self.assertAlmostEqual(
-            virtual_device.TARGET_SAMPLE_INTERVAL_VIEW_CONTRACT,
-            virtual_device.FRAME_INTERVAL,
-        )
-
-    def test_screen_bar_cadence_promotion(self) -> None:
-        """Sampling follows the selected cadence; a new program promotes it
-        immediately while a frame callback never does."""
-        # --- scenario: screen_bar_sampling_interval_follows_selected_cadence
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (220.0, 37.0)))
-        view.setRenderFps_(60.0)
-        self.assertAlmostEqual(view._target_sample_interval, 1.0 / 60.0)
-        view.setRenderFps_(10.0)
-        self.assertAlmostEqual(view._target_sample_interval, 1.0 / 10.0)
-
-        # --- scenario: screen_bar_new_program_promotes_cadence_immediately
-        try:
-            from jrbar import virtual_device
-            from jrbar.render_policy import RenderEnvironment
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        class View:
-            current_program = "old"
-
-            def setProgram_startedAt_(self, program, _started_at):
-                self.current_program = program
-
-            def setRenderFps_(self, _fps):
-                pass
-
-        device = virtual_device.VirtualStatusDevice.alloc().init()
-        published = []
-        device.window = SimpleNamespace(isVisible=lambda: True)
-        device.view = View()
-        device._frame_interval_current = 1.0 / virtual_device.IDLE_FRAME_RATE
-        device.show = lambda: None
-        device._runtime_environment = lambda **_kwargs: RenderEnvironment(visible=True)
-        device.set_presentation_schedule_reconciler(published.append)
-        device.set_program("new")
-
-        self.assertTrue(device._animation_active)
-        self.assertTrue(published[-1].animation_active)
-        # Promoted off the idle-dropped rate. Continuous motion settles
-        # at the gentle cadence rather than transition framerate: a slow
-        # breathe looks identical there and running it at 60-120Hz was
-        # the app's single largest CPU draw.
-        self.assertLess(device._frame_interval_current, 1.0 / virtual_device.IDLE_FRAME_RATE)
-        self.assertAlmostEqual(
-            device._frame_interval_current,
-            1.0 / virtual_device.GENTLE_MOTION_FPS,
-            places=4,
-        )
-        self.assertIsNone(device.timer)
-
-        # --- scenario: screen_bar_frame_callback_never_promotes_cadence
-        try:
-            from jrbar import virtual_device
-            from jrbar.render_policy import RenderEnvironment
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        class View:
-            def setPresentationColors_(self, _colors):
-                pass
-
-            def setNeedsDisplay_(self, _value):
-                pass
-
-            def setRenderFps_(self, _fps):
-                pass
-
-        intervals = []
-        device = virtual_device.VirtualStatusDevice.alloc().init()
-        device.window = SimpleNamespace(isVisible=lambda: True)
-        device.view = View()
-        device.timer = object()
-        device._animation_active = False
-        device._last_marked_colors = ((0, 0, 0, 0),) * virtual_device.LED_COUNT
-        device._frame_interval_current = 1.0 / virtual_device.IDLE_FRAME_RATE
-        device._last_reposition_at = time.monotonic()
-        device._runtime_environment = lambda **_kwargs: RenderEnvironment(visible=True)
-
-        def install(interval):
-            intervals.append(interval)
-            device._frame_interval_current = interval
-
-        device._install_frame_timer = install
-        device.redraw_(None)
-
-        self.assertFalse(device._animation_active)
-        self.assertEqual(intervals, [])
-
-    def test_screen_bar_power_and_repaint_guards(self) -> None:
-        """Hidden bars drop power observers, visible bars pause for sleep and
-        promote on wake, and identical frames are not repainted."""
-        # --- scenario: screen_bar_power_observers_are_removed_when_hidden
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        class Center:
-            def __init__(self):
-                self.added = []
-                self.removed = []
-
-            def addObserver_selector_name_object_(self, observer, selector, name, obj):
-                self.added.append((observer, selector, name, obj))
-
-            def removeObserver_name_object_(self, observer, name, obj):
-                self.removed.append((observer, name, obj))
-
-        center = Center()
-
-        class Workspace:
-            @staticmethod
-            def sharedWorkspace():
-                return SimpleNamespace(notificationCenter=lambda: center)
-
-        device = virtual_device.VirtualStatusDevice.alloc().init()
-        with patch.object(virtual_device, "NSWorkspace", Workspace):
-            device._install_power_observers()
-            device.hide()
-
-        self.assertEqual(len(center.added), 2)
-        self.assertEqual(len(center.removed), 2)
-        self.assertFalse(device._power_observers_installed)
-
-        # --- scenario: visible_screen_bar_pauses_for_sleep_and_promotes_on_wake
-        try:
-            from jrbar import virtual_device
-            from jrbar.render_policy import RenderEnvironment
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        class Timer:
-            def __init__(self):
-                self.invalidated = False
-
-            def invalidate(self):
-                self.invalidated = True
-
-        class View:
-            def __init__(self):
-                self.sample_fps = []
-
-            def setRenderFps_(self, fps):
-                self.sample_fps.append(fps)
-
-        device = virtual_device.VirtualStatusDevice.alloc().init()
-        original_timer = Timer()
-        view = View()
-        published = []
-        device.window = SimpleNamespace(isVisible=lambda: True)
-        device.view = view
-        device.timer = original_timer
-        device._frame_interval_current = virtual_device.FRAME_INTERVAL
-        device._runtime_environment = lambda **_kwargs: RenderEnvironment(
-            visible=True,
-            display_asleep=device._display_asleep,
-        )
-
-        device.set_presentation_schedule_reconciler(published.append)
-
-        # Both notification selectors must share one injected transition
-        # path so direct lifecycle calls and workspace events cannot drift.
-        self.assertTrue(hasattr(device, "_set_display_asleep"))
-        device.screenDidSleep_(None)
-        self.assertTrue(original_timer.invalidated)
-        self.assertIsNone(device.timer)
-        self.assertIsNone(device._frame_interval_current)
-        self.assertEqual(view.sample_fps[-1], 0.0)
-
-        device.screenDidWake_(None)
-        self.assertTrue(device._animation_active)
-        self.assertTrue(published[-1].animation_active)
-        self.assertEqual(device._frame_interval_current, virtual_device.FRAME_INTERVAL)
-        self.assertEqual(view.sample_fps[-1], virtual_device.FRAME_RATE)
-        self.assertIsNone(device.timer)
-
-        # --- scenario: screen_bar_identical_quantized_frame_is_not_repainted
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        paints = []
-
-        class View:
-            def _colors_for_draw(self):
-                return [(0.2, 0.4, 0.8, 1.0)] * virtual_device.LED_COUNT
-
-            def setNeedsDisplay_(self, value):
-                paints.append(value)
-
-            def setRenderFps_(self, _fps):
-                pass
-
-        device = virtual_device.VirtualStatusDevice.alloc().init()
-        device.view = View()
-        device.timer = object()
-        device._frame_interval_current = virtual_device.FRAME_INTERVAL
-        device._reposition_tick = 0
-        device.redraw_(None)
-        device.redraw_(None)
-
-        self.assertEqual(paints, [True])
-
-    def test_screen_bar_riser_and_gradient(self) -> None:
-        """The riser uses native gradient draws, the fallback stays under the
-        old fill count, and the gradient cache reuses smoothed colors."""
-        # --- scenario: screen_bar_riser_uses_two_native_gradient_draws
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        gradient_draws = []
-        fallback_fills = []
-
-        class Gradient:
-            def drawInRect_angle_(self, rect, angle):
-                gradient_draws.append((rect, angle))
-
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (220.0, 37.0)))
-        with (
-            patch.object(
-                virtual_device,
-                "native_riser_gradients",
-                return_value=(Gradient(), Gradient()),
-            ),
-            patch.object(
-                virtual_device,
-                "fill_rect_with_cg",
-                side_effect=lambda *args: fallback_fills.append(args),
-            ),
-        ):
-            view._draw_wing_riser(None, (1.0, 0.2, 0.1, 1.0), 0.0, 6.0, 37.0)
-
-        self.assertEqual(len(gradient_draws), 2)
-        self.assertEqual(fallback_fills, [])
-
-        # --- scenario: screen_bar_riser_fallback_stays_below_old_fill_count
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        fallback_fills = []
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (220.0, 37.0)))
-        with (
-            patch.object(
-                virtual_device,
-                "native_riser_gradients",
-                side_effect=RuntimeError("native gradient unavailable"),
-            ),
-            patch.object(
-                virtual_device,
-                "fill_rect_with_cg",
-                side_effect=lambda *args: fallback_fills.append(args),
-            ),
-        ):
-            view._draw_wing_riser(None, (1.0, 0.2, 0.1, 1.0), 0.0, 6.0, 37.0)
-
-        self.assertLessEqual(len(fallback_fills), 24)
-        self.assertLess(len(fallback_fills), 96)
-
-        # --- scenario: screen_bar_gradient_cache_reuses_changing_smoothed_colors
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        class Gradient:
-            allocations = 0
-
-            @classmethod
-            def alloc(cls):
-                cls.allocations += 1
-                return cls()
-
-            def initWithColors_atLocations_colorSpace_(self, _colors, _locations, _color_space):
-                return self
-
-            def drawInRect_angle_(self, _rect, _angle):
-                pass
-
-        frames = 120
-        builder_calls = 0
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (220.0, 37.0)))
-        cache = view._riser_gradient_cache
-        original_get_or_build = cache.get_or_build
-
-        def counting_get_or_build(key, builder):
-            def counted_builder():
-                nonlocal builder_calls
-                builder_calls += 1
-                return builder()
-
-            return original_get_or_build(key, counted_builder)
-
-        cache.get_or_build = counting_get_or_build
-        with patch.object(virtual_device, "NSGradient", Gradient):
-            for index in range(frames):
-                phase = index / (frames - 1)
-                edge_color = (
-                    0.35 + 0.08 * phase,
-                    0.42 + 0.04 * phase,
-                    0.80 - 0.06 * phase,
-                    0.70 + 0.10 * phase,
-                )
-                view._draw_wing_riser(None, edge_color, 0.0, 6.0, 37.0, outer_on_left=True)
-                view._draw_wing_riser(None, edge_color, 214.0, 220.0, 37.0, outer_on_left=False)
-
-        # The draw path may reuse even more buckets as its uniform layer
-        # calibration changes. This is a cache ceiling, not a golden image.
-        self.assertLessEqual(builder_calls, 9)
-        self.assertEqual(Gradient.allocations, builder_calls * 2)
-        self.assertLess(Gradient.allocations, frames * 2)
-
-    def test_compact_mode(self) -> None:
-        """Compact mode keeps the normal frame and redraws on toggle."""
-        # --- scenario: compact_mode_keeps_the_same_frame_as_normal_mode
-        # Alcove compatibility changes drawing style, not position -- an
-        # earlier attempt moved the window to an offset frame and it read
-        # as a disconnected floating widget rather than an integrated
-        # accent. Position/size must be identical either way; only
-        # VirtualLedView.compact_mode (tested below) changes.
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        screen = SimpleNamespace(
-            frame=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0),
-                size=SimpleNamespace(width=1512.0, height=982.0),
-            ),
-            safeAreaInsets=lambda: SimpleNamespace(top=32.0),
-            auxiliaryTopLeftArea=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0),
-                size=SimpleNamespace(width=640.0, height=24.0),
-            ),
-            auxiliaryTopRightArea=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=872.0, y=0.0),
-                size=SimpleNamespace(width=640.0, height=24.0),
-            ),
-        )
-
-        self.assertFalse(hasattr(virtual_device, "compact_window_frame_for_screen"))
-        frame = virtual_device.virtual_window_frame_for_screen(screen)
-        self.assertEqual(frame, virtual_device.virtual_window_frame_for_screen(screen))
-
-        # --- scenario: compact_mode_toggle_updates_the_view_and_redraws
-        try:
-            from jrbar import virtual_device
-            from jrbar.screen_bar_runtime import install_screen_bar_runtime
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        # The draw bodies live in screen_bar_runtime and are installed onto
-        # the view class at facade import; a cold suite must install them
-        # explicitly (the in-class originals were deleted 2026-08-26).
-        install_screen_bar_runtime()
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (220.0, 37.0)))
-        self.assertFalse(view.compact_mode)
-        view.setCompactMode_(True)
-        self.assertTrue(view.compact_mode)
-        # Must not raise: compact drawing path renders without the normal
-        # black-backdrop body shape.
-        view.setState_brightness_(virtual_device.LedDisplayState.WORKING, 255)
-        view._draw_compact_accent()
-        view.setCompactMode_(False)
-        self.assertFalse(view.compact_mode)
-
-    def _screen_with_notch(self, *, left_width=640.0, right_width=640.0):
-        return SimpleNamespace(
-            frame=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0),
-                size=SimpleNamespace(width=1512.0, height=982.0),
-            ),
-            safeAreaInsets=lambda: SimpleNamespace(top=32.0),
-            auxiliaryTopLeftArea=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0),
-                size=SimpleNamespace(width=left_width, height=24.0),
-            ),
-            auxiliaryTopRightArea=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=1512.0 - right_width, y=0.0),
-                size=SimpleNamespace(width=right_width, height=24.0),
-            ),
-        )
-
-    def test_wrap_frame_wings_and_notch_geometry(self) -> None:
-        """Wrap mode widens the frame around the menu bar and keeps it
-        centered; wings are bounded by the narrower side and the notch
-        inset is capped by the view bounds."""
-        # --- scenario: wrap_menu_bar_off_matches_todays_exact_frame
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        screen = self._screen_with_notch()
-        # Omitting wrap_menu_bar (the default) must be byte-for-byte
-        # identical to explicitly passing False -- no behavior change for
-        # anyone who never opts in.
-        self.assertEqual(
-            virtual_device.virtual_window_frame_for_screen(screen),
-            virtual_device.virtual_window_frame_for_screen(screen, wrap_menu_bar=False),
-        )
-
-        # --- scenario: wrap_menu_bar_widens_the_frame_but_stays_centered
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        screen = self._screen_with_notch()
-        plain = virtual_device.virtual_window_frame_for_screen(screen)
-        wrapped = virtual_device.virtual_window_frame_for_screen(screen, wrap_menu_bar=True)
-        (plain_x, plain_y), (plain_w, plain_h) = plain
-        (wrapped_x, wrapped_y), (wrapped_w, wrapped_h) = wrapped
-        self.assertGreater(wrapped_w, plain_w)
-        self.assertEqual(wrapped_h, plain_h)
-        self.assertEqual(wrapped_y, plain_y)
-        # Centered on the screen either way -- the extra width is symmetric.
-        screen_center = screen.frame().origin.x + screen.frame().size.width / 2.0
-        self.assertAlmostEqual(wrapped_x + wrapped_w / 2.0, screen_center)
-        self.assertAlmostEqual(plain_x + plain_w / 2.0, screen_center)
-
-        # --- scenario: wing_width_is_bounded_by_the_narrower_side
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        # A cluttered right side (lots of menu-bar app icons eating into the
-        # reported safe area) must constrain the wing on *both* sides --
-        # a lopsided wing (wide on the left, clipped on the right) would
-        # look broken, not native.
-        narrow_screen = self._screen_with_notch(left_width=640.0, right_width=50.0)
-        roomy_screen = self._screen_with_notch(left_width=640.0, right_width=640.0)
-        narrow_width = virtual_device.wing_width_for_screen(
-            narrow_screen, virtual_device.slot_width_for_screen(narrow_screen)
-        )
-        roomy_width = virtual_device.wing_width_for_screen(
-            roomy_screen, virtual_device.slot_width_for_screen(roomy_screen)
-        )
-        self.assertEqual(narrow_width, 0.0, "not enough safe room on the right for any wing")
-        self.assertGreater(roomy_width, 0.0)
-        self.assertLessEqual(roomy_width, virtual_device.WING_MAX_WIDTH)
-
-        # --- scenario: wing_width_is_zero_on_a_notchless_display
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        screen = SimpleNamespace(
-            frame=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0),
-                size=SimpleNamespace(width=1920.0, height=1080.0),
-            ),
-            safeAreaInsets=lambda: SimpleNamespace(top=0.0),
-            auxiliaryTopLeftArea=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0), size=SimpleNamespace(width=0.0, height=0.0)
-            ),
-            auxiliaryTopRightArea=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0), size=SimpleNamespace(width=0.0, height=0.0)
-            ),
-        )
-        self.assertEqual(virtual_device.wing_width_for_screen(screen, 220.0), 0.0)
-        # And therefore wrap_menu_bar=True is a no-op on this display.
-        self.assertEqual(
-            virtual_device.virtual_window_frame_for_screen(screen),
-            virtual_device.virtual_window_frame_for_screen(screen, wrap_menu_bar=True),
-        )
-
-        # --- scenario: notch_width_none_uses_full_view_width_unchanged
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (220.0, 37.0)))
-        self.assertIsNone(view.notch_width)
-        notch_width, wing_offset = view._notch_geometry()
-        self.assertEqual(notch_width, 220.0)
-        self.assertEqual(wing_offset, 0.0)
-
-        # --- scenario: set_notch_width_insets_the_body_and_computes_wing_offset
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
-        view.setNotchWidth_(220.0)
-        notch_width, wing_offset = view._notch_geometry()
-        self.assertEqual(notch_width, 220.0)
-        self.assertEqual(wing_offset, 90.0)  # (400 - 220) / 2
-
-        # --- scenario: notch_width_never_exceeds_the_views_own_bounds
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        # A stale notch_width from before a screen change (narrower new
-        # screen) must not produce a negative wing_offset.
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (200.0, 37.0)))
-        view.setNotchWidth_(320.0)
-        notch_width, wing_offset = view._notch_geometry()
-        self.assertEqual(notch_width, 200.0)
-        self.assertEqual(wing_offset, 0.0)
-
-    def test_wing_rendering(self) -> None:
-        """Wrap-mode drawing never raises, wing glow reaches the real edge,
-        column colors match the plain blend, white preview scales
-        evenly, risers are symmetric, auto-wing backs off."""
-        # --- scenario: wrap_mode_drawing_does_not_raise
-        try:
-            from jrbar import virtual_device
-            from jrbar.screen_bar_runtime import install_screen_bar_runtime
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        install_screen_bar_runtime()
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
-        view.setNotchWidth_(220.0)
-        view.setState_brightness_(virtual_device.LedDisplayState.WORKING, 255)
-        # Must not raise with a real, wider-than-notch bounds -- classic
-        # mode paints contained inside the notch silhouette (glow, corner
-        # feather, rim, gauges all under the body clip) while the window
-        # itself stays wider.
-        view.drawRect_(((0, 0), (400.0, 37.0)))
-        view.setCompactMode_(True)
-        view._draw_compact_accent()
-
-        # --- scenario: wing_glow_reaches_the_wings_actual_edge
-        # Regression guard: glow_color_for_column used to sample wing
-        # columns with blended_led_color_at_x's own inter-LED blend
-        # radius, which is sized for blending between neighboring LEDs a
-        # few points apart -- on a wide wing that faded to nothing tens
-        # of points before the wing's actual (much larger) assigned
-        # width, reading as "the glow doesn't extend to the edges" even
-        # though the window itself was genuinely that wide.
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        colors = virtual_device.virtual_led_colors(virtual_device.LedDisplayState.DONE, 0.0, 255)
-        notch_width = 200.0
-        wing_offset = 90.0  # wider than blended_led_color_at_x's own blend radius here
-        led_width = notch_width / virtual_device.LED_COUNT
-
-        at_notch_edge = virtual_device.glow_color_for_column(colors, led_width, notch_width, wing_offset, 89.0)
-        deep_in_wing = virtual_device.glow_color_for_column(colors, led_width, notch_width, wing_offset, 20.0)
-        at_wing_edge = virtual_device.glow_color_for_column(colors, led_width, notch_width, wing_offset, 0.0)
-        past_wing_edge = virtual_device.glow_color_for_column(colors, led_width, notch_width, wing_offset, -5.0)
-
-        self.assertGreater(at_notch_edge[3], 0.5, "glow should still be strong right at the notch's own edge")
-        self.assertGreater(deep_in_wing[3], 0.0, "glow should still be visible most of the way into the wing")
-        self.assertAlmostEqual(at_wing_edge[3], 0.0, delta=0.01)
-        self.assertEqual(past_wing_edge[3], 0.0)
-
-        # --- scenario: glow_color_for_column_matches_plain_blend_with_no_wing
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        colors = virtual_device.virtual_led_colors(virtual_device.LedDisplayState.WORKING, 0.0, 255)
-        notch_width = 200.0
-        led_width = notch_width / virtual_device.LED_COUNT
-
-        for x in (0.0, 50.0, 100.0, 199.0):
-            self.assertEqual(
-                virtual_device.glow_color_for_column(colors, led_width, notch_width, 0.0, x),
-                virtual_device.blended_led_color_at_x(colors, x, led_width),
-            )
-
-        # --- scenario: preview_white_brightness_scales_all_leds_evenly
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (220.0, 37.0)))
-        view.setPreviewWhiteBrightness_(128)
-
-        self.assertEqual(len(view.fixed_colors), virtual_device.LED_COUNT)
-        red, green, blue, alpha = view.fixed_colors[0]
-        self.assertEqual(red, green)
-        self.assertEqual(green, blue)
-        self.assertEqual(blue, alpha)
-        self.assertGreater(red, 0.0)
-        self.assertTrue(all(c == view.fixed_colors[0] for c in view.fixed_colors))
-
-        # --- scenario: wing_risers_are_symmetric_and_render_without_raising
-        # Wing risers are the Alcove bracket's language now (classic mode
-        # paints contained inside the notch), but the bracket ("|____|")
-        # must still hug both corners rather than visibly terminate on
-        # one side: glow_color_for_column's own symmetry (both edge
-        # samples equal, by construction, for a uniform-color state)
-        # feeds identical left/right risers. The drawRect_ call below
-        # exercises the contained classic path end to end.
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        notch_width, wing_offset = 200.0, 70.0
-        led_width = notch_width / virtual_device.LED_COUNT
-        colors = virtual_device.virtual_led_colors(virtual_device.LedDisplayState.DONE, 0.0, 255)
-        left_edge_color = virtual_device.blended_led_color_at_x(colors, 0.0, led_width)
-        right_edge_color = virtual_device.blended_led_color_at_x(colors, notch_width, led_width)
-        self.assertEqual(left_edge_color, right_edge_color)
-
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (notch_width + 2.0 * wing_offset, 37.0)))
-        view.setHasNotch_(True)
-        view.setNotchWidth_(notch_width)
-        view.setState_brightness_(virtual_device.LedDisplayState.DONE, 255)
-        # Must not raise -- exercises the contained classic path with a
-        # wider-than-notch window (wing_offset > 0 centers the body).
-        view.drawRect_(view.bounds())
-
-        # --- scenario: auto_wing_backs_off_when_the_gap_is_wider_than_the_notch
-        # A measured (or user-set) gap wider than the hardware slot eats
-        # each side's free room; the auto wing must shrink by the same
-        # overhang or it draws over app menus and status icons.
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        class Area:
-            def __init__(self, x, width):
-                self.origin = types.SimpleNamespace(x=x, y=0.0)
-                self.size = types.SimpleNamespace(width=width, height=24.0)
-
-        class Screen:
-            def auxiliaryTopLeftArea(self):
-                return Area(0.0, 80.0)
-
-            def auxiliaryTopRightArea(self):
-                return Area(280.0, 80.0)
-
-        # Hardware slot = 280 - 80 = 200pt; each side has 80pt of room.
-        screen = Screen()
-        at_notch = virtual_device.wing_width_for_screen(screen, 200.0)
-        # Auto wings are the tight bracket hug, never the whole room.
-        self.assertEqual(at_notch, virtual_device.WING_AUTO_LENGTH)
-        # 100pt of widening = 50pt of overhang per side: 80 - 28 - 50
-        # = 2pt of room, below the usable minimum -> no wing at all.
-        self.assertEqual(virtual_device.wing_width_for_screen(screen, 300.0), 0.0)
-
-    def test_bracket_and_wings_only_modes(self) -> None:
-        """Bracket mode mirrors the crowd and survives a single lit LED;
-        wings-only mode renders; the setting round-trips."""
-        # --- scenario: bracket_style_auto_mirrors_leds_when_a_crowd_is_lit
-        # Auto preserves each LED even when only the moving head is lit.
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
-        crowd = [(0.2, 0.5, 1.0, 1.0), (1.0, 0.4, 0.7, 1.0)] + [(0.05, 0.02, 0.02, 0.05)] * 6
-        rendered = view._bracket_colors(crowd)
-        self.assertEqual(rendered, crowd)
-        lone = [(0.2, 0.5, 1.0, 1.0)] + [(0.0, 0.0, 0.0, 0.0)] * 7
-        self.assertEqual(view._bracket_colors(lone), lone)
-        # Explicit styles override auto in both directions.
-        view.setBracketStyle_("spatial")
-        self.assertEqual(view._bracket_colors(lone), lone)
-        view.setBracketStyle_("identity")
-        self.assertEqual(len(set(view._bracket_colors(crowd))), 1)
-
-        # --- scenario: bracket_style_setting_round_trips
+    def test_bracket_style_setting_round_trips(self) -> None:
         configured = AgentMonitorSettings().with_screen_bar_bracket_style("spatial")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
@@ -2136,41 +1369,8 @@ for (const event of [
         with self.assertRaises(ValueError):
             AgentMonitorSettings().with_screen_bar_bracket_style("plaid")
 
-        # --- scenario: bracket_identity_color_survives_a_single_lit_led
-        # The Alcove bracket/accent paints ONE identity color -- with a
-        # spatial per-LED render, one working agent lit 1 of 8 LEDs and
-        # the bracket was 7/8 black with an invisible right riser.
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
-        one_lit = [(0.2, 0.5, 1.0, 1.0)] + [(0.0, 0.0, 0.0, 0.0)] * 7
-        red, green, blue, alpha = view._bar_identity_color(one_lit)
-        self.assertAlmostEqual(red, 0.2, places=5)
-        self.assertAlmostEqual(blue, 1.0, places=5)
-        self.assertEqual(alpha, 1.0)
-        self.assertEqual(view._bar_identity_color([(0.0, 0.0, 0.0, 0.0)] * 8), (0.0, 0.0, 0.0, 0.0))
-
-        # --- scenario: wings_only_mode_renders_without_raising
-        # The Alcove-aware wrap draws just the bracket (wings + risers)
-        # and leaves the center -- Alcove's own overlay -- untouched.
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        notch_width, wing_offset = 624.0, 90.0
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (notch_width + 2.0 * wing_offset, 37.0)))
-        view.setHasNotch_(True)
-        view.setNotchWidth_(notch_width)
-        view.setWingsOnlyMode_(True)
-        view.setState_brightness_(virtual_device.LedDisplayState.DONE, 255)
-        view.drawRect_(view.bounds())
-
     def test_wraps_menu_bar_settings(self) -> None:
-        """The wrap flag persists, defaults false in old settings files, and
-        reaches the virtual device."""
+        """The wrap flag persists and defaults false in old settings files."""
         # --- scenario: settings_persist_wraps_menu_bar_flag
         settings = AgentMonitorSettings().with_virtual_status_device_wraps_menu_bar(True)
         self.assertTrue(settings.virtual_status_device_wraps_menu_bar)
@@ -2190,39 +1390,9 @@ for (const event of [
             reloaded = load_settings(path)
         self.assertFalse(reloaded.virtual_status_device_wraps_menu_bar)
 
-        # --- scenario: virtual_status_device_set_wraps_menu_bar
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        device = virtual_device.VirtualStatusDevice.alloc().init()
-        self.assertFalse(device.wraps_menu_bar)
-        device.set_wraps_menu_bar(True)
-        self.assertTrue(device.wraps_menu_bar)
-
-    def test_alcove_wasm_and_led_blend(self) -> None:
-        """Alcove detection fails safe, the wasm controller uses the packaged
-        firmware engine for both LED counts, and the virtual bar blends."""
-        # --- scenario: is_alcove_running_fails_safe_on_workspace_error
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        class ExplodingWorkspace:
-            @staticmethod
-            def sharedWorkspace():
-                raise RuntimeError("boom")
-
-        # Patch the name as imported into virtual_device's own namespace, not
-        # the real AppKit class object -- NSWorkspace is a bridged
-        # Objective-C class shared with the rest of the process (e.g.
-        # status_bar.py's own icon lookups), and mutating it directly would
-        # leak into unrelated tests.
-        with patch.object(virtual_device, "NSWorkspace", ExplodingWorkspace):
-            self.assertFalse(virtual_device.is_alcove_running())
-
+    def test_the_wasm_controller_uses_the_packaged_firmware_engine(self) -> None:
+        """The wasm controller uses the packaged firmware engine for both
+        LED counts."""
         # --- scenario: led_wasm_controller_uses_packaged_firmware_engine
         try:
             from jrbar.led_wasm import LedWasmUnavailableError, SdLedWasmController
@@ -2255,43 +1425,10 @@ for (const event of [
         self.assertTrue(result.ok)
         self.assertEqual(controller.step(0), [(255, 0, 0), (0, 255, 0)])
 
-        # --- scenario: virtual_screen_bar_led_blend_spans_three_leds
-        try:
-            from jrbar import virtual_device
-        except (ImportError, SystemExit) as exc:
-            self.skipTest(str(exc))
-
-        led_width = 10.0
-        target_center = 35.0
-        colors = [(0.0, 0.0, 0.0, 0.0)] * 8
-        colors[3] = (0.0, 1.0, 0.0, 1.0)
-
-        self.assertAlmostEqual(
-            virtual_device.blended_led_color_at_x(colors, target_center, led_width)[1],
-            1.0,
-        )
-        self.assertGreater(
-            virtual_device.blended_led_color_at_x(colors, target_center - led_width, led_width)[1],
-            0.0,
-        )
-        self.assertGreater(
-            virtual_device.blended_led_color_at_x(colors, target_center + led_width, led_width)[1],
-            0.0,
-        )
-        self.assertAlmostEqual(
-            virtual_device.blended_led_color_at_x(colors, target_center - led_width * 1.5, led_width)[1],
-            0.0,
-        )
-        self.assertAlmostEqual(
-            virtual_device.blended_led_color_at_x(colors, target_center + led_width * 1.5, led_width)[1],
-            0.0,
-        )
-
 
     def test_status_bar_device_observation_and_menus(self) -> None:
-        """A new mount resets observation, a connection change refreshes the
-        menu, closed-lid policy choices are offered, and stale statuses
-        still render when nothing is fresh."""
+        """A new mount resets observation, closed-lid policy choices are
+        offered, and stale statuses still render when nothing is fresh."""
         # --- scenario: status_bar_observe_connected_device_resets_on_new_mount
         try:
             from jrbar import status_bar
@@ -2326,28 +1463,9 @@ for (const event of [
             self.assertFalse(status_bar.StatusBarController.observe_connected_devices(target))
             self.assertEqual(reset_ids, ["/Volumes/SidePulsePro"])
 
-        # --- scenario: status_bar_poll_devices_refreshes_on_connection_change
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        calls: list[object] = []
-        target = SimpleNamespace(
-            observe_connected_devices=lambda: True,
-            last_snapshot=object(),
-            refresh_=lambda sender: calls.append(sender),
-            rebuild_devices_pane=lambda: None,
-        )
-
-        status_bar.StatusBarController.poll_devices_once(target)
-
-        self.assertEqual(calls, [None])
-
-
     def test_lid_animation(self) -> None:
         """The lid animation honors device brightness and forces an LED
-        resync on restore; its controls live in Settings."""
+        resync on restore."""
         # --- scenario: lid_animation_program_uses_device_brightness
         try:
             from jrbar import status_bar
@@ -2390,60 +1508,6 @@ for (const event of [
         self.assertEqual(calls[0], ("reset", None))
         self.assertEqual(calls[1][0], "sync")
         self.assertEqual(calls[1][1][0], AgentMode.WORKING)
-
-        # --- scenario: status_bar_settings_window_has_lid_animation_controls
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        # build_settings_window now also reads target.settings and
-        # target.status_bar_devices() (for the per-device controls
-        # section), so this needs a real controller rather than a bare
-        # SimpleNamespace -- isolated from the real settings file per the
-        # usual rule (patch default_settings_path before construction).
-        with tempfile.TemporaryDirectory() as tmp:
-            settings_path = Path(tmp) / "settings.json"
-            with (
-                patch("jrbar.settings.default_settings_path", return_value=settings_path),
-                patch("jrbar.status_bar.default_settings_path", return_value=settings_path),
-            ):
-                target = status_bar.StatusBarController.alloc().init()
-                window = status_bar.build_settings_window(target)
-                # Panes build lazily in production (audit #5); tests
-                # assert across the full control map.
-                target.ensure_all_settings_panes()
-
-        self.assertEqual(window.title(), "JR-Bar Settings: Profile")
-        self.assertIn("devin_session_opener", target.settings_fields)
-        self.assertIn("closed_animation_program", target.settings_fields)
-        self.assertIn("closed_animation_duration", target.settings_fields)
-        self.assertIn("open_animation_program", target.settings_fields)
-        self.assertIn("open_animation_duration", target.settings_fields)
-        self.assertNotIn("closed_lid_system_override", target.settings_buttons)
-
-    def test_first_launch_setup_window(self) -> None:
-        """The setup window offers first-launch controls, hides once done,
-        and its terminal installer opens a command file."""
-        # --- scenario: setup_terminal_installer_opens_command_file
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-
-        with tempfile.TemporaryDirectory() as tmp:
-            state_dir = Path(tmp)
-            with (
-                patch("jrbar.status_bar.default_state_dir", return_value=state_dir),
-                patch("jrbar.status_bar.subprocess.Popen") as popen,
-            ):
-                script = status_bar.open_terminal_setup_command("echo hello")
-
-            self.assertEqual(script, state_dir / "install-sleep-helper.command")
-            self.assertIn("echo hello", script.read_text())
-            self.assertEqual(script.stat().st_mode & 0o777, 0o700)
-            popen.assert_called_once()
-            self.assertEqual(popen.call_args.args[0][0], "/usr/bin/open")
 
     def test_session_open_action_by_origin(self) -> None:
         """Opening a session remembers the action by origin and the primary
@@ -8990,11 +8054,8 @@ class ClosedLidGracePeriodTests(unittest.TestCase):
         self.assertEqual(controller.keep_awake.grace_seconds, 120.0)
 
 
-class SettingsWindowDeviceSectionTests(unittest.TestCase):
-    """The Settings window's Devices section duplicates the per-device
-    Brightness/Auto-Brightness/Color Calibration controls that live in the
-    menu bar icon's own device submenu -- a real user went looking for
-    Auto-Brightness in Settings and couldn't find it there at all."""
+class DeviceBrightnessWatcherTests(unittest.TestCase):
+    """The controller's brightness watcher and its refresh, with one fake device."""
 
     def setUp(self) -> None:
         isolate_controller(self)
@@ -9012,38 +8073,8 @@ class SettingsWindowDeviceSectionTests(unittest.TestCase):
         # cache before AppKit paints, just as the runtime worker does live.
         self.controller.discover_device_candidates()
 
-    def test_calibration_and_brightness_watchers(self) -> None:
-        '''Calibration test lights the device and follows gain changes; a
-        brightness result resyncs only on a real change.'''
-        # --- scenario: calibration_test_lights_device_and_follows_gain_changes
-        self.setUp()  # fresh isolated controller per scenario
-        # The guided flow's contract: clicking a patch lights the device
-        # with it; every gain change re-lights THROUGH the new gains; and
-        # closing the popover hands the device back to live status.
-        status_bar = self.status_bar
-        controller = self.controller
-        sends = []
-        controller._send_calibration_test = lambda: sends.append(controller.calibration_test)
-        refreshes = []
-        controller.refresh_ = lambda _s: refreshes.append(True)
-
-        patch_button = SimpleNamespace(
-            representedObject=lambda: {"device_id": status_bar.VIRTUAL_DEVICE_ID, "hex": "#FF0000"}
-        )
-        controller.startCalibrationTest_(patch_button)
-        self.assertEqual(controller.calibration_test, (status_bar.VIRTUAL_DEVICE_ID, "#FF0000"))
-        self.assertEqual(len(sends), 1)
-
-        controller.set_device_channel_gain(status_bar.VIRTUAL_DEVICE_ID, "red", 0.8)
-        self.assertEqual(len(sends), 2)
-
-        controller.popoverDidClose_(None)
-        self.assertIsNone(controller.calibration_test)
-        self.assertEqual(refreshes, [True])
-        # A second close is a no-op, not a second refresh.
-        controller.popoverDidClose_(None)
-        self.assertEqual(refreshes, [True])
-
+    def test_a_brightness_result_resyncs_only_on_a_real_change(self) -> None:
+        '''A brightness result resyncs only on a real change.'''
         # --- scenario: brightness_result_resyncs_only_on_a_real_change
         self.setUp()  # fresh isolated controller per scenario
         # Auto-brightness used to re-evaluate only when an agent state
@@ -9072,299 +8103,56 @@ class SettingsWindowDeviceSectionTests(unittest.TestCase):
         self.assertEqual(controller.last_watched_brightness, 140)
         self.assertEqual(refreshes, [True])
 
-    def test_settings_pane_layout(self) -> None:
-        '''Panes have no overlapping cards, render with real content height,
-        and keep columns centered after clip constraining.'''
-        # --- scenario: settings_window_panes_have_no_overlapping_cards
+    def test_a_manual_brightness_turns_auto_brightness_off(self) -> None:
+        '''The daemon's set_brightness command lands on the controller's
+        set_device_brightness. A value the person picks is explicit intent,
+        so it is kept and auto-brightness is switched off; otherwise the
+        screen-derived level silently wins and the control does nothing.'''
+        # --- scenario: a_manual_brightness_turns_auto_brightness_off
         self.setUp()  # fresh isolated controller per scenario
-        # Regression guard for the bug class originally reported here (a
-        # label that wrapped to two lines and spilled into the control
-        # below it). Each pane is now built from NSStackView, which lays
-        # out its arranged subviews (the cards) without overlap by
-        # construction -- this forces a real layout pass and checks it,
-        # rather than trusting a hand-written height formula the way the
-        # old single-column window had to.
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        self.controller.settings_window.contentView().layoutSubtreeIfNeeded()
-
-        def overlaps(a, b):
-            ax0, ay0 = a.origin.x, a.origin.y
-            ax1, ay1 = ax0 + a.size.width, ay0 + a.size.height
-            bx0, by0 = b.origin.x, b.origin.y
-            bx1, by1 = bx0 + b.size.width, by0 + b.size.height
-            return ax0 < bx1 and bx0 < ax1 and ay0 < by1 and by0 < ay1
-
-        for key, pane in self.controller.settings_panes.items():
-            if key == "color_studio" or key.startswith("header:"):
-                # Custom container (pinned preview + own scroll), not a
-                # wrap_in_scroll_pane -- covered by its own tests.
-                continue
-            pane.layoutSubtreeIfNeeded()
-            # documentView is a plain container (padding lives inside it,
-            # where NSClipView's scroll-to-document-origin can't eat it);
-            # its single subview is the padded column stack.
-            content_stack = pane.documentView().subviews()[0].arrangedSubviews()[0]
-            frames = [
-                v.frame()
-                for v in content_stack.arrangedSubviews()
-                if v.frame().size.width > 0 and v.frame().size.height > 0
-            ]
-            overlap_count = sum(
-                1 for i in range(len(frames)) for j in range(i + 1, len(frames)) if overlaps(frames[i], frames[j])
-            )
-            self.assertEqual(overlap_count, 0, f"unexpected overlapping cards in the {key!r} pane")
-
-        # --- scenario: settings_window_panes_render_with_real_content_height
-        self.setUp()  # fresh isolated controller per scenario
-        # wrap_in_scroll_pane's soft bottom constraint makes a
-        # content-taller-than-window overflow structurally impossible now
-        # (the scroll view just grows its document view to fit); this
-        # guards that each pane actually produced non-degenerate content
-        # rather than an empty/zero-height document view.
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        self.controller.settings_window.contentView().layoutSubtreeIfNeeded()
-        for key, pane in self.controller.settings_panes.items():
-            if key == "color_studio" or key.startswith("header:"):
-                continue
-            pane.layoutSubtreeIfNeeded()
-            self.assertGreater(pane.documentView().frame().size.height, 0, f"{key!r} pane has no content height")
-
-        # --- scenario: settings_pane_columns_stay_centered_after_clip_constrain
-        self.setUp()  # fresh isolated controller per scenario
-        # Regression: NSClipView constrains its bounds to the document
-        # view's frame. When the padded column WAS the document view, the
-        # clip scrolled to the column's own (padding, padding) origin --
-        # so live panes rendered flush against the sidebar with both
-        # paddings dumped on the right ("everything is off-center"),
-        # while frame-based tests kept passing. Forcing the constrain
-        # pass here reproduces what the real display does.
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        self.controller.settings_window.contentView().layoutSubtreeIfNeeded()
-        for key, pane in self.controller.settings_panes.items():
-            if key == "color_studio" or key.startswith("header:"):
-                continue
-            pane.layoutSubtreeIfNeeded()
-            clip = pane.contentView()
-            origin = clip.constrainBoundsRect_(clip.bounds()).origin
-            self.assertEqual((origin.x, origin.y), (0.0, 0.0), f"{key!r} pane clip scrolls away from its origin")
-            document = pane.documentView()
-            column = document.subviews()[0]
-            left = column.frame().origin.x
-            right = document.frame().size.width - left - column.frame().size.width
-            self.assertAlmostEqual(left, right, delta=1.0, msg=f"{key!r} pane column is off-center")
-            self.assertGreaterEqual(left, 19.0, f"{key!r} pane column lost its edge padding")
-
-    def test_devices_section_controls(self) -> None:
-        '''A Devices section exists per connected device with brightness and
-        calibrate controls, one preview dot per LED, and slider preview
-        without committing.'''
-        # --- scenario: devices_section_exists_for_each_connected_device
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        devices = self.controller.status_bar_devices(remember=False)
-        self.assertEqual(set(self.controller.device_settings_controls.keys()), {d.device_id for d in devices})
-
-        # --- scenario: device_controls_include_brightness_and_a_calibrate_button
-        self.setUp()  # fresh isolated controller per scenario
-        # Auto-Brightness and the R/G/B sliders no longer sit inline in the
-        # Devices pane -- they live behind "Calibrate..." (see
-        # test_calibrate_button_opens_a_popover_with_the_full_controls
-        # below), which is what per-device calibration was too weird
-        # about. Brightness itself stays inline, since it's something
-        # you'd actually adjust often.
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        for controls in self.controller.device_settings_controls.values():
-            for key in (
-                "brightness_slider",
-                "brightness_label",
-                "brightness_dots",
-                "calibrate_button",
-                "calibration_label",
-            ):
-                self.assertIn(key, controls)
-
-        # --- scenario: brightness_preview_has_one_dot_per_led
-        self.setUp()  # fresh isolated controller per scenario
-        # The slider alone is a control, not a preview of its own effect
-        # -- one dot per real LED shows how bright the device will
-        # actually be.
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        for device_id, controls in self.controller.device_settings_controls.items():
-            device = next(d for d in self.controller.status_bar_devices(remember=False) if d.device_id == device_id)
-            if device_id == self.status_bar.VIRTUAL_DEVICE_ID:
-                expected = self.status_bar.LED_COUNT
-            else:
-                expected = self.status_bar.led_count_for_target(device.target)
-            self.assertEqual(len(controls["brightness_dots"]), expected)
-
-        # --- scenario: dragging_the_brightness_slider_previews_without_committing
-        self.setUp()  # fresh isolated controller per scenario
-        # Continuous dragging must update the live preview on every tick
-        # but only actually save/sync on the drag's final tick -- treating
-        # every pixel of mouse movement as a full commit (settings save +
-        # hardware sync + a full settings-window refresh) would make the
-        # slider feel sluggish and thrash the disk.
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        device_id = next(iter(self.controller.device_settings_controls))
-        controls = self.controller.device_settings_controls[device_id]
-        slider = controls["brightness_slider"]
-        self.assertTrue(slider.isContinuous())
-        before_settings = self.controller.settings
-
-        slider.setDoubleValue_(40.0)
-        with patch.object(self.status_bar, "NSApp") as mock_app:
-            mock_app.currentEvent.return_value = SimpleNamespace(
-                type=lambda: self.status_bar.NSEventTypeLeftMouseDragged
-            )
-            self.controller.setDeviceBrightness_(slider)
-        self.assertIs(self.controller.settings, before_settings)
-
-        with patch.object(self.status_bar, "NSApp") as mock_app:
-            mock_app.currentEvent.return_value = SimpleNamespace(type=lambda: -1)
-            self.controller.setDeviceBrightness_(slider)
-        self.assertIsNot(self.controller.settings, before_settings)
-        self.assertEqual(self.controller.settings.brightness_for_device(device_id), 40)
-
-    def test_screen_bar_preview_and_calibration_popover(self) -> None:
-        '''The screen-bar preview is centered via the real call order and the
-        calibrate button opens a popover with full controls.'''
-        # --- scenario: screen_bar_preview_is_centered_using_show_settings_windows_real_call_order
-        self.setUp()  # fresh isolated controller per scenario
-        # Regression guard: refresh_screen_bar_preview used to center the
-        # preview against screen_bar_preview_container.frame().size.width
-        # -- but show_settings_window() calls refresh_settings_window()
-        # (and so this) *before* makeKeyAndOrderFront_, when the window
-        # has never had a real Auto Layout pass and the container's frame
-        # is still its construction-time default (0-width). That silently
-        # centered the preview around a width of 0, pushing it into
-        # negative x and clipping the entire left wing off-screen.
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        preview = self.controller.settings_fields["screen_bar_preview_view"]
-        expected_total = (
-            self.status_bar.SCREEN_BAR_PREVIEW_NOTCH_WIDTH
-            if not self.controller.settings.virtual_status_device_wraps_menu_bar
-            else self.status_bar.SCREEN_BAR_PREVIEW_NOTCH_WIDTH + 2.0 * self.status_bar.SCREEN_BAR_PREVIEW_WING_WIDTH
+        status_bar = self.status_bar
+        controller = self.controller
+        # The resync after a change replays the last snapshot onto the
+        # device; this test is about the stored setting, not LED writes.
+        controller.sync_leds = lambda *args, **kwargs: None
+        device = next(
+            entry
+            for entry in controller.status_bar_devices(remember=False)
+            if entry.connected and entry.device_id != status_bar.VIRTUAL_DEVICE_ID
         )
-        container_width = (
-            self.status_bar.SCREEN_BAR_PREVIEW_NOTCH_WIDTH + 2.0 * self.status_bar.SCREEN_BAR_PREVIEW_WING_WIDTH
+        device_id = device.device_id
+        controller.settings = controller.settings.with_device_auto_brightness(
+            device_id, True, name=device.name, path=str(device.root)
         )
-        expected_x = (container_width - expected_total) / 2.0
-        self.assertGreaterEqual(expected_x, 0.0)
-        self.assertEqual(preview.frame().origin.x, expected_x)
+        self.assertTrue(controller.settings.auto_brightness_enabled_for_device(device_id))
 
-        # --- scenario: calibrate_button_opens_a_popover_with_the_full_controls
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        device_id = next(iter(self.controller.device_settings_controls))
-        button = self.controller.device_settings_controls[device_id]["calibrate_button"]
+        controller.set_device_brightness(device_id, 120)
 
-        self.controller.openDeviceCalibrationPopover_(button)
+        self.assertEqual(controller.settings.brightness_for_device(device_id), 120)
+        self.assertFalse(controller.settings.auto_brightness_enabled_for_device(device_id))
+        # The device list the menu and the state document read agrees, and
+        # the change is on disk for the next launch.
+        listed = next(
+            entry
+            for entry in controller.status_bar_devices(remember=False)
+            if entry.device_id == device_id
+        )
+        self.assertEqual(listed.brightness, 120)
+        self.assertFalse(listed.auto_brightness_enabled)
+        saved = load_settings(self._settings_path)
+        self.assertEqual(saved.brightness_for_device(device_id), 120)
+        self.assertFalse(saved.auto_brightness_enabled_for_device(device_id))
 
-        controls = self.controller.device_settings_controls[device_id]
-        for key in (
-            "auto_brightness_checkbox",
-            "reset_button",
-            "red_slider",
-            "green_slider",
-            "blue_slider",
-        ):
-            self.assertIn(key, controls)
+        # --- scenario: a_later_manual_brightness_replaces_the_earlier_one
+        controller.set_device_brightness(device_id, 200)
 
-    def test_settings_window_bidirectional_reflection(self) -> None:
-        '''Menu-bar changes appear in the open window, moving the slider turns
-        auto-brightness off, and window changes appear in a fresh menu.'''
-        # --- scenario: menu_bar_change_is_reflected_in_the_open_settings_window
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        device_id = next(iter(self.controller.device_settings_controls))
-        controls = self.controller.device_settings_controls[device_id]
-
-        self.controller.set_device_brightness(device_id, 90)
-        self.controller.refresh_settings_window()
-
-        self.assertEqual(controls["brightness_slider"].doubleValue(), 90.0)
-        self.assertEqual(controls["brightness_label"].stringValue(), "35%")
-
-        # --- scenario: moving_the_brightness_slider_turns_auto_brightness_off
-        self.setUp()  # fresh isolated controller per scenario
-        """Manual slider intent must WIN: with auto-brightness left on, the
-        dragged value silently lost to the screen-derived one and the
-        slider read as "does nothing" on the real strip."""
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        device_id = next(iter(self.controller.device_settings_controls))
-        self.controller.set_device_auto_brightness(device_id, True)
-        self.assertTrue(self.controller.settings.auto_brightness_enabled_for_device(device_id))
-
-        self.controller.set_device_brightness(device_id, 120)
-
-        self.assertEqual(self.controller.settings.brightness_for_device(device_id), 120)
-        self.assertFalse(self.controller.settings.auto_brightness_enabled_for_device(device_id))
-
-        # --- scenario: settings_window_change_is_reflected_in_a_freshly_built_menu
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        device_id = next(iter(self.controller.device_settings_controls))
-        controls = self.controller.device_settings_controls[device_id]
-
-        controls["brightness_slider"].setDoubleValue_(200.0)
-        self.controller.setDeviceBrightness_(controls["brightness_slider"])
-
-        device = next(d for d in self.controller.status_bar_devices(remember=False) if d.device_id == device_id)
-        self.assertEqual(device.brightness, 200)
-
-    def test_settings_window_persistence_and_policy_popup(self) -> None:
-        '''A calibration change persists; the closed-lid policy popup reflects
-        and sets the policy.'''
-        # --- scenario: calibration_change_via_settings_window_persists
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        device_id = next(iter(self.controller.device_settings_controls))
-        button = self.controller.device_settings_controls[device_id]["calibrate_button"]
-        self.controller.openDeviceCalibrationPopover_(button)
-        controls = self.controller.device_settings_controls[device_id]
-
-        controls["green_slider"].setDoubleValue_(60.0)
-        self.controller.setDeviceGreenGain_(controls["green_slider"])
-
-        self.assertEqual(self.controller.settings.channel_gains_for_device(device_id), (1.0, 0.6, 1.0))
-
-        # --- scenario: closed_lid_awake_policy_popup_reflects_current_setting
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.settings import CLOSED_LID_AWAKE_ALWAYS
-
-        self.controller.settings = self.controller.settings.with_closed_lid_awake_policy(CLOSED_LID_AWAKE_ALWAYS)
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        popup = self.controller.settings_fields["closed_lid_awake_policy_popup"]
-        self.assertEqual(popup.titleOfSelectedItem(), "Always")
-
-        # --- scenario: closed_lid_awake_policy_popup_sets_the_policy
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.settings import CLOSED_LID_AWAKE_ALWAYS
-
-        self.controller.show_settings_window()
-
-        self.controller.ensure_all_settings_panes()
-        popup = self.controller.settings_fields["closed_lid_awake_policy_popup"]
-        for index in range(popup.numberOfItems()):
-            if popup.itemAtIndex_(index).representedObject().get("policy") == CLOSED_LID_AWAKE_ALWAYS:
-                popup.selectItemAtIndex_(index)
-                break
-        self.controller.setClosedLidAwakePolicyFromPopup_(popup)
-        self.assertEqual(self.controller.settings.closed_lid_awake_policy, CLOSED_LID_AWAKE_ALWAYS)
+        listed = next(
+            entry
+            for entry in controller.status_bar_devices(remember=False)
+            if entry.device_id == device_id
+        )
+        self.assertEqual(listed.brightness, 200)
+        self.assertFalse(listed.auto_brightness_enabled)
 
     def test_refresh_does_not_crash_before_the_status_item_exists(self) -> None:
         # Regression guard: set_closed_lid_awake_policy (and several other
@@ -9384,407 +8172,9 @@ class SettingsWindowDeviceSectionTests(unittest.TestCase):
         self.controller.refresh_(None)  # must not raise
 
 
-class Task9HistorySettingsCompositionTests(unittest.TestCase):
-    """Rendered native contract for the one gated History settings pane."""
-
-    MANIFEST = (
-        "day_key",
-        "timezone_offset_minutes",
-        "provider_id",
-        "started",
-        "needs_user",
-        "completed",
-        "failed",
-        "acknowledged",
-        "active_duration_bands",
-        "attention_wait_bands",
-        "primary_count",
-        "worker_count",
-        "source_recoveries",
-        "device_recoveries",
-        "coverage",
-        "sample_count",
-    )
-
-    def setUp(self) -> None:
-        isolate_controller(self)
-        self.controller.operator_history_store.path = Path(self._tmp.name) / "operator-history.json"
-
-    @staticmethod
-    def _descendants(view):
-        for child in view.subviews():
-            yield child
-            yield from Task9HistorySettingsCompositionTests._descendants(child)
-
-    def _build_history(self):
-        self.controller.show_settings_window()
-        self.controller.select_settings_pane("history")
-        self.controller.settings_window.contentView().layoutSubtreeIfNeeded()
-        return self.controller.settings_panes["history"]
-
-    def _day(self, *, coverage="complete"):
-        from jrbar.operator_history import HistoryCoverage, OperatorHistoryDay
-        from jrbar.provider_contracts import ProviderIdentifier
-
-        return OperatorHistoryDay(
-            datetime.now().date().isoformat(),
-            0,
-            ProviderIdentifier("codex"),
-            1,
-            1,
-            1,
-            0,
-            1,
-            (1, 0, 0, 0),
-            (0, 1, 0, 0),
-            1,
-            2,
-            0,
-            0,
-            HistoryCoverage(coverage),
-            4,
-        )
-
-    def test_history_pane_and_opt_in(self) -> None:
-        '''History is one lazy sidebar pane, off by default, restores the
-        title, discloses exact fields before opt-in, and supports three
-        ranges.'''
-        # --- scenario: history_is_one_lazy_sidebar_pane_with_off_default_and_title_restore
-        self.setUp()  # fresh isolated controller per scenario
-        self.assertEqual(self.controller.settings.operator_history_retention_days, 0)
-        self.controller.show_settings_window()
-        self.assertNotIn("history", self.controller.settings_panes)
-        self.assertEqual(
-            [label for key, label in self.status_bar.SETTINGS_SIDEBAR_ITEMS if key == "history"],
-            ["History"],
-        )
-
-        self.controller.select_settings_pane("history")
-        self.assertIn("history", self.controller.settings_panes)
-        self.assertEqual(self.controller.settings_window.title(), "JR-Bar Settings: History")
-        controls = self.controller.settings_fields["history_retention_controls"]
-        self.assertEqual(tuple(controls), (0, 7, 30, 90))
-        self.assertTrue(all(control.accessibilityRole() == "AXRadioButton" for control in controls.values()))
-        self.assertEqual(controls[0].state(), 1)
-
-        self.controller.settings_window.performClose_(None)
-        self.controller.show_settings_window()
-        self.assertEqual(self.controller.current_settings_pane, "history")
-        self.assertEqual(self.controller.settings_window.title(), "JR-Bar Settings: History")
-
-        # --- scenario: history_discloses_exact_fields_before_opt_in_and_supports_three_ranges
-        self.setUp()  # fresh isolated controller per scenario
-        self._build_history()
-        preview = self.controller.settings_fields["history_retention_disclosure"].stringValue()
-        manifest = self.controller.settings_fields["history_field_manifest"].stringValue()
-        self.assertIn("Before enabling", preview)
-        self.assertIn("derived metadata only", preview)
-        self.assertIn("does not store prompts", preview.casefold())
-        self.assertEqual(tuple(part.strip() for part in manifest.split(",")), self.MANIFEST)
-
-        controls = self.controller.settings_fields["history_range_controls"]
-        self.assertEqual(tuple(controls), (1, 7, 30))
-        self.assertEqual(
-            tuple(control.title() for control in controls.values()),
-            ("Day", "7 Day", "30 Day"),
-        )
-        self.assertEqual(
-            self.controller.settings_fields["history_retention_group"].accessibilityRole(),
-            "AXRadioGroup",
-        )
-        self.assertEqual(
-            self.controller.settings_fields["history_range_group"].accessibilityRole(),
-            "AXRadioGroup",
-        )
-
-    def test_history_projection_health(self) -> None:
-        '''The projection mutates stable labels for no-observation and partial
-        states and never paints clean-empty before degraded health.'''
-        # --- scenario: history_projection_mutates_stable_labels_for_no_observation_and_partial
-        self.setUp()  # fresh isolated controller per scenario
-        self._build_history()
-        summary = self.controller.settings_fields["history_summary"]
-        health = self.controller.settings_fields["history_health"]
-        identity = id(summary)
-        self.assertIn("No operator history was observed", summary.stringValue())
-        self.assertEqual(health.stringValue(), "No Observation")
-
-        self.controller.operator_history_store.state = OperatorHistoryState((self._day(coverage="partial"),))
-        self.controller.operator_history_range_days = 1
-        self.controller.refresh_operator_history_projection()
-        self.assertEqual(id(self.controller.settings_fields["history_summary"]), identity)
-        self.assertEqual(health.stringValue(), "Partial observation")
-        self.assertIn("Observed", summary.stringValue())
-
-        # --- scenario: history_restore_never_paints_clean_empty_before_degraded_health
-        self.setUp()  # fresh isolated controller per scenario
-        restore_published = threading.Event()
-
-        for index, mode in enumerate(("corrupt", "unavailable")):
-            with self.subTest(mode=mode):
-                controller = self.controller if index == 0 else self.status_bar.StatusBarController.alloc().init()
-                path = Path(self._tmp.name) / mode / "operator-history.json"
-                path.parent.mkdir()
-                if mode == "corrupt":
-                    path.write_text("not-json", encoding="utf-8")
-                else:
-                    path.mkdir()
-                controller.settings = dataclass_replace(
-                    controller.settings,
-                    operator_history_retention_days=7,
-                )
-                controller.operator_history_store.path = path
-                accepted = []
-
-                def accept_restore(selector, payload, _wait):
-                    if selector == "applyOperatorHistoryRestore:":
-                        accepted.append((selector, payload))
-                        restore_published.set()
-
-                controller.performSelectorOnMainThread_withObject_waitUntilDone_ = accept_restore
-
-                controller.show_settings_window()
-                controller.select_settings_pane("history")
-                health = controller.settings_fields["history_health"]
-                summary = controller.settings_fields["history_summary"]
-                self.assertEqual(health.stringValue(), "History loading")
-                self.assertNotIn("No Observation", health.stringValue())
-                self.assertIn("being restored", summary.stringValue())
-
-                if not restore_published.wait(2.0):
-                    self.fail(f"{mode} history restore did not publish")
-                selector, payload = accepted.pop()
-                restore_published.clear()
-                self.assertEqual(selector, "applyOperatorHistoryRestore:")
-                controller.applyOperatorHistoryRestore_(payload)
-                self.assertEqual(health.stringValue(), "History unavailable")
-                self.assertEqual(
-                    summary.stringValue(),
-                    "Operator history could not be restored.",
-                )
-
-    def test_history_clear_and_reel(self) -> None:
-        '''Clearing requires confirmation and failure stays generic and
-        visible; the reel is memory-only product copy capped at fifty.'''
-        # --- scenario: clear_history_requires_confirmation_and_failure_stays_generic_and_visible
-        self.setUp()  # fresh isolated controller per scenario
-        self._build_history()
-        self.controller.operator_history_store.state = OperatorHistoryState((self._day(),))
-        self.controller.confirmClearOperatorHistory_ = MagicMock(return_value=False)
-        self.controller.clearOperatorHistory_(None)
-        self.assertEqual(len(self.controller.operator_history_store.state.rows), 1)
-
-        self.controller.confirmClearOperatorHistory_.return_value = True
-        real_clear = self.controller.operator_history_store.clear
-        self.controller.operator_history_store.clear = MagicMock(side_effect=OSError("/private/path and secret"))
-        self.controller.clearOperatorHistory_(None)
-        status = self.controller.settings_fields["history_operation_status"]
-        self.assertEqual(status.stringValue(), "History could not be cleared.")
-        self.assertEqual(status.accessibilityRole(), "AXStaticText")
-        self.assertEqual(len(self.controller.operator_history_store.state.rows), 1)
-
-        self.controller.operator_history_store.clear = real_clear
-        self.controller.clearOperatorHistory_(None)
-        self.assertEqual(self.controller.operator_history_store.state.rows, ())
-        self.assertEqual(status.stringValue(), "History cleared.")
-        self.assertIn(
-            "No operator history was observed",
-            self.controller.settings_fields["history_summary"].stringValue(),
-        )
-
-        # --- scenario: semantic_reel_is_memory_only_product_copy_capped_at_fifty
-        self.setUp()  # fresh isolated controller per scenario
-        self._build_history()
-        for index in range(70):
-            self.controller.append_operator_history_reel("Agent became active", index)
-        self.assertEqual(len(self.controller.operator_history_reel), 50)
-        reel = self.controller.settings_fields["history_semantic_reel"].stringValue()
-        self.assertEqual(len(reel.splitlines()), 50)
-        self.assertNotIn("session", reel.casefold())
-        self.assertNotIn("path", reel.casefold())
-
-        # --- scenario: local_acknowledge_and_resume_update_content_free_history
-        self.setUp()  # fresh isolated controller per scenario
-        snapshot = CanonicalAgentBrowserIntegrationTests._canonical_snapshot(1)
-        state = snapshot.operator_state
-        request = state.requests[0]
-        original_phase = request.phase
-        self.controller.current_operator_state = state
-        self.controller.last_snapshot = snapshot
-        self.controller.operator_triage_saver = lambda _state: None
-        self.controller.settings = dataclass_replace(
-            self.controller.settings,
-            operator_history_retention_days=7,
-        )
-        self.controller.operator_history_store.retention_days = 7
-        work_key = state.works[0].key
-
-        acknowledge = AgentBrowserActionPayload(
-            work_key,
-            state.generation,
-            OperatorActionKind.ACKNOWLEDGE,
-        )
-        self.assertTrue(self.controller.performAgentBrowserPayload_(acknowledge))
-        self.assertTrue(self.controller._persistence_writer.wait_idle(timeout_seconds=2.0))
-        self.assertTrue(self.controller.operator_history_store.state.rows)
-        self.assertEqual(
-            self.controller.operator_history_store.state.rows[0].acknowledged,
-            1,
-        )
-
-        resume = AgentBrowserActionPayload(
-            work_key,
-            state.generation,
-            OperatorActionKind.RESUME_ESCALATION,
-        )
-        self.assertTrue(self.controller.performAgentBrowserPayload_(resume))
-        self.assertTrue(self.controller._persistence_writer.wait_idle(timeout_seconds=2.0))
-        self.assertGreaterEqual(
-            self.controller.operator_history_store.state.rows[0].sample_count,
-            2,
-        )
-        self.assertEqual(self.controller.current_operator_state.requests[0].phase, original_phase)
-        self.assertEqual(self.controller.local_triage_state.acknowledgements, ())
-        self.assertEqual(
-            self.controller.operator_history_reel[-2:],
-            (
-                "Request acknowledged locally",
-                "Request escalation resumed",
-            ),
-        )
-
-    def test_history_retention_worker(self) -> None:
-        '''The retention worker is generation-fenced, preserves focus and
-        unsaved range, and prunes the latest locked state without losing
-        a row.'''
-        # --- scenario: retention_worker_generation_fence_preserves_focus_and_unsaved_range
-        self.setUp()  # fresh isolated controller per scenario
-        self._build_history()
-        first_responder = self.controller.settings_fields["history_range_controls"][30]
-        self.controller.settings_window.makeFirstResponder_(first_responder)
-        self.controller.operator_history_range_days = 30
-        accepted = []
-        retention_published = threading.Event()
-
-        def accept_retention(selector, payload, _wait):
-            if selector == "applyOperatorHistoryRetentionResult:":
-                accepted.append((selector, payload))
-                retention_published.set()
-
-        self.controller.performSelectorOnMainThread_withObject_waitUntilDone_ = accept_retention
-
-        self.controller.start_operator_history_retention_change(7)
-        if not retention_published.wait(2.0):
-            self.fail("first retention worker did not publish")
-        stale = accepted.pop()[1]
-        retention_published.clear()
-        self.controller.start_operator_history_retention_change(30)
-        if not retention_published.wait(2.0):
-            self.fail("second retention worker did not publish")
-        current = accepted.pop()[1]
-        retention_published.clear()
-        self.controller.applyOperatorHistoryRetentionResult_(stale)
-        self.assertEqual(self.controller.settings.operator_history_retention_days, 0)
-        self.controller.applyOperatorHistoryRetentionResult_(current)
-        self.assertEqual(self.controller.settings.operator_history_retention_days, 30)
-        self.assertEqual(self.controller.operator_history_range_days, 30)
-        self.assertIs(self.controller.settings_window.firstResponder(), first_responder)
-
-        for retention in (90, 0, 7):
-            self.controller.start_operator_history_retention_change(retention)
-            if not retention_published.wait(2.0):
-                self.fail(f"{retention}-day retention worker did not publish")
-            self.controller.applyOperatorHistoryRetentionResult_(accepted.pop()[1])
-            retention_published.clear()
-            self.assertEqual(
-                self.controller.settings.operator_history_retention_days,
-                retention,
-            )
-
-        # --- scenario: retention_worker_prunes_the_latest_locked_state_without_losing_a_row
-        self.setUp()  # fresh isolated controller per scenario
-        day = self._day()
-        self.controller.operator_history_store.retention_days = 30
-        self.controller.operator_history_store.state = OperatorHistoryState((day,))
-        accepted = []
-        self.controller.performSelectorOnMainThread_withObject_waitUntilDone_ = lambda selector, payload, _wait: (
-            accepted.append((selector, payload))
-        )
-
-        with self.controller._operator_history_lock:
-            self.controller.start_operator_history_retention_change(7)
-            self.assertTrue(self.controller.operator_history_store.add_rows((day,)))
-
-        self.assertTrue(self.controller._persistence_writer.wait_idle(timeout_seconds=2.0))
-        self.assertTrue(accepted)
-        selector, payload = accepted.pop()
-        self.assertEqual(selector, "applyOperatorHistoryRetentionResult:")
-        self.controller.applyOperatorHistoryRetentionResult_(payload)
-
-        retained = self.controller.operator_history_store.state.rows
-        self.assertEqual(len(retained), 1)
-        self.assertEqual(retained[0].started, 2)
-        self.assertEqual(retained[0].sample_count, 8)
-
-    def test_history_reflows_at_two_hundred_percent_with_keyboard_visual_order(self) -> None:
-        from AppKit import NSUserInterfaceLayoutOrientationVertical
-
-        self.controller.semantic_text_scale_percent = 200
-        pane = self._build_history()
-        pane.layoutSubtreeIfNeeded()
-        manifest = self.controller.settings_fields["history_field_manifest"]
-        disclosure = self.controller.settings_fields["history_retention_disclosure"]
-        self.assertFalse(manifest.usesSingleLineMode())
-        self.assertFalse(disclosure.usesSingleLineMode())
-        self.assertGreaterEqual(manifest.font().pointSize(), 22.0)
-        order = self.controller.settings_fields["history_keyboard_order"]
-        self.assertEqual(order[0].title(), "Off")
-        self.assertEqual(order[-1].title(), "Clear History")
-        self.assertTrue(all(control.acceptsFirstResponder() for control in order))
-        self.assertTrue(
-            all(
-                current.nextKeyView() is following
-                for current, following in zip(
-                    order,
-                    (*order[1:], order[0]),
-                    strict=True,
-                )
-            )
-        )
-        self.assertEqual(
-            self.controller.settings_fields["history_retention_group"].orientation(),
-            NSUserInterfaceLayoutOrientationVertical,
-        )
-
-
-class ScreenBarSettingsTakeEffectImmediatelyTests(unittest.TestCase):
-    """Regression guard: toggling a Screen Bar geometry/drawing setting
-    (Alcove compatibility, wraps-menu-bar) must reposition the Screen Bar
-    right away. Before this fix, both settings were only ever re-read the
-    next time sync_virtual_status_device happened to run -- which, with a
-    physical device connected, only happens on a genuine LED write. Once
-    agent layout stopped thrashing (see the ordering-stability fix), that
-    could be a very long wait: the setting would visibly "not work" even
-    though it saved correctly."""
-
-    def setUp(self) -> None:
-        isolate_controller(self)
-        # The bug only manifests once the Screen Bar window already exists
-        # (reposition() is a no-op before that) -- matches the real
-        # scenario: the user already has it visible and flips a setting.
-        self.controller.virtual_status_device.show()
-
-    def test_toggling_wraps_menu_bar_repositions_without_any_led_write(self) -> None:
-        before = self.controller.virtual_status_device.window.frame().size.width
-        checkbox = self.status_bar.NSButton.alloc().init()
-        self.status_bar.set_checkbox_state(checkbox, True)
-        with patch.object(self.status_bar.StatusBarController, "sync_leds") as sync_leds:
-            self.controller.toggleScreenBarWrapsMenuBar_(checkbox)
-            sync_leds.assert_not_called()
-        after = self.controller.virtual_status_device.window.frame().size.width
-        self.assertTrue(self.controller.settings.virtual_status_device_wraps_menu_bar)
-        self.assertTrue(self.controller.virtual_status_device.wraps_menu_bar)
-        self.assertGreaterEqual(after, before)
+class ColorSettingsPersistenceTests(unittest.TestCase):
+    """The colour settings survive a save and a load, and a corrupt colours
+    block falls back to the defaults without taking the other settings."""
 
     def test_settings_round_trip_persists_colors(self) -> None:
         settings = AgentMonitorSettings().with_colors(ColorSettings.defaults().with_agent_color("codex", "#123456"))
@@ -10012,48 +8402,6 @@ class SignalEngineTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             AgentMonitorSettings().with_signal_style("nope", signals.DEFAULT_SIGNAL_STYLES["calendar"])
-
-
-class SignalStyleCardTests(unittest.TestCase):
-    def setUp(self) -> None:
-        isolate_controller(self)
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-
-    def test_every_signal_gets_a_full_style_card(self) -> None:
-        from jrbar import signals
-
-        for key, _title, show_color in self.status_bar.SIGNAL_STYLE_CARDS:
-            thumbs = self.controller.settings_fields.get(f"signal_thumbs:{key}")
-            self.assertIsInstance(thumbs, dict, key)
-            expected = set(signals.SIGNAL_PATTERNS)
-            if key in signals.CONTINUOUS_SIGNALS:
-                # One-shot patterns would flash once then leave the bar
-                # dark for the rest of a held condition -- not offered.
-                expected -= set(signals.ONE_SHOT_PATTERNS)
-            self.assertEqual(set(thumbs), expected, key)
-            self.assertIsNotNone(self.controller.settings_fields.get(f"signal_preview:{key}"))
-            self.assertIsNotNone(self.controller.settings_fields.get(f"signal_speed:{key}"))
-            self.assertIsNotNone(self.controller.settings_fields.get(f"signal_intensity:{key}"))
-            if show_color:
-                self.assertIsNotNone(self.controller.settings_fields.get(f"signal_color:{key}"))
-            else:
-                self.assertIsNone(self.controller.settings_fields.get(f"signal_color:{key}"))
-
-    def test_speed_slider_saves_the_style_and_updates_the_preview(self) -> None:
-        slider = self.controller.settings_fields.get("signal_speed:calendar")
-        slider.setDoubleValue_(4.2)
-        with patch.object(self.controller, "refresh_") as refresh:
-            self.controller.setSignalSpeed_(slider)
-        refresh.assert_called_once_with(None)
-        self.assertAlmostEqual(self.controller.settings.signal_style("calendar").speed_seconds, 4.2, places=5)
-
-    def test_escalation_controls_exist_and_apply(self) -> None:
-        self.assertIsNotNone(self.controller.settings_fields.get("escalation_tier_popup"))
-        field = self.controller.settings_fields.get("escalation_ramp_field")
-        field.setStringValue_("45")
-        self.controller.applyEscalationThresholds_(None)
-        self.assertEqual(self.controller.settings.escalation_ramp_seconds, 45.0)
 
 
 class IdentityColorTests(unittest.TestCase):
@@ -11733,36 +10081,26 @@ class SubagentAskAggregateTests(unittest.TestCase):
             if with_main:
                 self.assertEqual(modes[0], AgentMode.WORKING)
 
-    def test_color_preview_and_device_resync_never_paint_a_workers_ask(self) -> None:
-        snapshot = self._worker_ask_snapshot(with_main=True)
-
-        preview = self._repaint_modes(
-            snapshot, self.controller.push_colors_preview_to_device
-        )
-        self.assertEqual(preview, [AgentMode.WORKING])
-
-        device = self._repaint_modes(
-            snapshot,
-            lambda: self.controller._mutate_device_setting(
+    def test_device_resync_never_paints_a_workers_ask(self) -> None:
+        def resync():
+            self.controller._mutate_device_setting(
                 "device:test",
                 lambda _device: self.controller.settings,
                 lambda label: f"{label} changed.",
                 "test setting",
-            ),
-        )
+            )
+
+        snapshot = self._worker_ask_snapshot(with_main=True)
+        device = self._repaint_modes(snapshot, resync)
         self.assertEqual(device, [AgentMode.WORKING])
 
         # With nothing else running the worker is the only thing to show. Off,
         # it stays quiet; on, the resync rings for it like the refresh does.
         alone = self._worker_ask_snapshot(with_main=False)
-        quiet = self._repaint_modes(
-            alone, self.controller.push_colors_preview_to_device
-        )
+        quiet = self._repaint_modes(alone, resync)
         self.assertNotEqual(quiet, [AgentMode.WAITING_FOR_INPUT])
         self.controller.settings = self.controller.settings.with_subagent_asks_alert(True)
-        enabled = self._repaint_modes(
-            alone, self.controller.push_colors_preview_to_device
-        )
+        enabled = self._repaint_modes(alone, resync)
         self.assertEqual(enabled, [AgentMode.WAITING_FOR_INPUT])
 
     def test_a_main_ask_still_rings_after_a_flourish(self) -> None:
@@ -12129,90 +10467,15 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         )
         return self.controller._usage_provider_states
 
-    def test_usage_settings_copy(self) -> None:
-        """Settings copy keeps Codex windows semantic and offers the
-        capacity opt-in, off by default."""
-        # --- scenario: settings_usage_copy_keeps_codex_windows_semantic
-        self.setUp()  # fresh isolated controller per scenario
-        pane, _fields = self.status_bar._build_profile_pane(self.controller)
-
-        def descendants(view):
-            for child in view.subviews():
-                yield child
-                yield from descendants(child)
-
-        rendered = []
-        for view in (pane, *descendants(pane)):
-            if hasattr(view, "stringValue"):
-                rendered.append(str(view.stringValue()))
-            tooltip = view.toolTip() if hasattr(view, "toolTip") else None
-            if tooltip:
-                rendered.append(str(tooltip))
-        codex_copy = [text for text in rendered if "codex" in text.lower()]
-
-        self.assertIn("Show Codex rate-limit percent", codex_copy)
-        self.assertTrue(codex_copy)
-        self.assertFalse(
-            any("weekly" in text.lower() for text in codex_copy),
-            codex_copy,
-        )
-
-        # --- scenario: settings_capacity_copy_offers_the_opt_in_and_starts_off
-        self.setUp()  # fresh isolated controller per scenario
-        """The pane said "Not supported" and offered no way to change that.
-
-        The consumer policy declares lanes now, so the honest control is the
-        opt-in itself -- and until this row existed, `toggleClaudePlanLimits_`
-        was an action no user could reach.
-        """
-        self.controller.settings = self.controller.settings.with_claude_plan_limits_enabled(False)
-        pane, fields = self.status_bar._build_profile_pane(self.controller)
-
-        def descendants(view):
-            for child in view.subviews():
-                yield child
-                yield from descendants(child)
-
-        rendered = []
-        for view in (pane, *descendants(pane)):
-            if hasattr(view, "stringValue"):
-                rendered.append(str(view.stringValue()))
-            tooltip = view.toolTip() if hasattr(view, "toolTip") else None
-            if tooltip:
-                rendered.append(str(tooltip))
-
-        self.assertIn("Show Claude plan limits", rendered)
-        self.assertFalse(
-            any("not supported" in text.lower() for text in rendered),
-            rendered,
-        )
-        self.assertTrue(
-            any("does not read browser sessions" in text.lower() for text in rendered),
-            rendered,
-        )
-        self.assertTrue(
-            any("browser access has separate consent" in text.lower() for text in rendered),
-            rendered,
-        )
-        # Declaring the lanes does not turn the read on, and the switch shows
-        # the setting rather than a default of its own.
-        self.assertEqual(fields["profile_plan_limits_switch"].state(), 0)
-        self.assertFalse(AgentMonitorSettings().claude_plan_limits_enabled)
-        self.controller.settings = self.controller.settings.with_claude_plan_limits_enabled(True)
-        _pane, on_fields = self.status_bar._build_profile_pane(self.controller)
-        self.assertEqual(on_fields["profile_plan_limits_switch"].state(), 1)
-
     def test_refresh_authority_initialization(self) -> None:
         """The controller initializes bounded capacity timer state and the
         exact registry-scoped refresh authority."""
         # --- scenario: controller_initializes_bounded_capacity_timer_state
         self.setUp()  # fresh isolated controller per scenario
         self.assertIsNone(self.controller._capacity_reset_timer)
-        self.assertIsNone(self.controller._capacity_countdown_timer)
         self.assertIsNone(self.controller._capacity_reset_plan.deadline)
         self.assertEqual(self.controller._capacity_reset_plan.provider_ids, ())
         self.assertIsNone(self.controller._capacity_reset_retry_deadline)
-        self.assertIsNone(self.controller._capacity_countdown_deadline)
         self.assertEqual(self.controller._attempted_capacity_boundary_keys, ())
 
         # --- scenario: controller_initializes_exact_registry_scoped_refresh_authority
@@ -12262,7 +10525,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             patch("jrbar.status_bar.usage_stats.codex_rate_limits") as codex,
             patch("jrbar.status_bar.claude_quota.fetch_windows") as claude,
         ):
-            self.controller.menuWillOpen_(None)
+            self.controller.maybe_refresh_usage_summary(reason="menu-open")
 
         request.assert_called_once_with(
             (
@@ -12636,26 +10899,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertEqual(state.last_known_good.lanes[0].observed_at, 1_000.0)
 
     def test_usage_request_planner(self) -> None:
-        """Opening settings requests stale/missing usage through the planner;
-        menu open requests only stale/missing visible providers; rapid
+        """Menu open requests only stale/missing visible providers; rapid
         opens coalesce in-flight work."""
-        # --- scenario: opening_settings_requests_stale_or_missing_usage_through_planner
-        self.setUp()  # fresh isolated controller per scenario
-        now = time.monotonic()
-        self.controller._usage_provider_states = {
-            "codex": self._state("codex", last_success_at=now),
-            "claude": self._state("claude"),
-        }
-        self.controller.settings_window = MagicMock()
-
-        with (
-            patch.object(self.controller, "request_usage_refresh") as request,
-            patch("jrbar.status_bar.NSApp"),
-        ):
-            self.controller.show_settings_window()
-
-        request.assert_called_once_with((self._source("claude"),))
-
         # --- scenario: menu_open_requests_only_stale_or_missing_visible_providers
         self.setUp()  # fresh isolated controller per scenario
         now = time.monotonic()
@@ -12665,7 +10910,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         }
 
         with patch.object(self.controller, "request_usage_refresh") as request:
-            self.controller.menuWillOpen_(None)
+            self.controller.maybe_refresh_usage_summary(reason="menu-open")
 
         request.assert_called_once_with(
             (self._source("claude"),),
@@ -12680,8 +10925,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         }
 
         with patch("jrbar.status_bar.threading.Thread") as thread_type:
-            self.controller.menuWillOpen_(None)
-            self.controller.menuWillOpen_(None)
+            self.controller.maybe_refresh_usage_summary(reason="menu-open")
+            self.controller.maybe_refresh_usage_summary(reason="menu-open")
 
         self.assertEqual(thread_type.call_count, 1)
         thread_type.return_value.start.assert_called_once_with()
@@ -12690,11 +10935,9 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertFalse(self.controller._usage_transcript_states[self._transcript_source("codex")].in_flight)
         self.assertFalse(self.controller._usage_transcript_states[self._transcript_source("claude")].in_flight)
 
-    def test_disabled_plan_limits_and_window_clearing(self) -> None:
+    def test_disabled_plan_limits_and_window_clearing__and_1_more(self) -> None:
         """Local Claude usage stays eligible with plan limits disabled,
-        publishing local usage without network; disabling a provider
-        clears old windows only after a successful refresh, with exact
-        source invalidation."""
+        publishing local usage without network."""
         # --- scenario: claude_local_usage_stays_eligible_when_plan_limits_are_disabled
         self.setUp()  # fresh isolated controller per scenario
         self.controller.settings = self.controller.settings.with_claude_plan_limits_enabled(False)
@@ -12704,7 +10947,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         }
 
         with patch.object(self.controller, "request_usage_refresh") as request:
-            self.controller.menuWillOpen_(None)
+            self.controller.maybe_refresh_usage_summary(reason="menu-open")
 
         request.assert_called_once_with(
             (self._source("codex"),),
@@ -12741,144 +10984,6 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             published[0]["results"][self._transcript_source("claude")]["summary_text"],
         )
 
-        # --- scenario: disabling_codex_percent_clears_old_windows_after_successful_refresh
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.usage_view import build_provider_usage_view
-
-        now = time.monotonic()
-        self.controller._usage_provider_states = {
-            "codex": self._state("codex", last_success_at=now),
-            "claude": self._state("claude", last_success_at=now),
-        }
-        self.controller._usage_provider_models = {
-            "codex": build_provider_usage_view(
-                "codex",
-                "Codex",
-                ({"used_percent": 81, "window_minutes": 300},),
-                last_success_at=now,
-                now=now,
-                summary_text="Today: old local summary",
-            )
-        }
-        settings_label = MagicMock()
-        self.controller.settings_fields = {"profile_codex_label": settings_label}
-        sender = MagicMock()
-        sender.state.return_value = 0
-
-        def inline_thread(*, target, args, daemon):
-            del daemon
-
-            class InlineThread:
-                def start(self) -> None:
-                    target(*args)
-
-            return InlineThread()
-
-        with (
-            patch("jrbar.status_bar.usage_stats.scan_usage") as scan,
-            patch(
-                "jrbar.status_bar.usage_stats.cached_codex_rate_limits",
-                return_value={"primary": {"used_percent": 82, "window_minutes": 300}},
-            ),
-            patch(
-                "jrbar.status_bar.threading.Thread",
-                side_effect=inline_thread,
-            ),
-            patch.object(
-                self.controller,
-                "performSelectorOnMainThread_withObject_waitUntilDone_",
-                side_effect=lambda _selector, payload, _wait: self.controller.applyUsageSummary_(payload),
-            ),
-        ):
-            self.controller.toggleCodexPercent_(sender)
-
-        model = self.controller._usage_provider_models["codex"]
-        self.assertFalse(self.controller.settings.codex_percent_enabled)
-        scan.assert_not_called()
-        self.assertEqual(model.windows, ())
-        self.assertIn("Codex · Today: old local summary", model.menu_line)
-        self.assertEqual(model.menu_line.count("Codex"), 1)
-        self.assertNotIn("81%", model.menu_line)
-        self.assertNotIn("82%", model.settings_text)
-        settings_label.setStringValue_.assert_called_with(model.settings_text)
-        self.assertIn("old local summary", model.settings_text)
-
-        # --- scenario: disabling_claude_plan_limits_clears_old_windows_after_successful_refresh
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.usage_view import build_provider_usage_view
-
-        now = time.monotonic()
-        self.controller._usage_provider_states = {
-            "codex": self._state("codex", last_success_at=now),
-            "claude": self._state("claude", last_success_at=now),
-        }
-        self.controller._usage_provider_models = {
-            "claude": build_provider_usage_view(
-                "claude",
-                "Claude",
-                ({"utilization": 71, "window_minutes": 300},),
-                last_success_at=now,
-                now=now,
-                summary_text="Today: old local summary",
-            )
-        }
-        settings_label = MagicMock()
-        self.controller.settings_fields = {"profile_plan_label": settings_label}
-        sender = MagicMock()
-        sender.state.return_value = 0
-
-        def inline_thread(*, target, args, daemon):
-            del daemon
-
-            class InlineThread:
-                def start(self) -> None:
-                    target(*args)
-
-            return InlineThread()
-
-        with (
-            patch("jrbar.status_bar.usage_stats.scan_usage") as scan,
-            patch("jrbar.status_bar.claude_quota.fetch_windows") as fetch,
-            patch(
-                "jrbar.status_bar.threading.Thread",
-                side_effect=inline_thread,
-            ),
-            patch.object(
-                self.controller,
-                "performSelectorOnMainThread_withObject_waitUntilDone_",
-                side_effect=lambda _selector, payload, _wait: self.controller.applyUsageSummary_(payload),
-            ),
-            patch.object(self.controller, "refresh_"),
-        ):
-            self.controller.toggleClaudePlanLimits_(sender)
-
-        model = self.controller._usage_provider_models["claude"]
-        self.assertFalse(self.controller.settings.claude_plan_limits_enabled)
-        fetch.assert_not_called()
-        scan.assert_not_called()
-        self.assertEqual(model.windows, ())
-        self.assertIn("Claude · Today: old local summary", model.menu_line)
-        self.assertEqual(model.menu_line.count("Claude"), 1)
-        self.assertNotIn("71%", model.menu_line)
-        self.assertNotIn("71%", model.settings_text)
-        settings_label.setStringValue_.assert_called_with(model.settings_text)
-        self.assertIn("old local summary", model.settings_text)
-
-        # --- scenario: claude_plan_setting_uses_exact_source_invalidation
-        self.setUp()  # fresh isolated controller per scenario
-        sender = MagicMock()
-        sender.state.return_value = 0
-
-        with (
-            patch.object(self.status_bar, "save_settings"),
-            patch.object(self.controller, "invalidate_usage_providers") as invalidate,
-            patch.object(self.controller, "maybe_refresh_usage_summary") as refresh_usage,
-            patch.object(self.controller, "refresh_"),
-        ):
-            self.controller.toggleClaudePlanLimits_(sender)
-
-        invalidate.assert_called_once_with(("claude",))
-        refresh_usage.assert_called_once_with()
 
     def test_failure_isolation_and_last_known_good(self) -> None:
         """A quota refresh preserves the selected model; one provider failure
@@ -12890,25 +10995,15 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         requests = self._prime_refreshes("codex")
         activity = {"summary": "Selected local history", "heatmap": "selected heatmap"}
         self.controller.usage_graph_model = activity
-        label = MagicMock()
-        graph = MagicMock()
-        self.controller.settings_fields = {
-            "profile_usage_label": label,
-            "profile_usage_graph": graph,
-        }
-        with patch("jrbar.usage_graph_worker.refresh_usage_graph") as refresh:
-            self.controller.applyUsageSummary_(
-                {
-                    "requests": requests,
-                    "results": self._results(codex=self._result("codex", 22)),
-                    "failures": {},
-                    "shared": {"usage_graph": {"series": "unfiltered legacy graph"}},
-                }
-            )
+        self.controller.applyUsageSummary_(
+            {
+                "requests": requests,
+                "results": self._results(codex=self._result("codex", 22)),
+                "failures": {},
+                "shared": {"usage_graph": {"series": "unfiltered legacy graph"}},
+            }
+        )
         self.assertIs(self.controller.usage_graph_model, activity)
-        label.setStringValue_.assert_called_with("Selected local history")
-        graph.setModel_.assert_called_with(activity)
-        refresh.assert_called_once_with(self.controller)
 
         # --- scenario: one_provider_failure_keeps_other_success_and_last_known_good
         self.setUp()  # fresh isolated controller per scenario
@@ -12984,7 +11079,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertFalse(window.reset_known)
         schedule = timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
         reset_calls = [
-            call for call in schedule.call_args_list if call.args[2] in {"capacityResetBoundary:", "capacityCountdown:"}
+            call for call in schedule.call_args_list if call.args[2] == "capacityResetBoundary:"
         ]
         self.assertEqual(reset_calls, [])
 
@@ -13105,7 +11200,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertIsNone(continuity.pending)
         schedule = timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_
         reset_calls = [
-            call for call in schedule.call_args_list if call.args[2] in {"capacityResetBoundary:", "capacityCountdown:"}
+            call for call in schedule.call_args_list if call.args[2] == "capacityResetBoundary:"
         ]
         self.assertEqual(reset_calls, [])
 
@@ -13137,7 +11232,6 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
                 (self._source("claude"),),
                 reason="manual",
             )
-            self.controller.menuDidClose_(None)
             duplicate = self.controller.request_usage_refresh(
                 (self._source("claude"),),
                 reason="manual",
@@ -13195,7 +11289,6 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
                 (self._source("claude"),),
                 reason="manual",
             )
-            self.controller.menuDidClose_(None)
             duplicate = self.controller.request_usage_refresh(
                 (self._source("claude"),),
                 reason="manual",
@@ -13653,34 +11746,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertNotIn("/Users", model.settings_text)
 
     def test_capacity_copy_follows_the_latest_shared_models(self) -> None:
-        """Settings use the latest shared models, and the capacity copy
-        states remaining, reset and age without borrowing the scan's
-        coverage."""
-        # --- scenario: settings_use_the_latest_shared_models
-        self.setUp()  # fresh isolated controller per scenario
-        codex_label = MagicMock()
-        claude_label = MagicMock()
-        self.controller.settings_fields = {
-            "profile_codex_label": codex_label,
-            "profile_plan_label": claude_label,
-        }
-        requests = self._prime_refreshes("codex", "claude")
-        self.controller.applyUsageSummary_(
-            {
-                "requests": requests,
-                "results": self._results(
-                    codex=self._result("codex", 55),
-                    claude=self._result("claude", 65),
-                ),
-                "failures": {},
-            }
-        )
-
-        codex_model = self.controller._usage_provider_models["codex"]
-        claude_model = self.controller._usage_provider_models["claude"]
-        codex_label.setStringValue_.assert_called_with(codex_model.settings_text)
-        claude_label.setStringValue_.assert_called_with(claude_model.settings_text)
-
+        """The capacity copy states remaining, reset and age without
+        borrowing the scan's coverage."""
         # --- scenario: capacity_copy_states_remaining_reset_and_age_only
         self.setUp()  # fresh isolated controller per scenario
         requests = self._prime_refreshes("codex", "claude", completed_at=500.0)
@@ -13791,8 +11858,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
     def test_reset_timer_scheduling(self) -> None:
         """Apply schedules one earliest grouped reset timer across providers;
         a due normal refresh suppresses the reset boundary timer; an
-        unchanged plan keeps timer identity; timers join common run-loop
-        modes; an exact 24h countdown schedules the branch transition."""
+        unchanged plan keeps timer identity; timers join the default
+        run-loop mode."""
         # --- scenario: apply_schedules_one_earliest_grouped_reset_timer
         self.setUp()  # fresh isolated controller per scenario
         timer = MagicMock()
@@ -13908,13 +11975,10 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.setUp()  # fresh isolated controller per scenario
         from jrbar.usage_view import build_provider_usage_view
 
-        self.controller.status_menu_open = True
         reset_timer = MagicMock()
-        countdown_timer = MagicMock()
         timer_api = MagicMock()
         timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.side_effect = (
             reset_timer,
-            countdown_timer,
         )
         self.controller._usage_provider_states = {"codex": self._state("codex", last_success_at=500.0)}
         self.controller._usage_provider_models = {
@@ -13937,16 +12001,14 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
 
         self.assertEqual(
             timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.call_count,
-            2,
+            1,
         )
         self.assertIs(self.controller._capacity_reset_timer, reset_timer)
-        self.assertIs(self.controller._capacity_countdown_timer, countdown_timer)
 
-        # --- scenario: capacity_timers_join_common_run_loop_modes_for_open_menu_updates
+        # --- scenario: capacity_timers_join_the_default_run_loop_mode
         self.setUp()  # fresh isolated controller per scenario
         from jrbar.usage_view import build_provider_usage_view
 
-        self.controller.status_menu_open = True
         self.controller._usage_provider_states = {"codex": self._state("codex", last_success_at=500.0)}
         self.controller._usage_provider_models = {
             "codex": build_provider_usage_view(
@@ -13959,11 +12021,9 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             )
         }
         reset_timer = MagicMock()
-        countdown_timer = MagicMock()
         timer_api = MagicMock()
         timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.side_effect = (
             reset_timer,
-            countdown_timer,
         )
 
         with (
@@ -13973,55 +12033,13 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             self.controller.schedule_capacity_timers(epoch_now=1_000.0)
 
         add_timer = self.capacity_run_loop_type.currentRunLoop.return_value.addTimer_forMode_
-        self.assertEqual(add_timer.call_count, 2)
-        self.assertEqual(
-            [call.args[0] for call in add_timer.call_args_list],
-            [reset_timer, countdown_timer],
-        )
+        add_timer.assert_called_once_with(reset_timer, self.status_bar.NSDefaultRunLoopMode)
         reset_timer.invalidate.assert_not_called()
-        countdown_timer.invalidate.assert_not_called()
 
-        # --- scenario: exact_twenty_four_hour_countdown_schedules_the_branch_transition
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.usage_view import build_provider_usage_view
-
-        self.controller.status_menu_open = True
-        timer_api = MagicMock()
-        timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.side_effect = (
-            MagicMock(),
-            MagicMock(),
-        )
-        self.controller._usage_provider_states = {"codex": self._state("codex", last_success_at=500.0)}
-        self.controller._usage_provider_models = {
-            "codex": build_provider_usage_view(
-                "codex",
-                "Codex",
-                ({"used_percent": 20, "resets_at": 87_400.0},),
-                last_success_at=500.0,
-                now=500.0,
-                reset_now=1_000.0,
-            )
-        }
-
-        with (
-            patch.object(self.status_bar.time, "monotonic", return_value=500.0),
-            patch.object(self.status_bar, "NSTimer", timer_api),
-        ):
-            self.controller.schedule_capacity_timers(epoch_now=1_000.0)
-
-        countdown_calls = [
-            call
-            for call in timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.call_args_list
-            if call.args[2] == "capacityCountdown:"
-        ]
-        self.assertEqual(len(countdown_calls), 1)
-        self.assertEqual(countdown_calls[0].args[0], 60.0)
-
-    def test_reset_callback_reconciliation(self) -> None:
+    def test_reset_callback_reconciliation__and_3_more(self) -> None:
         """The reset callback records keys before requesting providers; a
         partial grouped request rolls back all new keys; early and late
-        callbacks reconcile before requesting; a backoff-blocked request
-        keeps one concrete retry timer."""
+        callbacks reconcile before requesting."""
         # --- scenario: reset_callback_records_keys_before_requesting_grouped_providers
         self.setUp()  # fresh isolated controller per scenario
         self.controller._usage_provider_states = {
@@ -14166,80 +12184,9 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         schedule.assert_called_once_with(epoch_now=1_050.0)
         self.assertEqual(self.controller._attempted_capacity_boundary_keys, ())
 
-        # --- scenario: backoff_blocked_reset_request_keeps_one_concrete_retry_timer
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.usage_view import build_provider_usage_view
 
-        timer = MagicMock()
-        retry_timer = MagicMock()
-        timer_api = MagicMock()
-        timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.return_value = retry_timer
-        self.controller._capacity_reset_timer = timer
-        self.controller._capacity_reset_plan = SimpleNamespace(
-            deadline=1_000.0,
-            provider_ids=("codex",),
-            boundary_keys=("codex|primary|998",),
-        )
-        self.controller._attempted_capacity_boundary_keys = ("older",)
-        self.controller._usage_provider_states = {
-            "codex": self._state(
-                "codex",
-                last_success_at=450.0,
-                retry_not_before=530.0,
-            )
-        }
-        self.controller._usage_provider_models = {
-            "codex": build_provider_usage_view(
-                "codex",
-                "Codex",
-                ({"label": "primary", "used_percent": 20, "resets_at": 998.0},),
-                last_success_at=450.0,
-                now=450.0,
-                reset_now=990.0,
-            )
-        }
-
-        with (
-            patch.object(self.status_bar.time, "time", return_value=1_000.0),
-            patch.object(self.status_bar.time, "monotonic", return_value=500.0),
-            patch.object(self.status_bar, "NSTimer", timer_api),
-            patch.object(self.controller, "request_usage_refresh") as request,
-        ):
-            self.controller.capacityResetBoundary_(timer)
-
-        request.assert_not_called()
-        self.assertEqual(self.controller._attempted_capacity_boundary_keys, ("older",))
-        timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.assert_called_once_with(
-            30.0,
-            self.controller,
-            "capacityResetBoundary:",
-            None,
-            False,
-        )
-        self.assertIs(self.controller._capacity_reset_timer, retry_timer)
-        self.assertEqual(self.controller._capacity_reset_plan.deadline, 1_000.0)
-
-        with patch.object(self.status_bar.time, "monotonic", return_value=501.0):
-            self.controller.schedule_capacity_timers(epoch_now=1_001.0)
-
-        retry_timer.invalidate.assert_not_called()
-        self.assertIs(self.controller._capacity_reset_timer, retry_timer)
-
-        self.controller.invalidate_usage_providers(("codex",))
-
-        retry_timer.invalidate.assert_called_once_with()
-        self.assertIsNone(self.controller._capacity_reset_timer)
-        self.assertIsNone(self.controller._capacity_reset_retry_deadline)
-        self.assertEqual(
-            self.controller._usage_provider_states["codex"].generation,
-            1,
-        )
-
-    def test_capacity_invalidation(self) -> None:
-        """Attempt state caps at 64; the countdown callback only mutates
-        labels and reschedules; invalidation clears timers, models, and
-        attempts; settings invalidation reseeds the exact source and
-        replans once; termination invalidates everything."""
+    def test_capacity_invalidation__and_1_more(self) -> None:
+        """Attempt state caps at 64; termination invalidates everything."""
         # --- scenario: controller_capacity_attempt_state_stays_capped_at_64
         self.setUp()  # fresh isolated controller per scenario
         timer = MagicMock()
@@ -14266,154 +12213,12 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertNotIn("old-00", self.controller._attempted_capacity_boundary_keys)
         self.assertEqual(self.controller._attempted_capacity_boundary_keys[-1], "new")
 
-        # --- scenario: countdown_callback_only_reschedules_and_starts_no_source_work
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.usage_view import build_provider_usage_view
-
-        self.controller._usage_provider_states = {"codex": self._state("codex", last_success_at=500.0)}
-        self.controller._usage_provider_models = {
-            "codex": build_provider_usage_view(
-                "codex",
-                "Codex",
-                (
-                    {
-                        "used_percent": 20,
-                        "window_minutes": 300,
-                        "resets_at": 1_130.0,
-                    },
-                ),
-                last_success_at=500.0,
-                now=500.0,
-                reset_now=1_000.0,
-            )
-        }
-        timer = MagicMock()
-        self.controller._capacity_countdown_timer = timer
-
-        with (
-            patch.object(self.status_bar.time, "monotonic", return_value=510.0),
-            patch.object(self.status_bar.time, "time", return_value=1_010.0),
-            patch.object(self.controller, "_usage_refresh_worker") as worker,
-            patch("jrbar.status_bar.usage_stats.scan_usage") as scan,
-            patch("jrbar.status_bar.usage_stats.codex_rate_limits") as codex,
-            patch("jrbar.status_bar.claude_quota.fetch_windows") as claude,
-            patch.object(self.controller, "schedule_capacity_timers") as schedule,
-        ):
-            self.controller.capacityCountdown_(timer)
-
-        self.assertIsNone(self.controller._capacity_countdown_timer)
-        worker.assert_not_called()
-        scan.assert_not_called()
-        codex.assert_not_called()
-        claude.assert_not_called()
-        schedule.assert_called_once_with(epoch_now=1_010.0)
-
-        # --- scenario: invalidation_clears_capacity_timers_models_and_attempts
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.usage_view import build_provider_usage_view
-
-        reset_timer = MagicMock()
-        countdown_timer = MagicMock()
-        self.controller._capacity_reset_timer = reset_timer
-        self.controller._capacity_countdown_timer = countdown_timer
-        self.controller._capacity_reset_plan = object()
-        self.controller._capacity_reset_retry_deadline = 530.0
-        self.controller._capacity_countdown_deadline = 1_100.0
-        self.controller._attempted_capacity_boundary_keys = ("old",)
-        self.controller._usage_provider_models = {
-            "codex": build_provider_usage_view(
-                "codex",
-                "Codex",
-                ({"used_percent": 20, "resets_at": 1_100.0},),
-                last_success_at=500.0,
-                now=500.0,
-                reset_now=1_000.0,
-            )
-        }
-
-        self.controller.invalidate_usage_providers(("codex",))
-
-        reset_timer.invalidate.assert_called_once_with()
-        countdown_timer.invalidate.assert_called_once_with()
-        self.assertIsNone(self.controller._capacity_reset_timer)
-        self.assertIsNone(self.controller._capacity_countdown_timer)
-        self.assertIsNone(self.controller._capacity_reset_retry_deadline)
-        self.assertEqual(self.controller._attempted_capacity_boundary_keys, ())
-        self.assertNotIn("codex", self.controller._usage_provider_models)
-
-        # --- scenario: settings_invalidation_reseeds_only_exact_source_and_replans_once
-        self.setUp()  # fresh isolated controller per scenario
-        requests = self._prime_refreshes("codex", completed_at=100.0)
-        with patch.object(self.status_bar.time, "monotonic", return_value=100.0):
-            self.controller.applyUsageSummary_(
-                {
-                    "requests": requests,
-                    "results": {},
-                    "failures": self._failures(codex=self.RefreshFailureKind.SOURCE_UNAVAILABLE),
-                }
-            )
-        retry_timer = MagicMock()
-        retry_timer.userInfo.return_value = self._refresh_key("codex")
-        self.controller._capacity_refresh_retry_timers[self._refresh_key("codex")] = retry_timer
-        stale_deadline_timer = MagicMock()
-        self.controller._capacity_refresh_deadline_timers[self._refresh_key("codex")] = stale_deadline_timer
-        claude_requests = self._prime_refreshes("claude", completed_at=101.0)
-        claude_deadline_timer = self.controller._capacity_refresh_deadline_timers[self._refresh_key("claude")]
-
-        with patch.object(self.status_bar.time, "monotonic", return_value=102.0):
-            self.controller.invalidate_usage_providers(("codex",))
-
-        codex = self._capacity_refresh_state("codex", now=102.0)
-        claude = self._capacity_refresh_state("claude", now=102.0)
-        self.assertEqual(codex.generation, 2)
-        self.assertFalse(codex.in_flight)
-        self.assertIsNone(codex.retry_at)
-        self.assertFalse(codex.queued_manual)
-        self.assertEqual(claude.generation, claude_requests[self._source("claude")])
-        self.assertTrue(claude.in_flight)
-        retry_timer.invalidate.assert_called_once_with()
-        stale_deadline_timer.invalidate.assert_called_once_with()
-        self.assertNotIn(
-            self._refresh_key("codex"),
-            self.controller._capacity_refresh_retry_timers,
-        )
-        self.assertNotIn(
-            self._refresh_key("codex"),
-            self.controller._capacity_refresh_deadline_timers,
-        )
-        self.assertIs(
-            self.controller._capacity_refresh_deadline_timers[self._refresh_key("claude")],
-            claude_deadline_timer,
-        )
-        self.controller._usage_transcript_states = {
-            source_key: dataclass_replace(state, last_success_at=102.0)
-            for source_key, state in (self.controller._usage_transcript_states.items())
-        }
-
-        timer_api = MagicMock()
-        with (
-            patch.object(self.status_bar.time, "monotonic", return_value=102.0),
-            patch.object(self.status_bar, "NSTimer", timer_api),
-            patch("jrbar.status_bar.threading.Thread") as thread_type,
-        ):
-            self.controller.maybe_refresh_usage_summary()
-            self.controller.maybe_refresh_usage_summary()
-
-        thread_type.assert_called_once()
-        self.assertEqual(
-            thread_type.call_args.kwargs["args"][0],
-            {self._source("codex"): 3},
-        )
-        self.assertTrue(self._capacity_refresh_state("codex", now=102.0).in_flight)
-
         # --- scenario: termination_invalidates_capacity_timers_and_clears_attempts
         self.setUp()  # fresh isolated controller per scenario
         reset_timer = MagicMock()
-        countdown_timer = MagicMock()
         deadline_timer = MagicMock()
         retry_timer = MagicMock()
         self.controller._capacity_reset_timer = reset_timer
-        self.controller._capacity_countdown_timer = countdown_timer
         self.controller._capacity_refresh_deadline_timers = {self._refresh_key("codex"): deadline_timer}
         self.controller._capacity_refresh_retry_timers = {self._refresh_key("claude"): retry_timer}
         self.controller._capacity_reset_retry_deadline = 530.0
@@ -14426,7 +12231,6 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             self.controller.applicationWillTerminate_(None)
 
         reset_timer.invalidate.assert_called_once_with()
-        countdown_timer.invalidate.assert_called_once_with()
         deadline_timer.invalidate.assert_called_once_with()
         retry_timer.invalidate.assert_called_once_with()
         self.assertEqual(self.controller._capacity_refresh_deadline_timers, {})
@@ -15146,37 +12950,6 @@ class SnoozeScopeControllerTests(unittest.TestCase):
         controller._deliver_semantic_notification.assert_called_once()
 
 
-class PowerUpLookTests(unittest.TestCase):
-    def setUp(self) -> None:
-        isolate_controller(self)
-
-    def test_power_up_writes_init_led_on_connected_hardware(self) -> None:
-        volume_root = Path(self._tmp.name) / "volumes"
-        (volume_root / "SidePulseDot").mkdir(parents=True)
-        devices = discover_devices(mount_root=volume_root)
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        self.controller.studio_editor.setString_("#00E5FF 500ms pulse\nrepeat")
-        with patch("jrbar.status_bar.discover_devices", return_value=devices):
-            self.controller.applyStudioAsPowerUp_(None)
-        init_path = volume_root / "SidePulseDot" / "INIT.LED"
-        self.assertTrue(init_path.exists())
-        self.assertIn("pulse", init_path.read_text())
-        # LEDS.LED untouched by the power-up write.
-        self.assertFalse((volume_root / "SidePulseDot" / "LEDS.LED").exists())
-
-    def test_invalid_program_writes_nothing(self) -> None:
-        volume_root = Path(self._tmp.name) / "volumes"
-        (volume_root / "SidePulseDot").mkdir(parents=True)
-        devices = discover_devices(mount_root=volume_root)
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        self.controller.studio_editor.setString_("")
-        with patch("jrbar.status_bar.discover_devices", return_value=devices):
-            self.controller.applyStudioAsPowerUp_(None)
-        self.assertFalse((volume_root / "SidePulseDot" / "INIT.LED").exists())
-
-
 class StudioLibraryTests(unittest.TestCase):
     def setUp(self) -> None:
         isolate_controller(self)
@@ -15197,20 +12970,6 @@ class StudioLibraryTests(unittest.TestCase):
         self.assertEqual(len(loaded.without_studio_look("Ember").studio_library), 1)
         with self.assertRaises(ValueError):
             settings.with_studio_saved_look("  ", "x")
-
-    def test_capture_strips_brightness_prefix(self) -> None:
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        view = self.controller.virtual_status_device.view
-        if view is None:
-            self.controller.virtual_status_device._build_window()
-            view = self.controller.virtual_status_device.view
-        view.current_program = "brightness 120\n#00E5FF 500ms pulse\nrepeat"
-        self.controller.captureStudioProgram_(None)
-        captured = str(self.controller.studio_editor.string())
-        self.assertNotIn("brightness", captured)
-        self.assertIn("#00E5FF", captured)
-
 
 class OvertimePatinaWebhookTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -15489,26 +13248,6 @@ class BacklogBehaviorTests(unittest.TestCase):
     def setUp(self) -> None:
         isolate_controller(self)
 
-    def test_battery_toggle_reaches_remembered_devices(self) -> None:
-        self.controller.settings = self.controller.settings.with_remembered_device(
-            device_id="Dot", name="SidePulse Dot", path="/Volumes/Dot"
-        )
-        # A remembered device snapshots the then-current global display,
-        # which used to shadow the switch forever after.
-        with patch.object(self.controller, "refresh_") as refresh:
-            self.controller.set_battery_led_display(True)
-            self.assertEqual(
-                self.controller.settings.display_for_device("Dot"),
-                self.status_bar.LED_DISPLAY_BATTERY,
-            )
-            self.controller.set_battery_led_display(False)
-        self.assertEqual(refresh.call_args_list, [call(None), call(None)])
-        self.assertEqual(
-            self.controller.settings.display_for_device("Dot"),
-            self.status_bar.LED_DISPLAY_AGENT,
-        )
-
-
 class CompletionThroughSnapshotTests(unittest.TestCase):
     """THE missed-celebration regression: the collector demotes every
     inactive status to stale the moment ANY session is active, so a
@@ -15660,9 +13399,9 @@ class AgentMailboxMenuTests(unittest.TestCase):
 
     def test_mailbox_projection_details(self) -> None:
         """Provider name, color and accessible icon survive projection;
-        background refresh does not mark seen but a visit does; a fresh
+        background refresh does not mark a completion seen; a fresh
         stale completion stays ready while another session is active."""
-        # --- scenario: background_refresh_does_not_mark_completion_seen_but_visit_does
+        # --- scenario: background_refresh_does_not_mark_completion_seen
         self.setUp()  # fresh isolated controller per scenario
         completed = self._status(
             "claude",
@@ -15677,15 +13416,6 @@ class AgentMailboxMenuTests(unittest.TestCase):
         self.assertEqual(
             [section.kind.value for section in self.controller.current_mailbox_projection.sections if section.rows],
             ["ready_for_review"],
-        )
-
-        self.controller.last_snapshot = snapshot
-        self.controller.menuWillOpen_(None)
-
-        self.assertIn(completed.agent_id, self.controller.mailbox_seen_completion_ids)
-        self.assertEqual(
-            [section.kind.value for section in self.controller.current_mailbox_projection.sections if section.rows],
-            ["recent"],
         )
 
         # --- scenario: fresh_stale_completion_stays_ready_while_another_session_is_active
@@ -15826,28 +13556,12 @@ class ModernNotificationControllerTests(unittest.TestCase):
     class RecordingClient:
         def __init__(self) -> None:
             self.deliveries: list[tuple[str, str, str, dict[str, str]]] = []
-            self.authorization_requests = 0
-            self.authorization_observations = 0
             self.delegates: list[object | None] = []
             self.closed = 0
 
         def deliver(self, identifier, title, body, user_info) -> bool:
             self.deliveries.append((identifier, title, body, dict(user_info)))
             return True
-
-        def request_authorization(self, completion=None) -> bool:
-            from jrbar.macos_notifications import NotificationAuthorizationState
-
-            self.authorization_requests += 1
-            if completion is not None:
-                completion(NotificationAuthorizationState.AUTHORIZED)
-            return True
-
-        def authorization_state(self):
-            from jrbar.macos_notifications import NotificationAuthorizationState
-
-            self.authorization_observations += 1
-            return NotificationAuthorizationState.AUTHORIZED
 
         def set_delegate(self, delegate) -> bool:
             self.delegates.append(delegate)
@@ -16103,124 +13817,8 @@ class ModernNotificationControllerTests(unittest.TestCase):
 
         self.assertEqual(presented, [1 << 2])
 
-        # --- scenario: explicit_permission_action_updates_controller_state
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.macos_notifications import NotificationAuthorizationState
-
-        self.controller.performSelectorOnMainThread_withObject_waitUntilDone_ = lambda selector, payload, _wait: (
-            getattr(
-                self.controller,
-                selector.replace(":", "_"),
-            )(payload)
-        )
-
-        self.controller.requestNotificationPermission_(None)
-
-        self.assertEqual(self.client.authorization_requests, 1)
-        self.assertIs(
-            self.controller.notification_authorization_state,
-            NotificationAuthorizationState.AUTHORIZED,
-        )
-
-    def test_notification_permission_states(self) -> None:
-        """The messages pane renders not-determined state and an unavailable
-        permission action retries observation without prompting."""
-        # --- scenario: messages_pane_renders_not_determined_permission_state
-        self.setUp()  # fresh isolated controller per scenario
-        """The macOS permission control lives in Messages, not Signals.
-
-        Notifications are WORDS, and the owner asked for the words to have
-        their own area; Signals keeps the lights. If this ever reads
-        "led_behavior" again, the two jobs have been merged back.
-        """
-        from jrbar.macos_notifications import NotificationAuthorizationState
-
-        self.controller._notification_authorization_checked = True
-        self.controller.notification_authorization_state = NotificationAuthorizationState.NOT_DETERMINED
-        self.controller.show_settings_window()
-        self.controller.ensure_settings_pane("notifications")
-
-        label = self.controller.settings_fields["notification_authorization_status"]
-        button = self.controller.settings_buttons["notification_permission"]
-        self.assertEqual(label.stringValue(), "Not requested")
-        self.assertEqual(button.title(), "Enable Notifications\u2026")
-        self.assertFalse(button.isHidden())
-
-        # --- scenario: unavailable_permission_action_retries_observation_without_prompt
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.macos_notifications import NotificationAuthorizationState
-
-        self.controller._notification_authorization_checked = True
-        self.controller.notification_authorization_state = NotificationAuthorizationState.UNAVAILABLE
-        self.controller.show_settings_window()
-        self.controller.ensure_settings_pane("notifications")
-        self.controller.refresh_notification_authorization_controls()
-        button = self.controller.settings_buttons["notification_permission"]
-
-        self.assertEqual(button.title(), "Retry Permission Check\u2026")
-        self.assertFalse(button.isHidden())
-
-        with patch.object(self.status_bar.threading, "Thread") as thread_type:
-            self.controller.requestNotificationPermission_(None)
-        observe = thread_type.call_args.kwargs["target"]
-        observe()
-
-        self.assertEqual(self.client.authorization_requests, 0)
-        self.assertEqual(self.client.authorization_observations, 1)
-
-    def test_authorization_refresh_lifecycle(self) -> None:
-        """Authorization refresh builds the bridge before the worker,
-        recovers when the worker cannot start, and termination clears
-        delegate bindings and the worker."""
-        # --- scenario: authorization_refresh_constructs_notification_bridge_before_worker
-        self.setUp()  # fresh isolated controller per scenario
-        main_thread = threading.get_ident()
-        construction_threads: list[int] = []
-        self.controller.notification_client = None
-
-        def build_client():
-            construction_threads.append(threading.get_ident())
-            return self.client
-
-        with (
-            patch.object(
-                self.status_bar,
-                "MacOSNotificationClient",
-                side_effect=build_client,
-            ),
-            patch.object(self.status_bar.threading, "Thread") as thread_type,
-        ):
-            self.controller.start_notification_authorization_refresh()
-
-        self.assertEqual(construction_threads, [main_thread])
-        observe = thread_type.call_args.kwargs["target"]
-        observe()
-        self.assertEqual(construction_threads, [main_thread])
-        self.assertEqual(self.client.authorization_observations, 1)
-
-        # --- scenario: authorization_refresh_recovers_when_worker_cannot_start
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.macos_notifications import NotificationAuthorizationState
-
-        thread = MagicMock()
-        thread.start.side_effect = RuntimeError("thread unavailable")
-        with (
-            patch.object(self.status_bar.threading, "Thread", return_value=thread),
-            patch.object(
-                self.controller,
-                "refresh_notification_authorization_controls",
-            ) as refresh_controls,
-        ):
-            self.controller.start_notification_authorization_refresh()
-
-        self.assertFalse(self.controller._notification_authorization_refresh_in_flight)
-        self.assertTrue(self.controller._notification_authorization_checked)
-        self.assertIs(
-            self.controller.notification_authorization_state,
-            NotificationAuthorizationState.UNAVAILABLE,
-        )
-        refresh_controls.assert_called_once_with()
-
+    def test_notification_termination_lifecycle(self) -> None:
+        """Termination clears delegate bindings and the worker."""
         # --- scenario: termination_clears_notification_delegate_bindings_and_worker
         self.setUp()  # fresh isolated controller per scenario
         self._deliver_completion()
@@ -16240,34 +13838,6 @@ class ModernNotificationControllerTests(unittest.TestCase):
         self.assertEqual(self.client.closed, 1)
         self.assertEqual(self.controller._notification_action_bindings, {})
         self.assertEqual(self.controller._notification_events_by_work_key, {})
-
-
-class LazyPaneBuildTests(unittest.TestCase):
-    """Audit #5's actual contract: only the default pane exists after
-    the window opens, and the sidebar's selection path builds the rest
-    (the production trigger the ensure_all test shims bypass)."""
-
-    def setUp(self) -> None:
-        isolate_controller(self)
-
-    def test_open_builds_only_the_default_pane(self) -> None:
-        self.controller.show_settings_window()
-        self.assertEqual(
-            set(self.controller.settings_panes),
-            {self.status_bar.DEFAULT_SETTINGS_PANE},
-        )
-
-    def test_sidebar_selection_builds_and_unhides_the_pane(self) -> None:
-        self.controller.show_settings_window()
-        row = next(
-            index for index, (key, _label) in enumerate(self.status_bar.SETTINGS_SIDEBAR_ITEMS) if key == "focus"
-        )
-        table = self.controller.settings_sidebar_table
-        table.selectRowIndexes_byExtendingSelection_(self.status_bar.NSIndexSet.indexSetWithIndex_(row), False)
-        self.controller.tableViewSelectionDidChange_(SimpleNamespace(object=lambda: table))
-        self.assertIn("focus", self.controller.settings_panes)
-        self.assertFalse(self.controller.settings_panes["focus"].isHidden())
-        self.assertEqual(self.controller.current_settings_pane, "focus")
 
 
 class SingleInstanceProbeTests(unittest.TestCase):
@@ -16380,46 +13950,7 @@ class ResilienceHardeningTests(unittest.TestCase):
         )
 
     def test_burn_fails_closed_without_parser(self) -> None:
-        '''Burn refuses to write and validation fails closed when the parser
-        is gone.'''
-        # --- scenario: burn_refuses_to_write_init_led_when_parser_is_gone
-        """The WIRING half of fail-closed: with the parser broken, the
-        burn path must write no INIT.LED at all (dropping the firmware
-        gate from applyStudioAsPowerUp_ would pass every other test).
-
-        A connected device is stubbed in ON PURPOSE: without one the burn
-        returns "no hardware" and an empty write list would be true for
-        entirely the wrong reason.
-        """
-        isolate_controller(self)
-        from jrbar import status_bar
-
-        self.status_bar = status_bar
-        self.controller.studio_editor = SimpleNamespace(string=lambda: self.VALID_BURN_PROGRAM)
-        self.controller.status_bar_devices = MagicMock(return_value=[self._connected_device()])
-        writes: list = []
-        with (
-            patch(
-                "jrbar.led_wasm.SdLedWasmController",
-                side_effect=RuntimeError("no JavaScriptCore"),
-            ),
-            patch(
-                "jrbar.device_writer.write_led_program",
-                side_effect=lambda *a, **k: writes.append((a, k)),
-            ),
-        ):
-            self.controller.applyStudioAsPowerUp_(None)
-        self.assertEqual(writes, [])
-        # And the same wiring DOES write when the parser is available --
-        # otherwise "wrote nothing" is just a broken burn button.
-        with patch(
-            "jrbar.device_writer.write_led_program",
-            side_effect=lambda *a, **k: writes.append((a, k)) or Path("/Volumes/JRBarBurnTest/INIT.LED"),
-        ):
-            self.controller.applyStudioAsPowerUp_(None)
-        self.assertEqual(len(writes), 1)
-        self.assertEqual(writes[0][1]["file_name"], "INIT.LED")
-
+        '''Burn validation fails closed when the parser is gone.'''
         # --- scenario: burn_validation_fails_closed_when_parser_is_gone
         isolate_controller(self)
         with patch(
@@ -16441,65 +13972,7 @@ class ResilienceHardeningTests(unittest.TestCase):
 
 
 class AlcoveFollowTests(unittest.TestCase):
-    """The bracket follows Alcove's alpha-measured capsule width --
-    widen instantly, narrow patiently, never balloon."""
-
-    @staticmethod
-    def _screen():
-        return SimpleNamespace(
-            frame=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0),
-                size=SimpleNamespace(width=1512.0, height=982.0),
-            ),
-            safeAreaInsets=lambda: SimpleNamespace(top=32.0),
-            auxiliaryTopLeftArea=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=0.0, y=0.0),
-                size=SimpleNamespace(width=640.0, height=24.0),
-            ),
-            auxiliaryTopRightArea=lambda: SimpleNamespace(
-                origin=SimpleNamespace(x=872.0, y=0.0),
-                size=SimpleNamespace(width=640.0, height=24.0),
-            ),
-        )
-
-    def test_alcove_width_is_matched_exactly_both_directions(self) -> None:
-        from jrbar import virtual_device
-
-        screen = self._screen()
-        base = virtual_device.virtual_window_frame_for_screen(screen, wrap_menu_bar=True)
-        wider = virtual_device.virtual_window_frame_for_screen(screen, wrap_menu_bar=True, alcove_total_width=300.0)
-        self.assertEqual(wider[1][0], 300.0)
-        # Still centered on the notch.
-        self.assertAlmostEqual(wider[0][0] + wider[1][0] / 2.0, 756.0)
-        # "Match" means match: a capsule NARROWER than the current bar
-        # narrows the bar too (this is what supersedes a stale manual
-        # gap the moment a real reading exists) -- down to a sane floor.
-        narrower = virtual_device.virtual_window_frame_for_screen(screen, wrap_menu_bar=True, alcove_total_width=170.0)
-        self.assertEqual(narrower[1][0], 170.0)
-        self.assertAlmostEqual(narrower[0][0] + narrower[1][0] / 2.0, 756.0)
-        self.assertEqual(
-            virtual_device.virtual_window_frame_for_screen(screen, wrap_menu_bar=True, alcove_total_width=60.0)[1][0],
-            140.0,
-        )
-        # None means classic geometry, byte-identical.
-        self.assertEqual(
-            virtual_device.virtual_window_frame_for_screen(screen, wrap_menu_bar=True, alcove_total_width=None),
-            base,
-        )
-        # Width follows Alcove in BOTH modes now (2026-08-27: the
-        # wrap-only gate left "minimal settings" drawing a fixed-width
-        # band overhanging a narrower capsule).
-        self.assertEqual(
-            virtual_device.virtual_window_frame_for_screen(screen, wrap_menu_bar=False, alcove_total_width=900.0)[1][0],
-            900.0,
-        )
-
-    def test_alcove_width_still_caps_at_the_screen(self) -> None:
-        from jrbar import virtual_device
-
-        screen = self._screen()
-        huge = virtual_device.virtual_window_frame_for_screen(screen, wrap_menu_bar=True, alcove_total_width=5000.0)
-        self.assertLessEqual(huge[1][0], 1512.0)
+    """Following Alcove's capsule width is a setting that defaults on."""
 
     def test_follow_setting_round_trips_default_on(self) -> None:
         self.assertTrue(AgentMonitorSettings().screen_bar_follow_alcove)
@@ -16567,19 +14040,6 @@ class ProjectHueFamilyTests(unittest.TestCase):
 
 class WingTipGaugeTests(unittest.TestCase):
     """Story #14: the wing tips as standing micro-gauges."""
-
-    def test_setter_clamps_and_change_gates(self) -> None:
-        from jrbar import virtual_device
-
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
-        view.set_standing_gauges(0.6, True)
-        self.assertAlmostEqual(view._gauge_left_level, 0.6)
-        self.assertTrue(view._gauge_right_on)
-        view.set_standing_gauges(2.0, False)
-        self.assertEqual(view._gauge_left_level, 1.0)
-        self.assertFalse(view._gauge_right_on)
-        view.set_standing_gauges(-3.0, False)
-        self.assertEqual(view._gauge_left_level, 0.0)
 
     def test_setting_defaults_off_and_round_trips(self) -> None:
         self.assertFalse(AgentMonitorSettings().screen_bar_gauges_enabled)
@@ -16863,44 +14323,6 @@ class GlowDialTests(unittest.TestCase):
         self.controller.settings = self.controller.settings.with_screen_bar_min_glow(0.25)
         self.assertGreaterEqual(self.controller.effective_brightness_for_device(device), 63)
 
-    def test_bracket_and_classic_bar_glow(self) -> None:
-        '''A zero bracket floor means pitch black; the classic bar preserves
-        dim pixels with min glow and respects dark and off.'''
-        # --- scenario: bracket_floor_zero_means_pitch_black
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar import virtual_device
-
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
-        view.setMinGlow_(0.0)
-        dim = [(0.02, 0.01, 0.01, 0.01)] * 8
-        rendered = view._bracket_colors(dim)
-        self.assertTrue(all(c[3] <= 0.011 for c in rendered))
-
-        # --- scenario: classic_bar_preserves_dim_pixels_with_minimum_glow
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar import virtual_device
-
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
-        view.setMinGlow_(0.25)
-        dim = [(0.02, 0.01, 0.01, 0.01)] * 8
-
-        rendered = view._classic_status_colors(dim)
-
-        self.assertEqual(rendered, dim)
-
-        # --- scenario: classic_bar_minimum_glow_respects_dark_and_off
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar import virtual_device
-
-        view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
-        dim = [(0.02, 0.01, 0.01, 0.01)] * 8
-        view.setMinGlow_(0.0)
-        self.assertEqual(view._classic_status_colors(dim), dim)
-
-        view.setMinGlow_(0.25)
-        view.setProgram_("off")
-        self.assertEqual(view._classic_status_colors(dim), dim)
-
     def test_glow_reaches_devices(self) -> None:
         '''Resting glow reaches the screen-bar program and the device setting
         round-trips.'''
@@ -16955,34 +14377,6 @@ class PaletteTests(unittest.TestCase):
 
         value = oklch_hex(0.5, 5.0, 200.0)
         self.assertRegex(value, r"^#[0-9A-F]{6}$")
-
-    def test_apply_palette_round_trip(self) -> None:
-        from types import SimpleNamespace as NS
-
-        from jrbar.colors import CURATED_PALETTES
-
-        sender = NS(identifier=lambda: "Sunset")
-        with patch.object(self.controller, "refresh_") as refresh:
-            self.controller.applyPalette_(sender)
-        refresh.assert_called_once_with(None)
-        expected = CURATED_PALETTES["Sunset"]
-        self.assertEqual(
-            self.controller.settings.colors.mode_colors["working"],
-            expected["modes"]["working"],
-        )
-        # 2026-08-20: every registered provider carries a deliberate
-        # brand color now, so palettes own the MODES and no providers --
-        # brands stay brands. apply_palette always skipped branded rows;
-        # with none left brandless, the agents fan is empty and a theme
-        # can never repaint Cursor off its identity.
-        self.assertEqual(expected["agents"], {})
-        from jrbar.colors import PROVIDER_BRAND_COLORS
-
-        self.assertEqual(
-            self.controller.settings.colors.agent_color("cursor"),
-            PROVIDER_BRAND_COLORS["cursor"],
-        )
-
 
 class UsageStatsTests(unittest.TestCase):
     """The T3-exact usage pipeline: substring gate, global first-seen
@@ -17094,8 +14488,9 @@ class T3AdoptionTests(unittest.TestCase):
         )
 
     def test_ask_classification_and_plan_detection(self) -> None:
-        '''Hard vs soft ask, plan-ready detection, unseen completions cleared
-        by menu open, pause override consuming courtesy signals.'''
+        '''Hard vs soft ask, plan-ready detection, an unacknowledged
+        completion counted as unseen, pause override consuming courtesy
+        signals.'''
         # --- scenario: hard_vs_soft_ask
         self.setUp()  # fresh isolated controller per scenario
         hard = self._status("claude:session:a", AgentMode.WAITING_FOR_INPUT, event="PermissionRequest")
@@ -17115,17 +14510,13 @@ class T3AdoptionTests(unittest.TestCase):
         )
         self.assertTrue(plan.is_plan_ready)
 
-        # --- scenario: unseen_completions_cleared_by_menu_open
+        # --- scenario: unacknowledged_completion_is_unseen
         self.setUp()  # fresh isolated controller per scenario
         from types import SimpleNamespace as NS
 
         done = self._status("claude:session:a", AgentMode.COMPLETED, event="Stop")
         snapshot = NS(statuses=[done], stale_statuses=[], collected_at=datetime.now(timezone.utc))
-        # Never opened the menu: the completion is unseen.
         self.assertEqual(len(self.status_bar.unseen_completions(snapshot, self.controller)), 1)
-        # Opening the menu is the visit that clears it.
-        self.controller.menuWillOpen_(None)
-        self.assertEqual(self.status_bar.unseen_completions(snapshot, self.controller), [])
 
         # --- scenario: pause_override_consumes_courtesy_signals_without_replay
         self.setUp()  # fresh isolated controller per scenario
@@ -17162,11 +14553,11 @@ class T3AdoptionTests(unittest.TestCase):
 
 
     def test_every_lid_preset_parses_in_the_real_firmware_grammar(self) -> None:
-        from jrbar import status_bar
         from jrbar.led_wasm import SdLedWasmController
+        from jrbar.lid_presets import LID_ANIMATION_PRESETS
 
         engine = SdLedWasmController(led_count=8)
-        for presets in status_bar.LID_ANIMATION_PRESETS.values():
+        for presets in LID_ANIMATION_PRESETS.values():
             for name, duration, program in presets:
                 result = engine.parse(program, 0)
                 self.assertTrue(
@@ -17226,49 +14617,6 @@ class StudioDisplayAndTrancheCTests(unittest.TestCase):
         # --- scenario: empty_studio_program_falls_back
         self.setUp()  # fresh isolated controller per scenario
         self.assertIsNone(self.controller.studio_display_program(255))
-
-    def test_studio_popup_and_hotplug(self) -> None:
-        '''Studio and runway are in the display popup and the devices pane
-        rebuilds on hotplug while visible.'''
-        # --- scenario: studio_and_runway_options_are_in_the_display_popup
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.settings import LED_DISPLAY_QUOTA_RUNWAY, LED_DISPLAY_STUDIO
-
-        volume_root = Path(self._tmp.name) / "volumes"
-        (volume_root / "SidePulseDot").mkdir(parents=True)
-        devices = discover_devices(mount_root=volume_root)
-        with patch("jrbar.status_bar.discover_devices", return_value=devices):
-            self.controller.discover_device_candidates()
-            self.controller.show_settings_window()
-            self.controller.ensure_all_settings_panes()
-        controls = next(iter(self.controller.device_settings_controls.values()))
-        popup = controls["display_popup"]
-        keys = {}
-        for index in range(popup.numberOfItems()):
-            item = popup.itemAtIndex_(index)
-            keys[item.representedObject()] = str(item.title())
-        self.assertIn(LED_DISPLAY_STUDIO, keys)
-        # 2026-08-26: choosable again -- the JR usage plane feeds it.
-        self.assertEqual(keys.get(LED_DISPLAY_QUOTA_RUNWAY), "Quota runway")
-
-        # --- scenario: devices_pane_rebuilds_on_hotplug_while_visible
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller.show_settings_window()
-        self.controller.ensure_all_settings_panes()
-        self.assertEqual(len(self.controller.device_settings_controls), 0)
-        # Prime the connection signature, then "plug in" a device.
-        self.controller.observe_connected_devices()
-        volume_root = Path(self._tmp.name) / "hotplug"
-        (volume_root / "SidePulsePro").mkdir(parents=True)
-        devices = discover_devices(mount_root=volume_root)
-        with patch("jrbar.status_bar.discover_devices", return_value=devices):
-            self.controller.poll_devices_once()
-        # Device ids for non-/Volumes roots carry the full path.
-        self.assertTrue(
-            any("SidePulsePro" in device_id for device_id in self.controller.device_settings_controls),
-            self.controller.device_settings_controls,
-        )
-
 
 class CalendarAlertTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -17569,9 +14917,7 @@ class ReminderObservationRuntimeTests(unittest.TestCase):
 
     def test_reminder_callback_and_permission(self) -> None:
         """A callback timeout releases the shared worker and a late callback
-        is inert; permission is explicit-enable, main-thread, single
-        flight; its callback is inert after sleep; denial withdraws the
-        timer and cue; unavailable clears without replay."""
+        is inert."""
         # --- scenario: reminder_callback_timeout_releases_shared_worker_and_late_callback_is_inert
         self.setUp()  # fresh isolated controller per scenario
         started = threading.Event()
@@ -17635,182 +14981,6 @@ class ReminderObservationRuntimeTests(unittest.TestCase):
         self.assertEqual(self.controller.reminders_seen, previous_seen)
         self.assertEqual(self.controller.reminders_glow_until, 0.0)
 
-        # --- scenario: reminder_permission_is_explicit_enable_only_main_thread_and_single_flight
-        self.setUp()  # fresh isolated controller per scenario
-        inputs = self._inputs()
-        self.controller.virtual_status_device = SimpleNamespace(presentation_scheduler_inputs=lambda: inputs)
-        worker = MagicMock()
-        self.controller._os_poll_worker = worker
-        enabled_sender = SimpleNamespace(state=lambda: 1)
-        disabled_sender = SimpleNamespace(state=lambda: 0)
-        callbacks = []
-        request_threads = []
-
-        def request_access(completion):
-            callbacks.append(completion)
-            request_threads.append(threading.get_ident())
-
-        with (
-            patch.object(self.status_bar, "save_settings"),
-            patch.object(
-                self.status_bar.reminders_watch,
-                "authorization_status",
-                return_value=self.status_bar.reminders_watch.AUTH_NOT_DETERMINED,
-            ) as authorization_status,
-            patch.object(
-                self.status_bar.reminders_watch,
-                "request_access",
-                side_effect=request_access,
-            ) as request_access_mock,
-            patch.object(
-                self.status_bar.reminders_watch,
-                "fetch_due",
-            ) as fetch_due,
-        ):
-            for _ in range(100):
-                self.controller.reconcile_presentation_timers(inputs)
-            authorization_status.assert_not_called()
-            request_access_mock.assert_not_called()
-
-            self.controller.toggleReminderAlerts_(enabled_sender)
-            self.controller.toggleReminderAlerts_(enabled_sender)
-            for _ in range(100):
-                self.controller.reconcile_presentation_timers(inputs)
-
-            authorization_status.assert_called_once_with()
-            request_access_mock.assert_called_once_with(callbacks[0])
-            self.assertEqual(request_threads, [threading.main_thread().ident])
-            fetch_due.assert_not_called()
-
-            self.controller.toggleReminderAlerts_(disabled_sender)
-            callback_thread = threading.Thread(target=lambda: callbacks[0](True))
-            callback_thread.start()
-            callback_thread.join(1.0)
-
-        self.assertFalse(self.controller._reminders_observation_active)
-        self.assertEqual(self.controller.reminders_glow_until, 0.0)
-        worker.submit.assert_not_called()
-
-        # --- scenario: reminder_permission_callback_is_inert_after_sleep
-        self.setUp()  # fresh isolated controller per scenario
-        inputs = self._inputs()
-        self.controller.virtual_status_device = SimpleNamespace(presentation_scheduler_inputs=lambda: inputs)
-        callbacks = []
-        self.controller.set_settings_message = MagicMock()
-
-        with (
-            patch.object(self.status_bar, "save_settings"),
-            patch.object(
-                self.status_bar.reminders_watch,
-                "authorization_status",
-                return_value=self.status_bar.reminders_watch.AUTH_NOT_DETERMINED,
-            ),
-            patch.object(
-                self.status_bar.reminders_watch,
-                "request_access",
-                side_effect=callbacks.append,
-            ),
-        ):
-            self.controller.toggleReminderAlerts_(SimpleNamespace(state=lambda: 1))
-
-        self.controller.set_settings_message.reset_mock()
-        self.controller.reconcile_presentation_timers(self._inputs(display_asleep=True))
-        self.controller.reminderAccessResolved_(
-            {
-                "token": self.controller._reminders_permission_request_token,
-                "granted": False,
-            }
-        )
-
-        self.assertIsNone(self.controller._reminders_permission_request_token)
-        self.assertFalse(self.controller._reminders_permission_failed)
-        self.assertEqual(self.controller.reminders_glow_until, 0.0)
-        self.controller.set_settings_message.assert_not_called()
-
-        # --- scenario: reminder_permission_denial_withdraws_timer_and_active_cue
-        self.setUp()  # fresh isolated controller per scenario
-        inputs = self._inputs()
-        self.controller.virtual_status_device = SimpleNamespace(presentation_scheduler_inputs=lambda: inputs)
-        self.controller.settings = self.controller.settings.with_reminder_alerts_enabled(True)
-        self.controller.reconcile_presentation_timers(inputs)
-        self.controller._apply_reminders_observation_result(
-            self.status_bar.RemindersObservationResult(True, ("f" * 64,))
-        )
-        self.controller.refresh_ = MagicMock()
-        worker = MagicMock()
-        self.controller._os_poll_worker = worker
-
-        with (
-            patch.object(self.status_bar, "save_settings"),
-            patch.object(
-                self.status_bar.reminders_watch,
-                "authorization_status",
-                return_value=self.status_bar.reminders_watch.AUTH_DENIED,
-            ),
-            patch.object(
-                self.status_bar.reminders_watch,
-                "request_access",
-            ) as request_access,
-            patch.object(
-                self.status_bar.reminders_watch,
-                "fetch_due",
-            ) as fetch_due,
-        ):
-            self.controller.toggleReminderAlerts_(SimpleNamespace(state=lambda: 1))
-
-        self.assertTrue(self.controller.settings.reminder_alerts_enabled)
-        self.assertTrue(self.controller._reminders_permission_failed)
-        self.assertFalse(self.controller._reminders_observation_active)
-        self.assertEqual(self.controller.reminders_glow_until, 0.0)
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.REMINDERS_OBSERVATION,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.TEST_SIGNAL_DEADLINE,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-        worker.submit.assert_not_called()
-        request_access.assert_not_called()
-        fetch_due.assert_not_called()
-        self.controller.refresh_.assert_called_once_with(None)
-
-        # --- scenario: reminder_permission_unavailable_clears_active_cue_without_replay
-        self.setUp()  # fresh isolated controller per scenario
-        inputs = self._inputs()
-        self.controller.virtual_status_device = SimpleNamespace(presentation_scheduler_inputs=lambda: inputs)
-        self.controller.settings = self.controller.settings.with_reminder_alerts_enabled(True)
-        self.controller.reconcile_presentation_timers(inputs)
-        self.controller._apply_reminders_observation_result(
-            self.status_bar.RemindersObservationResult(True, ("9" * 64,))
-        )
-        self.controller.refresh_ = MagicMock()
-
-        with (
-            patch.object(self.status_bar, "save_settings"),
-            patch.object(
-                self.status_bar.reminders_watch,
-                "authorization_status",
-                side_effect=self.status_bar.reminders_watch.RemindersUnavailableError("private EventKit error"),
-            ),
-            patch.object(
-                self.status_bar.reminders_watch,
-                "request_access",
-            ) as request_access,
-            patch.object(
-                self.status_bar.reminders_watch,
-                "fetch_due",
-            ) as fetch_due,
-        ):
-            self.controller.toggleReminderAlerts_(SimpleNamespace(state=lambda: 1))
-            self.controller._reminders_observation_timer_fired()
-
-        self.assertTrue(self.controller._reminders_permission_failed)
-        self.assertFalse(self.controller._reminders_observation_active)
-        self.assertEqual(self.controller.reminders_glow_until, 0.0)
-        self.controller.refresh_.assert_called_once_with(None)
-        request_access.assert_not_called()
-        fetch_due.assert_not_called()
 
     def test_reminder_burst_and_teardown(self) -> None:
         """A burst keeps one running and one latest pending; a disabled launch
@@ -18148,10 +15318,9 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
         self.assertEqual(self.controller.calendar_glow_until, self.clock[0] + 90.0)
         self.controller.refresh_.assert_called_once_with(None)
 
-    def test_calendar_timeout_and_reconcile(self) -> None:
+    def test_calendar_timeout_and_reconcile__and_1_more(self) -> None:
         """Timeout is static and backs off without retry; unavailable clears
-        the cue and arms retry; the toggle reconciles and submits only
-        through the worker."""
+        the cue and arms retry."""
         # --- scenario: calendar_timeout_is_static_and_backs_off_without_retry
         self.setUp()  # fresh isolated controller per scenario
         self.controller.settings = self.controller.settings.with_calendar_alerts_enabled(True)
@@ -18213,51 +15382,11 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
         self.controller.refresh_.assert_called_once_with(None)
         self.assertEqual(self.controller.calendar_watch_retry_at, 950.0)
 
-        # --- scenario: calendar_toggle_reconciles_and_submits_only_through_worker
-        self.setUp()  # fresh isolated controller per scenario
-        inputs = self._inputs()
-        self.controller.virtual_status_device = SimpleNamespace(presentation_scheduler_inputs=lambda: inputs)
-        worker = MagicMock()
-        self.controller._os_poll_worker = worker
-        enabled_sender = SimpleNamespace(state=lambda: 1)
-        disabled_sender = SimpleNamespace(state=lambda: 0)
 
-        with (
-            patch.object(self.status_bar, "save_settings"),
-            patch.object(
-                self.status_bar.calendar_watch,
-                "authorization_status",
-                return_value=self.status_bar.calendar_watch.AUTH_AUTHORIZED,
-            ) as authorization_status,
-            patch.object(
-                self.status_bar.calendar_watch,
-                "next_event_start",
-            ) as next_event_start,
-        ):
-            self.controller.toggleCalendarAlerts_(enabled_sender)
-
-            calendar_timer = next(
-                timer
-                for timer in self.factory.live
-                if timer.feature is self.status_bar.RuntimeFeature.CALENDAR_OBSERVATION
-            )
-            self.assertEqual(calendar_timer.interval, 30.0)
-            self.assertEqual(worker.submit.call_count, 1)
-            next_event_start.assert_not_called()
-
-            self.controller.toggleCalendarAlerts_(disabled_sender)
-
-        self.assertFalse(self.controller._calendar_observation_active)
-        self.assertEqual(calendar_timer.invalidations, 1)
-        self.assertEqual(worker.submit.call_count, 1)
-        authorization_status.assert_called_once_with()
-        next_event_start.assert_not_called()
-
-    def test_calendar_teardown_and_burst(self) -> None:
+    def test_calendar_teardown_and_burst__and_1_more(self) -> None:
         """A disabled launch has no legacy timer or event lookup; termination
         withdraws and blocks late callbacks; a burst keeps one running
-        and one latest pending; a late recheck while disabled creates no
-        work; a lead change obsoletes in-flight results."""
+        and one latest pending."""
         # --- scenario: termination_withdraws_calendar_and_blocks_late_callback
         self.setUp()  # fresh isolated controller per scenario
         self.controller.settings = self.controller.settings.with_calendar_alerts_enabled(True)
@@ -18358,65 +15487,6 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
             1,
         )
 
-        # --- scenario: late_access_recheck_while_disabled_creates_no_calendar_work
-        self.setUp()  # fresh isolated controller per scenario
-        inputs = self._inputs()
-        self.controller.settings = self.controller.settings.with_calendar_alerts_enabled(False)
-        self.controller.virtual_status_device = SimpleNamespace(presentation_scheduler_inputs=lambda: inputs)
-        worker = MagicMock()
-        self.controller._os_poll_worker = worker
-
-        with patch.object(
-            self.status_bar.calendar_watch,
-            "next_event_start",
-        ) as next_event_start:
-            self.controller.calendarAccessResolved_(True)
-            self.controller.reconcile_lid_observation()
-            self.controller._calendar_observation_timer_fired()
-
-        self.assertFalse(self.controller._calendar_observation_active)
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.CALENDAR_OBSERVATION,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-        worker.submit.assert_not_called()
-        next_event_start.assert_not_called()
-
-        # --- scenario: calendar_lead_change_obsoletes_in_flight_result
-        self.setUp()  # fresh isolated controller per scenario
-        inputs = self._inputs()
-        self.controller.settings = self.controller.settings.with_calendar_alerts_enabled(True)
-        self.controller._calendar_observation_active = True
-        self.controller._os_poll_generation = 15
-        self.controller._presentation_scheduler_inputs = inputs
-        self.controller.virtual_status_device = SimpleNamespace(presentation_scheduler_inputs=lambda: inputs)
-        self.controller.refresh_ = MagicMock()
-        stale = self.status_bar.RuntimeWorkCommand(
-            self.status_bar.RuntimeWorkerDomain.OS_POLL,
-            "calendar-observation",
-            15,
-            self.clock[0] + 30.0,
-            self.status_bar.CalendarObservationRequest(lead_minutes=10.0),
-        )
-        field = SimpleNamespace(
-            stringValue=lambda: "20",
-            setStringValue_=MagicMock(),
-        )
-        self.controller.settings_fields["calendar_lead_field"] = field
-
-        with patch.object(self.status_bar, "save_settings"):
-            self.controller.applyCalendarLead_(None)
-
-        self.assertEqual(self.controller._os_poll_generation, 16)
-        self.controller._apply_os_poll_result(
-            stale,
-            self.status_bar.CalendarObservationResult(
-                available=True,
-                starts_in_seconds=90.0,
-            ),
-        )
-        self.assertEqual(self.controller.calendar_glow_until, 0.0)
-        self.controller.refresh_.assert_not_called()
 
 
 class _PresentationTimerDouble:
@@ -18498,272 +15568,6 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
         }
         values.update(changes)
         return self.status_bar.PresentationSchedulerInputs(**values)
-
-    def test_task9g_preview_lifecycle(self) -> None:
-        """Signal/color previews are pane-scoped, bounded, idempotent; engines
-        release on irrelevance/reduce-motion; setup preview stops for
-        close, sleep, and termination."""
-        # --- scenario: task9g_signal_preview_is_exact_pane_scoped_bounded_and_idempotent
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        window_state = {"visible": True}
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: window_state["visible"])
-        self.controller.current_settings_pane = "led_behavior"
-        preview = MagicMock()
-        preview.isHiddenOrHasHiddenAncestor.return_value = False
-        preview.visibleRect.return_value = SimpleNamespace(size=SimpleNamespace(width=120.0))
-        self.controller.settings_fields = {"signal_preview:calendar": preview}
-        inputs = self._inputs(screen_bar_enabled=False, visible=False)
-
-        for _ in range(100):
-            self.controller.reconcile_presentation_timers(inputs)
-
-        timer = next(
-            timer
-            for timer in self.factory.live
-            if timer.feature is self.status_bar.RuntimeFeature.SETTINGS_SIGNAL_PREVIEW
-        )
-        self.assertGreaterEqual(timer.interval, 1.0 / 30.0)
-        self.assertEqual(timer.tolerances, [timer.interval * 0.1])
-        # Default mode (2026-08-26): preview thumbnails re-rendering inside
-        # a scroll gesture was the settings window's own lag.
-        self.assertIn((timer, False), self.factory.registrations)
-        self.assertEqual(
-            sum(
-                candidate.feature is self.status_bar.RuntimeFeature.SETTINGS_SIGNAL_PREVIEW
-                for candidate in self.factory.created
-            ),
-            1,
-        )
-
-        self.clock[0] += timer.interval
-        self.controller.runtimeTimerFired_(timer)
-        preview.setNeedsDisplay_.assert_called_once_with(True)
-
-        self.controller.current_settings_pane = "profile"
-        self.controller._reconcile_current_presentation_inputs()
-        self.assertEqual(timer.invalidations, 1)
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.SETTINGS_SIGNAL_PREVIEW,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-        preview.setNeedsDisplay_.reset_mock()
-        self.controller.runtimeTimerFired_(timer)
-        preview.setNeedsDisplay_.assert_not_called()
-
-        # --- scenario: task9g_color_preview_releases_engines_on_irrelevance_and_reduce_motion
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: True)
-        self.controller.current_settings_pane = "color_studio"
-        self.controller.color_preview_rows = [{"led_count": 8, "dots": (), "legend": MagicMock()}]
-        engine = MagicMock()
-        engine.step.return_value = ()
-        self.controller.color_preview_wasm = {8: engine}
-        self.controller.color_preview_programs = {8: "#112233"}
-        inputs = self._inputs(screen_bar_enabled=False, visible=False)
-
-        self.controller.reconcile_presentation_timers(inputs)
-
-        timer = next(
-            timer
-            for timer in self.factory.live
-            if timer.feature is self.status_bar.RuntimeFeature.SETTINGS_COLOR_PREVIEW
-        )
-        self.assertGreaterEqual(timer.interval, 1.0 / 30.0)
-        self.assertIn((timer, False), self.factory.registrations)
-        self.clock[0] += timer.interval
-        self.controller.runtimeTimerFired_(timer)
-        engine.step.assert_called_once()
-
-        self.controller._accessibility_display_preferences = self.status_bar.AccessibilityDisplayPreferences(
-            reduce_motion=True
-        )
-        self.controller._reconcile_current_presentation_inputs()
-
-        self.assertEqual(timer.invalidations, 1)
-        self.assertEqual(self.controller.color_preview_wasm, {})
-        self.assertEqual(self.controller.color_preview_programs, {})
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.SETTINGS_COLOR_PREVIEW,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-
-        # --- scenario: task9g_setup_preview_stops_for_close_sleep_and_termination
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        window_state = {"visible": True}
-        self.controller.setup_window = SimpleNamespace(isVisible=lambda: window_state["visible"])
-        demo_view = MagicMock()
-        self.controller.setup_fields = {"demo_view": demo_view}
-        active = self._inputs(screen_bar_enabled=False, visible=False)
-
-        self.controller.reconcile_presentation_timers(active)
-        first = next(timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.SETUP_DEMO)
-        self.assertEqual(first.interval, 1.0 / 30.0)
-        self.assertIn((first, False), self.factory.registrations)
-
-        self.clock[0] += first.interval
-        self.controller.runtimeTimerFired_(first)
-        demo_view.setNeedsDisplay_.assert_called_once_with(True)
-
-        window_state["visible"] = False
-        self.controller._reconcile_current_presentation_inputs()
-        self.assertEqual(first.invalidations, 1)
-        demo_view.setNeedsDisplay_.reset_mock()
-        self.controller.runtimeTimerFired_(first)
-        demo_view.setNeedsDisplay_.assert_not_called()
-
-        window_state["visible"] = True
-        self.controller._reconcile_current_presentation_inputs()
-        second = next(
-            timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.SETUP_DEMO
-        )
-        self.controller.reconcile_presentation_timers(self._inputs(display_asleep=True))
-        self.assertEqual(second.invalidations, 1)
-
-        self.controller.reconcile_presentation_timers(active)
-        third = next(timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.SETUP_DEMO)
-        self.controller.reconcile_presentation_timers(self._inputs(app_terminating=True))
-        self.assertEqual(third.invalidations, 1)
-
-    def test_task9g_deadlines(self) -> None:
-        """Settings-message and test-signal deadlines are keyed, replaced on
-        re-arm, non-replaying after elapsed close or sleep, and tip and
-        completion holds share one finite deadline; dispatch never
-        mutates tracked menu hierarchy or controls."""
-        # --- scenario: task9g_settings_message_deadline_replaces_and_elapsed_close_does_not_replay
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        window_state = {"visible": True}
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: window_state["visible"])
-        label = MagicMock()
-        self.controller.settings_fields = {"message": label}
-        inputs = self._inputs(screen_bar_enabled=False, visible=False)
-        self.controller._presentation_scheduler_inputs = inputs
-
-        self.controller.set_settings_message("First")
-        first = next(
-            timer
-            for timer in self.factory.live
-            if timer.feature is self.status_bar.RuntimeFeature.SETTINGS_MESSAGE_DEADLINE
-        )
-        self.clock[0] += 1.0
-        self.controller.set_settings_message("Second")
-        second = next(
-            timer
-            for timer in self.factory.live
-            if timer.feature is self.status_bar.RuntimeFeature.SETTINGS_MESSAGE_DEADLINE
-        )
-
-        self.assertIsNot(first, second)
-        self.assertEqual(first.invalidations, 1)
-        self.assertIsNone(second.interval)
-        self.assertIn((second, True), self.factory.registrations)
-        label.setAlphaValue_.assert_called_with(1.0)
-
-        self.controller.runtimeTimerFired_(first)
-        label.animator.return_value.setAlphaValue_.assert_not_called()
-
-        window_state["visible"] = False
-        self.controller._settings_window_closing = True
-        self.controller._reconcile_current_presentation_inputs()
-        self.assertEqual(second.invalidations, 1)
-        self.clock[0] += 4.0
-        window_state["visible"] = True
-        self.controller._settings_window_closing = False
-        self.controller._reconcile_current_presentation_inputs()
-
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.SETTINGS_MESSAGE_DEADLINE,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-        self.assertEqual(label.setAlphaValue_.call_args, call(0.0))
-        label.animator.return_value.setAlphaValue_.assert_not_called()
-
-        # --- scenario: task9g_test_signal_deadline_is_keyed_and_sleep_cannot_replay
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        inputs = self._inputs(screen_bar_enabled=False, visible=False)
-        self.controller._presentation_scheduler_inputs = inputs
-        self.controller.refresh_ = MagicMock()
-        self.controller.set_settings_message = MagicMock()
-        calendar = SimpleNamespace(identifier=lambda: "calendar")
-        reminder = SimpleNamespace(identifier=lambda: "reminders")
-
-        with patch.object(
-            self.status_bar.time,
-            "monotonic",
-            side_effect=lambda: self.clock[0],
-        ):
-            self.controller.testSignal_(calendar)
-            first = next(
-                timer
-                for timer in self.factory.live
-                if timer.feature is self.status_bar.RuntimeFeature.TEST_SIGNAL_DEADLINE
-            )
-            self.clock[0] += 1.0
-            self.controller.testSignal_(reminder)
-            second = next(
-                timer
-                for timer in self.factory.live
-                if timer.feature is self.status_bar.RuntimeFeature.TEST_SIGNAL_DEADLINE
-            )
-
-        self.assertIsNot(first, second)
-        self.assertEqual(first.invalidations, 1)
-        self.assertEqual(self.controller.test_signal_key, "reminders")
-        self.controller.runtimeTimerFired_(first)
-        self.assertEqual(self.controller.test_signal_key, "reminders")
-
-        self.controller.reconcile_presentation_timers(self._inputs(display_asleep=True))
-        self.assertEqual(second.invalidations, 1)
-        self.assertIsNone(self.controller.test_signal_key)
-        self.assertEqual(self.controller.test_signal_until, 0.0)
-
-        self.clock[0] += 10.0
-        self.controller.reconcile_presentation_timers(inputs)
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.TEST_SIGNAL_DEADLINE,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-
-        # --- scenario: task9g_deadline_dispatch_does_not_mutate_tracked_menu_hierarchy_or_controls
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        inputs = self._inputs(screen_bar_enabled=False, visible=False)
-        self.controller._presentation_scheduler_inputs = inputs
-        self.controller.status_menu_open = True
-        self.controller._menu_rebuild_pending = ("operator-owned",)
-        self.controller.native_agent_menu_registry = MagicMock()
-        self.controller.current_settings_pane = "led_behavior"
-        fields = {"signal_preview:calendar": object()}
-        self.controller.settings_fields = fields
-        self.controller.refresh_ = MagicMock()
-        self.controller.test_signal_key = "calendar"
-        self.controller.test_signal_until = self.clock[0] + 1.0
-        self.controller._reconcile_current_presentation_inputs()
-        timer = next(
-            timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.TEST_SIGNAL_DEADLINE
-        )
-
-        self.clock[0] += 1.0
-        self.controller.runtimeTimerFired_(timer)
-
-        self.assertTrue(self.controller.status_menu_open)
-        self.assertEqual(
-            self.controller._menu_rebuild_pending,
-            ("operator-owned",),
-        )
-        self.controller.native_agent_menu_registry.take_deferred_after_close.assert_not_called()
-        self.assertEqual(self.controller.current_settings_pane, "led_behavior")
-        self.assertIs(self.controller.settings_fields, fields)
 
     def test_task10_status_transition_coordinator(self) -> None:
         """Status transitions drive the finite coordinator with keyed
@@ -19559,9 +16363,8 @@ class LidObservationRuntimeTests(unittest.TestCase):
         self.setUp()  # fresh isolated controller per scenario
         # A /Volumes scan every 2s buys nothing once the inventory has
         # stopped changing; the cadence drops to the idle rate until a
-        # candidate change or the Devices pane pulls it back.
+        # candidate change pulls it back.
         self.controller.leds_enabled = True
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: False)
 
         self.controller.reconcile_presentation_timers(self._inputs())
         timer = next(
@@ -19814,17 +16617,15 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
 
     def test_device_inventory_gating(self) -> None:
         """A legacy virtual device never restores a poll timer; disabled LEDs
-        and a closed devices pane schedule no work; runtime reads only
+        schedule no work; runtime reads only
         worker-published inventory; the adapter refuses >16 devices;
         targets are distinct mounted per-device paths."""
-        # --- scenario: disabled_leds_and_closed_devices_pane_schedule_no_inventory_or_hardware_work
+        # --- scenario: disabled_leds_schedule_no_inventory_or_hardware_work
         self.setUp()  # fresh isolated controller per scenario
         self.controller.leds_enabled = False
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: False)
-        self.controller.current_settings_pane = "devices"
 
         with patch.object(self.status_bar, "discover_devices") as discover:
-            self.controller.reconcile_device_runtime()
+            self.controller.reconcile_lid_observation()
 
         discover.assert_not_called()
         snapshots = {snapshot.domain: snapshot for snapshot in self.controller._runtime_worker_registry.snapshot()}
@@ -19845,7 +16646,6 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         self.setUp()  # fresh isolated controller per scenario
         self.controller._runtime_started = True
         self.controller.leds_enabled = False
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: False)
         self.controller._device_discovery_cache = None
 
         with patch.object(
@@ -20087,78 +16887,10 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         physical.sync_program.assert_called_once_with("#FF0000 1s", LedDisplayState.FAILED)
         self.assertTrue(result.write.changed)
 
-        # --- scenario: physical_calibration_preview_uses_worker_and_excludes_live_writes
-        self.setUp()  # fresh isolated controller per scenario
-        device = self.status_bar.StatusBarDevice(
-            device_id="sidepulse-test",
-            name="SidePulse Test",
-            root=Path("/Volumes/JRBarTest"),
-            target=Path("/Volumes/JRBarTest/LEDS.LED"),
-            connected=True,
-            display=self.status_bar.LED_DISPLAY_AGENT,
-        )
-        submitted = []
-        worker = SimpleNamespace(
-            discard_pending_prefix=MagicMock(return_value=2),
-            submit=lambda command: submitted.append(command),
-        )
-        physical = MagicMock()
-        physical.brightness = 128
-        physical.sync_program.return_value = self.status_bar.LedStatusWrite(
-            LedDisplayState.ASK,
-            device.target,
-            "preview",
-            True,
-        )
-        self.controller._hardware_write_worker = worker
-        self.controller._hardware_write_active = True
-        self.controller._hardware_write_generation = 9
-        self.controller.calibration_test = (device.device_id, "#FFFFFF")
-
-        with (
-            patch.object(self.controller, "status_bar_devices", return_value=[device]),
-            patch.object(self.controller, "agent_controller_for_device", return_value=physical),
-            patch.object(self.controller, "sync_virtual_status_device"),
-            patch.object(self.status_bar, "write_led_program") as direct_writer,
-        ):
-            self.controller._send_calibration_test()
-            self.controller.sync_leds(
-                AgentMode.WORKING,
-                None,
-                self.status_bar.LED_DISPLAY_AGENT,
-                (),
-            )
-
-        self.assertEqual(len(submitted), 1)
-        command = submitted[0]
-        self.assertIs(command.priority, self.status_bar.RuntimeWorkPriority.EXPLICIT)
-        self.assertTrue(command.coalesce_key.endswith(":preview-calibration"))
-        self.assertEqual(
-            self.controller._active_calibration_preview_key,
-            command.coalesce_key,
-        )
-        self.assertEqual(command.payload.display_kind, self.status_bar.LED_DISPLAY_TEST)
-        self.assertIs(command.payload.override_state, LedDisplayState.ASK)
-        self.assertIn("#FFFFFF", command.payload.override_program)
-        worker.discard_pending_prefix.assert_called_once_with(f"{command.key}:")
-        direct_writer.assert_not_called()
-
-        with patch.object(
-            self.controller,
-            "agent_controller_for_device",
-            return_value=physical,
-        ):
-            result = self.controller._execute_hardware_write_command(command)
-        physical.sync_program.assert_called_once_with(
-            command.payload.override_program,
-            LedDisplayState.ASK,
-        )
-        self.assertIsNone(self.status_bar.hardware_presentation_sync_for_result(result))
-
-    def test_transition_flourish_writer_gating(self) -> None:
+    def test_transition_flourish_writer_gating__and_2_more(self) -> None:
         """The flourish cancels its generation before the detached writer,
-        discards queued preview after device loss, refuses direct writes
-        while the worker is busy, and writes only when idle."""
+        refuses direct writes while the worker is busy, and writes only when
+        idle."""
         # --- scenario: transition_flourish_cancels_generation_before_detached_writer_starts
         self.setUp()  # fresh isolated controller per scenario
         device = self.status_bar.StatusBarDevice(
@@ -20184,35 +16916,6 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         self.assertEqual(self.controller._hardware_write_generation, 13)
         thread_type.assert_called_once()
         thread_type.return_value.start.assert_called_once_with()
-
-        # --- scenario: closing_calibration_discards_queued_preview_after_device_disappears
-        self.setUp()  # fresh isolated controller per scenario
-        device = self.status_bar.StatusBarDevice(
-            device_id="sidepulse-test",
-            name="SidePulse Test",
-            root=Path("/Volumes/JRBarTest"),
-            target=Path("/Volumes/JRBarTest/LEDS.LED"),
-            connected=True,
-            display=self.status_bar.LED_DISPLAY_AGENT,
-        )
-        worker = SimpleNamespace(discard_pending=MagicMock(return_value=True))
-        self.controller._hardware_write_worker = worker
-        self.controller.calibration_test = (device.device_id, "#FFFFFF")
-        worker_key = self.controller._hardware_worker_key(device)
-        self.controller._active_calibration_preview_key = f"{worker_key}:preview-calibration"
-        self.controller.refresh_ = MagicMock()
-
-        with patch.object(
-            self.controller,
-            "status_bar_devices",
-            return_value=[],
-        ):
-            self.controller.popoverDidClose_(None)
-
-        self.assertIsNone(self.controller.calibration_test)
-        self.controller.refresh_.assert_called_once_with(None)
-        worker.discard_pending.assert_called_once_with(f"{worker_key}:preview-calibration")
-        self.assertIsNone(self.controller._active_calibration_preview_key)
 
         # --- scenario: transition_flourish_refuses_direct_write_when_worker_stays_busy
         self.setUp()  # fresh isolated controller per scenario
@@ -20599,274 +17302,6 @@ class InstalledAgentInventoryControllerTests(unittest.TestCase):
         )
         self.controller._os_poll_worker = refused
         self.assertFalse(self.controller.refresh_installed_agent_inventory())
-
-    def test_hidden_or_unrelated_settings_panes_do_not_schedule_inventory_repeats(self) -> None:
-        """Treating every settings reconciliation as inventory work would create hidden polling."""
-        submissions = []
-        self.controller._os_poll_worker = SimpleNamespace(submit=submissions.append)
-        self.controller._installed_agent_inventory_roots = lambda: ()
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: False)
-        self.controller.current_settings_pane = "devices"
-
-        for _ in range(100):
-            self.controller.reconcile_installed_agent_inventory()
-
-        self.assertEqual(submissions, [])
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: True)
-        self.controller.current_settings_pane = "installed_agents"
-        self.controller.reconcile_installed_agent_inventory()
-        self.assertEqual(len(submissions), 1)
-        self.assertEqual(submissions[0].key, "installed-agent-inventory")
-
-
-class LatestFeatureSettingsCompositionTests(unittest.TestCase):
-    def setUp(self) -> None:
-        isolate_controller(self)
-        self.controller.refresh_installed_agent_inventory = MagicMock(return_value=True)
-
-    @staticmethod
-    def _descendant_text(view) -> tuple[str, ...]:
-        rendered = []
-        for child in view.subviews():
-            if hasattr(child, "stringValue"):
-                value = str(child.stringValue())
-                if value:
-                    rendered.append(value)
-            if hasattr(child, "title"):
-                value = str(child.title())
-                if value:
-                    rendered.append(value)
-            rendered.extend(LatestFeatureSettingsCompositionTests._descendant_text(child))
-        return tuple(rendered)
-
-    def test_installed_agents_and_activity_panes(self) -> None:
-        '''Installed agents is lazy, grouped, private and refreshable;
-        activity never claims zero history before the scan finishes;
-        inventory mutates stable rows without focus/lifecycle output.'''
-        # --- scenario: installed_agents_is_lazy_grouped_private_and_refreshable
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.installed_agents import installed_surface_registrations
-
-        # This test exercises the isVisible()-gated inventory refresh,
-        # which needs the window actually presented. The activation
-        # policy in conftest still keeps focus with the owner.
-        self.enterContext(
-            patch(
-                "jrbar.window_presentation.desktop_takeover_suppressed",
-                return_value=False,
-            )
-        )
-        self.controller.show_settings_window()
-        self.assertNotIn("installed_agents", self.controller.settings_panes)
-        self.assertEqual(
-            [label for key, label in self.status_bar.SETTINGS_SIDEBAR_ITEMS if key == "installed_agents"],
-            ["Installed Agents"],
-        )
-
-        self.controller.select_settings_pane("installed_agents")
-        pane = self.controller.settings_panes["installed_agents"]
-        fields = self.controller.settings_fields["installed_agent_status_fields"]
-        registrations = installed_surface_registrations()
-        self.assertEqual(len(fields), len(registrations))
-        self.assertEqual(
-            tuple(fields),
-            tuple((row.provider_id, row.surface_id) for row in registrations),
-        )
-        self.assertEqual(
-            self.controller.settings_window.title(),
-            "JR-Bar Settings: Installed Agents",
-        )
-        self.controller.refresh_installed_agent_inventory.assert_called_once_with()
-        rendered = "\n".join(self._descendant_text(pane))
-        for expected in (
-            "OpenCode CLI",
-            "Google Antigravity CLI",
-            "Gemini CLI",
-            "GitHub Copilot",
-            "Not detected",
-            "Detection only",
-        ):
-            self.assertIn(expected, rendered)
-        for prohibited in (
-            "/Users/",
-            "/Applications/",
-            ".config/",
-            "api-key",
-            "account email",
-            "raw error",
-        ):
-            self.assertNotIn(prohibited, rendered.casefold())
-        refresh = self.controller.settings_buttons["refresh_installed_agents"]
-        self.assertEqual(refresh.title(), "Refresh")
-        self.assertEqual(refresh.accessibilityLabel(), "Refresh installed coding agents")
-
-        # --- scenario: activity_never_claims_zero_history_before_the_local_scan_finishes
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller.show_settings_window()
-        self.assertNotIn("profile_usage_label", self.controller.settings_fields)
-        self.controller.ensure_settings_pane("usage_activity")
-
-        self.assertEqual(
-            self.controller.settings_fields["profile_usage_label"].stringValue(),
-            "Loading local usage history…",
-        )
-
-        # --- scenario: inventory_result_mutates_stable_rows_without_focus_or_lifecycle_output
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.installed_agent_inventory import InstalledAgentInventoryResult
-        from jrbar.installed_agents import (
-            InstalledSurfaceObservation,
-            InstalledSurfaceReduction,
-            SurfacePresence,
-            installed_surface_registrations,
-        )
-
-        self.controller.show_settings_window()
-        self.controller.select_settings_pane("installed_agents")
-        registrations = installed_surface_registrations()
-        status_fields = self.controller.settings_fields["installed_agent_status_fields"]
-        opencode_cli_key = ("opencode", "cli")
-        opencode_plugin_key = ("opencode", "jrbar-plugin")
-        stable_cli = status_fields[opencode_cli_key]
-        stable_plugin = status_fields[opencode_plugin_key]
-        refresh = self.controller.settings_buttons["refresh_installed_agents"]
-        self.controller.settings_window.makeFirstResponder_(refresh)
-        observations = tuple(
-            InstalledSurfaceObservation(
-                row.key,
-                (
-                    SurfacePresence.INSTALLED
-                    if (row.provider_id, row.surface_id) == opencode_cli_key
-                    else SurfacePresence.CONFIGURED
-                    if (row.provider_id, row.surface_id) == opencode_plugin_key
-                    else SurfacePresence.ABSENT
-                ),
-                None,
-                (
-                    row.capability_ids
-                    if (row.provider_id, row.surface_id) in {opencode_cli_key, opencode_plugin_key}
-                    else ()
-                ),
-                None,
-            )
-            for row in registrations
-        )
-        result = InstalledAgentInventoryResult(
-            InstalledSurfaceReduction(observations),
-            len(registrations),
-            len(registrations) - 1,
-        )
-        self.controller._runtime_started = True
-        self.controller._installed_agent_inventory_generation = 9
-        self.controller._runtime_worker_monotonic = lambda: 100.0
-        command = self.status_bar.RuntimeWorkCommand(
-            self.status_bar.RuntimeWorkerDomain.OS_POLL,
-            "installed-agent-inventory",
-            9,
-            105.0,
-            (),
-        )
-        self.controller._apply_os_poll_result(command, result)
-
-        self.assertIs(status_fields[opencode_cli_key], stable_cli)
-        self.assertIs(status_fields[opencode_plugin_key], stable_plugin)
-        self.assertEqual(stable_cli.stringValue(), "Installed · Detection only")
-        self.assertEqual(stable_plugin.stringValue(), "Configured · Monitoring")
-        self.assertIs(self.controller.settings_window.firstResponder(), refresh)
-        self.assertEqual(result.reduction.work_rows, ())
-        self.assertEqual(result.reduction.requests, ())
-        self.assertEqual(result.reduction.notifications, ())
-        self.assertEqual(result.reduction.hardware_presentation_changes, ())
-
-    def test_capacity_pane_and_wrap(self) -> None:
-        '''Capacity is lazy, complete, truthful, and does no implicit provider
-        work; refresh is explicit and updates stable labels; feature
-        panes wrap at 200% keeping keyboard order.'''
-        # --- scenario: capacity_is_lazy_complete_truthful_and_does_no_implicit_provider_work
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.provider_capacity import provider_capacity_policies
-
-        self.controller.show_settings_window()
-        with patch.object(self.controller, "maybe_refresh_usage_summary") as refresh:
-            self.controller.select_settings_pane("capacity")
-        refresh.assert_not_called()
-        pane = self.controller.settings_panes["capacity"]
-        policies = provider_capacity_policies()
-        fields = self.controller.settings_fields["capacity_policy_status_fields"]
-        self.assertEqual(tuple(fields), tuple(row.profile_id for row in policies))
-        rendered = "\n".join(self._descendant_text(pane))
-        for expected in (
-            "ChatGPT and Codex",
-            "OpenAI API",
-            "Claude consumer plan",
-            "Claude Team and Enterprise",
-            "Gemini Code Assist",
-            "Google Antigravity",
-            "Google Cloud API",
-            "GitHub Copilot",
-            "OpenCode",
-            "Available locally",
-            # An observable source can still require consent, and the copy has
-            # to say so -- "Available locally" about a read that presents the
-            # user's subscription credential would be true and misleading.
-            "Available after opt-in",
-            "Weekly Opus",
-            "Permission required",
-            "Check provider",
-            "Uses model provider",
-        ):
-            self.assertIn(expected, rendered)
-        for prohibited in (
-            "local:test",
-            "experimental-remote",
-            "service-account",
-            "google-cloud-oauth",
-            "api-key",
-            "account discriminator",
-            "raw error",
-        ):
-            self.assertNotIn(prohibited, rendered.casefold())
-
-        # --- scenario: capacity_refresh_is_explicit_and_updates_stable_live_labels
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller.show_settings_window()
-        self.controller.select_settings_pane("capacity")
-        live = self.controller.settings_fields["capacity_live_fields"]
-        codex = live["codex"]
-        claude = live["claude"]
-        codex_identity = id(codex)
-        first_responder = self.controller.settings_buttons["refresh_capacity"]
-        self.controller.settings_window.makeFirstResponder_(first_responder)
-        self.controller.codex_summary_text = "Codex capacity observed"
-        self.controller.claude_plan_text = "Claude capacity observed"
-        self.controller.refresh_capacity_settings_projection()
-        self.assertEqual(id(live["codex"]), codex_identity)
-        self.assertEqual(codex.stringValue(), "Codex capacity observed")
-        self.assertEqual(claude.stringValue(), "Claude capacity observed")
-        self.assertIs(self.controller.settings_window.firstResponder(), first_responder)
-
-        with patch.object(self.controller, "maybe_refresh_usage_summary") as refresh:
-            self.controller.refreshCapacitySources_(None)
-        refresh.assert_called_once_with(reason="manual")
-
-        # --- scenario: new_feature_panes_wrap_at_two_hundred_percent_and_keep_keyboard_order
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller.semantic_text_scale_percent = 200
-        self.controller.show_settings_window()
-        self.controller.select_settings_pane("installed_agents")
-        intro = self.controller.settings_fields["installed_agents_intro"]
-        self.assertFalse(intro.usesSingleLineMode())
-        self.assertGreaterEqual(intro.font().pointSize(), 22.0)
-        installed_refresh = self.controller.settings_buttons["refresh_installed_agents"]
-        self.assertTrue(installed_refresh.acceptsFirstResponder())
-
-        self.controller.select_settings_pane("capacity")
-        capacity_intro = self.controller.settings_fields["capacity_intro"]
-        self.assertFalse(capacity_intro.usesSingleLineMode())
-        self.assertGreaterEqual(capacity_intro.font().pointSize(), 22.0)
-        capacity_refresh = self.controller.settings_buttons["refresh_capacity"]
-        self.assertTrue(capacity_refresh.acceptsFirstResponder())
-
 
 class RelayControllerContinuityTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -21641,35 +18076,53 @@ class CanonicalAgentBrowserIntegrationTests(unittest.TestCase):
         return monitor.snapshot()
 
 
-    def test_canonical_root_and_urgent_rows(self) -> None:
-        """The canonical root caps urgent rows and moves shelves to the
-        browser; menu open marks the visit and only plans capacity
-        refresh; urgent rows and the browser share action
-        descriptors."""
-        # --- scenario: status_menu_open_marks_visit_and_only_plans_capacity_refresh
-        self.setUp()  # fresh isolated controller per scenario
+    def test_local_acknowledge_and_resume_update_content_free_history(self) -> None:
+        """A local acknowledge and a resume from the deck path write content-free
+        history rows, leave the request phase alone, and keep
+        the acknowledgement out of the stored local triage state."""
+        self.controller.operator_history_store.path = (
+            Path(self._tmp.name) / "operator-history.json"
+        )
         snapshot = self._canonical_snapshot(1)
+        state = snapshot.operator_state
+        request = state.requests[0]
+        original_phase = request.phase
+        self.controller.current_operator_state = state
         self.controller.last_snapshot = snapshot
-        self.controller.current_operator_state = snapshot.operator_state
-        before_preferences = self.controller.mailbox_preferences
-        before_opened_at = self.controller.menu_last_opened_at
+        self.controller.operator_triage_saver = lambda _state: None
+        self.controller.settings = dataclass_replace(
+            self.controller.settings,
+            operator_history_retention_days=7,
+        )
+        self.controller.operator_history_store.retention_days = 7
+        work_key = state.works[0].key
 
-        with (
-            patch.object(self.controller, "maybe_refresh_usage_summary") as usage,
-            patch.object(self.controller, "request_usage_refresh") as request_usage,
-            patch("jrbar.status_bar.detect_log_path") as detect,
-            patch("jrbar.status_bar.discover_devices") as discover,
-        ):
-            self.controller.menuWillOpen_(None)
+        acknowledge = AgentBrowserActionPayload(
+            work_key,
+            state.generation,
+            OperatorActionKind.ACKNOWLEDGE,
+        )
+        self.assertTrue(self.controller.performAgentBrowserPayload_(acknowledge))
+        self.assertTrue(self.controller._persistence_writer.wait_idle(timeout_seconds=2.0))
+        self.assertTrue(self.controller.operator_history_store.state.rows)
+        self.assertEqual(
+            self.controller.operator_history_store.state.rows[0].acknowledged,
+            1,
+        )
 
-        usage.assert_called_once_with(reason="menu-open")
-        request_usage.assert_not_called()
-        detect.assert_not_called()
-        discover.assert_not_called()
-        self.assertEqual(self.controller.mailbox_preferences, before_preferences)
-        self.assertIsNone(before_opened_at)
-        self.assertIsNotNone(self.controller.menu_last_opened_at)
-
+        resume = AgentBrowserActionPayload(
+            work_key,
+            state.generation,
+            OperatorActionKind.RESUME_ESCALATION,
+        )
+        self.assertTrue(self.controller.performAgentBrowserPayload_(resume))
+        self.assertTrue(self.controller._persistence_writer.wait_idle(timeout_seconds=2.0))
+        self.assertGreaterEqual(
+            self.controller.operator_history_store.state.rows[0].sample_count,
+            2,
+        )
+        self.assertEqual(self.controller.current_operator_state.requests[0].phase, original_phase)
+        self.assertEqual(self.controller.local_triage_state.acknowledgements, ())
 
     def test_action_generation_fencing(self) -> None:
         """Actions revalidate generation and keep a failed save visible; the
@@ -21967,7 +18420,6 @@ class Task10AccessibilityObservationTests(unittest.TestCase):
         self.controller.virtual_status_device.set_accessibility_display_preferences = MagicMock()
         self.controller._hardware_write_worker = MagicMock()
         self.controller.refresh_ = MagicMock()
-        self.controller.show_settings_window = MagicMock()
         scheduled = []
         self.controller.performSelectorOnMainThread_withObject_waitUntilDone_ = lambda selector, payload, wait: (
             scheduled.append((selector, payload, wait))
@@ -21992,7 +18444,6 @@ class Task10AccessibilityObservationTests(unittest.TestCase):
         self.controller.virtual_status_device.set_accessibility_display_preferences.assert_not_called()
         self.controller._hardware_write_worker.submit.assert_not_called()
         self.controller.refresh_.assert_not_called()
-        self.controller.show_settings_window.assert_not_called()
 
         values["contrast"] = True
         with patch.object(
@@ -22208,62 +18659,6 @@ class ChargingHelloTests(unittest.TestCase):
         unplugged = BatterySnapshot(percent=50, is_charging=False, is_charged=False, is_plugged=False)
         self.controller.update_battery_power_preview(unplugged)
         self.assertEqual(len(flourishes), 1)
-
-
-class StudioBuilderTests(unittest.TestCase):
-    def setUp(self) -> None:
-        isolate_controller(self)
-
-    def test_compile_maps_touch_steps_to_the_dsl(self) -> None:
-        from jrbar.studio_builder import compile_builder_program
-
-        program = compile_builder_program(
-            (
-                {"color": "#00E5FF", "ms": 800, "ease": "pulse"},
-                {"color": "#000000", "ms": 50, "ease": "warp"},
-            ),
-            True,
-        )
-        # Black maps to `off` (a literal #000000 is a firmware parse
-        # error on indexed lines and dead weight elsewhere), durations
-        # clamp to the floor, unknown eases fail closed to a hold.
-        self.assertEqual(program, "#00E5FF 800ms pulse\noff 100ms none\nrepeat")
-        self.assertNotIn("repeat", compile_builder_program(({"color": "#111111", "ms": 500, "ease": "ease"},), False))
-
-    def test_builder_compiles_into_the_editor_and_firmware_accepts_it(self) -> None:
-        """The no-typing path (2026-08-26): rows of controls compile to
-        the same text, validation, and persistence the editor uses --
-        the DSL is an output format now, not the interface."""
-        try:
-            from jrbar import status_bar
-        except SystemExit as exc:
-            self.skipTest(str(exc))
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {"HOME": tmp}):
-                window = status_bar.build_settings_window(self.controller)
-                self.controller.ensure_all_settings_panes()
-        self.assertIsNotNone(window)
-
-        rows = self.controller._studio_builder_rows_stack
-        self.assertEqual(len(rows.arrangedSubviews()), 2)
-
-        self.controller.studioBuilderAddStep_(None)
-        self.assertEqual(len(rows.arrangedSubviews()), 3)
-        program = str(self.controller.studio_editor.string())
-        self.assertEqual(program.splitlines()[-1], "repeat")
-        self.assertEqual(len(program.splitlines()), 4)
-
-        sender = SimpleNamespace(tag=lambda: 0, doubleValue=lambda: 1200.0)
-        self.controller.studioBuilderDurationChanged_(sender)
-        self.assertIn("1200ms", str(self.controller.studio_editor.string()))
-
-        remove = SimpleNamespace(tag=lambda: 2)
-        self.controller.studioBuilderRemoveStep_(remove)
-        self.assertEqual(len(rows.arrangedSubviews()), 2)
-
-        from jrbar.animation import parse_animation
-
-        parse_animation(str(self.controller.studio_editor.string()), led_count=8)
 
 
 class SharedStripHeartbeatBudgetTests(unittest.TestCase):

@@ -96,11 +96,10 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
         for name in (_call_name(node) for node in ast.walk(compose))
         if name is not None
     ]
-    assert "install_settings_navigation" in call_names
-    assert "install_screen_bar_runtime" in call_names
-    assert call_names.index("install_settings_navigation") < call_names.index(
-        "install_screen_bar_runtime"
-    )
+    # The Settings window and the Python Screen Bar's drawing installer are
+    # gone, and so are their install steps.
+    assert "install_settings_navigation" not in call_names
+    assert "install_screen_bar_runtime" not in call_names
 
     receipt_keywords: set[str] = set()
     for node in ast.walk(compose):
@@ -124,9 +123,7 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
         source = path.read_text(encoding="utf-8")
         tree = _tree(path)
 
-        assert "install_screen_bar_runtime()" not in source, f"{path.name} still starts Screen Bar at import time"
         assert "_install(dict(globals()))" not in source, f"{path.name} still performs namespace injection at import time"
-        assert "install_settings_navigation(_legacy, _settings_window)" not in source, f"{path.name} still installs settings navigation at import time"
 
         top_level_calls = {_call_name(call) for call in _top_level_calls(tree)}
         assert "DeviceIdentityCache" not in top_level_calls, f"{path.name} still creates the device identity cache at import time"
@@ -136,6 +133,18 @@ def test_application_composition_module_is_pure_at_import_time__and_2_more() -> 
         assert not any(owner == "_legacy" for owner, _attr in assigned_targets), (
             f"{path.name} still mutates the retained runtime module at import time"
         )
+
+
+def test_the_provider_host_is_one_controller_class_the_composition_installs() -> None:
+    source = PROVIDER_USAGE_STATUS_BAR.read_text(encoding="utf-8")
+    composition = APPLICATION_COMPOSITION.read_text(encoding="utf-8")
+
+    assert "install_provider_usage_status_bar()" in composition
+    classes = {
+        node.name for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ClassDef)
+    }
+    assert classes == {"JRProviderUsageStatusBarController"}
+    assert "openProviderUsageCenter_" not in source
 
 
 
@@ -179,8 +188,6 @@ assert receipt.final_controller is provider.JRProviderUsageStatusBarController
 assert receipt.steps == (
     "production-controller",
     "status-bar-facade",
-    "settings-navigation",
-    "screen-bar-runtime",
     "ambient-effects-runtime",
     "provider-usage-controller",
 )

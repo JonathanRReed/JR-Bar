@@ -1,53 +1,6 @@
-"""Persistence action for one exact provider reset delivery choice."""
+"""Reset delivery state and delivery for the provider usage controller."""
 
 from __future__ import annotations
-
-
-def toggle_provider_reset_setting(controller, sender, *, log) -> None:
-    from .provider_usage_controller_actions import apply_provider_usage_settings_snapshot
-    from .provider_usage_settings import (
-        load_provider_usage_settings,
-        save_provider_usage_settings,
-    )
-    from .settings_category_runtime import refresh_native_usage_summary
-
-    payload = sender.representedObject()
-    if not isinstance(payload, dict):
-        return
-    provider_id = str(payload.get("provider_id") or "")
-    source_instance_id = str(payload.get("source_instance_id") or "default")
-    field = str(payload.get("field") or "")
-    enabled = bool(sender.state())
-    if not provider_id:
-        return
-    loaded = load_provider_usage_settings()
-    try:
-        if field == "reset_celebrations":
-            updated = loaded.settings.with_reset_celebrations(
-                provider_id,
-                enabled,
-                source_instance_id=source_instance_id,
-            )
-        elif field.startswith("reset_"):
-            updated = loaded.settings.with_reset_channel(
-                provider_id,
-                field.removeprefix("reset_"),
-                enabled,
-                source_instance_id=source_instance_id,
-            )
-        else:
-            raise ValueError("invalid provider reset setting")
-        save_provider_usage_settings(updated, loaded=loaded)
-    except Exception as exc:
-        log(f"provider reset setting: {exc}")
-        sender.setState_(0 if enabled else 1)
-        return
-    controller._menu_signature = None
-    apply_provider_usage_settings_snapshot(controller, updated, notify_service=True)
-    refresh_native_usage_summary(controller)
-
-
-__all__ = ["toggle_provider_reset_setting"]
 
 
 def reset_delivery_state(controller):
@@ -89,7 +42,7 @@ def note_reset_candidates(controller, candidates) -> None:
         pass
 
 
-__all__ += ["note_reset_candidates", "reset_delivery_state"]
+__all__ = ["note_reset_candidates", "reset_delivery_state"]
 
 
 def deliver_pending_reset_events(controller, *, legacy) -> None:

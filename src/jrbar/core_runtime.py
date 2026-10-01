@@ -1098,7 +1098,6 @@ def _apply_clear_agents_plan(self, kind: str, plan) -> None:
         raise CommandError("refused", f"could not save the clear receipts: {error}") from error
     self.clear_agents_state = plan.next_state
     self.current_mailbox_projection = None
-    self._menu_signature = None
     if kind == "commit":
         self._clear_agents_commit_plan = plan
     self._core_publish_state()
@@ -1201,7 +1200,6 @@ def _cmd_dismiss_session(self, args):
         raise CommandError("refused", f"could not save the dismissal: {error}") from error
     self.clear_agents_state = next_state
     self.current_mailbox_projection = None
-    self._menu_signature = None
     self._core_publish_state()
     return {"session": agent_id, "dismissed": True}
 
@@ -3523,9 +3521,8 @@ def _cmd_replay_events(self, args):
 def _cmd_mark_history_seen(self, args):
     """The user just looked at History: advance the ledger's ``last_seen``.
 
-    Same stamp the menu writes when the dropdown opens -- ``unseen`` rows
-    and the "while you were away" banner measure from the last look, not
-    from a restart. It waits on the slow lane behind the History read sent
+    ``unseen`` rows and the "while you were away" banner measure from the
+    last look, not from a restart. It waits on the slow lane behind the History read sent
     before it, so the look is stamped when the command arrived: a scan
     ahead of it must not mark what came in meanwhile as seen.
     """
@@ -4011,8 +4008,8 @@ def _cmd_deck_check_input(self, args):
 def _deck_bindings_update(value, previous) -> tuple:
     """The ``bindings`` argument: a full replacement list of auxiliary
     (13..19) and analog-sector (20..23) mappings, {"index": int,
-    "action": kind | null}. Matrix-key bindings are managed by the
-    Devices pane and survive."""
+    "action": kind | null}. Matrix-key bindings already in
+    deck-controls.json (keys 0-12) are kept."""
     from .deck_actions import DeckAction
 
     if type(value) is not list or len(value) > 11:
@@ -4180,10 +4177,6 @@ def build_headless_controller_class() -> type:
             if self is None:
                 return None
             self.notification_client = HeadlessNotificationClient()
-            device = getattr(self, "virtual_status_device", None)
-            if device is not None:
-                device.headless = True
-                device._enabled = False
             self._core = None
             self._core_socket_path = None
             self._core_lock = threading.RLock()
@@ -4372,8 +4365,6 @@ def build_headless_controller_class() -> type:
             self._core_sync_serve_server()
             self.refresh_(None)
             self.timer = _schedule_timer(legacy.STATUS_BAR_REFRESH_SECONDS, self, "refresh:", True)
-            if not hasattr(self.virtual_status_device, "presentation_scheduler_inputs"):
-                self.lid_timer = _schedule_timer(legacy.LID_POLL_SECONDS, self, "pollLid:", True)
             self.liveness_timer = _schedule_timer(legacy.LIVENESS_POLL_SECONDS, self, "pollLiveness:", True)
             self.start_remote_peer_timer()
             # The Screen Bar is the app's; the daemon only computes its program.
@@ -5926,9 +5917,6 @@ def build_headless_controller_class() -> type:
         def applyDeckAutomationResult_(self, receipt) -> None:
             if not getattr(self, "_runtime_termination_started", False):
                 self._deck_action_receipt = receipt
-
-        def applyDeckControlsLoaded_(self, payload) -> None:
-            self._core_publish_state()
 
         def applyDeckLayer_(self, payload) -> None:
             from .deck_controller import apply_deck_layer

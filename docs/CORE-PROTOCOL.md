@@ -707,7 +707,7 @@ volatile fields: `lights` follows the same `doc_significant_equal` rule as
 
 - `hardware` is the first connected 8-LED strip (a second one is
   `hardware:<device id>`), `dot` the connected 2-LED device, `screen_bar`
-  the program the Python Screen Bar would draw (calibration and resting
+  the program the Screen Bar plays (calibration and resting
   glow applied). The `screen_bar` surface mirrors `hardware` only while
   the bar is linked (`link_screen_bar_to_hardware`) and a strip is
   connected; unlinked it publishes nothing unless a live bar program is
@@ -1065,7 +1065,7 @@ never costs the rest of the file):
 ```
 
 Legacy-only settings: the daemon still loads, normalises and re-emits
-each of these, but only the deprecated Python settings window ever
+each of these, but only the retired Python settings window ever
 wrote them -- the app has no control for any of them, so a value there
 today keeps working exactly as configured:
 
@@ -1095,14 +1095,18 @@ today keeps working exactly as configured:
 - `focus_signal_policy`: which signals a Focus may pass through.
 - `focus_profile_rules`: Focus id → calibration profile slot applied
   when that Focus activates.
-- `global_action_shortcuts`: persisted chords for the global actions.
+- `global_action_shortcuts`: the chord the retired daemon hotkey registry
+  held for `reveal_current_ask`. The app reads it once to adopt it (see
+  `AppShortcutCatalog.legacyRevealAskChord`). Nothing in the daemon
+  registers or writes it, and a settings save keeps the entries that are
+  already there.
 - `studio_program`: the hand-written Studio LED program, kept verbatim.
 - `studio_library`: the named Studio programs shelf.
 - `notification_policy_version`: which notification-policy migration
   has already run.
 - `screen_bar_gauges_enabled`: the Screen Bar's wing-tip micro-gauges.
 - `screen_bar_bracket_style`: how the Alcove bracket colours itself
-  (`auto`/`spatial`/`identity`).
+  (`auto`/`spatial`/`identity`/`bracket`).
 - `virtual_status_device_wraps_menu_bar`: extends the Screen Bar's glow
   past the notch toward the menu bar's edges -- the app reads it, no
   control yet.

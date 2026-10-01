@@ -641,11 +641,6 @@ class OptionalIntegrationRuntime:
                     service.start()
         finally:
             self._configured.set()
-            with self._lock:
-                if not self._closed and getattr(self._target, "deck_settings_pane", None) is not None:
-                    dispatch = getattr(self._target, "performSelectorOnMainThread_withObject_waitUntilDone_", None)
-                    if callable(dispatch):
-                        dispatch("applyDeckControlsLoaded:", getattr(self._target, "_deck_control_settings", None), False)
 
     def _publish_creator_receipt(self, receipt: CreatorMicroOutputReceipt) -> None:
         with self._lock:

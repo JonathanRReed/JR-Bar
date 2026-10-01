@@ -80,7 +80,7 @@ def _usage_snapshot(
     )
 
 
-def _menu_controller_with_refresh_states(*, controller=None):
+def _controller_with_refresh_states(*, controller=None):
     from jrbar.status_bar import StatusBarController
 
     target = controller if controller is not None else SimpleNamespace()
@@ -101,29 +101,6 @@ def _menu_controller_with_refresh_states(*, controller=None):
     target.request_usage_refresh = request_usage_refresh
     target.jr_plane_owns_capacity = lambda _provider_id: False
     target.request_jr_usage_refresh = lambda *_args, **_kwargs: None
-    target.mark_activity_seen_now = lambda _timestamp: None
-    target.note_menu_opened = lambda **_kwargs: None
-    target.current_attention_projection = None
-    target.mailbox_seen_completion_ids = set()
-    target.current_mailbox_projection = None
-    target.mailbox_retained_order = {}
-    target._runtime_started = False
-    target.refresh_capacity_settings_projection = lambda: None
-    target._jrbar_provider_usage_service = None
-    target._provider_usage_log = lambda _message: None
-    target._jrbar_provider_usage_window = None
-    target._alert_new_critical_pace = lambda *_args: None
-    target._alert_connection_loss = lambda *_args: None
-    target._report_reconnect_outcome = lambda *_args: None
-    target._celebrate_quota_resets = lambda *_args: None
-    target._menu_signature = None
-    target.current_settings_pane = None
-    target.settings_window = None
-    target.virtual_status_device = SimpleNamespace(
-        set_pointer_interaction_relevant=lambda *_args: None
-    )
-    target.status_menu_open = False
-    target.last_snapshot = None
     return target, StatusBarController
 
 
@@ -194,8 +171,7 @@ def test_adaptive_cadence_plan_preserves_current_interval_precedence__and_2_more
 
 
 
-def test_rate_limiting_keeps_the_idle_cadence_for_failure_gate_backoff__and_2_more() -> None:
-    # --- scenario: rate_limiting_keeps_the_idle_cadence_for_failure_gate_backoff
+def test_rate_limiting_keeps_the_idle_cadence_for_failure_gate_backoff() -> None:
     adaptive_refresh = _adaptive_refresh()
 
     plan = adaptive_refresh.plan_adaptive_refresh_cadence(
@@ -206,62 +182,9 @@ def test_rate_limiting_keeps_the_idle_cadence_for_failure_gate_backoff__and_2_mo
     assert plan.reason is adaptive_refresh.AdaptiveRefreshReason.IDLE
     assert plan.interval_seconds == 1800.0
 
-    # --- scenario: menu_open_admission_returns_a_bounded_receipt
-    adaptive_refresh = _adaptive_refresh()
-    notifications = []
-    plans = []
-    service = SimpleNamespace(
-        note_menu_opened=lambda *, now: notifications.append(now)
-    )
-    controller = SimpleNamespace(
-        _jrbar_provider_usage_service=service,
-        maybe_refresh_usage_summary=lambda *, reason: plans.append(reason),
-    )
-
-    receipt = adaptive_refresh.admit_menu_open_refresh(controller, wall_clock=lambda: 1_000.0)
-
-    assert isinstance(receipt, adaptive_refresh.MenuOpenAdmissionReceipt)
-    assert receipt.reason == "menu-open"
-    assert receipt.provider_service_notified is True
-    assert receipt.refresh_planned is True
-    assert receipt.wall_clock == 1_000.0
-    assert notifications == [1_000.0]
-    assert plans == ["menu-open"]
-    assert set(receipt.__slots__) <= {
-        "provider_service_notified",
-        "refresh_planned",
-        "reason",
-        "wall_clock",
-    }
-
-    # --- scenario: menu_open_admission_preserves_planner_failure_semantics
-    adaptive_refresh = _adaptive_refresh()
-    notifications = []
-
-    def fail_planning(*, reason):
-        assert reason == "menu-open"
-        raise RuntimeError("planner failed")
-
-    controller = SimpleNamespace(
-        _jrbar_provider_usage_service=SimpleNamespace(
-            note_menu_opened=lambda *, now: notifications.append(now)
-        ),
-        maybe_refresh_usage_summary=fail_planning,
-    )
-
-    with pytest.raises(RuntimeError, match="planner failed"):
-        adaptive_refresh.admit_menu_open_refresh(
-            controller,
-            wall_clock=lambda: 1_000.0,
-        )
-
-    assert notifications == [1_000.0]
-    assert not hasattr(controller, "_jrbar_adaptive_refresh_visit_receipt")
-
-
 
 def test_maybe_refresh_usage_summary_does_not_run_io_on_the_caller_thread(monkeypatch: pytest.MonkeyPatch) -> None:
-    controller, StatusBarController = _menu_controller_with_refresh_states()
+    controller, StatusBarController = _controller_with_refresh_states()
     caller_thread = threading.current_thread().name
     observed_calls: list[str] = []
     forbidden: list[str] = []

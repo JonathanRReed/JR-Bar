@@ -103,33 +103,32 @@ are copied forward once by `migration.py` on first launch and recorded in
 
 ## The Python daemon by responsibility
 
-`src/jrbar` is large (340 modules) because the 0.8 daemon is the old
+`src/jrbar` is large (324 modules) because the 0.8 daemon is the old
 application minus its windows. The map below is by job; a module not
 listed is a helper of the row it sits next to alphabetically.
 
 | Responsibility | Modules |
 | --- | --- |
-| Entry points and CLI | `__main__.py`, `cli.py`, `cli_entry.py`, `core_runtime.py` (the `core` subcommand), `doctor.py`, `hook_doctor.py`, `install.py`, `setup_window.py` (legacy), `integration_cli.py`, `effect_cli.py`, `provider_usage_cli*.py` |
+| Entry points and CLI | `__main__.py`, `cli.py`, `cli_entry.py`, `core_runtime.py` (the `core` subcommand), `doctor.py`, `hook_doctor.py`, `install.py`, `integration_cli.py`, `effect_cli.py`, `provider_usage_cli*.py` |
 | Core socket | `core_server.py` (transport, framing, clients), `core_projection.py` (`state` / `lights` / `settings` documents), `core_effects.py`, `core_deck.py`, `core_usage_history.py`, `core_usage_samples.py` |
 | Hook path | `hook_ingress_protocol.py`, `hook_ingress.py`, `hook_pending.py`, `hook_dedupe.py`, `hook_client.py` (the Python fallback command), `hook_entry.py`, `hook.py`, `ipc.py` |
 | Providers and session truth | `providers.py` (`PROVIDER_SPECS`: codex, claude, devin, grok, cursor, hermes, openclaw, opencode, antigravity, kiro, pi, gemini), `provider_adapters.py`, `provider_contracts.py`, `provider_instances.py`, `collector.py`, `process_registry.py`, `liveness_sweep.py`, `transcript_runtime.py`, `transcript_sessions.py`, `codex_hook_trust.py`, `antigravity_process_identity.py`, `origin.py`, `installed_agents.py` |
 | Canonical operator state | `operator_state.py`, `provider_facts.py`, `attention.py`, `mailbox.py`, `ask_episodes.py`, `completions.py`, `completion_visibility.py`, `local_triage.py`, `freshness.py`, `intake_health.py` |
 | Actions the app sends | `session_actions.py` (open in terminal / app), `answer_controller.py`, `answer_runtime.py`, `answer_in_place.py`, `clear_agents*.py`, `snooze_scope.py`, `navigation_policy.py` |
 | Signals and presentation | `signals.py`, `signal_coordinator.py`, `signal_selection.py`, `presentation_policy.py`, `presentation_scheduler.py`, `presentation_compiler.py`, `render_policy.py`, `brightness_policy.py`, `auto_dim.py`, `display_brightness.py`, `interruption_policy.py`, `notification_arbitration.py`, `courtesy_signatures.py` |
-| Effects | `effect_registry.py`, `effect_packs.py`, `effect_pack_store.py`, `effect_assignment_store.py`, `effect_selection.py`, `effect_studio.py`, `semantic_effect_router.py`, `ambient_effect_*.py`, `scenes.py`, `scene_packs.py`, `animation.py`, `colors.py`, `celebrations.py`, `firefly_completion.py`, `rainstick_idle.py`, `turn_length_ember.py`, `finite_effect_policy.py` |
-| LED output | `led_status.py`, `led_wasm.py` (+ the packaged `sdled.wasm` firmware parser), `device_writer.py`, `hardware_write_policy.py`, `hardware_write_contract.py`, `firmware_validation.py`, `device_identity.py`, `device_inventory.py`, `device_projection.py`, `dot_binary_heartbeat.py`, `calibration_flow.py`, `draw_guard.py` |
-| Screen Bar (geometry the app ports) | `virtual_device.py`, `screen_bar_design.py`, `screen_bar_pipeline.py`, `screen_bar_runtime.py`, `notch_silhouette.py`, `alcove_observation.py`, `alcove_window_probe.py` |
-| Usage and quota | `provider_usage_*.py` (platform, runtime, store, sync, parsers, collectors, center, menu), `provider_capacity.py`, `capacity_*.py`, `claude_quota.py`, `usage_stats.py`, `usage_file_index.py`, `usage_pace.py`, `usage_percent_history.py`, `quota_runway.py`, `quota_power_hold.py`, `provider_reset_*.py`, `provider_credential_store.py`, `credentials.py`, `provider_browser_*.py` |
+| Effects | `effect_registry.py`, `effect_packs.py`, `effect_pack_store.py`, `effect_assignment_store.py`, `effect_studio.py`, `semantic_effect_router.py`, `ambient_effect_*.py`, `scenes.py`, `scene_packs.py`, `animation.py`, `colors.py`, `celebrations.py`, `firefly_completion.py`, `rainstick_idle.py`, `turn_length_ember.py`, `finite_effect_policy.py` |
+| LED output | `led_status.py`, `led_wasm.py` (+ the packaged `sdled.wasm` firmware parser), `device_writer.py`, `hardware_write_policy.py`, `hardware_write_contract.py`, `firmware_validation.py`, `device_identity.py`, `device_inventory.py`, `device_projection.py`, `dot_binary_heartbeat.py` |
+| Screen Bar (the app draws it; the daemon only computes its program) | `headless_screen_bar.py` (the object the controller pushes Screen Bar settings at; it draws nothing), `screen_bar_pipeline.py`, `alcove_observation.py` |
+| Usage and quota | `provider_usage_*.py` (platform, runtime, store, sync, parsers, collectors, menu), `provider_capacity.py`, `capacity_*.py`, `claude_quota.py`, `usage_stats.py`, `usage_file_index.py`, `usage_pace.py`, `usage_percent_history.py`, `quota_runway.py`, `quota_power_hold.py`, `provider_reset_*.py`, `provider_credential_store.py`, `credentials.py`, `provider_browser_*.py` |
 | Power | `keep_awake.py` (`caffeinate -ims`), `power_policy.py`, `lid_sleep.py` (the `pmset` helper behind `/etc/sudoers.d/jrbar-disablesleep`), `lid_presets.py`, `battery.py`, `battery_runtime.py` |
 | Quiet and Focus | `dnd_policy.py`, `dnd_controller.py`, `focus_status.py`, `focus_sync.py`, `local_time_boundary.py`, `temporal_safety.py` |
 | Mac signals | `calendar_watch.py`, `reminders_watch.py`, `macos_notifications.py` (legacy path), `webhook_delivery.py` |
 | History | `activity_ledger*.py`, `operator_history*.py`, `session_history.py`, `capacity_history*.py`, `effect_history*.py` |
 | Remote | `remote_peers.py` (Tailscale + SFTP viewer), `remote_observation.py`, `provider_usage_sync_*.py` (HMAC-signed usage sync over SSH), `cloud_ingest.py` (loopback bearer-token listener), `serve.py` (`GET /status.json` on loopback) |
 | Creator Micro 2 | `creator_micro_*.py` (HID, discovery, keymap, setup, lighting), `deck_*.py` (board, controls, dispatch, actions, session board) |
-| Settings and persistence | `settings.py` → `_settings_legacy.py`, `settings_installation.py`, `state_paths.py`, `migration.py`, `persistence_writer.py`, `private_io.py`, `*_store.py` |
+| Settings and persistence | `settings.py` → `_settings_legacy.py`, `state_paths.py`, `migration.py`, `persistence_writer.py`, `private_io.py`, `*_store.py` |
 | Scheduling | `runtime_scheduler.py`, `core_state.py`, `refresh_admission.py`, `adaptive_refresh.py`, `refresh_policy.py`, `performance_metrics.py`, `local_health.py`, `memory_probe.py` |
-| Retained controller (live: `application_composition.py` composes it and `core_runtime.build_headless_controller_class` subclasses it, running its refresh, escalation and keep-awake methods through `objc.super`) | `application_composition.py`, `status_bar_legacy.py`, `_status_bar_production.py`, `status_bar.py`, `provider_usage_status_bar.py`, `usage_view.py`, `agent_browser.py`, `agent_browser_window.py` (payload types), `window_presentation.py` |
-| Legacy AppKit windows (still imported, but no socket command opens them since `open_legacy_window` went; removed with the settings-window removal, SP-10 in `docs/archive/UPGRADE-PLAN-2026-09-24.md`) | `settings_window*.py`, `*_pane.py`, `why_panel.py` (the window half; `panel_body` feeds the controller's Why text), `native_ui.py` |
+| Retained controller (live: `application_composition.py` composes it and `core_runtime.build_headless_controller_class` subclasses it, running its refresh, escalation and keep-awake methods through `objc.super`; it is linted like the rest, with its import block kept as the surface the facade and tests read) | `application_composition.py`, `status_bar_legacy.py`, `_status_bar_production.py`, `status_bar.py`, `provider_usage_status_bar.py`, `usage_view.py`, `agent_browser.py`, `agent_browser_window.py` (payload types), `why_panel.py` (the text of the Why explanation) |
 
 The one-release `sidepulse` import shim and console alias are gone. Hook
 commands registered before the rename (`python -m sidepulse.hook_client`
@@ -160,8 +159,9 @@ Everything not in this list comes from a daemon document.
 - Panel geometry (`PanelLayout`), motion, keyboard handling, hover and
   selection.
 - The Screen Bar's band geometry from the notch's auxiliary areas, and the
-  raised-cosine blend between the eight samples (ported from
-  `screen_bar_design.py`).
+  raised-cosine blend between the eight samples (ported from the Python
+  bar the app replaced; `docs/feature-disposition.md` names the last commit
+  that still has it).
 - Which sound or banner an `event` earns (`EventPolicy`), notification
   permission, the ask banner's Approve / Deny actions (they send
   `answer_ask`).

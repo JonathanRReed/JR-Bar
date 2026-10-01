@@ -2,15 +2,15 @@
 
 JR-Bar separates runtime measurements from Instruments measurements. A runtime
 capture proves what the app observed. An Instruments profile adds wakeups,
-energy impact, memory, and CPU evidence and binds those values to a raw trace.
-Neither file is a release claim by itself.
+energy impact, memory and CPU evidence from a raw trace. Neither is a release
+claim by itself.
 
-The runtime exporter described below belongs to the retained Python renderer.
-The current Swift Screen Bar does not export that schema. The retired
-`status-bar start` UI command cannot produce a native-app capture. Use
-Instruments against the installed `JR-Bar` process for current measurements;
-do not certify the native renderer with a legacy runtime profile. A native
-exporter remains needed to complete this diagnostic matrix.
+The Python renderer that exported runtime captures is gone. The daemon no
+longer draws the Screen Bar, and the Swift band does not export a runtime
+profile. Use Instruments against the installed `JR-Bar` process for current
+measurements. A native exporter is still needed to complete the matrix below;
+the [roadmap](ROADMAP.md) tracks it with the controlled performance
+measurements.
 
 ## Required matrix
 
@@ -24,98 +24,32 @@ Capture each scenario for at least five minutes:
 6. `low-power`
 7. `hidden`
 
-The DND run is accepted only when JR-Bar can observe an active macOS Focus.
-The low-power run is accepted only while Low Power Mode is active. The hidden
-run is accepted only when the Screen Bar is not visible and presents no
-frames. Unreadable Focus state remains `unknown`; it is never converted to a
-successful DND observation.
+A native capture has to show the state it was taken in. The DND run counts
+only when JR-Bar can observe an active macOS Focus, and an unreadable Focus
+state stays `unknown` instead of becoming a successful DND observation. The
+low-power run counts only while Low Power Mode is active. The hidden run counts
+only when the Screen Bar is not visible and presents no frames.
 
-## Legacy runtime profile schema
+## Measure with Instruments
 
-The former renderer used `JRBAR_SCREEN_BAR_PROFILE_SCENARIO` and
-`JRBAR_SCREEN_BAR_PROFILE_OUTPUT` to name a scenario and private output path.
-Its historical capture procedure held that state for at least 300 seconds
-and exported during normal termination. Without
-both environment variables, the ordinary runtime performs no profile export.
-During an explicit profiling run, a content-free state sampler observes the
-scenario every five seconds and whenever Screen Bar visibility or display
-sleep changes. The five-minute window starts only after the declared scenario
-first matches. Any later mismatch invalidates the run, and fewer than 30 state
-samples are rejected. This prevents a last-second Focus, Low Power Mode, or
-visibility toggle from relabeling an unrelated capture.
+Record the installed `JR-Bar` process in Apple Instruments for the full
+scenario. Keep the raw `.trace` file and note which state was held. From the
+trace, read:
 
-Validate the capture:
+- the measured duration, which must cover the whole scenario
+- wakeups per second
+- energy impact
+- peak resident memory
+- average CPU percent and CPU time
 
-```bash
-.venv/bin/python scripts/screen_bar_profile_evidence.py \
-  validate-runtime performance-evidence/static.runtime.json
-```
+An Instruments trace cannot say what state the Screen Bar was in. That is the
+gap the native exporter closes. Until it exists, a trace alone does not
+complete a row of the matrix.
 
-The runtime profile contains no prompt text, session labels, account labels,
-Focus names, serial numbers, or cloud telemetry. It records bounded callback
-timings, JavaScriptCore single and batch calls, batch successes and fallbacks,
-cached frames, invalidated prefetch, finite-horizon truncations, processed and
-suppressed callbacks, presented frames, display refresh, visibility, display
-sleep, Low Power Mode, thermal state, and a content-free Focus state. A batch
-invalidation means prefetched work was discarded because command identity or
-timing changed. It is not counted as a JavaScriptCore failure. A truncation
-means JR-Bar deliberately requested fewer than the 24-frame ceiling because a
-finite cue had fewer deliverable samples remaining.
-
-## Add Instruments evidence
-
-Record the same foreground process in Apple Instruments for the full runtime
-capture. Preserve the raw `.trace` file under the evidence root. Review the
-trace and export these non-negative numeric values to a JSON object:
-
-```json
-{
-  "measurement_duration_seconds": 300.0,
-  "wakeups_per_second": 0.0,
-  "energy_impact": 0.0,
-  "peak_resident_memory_mb": 0.0,
-  "average_cpu_percent": 0.0,
-  "cpu_time_seconds": 0.0
-}
-```
-
-The zeroes above illustrate the schema only. Replace them with observed values;
-do not use the example as evidence. Finalize one scenario:
-
-```bash
-.venv/bin/python scripts/screen_bar_profile_evidence.py finalize \
-  --root performance-evidence \
-  --runtime performance-evidence/static.runtime.json \
-  --instruments performance-evidence/static.instruments.json \
-  --trace performance-evidence/static.trace \
-  --output performance-evidence/static.profile.json
-```
-
-The finalizer revalidates the runtime capture, rejects non-finite or negative
-measurements, requires the Instruments duration to cover the runtime capture,
-and records the trace path, size, and SHA-256. Changing the trace invalidates
-the profile.
-
-## Assemble the matrix
-
-Pass exactly one finalized profile for each required scenario:
-
-```bash
-.venv/bin/python scripts/screen_bar_profile_evidence.py matrix \
-  --root performance-evidence \
-  --profile performance-evidence/static.profile.json \
-  --profile performance-evidence/working.profile.json \
-  --profile performance-evidence/asking.profile.json \
-  --profile performance-evidence/multi-agent.profile.json \
-  --profile performance-evidence/dnd.profile.json \
-  --profile performance-evidence/low-power.profile.json \
-  --profile performance-evidence/hidden.profile.json \
-  --output performance-evidence/screen-bar-profile-matrix.json
-```
-
-The command rejects missing, duplicate, unknown, tampered, secret-shaped, or
-cross-trace evidence. Validate a saved matrix with `validate-matrix` before
-using it in performance work.
+For a CPU diagnostic, the Activity Monitor export and its analyzer are in
+[Local verification](LOCAL-VERIFICATION.md). The release gate takes its
+performance numbers from the evidence file described in the
+[production release gate](PRODUCTION-RELEASE.md).
 
 ## Current external gate
 

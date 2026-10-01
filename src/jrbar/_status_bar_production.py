@@ -23,7 +23,6 @@ from .ambient_effect_consumer import (
 from .battery_runtime import BatteryObservation, BatteryObservationService
 from .core_state import CoreDomain, CoreStateStore, StateDelta
 from .device_projection import light_rows_for_provider, projection_for_provider
-from .hardware_write_policy import hardware_coalesce_key
 from .intake_runtime import IntakeProbeResult, IntakeProbeService
 from .ledger_runtime import LedgerPublishResult, RemoteLedgerPublisher
 from .local_health import LocalHealthMonitor, LocalHealthSnapshot, format_local_health
@@ -566,71 +565,6 @@ else:
                     outcome=outcome,
                 )
 
-        def _send_calibration_test(self) -> None:
-            calibration = self.calibration_test
-            if calibration is None or calibration[0] == _legacy.VIRTUAL_DEVICE_ID:
-                return _LegacyStatusBarController._send_calibration_test(self)
-            if not getattr(self, "_hardware_write_active", False):
-                return
-            device_id, hex_color = calibration
-            device = next(
-                (
-                    entry
-                    for entry in self.status_bar_devices(remember=False)
-                    if entry.device_id == device_id and entry.connected
-                ),
-                None,
-            )
-            if device is None:
-                return
-            controller = self.agent_controller_for_device(device)
-            program = _legacy.apply_brightness(
-                f"{hex_color} 500ms\nrepeat",
-                controller.brightness,
-            )
-            snapshot = self.last_snapshot
-            request = _legacy.HardwareWriteRequest(
-                device=device,
-                mode=(
-                    snapshot.aggregate.mode
-                    if snapshot is not None
-                    else _legacy.AgentMode.IDLE_READY
-                ),
-                battery_snapshot=self.last_battery_snapshot,
-                statuses=(snapshot.statuses if snapshot is not None else ()),
-                projection=self.current_attention_projection,
-                relay_elapsed_seconds=max(
-                    0.0,
-                    time.monotonic() - self._relay_epoch,
-                ),
-                accessibility_preferences=self._accessibility_display_preferences,
-                display_kind=_legacy.LED_DISPLAY_TEST,
-                write_priority=_legacy.RuntimeWorkPriority.EXPLICIT,
-                coalesce_identity="preview-calibration",
-                override_program=program,
-                override_state=_legacy.LedDisplayState.ASK,
-            )
-            worker_key = self._hardware_worker_key(device)
-            prefix = f"{worker_key}:"
-            self._hardware_write_worker.discard_pending_prefix(prefix)
-            preview_key = hardware_coalesce_key(
-                worker_key,
-                request.coalesce_identity,
-            )
-            self._active_calibration_preview_key = preview_key
-            now = self._runtime_worker_monotonic()
-            self._hardware_write_worker.submit(
-                _legacy.RuntimeWorkCommand(
-                    domain=_legacy.RuntimeWorkerDomain.HARDWARE_WRITE,
-                    key=worker_key,
-                    generation=self._hardware_write_generation,
-                    deadline=now + 30.0,
-                    payload=request,
-                    priority=_legacy.RuntimeWorkPriority.EXPLICIT,
-                    coalesce_key=preview_key,
-                )
-            )
-
         def play_transition_flourish(self, label, animation) -> None:
             if not self.leds_enabled:
                 return _LegacyStatusBarController.play_transition_flourish(
@@ -679,21 +613,6 @@ else:
                 devices,
                 token,
             )
-
-        def popoverDidClose_(self, notification):
-            calibration = self.calibration_test
-            preview_key = getattr(
-                self,
-                "_active_calibration_preview_key",
-                None,
-            )
-            result = _LegacyStatusBarController.popoverDidClose_(self, notification)
-            if calibration is None or calibration[0] == _legacy.VIRTUAL_DEVICE_ID:
-                return result
-            if type(preview_key) is str:
-                self._hardware_write_worker.discard_pending(preview_key)
-            self._active_calibration_preview_key = None
-            return result
 
         def _core_state_store(self) -> CoreStateStore:
             store = getattr(self, "_production_core_state", None)
@@ -780,12 +699,6 @@ else:
                 }
             )
 
-        def refresh_why_panel(self) -> bool:
-            if getattr(self, "_production_refresh_active", False):
-                self._production_why_panel_refresh_pending = True
-                return False
-            return _LegacyStatusBarController.refresh_why_panel(self)
-
         @_legacy.objc.IBAction
         def refresh_(self, sender):
             # Any completed refresh satisfies pending event wake-ups, no
@@ -845,15 +758,8 @@ else:
                 )
                 self._production_last_full_refresh = time.monotonic()
                 self._production_refresh_active = False
-                why_panel_pending = bool(
-                    getattr(self, "_production_why_panel_refresh_pending", False)
-                )
-                self._production_why_panel_refresh_pending = False
                 try:
-                    if why_panel_pending:
-                        _LegacyStatusBarController.refresh_why_panel(self)
-                    else:
-                        self.local_health_snapshot()
+                    self.local_health_snapshot()
                 except Exception:
                     pass
                 pending = bool(
@@ -896,51 +802,6 @@ else:
             self._last_event_refresh_at = time.monotonic()
             self.refresh_(None)
 
-        def menuWillOpen_(self, menu):
-            started = time.perf_counter()
-            outcome = "ok"
-            try:
-                return _LegacyStatusBarController.menuWillOpen_(self, menu)
-            except BaseException:
-                outcome = "error"
-                raise
-            finally:
-                self._performance().record(
-                    "menu_open",
-                    (time.perf_counter() - started) * 1000.0,
-                    outcome=outcome,
-                )
-
-        def ensure_settings_pane(self, key: str) -> None:
-            started = time.perf_counter()
-            outcome = "ok"
-            try:
-                return _LegacyStatusBarController.ensure_settings_pane(self, key)
-            except BaseException:
-                outcome = "error"
-                raise
-            finally:
-                self._performance().record(
-                    "settings_pane_build",
-                    (time.perf_counter() - started) * 1000.0,
-                    outcome=outcome,
-                )
-
-        def refresh_settings_window(self) -> None:
-            started = time.perf_counter()
-            outcome = "ok"
-            try:
-                return _LegacyStatusBarController.refresh_settings_window(self)
-            except BaseException:
-                outcome = "error"
-                raise
-            finally:
-                self._performance().record(
-                    "settings_refresh",
-                    (time.perf_counter() - started) * 1000.0,
-                    outcome=outcome,
-                )
-
         def why_panel_body(self, *, why_context=None) -> str:
             report = self._performance().snapshot()
             health = self.local_health_snapshot(performance=report)
@@ -958,20 +819,6 @@ else:
                 report=report,
             )
             return f"{body}\n\n{diagnostics}"
-
-        @_legacy.objc.IBAction
-        def applyEscalationWebhook_(self, sender):
-            url = str(sender.stringValue()).strip()
-            if url and not url.casefold().startswith("https://"):
-                self.set_settings_message(
-                    "Webhook delivery requires HTTPS. Local and cleartext URLs are refused."
-                )
-                return
-            self.settings = self.settings.with_escalation_webhook_url(url)
-            _legacy.save_settings(self.settings)
-            self.set_settings_message(
-                "Secure webhook set." if url else "Stage-3 webhook off."
-            )
 
         def _webhook_service(self) -> WebhookDeliveryService:
             service = getattr(self, "_production_webhook_service", None)

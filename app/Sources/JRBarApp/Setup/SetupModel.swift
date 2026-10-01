@@ -275,8 +275,8 @@ extension SetupModel {
     /// a grant apart from Full Disk Access.
     static let focusSettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Focus")!
-    /// Full Disk Access — the pane the legacy setup window's FDA row
-    /// opened for `focus_sync` (`openFullDiskAccessSettings:`).
+    /// Full Disk Access — the pane where the person grants the read that
+    /// `focus_sync` needs for the Focus assertions file.
     static let fullDiskAccessSettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!
 

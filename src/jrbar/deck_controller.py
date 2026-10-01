@@ -41,17 +41,6 @@ def apply_deck_input(target, batch: object) -> None:
             if getattr(target, "_runtime_termination_started", False):
                 return
             target._deck_action_receipt = receipts[-1]
-            if getattr(target, "current_settings_pane", None) == "devices":
-                code = receipts[-1].code
-                message = {
-                    "accessibility_not_trusted": "Allow JR-Bar in macOS Accessibility settings to use app shortcuts.",
-                    "target_not_frontmost": "Switch to the mapped app before using its shortcut.",
-                    "target_not_running": "Open the mapped app before using its shortcut.",
-                    "app_not_found": "The mapped app is not installed. Choose it again in Devices settings.",
-                }.get(code, f"Device action: {code.replace('_', ' ')}.")
-                set_message = getattr(target, "set_settings_message", None)
-                if callable(set_message):
-                    set_message(message)
             publish = getattr(target, "_core_publish_state", None)
             if callable(publish):
                 publish()

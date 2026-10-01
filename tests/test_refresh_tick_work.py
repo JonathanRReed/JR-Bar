@@ -32,5 +32,4 @@ def test_the_refresh_tick_never_rebuilds_the_why_panel() -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
 
-    assert "refresh_why_panel" not in called
     assert "why_panel_body" not in called

@@ -17,7 +17,6 @@ import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from jrbar.accessibility_display import AccessibilityDisplayPreferences
@@ -568,28 +567,6 @@ class WhyPanelTests(unittest.TestCase):
         text = decision_trace.decision_trace_text(self.controller.current_decision_trace())
         self.assertIn("No presentation has been resolved yet.", text)
 
-    def test_an_open_panel_follows_the_light_it_explains(self) -> None:
-        """Left alone, a panel answers for whichever light was on when it
-        opened -- the exact failure it exists to end."""
-        written: list[str] = []
-        self.controller.why_panel_window = SimpleNamespace(isVisible=lambda: True)
-        self.controller.why_panel_text_view = SimpleNamespace(
-            setString_=written.append
-        )
-        self.controller._current_resolved_glance = self._glance(GlanceSemantic.REST)
-        self.assertTrue(self.controller.refresh_why_panel())
-        self.controller._current_resolved_glance = self._glance(GlanceSemantic.ATTENTION)
-        self.assertTrue(self.controller.refresh_why_panel())
-        self.assertIn("Rest ·", written[0])
-        self.assertIn("Ask ·", written[1])
-
-
-    def test_a_closed_panel_is_never_repainted(self) -> None:
-        self.controller.why_panel_window = SimpleNamespace(isVisible=lambda: False)
-        self.assertFalse(self.controller.refresh_why_panel())
-        self.controller.why_panel_window = None
-        self.assertFalse(self.controller.refresh_why_panel())
-
     def test_the_panel_reports_the_intake_it_would_otherwise_hide(self) -> None:
         self.controller._current_resolved_glance = self._glance(GlanceSemantic.REST)
         with patch.object(
@@ -657,8 +634,6 @@ class IntakeRefreshTests(unittest.TestCase):
         # selector and cannot be replaced on the class.
         for name in (
             "reload_monitor",
-            "refresh_settings_window",
-            "refresh_setup_window",
             "refresh_",
             "set_settings_message",
         ):

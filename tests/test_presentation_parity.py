@@ -4,7 +4,6 @@ from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -50,7 +49,6 @@ from jrbar.status_bar import (
     StatusBarDevice,
     hardware_presentation_sync_for_result,
 )
-from jrbar.virtual_device import VirtualStatusDevice
 
 _SOURCE = SourceKey("codex", "hooks", "local:test", "live_agent_events")
 _WORK_KEY = WorkKey(_SOURCE, WorkIdentifier("work:test"))
@@ -609,49 +607,7 @@ def test_physical_success_and_failure_keep_virtual_semantics_but_only_success_an
 
 
 
-def test_accessibility_preferences_repaint_each_changed_dimension_without_recreating_renderer__and_1_more() -> None:
-    # --- scenario: accessibility_preferences_repaint_each_changed_dimension_without_recreating_renderer
-    device = VirtualStatusDevice.alloc().init()
-    window = SimpleNamespace(isVisible=lambda: True)
-    view = MagicMock()
-    sampler = object()
-    device.window = window
-    device.view = view
-    device._sampler = sampler
-    device._sampler_factory = MagicMock()
-
-    snapshots = (
-        AccessibilityDisplayPreferences(reduce_motion=True),
-        AccessibilityDisplayPreferences(reduce_transparency=True),
-        AccessibilityDisplayPreferences(increase_contrast=True),
-        AccessibilityDisplayPreferences(differentiate_without_color=True),
-    )
-    for generation, preferences in enumerate(snapshots, start=1):
-        assert device.set_accessibility_display_preferences(
-            preferences,
-            generation=generation,
-        )
-        assert device.window is window
-        assert device.view is view
-        assert device._sampler is sampler
-
-    assert [item.args[0] for item in view.setAccessibilityDisplayPreferences_.call_args_list] == list(
-        snapshots
-    )
-    assert view.setNeedsDisplay_.call_count == 4
-    device._sampler_factory.assert_not_called()
-
-    assert not device.set_accessibility_display_preferences(
-        snapshots[-1],
-        generation=4,
-    )
-    assert not device.set_accessibility_display_preferences(
-        AccessibilityDisplayPreferences(),
-        generation=3,
-    )
-    assert view.setNeedsDisplay_.call_count == 4
-
-    # --- scenario: physical_accessibility_snapshot_is_frozen_validated_and_semantically_neutral
+def test_physical_accessibility_snapshot_is_frozen_validated_and_semantically_neutral() -> None:
     baseline = _request()
     preferences = AccessibilityDisplayPreferences(
         reduce_motion=True,

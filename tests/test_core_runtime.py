@@ -6,7 +6,9 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -69,6 +71,69 @@ def test_every_protocol_command_is_registered__and_2_more() -> None:
     assert screen_bar_anchor(200.0, 100.0, linked=False) == 200.0
     assert screen_bar_anchor(200.0, None, linked=True) == 200.0
     assert screen_bar_anchor(None, None, linked=True) is None
+
+
+def test_the_headless_controller_has_no_way_to_open_a_window() -> None:
+    """The daemon composes the controller in a fresh interpreter: the class it
+    serves with must not carry the retired Settings window's entry points, and
+    composing it must not import the window's modules."""
+    script = """
+RETIRED_WINDOW_MODULES = {
+    "jrbar.settings_window",
+    "jrbar.native_ui",
+    "jrbar.settings_window_controls",
+    "jrbar.settings_category_runtime",
+    "jrbar.onboarding_runtime",
+    "jrbar.global_action_settings_pane",
+    "jrbar.dnd_settings_pane",
+    "jrbar.deck_settings_pane",
+}
+import json
+import sys
+
+from jrbar import core_runtime
+from jrbar.application_composition import compose_status_bar_application
+
+compose_status_bar_application()
+controller_class = core_runtime.build_headless_controller_class()
+assert not [name for name in sys.modules if name in RETIRED_WINDOW_MODULES], sorted(
+    name for name in sys.modules if name in RETIRED_WINDOW_MODULES
+)
+retired = [
+    name
+    for name in (
+        "show_settings_window",
+        "ensure_settings_pane",
+        "ensure_all_settings_panes",
+        "select_settings_pane",
+        "show_colors_window",
+        "openColorsWindow_",
+    )
+    if hasattr(controller_class, name)
+]
+assert retired == [], retired
+print(json.dumps({"ok": True}))
+"""
+    with tempfile.TemporaryDirectory() as tempdir:
+        env = os.environ.copy()
+        env["SIDEPULSE_TESTING"] = "1"
+        env["HOME"] = tempdir
+        env["PYTHONPATH"] = str(Path(core_runtime.__file__).resolve().parents[1])
+        # A `python -c` child under PYTEST_CURRENT_TEST is the provider
+        # module's import probe, which swaps the real controller for
+        # stand-ins; this child needs the real composition.
+        env.pop("PYTEST_CURRENT_TEST", None)
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+    assert completed.returncode == 0, completed.stderr
+    assert '"ok": true' in completed.stdout
 
 
 
@@ -345,6 +410,8 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     controller_class = core_runtime.build_headless_controller_class()
     assert controller_class.headless is True
     controller = controller_class.alloc().init()
+    # What the daemon really builds, kept for the test that pins its type.
+    controller.screen_bar_as_built = controller.virtual_status_device
     controller.virtual_status_device = SimpleNamespace(
         show=MagicMock(name="show"),
         hide=MagicMock(name="hide"),
@@ -352,7 +419,6 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         headless=True,
         _enabled=False,
         _live_program_call=None,
-        presentation_scheduler_inputs=None,
     )
     for name in (
         "load_operator_local_state", "trim_oversized_state_logs", "start_event_server",
@@ -366,6 +432,17 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     # No real threads exist in this harness — deliver deck input inline.
     controller._deck_deliver_inline = True
     return controller
+
+
+def test_the_daemons_screen_bar_is_the_headless_one_that_draws_nothing(headless) -> None:
+    from jrbar.headless_screen_bar import HeadlessScreenBar
+
+    built = headless.screen_bar_as_built
+
+    assert type(built) is HeadlessScreenBar
+    assert built.window is None
+    assert built.presentation_scheduler_inputs().screen_bar_enabled is False
+    assert built._live_program_call is None
 
 
 def test_headless_launch_skips_every_appkit_surface_and_serves__and_2_more(headless) -> None:
@@ -562,6 +639,54 @@ def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused__and_2_mor
     assert payload.snooze_preset == "15-minutes"
 
 
+class _DndOverrideSink:
+    """A DND controller that records each override and answers with a fixed
+    result, so the daemon's ``quiet`` command runs against the real legacy
+    handlers (``_set_dnd_for_duration``, ``endDndOverride_`` and
+    ``_finish_dnd_change``) without touching the system's Focus state."""
+
+    def __init__(self, *, applied: bool) -> None:
+        self.applied = applied
+        self.overrides: list = []
+
+    def set_override(self, override):
+        self.overrides.append(override)
+        failure = None if self.applied else SimpleNamespace(value="unavailable")
+        return SimpleNamespace(applied=self.applied, projection=None, failure=failure)
+
+
+def test_quiet_starts_and_ends_an_override_through_the_real_handlers__and_1_more(headless) -> None:
+    # --- scenario: quiet_starts_and_ends_an_override_through_the_real_handlers
+    """``quiet`` sets the override through the legacy handlers, and their
+    shared tail (``_finish_dnd_change``) must run whole: the override is
+    applied and the command answers."""
+    from jrbar.dnd_policy import DndMode
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    sink = _DndOverrideSink(applied=True)
+    controller.dnd_controller = sink
+
+    started = core_runtime._cmd_quiet(controller, {"mode": "pause", "seconds": 600})
+
+    (override,) = sink.overrides
+    assert override.mode is DndMode.PAUSE
+    assert started["mode"] == DndMode.PAUSE.value
+    assert started["until"] == pytest.approx(override.until_epoch)
+
+    ended = core_runtime._cmd_quiet(controller, {"mode": "pause", "seconds": 0})
+
+    assert ended == {"until": None}
+    assert sink.overrides[-1] is None
+
+    # --- scenario: quiet_names_a_refused_override_instead_of_crashing
+    """A DND controller that refuses the override answers ``refused`` to the
+    app; the shared tail records why, and nothing else goes wrong."""
+    sink.applied = False
+    with pytest.raises(CommandError) as refused:
+        core_runtime._cmd_quiet(controller, {"mode": "dim", "seconds": 600})
+    assert refused.value.code == "refused"
+
 
 def test_peer_arrive_depart_events_fire_on_reachability_edges(headless) -> None:
     """``peer_arrived``/``peer_departed`` are emitted on the reachable-set
@@ -619,6 +744,53 @@ def test_set_setting_writes_validates_and_reports_the_generation(headless, tmp_p
     reset = controller._core_dispatch("reset_settings", {"paths": ["alert_burst", "no.such.path"]})
     assert reset["reset"] == ["alert_burst"]
     assert controller.settings.alert_burst == status_bar.AgentMonitorSettings().alert_burst
+
+
+def test_the_closed_lid_policy_command_saves_the_policy_and_refreshes(headless, monkeypatch) -> None:
+    """The command runs the real controller method end to end: it names
+    only methods the daemon's class has, so nothing is stubbed but the
+    machine-wide power holder."""
+    controller = headless
+    monkeypatch.setattr(status_bar, "sleep_helper_installed", lambda: False)
+    holder = MagicMock(name="closed_lid_awake")
+    holder.active.return_value = False
+    holder.last_error = None
+    controller.closed_lid_awake = holder
+    controller.applicationDidFinishLaunching_(None)
+    controller.refresh_.reset_mock()
+
+    reply = controller._core_dispatch("set_closed_lid_policy", {"policy": "agents"})
+
+    assert reply == {"policy": "agents"}
+    assert controller.settings.closed_lid_awake_policy == "agents"
+    holder.update.assert_called_once()
+    assert holder.update.call_args.args == ("agents",)
+    controller.refresh_.assert_called_once_with(None)
+    with pytest.raises(CommandError):
+        controller._core_dispatch("set_closed_lid_policy", {"policy": "sometimes"})
+    assert controller.settings.closed_lid_awake_policy == "agents"
+
+
+def test_an_accessibility_change_from_the_os_poll_applies_and_refreshes(headless) -> None:
+    """The display-environment result a worker lands on the main thread
+    reaches the daemon's controller without a window to repaint."""
+    from jrbar.accessibility_display import AccessibilityDisplayPreferences
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    controller.refresh_.reset_mock()
+    preferences = AccessibilityDisplayPreferences(reduce_motion=True)
+
+    controller._apply_display_environment_result(
+        status_bar.DisplayEnvironmentResult(
+            brightness=None,
+            active_focus_ids=None,
+            accessibility_preferences=preferences,
+        )
+    )
+
+    assert controller._accessibility_display_preferences == preferences
+    controller.refresh_.assert_called_once_with(None)
 
 
 def test_set_setting_serves_and_validates_screen_bar_notch_shape(headless) -> None:

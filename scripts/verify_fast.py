@@ -30,8 +30,6 @@ CONTRACT_TESTS: Final = (
     "tests/test_status_bar_facade_contract.py",
     "tests/test_status_bar_adapter_reload_contract.py",
     "tests/test_provider_usage_status_bar_contract.py",
-    "tests/test_provider_usage_window_contract.py",
-    "tests/test_settings_window_injection_ratchet.py",
     "tests/test_workflow_contract.py",
     "tests/test_repository_hygiene.py",
     "tests/test_build_script_contract.py",
@@ -83,16 +81,15 @@ FOCUSED_TESTS: Final = (
     "tests/test_provider_usage_runtime.py",
     "tests/test_provider_usage_store.py",
     "tests/test_provider_usage_sync.py",
-    "tests/test_provider_usage_sync_projection.py",
     "tests/test_provider_usage_menu.py",
-    "tests/test_provider_usage_center.py",
     "tests/test_usage_event_hooks.py",
     "tests/test_usage_graph_worker.py",
     "tests/test_local_health.py",
     "tests/test_why_light_context.py",
     "tests/test_why_light_projection.py",
-    "tests/test_why_panel.py",
-    "tests/test_settings_accessibility.py",
+    # The colour model and its motion: live code that used to share test
+    # files with the retired Settings window.
+    "tests/test_colors_model.py",
 )
 
 

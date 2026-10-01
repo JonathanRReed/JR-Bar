@@ -195,7 +195,6 @@ def test_reset_event_fires_on_a_replenishment_jump_despite_poisoned_clocks__and_
     def make_controller(snapshot_state, reason=None, action=None):
         controller = SimpleNamespace()
         controller._jrbar_reconnect_watch = ("grok", 100.0)
-        controller._jrbar_provider_usage_window = None
         controller.set_settings_message = messages.append
         state = SimpleNamespace(
             snapshots=(

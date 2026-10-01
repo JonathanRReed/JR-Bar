@@ -66,7 +66,7 @@ device rewrites at most once every ~3 minutes from patina.
 - **#5684 (merged) usage page reading provider transcripts across
   environments** — cross-machine transcript usage; adjacent to our
   cross-Mac provider sync. Their merge strategy (freshest-wins per account)
-  matches our `apply_merged_sync_to_state`.
+  matches how `provider_usage_sync.py` merges.
 - **#7424 [codex] grouped projects on another machine** — machine profiles;
   relevant to the multi-Mac ledger's "machine" column. Checked 2026-08-18:
   the local Nightly schema (`projection_threads`/`projection_projects`) has

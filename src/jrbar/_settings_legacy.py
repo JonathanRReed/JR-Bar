@@ -103,7 +103,7 @@ DEFAULT_MENU_BAR_ICON_STYLE = "glyph"
 # changes.
 CLAUDE_PLAN_LIMITS_CONSENT_VERSION = 1
 CALIBRATION_PROFILE_SLOTS = ("Day", "Night", "Travel")
-BRACKET_STYLE_CHOICES = ("auto", "spatial", "identity")
+BRACKET_STYLE_CHOICES = ("auto", "spatial", "identity", "bracket")
 SCREEN_BAR_NOTCH_PROFILE_CHOICES = (
     "auto",
     "macbook_air_13",
@@ -439,9 +439,8 @@ class AgentMonitorSettings:
     # Extends the Screen Bar's glow beyond the notch's own width, reaching
     # toward the menu bar's edges on both sides -- an opt-in look (default
     # off) since how much room is actually safe to use depends on how
-    # cluttered the user's own menu bar is (see virtual_device.wing_width_
-    # for_screen, which measures the real per-user safe area rather than
-    # assuming a fixed amount).
+    # cluttered the user's own menu bar is (the app measures the real
+    # per-user safe area rather than assuming a fixed amount).
     virtual_status_device_wraps_menu_bar: bool = False
     # Manual Screen Bar geometry, both None = Automatic. Jonathan's ask,
     # and the durable answer to notch-adjacent apps (Alcove) whose visual
@@ -666,7 +665,9 @@ class AgentMonitorSettings:
     # Webhook bridge: which non-capacity moment events (beyond stage-3
     # escalation, which always fires when the URL is set) also POST.
     webhook_events: tuple[str, ...] = ()
-    # Global action identifier -> strict ShortcutChord persistence fields.
+    # The chord the retired daemon hotkey registry held for each global action
+    # ({key_code, key_label, modifiers}). The app reads it once to adopt it;
+    # nothing in the daemon registers or writes it, and a save keeps what is there.
     # Empty is intentional: a new installation does not claim a system chord.
     global_action_shortcuts: dict[str, dict] = field(default_factory=dict)
     # Sub-agent asks stay quiet by default: no light, sound, banner or

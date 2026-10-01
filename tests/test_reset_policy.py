@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,7 +21,6 @@ from jrbar.reset_policy import (
     ResetCountdown,
     derive_reset_countdown,
     format_reset_countdown,
-    next_countdown_deadline,
     parse_reset_epoch,
     plan_reset_boundary_refresh,
 )
@@ -224,6 +222,9 @@ def test_parse_reset_epoch_rejects_malformed_nonfuture_and_implausible_values(
         (87_399.999, "in 1d"),
         (87_400.0, "in 1d"),
         (91_000.0, "in 1d 1h"),
+        (92_800.0, "in 1d 2h"),
+        (177_400.0, "in 2d 1h"),
+        (178_300.0, "in 2d 2h"),
     ),
 )
 def test_reset_countdown_uses_literal_ceil_minute_boundaries(
@@ -231,35 +232,6 @@ def test_reset_countdown_uses_literal_ceil_minute_boundaries(
     expected: str | None,
 ) -> None:
     assert format_reset_countdown(reset_epoch, now=1_000.0) == expected
-
-
-def test_next_countdown_deadline_is_the_earliest_displayed_text_transition() -> None:
-    assert next_countdown_deadline((1_130.0,), now=1_000.0) == 1_010.0
-    assert next_countdown_deadline((1_130.0, 1_045.0), now=1_000.0) == 1_010.0
-    assert next_countdown_deadline((1_060.0,), now=1_000.0) == 1_060.0
-    assert next_countdown_deadline((999.0, math.nan), now=1_000.0) is None
-
-
-@pytest.mark.parametrize(
-    ("remaining_seconds", "initial_text", "deadline_delay", "next_text"),
-    (
-        (91_800.0, "in 1d 2h", 1_800.0, "in 1d 1h"),
-        (177_300.0, "in 2d 2h", 900.0, "in 2d 1h"),
-    ),
-)
-def test_multi_day_countdown_deadline_follows_the_next_displayed_hour_transition(
-    remaining_seconds: float,
-    initial_text: str,
-    deadline_delay: float,
-    next_text: str,
-) -> None:
-    now = 1_000.0
-    reset_epoch = now + remaining_seconds
-
-    assert format_reset_countdown(reset_epoch, now=now) == initial_text
-    deadline = next_countdown_deadline((reset_epoch,), now=now)
-    assert deadline == now + deadline_delay
-    assert format_reset_countdown(reset_epoch, now=deadline) == next_text
 
 
 def test_reset_plan_groups_every_provider_at_the_earliest_shared_boundary__and_2_more() -> None:

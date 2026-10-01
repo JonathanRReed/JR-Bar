@@ -165,8 +165,6 @@ The runtime owner composes routing, finite planning, admission and power policy,
 
 `src/jrbar/effect_studio.py` provides pure UI projections and explicit preview plans. It bounds search text, synthetic scenarios, timeline duration, assignment targets, source age, effect expiration, and physical preview duration. `plan_preview()` requires a registered effect and a typed preview session. Physical preview is at most 30 seconds and returns `CONSENT_REQUIRED` unless exact consent is supplied, with release triggers for close, sleep, app termination, and error.
 
-`src/jrbar/settings_preview_policy.py` keeps settings previews honest. `reduce_motion_active(target)` reads the native accessibility preference. `signal_preview_program()` returns a static color under Reduce Motion, while `mode_animation_thumb_program()` uses a static mode color. Settings accessibility tests require native roles, labels, help text, keyboard semantics, and static preview programs when Reduce Motion is enabled. High contrast and color-vision modes must preserve meaning without relying on color alone.
-
 ## Safe extension workflow
 
 1. State the semantic meaning, safety level, energy cost, supported surfaces, and static fallback before writing animation code.
@@ -180,6 +178,6 @@ The runtime owner composes routing, finite planning, admission and power policy,
 
 ## Verification map
 
-The authoritative tests are `tests/test_presentation_safety_compiler.py`, `tests/test_flash_analysis.py`, `tests/test_motion_shapes.py`, `tests/test_effect_registry.py`, `tests/test_semantic_effect_router.py`, `tests/test_finite_effect_policy.py`, `tests/test_effect_packs.py`, `tests/test_effect_history.py`, `tests/test_effect_history_store.py`, `tests/test_effect_studio.py`, `tests/test_ambient_effect_runtime.py`, `tests/test_semantic_effect_router.py`, and `tests/test_settings_accessibility.py`. The Screen Bar's Swift copy of the compiler is checked by `tests/test_leds_fixtures_match_reference.py` (the fixtures are what Python says today) and the Swift parity suites `CompilerTests` and `FlashAnalysisTests` in `app/Tests/JRBarLEDSTests`. Add runtime and surface tests for every destination declared by an effect.
+The authoritative tests are `tests/test_presentation_safety_compiler.py`, `tests/test_flash_analysis.py`, `tests/test_motion_shapes.py`, `tests/test_effect_registry.py`, `tests/test_semantic_effect_router.py`, `tests/test_finite_effect_policy.py`, `tests/test_effect_packs.py`, `tests/test_effect_history.py`, `tests/test_effect_history_store.py`, `tests/test_effect_studio.py`, and `tests/test_ambient_effect_runtime.py`. The Screen Bar's Swift copy of the compiler is checked by `tests/test_leds_fixtures_match_reference.py` (the fixtures are what Python says today) and the Swift parity suites `CompilerTests` and `FlashAnalysisTests` in `app/Tests/JRBarLEDSTests`. Add runtime and surface tests for every destination declared by an effect.
 
 Acceptance requires source and rendered evidence: the definition validates, semantic selection is deterministic, policy is finite and accessible, packs remain inert JSON, history remains content-free, settings previews expose usable controls, and the installed surface honors suppression, Reduce Motion, power, and device-write policy.

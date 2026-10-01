@@ -47,11 +47,6 @@ from jrbar.led_status import (
     srgb_to_linear,
     strip_drive_code,
 )
-from jrbar.virtual_device import (
-    LED_CORE_BOOST,
-    LED_HOTLINE_BOOST,
-    tone_mapped_led_color,
-)
 
 # The physical device's own calibration, read off the owner's machine, and the
 # byte the old maths drove green to at white: round(255 * 0.380417).
@@ -89,11 +84,14 @@ def _strip_light(hex_color: str, gains=NEUTRAL_CHANNEL_GAINS) -> tuple[float, ..
     )
 
 
-def _screen_light(hex_color: str, boost: float = LED_CORE_BOOST) -> tuple[float, ...]:
-    """Relative light the notch emits, through the real draw-path transform."""
-    red, green, blue = (code / 255.0 for code in _codes(hex_color))
-    painted = tone_mapped_led_color(red, green, blue, 1.0, boost=boost)
-    return tuple(srgb_to_linear(channel) for channel in painted[:3])
+def _screen_light(hex_color: str) -> tuple[float, ...]:
+    """Relative light the notch emits.
+
+    The Screen Bar is already sRGB and the app draws the nominal code
+    unchanged, so its transfer is the identity: the light is the code
+    decoded once, the way any sRGB display decodes it.
+    """
+    return tuple(srgb_to_linear(code / 255.0) for code in _codes(hex_color))
 
 
 def _as_hex(light: tuple[float, ...]) -> str:
@@ -104,7 +102,7 @@ def _as_hex(light: tuple[float, ...]) -> str:
 # --- the reconciliation ----------------------------------------------------
 
 
-def test_both_surfaces_emit_the_same_relative_light_for_the_same_hex__and_2_more() -> None:
+def test_both_surfaces_emit_the_same_relative_light_for_the_same_hex__and_1_more() -> None:
     # --- scenario: both_surfaces_emit_the_same_relative_light_for_the_same_hex
     """The headline. Every state, both surfaces, channel by channel."""
     for name, hex_color in STATE_COLORS.items():
@@ -122,23 +120,6 @@ def test_both_surfaces_emit_the_same_relative_light_for_the_same_hex__and_2_more
             relative_luminance(hex_color), abs=0.01
         ), name
 
-    # --- scenario: the_notch_no_longer_turns_the_ask_colour_orange
-    """#FF3A00 read as #FF5700 on screen: red was already at full so the 1.22
-    core boost clipped it while green took its whole 22%, and the hue slid.
-    That is not bloom, it is a hue error, and it is the single most visible
-    instance of the mismatch."""
-    assert _as_hex(_screen_light("#FF3A00")) == "#FF3A00"
-    # Every layer of the glow, not just the core: a shared scale may change a
-    # LEVEL but may never change the ratio between the channels, which is what
-    # "the same colour" means.
-    for boost in (LED_CORE_BOOST, LED_HOTLINE_BOOST, 1.46, 0.82, 0.64):
-        red, green, blue, _alpha = tone_mapped_led_color(
-            1.0, 0x3A / 255.0, 0.0, 1.0, boost=boost
-        )
-        assert green / red == pytest.approx(0x3A / 255.0, rel=1e-9)
-        assert blue == 0.0
-        assert red <= 1.0  # and nothing may clip, which is how the ratio broke
-
     # --- scenario: a_fade_ceiling_is_the_same_breath_on_both_surfaces
     """0.5 emitted 50% of full light on the strip and 21% on screen -- the
     same dial driving two different animations."""
@@ -152,7 +133,7 @@ def test_both_surfaces_emit_the_same_relative_light_for_the_same_hex__and_2_more
 
 
 
-def test_device_brightness_dims_both_surfaces_by_the_same_amount__and_2_more() -> None:
+def test_device_brightness_dims_both_surfaces_by_the_same_amount() -> None:
     # --- scenario: device_brightness_dims_both_surfaces_by_the_same_amount
     """The firmware multiplies the DRIVE bytes by N/255, so on the strip
     brightness is a scale on light, while the Screen Bar's engine multiplies
@@ -170,28 +151,6 @@ def test_device_brightness_dims_both_surfaces_by_the_same_amount__and_2_more() -
     # light hotter than the screen -- deliberately, so the bottom of the
     # slider is dim rather than black. Everything above that must still match.
     assert strip_scale == pytest.approx(screen_scale, abs=0.02)
-
-    # --- scenario: screen_core_does_not_apply_semantic_intensity_twice
-    """The sampled RGB already contains animation and brightness intensity."""
-    red, green, blue, alpha = tone_mapped_led_color(
-        0.5,
-        0.25,
-        0.0,
-        0.5,
-        boost=1.0,
-        alpha_scale=1.0,
-    )
-
-    assert (red, green, blue) == (0.5, 0.25, 0.0)
-    assert alpha == 1.0, "using 0.5 here composites the same dimming a second time"
-
-    # --- scenario: screen_glow_layer_uses_alpha_only_as_its_layer_calibration
-    bright = tone_mapped_led_color(1.0, 0.5, 0.0, 1.0, alpha_scale=0.18)
-    dim = tone_mapped_led_color(0.2, 0.1, 0.0, 0.2, alpha_scale=0.18)
-
-    assert bright[3] == pytest.approx(0.18)
-    assert dim[3] == pytest.approx(0.18)
-
 
 
 # --- the strip's assumption, stated once and correctable -------------------

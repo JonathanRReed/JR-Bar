@@ -129,6 +129,20 @@ def test_every_lazy_controller_read_names_a_declared_attribute() -> None:
     assert missing == {}
 
 
+def test_the_daemon_class_has_no_python_window_entry_point_left() -> None:
+    """The Usage Center and Agent Browser windows are gone, and so is every
+    method that could only open one or take a click from it. A controller
+    that names one again is about to build an NSWindow in an accessory app."""
+    composed = _composed_daemon_class()
+    known = set(composed["declared"]) | set(composed["chain"]) | set(composed["own"])
+    assert known & {
+        "openAgentBrowser_",
+        "performBrowserAction_",
+        "openProviderUsageCenter_",
+        "usageCenterAction_",
+    } == set()
+
+
 def test_no_declaration_changes_what_a_read_answers() -> None:
     """Every getattr anywhere in jrbar that names a declared attribute uses
     the declared value as its default, and nothing asks hasattr about one:

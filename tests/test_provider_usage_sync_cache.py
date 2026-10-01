@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 from jrbar import provider_usage_sync_cache as sync_cache
 from jrbar.provider_feature_settings import ProviderInstanceSharingProjection
 from jrbar.provider_usage_platform import ProviderSourceState, ProviderUsageSnapshot
@@ -137,3 +140,24 @@ def test_default_worker_refresh_injects_privacy_safe_sharing_projection(
     )
 
     assert type(captured["sharing_loader"]()) is ProviderInstanceSharingProjection
+
+
+def test_the_cache_lookup_is_memory_only_and_the_worker_refresh_does_the_read() -> None:
+    """The main thread only reads the memo; the disk and the signed packets
+    are read by the worker's refresh, so a lookup can never block a repaint."""
+    tree = ast.parse(Path(sync_cache.__file__).read_text(encoding="utf-8"))
+
+    def calls(name: str) -> tuple[str, ...]:
+        function = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == name
+        )
+        return tuple(
+            node.func.id
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        )
+
+    assert "load_cached_merged_sync" not in calls("cached_merged_sync")
+    assert "load_cached_merged_sync" in calls("refresh_cached_merged_sync")
