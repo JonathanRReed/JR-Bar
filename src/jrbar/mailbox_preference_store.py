@@ -19,7 +19,13 @@ from .mailbox_preferences import (
     MailboxPreferenceMode,
     MailboxSnoozeScope,
 )
-from .private_io import atomic_private_write, read_private_bytes, read_private_text
+from .private_io import (
+    atomic_private_write,
+    private_file_identity,
+    quarantine_private_file,
+    read_private_bytes,
+    read_private_text,
+)
 from .provider_facts import WorkKey, work_key_from_payload, work_key_to_payload
 
 _STORE_VERSION = 1
@@ -58,25 +64,57 @@ class _InvalidPreference(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class MailboxPreferenceDocument:
+    """What the store restored.
+
+    ``degraded`` means a file was there and nothing usable came out of it.
+    A file whose rows were partly bad is not degraded: the good rows are
+    here and ``dropped`` counts the rest."""
+
     version: int
     preferences: tuple[MailboxPreference, ...]
     legacy_preferences: tuple[LegacyMailboxPreference, ...]
     degraded: bool
+    dropped: int = 0
 
 
-def load_mailbox_preference_document(path: Path) -> MailboxPreferenceDocument:
-    """Decode only strict v1 legacy or source-scoped v2 documents."""
+def load_mailbox_preference_document(
+    path: Path,
+    *,
+    quarantine: bool = True,
+) -> MailboxPreferenceDocument:
+    """Decode only strict v1 legacy or source-scoped v2 documents.
+
+    A file that cannot be read is moved aside as
+    ``mailbox-preferences.json.corrupt-<stamp>`` before the next save can
+    overwrite it, and a row that is not valid on its own is left out without
+    costing the others. ``quarantine=False`` makes this a plain read, for a
+    caller that is only checking a file it just wrote."""
+    target = Path(path)
+    seen = private_file_identity(target) if quarantine else None
+
+    def set_aside(reason: str, *, copy: bool = False) -> None:
+        if quarantine:
+            quarantine_private_file(
+                target, copy=copy, reason=reason, expected_identity=seen
+            )
+
     degraded = MailboxPreferenceDocument(0, (), (), True)
     try:
-        raw = read_private_text(Path(path), max_bytes=_MAX_STORE_BYTES)
+        raw = read_private_text(target, max_bytes=_MAX_STORE_BYTES)
         document = json.loads(
             raw,
             object_pairs_hook=_strict_json_object,
             parse_constant=_reject_json_constant,
         )
-    except (OSError, RecursionError, TypeError, UnicodeError, ValueError):
+    except OSError as error:
+        if "exceeds maximum size" in str(error):
+            set_aside("it is larger than the store allows")
+        return degraded
+    except (RecursionError, TypeError, UnicodeError, ValueError):
+        set_aside("it did not decode")
         return degraded
     if type(document) is not dict or frozenset(document) != _DOCUMENT_KEYS:
+        set_aside("it is not a preference document")
         return degraded
     version = document["version"]
     entries = document["preferences"]
@@ -86,20 +124,43 @@ def load_mailbox_preference_document(path: Path) -> MailboxPreferenceDocument:
         and type(entries) is list
         and len(entries) <= _MAX_PREFERENCES
     ):
+        set_aside("its version or size is not one this build reads")
         return degraded
 
     try:
         if version == 1:
-            legacy = tuple(_preference_from_payload(entry) for entry in entries)
+            legacy, dropped = _readable_rows(entries, _preference_from_payload)
             if len({item.agent_id for item in legacy}) != len(legacy):
                 raise _InvalidPreference
-            return MailboxPreferenceDocument(1, (), legacy, False)
-        preferences = tuple(_v2_preference_from_payload(entry) for entry in entries)
-        if len({item.work_key for item in preferences}) != len(preferences):
-            raise _InvalidPreference
-        return MailboxPreferenceDocument(2, preferences, (), False)
+            restored = MailboxPreferenceDocument(1, (), legacy, False, dropped)
+            kept = bool(legacy)
+        else:
+            preferences, dropped = _readable_rows(entries, _v2_preference_from_payload)
+            if len({item.work_key for item in preferences}) != len(preferences):
+                raise _InvalidPreference
+            restored = MailboxPreferenceDocument(2, preferences, (), False, dropped)
+            kept = bool(preferences)
     except _InvalidPreference:
+        set_aside("two of its rows name the same run")
         return degraded
+    if restored.dropped and not kept:
+        set_aside("no row in it was readable")
+        return degraded
+    if restored.dropped:
+        set_aside(f"{restored.dropped} unreadable row(s) were dropped", copy=True)
+    return restored
+
+
+def _readable_rows(entries: list, decode) -> tuple[tuple, int]:
+    """The rows that decode on their own, and how many did not."""
+    rows = []
+    dropped = 0
+    for entry in entries:
+        try:
+            rows.append(decode(entry))
+        except (_InvalidPreference, TypeError, ValueError):
+            dropped += 1
+    return tuple(rows), dropped
 
 
 def save_mailbox_preferences_v2(
@@ -152,7 +213,7 @@ def save_mailbox_preferences_v2(
     except FileNotFoundError:
         previous = None
     atomic_private_write(target, encoded)
-    verified = load_mailbox_preference_document(target)
+    verified = load_mailbox_preference_document(target, quarantine=False)
     expected = tuple(canonical)
     if not (
         verified.version == 2

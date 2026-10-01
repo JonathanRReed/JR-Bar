@@ -187,7 +187,21 @@ Everything not in this list comes from a daemon document.
   keep their own bounded queue slots so a burst cannot starve them.
 - The Screen Bar is one band. There is never a per-LED segment.
 - Settings writes are validated by the real loader, saved atomically, and
-  a corrupt file is preserved for recovery rather than reset.
+  a corrupt file is preserved for recovery rather than reset. The same holds
+  for the stores of the person's own choices (effect assignments, mailbox
+  preferences, acknowledged requests, cleared completions): a file that
+  cannot be read is moved aside as `<name>.corrupt-<UTC stamp>` (newest three
+  kept) before the store starts empty, and one bad row costs only itself.
+- `settings.json` edited outside the daemon while it runs is adopted the
+  next time the daemon saves a setting, if it parses and validates; what the
+  daemon held is kept as `settings.json.replaced`. A save never overwrites an
+  outside edit. A file that does not parse is looked at twice, one refresh
+  apart, and only set aside (`settings.json.corrupt-<UTC stamp>`, newest three
+  kept) if it did not change in between, so an editor's save in progress is
+  not moved out from under it.
+- `settings.json` and the activity ledger are flushed with `F_FULLFSYNC`,
+  which survives a power cut; `fsync` alone only reaches the drive's cache on
+  macOS. Hot paths (log lines, state files) keep the cheap flush.
 - TCC grants belong to the signed `JR-Bar.app` identity. An ad-hoc or
   differently signed build is a different app to macOS.
 - The hook shim fails open: it never blocks a provider for more than

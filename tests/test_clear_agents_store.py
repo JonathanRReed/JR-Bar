@@ -406,3 +406,76 @@ def test_save_refuses_forged_or_secret_extended_receipts__and_1_more(tmp_path: P
 
     assert not target.exists()
 
+
+
+# --- an unreadable file is kept, so the next save cannot destroy the receipts ---
+
+
+def _kept(target: Path) -> list[Path]:
+    return sorted(target.parent.glob(f"{target.name}.corrupt-*"))
+
+
+def test_an_unreadable_receipt_file_is_set_aside_not_overwritten_by_the_next_save(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "state" / CLEAR_AGENTS_STORE_NAME
+    target.parent.mkdir()
+    target.write_bytes(b'{"generation": 3, "receipts": [{"key"')
+
+    restored = load_clear_agents_state(target)
+    save_clear_agents_state(target, _state(_key("fresh")))
+
+    assert restored.health is ClearAgentsRestoreHealth.CORRUPT
+    (kept,) = _kept(target)
+    assert kept.read_bytes() == b'{"generation": 3, "receipts": [{"key"'
+    assert _mode(kept) == 0o600
+    assert load_clear_agents_state(target).state == _state(_key("fresh"))
+
+
+def test_a_receipt_file_from_a_newer_version_is_kept_rather_than_wiped(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / CLEAR_AGENTS_STORE_NAME
+    text = json.dumps(_document(version=2))
+    target.write_text(text)
+
+    restored = load_clear_agents_state(target)
+    save_clear_agents_state(target, ClearAgentsState())
+
+    assert restored.health is ClearAgentsRestoreHealth.UNSUPPORTED
+    (kept,) = _kept(target)
+    assert kept.read_text() == text
+
+
+def test_an_oversized_receipt_file_is_set_aside_unread_and_still_unavailable(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / CLEAR_AGENTS_STORE_NAME
+    target.write_bytes(b" " * (MAX_CLEAR_AGENTS_STORE_BYTES + 1))
+
+    restored = load_clear_agents_state(target)
+
+    assert restored.health is ClearAgentsRestoreHealth.UNAVAILABLE
+    assert not target.exists()
+    assert len(_kept(target)) == 1
+
+
+def test_a_healthy_missing_or_unavailable_receipt_file_is_never_moved(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / CLEAR_AGENTS_STORE_NAME
+    assert load_clear_agents_state(target).health is ClearAgentsRestoreHealth.MISSING
+    save_clear_agents_state(target, _state(_key()))
+    before = target.read_bytes()
+
+    assert load_clear_agents_state(target).health is ClearAgentsRestoreHealth.HEALTHY
+    with patch(
+        "jrbar.clear_agents_store.read_private_text",
+        side_effect=PermissionError("permission denied"),
+    ):
+        assert (
+            load_clear_agents_state(target).health
+            is ClearAgentsRestoreHealth.UNAVAILABLE
+        )
+
+    assert target.read_bytes() == before and _kept(target) == []

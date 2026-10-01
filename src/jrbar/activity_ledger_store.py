@@ -120,7 +120,8 @@ def save_activity_ledger(path: Path, ledger: ActivityLedger) -> None:
         # assertion about that invariant rather than a runtime path: refuse
         # rather than write a file the loader will call corrupt.
         raise ActivityValidationError("activity ledger store exceeds maximum size")
-    atomic_private_write(Path(path), encoded)
+    # Small, and the only record of what the person has seen: flush to the drive.
+    atomic_private_write(Path(path), encoded, full_sync=True)
 
 
 def _encode_document(ledger: ActivityLedger) -> str:

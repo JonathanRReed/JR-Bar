@@ -12,7 +12,12 @@ from .local_triage import (
     LocalAcknowledgement,
     LocalTriageState,
 )
-from .private_io import atomic_private_write, read_private_text
+from .private_io import (
+    atomic_private_write,
+    private_file_identity,
+    quarantine_private_file,
+    read_private_text,
+)
 from .provider_facts import (
     RequestKey,
     request_key_from_payload,
@@ -30,13 +35,49 @@ class _InvalidTriageStore(ValueError):
 
 
 def load_operator_triage(path: Path) -> LocalTriageState:
-    """Load one strict bounded store, returning empty state on unsafe input."""
+    """Load one strict bounded store, returning empty state on unsafe input.
+
+    A file that cannot be read is first moved aside as
+    ``operator-triage.json.corrupt-<stamp>``, and a row that is not valid on
+    its own is left out without costing the others (see
+    ``load_operator_triage_with_report``), so the next save never destroys
+    what the person had acknowledged."""
+    return load_operator_triage_with_report(path)[0]
+
+
+def load_operator_triage_with_report(path: Path) -> tuple[LocalTriageState, int]:
+    """The restored state and how many rows did not read and were left out."""
+    target = Path(path)
+    seen = private_file_identity(target)
     try:
-        raw = read_private_text(Path(path), max_bytes=_MAX_STORE_BYTES)
+        raw = read_private_text(target, max_bytes=_MAX_STORE_BYTES)
         document = _decode_document(raw)
-        return _state_from_document(document)
-    except (OSError, RecursionError, TypeError, UnicodeError, ValueError):
-        return LocalTriageState(())
+        state, dropped = _state_from_document(document)
+    except FileNotFoundError:
+        return LocalTriageState(()), 0
+    except OSError as error:
+        if "exceeds maximum size" in str(error):
+            quarantine_private_file(
+                target,
+                reason="it is larger than the store allows",
+                expected_identity=seen,
+            )
+        return LocalTriageState(()), 0
+    except (RecursionError, TypeError, UnicodeError, ValueError):
+        quarantine_private_file(
+            target, reason="it did not decode", expected_identity=seen
+        )
+        return LocalTriageState(()), 0
+    if dropped:
+        # Good rows survive; a copy keeps what was dropped recoverable by hand.
+        # With no good row left there is nothing to keep in place: move it.
+        quarantine_private_file(
+            target,
+            copy=bool(state.acknowledgements),
+            reason=f"{dropped} unreadable row(s) were dropped",
+            expected_identity=seen,
+        )
+    return state, dropped
 
 
 def save_operator_triage(path: Path, state: LocalTriageState) -> None:
@@ -97,7 +138,11 @@ def _decode_document(raw: str) -> object:
     )
 
 
-def _state_from_document(document: object) -> LocalTriageState:
+def _state_from_document(document: object) -> tuple[LocalTriageState, int]:
+    """The state and the count of rows that were not valid on their own.
+
+    A document that is wrong as a whole, or that names one request twice,
+    raises; one row that is malformed is dropped and counted."""
     if type(document) is not dict or frozenset(document) != _DOCUMENT_KEYS:
         raise _InvalidTriageStore
     version = document["version"]
@@ -112,22 +157,26 @@ def _state_from_document(document: object) -> LocalTriageState:
 
     acknowledgements: list[LocalAcknowledgement] = []
     seen: set[RequestKey] = set()
+    dropped = 0
     for entry in entries:
         if type(entry) is not dict or frozenset(entry) != _ACKNOWLEDGEMENT_KEYS:
-            raise _InvalidTriageStore
-        request_key = request_key_from_payload(entry["request_key"])
+            dropped += 1
+            continue
+        try:
+            request_key = request_key_from_payload(entry["request_key"])
+        except (TypeError, ValueError):
+            request_key = None
         acknowledged_at = entry["acknowledged_at"]
-        if (
-            request_key is None
-            or request_key in seen
-            or not _valid_epoch(acknowledged_at)
-        ):
+        if request_key is None or not _valid_epoch(acknowledged_at):
+            dropped += 1
+            continue
+        if request_key in seen:
             raise _InvalidTriageStore
         seen.add(request_key)
         acknowledgements.append(
             LocalAcknowledgement(request_key, float(acknowledged_at))
         )
-    return LocalTriageState(tuple(acknowledgements))
+    return LocalTriageState(tuple(acknowledgements)), dropped
 
 
 def _valid_epoch(value: object) -> bool:

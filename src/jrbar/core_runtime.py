@@ -1745,9 +1745,10 @@ def _effect_packs(self) -> tuple:
     build. The store still fails closed: one pack that is not canonical
     makes every pack unavailable, and that verdict is cached under the
     fingerprint too, so it is logged once per change to the files and not
-    once per build. A store that cannot even be stamped (a link, a foreign
-    entry) and an error that may pass (an ``OSError``) are logged and never
-    cached.
+    once per build. A store that cannot even be stamped (a link, an unsafe
+    pack file) and an error that may pass (an ``OSError``) are logged and
+    never cached. A file that is not a pack (``.DS_Store``, a scratch file an
+    interrupted write left) is skipped by the store and does not count.
     """
     from .effect_pack_store import EffectPackStore, EffectPackStoreError
 
@@ -4219,6 +4220,19 @@ def build_headless_controller_class() -> type:
             # A settings change the persistence writer has not written yet.
             self._core_settings_dirty = False
             self._core_settings_save_lock = threading.Lock()
+            # A save that lost to an outside edit of settings.json, waiting
+            # for the run loop to take the file (any thread may set it).
+            self._core_settings_conflict: str | None = None
+            # (size, mtime_ns) of an unparsable settings.json at the last
+            # look: the file is set aside only if the next look finds it
+            # unchanged (an editor's save may still be in progress).
+            self._core_settings_unsettled: tuple[int, int] | None = None
+            # The last refusal logged, so one that can never succeed is said
+            # once, not on every refresh.
+            self._core_settings_refusal: str | None = None
+            from . import settings as settings_module
+
+            settings_module.set_write_conflict_observer(self._core_note_settings_conflict)
             self._core_command_in_flight: str | None = None
             self._core_started_at = time.time()
             self._core_pending_drainer = None
@@ -4481,6 +4495,13 @@ def build_headless_controller_class() -> type:
             # write failed or never got queued is written here.
             if self._core_settings_dirty:
                 self._core_flush_settings()
+            if self._core_settings_conflict is not None:
+                # Not worth a refresh now, but the memory an outside edit
+                # replaced is still kept as settings.json.replaced.
+                self._core_adopt_settings_from_disk(quitting=True)
+                if self._core_settings_dirty:
+                    # A deleted or unreadable file is written out from memory.
+                    self._core_flush_settings()
             service = getattr(self, "_core_usage_history_service", None)
             if service is not None:
                 service.close()
@@ -4622,6 +4643,8 @@ def build_headless_controller_class() -> type:
         def refresh_(self, sender):
             previous_asks = self._core_prev_asks
             previous_devices = self._core_prev_devices
+            if self._core_settings_conflict is not None:
+                self._core_adopt_settings_from_disk()
             if self._core_settings_dirty and not self._core_settings_write_queued():
                 # The last settings write failed: the retry belongs on
                 # the writer too, not as an fsync on the run loop.
@@ -6771,7 +6794,21 @@ def build_headless_controller_class() -> type:
         def _core_flush_settings(self) -> bool:
             """Write the settings if a change is waiting; True when nothing
             is left unsaved. Runs on the persistence writer, at quit, and on
-            the next refresh after a failed write."""
+            the next refresh after a failed write.
+
+            An I/O error is retried on the next refresh. A write that lost to
+            an outside edit of settings.json is not retried: the next refresh
+            takes the file instead (``_core_adopt_settings_from_disk``). A
+            write that is refused for good (a file from a newer version) is
+            said once and not retried: memory stays live for the session. A
+            file that cannot be read right now (a half-written save) is a
+            different case and is retried like an I/O error."""
+            from .settings import (
+                SettingsConcurrentWriteError,
+                SettingsFileUnreadableError,
+                SettingsWriteRefusedError,
+            )
+
             with self._core_settings_save_lock:
                 for _ in range(3):
                     if not self._core_settings_dirty:
@@ -6780,6 +6817,35 @@ def build_headless_controller_class() -> type:
                     current = self.settings
                     try:
                         legacy.save_settings(current)
+                    except SettingsConcurrentWriteError as exc:
+                        # The observer has recorded it from inside the save;
+                        # this covers a save that was replaced in a test.
+                        if self._core_settings_conflict is None:
+                            self._core_settings_conflict = str(exc)
+                        return False
+                    except SettingsFileUnreadableError as exc:
+                        # A half-written file can pass: keep the change, try
+                        # again on the next refresh and at quit, and let the
+                        # refresh look at the file the way it does after a
+                        # lost save (it may be an editor's save in progress).
+                        self._core_settings_dirty = True
+                        if self._core_settings_conflict is None:
+                            self._core_settings_conflict = str(exc)
+                        message = f"{exc.__class__.__name__}: {exc}"
+                        if message != self._core_settings_refusal:
+                            self._core_settings_refusal = message
+                            legacy.log_status_bar(
+                                f"core: settings are not saved yet, retrying on the next refresh: {message}"
+                            )
+                        return False
+                    except SettingsWriteRefusedError as exc:
+                        message = f"{exc.__class__.__name__}: {exc}"
+                        if message != self._core_settings_refusal:
+                            self._core_settings_refusal = message
+                            legacy.log_status_bar(
+                                f"core: settings are not saved and will not be retried: {message}"
+                            )
+                        return False
                     except Exception as exc:
                         self._core_settings_dirty = True
                         legacy.log_status_bar(
@@ -6787,10 +6853,103 @@ def build_headless_controller_class() -> type:
                             f"{exc.__class__.__name__}: {exc}"
                         )
                         return False
+                    self._core_settings_refusal = None
                     if self.settings is not current:
                         # A newer document arrived while this one was written.
                         self._core_settings_dirty = True
                 return not self._core_settings_dirty
+
+        def _core_note_settings_conflict(self, target, error) -> None:
+            """Remember that a save lost to an outside edit of settings.json.
+
+            Called from inside ``save_settings``, on whichever thread was
+            saving (the writer, the LED worker, the run loop), so it only
+            records: the run loop takes the file at its next refresh."""
+            try:
+                from . import settings as settings_module
+
+                if Path(target) != settings_module.settings_file_path():
+                    return
+            except Exception:
+                return
+            if self._core_settings_conflict is None:
+                self._core_settings_conflict = str(error) or "settings.json changed on disk"
+
+        def _core_adopt_settings_from_disk(self, *, quitting: bool = False) -> None:
+            """Take settings.json after an outside edit, on the run loop.
+
+            A save lost to somebody else's change to the file (a hand edit, a
+            restore, ``jrbar battery configure``). Memory is stale, so the
+            file wins when it parses and validates: what memory held is kept
+            as ``settings.json.replaced``, memory becomes the file, and the
+            Settings screen follows. A file that does not parse is set aside
+            and memory is written out again; a deleted file is written out
+            again. Nothing here overwrites a valid outside edit."""
+            from . import settings as settings_module
+            from .settings import OutsideEditOutcome
+
+            reason = self._core_settings_conflict
+            self._core_settings_conflict = None
+            try:
+                # The save lock keeps a flush that began before this from
+                # landing its older document over the file just taken.
+                with self._core_settings_save_lock:
+                    previous = self.settings
+                    adoption = settings_module.adopt_outside_edit(
+                        previous, unsettled=self._core_settings_unsettled
+                    )
+                    if adoption.outcome is OutsideEditOutcome.ADOPTED:
+                        self._core_settings_dirty = False
+                        self.settings = adoption.settings
+                    elif adoption.outcome is OutsideEditOutcome.UNCHANGED:
+                        self._core_settings_dirty = False
+                    elif adoption.outcome is not OutsideEditOutcome.UNSETTLED:
+                        self._core_settings_dirty = True
+            except Exception as exc:
+                self._core_settings_conflict = reason
+                message = f"core: settings.json changed on disk; reading it failed: {exc.__class__.__name__}"
+                if message != self._core_settings_refusal:
+                    self._core_settings_refusal = message
+                    legacy.log_status_bar(message)
+                return
+            outcome = adoption.outcome
+            if outcome is OutsideEditOutcome.UNSETTLED:
+                # Could be an editor's save still in progress: look once more
+                # on the next refresh before setting anything aside. At quit
+                # there is no next refresh, so the file is left as it is.
+                if quitting:
+                    legacy.log_status_bar(
+                        "core: settings.json was changed outside JR-Bar and cannot be read; left as it is"
+                    )
+                else:
+                    self._core_settings_conflict = reason
+                    self._core_settings_unsettled = adoption.signature
+                return
+            self._core_settings_unsettled = None
+            self._core_settings_refusal = None
+            if outcome is OutsideEditOutcome.ADOPTED:
+                kept = (
+                    "your previous settings are in settings.json.replaced"
+                    if adoption.backup is not None
+                    else "your previous settings could not be kept"
+                )
+                legacy.log_status_bar(f"core: settings.json was changed outside JR-Bar; using the file ({kept})")
+                changed = sorted(
+                    key
+                    for key in {*previous.to_dict(), *adoption.settings.to_dict()}
+                    if previous.to_dict().get(key) != adoption.settings.to_dict().get(key)
+                )
+                if not quitting:
+                    self._core_after_settings_change(changed)
+            elif outcome is OutsideEditOutcome.INVALID:
+                legacy.log_status_bar(
+                    "core: settings.json was changed outside JR-Bar and could not be read; "
+                    "set it aside as settings.json.corrupt-<time> and will save the current settings"
+                )
+            elif outcome is OutsideEditOutcome.MISSING:
+                legacy.log_status_bar("core: settings.json was removed outside JR-Bar; saving the current settings again")
+            else:
+                legacy.log_status_bar("core: settings.json was touched outside JR-Bar; it holds the same settings")
 
         # -- facts -------------------------------------------------------------
 

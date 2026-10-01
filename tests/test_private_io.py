@@ -707,3 +707,243 @@ def test_atomic_private_write_rejects_non_private_modes(
         atomic_private_write(target, "payload", mode=file_mode)
 
     assert not target.exists()
+
+
+# --- quarantine: a file that cannot be read is moved aside, never overwritten ---
+
+
+_QUARANTINE_NOON = 1_788_264_000.0  # 2026-09-01T12:00:00Z
+
+
+def test_quarantine_moves_an_unreadable_file_aside_privately(tmp_path: Path) -> None:
+    from jrbar.private_io import quarantine_private_file
+
+    target = tmp_path / "state" / "effect-assignments.json"
+    target.parent.mkdir(mode=0o700)
+    target.write_bytes(b'{"assignments": [')
+    target.chmod(0o644)
+    lines: list[str] = []
+
+    moved = quarantine_private_file(
+        target, now=_QUARANTINE_NOON, reason="it did not decode", log=lines.append
+    )
+
+    assert moved == target.with_name("effect-assignments.json.corrupt-20260901T120000Z")
+    assert not target.exists()
+    assert moved.read_bytes() == b'{"assignments": ['
+    assert mode(moved) == 0o600
+    assert len(lines) == 1
+    assert "effect-assignments.json" in lines[0] and "it did not decode" in lines[0]
+    assert str(tmp_path) not in lines[0], "a log line names the file, not the path"
+
+
+def test_quarantine_keeps_only_the_three_newest_copies(tmp_path: Path) -> None:
+    from jrbar.private_io import quarantine_private_file
+
+    target = tmp_path / "state" / "operator-triage.json"
+    target.parent.mkdir(mode=0o700)
+    for index in range(5):
+        target.write_text(f"bad-{index}")
+        quarantine_private_file(
+            target, now=_QUARANTINE_NOON + index * 60, log=lambda _line: None
+        )
+
+    kept = sorted(target.parent.glob("operator-triage.json.corrupt-*"))
+    assert [path.read_text() for path in kept] == ["bad-2", "bad-3", "bad-4"]
+
+
+def test_quarantine_in_the_same_second_never_overwrites_an_earlier_copy(
+    tmp_path: Path,
+) -> None:
+    from jrbar.private_io import quarantine_private_file
+
+    target = tmp_path / "state" / "clear-agents.json"
+    target.parent.mkdir(mode=0o700)
+    for text in ("first", "second", "third"):
+        target.write_text(text)
+        quarantine_private_file(target, now=_QUARANTINE_NOON, log=lambda _line: None)
+
+    assert sorted(path.read_text() for path in target.parent.iterdir()) == [
+        "first",
+        "second",
+        "third",
+    ]
+    # Past the cap, the oldest of the same second goes first, not the newest.
+    target.write_text("fourth")
+    quarantine_private_file(target, now=_QUARANTINE_NOON, log=lambda _line: None)
+    assert sorted(path.read_text() for path in target.parent.iterdir()) == [
+        "fourth",
+        "second",
+        "third",
+    ]
+
+
+def test_quarantine_copy_leaves_the_original_and_does_not_repeat_itself(
+    tmp_path: Path,
+) -> None:
+    from jrbar.private_io import quarantine_private_file
+
+    target = tmp_path / "state" / "mailbox-preferences.json"
+    target.parent.mkdir(mode=0o700)
+    target.write_text('{"keep": 1, "bad": 2}')
+    lines: list[str] = []
+
+    first = quarantine_private_file(
+        target, now=_QUARANTINE_NOON, copy=True, reason="2 rows dropped", log=lines.append
+    )
+    again = quarantine_private_file(
+        target, now=_QUARANTINE_NOON + 90, copy=True, reason="2 rows dropped", log=lines.append
+    )
+
+    assert target.read_text() == '{"keep": 1, "bad": 2}'
+    assert first is not None and first.read_text() == '{"keep": 1, "bad": 2}'
+    assert mode(first) == 0o600
+    assert again == first, "an identical copy is not made twice"
+    assert len(lines) == 1
+    assert len(list(target.parent.glob("*.corrupt-*"))) == 1
+
+
+def test_quarantine_leaves_a_missing_linked_or_replaced_file_alone(tmp_path: Path) -> None:
+    from jrbar.private_io import private_file_identity, quarantine_private_file
+
+    quiet = {"now": _QUARANTINE_NOON, "log": lambda _line: None}
+    folder = tmp_path / "state"
+    folder.mkdir(mode=0o700)
+
+    assert quarantine_private_file(folder / "absent.json", **quiet) is None
+
+    outside = tmp_path / "outside.json"
+    outside.write_text("elsewhere")
+    link = folder / "linked.json"
+    link.symlink_to(outside)
+    assert quarantine_private_file(link, **quiet) is None
+    assert link.is_symlink() and outside.read_text() == "elsewhere"
+
+    swapped = folder / "swapped.json"
+    swapped.write_text("what failed to decode")
+    seen = private_file_identity(swapped)
+    assert seen is not None
+    swapped.unlink()
+    swapped.write_text("a good file another writer just published")
+    assert quarantine_private_file(swapped, expected_identity=seen, **quiet) is None
+    assert swapped.read_text() == "a good file another writer just published"
+
+
+def test_quarantine_logs_one_daemon_style_line_by_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from jrbar.private_io import quarantine_private_file
+
+    target = tmp_path / "state" / "x.json"
+    target.parent.mkdir(mode=0o700)
+    target.write_text("{")
+    quarantine_private_file(target, now=_QUARANTINE_NOON, reason="it did not decode")
+
+    out = capsys.readouterr().out.splitlines()
+    assert len(out) == 1
+    assert "x.json" in out[0] and "x.json.corrupt-20260901T120000Z" in out[0]
+
+
+# --- full_sync: macOS fsync reaches the drive's cache, F_FULLFSYNC reaches the drive ---
+
+
+class _SyncRecorder:
+    """Stands in for the two flush calls and records which one ran."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, *, full_supported: bool = True) -> None:
+        import fcntl
+
+        from jrbar import private_io
+
+        self.full: list[int] = []
+        self.plain: list[int] = []
+        real_fsync = os.fsync
+
+        def fake_fcntl(descriptor: int, command: int, *args):
+            if command != fcntl.F_FULLFSYNC:
+                return fcntl.fcntl(descriptor, command, *args)
+            if not full_supported:
+                raise OSError(45, "Operation not supported")
+            self.full.append(descriptor)
+            return 0
+
+        def fake_fsync(descriptor: int) -> None:
+            self.plain.append(descriptor)
+            real_fsync(descriptor)
+
+        # The suite runs with the full flush off (tests/conftest.py): put it back.
+        monkeypatch.setattr(private_io, "_F_FULLFSYNC", fcntl.F_FULLFSYNC)
+        monkeypatch.setattr(private_io.fcntl, "fcntl", fake_fcntl)
+        monkeypatch.setattr(private_io.os, "fsync", fake_fsync)
+
+
+def test_full_sync_flushes_the_file_and_its_folder_to_the_drive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sync = _SyncRecorder(monkeypatch)
+    target = tmp_path / "state" / "settings.json"
+
+    atomic_private_write(target, "{}", full_sync=True)
+
+    assert target.read_text() == "{}"
+    assert len(sync.full) == 2 and sync.full[0] != sync.full[1], "the file, then its folder"
+    assert sync.plain == []
+
+
+def test_the_default_write_keeps_the_cheap_flush(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sync = _SyncRecorder(monkeypatch)
+
+    atomic_private_write(tmp_path / "state" / "latest.json", "{}")
+
+    assert sync.full == []
+    assert len(sync.plain) == 2
+
+
+def test_full_sync_on_a_rebuildable_cache_still_skips_the_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sync = _SyncRecorder(monkeypatch)
+
+    atomic_private_write(
+        tmp_path / "state" / "cache.json", "{}", full_sync=True, durable_directory=False
+    )
+
+    assert len(sync.full) == 1 and sync.plain == []
+
+
+def test_full_sync_falls_back_to_fsync_where_the_filesystem_cannot_do_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sync = _SyncRecorder(monkeypatch, full_supported=False)
+    target = tmp_path / "state" / "settings.json"
+
+    atomic_private_write(target, "{}", full_sync=True)
+
+    assert target.read_text() == "{}"
+    assert sync.full == [] and len(sync.plain) == 2
+
+
+def test_only_the_small_critical_documents_ask_for_the_full_flush(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jrbar.activity_ledger import ActivityLedger
+    from jrbar.activity_ledger_store import save_activity_ledger
+    from jrbar.settings import AgentMonitorSettings, save_settings
+
+    sync = _SyncRecorder(monkeypatch)
+
+    save_settings(AgentMonitorSettings(), tmp_path / "settings.json")
+    after_settings = len(sync.full)
+    save_activity_ledger(tmp_path / "activity-ledger.json", ActivityLedger())
+    after_ledger = len(sync.full)
+
+    assert after_settings == 2, "settings.json: file and folder"
+    assert after_ledger == after_settings + 2, "the activity ledger: file and folder"
+
+    # The hot paths keep the cheap flush: log appends and frequent state writes.
+    append_private_text(tmp_path / "events.log", "line\n")
+    atomic_private_write(tmp_path / "latest.json", "{}", durable_directory=False)
+    atomic_private_write(tmp_path / "usage.json", "{}")
+    assert len(sync.full) == after_ledger

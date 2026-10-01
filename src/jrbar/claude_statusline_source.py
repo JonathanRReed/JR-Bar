@@ -257,7 +257,7 @@ def source_enabled(now: float | None = None) -> bool:
     try:
         from .settings import load_settings
 
-        enabled = bool(getattr(load_settings(), "claude_statusline_source", False))
+        enabled = bool(getattr(load_settings(track=False), "claude_statusline_source", False))
     except Exception:
         enabled = False
     _settings_cache = (moment, enabled)

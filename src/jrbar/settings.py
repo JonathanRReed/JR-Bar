@@ -11,11 +11,14 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, replace
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from . import _settings_legacy as _legacy
+from .private_io import quarantine_private_file
 from .product_identity import PRODUCT_DISPLAY_NAME
 
 CURRENT_SETTINGS_SCHEMA_VERSION = 2
@@ -64,6 +67,12 @@ class SettingsWriteRefusedError(RuntimeError):
 
 class SettingsConcurrentWriteError(SettingsWriteRefusedError):
     """The durable settings document changed after this process loaded it."""
+
+
+class SettingsFileUnreadableError(SettingsWriteRefusedError):
+    """The file on disk cannot be read (a half-written save, say), so a save
+    will not write over it. Unlike a newer-version or schema refusal this one
+    can pass: the file may be whole a moment later."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +219,22 @@ def _migrate_settings_document(
     return migrated
 
 
+def _preserve_corrupt_settings(target: Path) -> None:
+    """Set a settings file that cannot be read aside, never destroy it.
+
+    Returning defaults means the very next save would overwrite the
+    evidence, and with it the calibration profiles, studio library and
+    colours. The file moves to ``settings.json.corrupt-<UTC stamp>``
+    (private, the newest three kept), so a second bad file does not cost the
+    first, and a second bad file is never deleted. The legacy loader calls
+    this name too; it is replaced below."""
+    try:
+        _legacy.ensure_private_directory(target.parent)
+    except OSError:
+        pass
+    quarantine_private_file(target, reason="it could not be read")
+
+
 def _remember_document(
     target: Path,
     compatibility: SettingsCompatibility,
@@ -228,6 +253,39 @@ def _forget_document(target: Path) -> None:
         _COMPATIBILITY_BY_PATH.pop(target, None)
         _SOURCE_DOCUMENT_BY_PATH.pop(target, None)
         _SOURCE_DIGEST_BY_PATH.pop(target, None)
+
+
+#: Told, from whichever thread is saving, when a save loses to an outside edit.
+#: The daemon sets it so that every one of its save sites, not only the one
+#: that happened to be writing, asks for the same deliberate recovery.
+_CONFLICT_OBSERVER: Callable[[Path, SettingsWriteRefusedError], None] | None = None
+
+
+def set_write_conflict_observer(
+    observer: Callable[[Path, SettingsWriteRefusedError], None] | None,
+) -> None:
+    """Register (or with None, remove) the one process-wide conflict listener.
+
+    It is called while the settings lock is held, so it must only record that
+    a conflict happened and return."""
+    global _CONFLICT_OBSERVER
+    _CONFLICT_OBSERVER = observer
+
+
+def settings_file_path(path: Path | None = None) -> Path:
+    """The absolute settings path a save or load with ``path`` would use."""
+    return _settings_path(path)
+
+
+def _lost_to_an_outside_edit(target: Path, message: str) -> SettingsConcurrentWriteError:
+    error = SettingsConcurrentWriteError(message)
+    observer = _CONFLICT_OBSERVER
+    if observer is not None:
+        try:
+            observer(target, error)
+        except Exception:
+            pass
+    return error
 
 
 # Entry-keyed collections the runtime serializes COMPLETELY: their entries
@@ -300,22 +358,43 @@ def _merge_unknown_fields(
     return encoded
 
 
-def load_settings_document(path: Path | None = None) -> LoadedSettings:
+def load_settings_document(
+    path: Path | None = None,
+    *,
+    track: bool = True,
+) -> LoadedSettings:
+    """Read the settings file.
+
+    A tracked load (the default) is a deliberate reload: it records what the
+    file held, and ``save_settings`` later refuses to write over a file that
+    changed since. ``track=False`` is a plain read for code that only wants
+    one field (a statusline check, a price table): it leaves that record
+    exactly as it was, on every branch, so an incidental read can never
+    stand in for the daemon having seen an outside edit."""
     target = _settings_path(path)
+
+    def remember(*args, **kwargs) -> None:
+        if track:
+            _remember_document(*args, **kwargs)
+
+    def forget(target_path: Path) -> None:
+        if track:
+            _forget_document(target_path)
+
     try:
         data, source_digest = _read_document(target)
     except FileNotFoundError:
         compatibility = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
-        _remember_document(target, compatibility, {}, source_digest=None)
+        remember(target, compatibility, {}, source_digest=None)
         return LoadedSettings(_legacy.AgentMonitorSettings(), compatibility)
     except OSError:
         compatibility = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
-        _forget_document(target)
+        forget(target)
         return LoadedSettings(_legacy.AgentMonitorSettings(), compatibility)
     except Exception:
         _legacy._preserve_corrupt_settings(target)
         compatibility = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
-        _forget_document(target)
+        forget(target)
         return LoadedSettings(_legacy.AgentMonitorSettings(), compatibility)
 
     try:
@@ -323,7 +402,7 @@ def load_settings_document(path: Path | None = None) -> LoadedSettings:
     except ValueError:
         _legacy._preserve_corrupt_settings(target)
         compatibility = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
-        _forget_document(target)
+        forget(target)
         return LoadedSettings(_legacy.AgentMonitorSettings(), compatibility)
 
     if source_version > CURRENT_SETTINGS_SCHEMA_VERSION:
@@ -333,7 +412,7 @@ def load_settings_document(path: Path | None = None) -> LoadedSettings:
             migrated=False,
         )
         settings = _ORIGINAL_LOAD_SETTINGS(target)
-        _remember_document(
+        remember(
             target,
             compatibility,
             data,
@@ -344,14 +423,14 @@ def load_settings_document(path: Path | None = None) -> LoadedSettings:
     if source_version < MIN_READABLE_SETTINGS_SCHEMA_VERSION:
         _legacy._preserve_corrupt_settings(target)
         compatibility = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
-        _forget_document(target)
+        forget(target)
         return LoadedSettings(_legacy.AgentMonitorSettings(), compatibility)
 
     try:
         migrated = _migrate_settings_document(data, source_version)
     except ValueError:
         compatibility = SettingsCompatibility(source_version, read_only=True)
-        _remember_document(
+        remember(
             target,
             compatibility,
             data,
@@ -365,7 +444,7 @@ def load_settings_document(path: Path | None = None) -> LoadedSettings:
         migrated=source_version != CURRENT_SETTINGS_SCHEMA_VERSION,
     )
     settings = _ORIGINAL_LOAD_SETTINGS(target)
-    _remember_document(
+    remember(
         target,
         compatibility,
         migrated,
@@ -374,8 +453,8 @@ def load_settings_document(path: Path | None = None) -> LoadedSettings:
     return LoadedSettings(settings, compatibility)
 
 
-def load_settings(path: Path | None = None):
-    return load_settings_document(path).settings
+def load_settings(path: Path | None = None, *, track: bool = True):
+    return load_settings_document(path, track=track).settings
 
 
 def settings_from_mapping(data: object):
@@ -403,6 +482,158 @@ def settings_from_mapping(data: object):
     return _legacy.settings_from_data(data)
 
 
+class OutsideEditOutcome(str, Enum):
+    #: The file parsed and validated and differs from memory: it is now the settings.
+    ADOPTED = "adopted"
+    #: The file parsed and holds what memory holds: nothing to take.
+    UNCHANGED = "unchanged"
+    #: The file is gone: memory stays and the file should be written again.
+    MISSING = "missing"
+    #: The file did not parse or validate and has stopped changing: it was set
+    #: aside, memory stays.
+    INVALID = "invalid"
+    #: The file did not parse, but it may be an editor's save still in
+    #: progress. Nothing was moved; look again (see ``unsettled``).
+    UNSETTLED = "unsettled"
+
+
+@dataclass(frozen=True, slots=True)
+class OutsideEditAdoption:
+    outcome: OutsideEditOutcome
+    #: What the caller should hold now.
+    settings: Any
+    #: The kept copy of the memory that was replaced (outcome ADOPTED).
+    backup: Path | None = None
+    #: A backup was wanted and could not be written.
+    backup_failed: bool = False
+    #: (size, mtime_ns) of the file at this look (outcome UNSETTLED): pass it
+    #: back as ``unsettled`` on the next look.
+    signature: tuple[int, int] | None = None
+
+
+REPLACED_BACKUP_SUFFIX = ".replaced"
+
+
+def _replaced_backup(target: Path, previous) -> Path | None:
+    """Keep the memory an outside edit replaced as ``settings.json.replaced``.
+
+    One backup, private mode, the latest replacement; a copy somebody can
+    move back over the file by hand."""
+    encoded = previous.to_dict()
+    encoded["settings_schema_version"] = CURRENT_SETTINGS_SCHEMA_VERSION
+    payload = json.dumps(encoded, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    backup = target.with_name(target.name + REPLACED_BACKUP_SUFFIX)
+    return _legacy.atomic_private_write(backup, payload, full_sync=True)
+
+
+def _file_signature(target: Path) -> tuple[int, int] | None:
+    """(size, mtime_ns) of the settings file, or None when there is none."""
+    try:
+        info = target.lstat()
+    except OSError:
+        return None
+    return (info.st_size, info.st_mtime_ns)
+
+
+def adopt_outside_edit(
+    previous,
+    path: Path | None = None,
+    *,
+    unsettled: tuple[int, int] | None = None,
+    signature_of: Callable[[Path], tuple[int, int] | None] = _file_signature,
+) -> OutsideEditAdoption:
+    """Take the settings file as it stands after somebody else changed it.
+
+    ``previous`` is what the caller holds. A file that parses and validates
+    wins over stale memory: the caller's copy is kept as
+    ``settings.json.replaced`` and the file is read as a deliberate reload, so
+    the next save is judged against what was just taken. A missing file keeps
+    memory. A read that fails for a reason that may pass (an ``OSError``)
+    raises, so the caller can try again.
+
+    A file that does not parse or validate is never adopted, but it is not set
+    aside on the first look either: an editor that saves in place leaves a
+    half-written file for a moment, and moving it would send the editor's last
+    write into the moved file. The first look returns ``UNSETTLED`` with the
+    file's ``(size, mtime_ns)``; the caller passes it back as ``unsettled`` on
+    its next look, and only a file that has not changed in between is set aside
+    (see ``_preserve_corrupt_settings``). ``signature_of`` is the stat reader,
+    injected so a test needs no sleep."""
+    target = _settings_path(path)
+
+    def invalid() -> OutsideEditAdoption:
+        signature = signature_of(target)
+        if signature is None:
+            return missing()
+        if signature != unsettled:
+            return OutsideEditAdoption(
+                OutsideEditOutcome.UNSETTLED, previous, signature=signature
+            )
+        _legacy._preserve_corrupt_settings(target)
+        if target.exists():
+            # Could not be moved: leave the guard unarmed so a save refuses
+            # rather than overwrites.
+            _forget_document(target)
+        else:
+            _remember_document(
+                target,
+                SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION),
+                {},
+                source_digest=None,
+            )
+        return OutsideEditAdoption(OutsideEditOutcome.INVALID, previous)
+
+    def missing() -> OutsideEditAdoption:
+        _remember_document(
+            target,
+            SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION),
+            {},
+            source_digest=None,
+        )
+        return OutsideEditAdoption(OutsideEditOutcome.MISSING, previous)
+
+    try:
+        data, digest = _read_document(target)
+        source_version = _settings_schema_version(data)
+    except FileNotFoundError:
+        return missing()
+    except OSError as error:
+        if "exceeds maximum size" not in str(error):
+            raise
+        return invalid()
+    except Exception:
+        return invalid()
+
+    if source_version > CURRENT_SETTINGS_SCHEMA_VERSION:
+        compatibility = SettingsCompatibility(source_version, read_only=True)
+        document = data
+    else:
+        try:
+            document = _migrate_settings_document(data, source_version)
+        except ValueError:
+            return invalid()
+        compatibility = SettingsCompatibility(
+            source_version,
+            migrated=source_version != CURRENT_SETTINGS_SCHEMA_VERSION,
+        )
+    adopted = settings_from_mapping(data)
+    # Judged against exactly the bytes just read, so a later outside edit is
+    # still caught by the next save.
+    _remember_document(target, compatibility, document, source_digest=digest)
+    if previous is not None and previous.to_dict() == adopted.to_dict():
+        return OutsideEditAdoption(OutsideEditOutcome.UNCHANGED, previous)
+    backup = None
+    backup_failed = False
+    if previous is not None:
+        try:
+            backup = _replaced_backup(target, previous)
+        except (OSError, TypeError, ValueError):
+            backup_failed = True
+    return OutsideEditAdoption(
+        OutsideEditOutcome.ADOPTED, adopted, backup, backup_failed
+    )
+
+
 def save_settings(
     settings,
     path: Path | None = None,
@@ -423,20 +654,22 @@ def save_settings(
             except ValueError as error:
                 # The file was readable when it was loaded, so one that can no
                 # longer be parsed changed underneath us.
-                raise SettingsConcurrentWriteError(
+                raise _lost_to_an_outside_edit(
+                    target,
                     "settings changed after they were loaded and can no "
-                    "longer be read; reload before saving"
+                    "longer be read; reload before saving",
                 ) from error
             if current_digest != expected_digest:
-                raise SettingsConcurrentWriteError(
-                    "settings changed after they were loaded; reload before saving"
+                raise _lost_to_an_outside_edit(
+                    target,
+                    "settings changed after they were loaded; reload before saving",
                 )
         elif target.exists():
             try:
                 current_document, _ = _read_document(target)
             except ValueError as error:
                 # Never overwrite a file that cannot be read.
-                raise SettingsWriteRefusedError(
+                raise SettingsFileUnreadableError(
                     "settings file is unreadable; load it before saving"
                 ) from error
             current_version = _settings_schema_version(current_document)
@@ -472,7 +705,8 @@ def save_settings(
             sort_keys=True,
             allow_nan=False,
         ) + "\n"
-        written = _legacy.atomic_private_write(target, payload)
+        # settings.json is small, rewritten rarely, and a person's work: flush to the drive.
+        written = _legacy.atomic_private_write(target, payload, full_sync=True)
         current = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
         _remember_document(
             target,
@@ -497,6 +731,8 @@ _legacy.SettingsCompatibility = SettingsCompatibility
 _legacy.LoadedSettings = LoadedSettings
 _legacy.SettingsWriteRefusedError = SettingsWriteRefusedError
 _legacy.SettingsConcurrentWriteError = SettingsConcurrentWriteError
+_legacy.SettingsFileUnreadableError = SettingsFileUnreadableError
+_legacy._preserve_corrupt_settings = _preserve_corrupt_settings
 _legacy.load_settings_document = load_settings_document
 _legacy.load_settings = load_settings
 _legacy.save_settings = save_settings

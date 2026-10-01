@@ -792,3 +792,167 @@ def test_v2_store_excludes_secret_shaped_extended_attributes(tmp_path: Path) -> 
     assert "prompt" not in raw
     assert "command" not in raw
     assert "raw_error" not in raw
+
+
+# --- an unreadable file or row never costs the person their pins and snoozes ---
+
+
+def _kept(target: Path) -> list[Path]:
+    return sorted(target.parent.glob(f"{target.name}.corrupt-*"))
+
+
+def _v2_row(work_id: str, **changes) -> dict:
+    row = {
+        "work_key": work_key_to_payload(_work_key(work_id)),
+        "mode": "default",
+        "pin_order": None,
+        "snoozed_at": None,
+        "snoozed_until": None,
+        "last_visited_at": None,
+    }
+    row.update(changes)
+    return row
+
+
+def _write_v2(target: Path, rows: list) -> str:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps({"version": 2, "preferences": rows})
+    target.write_text(text)
+    return text
+
+
+def test_an_unreadable_preference_file_is_set_aside_not_overwritten_by_the_next_save(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "state" / "mailbox-preferences.json"
+    target.parent.mkdir()
+    target.write_bytes(b'{"version": 2, "preferences": [{"work_')
+
+    assert load_mailbox_preference_document(target).degraded
+    save_mailbox_preferences_v2(target, (_v2_preference("w1", mode=MailboxPreferenceMode.WATCHED),))
+
+    (kept,) = _kept(target)
+    assert kept.read_bytes() == b'{"version": 2, "preferences": [{"work_'
+    assert _mode(kept) == 0o600
+    assert len(load_mailbox_preference_document(target).preferences) == 1
+
+
+def test_one_bad_preference_row_does_not_cost_the_pins_beside_it(tmp_path: Path) -> None:
+    target = tmp_path / "state" / "mailbox-preferences.json"
+    text = _write_v2(
+        target,
+        [
+            _v2_row("w1", mode="pinned", pin_order=0),
+            _v2_row("w2", mode="no-such-mode"),
+            _v2_row("w3", mode="watched"),
+            {"work_key": "not a key"},
+        ],
+    )
+
+    document = load_mailbox_preference_document(target)
+
+    assert not document.degraded
+    assert document.version == 2 and document.dropped == 2
+    assert [item.work_key for item in document.preferences] == [
+        _work_key("w1"),
+        _work_key("w3"),
+    ]
+    assert target.read_text() == text
+    (kept,) = _kept(target)
+    assert kept.read_text() == text
+    load_mailbox_preference_document(target)
+    assert len(_kept(target)) == 1, "loading again does not copy it again"
+
+
+def test_a_legacy_file_keeps_its_good_rows_too(tmp_path: Path) -> None:
+    target = tmp_path / "state" / "mailbox-preferences.json"
+    target.parent.mkdir()
+    good = {
+        "agent_id": "codex:session:ok",
+        "mode": "watched",
+        "pin_order": None,
+        "snoozed_at": None,
+        "snoozed_until": None,
+        "last_visited_at": None,
+    }
+    target.write_text(
+        json.dumps({"version": 1, "preferences": [good, {**good, "agent_id": "bad id"}]})
+    )
+
+    document = load_mailbox_preference_document(target)
+
+    assert not document.degraded and document.dropped == 1
+    assert [item.agent_id for item in document.legacy_preferences] == ["codex:session:ok"]
+
+
+def test_a_file_where_every_row_is_bad_is_set_aside_whole(tmp_path: Path) -> None:
+    target = tmp_path / "state" / "mailbox-preferences.json"
+    text = _write_v2(target, [_v2_row("w1", mode="no-such-mode")])
+
+    document = load_mailbox_preference_document(target)
+
+    assert document.degraded
+    assert not target.exists()
+    (kept,) = _kept(target)
+    assert kept.read_text() == text
+
+
+def test_two_rows_for_one_run_make_the_whole_file_unreadable_and_kept(tmp_path: Path) -> None:
+    target = tmp_path / "state" / "mailbox-preferences.json"
+    text = _write_v2(target, [_v2_row("w1"), _v2_row("w1", mode="watched")])
+
+    assert load_mailbox_preference_document(target).degraded
+
+    (kept,) = _kept(target)
+    assert kept.read_text() == text
+
+
+def test_an_oversized_preference_file_is_set_aside_unread(tmp_path: Path) -> None:
+    target = tmp_path / "state" / "mailbox-preferences.json"
+    target.parent.mkdir()
+    target.write_bytes(b" " * 1_048_577)
+
+    assert load_mailbox_preference_document(target).degraded
+
+    assert not target.exists()
+    assert len(_kept(target)) == 1
+
+
+def test_a_healthy_missing_or_linked_preference_file_is_never_moved(tmp_path: Path) -> None:
+    target = tmp_path / "state" / "mailbox-preferences.json"
+    assert load_mailbox_preference_document(target).degraded
+    save_mailbox_preferences_v2(target, (_v2_preference("w1"),))
+    before = target.read_bytes()
+
+    assert not load_mailbox_preference_document(target).degraded
+    assert target.read_bytes() == before and _kept(target) == []
+
+    outside = tmp_path / "outside.json"
+    outside.write_text("{")
+    linked = tmp_path / "state" / "linked-preferences.json"
+    linked.symlink_to(outside)
+    assert load_mailbox_preference_document(linked).degraded
+    assert linked.is_symlink() and outside.read_text() == "{" and _kept(linked) == []
+
+
+def _unreadable_when_only_checking(path, **kwargs) -> MailboxPreferenceDocument:
+    assert kwargs == {"quarantine": False}, "the save's own check must only read"
+    return MailboxPreferenceDocument(0, (), (), True)
+
+
+def test_a_save_that_fails_verification_does_not_set_the_good_file_aside(
+    tmp_path: Path,
+) -> None:
+    """The verification read after a save must not quarantine the file it checks."""
+    target = tmp_path / "state" / "mailbox-preferences.json"
+    save_mailbox_preferences_v2(target, (_v2_preference("w1"),))
+    previous = target.read_bytes()
+
+    with patch(
+        "jrbar.mailbox_preference_store.load_mailbox_preference_document",
+        side_effect=_unreadable_when_only_checking,
+    ), pytest.raises(OSError, match="verification failed"):
+        save_mailbox_preferences_v2(target, (_v2_preference("w2"),))
+
+    assert target.read_bytes() == previous
+    assert _kept(target) == []

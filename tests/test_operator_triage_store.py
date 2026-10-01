@@ -294,3 +294,90 @@ def test_save_refuses_more_than_five_hundred_twelve_records(tmp_path: Path) -> N
 
     assert len(acknowledgements) == 513
     assert not target.exists()
+
+
+# --- an unreadable file or row never costs the person their acknowledgements ---
+
+
+def _kept(target: Path) -> list[Path]:
+    return sorted(target.parent.glob(f"{target.name}.corrupt-*"))
+
+
+def test_an_unreadable_triage_file_is_set_aside_not_overwritten_by_the_next_save(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "state" / "operator-triage.json"
+    target.parent.mkdir()
+    target.write_bytes(b'{"acknowledgements": [{"request_')
+
+    assert load_operator_triage(target) == LocalTriageState(())
+    save_operator_triage(target, _state(_request_key("request:new")))
+
+    (kept,) = _kept(target)
+    assert kept.read_bytes() == b'{"acknowledgements": [{"request_'
+    assert _mode(kept) == 0o600
+    assert load_operator_triage(target) == _state(_request_key("request:new"))
+
+
+def test_a_triage_file_with_a_duplicate_request_is_kept_whole(tmp_path: Path) -> None:
+    target = tmp_path / "state" / "operator-triage.json"
+    target.parent.mkdir()
+    key = _request_key()
+    text = _document(_entry(key), _entry(key, NOW + 1.0))
+    target.write_text(text)
+
+    assert load_operator_triage(target) == LocalTriageState(())
+
+    (kept,) = _kept(target)
+    assert kept.read_text() == text
+
+
+def test_one_bad_acknowledgement_row_does_not_cost_the_good_ones(tmp_path: Path) -> None:
+    from jrbar.operator_triage_store import load_operator_triage_with_report
+
+    target = tmp_path / "state" / "operator-triage.json"
+    target.parent.mkdir()
+    first = _request_key("request:first")
+    last = _request_key("request:last", source_instance="local:02")
+    text = _document(
+        _entry(first, NOW),
+        {"request_key": {}, "acknowledged_at": NOW},
+        _entry(_request_key("request:negative"), -1.0),
+        {**_entry(_request_key("request:extra")), "prompt": "private"},
+        _entry(last, NOW + 5.0),
+    )
+    target.write_text(text)
+
+    state, dropped = load_operator_triage_with_report(target)
+
+    assert state == LocalTriageState(
+        (LocalAcknowledgement(first, NOW), LocalAcknowledgement(last, NOW + 5.0))
+    )
+    assert dropped == 3
+    assert target.read_text() == text
+    (kept,) = _kept(target)
+    assert kept.read_text() == text
+    load_operator_triage(target)
+    assert len(_kept(target)) == 1, "loading again does not copy it again"
+    assert load_operator_triage(target) == state
+
+
+def test_an_oversized_triage_file_is_set_aside_unread(tmp_path: Path) -> None:
+    target = tmp_path / "state" / "operator-triage.json"
+    target.parent.mkdir()
+    target.write_bytes(b" " * 1_048_577)
+
+    assert load_operator_triage(target) == LocalTriageState(())
+
+    assert not target.exists()
+    assert len(_kept(target)) == 1
+
+
+def test_a_healthy_or_missing_triage_file_is_never_moved(tmp_path: Path) -> None:
+    target = tmp_path / "state" / "operator-triage.json"
+    assert load_operator_triage(target) == LocalTriageState(())
+    save_operator_triage(target, _state(_request_key()))
+    before = target.read_bytes()
+
+    assert load_operator_triage(target) == _state(_request_key())
+    assert target.read_bytes() == before and _kept(target) == []
