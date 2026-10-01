@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Final
 
 from .provider_facts import (
     RequestKey,
@@ -43,6 +43,24 @@ MODE_PRIORITY: dict[AgentMode, int] = {
     AgentMode.ENDED_UNCONFIRMED: 8,
     AgentMode.UNKNOWN: 99,
 }
+
+
+# The hook events a waiting status carries while it is a request for the
+# person: a permission prompt, a notification that waits on them, and an
+# MCP server asking through Claude's own dialog (Elicitation). This is the
+# one place that says so; the escalation clock (``AgentStatus.is_hard_ask``),
+# the light and the panel (``attention.actionable_request``) and the
+# announcer's alert priority and answerability all read it.
+ASK_EVENT_NAMES: Final = frozenset({"PermissionRequest", "Notification", "Elicitation"})
+# The asks a provider draws as its own dialog or form. The person sees and
+# answers them there: neither a key nor a line of text JR-Bar types fills an
+# MCP form, so these are asks that are never answered in place.
+DIALOG_ASK_EVENT_NAMES: Final = frozenset({"Elicitation"})
+
+
+def is_ask_status(mode: AgentMode, event_name: str) -> bool:
+    """Whether a status in ``mode`` from ``event_name`` is a live ask."""
+    return mode == AgentMode.WAITING_FOR_INPUT and event_name in ASK_EVENT_NAMES
 
 
 MODE_LABELS: dict[AgentMode, str] = {
@@ -107,11 +125,7 @@ class AgentStatus:
         as persistent attention. Escalation belongs to live request
         lifecycles, not error modes or text heuristics.
         """
-        return (
-            self.mode == AgentMode.WAITING_FOR_INPUT
-            # Elicitation: an MCP server asking through Claude's dialog.
-            and self.event_name in ("PermissionRequest", "Notification", "Elicitation")
-        )
+        return is_ask_status(self.mode, self.event_name)
 
     @property
     def is_plan_ready(self) -> bool:
@@ -127,8 +141,20 @@ class AgentStatus:
         """Sub-agents (Claude Task workers, Codex/Devin spawned agents)
         carry provider:agent:<id> keys; main sessions are
         provider:session:<id>. A real install had 77 of 111 statuses be
-        sub-agents -- they need grouping, not top billing."""
-        return ":agent:" in self.agent_id
+        sub-agents -- they need grouping, not top billing.
+
+        The kind is the part right after the provider. The id after it is
+        the provider's own and may hold a colon and anything past it, so
+        ``claude:session:abc:agent:def`` is a main session, not a worker
+        that is its own parent. A peer's row carries its machine in front
+        (``remote:<machine>:claude:agent:<id>``, and a machine name holds
+        no colon), which is stripped before the kind is read."""
+        agent_id = self.agent_id
+        if agent_id.startswith("remote:"):
+            _namespace, separator, local = agent_id[len("remote:"):].partition(":")
+            if separator:
+                agent_id = local
+        return agent_id.startswith(f"{self.provider}:agent:")
 
     @property
     def parent_agent_id(self) -> str | None:

@@ -29,7 +29,24 @@ hand-written examples.
 - Framing: newline-delimited JSON (one object per line, UTF-8, `ensure_ascii`
   on the daemon side so no raw newline ever appears). Max frame 1 MiB in
   both directions: an oversize outbound frame is dropped and counted, an
-  oversize inbound frame closes that client.
+  oversize inbound frame closes that client. A `reply` obeys the same
+  limit, but the command it answers must not be left waiting for a frame
+  that never arrives, so an oversize reply is replaced by
+  `{"ok":false,"error":{"code":"frame_too_large","message":…}}` with the
+  command's own `id` (counted with the other oversize drops).
+- Numbers: a number that is not finite (NaN, `+Infinity`, `-Infinity`) is
+  never written as a bare token, which is not JSON and would cost the app
+  the whole frame. The daemon writes `null` in its place, in every frame
+  kind and at any depth, and counts the frame (`sanitized_frames`). `null`
+  already means "no reading" wherever the protocol allows it
+  (`used_pct: null`), so a consumer needs no new case. The app's decoder
+  also reads the quoted strings `"inf"`, `"-inf"` and `"nan"`, but the
+  daemon never sends them: the app turns some of these doubles into an
+  `Int`, which traps on an infinity, and `null` cannot. A frame that cannot
+  be written at all (an object JSON has no form for) is dropped and counted
+  (`dropped_unencodable`), and the connection carries on. A reply whose
+  result cannot be written is sent with the result's text (`{"repr": ...}`)
+  instead; only a reply with nothing writable in it is dropped.
 - Clients: up to 4 at once; the fifth is refused.
 - Lifecycle: the app launches the daemon as a child when `JRBAR_CORE_EXEC`
   is set (`CoreSupervisor`), otherwise it connects to whatever listens.
@@ -1119,7 +1136,9 @@ Answer to a command.
 ```
 Error codes: `unknown_command`, `bad_frame`, `bad_command`, `internal`,
 `not_found`, `not_frontmost`, `invalid_args`, `invalid_path`,
-`invalid_value`, `read_only`, `refused`, `expired`, `busy`, `unsupported`;
+`invalid_value`, `read_only`, `refused`, `expired`, `busy`, `unsupported`,
+`frame_too_large` (any command whose answer would not fit in one 1 MiB
+frame; nothing is sent but the error, so ask for less, or for a page);
 `answer_ask` adds `accessibility_required`, `session_gone`, `stale_ask`,
 `stale_request` and
 `send_failed` (see below); the Effect
@@ -1130,8 +1149,11 @@ Studio commands add `unknown_effect`, `invalid_scope`, `invalid_target`,
 (`connection_required`, `device_conflict`, `recovery_required`,
 `keymap_changed`, `readback_mismatch`, `backup_failed`, `backup_invalid`,
 `backup_conflict`, `approved_device_changed`, `previous_owner_stopping`,
-`unsupported_file_protocol`, `setup_failed`, …) whose `message` is the
-Python app's sentence for that receipt.
+`unsupported_file_protocol`, `setup_failed`, `superseded`, …) whose
+`message` is the Python app's sentence for that receipt. `superseded` means
+the deck's settings changed (or the daemon began stopping) while a setup
+was running, so its result was dropped; the command answers at once and
+asking again is safe.
 
 ### log
 Content-free diagnostics for the app's log view: every `log_status_bar`
@@ -1150,13 +1172,18 @@ Commands are parsed on the socket thread and run on the AppKit main thread
 (`performSelectorOnMainThread`), one at a time, in order per client --
 except the slow-lane reads `usage_graph`, `usage_history`,
 `session_timeline`, `list_history`, `compare_sessions`, `session_usage` and
-`doctor`. Those queue on one daemon-wide worker at utility QoS, in order
-among themselves (two scans never overlap), and each replies by `id` when
-it is done, so a reply to a later command can arrive first and a scan never
-holds up an `answer_ask`. `mark_history_seen` queues on the same lane (it
+`doctor`. Those queue on daemon-wide workers at utility QoS and each reply
+by `id` when it is done, so a reply to a later command can arrive first and
+a scan never holds up an `answer_ask`. There are two lanes, each with one
+worker. The scan lane carries `usage_graph` and `usage_history`, in order
+among themselves, so two scans never overlap. The read lane carries
+`session_timeline`, `list_history`, `compare_sessions`, `session_usage` and
+`doctor`, in order among themselves, so History opens while the Overview's
+graph is still being built. `mark_history_seen` queues on the read lane (it
 still runs on the main thread when its turn comes), so a `list_history`
 sent before it computes `unseen` against the old watermark. Past 32
-queued, a new one is refused `busy`.
+queued on a lane, a new command for that lane is refused `busy`; a backlog
+of scans never makes a read busy.
 `install_hooks` / `uninstall_hooks` run on the socket thread because the
 Codex trust handshake can take seconds, and so do `open_session` and
 `resume_session`, whose osascript and tmux calls can wait on a first

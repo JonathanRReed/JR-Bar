@@ -76,6 +76,7 @@ SETUP_RECEIPT_MESSAGES: Final = {
     "backup_invalid": "No valid private backup is available. No keymap was written.",
     "readback_mismatch": "The device did not verify the keymap write. The backup was kept.",
     "cancelled": "Creator Micro 2 setup was cancelled.",
+    "superseded": "The deck settings changed while setup was running, so it was dropped. Try again.",
 }
 # The output service's receipts as deck_status_bar.py words them.
 OUTPUT_RECEIPT_MESSAGES: Final = {
