@@ -36,7 +36,7 @@ struct AgentUtilitySnapshotTests {
         core.handle(.connected)
         core.apply(Self.state([CoreSession(id: "s1", provider: "codex")], hooks: ["claude": "ok"]))
         let utility = AgentUtility(core: core)
-        var stored = AgentOrganizerSettings()
+        var stored = AgentOverviewSettings()
         utility.settings = { stored }
         utility.onSettingsChange = { stored = $0 }
         utility.refreshSnapshot()
@@ -65,7 +65,7 @@ struct AgentUtilitySnapshotTests {
     func agentStatus() {
         let core = CoreModel()
         let utility = AgentUtility(core: core)
-        var stored = AgentOrganizerSettings()
+        var stored = AgentOverviewSettings()
         stored.enabled = true
         utility.settings = { stored }
         #expect(utility.status == .paused("Monitor not connected"))

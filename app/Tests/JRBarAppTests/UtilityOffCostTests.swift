@@ -133,7 +133,7 @@ struct UtilityOffCostTests {
         let core = CoreModel()
         let utility = AgentUtility(core: core)
         // The store's seat: the card writes, the store keeps it.
-        final class Store { var settings = AgentOrganizerSettings() }
+        final class Store { var settings = AgentOverviewSettings() }
         let store = Store()
         utility.settings = { store.settings }
         utility.onSettingsChange = { store.settings = $0 }

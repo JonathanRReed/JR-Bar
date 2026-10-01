@@ -110,7 +110,7 @@ final class UtilitiesStore {
         // the same live `state.sessions` the panel reads.
         dock.sessions = { [weak self] in self?.core.state?.sessions ?? [] }
         dock.asks = { [weak self] in self?.core.state?.asks ?? [] }
-        agents.settings = { [weak self] in self?.state.agents ?? AgentOrganizerSettings() }
+        agents.settings = { [weak self] in self?.state.agents ?? AgentOverviewSettings() }
         agents.onSettingsChange = { [weak self] updated in
             self?.state.agents = updated
         }
