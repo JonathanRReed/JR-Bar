@@ -19,8 +19,7 @@ from pathlib import Path
 from jrbar.browser_session_import import (
     DEVIN_ORIGIN,
     devin_session_from_entries,
-    firefox_profile_directories,
-    import_devin_session,
+    firefox_profile_directory,
     import_devin_session_from_profile,
     is_internal_organization_id,
     origin_directory_name,
@@ -70,16 +69,14 @@ def test_a_real_shaped_zen_profile_yields_token_and_organization(tmp_path) -> No
             ("post-auth-v3-null-user-u1-org_name-acme-7535461b", "", 1),
         ],
     )
-    session = import_devin_session(tmp_path)
+    session = import_devin_session_from_profile(
+        home=tmp_path, browser="zen", profile=profile.name,
+    )
     assert session is not None
     assert session.token == TOKEN
     assert session.organization == "org/acme-7535461b"
     assert session.internal_organization_id == ORG_ID
     assert session.source_label.startswith("Zen")
-    exact = import_devin_session_from_profile(
-        home=tmp_path, browser="zen", profile=profile.name,
-    )
-    assert exact == session
 
 
 def test_a_compressed_value_still_contributes_its_key(tmp_path) -> None:
@@ -106,13 +103,17 @@ def test_a_compressed_value_still_contributes_its_key(tmp_path) -> None:
 def test_no_devin_session_is_not_an_error(tmp_path) -> None:
     profile = zen_profile(tmp_path)
     write_local_storage(profile, [("devin-webapp-theme", "dark", 0)])
-    assert import_devin_session(tmp_path) is None
+    assert import_devin_session_from_profile(
+        home=tmp_path, browser="zen", profile=profile.name,
+    ) is None
 
 
 def test_a_missing_browser_is_not_an_error__and_2_more(tmp_path) -> None:
     # --- scenario: a_missing_browser_is_not_an_error
-    assert import_devin_session(tmp_path) is None
-    assert firefox_profile_directories(tmp_path) == []
+    assert import_devin_session_from_profile(
+        home=tmp_path, browser="zen", profile="Default",
+    ) is None
+    assert firefox_profile_directory(tmp_path, browser="zen", profile="Default") is None
 
     # --- scenario: the_auth0_shape_is_read_when_auth1_is_absent
     jwt = "eyJ" + "c" * 40 + ".body.sig"
@@ -133,7 +134,7 @@ def test_a_missing_browser_is_not_an_error__and_2_more(tmp_path) -> None:
     root = tmp_path / "Library" / "Application Support" / "zen" / "Profiles"
     root.mkdir(parents=True)
     (root / "linked").symlink_to(real, target_is_directory=True)
-    assert firefox_profile_directories(tmp_path) == []
+    assert firefox_profile_directory(tmp_path, browser="zen", profile="linked") is None
 
 
 
@@ -181,26 +182,9 @@ def test_a_garbage_database_is_survivable(tmp_path) -> None:
     directory.mkdir(parents=True)
     (directory / "data.sqlite").write_bytes(b"not a database at all")
     assert read_local_storage(directory / "data.sqlite") == {}
-    assert import_devin_session(tmp_path) is None
-
-
-def test_the_best_session_wins_when_several_profiles_have_one(tmp_path) -> None:
-    """A profile that knows its organization beats one that does not --
-    usage is keyed on the organization, so a token alone is useless."""
-    bare = zen_profile(tmp_path, "aaa.Bare")
-    write_local_storage(bare, [("auth1_session", json.dumps({"token": TOKEN}), 0)])
-    full = zen_profile(tmp_path, "bbb.Full")
-    write_local_storage(
-        full,
-        [
-            ("auth1_session", json.dumps({"token": TOKEN}), 0),
-            ("last-internal-org-for-external-org-v1-acme", ORG_ID, 0),
-        ],
-    )
-    session = import_devin_session(tmp_path)
-    assert session is not None
-    assert session.organization == "org/acme"
-    assert "bbb.Full" in session.source_label
+    assert import_devin_session_from_profile(
+        home=tmp_path, browser="zen", profile=profile.name,
+    ) is None
 
 
 def test_internal_organization_ids_are_recognised_but_slugs_are_not() -> None:
@@ -209,3 +193,22 @@ def test_internal_organization_ids_are_recognised_but_slugs_are_not() -> None:
     assert not is_internal_organization_id("acme-7535461b")
     assert not is_internal_organization_id("org-")
     assert not is_internal_organization_id("")
+
+
+def test_nothing_scans_every_browser_profile_on_the_mac() -> None:
+    """Reading a browser takes a named profile and a grant, never a sweep.
+
+    The sweeps that used to live here had no caller and opened live browser
+    storage directly, around the consent and snapshot path the one entrypoint
+    sits behind.
+    """
+    from jrbar import browser_session_import
+
+    for name in (
+        "import_devin_session",
+        "import_devin_sessions",
+        "chromium_devin_sessions",
+        "firefox_profile_directories",
+    ):
+        assert not hasattr(browser_session_import, name), name
+        assert name not in browser_session_import.__all__

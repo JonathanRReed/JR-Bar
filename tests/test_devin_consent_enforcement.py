@@ -50,7 +50,7 @@ def test_browser_sources_setting_alone_never_invokes_a_browser_reader__and_2_mor
 
     monkeypatch.setattr(
         browser_session_import,
-        "import_devin_session",
+        "import_devin_session_from_profile",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("browser_sources is not browser consent")
         ),
@@ -94,15 +94,7 @@ def test_browser_sources_setting_alone_never_invokes_a_browser_reader__and_2_mor
             AssertionError("missing consent must fail before filesystem access")
         ),
     )
-    broad_reads = []
-    monkeypatch.setattr(
-        browser_session_import,
-        "import_devin_session",
-        lambda *_args, **_kwargs: broad_reads.append(True),
-    )
-
     assert provider_browser_access._import_browser_session("devin") is None
-    assert broad_reads == []
 
     # --- scenario: unauthorized_background_repair_requires_exact_persisted_consent
     monkeypatch.undo()
@@ -122,13 +114,6 @@ def test_browser_sources_setting_alone_never_invokes_a_browser_reader__and_2_mor
             AssertionError("missing consent must fail before filesystem access")
         ),
     )
-    broad_reads = []
-    monkeypatch.setattr(
-        browser_session_import,
-        "import_devin_session",
-        lambda *_args, **_kwargs: broad_reads.append(True),
-    )
-
     result = collectors.collect_devin(
         _preference().with_option("organization", "org/acme"),
         observed_at=1000.0,
@@ -139,7 +124,6 @@ def test_browser_sources_setting_alone_never_invokes_a_browser_reader__and_2_mor
     )
 
     assert result.state.value == "needs_sign_in"
-    assert broad_reads == []
 
 
 
