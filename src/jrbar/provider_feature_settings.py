@@ -98,9 +98,12 @@ class ProviderCollectionSettings:
 
 @dataclass(frozen=True, slots=True)
 class ProviderMenuPresentation:
-    """Menu-wide presentation switches, kept separate from collection."""
+    """Menu-wide presentation switches, kept separate from collection.
 
-    show_meters: bool = True
+    The saved ``show_meters`` flag is not projected: the meter it once
+    switched is gone, and the settings document still carries the key.
+    """
+
     show_totals: bool = True
     show_cost: bool = True
     show_detail_lanes: bool = True
@@ -111,7 +114,6 @@ class ProviderMenuPresentation:
         if not all(
             type(getattr(self, name)) is bool
             for name in (
-                "show_meters",
                 "show_totals",
                 "show_cost",
                 "show_detail_lanes",
@@ -196,10 +198,6 @@ class ProviderPresentationSettings:
     @property
     def menu_display(self) -> ProviderMenuPresentation:
         return self.menu
-
-    @property
-    def show_meters(self) -> bool:
-        return self.menu.show_meters
 
     @property
     def show_totals(self) -> bool:
@@ -558,7 +556,6 @@ def project_presentation_settings(settings: ProviderUsageSettings) -> ProviderPr
             **{
                 name: getattr(settings.menu_display, name)
                 for name in (
-                    "show_meters",
                     "show_totals",
                     "show_cost",
                     "show_detail_lanes",
@@ -669,7 +666,6 @@ def _feature_ids(
     identifiers.update(
         f"presentation.menu.{field}"
         for field in (
-            "show_meters",
             "show_totals",
             "show_cost",
             "show_detail_lanes",
@@ -745,7 +741,6 @@ def _changed_feature_ids(
                 if getattr(before, field) != getattr(after, field):
                     changed.add(f"{feature_prefix}.{field}")
         for field in (
-            "show_meters",
             "show_totals",
             "show_cost",
             "show_detail_lanes",
