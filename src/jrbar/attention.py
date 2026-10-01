@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -200,6 +201,37 @@ def quiet_worker_request_keys(
         for request in state.requests
         if request.key.work_key in worker_works
     )
+
+
+def quiet_waiting_worker_ids(
+    statuses: Iterable[AgentStatus],
+    settings: AgentMonitorSettings,
+    *,
+    live_request_keys: frozenset | None = None,
+) -> frozenset[str]:
+    """The sub-agents that are blocked on a request which stays quiet.
+
+    A worker with a hard ask whose request ``actionable_request`` keeps off
+    the panel, banner and sound because worker asks are off. The parent row
+    counts them (``sessions[].workers_waiting``) so the panel can say a
+    worker is waiting; nothing else reads this, and nothing may light, sound
+    or answer because of it.
+
+    A stale status is not waiting on anyone. ``live_request_keys`` is the
+    same set ``regate_actionable_attention`` takes: when the canonical state
+    has moved a keyed request on (resolved, stale hold) the worker is no
+    longer waiting either, and ``None`` (no state yet) leaves the status's
+    own word standing.
+    """
+    quiet: set[str] = set()
+    for status in statuses:
+        if status.stale or not status.is_hard_ask or actionable_request(status, settings):
+            continue
+        key = status.request_key
+        if live_request_keys is not None and key is not None and key not in live_request_keys:
+            continue
+        quiet.add(status.agent_id)
+    return frozenset(quiet)
 
 
 def project_attention(

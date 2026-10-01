@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from . import __version__, core_deck
+from .attention import quiet_waiting_worker_ids
 from .completion_visibility import END_EVENT_NAMES
 from .core_projection import (
     READ_ONLY_SETTINGS,
@@ -3249,6 +3250,36 @@ def _cmd_list_roster(self, args):
     return document
 
 
+def _quiet_worker_ids(controller, statuses) -> frozenset[str] | None:
+    """The sub-agents waiting on a request that worker asks keep quiet, for
+    the parent rows' ``workers_waiting``. ``None`` when the controller cannot
+    say, so a row carries no count rather than a false zero."""
+    settings = getattr(controller, "settings", None)
+    if settings is None:
+        return None
+    live_keys = getattr(controller, "_live_actionable_request_keys", None)
+    try:
+        quiet = quiet_waiting_worker_ids(
+            statuses,
+            settings,
+            live_request_keys=live_keys() if callable(live_keys) else None,
+        )
+    except Exception as exc:
+        # Not fatal (the rows carry no count), but never silent: one line the
+        # first time, and again only after it recovered and failed anew.
+        log = getattr(controller, "_core_log", None)
+        if callable(log) and not getattr(controller, "_core_quiet_ids_failing", False):
+            log(f"core: workers_waiting unavailable: {exc.__class__.__name__}")
+        try:
+            controller._core_quiet_ids_failing = True
+        except Exception:
+            pass
+        return None
+    if getattr(controller, "_core_quiet_ids_failing", False):
+        controller._core_quiet_ids_failing = False
+    return quiet
+
+
 def _roster_document(
     self,
     *,
@@ -3302,6 +3333,7 @@ def _roster_document(
             getattr(self, "answer_handler_registry", None), "has_handler", None
         ),
         acknowledged_keys=self._core_acknowledged_keys(),
+        quiet_worker_ids=_quiet_worker_ids(self, statuses),
     )
     rows = roster_rows(
         projected,
@@ -7654,6 +7686,11 @@ def build_headless_controller_class() -> type:
                 provider_updates = _provider_updates_of(self).document()
             except Exception:
                 provider_updates = None
+            all_statuses = (
+                [*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())]
+                if snapshot is not None
+                else []
+            )
             document = build_state_document(
                 now=wall_now,
                 generation=self._core_state_generation,
@@ -7690,6 +7727,7 @@ def build_headless_controller_class() -> type:
                 detected_agents=detected_agents,
                 catalog_generation=catalog_generation,
                 provider_updates=provider_updates,
+                quiet_worker_ids=_quiet_worker_ids(self, all_statuses),
             )
             try:
                 document["deck"] = self._core_deck_document(document["sessions"])

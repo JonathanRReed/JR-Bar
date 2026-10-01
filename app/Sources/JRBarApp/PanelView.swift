@@ -861,9 +861,20 @@ struct SessionRowView: View {
                             // The run's workers ride the model line, so the
                             // title keeps the label column's whole width.
                             CountBadge(text: "\(row.workers)", symbol: "square.stack")
-                                .help(row.workersText ?? "")
+                                .help([row.workersText, row.workersWaitingText].compactMap { $0 }.joined(separator: ", "))
                         }
-                        if let fact = row.activityFact {
+                        if let waiting = row.workersWaitingShortText {
+                            // Sub-agents blocked on a request that stays
+                            // quiet (Sub-agent asks off): "1 waiting" in
+                            // plain words, no tint, no card, no verb — a
+                            // fact, not an ask. It takes the activity
+                            // fact's place, because the model name, the
+                            // workers badge and a fact already fill the
+                            // label column; the full words ride the row's
+                            // tooltip and its spoken label.
+                            Text("·").foregroundStyle(.quaternary)
+                            Text(waiting).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                        } else if let fact = row.activityFact {
                             // The hook's last word ("running Bash") — the
                             // row's activity made specific.
                             Text("·").foregroundStyle(.quaternary)
@@ -946,7 +957,8 @@ struct SessionRowView: View {
         let place: String = row.isRemote
             ? "on \(row.remoteMachine ?? "a peer")"
             : (row.cwdTail.map { "in \($0)" } ?? "no folder on record")
-        let parts: [String?] = [row.label, row.workersText, row.style.name, row.activity.word, elapsed, place]
+        let parts: [String?] = [row.label, row.workersText, row.workersWaitingText, row.style.name,
+                                row.activity.word, elapsed, place]
         return parts.compactMap { $0 }.joined(separator: ", ")
     }
 }

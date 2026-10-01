@@ -125,7 +125,7 @@ Unix epoch seconds.
     "since":1788982891.0,"updated_at":1788982891.0,"stale":false,
     "pid":9170,"origin":{"kind":"claude_app","label":"Claude App","bundle_id":"com.anthropic.claudefordesktop"},
     "ask":null,"remote":false,"terminal":{"app":"Ghostty","bundle_id":"com.mitchellh.ghostty","tty":"/dev/ttys004"},
-    "workers":1,"snoozed_until":null,"event":"PreToolUse","tool":"Bash","message":null,
+    "workers":1,"workers_waiting":0,"snoozed_until":null,"event":"PreToolUse","tool":"Bash","message":null,
     "axes":{"outcome":"none","review":"pending","freshness":"live"}}
  ],
  "hidden_count":3,
@@ -244,6 +244,21 @@ Vocabulary:
   the row; a `scope: "run"` snooze covers this row alone; the later
   deadline wins), null while none is in effect -- the panel reads it to
   say "Snoozed until…" and to offer Unsnooze.
+- `workers` is how many of a main session's workers are live and either
+  working or waiting. `workers_waiting` (additive, 2026-10-01) is how many
+  of those are blocked on a request that stays quiet because
+  `subagent_asks_alert` is off, which is the default. A quiet request has no
+  light, sound, banner, card, escalation or `needs_you` count, and the
+  worker's own agent still shows its prompt. The count exists so the parent
+  row can say "1 worker waiting" in plain words instead of passing a stuck
+  worker off as a working one. It is information only: it never turns into
+  an ask, never offers `answer_ask`, and no surface may light, sound or
+  escalate because it is above zero. Only a main session's row carries it. A
+  row without it means the daemon did not say (an older daemon, or a row
+  that is not a main session), and a client shows nothing for that, never a
+  zero. With `subagent_asks_alert` on the count is `0`, because the same
+  request is an ordinary ask (next item). It changes only when a worker's
+  request opens or closes, so it never makes a state frame differ on its own.
 - `axes` is `{outcome, review, freshness}`: three separate facts about a
   row that `lifecycle` alone would run together. `outcome` is what the
   provider reported: `none` while the run is not over, `succeeded`,
@@ -366,6 +381,19 @@ Vocabulary:
   rather than left dangling -- a header that counts an ask and a strip
   that pulses amber for a row the panel cannot show is worse than an ask
   that quietly went away.
+- A worker's ask, with `subagent_asks_alert` on, is an ordinary ask. It is
+  in `asks` under the worker's own id, the worker's row (`kind: "worker"`,
+  `parent` set) is listed beside its parent, and `aggregate.needs_you`
+  counts it: `needs_you` is the number of asks in `asks`, whichever listed
+  session each names, while `total`, `active` and `failed` stay counts of
+  main sessions. A client that lists only main sessions gives such an ask a
+  row of its own, carrying the same `ask`, so an alert is never raised for an
+  ask the panel cannot show. The ask's `answerable` still says whether
+  Approve and Deny are offered: they are only where the provider's hook can
+  deliver the answer (Claude and Codex), and the row opens the session
+  otherwise. With the
+  setting off a worker's request is not in `asks` at all, and
+  `workers_waiting` is the only place it shows.
 - Device ids are the Python device ids; the Screen Bar row is `screen-bar`
   with `enabled` (the Python `virtual_status_device_enabled` setting).
   Hardware `brightness` is the effective percent after idle/DND dimming.

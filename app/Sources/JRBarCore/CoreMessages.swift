@@ -306,6 +306,13 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     public var ask: CoreAsk?
     public var terminal: CoreTerminal?
     public var workers: Int
+    /// How many of a main row's `workers` are waiting on a request that
+    /// stays quiet because sub-agent asks are off (`workers_waiting`). nil
+    /// when the daemon did not say (an older one, or a row that is not a
+    /// main session): nothing is shown for that, never a zero. Information
+    /// only: it is never an ask, and nothing lights, sounds or answers
+    /// because of it.
+    public var workersWaiting: Int?
     /// The family mailbox's active snooze (`snoozed_until`), when one
     /// covers this session.
     public var snoozedUntil: Double?
@@ -331,7 +338,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
                 shortId: String? = nil, cwd: String? = nil, mode: String? = nil, lifecycle: String? = nil, nextActor: String? = nil,
                 since: Double? = nil, updatedAt: Double? = nil, stale: Bool = false, pid: Int? = nil,
                 origin: CoreOrigin? = nil, ask: CoreAsk? = nil, terminal: CoreTerminal? = nil, workers: Int = 0,
-                snoozedUntil: Double? = nil, remote: Bool = false,
+                workersWaiting: Int? = nil, snoozedUntil: Double? = nil, remote: Bool = false,
                 event: String? = nil, tool: String? = nil, message: String? = nil,
                 axes: CoreSessionAxes? = nil) {
         self.id = id
@@ -352,6 +359,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         self.ask = ask
         self.terminal = terminal
         self.workers = workers
+        self.workersWaiting = workersWaiting
         self.snoozedUntil = snoozedUntil
         self.remote = remote
         self.event = event
@@ -363,6 +371,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, provider, kind, parent, label, cwd, mode, lifecycle, since, stale, pid, origin, ask, terminal, workers, remote
         case event, tool, message, axes
+        case workersWaiting = "workers_waiting"
         case shortId = "short_id"
         case nextActor = "next_actor"
         case updatedAt = "updated_at"
@@ -389,6 +398,9 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         ask = try c.decodeIfPresent(CoreAsk.self, forKey: .ask)
         terminal = try c.decodeIfPresent(CoreTerminal.self, forKey: .terminal)
         workers = try c.decodeIfPresent(Int.self, forKey: .workers) ?? 0
+        // Additive: absent from an older daemon, and a value of the wrong
+        // type reads as "not said" rather than losing the row.
+        workersWaiting = (try? c.decodeIfPresent(Int.self, forKey: .workersWaiting)).map { max(0, $0) }
         snoozedUntil = try c.decodeIfPresent(Double.self, forKey: .snoozedUntil)
         remote = (try? c.decodeIfPresent(Bool.self, forKey: .remote)) ?? false
         event = try c.decodeIfPresent(String.self, forKey: .event)
@@ -1845,6 +1857,19 @@ public struct CoreState: Codable, Hashable, Sendable {
             guard let session = ask.session, !session.isEmpty else { return true }
             return !known.contains(session)
         }
+    }
+
+    /// Sub-agent sessions that carry an open ask the daemon published. The
+    /// daemon puts a worker's ask in `asks` only while sub-agent asks are on,
+    /// and then it counts in `aggregate.needs_you` like a main session's. The
+    /// panel lists main sessions, so without a row of its own such an ask
+    /// would raise an alert for something the panel cannot show: it joins
+    /// `mainSessions` and `orphanAsks` as the third kind of row. A worker with
+    /// no parent is already a main row, so it is not repeated here.
+    public var askingWorkers: [CoreSession] {
+        guard !asks.isEmpty else { return [] }
+        let asking = Set(asks.compactMap(\.session).filter { !$0.isEmpty })
+        return sessions.filter { $0.isChildWorker && asking.contains($0.id) }
     }
 
     /// `health.sources[provider]` decoded: whether the provider's hook

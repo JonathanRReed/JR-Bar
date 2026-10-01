@@ -164,3 +164,28 @@ def test_session_usage_speaks_the_daemons_document(world) -> None:
     assert result["sessions"][codex]["window_tokens"] is None
     assert result["gaps"] == {gemini: "unsupported_provider", "remote:studio:claude:x": "remote"}
     assert _error(_call(world, "session_usage", {"ids": []}))["code"] == "invalid_value"
+
+
+def test_a_workers_request_is_quiet_by_default_and_counted_on_its_parent(world) -> None:
+    from_state = world.state()
+    parent = next(s for s in from_state["sessions"] if s["kind"] == "main" and s["workers"] > 0)
+    worker = next(s for s in from_state["sessions"] if s["kind"] == "worker" and s["parent"] == parent["id"])
+    assert parent["workers_waiting"] == 0
+    assert "workers_waiting" not in worker
+    baseline = from_state["aggregate"]["needs_you"]
+
+    # Off by default: the worker waits, nothing asks, the parent row says so.
+    assert world.document["subagent_asks_alert"] is False
+    world.open_ask(worker["id"], "Run: make build")
+    quiet = world.state()
+    assert quiet["asks"] == []
+    assert next(s for s in quiet["sessions"] if s["id"] == parent["id"])["workers_waiting"] == 1
+    assert quiet["aggregate"]["needs_you"] == baseline
+
+    # On: the same request is an ordinary ask and counts as needs you.
+    world.document["subagent_asks_alert"] = True
+    world.open_ask(worker["id"], "Run: make build")
+    loud = world.state()
+    assert [a["session"] for a in loud["asks"]] == [worker["id"]]
+    assert next(s for s in loud["sessions"] if s["id"] == parent["id"])["workers_waiting"] == 0
+    assert loud["aggregate"]["needs_you"] == baseline + 1

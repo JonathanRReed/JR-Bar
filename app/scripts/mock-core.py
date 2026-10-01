@@ -1730,7 +1730,11 @@ class World:
         now = time.time()
         for s in self.sessions.values():
             if s["kind"] == "main":
-                s["workers"] = sum(1 for w in self.sessions.values() if w["parent"] == s["id"] and w["lifecycle"] == "active")
+                live = [w for w in self.sessions.values() if w["parent"] == s["id"] and w["lifecycle"] == "active"]
+                s["workers"] = len(live)
+                # Workers waiting on a request that stays quiet while worker
+                # asks are off: they carry no ask, the parent row counts them.
+                s["workers_waiting"] = sum(1 for w in live if w["next_actor"] == "user" and not w["ask"])
             if s.get("snoozed_until") is not None and s["snoozed_until"] <= now:
                 s["snoozed_until"] = None
         providers = []
@@ -2414,6 +2418,13 @@ class World:
             # `answering` capability, and only an `input` ask takes a typed
             # reply.
             provider = sid.split(":", 1)[0]
+            target = self.sessions.get(sid)
+            if (target is not None and target["kind"] == "worker" and target["parent"]
+                    and not self.document.get("subagent_asks_alert")):
+                # Sub-agent asks are off (the default): the worker waits, no
+                # ask opens, and the parent row counts it as `workers_waiting`.
+                self.set_mode(sid, "waiting", "active", "user")
+                return
             answerable = provider in ("claude", "codex") and not sid.startswith("remote:")
             replyable = answerable and kind == "input"
             ask = {"session": sid, "kind": kind, "opened_at": time.time(), "summary": summary,
