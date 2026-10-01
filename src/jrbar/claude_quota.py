@@ -315,6 +315,22 @@ def _claude_code_user_agent() -> str:
     return f"claude-code/{CLAUDE_CODE_VERSION_FALLBACK}"
 
 
+def _is_json_error(body: bytes) -> bool:
+    """True when ``body`` is a JSON error object, the shape the API refuses with.
+
+    Judged only by shape and never repeated: the body can name an account.
+    """
+    if not body or len(body) > 64 * 1024:
+        return False
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return False
+    return isinstance(payload, dict) and (
+        payload.get("type") == "error" or isinstance(payload.get("error"), (dict, str))
+    )
+
+
 def fetch_windows(
     *,
     access_token: str | None = None,
@@ -355,7 +371,11 @@ def fetch_windows(
         raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_NETWORK) from None
     if status == 401:
         raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_UNAUTHORIZED)
-    if status == 403:
+    if status == 403 and _is_json_error(body):
+        # Only the API's own JSON refusal (a `permission_error`) says this
+        # sign-in may not read usage. A 403 with any other body, such as a
+        # proxy's or Cloudflare's HTML page, is not the API speaking and
+        # stays a transient failure below.
         raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_FORBIDDEN)
     if status == 429:
         raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_RATE_LIMITED)

@@ -99,9 +99,6 @@ def test_the_usage_read_does_not_ride_urllib__and_2_more() -> None:
     # --- scenario: http_failures_map_to_reason_codes
     for code, expected in [
         (401, claude_quota.CLAUDE_REMOTE_QUOTA_UNAUTHORIZED),
-        # A 403 is the server saying THIS sign-in may not read usage (a token
-        # without the profile scope): not a server error, and not transient.
-        (403, claude_quota.CLAUDE_REMOTE_QUOTA_FORBIDDEN),
         (429, claude_quota.CLAUDE_REMOTE_QUOTA_RATE_LIMITED),
         (500, claude_quota.CLAUDE_REMOTE_QUOTA_SERVER_ERROR),
         (503, claude_quota.CLAUDE_REMOTE_QUOTA_SERVER_ERROR),
@@ -148,3 +145,46 @@ def test_a_server_body_never_reaches_the_error_text__and_2_more() -> None:
         fetch_windows(access_token="tok", requester=_requester({}))
     assert str(excinfo.value) == claude_quota.CLAUDE_REMOTE_QUOTA_NO_WINDOWS
 
+
+
+_PERMISSION_ERROR = json.dumps(
+    {
+        "type": "error",
+        "error": {
+            "type": "permission_error",
+            "message": "OAuth token does not meet scope requirement user:profile",
+        },
+    }
+).encode("utf-8")
+
+
+def test_a_403_with_the_apis_json_error_means_this_sign_in_may_not_read_usage() -> None:
+    def requester(url, *, method, headers, body=None, timeout):
+        return 403, _PERMISSION_ERROR
+
+    with pytest.raises(ClaudeQuotaUnavailableError) as excinfo:
+        fetch_windows(access_token="tok", requester=requester)
+    assert str(excinfo.value) == claude_quota.CLAUDE_REMOTE_QUOTA_FORBIDDEN
+    # The server's words never reach the error text.
+    assert "scope" not in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        b"<html><head><title>Access denied</title></head><body>403</body></html>",
+        b"Forbidden",
+        b"",
+        b"[]",
+        b'"error"',
+        b"\xff\xfe",
+    ],
+)
+def test_a_403_that_is_not_the_apis_json_error_stays_transient(answer: bytes) -> None:
+    # A proxy's or Cloudflare's page is not the API refusing the token.
+    def requester(url, *, method, headers, body=None, timeout):
+        return 403, answer
+
+    with pytest.raises(ClaudeQuotaUnavailableError) as excinfo:
+        fetch_windows(access_token="tok", requester=requester)
+    assert str(excinfo.value) == claude_quota.CLAUDE_REMOTE_QUOTA_SERVER_ERROR
