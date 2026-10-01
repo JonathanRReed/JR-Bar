@@ -16363,9 +16363,8 @@ class LidObservationRuntimeTests(unittest.TestCase):
         self.setUp()  # fresh isolated controller per scenario
         # A /Volumes scan every 2s buys nothing once the inventory has
         # stopped changing; the cadence drops to the idle rate until a
-        # candidate change or the Devices pane pulls it back.
+        # candidate change pulls it back.
         self.controller.leds_enabled = True
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: False)
 
         self.controller.reconcile_presentation_timers(self._inputs())
         timer = next(
@@ -16647,7 +16646,6 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         self.setUp()  # fresh isolated controller per scenario
         self.controller._runtime_started = True
         self.controller.leds_enabled = False
-        self.controller.settings_window = SimpleNamespace(isVisible=lambda: False)
         self.controller._device_discovery_cache = None
 
         with patch.object(
