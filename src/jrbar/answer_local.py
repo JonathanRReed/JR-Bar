@@ -43,7 +43,9 @@ A permission prompt the agent's own hook is holding for JR-Bar never gets
 here: answer_decisions.py replies to the hook instead, with nothing typed.
 
 Anything that fails refuses, and anything that cannot be proven refuses too.
-There is no "type it anyway" path.
+There is no "type it anyway" path. The window checks above are taken twice, the
+second time immediately before the key is posted (``LocalAnswerDelivery``), so a
+tab switched while JR-Bar was answering refuses instead of receiving the key.
 
 The keys were measured against the real CLIs on this Mac (2026-09-10, Claude
 Code 2.1.263 and codex-cli 0.153.4) with scripts/verify_providers_live.py's
@@ -1172,10 +1174,20 @@ class AnswerDeliveryOutcome:
 class LocalAnswerDelivery:
     """Plan, fence again, then post. One at a time, with a hard budget.
 
-    ``is_live`` is re-asked immediately before the key goes out, so an ask that
-    was resolved (answered in the terminal, timed out, superseded) between the
-    plan and the post refuses instead of leaving a keystroke to land on
-    whatever replaced the prompt.
+    The window proof (the frontmost application, its ancestry, the focused
+    tab's tty or Ghostty's focused surface, the session's liveness and
+    Accessibility) is taken twice: once to plan, and again immediately before
+    the key goes out, with the same rules. The budget allows seconds between
+    the two looks of a slow probe, and the owner can switch tabs in that time;
+    a key posted on the first look alone would land in the wrong terminal. The
+    second look is stricter only: it must prove the same window affirmatively
+    (unknown refuses) and may not name a different process, and a delivery
+    that has taken longer than the budget by then sends nothing.
+
+    ``is_live`` is re-asked last of all, so an ask that was resolved (answered
+    in the terminal, timed out, superseded) between the plan and the post
+    refuses instead of leaving a keystroke to land on whatever replaced the
+    prompt.
     """
 
     def __init__(
@@ -1206,6 +1218,25 @@ class LocalAnswerDelivery:
         agent_id: str | None = None,
     ) -> AnswerDeliveryOutcome:
         started = self._clock()
+
+        def plan_for(facts: AnswerHostFacts, ask_live: bool) -> AnswerPlan | AnswerReplyPlan:
+            if reply_text is not None:
+                return plan_local_reply(
+                    provider=provider,
+                    reply_text=reply_text,
+                    ask_live=ask_live,
+                    facts=facts,
+                )
+            return plan_local_answer(
+                provider=provider,
+                decision=decision,
+                ask_live=ask_live,
+                facts=facts,
+            )
+
+        def over_budget() -> bool:
+            return self._clock() - started > DELIVERY_BUDGET_SECONDS
+
         with self._lock:
             try:
                 facts = self._observer(
@@ -1215,21 +1246,37 @@ class LocalAnswerDelivery:
                     provider=provider,
                     agent_id=agent_id,
                 )
-                if reply_text is not None:
-                    plan: AnswerPlan | AnswerReplyPlan = plan_local_reply(
-                        provider=provider,
-                        reply_text=reply_text,
-                        ask_live=bool(is_live()),
-                        facts=facts,
+                plan = plan_for(facts, bool(is_live()))
+                if over_budget():
+                    raise AnswerRefusal(
+                        "stale_ask",
+                        "Answering took too long to be safe; nothing was sent.",
+                        "budget_exceeded",
                     )
-                else:
-                    plan = plan_local_answer(
-                        provider=provider,
-                        decision=decision,
-                        ask_live=bool(is_live()),
-                        facts=facts,
+                # The proof again, right before the post. A tab switched or an
+                # app raised since the first look refuses here, with the code
+                # that look would have given. The ask is judged by the last
+                # fence below, so it is not asked a third time.
+                fresh = self._observer(
+                    session_pid=session_pid,
+                    expected_bundle_ids=expected_bundle_ids,
+                    session_tty=session_tty,
+                    provider=provider,
+                    agent_id=agent_id,
+                )
+                fresh_plan = plan_for(fresh, True)
+                if (
+                    fresh_plan.target_pid != plan.target_pid
+                    or fresh.session_pid != facts.session_pid
+                ):
+                    raise AnswerRefusal(
+                        "not_frontmost",
+                        "The window in front changed while JR-Bar was answering; "
+                        "nothing was sent.",
+                        "changed_while_sending",
                     )
-                if self._clock() - started > DELIVERY_BUDGET_SECONDS:
+                plan = fresh_plan
+                if over_budget():
                     raise AnswerRefusal(
                         "stale_ask",
                         "Answering took too long to be safe; nothing was sent.",
