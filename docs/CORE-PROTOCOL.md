@@ -423,8 +423,8 @@ Vocabulary:
   reading it had (never a gap). The last `usage` of a refresh has
   `refreshing: false`. A provider that has not answered by its deadline is
   given up on for that refresh only: `state` `unavailable`, `reason`
-  `collector_timeout`, its last good reading kept as `stale`. Two reasons are
-  new: `collector_timeout`, and `usage_permission_missing` (`state`
+  `response_timed_out`, its last good reading kept as `stale`. Two reasons are
+  new: `response_timed_out`, and `usage_permission_missing` (`state`
   `needs_sign_in`, `action` "Reconnect Claude"), which is Claude's usage
   endpoint refusing a sign-in that lacks the usage permission (HTTP 403); a
   server error or a network failure still reads `network_unavailable`.

@@ -529,7 +529,7 @@ class _CollectionRound:
         for slot, (job, deadline) in tuple(self._running.items()):
             if deadline <= now:
                 del self._running[slot]
-                finished.append((job, self._unanswered(job, "collector_timeout")))
+                finished.append((job, self._unanswered(job, "response_timed_out")))
         self._start_eligible()
         return finished
 
@@ -1185,7 +1185,7 @@ class ProviderUsageService:
             observed_at=observed_at,
             state=(
                 ProviderSourceState.UNAVAILABLE
-                if reason == "collector_timeout"
+                if reason == "response_timed_out"
                 else ProviderSourceState.ERROR
             ),
             reason=reason,

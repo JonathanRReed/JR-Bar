@@ -16,7 +16,7 @@ still being asked keeps the reading it had until its answer arrives.
 
 Each provider has 45 seconds to answer. A provider that does not is given up
 on for that refresh only: its card keeps its last good reading, marked stale,
-with "collector timeout" as the reason, and JR-Bar asks again later on the
+with "response timed out" as the reason, and JR-Bar asks again later on the
 same backoff as any other failure. A provider that fails or is rate limited
 backs off alone, too.
 

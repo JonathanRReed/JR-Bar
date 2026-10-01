@@ -1823,13 +1823,13 @@ def test_a_round_gives_up_on_a_collector_past_its_deadline_and_drops_its_late_an
         (1, ProviderSourceState.READY),
         (0, ProviderSourceState.UNAVAILABLE),
     ]
-    assert gave_up == [(0, "collector_timeout")]
+    assert gave_up == [(0, "response_timed_out")]
     assert collection.finished
 
     # The hung collector comes back after it was given up on: nothing reports it.
     release_hung.set()
     assert collection.advance() == []
-    assert gave_up == [(0, "collector_timeout")]
+    assert gave_up == [(0, "response_timed_out")]
 
 
 def test_the_published_order_follows_the_settings_whatever_order_providers_finish(tmp_path) -> None:
@@ -1958,7 +1958,7 @@ def test_a_collector_past_its_deadline_is_a_transient_failure_for_that_provider_
     assert final.by_provider("claude").state is ProviderSourceState.READY
     codex = final.by_provider("codex")
     assert codex.state is ProviderSourceState.STALE
-    assert codex.reason_code == "collector_timeout"
+    assert codex.reason_code == "response_timed_out"
     assert codex.action_label == "Retry"
     assert codex.lanes[0].remaining_percent == 55
     assert codex.effective_read_at == previous_codex.effective_read_at
