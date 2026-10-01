@@ -214,3 +214,27 @@ def test_the_graph_cache_notices_new_gemini_chats_and_openclaw_events(tmp_path: 
     with sqlite3.connect(database) as connection:
         connection.execute("INSERT INTO transcript_events VALUES ('s1', 1, '{}')")
     assert usage_graph_worker._local_history_fingerprint("openclaw", openclaw) != before
+
+
+def test_a_crowded_history_keeps_the_newest_files_not_the_first_by_name(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import os
+
+    from jrbar import local_token_history
+
+    # Session files are named by date, so path order is oldest first: a cap
+    # applied in path order would drop exactly the current days.
+    monkeypatch.setattr(local_token_history, "MAX_FILES", 3)
+    for index, name in enumerate(("a", "b", "c", "d", "e")):
+        path = tmp_path / f"{name}.jsonl"
+        path.write_text("{}\n", encoding="utf-8")
+        os.utime(path, (1_000_000 + index, 1_000_000 + index))
+    # An older file outside the window is never counted against the cap.
+    stale = tmp_path / "0-stale.jsonl"
+    stale.write_text("{}\n", encoding="utf-8")
+    os.utime(stale, (10, 10))
+
+    kept = [path.name for path in local_token_history._files(tmp_path, "*.jsonl", 500_000.0)]
+
+    assert kept == ["c.jsonl", "d.jsonl", "e.jsonl"]

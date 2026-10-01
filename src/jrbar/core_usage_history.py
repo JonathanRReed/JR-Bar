@@ -90,27 +90,10 @@ def default_codex_model(home: Path | None = None) -> str | None:
     return model.strip() if isinstance(model, str) and model.strip() else None
 
 
-#: Words that name a model's maker, for agents that run on someone else's
-#: models (Pi, OpenClaw): the record is priced at that maker's list price.
-_ANTHROPIC_WORDS: Final = ("claude", "opus", "sonnet", "haiku", "fable", "mythos")
-
-
 def _table_rates(provider: str, model: str) -> tuple[float, float] | None:
-    if provider == "codex":
-        return usage_stats._gpt_pricing_for_model(model)
-    if provider == "gemini":
-        return usage_stats._gemini_pricing_for_model(model)
-    if provider == "claude":
-        return usage_stats._pricing_for_model(model)
-    if provider in ("pi", "openclaw"):
-        lowered = str(model or "").lower()
-        if "gpt" in lowered or "codex" in lowered:
-            return usage_stats._gpt_pricing_for_model(model)
-        if "gemini" in lowered:
-            return usage_stats._gemini_pricing_for_model(model)
-        if any(word in lowered for word in _ANTHROPIC_WORDS):
-            return usage_stats._pricing_for_model(model)
-    return None
+    """The table rates for a record; the graph prices records the same way."""
+    rates = usage_stats.rates_for_record(provider, model)
+    return None if rates is None else (rates.input_rate, rates.output_rate)
 
 
 def price_quote(provider: str, model: str, *, codex_default_model: str | None = None) -> PriceQuote | None:

@@ -736,7 +736,9 @@ def test_a_slow_read_never_holds_up_a_later_command_on_the_same_socket__and_2_mo
 ) -> None:
     """A usage_graph took 107 s on 2026-09-23 and a ping sent behind it on
     the same connection waited just as long; an Approve gives up after 8 s.
-    Slow-lane reads now run on one worker and reply by id when done."""
+    Slow-lane reads now run on workers of their own and reply by id when
+    done. The usage scans share one, so two never overlap; the short reads
+    have another (test_core_server_hardening.py)."""
     from jrbar import core_server
 
     release = threading.Event()
@@ -750,7 +752,7 @@ def test_a_slow_read_never_holds_up_a_later_command_on_the_same_socket__and_2_mo
     def dispatch(name: str, args: dict) -> object:
         nonlocal running
         threads[name] = threading.current_thread().name
-        if name in ("usage_graph", "list_history"):
+        if name in ("usage_graph", "usage_history"):
             with guard:
                 running += 1
                 overlap.append(running)
@@ -785,16 +787,17 @@ def test_a_slow_read_never_holds_up_a_later_command_on_the_same_socket__and_2_mo
         # --- scenario: two slow reads from two clients never overlap
         second = _connect(instance)
         _read_frames(second, 1)
-        second.sendall(encode_frame({"t": "command", "v": 1, "id": "slow2", "name": "list_history", "args": {"tag": "b"}}))
+        second.sendall(encode_frame({"t": "command", "v": 1, "id": "slow2", "name": "usage_history", "args": {"tag": "b"}}))
         second.sendall(encode_frame({"t": "command", "v": 1, "id": "ping2", "name": "ping", "args": {}}))
         assert _read_frames(second, 1)[0]["id"] == "ping2"
         release.set()
         assert _read_frames(first, 1)[0]["result"] == {"name": "usage_graph", "tag": "a"}
-        assert _read_frames(second, 1)[0]["result"] == {"name": "list_history", "tag": "b"}
+        assert _read_frames(second, 1)[0]["result"] == {"name": "usage_history", "tag": "b"}
         assert overlap == [1, 1]
         assert order == ["a", "b"]
-        assert threads["usage_graph"] == threads["list_history"] == "JRBarCoreSlowLane"
-        assert setup_threads == ["JRBarCoreSlowLane"]
+        assert threads["usage_graph"] == threads["usage_history"] == "JRBarCoreScanLane"
+        # Each lane's worker drops to utility QoS before its first command.
+        assert sorted(setup_threads) == ["JRBarCoreActionLane", "JRBarCoreReadLane", "JRBarCoreScanLane"]
 
         # --- scenario: past the queue bound a slow read is refused busy at once
         release.clear()
@@ -860,7 +863,7 @@ def test_mark_history_seen_waits_behind_the_list_history_sent_before_it(sock_dir
         assert [reply["id"] for reply in replies] == ["ping", "list", "mark"]
         assert replies[1]["result"] == {"measured_from": "old"}
         assert replies[2]["result"] == {"last_seen": "new"}
-        assert threads["mark_history_seen"] == "JRBarCoreSlowLane"
+        assert threads["mark_history_seen"] == threads["list_history"] == "JRBarCoreReadLane"
         # Stamped when it arrived, so the watermark is the look, not the
         # moment the read ahead of it finished.
         assert sent_at <= watermark["received_at"] <= time.time()

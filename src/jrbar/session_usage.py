@@ -75,7 +75,7 @@ SESSION_USAGE_MAX_IDS: Final = 64
 #: reads already priced into the turns that follow.
 SESSION_USAGE_MAX_BYTES: Final = 64 * 1024 * 1024
 #: How long one request may spend reading before it answers: every other
-#: slow-lane read queues behind it on the daemon's one slow-lane worker
+#: read-lane read queues behind it on the daemon's one read-lane worker
 #: (core_server.py), and usage_history holds itself to 2 s for the same
 #: reason.
 SESSION_USAGE_REPLY_BUDGET_SECONDS: Final = 1.5
@@ -95,7 +95,10 @@ _SKIP_CHUNK: Final = 1024 * 1024
 #: Turns kept per file for ``tokens_since`` -- a very long run keeps its
 #: newest turns, which are the ones a quota window asks about.
 _MAX_TURNS: Final = 20_000
-#: Claude message ids remembered per file for the first-sighting rule.
+#: Claude message ids remembered per file for the first-sighting rule. The
+#: memory is least-recently-seen: a message's repeated content-block lines
+#: sit next to each other, so a full memory still catches them by forgetting
+#: the oldest ids, where refusing new ones would count every later repeat.
 _MAX_SEEN_IDS: Final = 50_000
 
 #: Claude's default prompt window, and the long-context one a transcript
@@ -127,7 +130,7 @@ class _FileUsage:
     max_context: int = 0
     first_at: float | None = None
     last_at: float | None = None
-    seen_ids: set[str] = field(default_factory=set)
+    seen_ids: OrderedDict[str, None] = field(default_factory=OrderedDict)
     #: Codex: the previous cumulative total, for rollouts without deltas.
     codex_previous: tuple[int, int, int, int] | None = None
     codex_model: str | None = None
@@ -206,9 +209,11 @@ def _claude_line(state: _FileUsage, line: str) -> None:
     message_id = message.get("id")
     if isinstance(message_id, str) and message_id:
         if message_id in state.seen_ids:
+            state.seen_ids.move_to_end(message_id)
             return
-        if len(state.seen_ids) < _MAX_SEEN_IDS:
-            state.seen_ids.add(message_id)
+        state.seen_ids[message_id] = None
+        if len(state.seen_ids) > _MAX_SEEN_IDS:
+            state.seen_ids.popitem(last=False)
     else:
         # No id means no safe dedupe (usage_stats skips these too).
         return

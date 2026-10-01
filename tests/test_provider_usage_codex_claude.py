@@ -329,3 +329,111 @@ def test_claude_cached_local_scan_reuses_bounded_aggregate__and_1_more(
     )
     assert result.state.value == "needs_consent"
     assert result.action_label == "Connect Claude usage"
+
+
+_JSON_ERROR = b'{"type":"error","error":{"type":"permission_error"}}'
+
+
+def _claude_failing_with(tmp_path: Path, status: int, answer: bytes = _JSON_ERROR):
+    """collect_claude over the real fetch_windows with a fake HTTP answer."""
+    from jrbar.claude_quota import fetch_windows
+
+    write_claude_account(tmp_path, "fixture@example.invalid")
+
+    def requester(url, *, method, headers, body=None, timeout):
+        return status, answer
+
+    return collect_claude(
+        preference("claude"),
+        home=tmp_path,
+        observed_at=1000,
+        credentials=FixtureCredentials(
+            {("claude", "oauth-token"): "fixture-claude-session"}
+        ),
+        quota_fetcher=lambda token: fetch_windows(access_token=token, requester=requester),
+        local_scanner=lambda _home, _observed: None,
+        statusline_reader=lambda _observed: None,
+    )
+
+
+def test_a_claude_403_names_the_missing_usage_permission_not_the_network(tmp_path: Path) -> None:
+    result = _claude_failing_with(tmp_path, 403)
+
+    # A sign-in that may not read usage is fixed by signing in again, and it
+    # arms the terminal retry gate: asking again with the same token cannot work.
+    assert result.state.value == "needs_sign_in"
+    assert result.reason_code == "usage_permission_missing"
+    assert result.action_label == "Reconnect Claude"
+
+
+def test_claude_server_errors_stay_transient_and_a_401_stays_a_sign_in(tmp_path: Path) -> None:
+    server = _claude_failing_with(tmp_path, 503)
+    assert server.state.value == "unavailable"
+    assert server.reason_code == "network_unavailable"
+    assert server.action_label == "Retry"
+
+    rejected = _claude_failing_with(tmp_path, 401)
+    assert rejected.state.value == "needs_sign_in"
+    assert rejected.reason_code == "authentication_required"
+
+    limited = _claude_failing_with(tmp_path, 429)
+    assert limited.state.value == "rate_limited"
+
+
+def test_a_claude_403_with_a_web_page_body_is_a_transient_failure(tmp_path: Path) -> None:
+    # Not the API speaking: a proxy or CDN page must not park Claude on a
+    # sign-in state that only a changed credential lifts.
+    result = _claude_failing_with(tmp_path, 403, b"<html><body>Access denied</body></html>")
+
+    assert result.state.value == "unavailable"
+    assert result.reason_code == "network_unavailable"
+    assert result.action_label == "Retry"
+
+
+def test_a_usage_permission_refusal_arms_the_terminal_retry_gate(tmp_path: Path, monkeypatch) -> None:
+    from jrbar import provider_reconnect
+    from jrbar.claude_quota import fetch_windows
+    from jrbar.provider_usage_runtime import ProviderUsageService
+
+    # No Keychain attribute probe from a test: the credential source is "none".
+    monkeypatch.setattr(provider_reconnect, "keychain_fingerprint", lambda *_a, **_k: ())
+    write_claude_account(tmp_path, "fixture@example.invalid")
+    asked: list[float] = []
+
+    def requester(url, *, method, headers, body=None, timeout):
+        asked.append(1.0)
+        return 403, _JSON_ERROR
+
+    def collector(pref, home, observed, credentials):
+        return collect_claude(
+            pref,
+            home=home,
+            observed_at=observed,
+            credentials=FixtureCredentials({("claude", "oauth-token"): "fixture-claude-session"}),
+            quota_fetcher=lambda token: fetch_windows(access_token=token, requester=requester),
+            local_scanner=lambda _home, _observed: None,
+            statusline_reader=lambda _observed: None,
+        )
+
+    settings = default_provider_usage_settings()
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={"claude": collector},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000.0,
+        incident_lookup=lambda *_args: None,
+    )
+
+    state = service.refresh_now(providers=("claude",), force=True)
+
+    assert state.by_provider("claude").reason_code == "usage_permission_missing"
+    gate = service._failure_gates[("claude", "default")]
+    assert gate.terminal is True
+    assert gate.terminal_fingerprint is None
+    # With the credential source unchanged the next background refresh does
+    # not ask again; a forced one (a click) still does.
+    service.refresh_now(providers=("claude",))
+    assert len(asked) == 1
+    service.refresh_now(providers=("claude",), force=True)
+    assert len(asked) == 2

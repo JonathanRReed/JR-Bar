@@ -284,7 +284,7 @@ def test_current_schema_round_trip_is_idempotent__and_1_more(tmp_path: Path) -> 
 
     assert loaded.settings.tips_enabled is True
     assert not target.exists()
-    corrupt = target.with_name("settings.json.corrupt")
+    (corrupt,) = target.parent.glob("settings.json.corrupt-*")
     assert json.loads(corrupt.read_text(encoding="utf-8"))["sentinel"] == "keep"
 
 
@@ -307,7 +307,7 @@ def test_non_finite_number_quarantines_document(tmp_path: Path, text: str) -> No
     assert loaded.settings == AgentMonitorSettings()
     assert loaded.compatibility.read_only is False
     assert not target.exists()
-    corrupt = target.with_name("settings.json.corrupt")
+    (corrupt,) = target.parent.glob("settings.json.corrupt-*")
     assert corrupt.read_text(encoding="utf-8") == text
 
     save_settings(loaded.settings, target, compatibility=loaded.compatibility)
@@ -325,7 +325,7 @@ def test_finite_exponent_numbers_still_load(tmp_path: Path) -> None:
 
     loaded = load_settings_document(target)
 
-    assert not target.with_name("settings.json.corrupt").exists()
+    assert not list(target.parent.glob("settings.json.corrupt*"))
     save_settings(loaded.settings, target, compatibility=loaded.compatibility)
     document = json.loads(target.read_text(encoding="utf-8"))
     assert document["sentinel"] == 1e5

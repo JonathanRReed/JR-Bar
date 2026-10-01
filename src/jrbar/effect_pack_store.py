@@ -13,7 +13,8 @@ import json
 import os
 import re
 import stat
-from collections.abc import Iterator, Mapping
+import time
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -45,6 +46,7 @@ from .effect_studio import (
 from .private_export import write_private_export
 from .private_io import (
     PrivateWriteTransaction,
+    daemon_log_line,
     ensure_private_directory,
     ensure_private_file,
     read_private_bytes,
@@ -60,6 +62,17 @@ MAX_EFFECT_PACK_FILENAME_BYTES: Final = 96
 _STORE_LOCK_NAME: Final = ".store.lock"
 
 _PACK_IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]{0,79}\Z")
+#: What an interrupted private write leaves behind: the pack's file name,
+#: then the writer's pid, thread id and a random token (``private_io``).
+_SCRATCH_ENTRY = re.compile(
+    r"[a-z0-9][a-z0-9._-]{0,79}\.json\.\d+\.\d+\.[0-9a-f]{32}\.tmp\Z"
+)
+#: A scratch file this old belongs to a write that never finished.
+ORPHAN_SCRATCH_SECONDS: Final = 24 * 60 * 60.0
+#: Entries already named in the log, so a stray file is reported once per run
+#: and not on every state build. (root, name) pairs, bounded.
+_REPORTED_STRAYS: set[tuple[str, str]] = set()
+_MAX_REPORTED_STRAYS: Final = 256
 
 
 class EffectPackStoreError(ValueError):
@@ -175,12 +188,53 @@ def _decode_pack(payload: bytes) -> Mapping[str, Any]:
 class EffectPackStore:
     """Bounded, no-follow local store for canonical data-only effect packs."""
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(
+        self,
+        root: Path | None = None,
+        *,
+        clock: Callable[[], float] = time.time,
+        log: Callable[[str], None] | None = None,
+    ) -> None:
         self.root = (
             default_effect_pack_store_path()
             if root is None
             else Path(root).expanduser()
         )
+        self._clock = clock
+        self._log = daemon_log_line if log is None else log
+
+    def _skip_stray(self, path: Path) -> None:
+        """Leave a file that is not a pack alone, and say so once.
+
+        Finder drops ``.DS_Store`` here and an interrupted write leaves a
+        scratch file; neither is a pack, and neither may take every pack
+        operation down. A scratch file a day old (the injected clock) is an
+        orphan and is removed; one that is newer may still be in use."""
+        name = path.name
+        try:
+            info = path.lstat()
+        except OSError:
+            return
+        key = (str(self.root), name)
+        if key not in _REPORTED_STRAYS:
+            if len(_REPORTED_STRAYS) >= _MAX_REPORTED_STRAYS:
+                _REPORTED_STRAYS.clear()
+            _REPORTED_STRAYS.add(key)
+            self._log(f"effect packs: ignoring {name[:96]!r} in the pack folder; it is not a pack")
+        if (
+            _SCRATCH_ENTRY.fullmatch(name) is not None
+            and stat.S_ISREG(info.st_mode)
+            and info.st_nlink == 1
+            and self._clock() - info.st_mtime > ORPHAN_SCRATCH_SECONDS
+        ):
+            try:
+                removed = unlink_private_file_if_unchanged(
+                    path, expected_identity=(info.st_dev, info.st_ino)
+                )
+            except OSError:
+                return
+            if removed:
+                self._log(f"effect packs: removed orphaned scratch file {name!r}")
 
     def _root(self, *, create: bool) -> Path | None:
         try:
@@ -265,15 +319,10 @@ class EffectPackStore:
                         "effect pack store contains an unsafe entry"
                     )
                 continue
-            if not name.endswith(".json"):
-                raise EffectPackStoreError(
-                    "effect pack store contains an invalid entry"
-                )
             pack_id = name[:-5]
-            if _pack_identifier(pack_id) != pack_id:
-                raise EffectPackStoreError(
-                    "effect pack store contains an invalid entry"
-                )
+            if not name.endswith(".json") or not self._is_pack_name(pack_id):
+                self._skip_stray(path)
+                continue
             try:
                 info = path.lstat()
             except OSError as error:
@@ -299,6 +348,13 @@ class EffectPackStore:
             )
         self._require_store_bounds(tuple(leaves))
         return tuple(leaves)
+
+    @staticmethod
+    def _is_pack_name(pack_id: str) -> bool:
+        try:
+            return _pack_identifier(pack_id) == pack_id
+        except EffectPackStoreError:
+            return False
 
     @staticmethod
     def _require_store_bounds(entries: tuple[_StoredLeaf, ...]) -> None:

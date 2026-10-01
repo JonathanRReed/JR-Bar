@@ -657,4 +657,6 @@ def test_the_command_refuses_bad_arguments_before_doing_anything() -> None:
 def test_the_command_waits_on_the_slow_lane_off_the_main_thread() -> None:
     spec = core_runtime._MAIN_THREAD_COMMANDS["provider_sign_in"]
     assert spec.main_thread is False
-    assert "provider_sign_in" in core_server.SLOW_LANE_COMMANDS
+    # Its own lane: a held renewal must not make History, a doctor run or a scan wait.
+    assert "provider_sign_in" in core_server.ACTION_LANE_COMMANDS
+    assert "provider_sign_in" not in core_server.READ_LANE_COMMANDS | core_server.SCAN_LANE_COMMANDS

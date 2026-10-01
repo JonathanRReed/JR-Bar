@@ -1,8 +1,10 @@
 """Read Devin sessions from browser local storage without changing profiles.
 
 Firefox-family readers copy a bounded SQLite database and its WAL; Chromium
-uses a private LevelDB snapshot. The exact-profile entrypoint runs after a
-provider-scoped consent check, including for optional background repair.
+uses a private LevelDB snapshot. The one entrypoint is
+``import_devin_session_from_profile``: it reads one named profile, after the
+caller's provider-scoped consent check (including for optional background
+repair). Nothing here scans every browser profile on the Mac.
 """
 
 from __future__ import annotations
@@ -61,28 +63,6 @@ def origin_directory_name(origin: str) -> str:
     ``+++`` and the rest is kept verbatim for an ordinary https origin.
     """
     return origin.replace("://", "+++")
-
-
-def firefox_profile_directories(home: Path) -> list[tuple[str, Path]]:
-    """Every existing Firefox-family profile, labelled by browser."""
-    found: list[tuple[str, Path]] = []
-    support = Path(home) / "Library" / "Application Support"
-    for label, relative in FIREFOX_FAMILY_PROFILE_ROOTS:
-        root = support / relative
-        try:
-            if root.is_symlink() or not root.is_dir():
-                continue
-            entries = sorted(root.iterdir())
-        except OSError:
-            continue
-        for entry in entries:
-            try:
-                if entry.is_symlink() or not entry.is_dir():
-                    continue
-            except OSError:
-                continue
-            found.append((f"{label} {entry.name}", entry))
-    return found
 
 
 def firefox_profile_directory(
@@ -363,96 +343,6 @@ def devin_session_from_entries(
     )
 
 
-def _session_rank(session: BrowserSession) -> int:
-    return (0 if session.organization is None else 1) + (
-        0 if session.internal_organization_id is None else 2
-    )
-
-
-CHROMIUM_FAMILY_PROFILE_ROOTS: tuple[tuple[str, str], ...] = (
-    ("Chrome", "Google/Chrome"),
-    ("Brave", "BraveSoftware/Brave-Browser"),
-    ("Arc", "Arc/User Data"),
-    ("Edge", "Microsoft Edge"),
-    ("Vivaldi", "Vivaldi"),
-)
-
-
-def chromium_devin_sessions(home: Path) -> list[BrowserSession]:
-    """Every Devin session found across Chromium-family profiles."""
-    try:
-        import rleveldb
-    except ImportError:
-        return []
-
-    sessions: list[BrowserSession] = []
-    support = Path(home) / "Library" / "Application Support"
-    for label, relative in CHROMIUM_FAMILY_PROFILE_ROOTS:
-        root = support / relative
-        try:
-            if not root.is_dir():
-                continue
-            candidates = [root / "Default" / "Local Storage" / "leveldb"]
-            try:
-                for entry in root.iterdir():
-                    if entry.name.startswith("Profile ") and entry.is_dir():
-                        candidates.append(entry / "Local Storage" / "leveldb")
-            except OSError:
-                pass
-        except OSError:
-            continue
-
-        for ldb_path in candidates:
-            if not ldb_path.is_dir():
-                continue
-            try:
-                profile_name = ldb_path.parent.parent.name
-                source_label = f"{label} {profile_name}"
-                entries: dict[str, str] = {}
-                with rleveldb.RawLevelDb(str(ldb_path)) as db:
-                    for key, val in db.iterate_records_raw():
-                        try:
-                            key_str = key.decode("utf-8", errors="ignore")
-                        except Exception:
-                            continue
-                        if "app.devin.ai" not in key_str:
-                            continue
-                        idx = key_str.rfind("")
-                        clean_key = key_str[idx + 1:] if idx != -1 else key_str
-                        val_str = ""
-                        if val:
-                            if val.startswith(b""):
-                                val_str = val[1:].decode("utf-8", errors="ignore")
-                            else:
-                                val_str = val.decode("utf-8", errors="ignore")
-                        entries[clean_key] = val_str
-                if entries:
-                    session = devin_session_from_entries(entries, source_label=source_label)
-                    if session is not None:
-                        sessions.append(session)
-            except Exception:
-                continue
-    return sessions
-
-
-def import_devin_sessions(home: Path) -> list[BrowserSession]:
-    """Every Devin session found across Firefox-family profiles, best
-    first -- "best" meaning the one that knows the most about which
-    organization it belongs to, since usage is keyed on that."""
-    sessions: list[BrowserSession] = []
-    directory = origin_directory_name(DEVIN_ORIGIN)
-    for label, profile in firefox_profile_directories(home):
-        database = profile / "storage" / "default" / directory / "ls" / "data.sqlite"
-        entries = read_local_storage(database)
-        if not entries:
-            continue
-        session = devin_session_from_entries(entries, source_label=label)
-        if session is not None:
-            sessions.append(session)
-    sessions.extend(chromium_devin_sessions(home))
-    return sorted(sessions, key=_session_rank, reverse=True)
-
-
 def import_devin_session_from_profile(
     *,
     home: Path,
@@ -509,21 +399,13 @@ def import_devin_session_from_profile(
     return devin_session_from_entries(entries, source_label=f"{label} {profile}")
 
 
-def import_devin_session(home: Path) -> BrowserSession | None:
-    sessions = import_devin_sessions(Path(home))
-    return sessions[0] if sessions else None
-
-
 __all__ = [
     "DEVIN_ORIGIN",
     "FIREFOX_FAMILY_PROFILE_ROOTS",
     "BrowserSession",
     "devin_session_from_entries",
-    "firefox_profile_directories",
     "firefox_profile_directory",
-    "import_devin_session",
     "import_devin_session_from_profile",
-    "import_devin_sessions",
     "is_internal_organization_id",
     "origin_directory_name",
     "read_local_storage",

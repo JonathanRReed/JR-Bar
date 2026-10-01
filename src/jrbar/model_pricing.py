@@ -108,7 +108,7 @@ class _Overrides:
                 from .settings import load_settings
                 from .usage_source_settings import normalize_pricing_overrides
 
-                source = normalize_pricing_overrides(getattr(load_settings(), "pricing_overrides", None))
+                source = normalize_pricing_overrides(getattr(load_settings(track=False), "pricing_overrides", None))
             except Exception:
                 source = {}
         rows = tuple(sorted(source.items(), key=lambda item: -len(item[0])))

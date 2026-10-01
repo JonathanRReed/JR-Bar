@@ -931,3 +931,20 @@ def test_codex_rate_limit_labels_are_product_owned_and_bounded(tmp_path: Path) -
 
     assert len(windows) <= 32
     assert all(raw_label not in window["label"] for window in windows)
+
+
+def test_the_claude_summary_line_counts_cache_writes_like_the_graph() -> None:
+    # The heatmap and the Codex totals count input, cache reads, cache writes
+    # and output; the summary line left cache writes out, so the line and the
+    # graph disagreed about the same window.
+    totals = usage_stats.UsageTotals()
+    totals.sessions.add("s1")
+    totals.input_tokens = 1_000_000
+    totals.cached_input_tokens = 500_000
+    totals.cache_creation_tokens = 1_500_000
+    totals.output_tokens = 0
+
+    line = usage_stats.usage_summary_line(totals, "tokens")
+
+    assert line is not None
+    assert "3M tokens" in line

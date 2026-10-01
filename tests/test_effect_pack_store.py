@@ -489,3 +489,123 @@ def test_fingerprint_refuses_an_unsafe_root_like_list_does(tmp_path: Path) -> No
         store.list()
     with pytest.raises(EffectPackStoreError):
         store.fingerprint()
+
+
+# --- a file that is not a pack never takes the pack list down ---
+
+_DAY = 24 * 60 * 60.0
+
+
+def _scratch_name(pack_id: str = "calm-pack", *, tail: str | None = None) -> str:
+    """A scratch file an interrupted write leaves behind: the pack's file
+    name, then pid, thread id and a random token."""
+    return f"{pack_id}.json.4242.140234.{tail or 'a' * 32}.tmp"
+
+
+def _foreign_store(tmp_path: Path, **kwargs) -> tuple[EffectPackStore, Path, list[str]]:
+    lines: list[str] = []
+    root = tmp_path / "store"
+    store = EffectPackStore(root, log=lines.append, **kwargs)
+    assert store.install(_pack()).status is PackMutationStatus.INSTALLED
+    return store, root, lines
+
+
+def test_a_stray_file_in_the_pack_folder_does_not_break_any_pack_operation(
+    tmp_path: Path,
+) -> None:
+    store, root, lines = _foreign_store(tmp_path)
+    (root / ".DS_Store").write_bytes(b"\x00\x00\x00\x01Bud1")
+    (root / "notes.txt").write_text("not a pack")
+    (root / "Bad Name.json").write_text("{}")
+    (root / "a-folder").mkdir()
+
+    assert [pack.pack_id for pack in store.list()] == ["calm-pack"]
+    assert store.inspect("calm-pack").pack_id == "calm-pack"
+    assert isinstance(store.fingerprint(), tuple)
+    assert store.install(_pack(id="second-pack", name="Second")).accepted
+    assert store.duplicate("second-pack", "third-pack", "Third").accepted
+    assert store.rename("third-pack", "fourth-pack", "Fourth").accepted
+    assert store.remove("fourth-pack").status is PackMutationStatus.REMOVED
+    assert [pack.pack_id for pack in store.list()] == ["calm-pack", "second-pack"]
+    # None of the strays was touched.
+    assert sorted(path.name for path in root.iterdir() if path.name != ".store.lock") == [
+        ".DS_Store",
+        "Bad Name.json",
+        "a-folder",
+        "calm-pack.json",
+        "notes.txt",
+        "second-pack.json",
+    ]
+
+
+def test_a_stray_file_is_named_in_the_log_once_not_once_per_read(tmp_path: Path) -> None:
+    store, root, lines = _foreign_store(tmp_path)
+    (root / ".DS_Store").write_bytes(b"\x00")
+
+    for _ in range(3):
+        store.list()
+        store.fingerprint()
+
+    assert len(lines) == 1
+    assert ".DS_Store" in lines[0] and str(tmp_path) not in lines[0]
+    # A second stray gets its own line.
+    (root / "notes.txt").write_text("x")
+    store.list()
+    assert len(lines) == 2 and "notes.txt" in lines[1]
+
+
+def test_a_fresh_scratch_file_is_left_alone_and_an_old_orphan_is_removed(
+    tmp_path: Path,
+) -> None:
+    now = [1_800_000_000.0]
+    store, root, lines = _foreign_store(tmp_path, clock=lambda: now[0])
+    scratch = root / _scratch_name()
+    scratch.write_text("{")
+    scratch.chmod(0o600)
+    os.utime(scratch, (now[0] - 3_600, now[0] - 3_600))
+
+    assert [pack.pack_id for pack in store.list()] == ["calm-pack"]
+    assert scratch.exists(), "a write may still be using it"
+
+    now[0] += _DAY
+    assert [pack.pack_id for pack in store.list()] == ["calm-pack"]
+    assert not scratch.exists()
+    assert any("orphaned scratch" in line and _scratch_name() in line for line in lines)
+    assert (root / "calm-pack.json").exists()
+
+
+def test_only_a_scratch_file_shaped_like_ours_is_ever_removed(tmp_path: Path) -> None:
+    now = [1_800_000_000.0]
+    store, root, _lines = _foreign_store(tmp_path, clock=lambda: now[0])
+    keep = [
+        root / ".DS_Store",
+        root / "notes.tmp",
+        root / "calm-pack.json.tmp",
+        root / _scratch_name().replace("4242", "pid"),
+        root / _scratch_name(tail="g" * 32),
+    ]
+    for path in keep:
+        path.write_text("keep me")
+        os.utime(path, (now[0] - 30 * _DAY, now[0] - 30 * _DAY))
+    # A link that looks like a scratch file is not followed or removed.
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside")
+    link = root / _scratch_name(tail="b" * 32)
+    link.symlink_to(outside)
+
+    store.list()
+
+    assert all(path.read_text() == "keep me" for path in keep)
+    assert link.is_symlink() and outside.read_text() == "outside"
+
+
+def test_a_pack_shaped_entry_that_is_unsafe_still_refuses_the_store(tmp_path: Path) -> None:
+    store, root, _lines = _foreign_store(tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}")
+    (root / "linked-pack.json").symlink_to(outside)
+
+    with pytest.raises(EffectPackStoreError):
+        store.list()
+    with pytest.raises(EffectPackStoreError):
+        store.fingerprint()

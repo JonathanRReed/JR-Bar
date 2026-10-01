@@ -2,21 +2,25 @@
 
 One accept thread, one reader thread per client, one flusher thread that
 coalesces the ``state`` / ``lights`` / ``settings`` documents (latest wins,
-bounded rate) and fans every frame out to every connected client, and one
-slow-lane worker for the heavy reads.
+bounded rate) and fans every frame out to every connected client, and three
+slow-lane workers for the heavy reads and the one click that can wait on a
+provider: one for the minutes-long usage scans, one for the short reads a
+person waits on, one for Fix sign-in.
 
 The server knows nothing about AppKit or the controller. Commands arrive on
 a client's reader thread and are handed to ``dispatch(name, args)``; the
 runtime wraps that callable so it runs on the main thread. A slow-lane
-command (``SLOW_LANE_COMMANDS``) is queued for the worker instead and
+command (``SLOW_LANE_COMMANDS``) is queued for a worker instead and
 answered by id when it is done, so a transcript scan never holds up the
-Approve the same client sends after it. Publishing is thread-safe and never
-blocks the caller on socket I/O.
+Approve the same client sends after it, and a usage scan never holds up
+History. Publishing is thread-safe and never blocks the caller on socket
+I/O.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import socket
 import stat
@@ -90,38 +94,57 @@ _COALESCED_KINDS: Final = ("state", "lights", "settings")
 # Reads that scan transcripts or run diagnostics, all ``main_thread=False``
 # in the runtime. A usage_graph took 107 s and then 195 s on 2026-09-23, and
 # every command the app sent behind it on its one connection -- an Approve,
-# a ping -- waited just as long. These run on one worker shared by every
-# client: in order among themselves, so two scans never overlap and fight
-# for the GIL, and out of order with everything else.
+# a ping -- waited just as long. They run on workers shared by every client
+# and out of order with everything else. There are two lanes, so the scans
+# do not make a short read wait either.
 #
-# ``mark_history_seen`` is not a scan, but History sends it right behind a
+# The SCAN lane holds the usage scans. Its one worker keeps them in order
+# among themselves: two scans never overlap and fight for the GIL, and the
+# one the person is watching on Overview is not slowed by a second parse of
+# the same files.
+SCAN_LANE_COMMANDS: Final = frozenset({"usage_graph", "usage_history"})
+# The READ lane holds the short reads: a History open, one session's
+# timeline, a comparison, a doctor run. It has its own worker, so opening
+# History while the Overview's graph is being built answers at once.
+#
+# ``mark_history_seen`` is not a read, but History sends it right behind a
 # ``list_history`` whose ``unseen`` flags measure from the watermark it
 # moves. Inline it would overtake the queued read and every row would come
-# back seen; on the lane it waits its turn. It is ``main_thread=True``, so
+# back seen; on this lane it waits its turn. It is ``main_thread=True``, so
 # the dispatch still hops it to the main thread from the worker.
-SLOW_LANE_COMMANDS: Final = frozenset(
+READ_LANE_COMMANDS: Final = frozenset(
     {
-        "usage_graph",
-        "usage_history",
         "session_timeline",
         "list_history",
         "mark_history_seen",
         "compare_sessions",
         "session_usage",
         "doctor",
-        # Not a read: a click on Fix sign-in that can wait up to 90 s on
-        # Claude Code. On the lane, nothing else the app sends waits with it.
-        "provider_sign_in",
     }
 )
+# The ACTION lane holds a click that can wait on a provider's own tool: Fix
+# sign-in asks Claude Code to renew its sign-in with a real call the daemon
+# allows 90 s. It is not a read, so it has a worker of its own: it must not
+# make History, a doctor run or a comparison wait, nor wait behind a scan.
+ACTION_LANE_COMMANDS: Final = frozenset({"provider_sign_in"})
+SLOW_LANE_COMMANDS: Final = SCAN_LANE_COMMANDS | READ_LANE_COMMANDS | ACTION_LANE_COMMANDS
+_SCAN_LANE: Final = "scan"
+_READ_LANE: Final = "read"
+_ACTION_LANE: Final = "action"
+_LANE_THREAD_NAMES: Final = {
+    _SCAN_LANE: "JRBarCoreScanLane",
+    _READ_LANE: "JRBarCoreReadLane",
+    _ACTION_LANE: "JRBarCoreActionLane",
+}
 # Stamped into a slow-lane command's args when it is queued (epoch
 # seconds), so a command that records "now" -- mark_history_seen's
 # watermark -- can record when it was sent, not when a scan ahead of it
 # finished.
 SLOW_LANE_RECEIVED_AT: Final = "_received_at"
-# Slow-lane commands waiting for the worker, across every client. The app
-# keeps a few in flight; past this a new one is refused ``busy`` at once
-# rather than answered minutes late.
+# Slow-lane commands waiting for a lane's worker, across every client. The
+# app keeps a few in flight; past this a new one is refused ``busy`` at once
+# rather than answered minutes late. Each lane has its own bound, so a
+# backlog of scans never makes a short read busy.
 MAX_SLOW_LANE_QUEUED: Final = 32
 
 
@@ -138,10 +161,64 @@ def default_core_socket_path() -> Path:
     return default_state_dir() / CORE_SOCKET_NAME
 
 
+def _without_non_finite(value: Any, replaced: list[int]) -> Any:
+    """A copy of ``value`` with every NaN and infinity replaced by ``None``.
+
+    ``replaced[0]`` counts them. Only containers JSON writes (dicts, lists,
+    tuples) are rebuilt; everything else is returned as it came, so a value
+    ``json`` cannot write still fails loudly in the encoder.
+    """
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        replaced[0] += 1
+        return None
+    if isinstance(value, dict):
+        return {key: _without_non_finite(item, replaced) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_without_non_finite(item, replaced) for item in value]
+    return value
+
+
+def _dump(document: Any) -> bytes:
+    text = json.dumps(document, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+    return (text + "\n").encode("ascii")
+
+
+def encode_frame_counting(document: dict[str, Any]) -> tuple[bytes, int]:
+    """``encode_frame`` and how many non-finite numbers it had to replace.
+
+    A document nobody built a NaN into costs one ``json.dumps`` and nothing
+    more; only a document that holds one is walked and rewritten.
+    """
+    try:
+        return _dump(document), 0
+    except ValueError:
+        # Either a NaN or infinity somewhere in the document (the encoder
+        # refuses them) or something worse, which the second pass raises
+        # again for the caller to count as a drop.
+        replaced = [0]
+        try:
+            clean = _without_non_finite(document, replaced)
+        except RecursionError as error:
+            # A document that holds itself: json refused it above as a
+            # circular reference, and walking it would never end.
+            raise ValueError("the document is circular or nested too deeply") from error
+        return _dump(clean), replaced[0]
+
+
 def encode_frame(document: dict[str, Any]) -> bytes:
     """One NDJSON line. ``t`` and ``v`` must be present; the result never
-    contains a raw newline because ``ensure_ascii`` escapes them."""
-    return (json.dumps(document, separators=(",", ":"), ensure_ascii=True) + "\n").encode("ascii")
+    contains a raw newline because ``ensure_ascii`` escapes them.
+
+    A number that is not finite (NaN, +inf, -inf) goes out as ``null``: a bare
+    ``NaN`` or ``Infinity`` token is not JSON, and the app drops the whole
+    frame that holds one. ``null`` reads as "no reading" everywhere the
+    protocol already says so (``used_pct: null``). Raises ``TypeError`` or
+    ``ValueError`` for a document that cannot be written at all, which the
+    server turns into a counted drop (``CoreServer._encode``).
+    """
+    return encode_frame_counting(document)[0]
 
 
 def _envelope(kind: str, document: dict[str, Any]) -> dict[str, Any]:
@@ -254,6 +331,8 @@ class CoreServer:
         log: Callable[[str], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         slow_commands: Iterable[str] = SLOW_LANE_COMMANDS,
+        scan_commands: Iterable[str] = SCAN_LANE_COMMANDS,
+        action_commands: Iterable[str] = ACTION_LANE_COMMANDS,
         slow_lane_setup: Callable[[], None] | None = None,
     ) -> None:
         if not callable(dispatch) or not callable(initial_documents):
@@ -273,12 +352,21 @@ class CoreServer:
         self._log = log or (lambda _line: None)
         self._clock = clock
         self._slow_commands = frozenset(slow_commands)
-        # Runs once on the worker before its first command (the runtime
-        # drops it to utility QoS there, never on a client's reader thread).
+        # The slow commands that take a long scan's lane, and the ones that
+        # take the action lane; every other slow command takes the read lane.
+        self._scan_commands = frozenset(scan_commands)
+        self._action_commands = frozenset(action_commands)
+        # Runs once on each lane's worker before its first command (the
+        # runtime drops it to utility QoS there, never on a client's reader
+        # thread).
         self._slow_lane_setup = slow_lane_setup
         self._slow_condition = threading.Condition()
-        self._slow_queue: deque[tuple[_Client, str | None, str, dict[str, Any]]] = deque()
-        self._slow_worker: threading.Thread | None = None
+        self._slow_queues: dict[str, deque[tuple[_Client, str | None, str, dict[str, Any]]]] = {
+            _SCAN_LANE: deque(),
+            _READ_LANE: deque(),
+            _ACTION_LANE: deque(),
+        }
+        self._slow_workers: list[threading.Thread] = []
         # Bumped at each start: a worker left finishing a scan from before a
         # stop exits instead of serving beside the new one.
         self._slow_generation = 0
@@ -318,7 +406,8 @@ class CoreServer:
         self.stats = {"frames_out": 0, "commands": 0, "dropped_oversize": 0,
                       "refused_clients": 0, "deduped_frames": 0,
                       "dropped_queue": 0, "journal_dropped": 0,
-                      "slow_lane": 0, "slow_lane_refused": 0}
+                      "slow_lane": 0, "slow_lane_refused": 0,
+                      "sanitized_frames": 0, "dropped_unencodable": 0}
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -360,12 +449,19 @@ class CoreServer:
             with self._slow_condition:
                 self._slow_generation += 1
                 generation = self._slow_generation
-            self._slow_worker = threading.Thread(
-                target=self._slow_lane_loop, args=(generation,), name="JRBarCoreSlowLane", daemon=True
-            )
+            self._slow_workers = [
+                threading.Thread(
+                    target=self._slow_lane_loop,
+                    args=(generation, lane),
+                    name=_LANE_THREAD_NAMES[lane],
+                    daemon=True,
+                )
+                for lane in (_SCAN_LANE, _READ_LANE, _ACTION_LANE)
+            ]
             self._accept_thread.start()
             self._flusher.start()
-            self._slow_worker.start()
+            for worker in self._slow_workers:
+                worker.start()
             self._log(f"core listening on {path}")
             return path
 
@@ -382,7 +478,8 @@ class CoreServer:
         with self._flush_condition:
             self._flush_condition.notify_all()
         with self._slow_condition:
-            self._slow_queue.clear()
+            for queue in self._slow_queues.values():
+                queue.clear()
             self._slow_condition.notify_all()
         if wakeup is not None:
             # Interrupt the accept thread's select BEFORE closing the
@@ -391,7 +488,7 @@ class CoreServer:
             wakeup.wake()
         for client in clients:
             client.close()
-        # The slow-lane worker is not joined: mid-scan it would hold a quit
+        # The slow-lane workers are not joined: mid-scan one would hold a quit
         # for the whole timeout, as a client's reader thread running one
         # never did. It sees the server stopped when the scan ends, and the
         # reply goes nowhere.
@@ -615,10 +712,8 @@ class CoreServer:
             self._flush_condition.notify_all()
 
     def _enqueue_locked(self, body: dict[str, Any]) -> None:
-        try:
-            frame = encode_frame(body)
-        except (TypeError, ValueError) as exc:
-            self._log(f"core frame not serialisable: {exc}")
+        frame = self._encode(body, body.get("t"))
+        if frame is None:
             return
         if len(frame) > MAX_FRAME_BYTES:
             self.stats["dropped_oversize"] += 1
@@ -648,10 +743,8 @@ class CoreServer:
                 for kind in ready:
                     body = self._pending.pop(kind)
                     self._last_sent[kind] = self._clock()
-                    try:
-                        frame = encode_frame(body)
-                    except (TypeError, ValueError) as exc:
-                        self._log(f"core {kind} not serialisable: {exc}")
+                    frame = self._encode(body, kind)
+                    if frame is None:
                         continue
                     if len(frame) > MAX_FRAME_BYTES:
                         self.stats["dropped_oversize"] += 1
@@ -776,14 +869,18 @@ class CoreServer:
             self._drop_clients([client])
 
     def _greet(self, client: _Client) -> None:
-        client.send(encode_frame(self.hello_document()))
+        hello = self._encode(self.hello_document(), "hello")
+        if hello is not None:
+            client.send(hello)
         for document in self._initial_documents():
             if not client.alive:
                 break
             kind = document.get("t")
             if not isinstance(kind, str):
                 continue
-            frame = encode_frame(_envelope(kind, document))
+            frame = self._encode(_envelope(kind, document), kind)
+            if frame is None:
+                continue
             if len(frame) > MAX_FRAME_BYTES:
                 self._log(f"core skipped oversize initial {document.get('t')} frame")
                 continue
@@ -791,7 +888,9 @@ class CoreServer:
         for event in self.recent_reset_events():
             if not client.alive:
                 break
-            frame = encode_frame(event)
+            frame = self._encode(event, "quota_reset")
+            if frame is None:
+                continue
             if len(frame) > MAX_FRAME_BYTES:
                 self._log("core skipped oversize initial quota_reset frame")
                 continue
@@ -828,10 +927,10 @@ class CoreServer:
         try:
             message = json.loads(line.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
-            client.send(encode_frame(self._reply(None, ok=False, code="bad_frame", message="not JSON")))
+            self._send_reply(client, self._reply(None, ok=False, code="bad_frame", message="not JSON"))
             return
         if not isinstance(message, dict):
-            client.send(encode_frame(self._reply(None, ok=False, code="bad_frame", message="not an object")))
+            self._send_reply(client, self._reply(None, ok=False, code="bad_frame", message="not an object"))
             return
         if message.get("t") != "command":
             return
@@ -843,48 +942,59 @@ class CoreServer:
         if not isinstance(args, dict):
             args = {}
         if not isinstance(name, str) or not name:
-            client.send(encode_frame(self._reply(command_id, ok=False, code="bad_command", message="missing name")))
+            self._send_reply(client, self._reply(command_id, ok=False, code="bad_command", message="missing name"))
             return
         self.stats["commands"] += 1
         if name in self._slow_commands:
             self._queue_slow(client, command_id, name, {**args, SLOW_LANE_RECEIVED_AT: time.time()})
             return
-        reply = self.run_command(command_id, name, args)
-        client.send(encode_frame(reply))
+        self._send_reply(client, self.run_command(command_id, name, args), name)
 
     def _queue_slow(self, client: _Client, command_id: str | None, name: str, args: dict[str, Any]) -> None:
+        if name in self._action_commands:
+            lane = _ACTION_LANE
+        elif name in self._scan_commands:
+            lane = _SCAN_LANE
+        else:
+            lane = _READ_LANE
+        queue = self._slow_queues[lane]
         with self._slow_condition:
-            if len(self._slow_queue) < MAX_SLOW_LANE_QUEUED:
-                self._slow_queue.append((client, command_id, name, args))
+            if len(queue) < MAX_SLOW_LANE_QUEUED:
+                queue.append((client, command_id, name, args))
                 self.stats["slow_lane"] += 1
                 self._slow_condition.notify_all()
                 return
             self.stats["slow_lane_refused"] += 1
-        client.send(encode_frame(self._reply(
-            command_id, ok=False, code="busy", message=f"{name}: too many slow reads queued; try again"
-        )))
+        self._send_reply(
+            client,
+            self._reply(command_id, ok=False, code="busy", message=f"{name}: too many slow reads queued; try again"),
+        )
 
-    def _slow_lane_loop(self, generation: int) -> None:
+    def _slow_lane_loop(self, generation: int, lane: str) -> None:
         if self._slow_lane_setup is not None:
             try:
                 self._slow_lane_setup()
             except Exception as exc:  # pragma: no cover - defensive
                 self._log(f"core slow-lane setup failed: {exc}")
+        queue = self._slow_queues[lane]
         while True:
             with self._slow_condition:
-                while self._running and generation == self._slow_generation and not self._slow_queue:
+                while self._running and generation == self._slow_generation and not queue:
                     self._slow_condition.wait()
                 if not self._running or generation != self._slow_generation:
                     return
-                client, command_id, name, args = self._slow_queue.popleft()
+                client, command_id, name, args = queue.popleft()
             # A client that left while its read waited gets no scan.
             if not client.alive:
                 continue
-            reply = self.run_command(command_id, name, args)
             # _Client.send holds the client's write lock, so this reply
             # never interleaves with a frame the flusher or the reader
             # thread is writing to the same socket.
-            client.send(encode_frame(reply))
+            try:
+                self._send_reply(client, self.run_command(command_id, name, args), name)
+            except Exception as exc:  # pragma: no cover - defensive
+                # A lane that died would leave every later read queued for good.
+                self._log(f"core slow-lane {lane} worker survived {name}: {exc.__class__.__name__}: {exc}")
 
     def run_command(self, command_id: str | None, name: str, args: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -898,11 +1008,86 @@ class CoreServer:
             result = {}
         reply = self._reply(command_id, ok=True)
         reply["result"] = result
-        try:
-            encode_frame(reply)
-        except (TypeError, ValueError):
-            reply["result"] = {"repr": repr(result)[:2000]}
         return reply
+
+    def _encode(self, document: dict[str, Any], kind: object) -> bytes | None:
+        """The wire bytes for ``document``, or ``None`` after a counted,
+        logged drop when it cannot be written at all.
+
+        A non-finite number is sent as ``null`` (``encode_frame``) and the
+        frame is counted in ``sanitized_frames``. Nothing here raises: a
+        document that cannot be encoded costs that one frame, never the
+        flusher, a reader thread or the client's connection.
+        """
+        try:
+            frame, replaced = encode_frame_counting(document)
+        except Exception as exc:
+            self.stats["dropped_unencodable"] += 1
+            self._log(f"core could not encode a {kind} frame, dropped: {exc.__class__.__name__}: {str(exc)[:200]}")
+            return None
+        if replaced:
+            self._note_sanitized(kind, replaced)
+        return frame
+
+    def _note_sanitized(self, kind: object, replaced: int) -> None:
+        self.stats["sanitized_frames"] += 1
+        count = self.stats["sanitized_frames"]
+        # A producer of NaN would repeat on every state build; say it once,
+        # then rarely.
+        if count == 1 or count % 256 == 0:
+            self._log(
+                f"core sent null for {replaced} non-finite number(s) in a {kind} frame "
+                f"({count} frame(s) so far)"
+            )
+
+    def _reply_frame(self, reply: dict[str, Any], name: str = "") -> bytes | None:
+        """The wire bytes for a reply: always a frame the client can read.
+
+        A result that cannot be written is replaced by its ``repr``; one over
+        the frame limit is replaced by a ``frame_too_large`` error carrying
+        the same id, so the app's command fails at once instead of waiting
+        out its reply timeout for a frame its splitter threw away. ``None``
+        when even that error cannot be sent (the id the client chose is
+        itself over the limit).
+        """
+        try:
+            frame, replaced = encode_frame_counting(reply)
+        except Exception:
+            reply = dict(reply)
+            try:
+                text = repr(reply.get("result"))[:2000]
+            except Exception:
+                text = "<a result that cannot be shown>"
+            reply["result"] = {"repr": text}
+            try:
+                frame, replaced = encode_frame_counting(reply)
+            except Exception:
+                # Nothing about this reply can be written: count it and let
+                # the caller carry on rather than end the connection.
+                self.stats["dropped_unencodable"] += 1
+                self._log(f"core dropped an unwritable reply to {name or 'a command'}")
+                return None
+        if replaced:
+            self._note_sanitized("reply", replaced)
+        if len(frame) <= MAX_FRAME_BYTES:
+            return frame
+        self.stats["dropped_oversize"] += 1
+        self._log(f"core dropped an oversize reply to {name or 'a command'} ({len(frame)} bytes)")
+        error = self._reply(
+            reply.get("id") if isinstance(reply.get("id"), str) else None,
+            ok=False,
+            code="frame_too_large",
+            message=f"{name or 'the command'}: the reply is {len(frame)} bytes, over the {MAX_FRAME_BYTES}-byte frame limit",
+        )
+        frame = self._encode(error, "reply")
+        if frame is None or len(frame) > MAX_FRAME_BYTES:
+            return None
+        return frame
+
+    def _send_reply(self, client: _Client, reply: dict[str, Any], name: str = "") -> None:
+        frame = self._reply_frame(reply, name)
+        if frame is not None:
+            client.send(frame)
 
     @staticmethod
     def _reply(
@@ -960,11 +1145,14 @@ class CommandRouter:
 
 
 __all__ = [
+    "ACTION_LANE_COMMANDS",
     "CORE_SOCKET_NAME",
     "DEFAULT_CAPABILITIES",
     "MAX_CLIENTS",
     "MAX_FRAME_BYTES",
     "PROTOCOL_VERSION",
+    "READ_LANE_COMMANDS",
+    "SCAN_LANE_COMMANDS",
     "SLOW_LANE_COMMANDS",
     "STATE_MIN_INTERVAL_SECONDS",
     "CommandError",
@@ -972,4 +1160,5 @@ __all__ = [
     "CoreServer",
     "default_core_socket_path",
     "encode_frame",
+    "encode_frame_counting",
 ]

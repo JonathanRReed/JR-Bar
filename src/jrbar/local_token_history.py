@@ -30,6 +30,7 @@ Every record carries a dedupe key, and a key seen twice is kept once.
 
 from __future__ import annotations
 
+import heapq
 import json
 import os
 import sqlite3
@@ -111,13 +112,17 @@ def _epoch(value: object) -> float | None:
 
 def _files(root: Path, pattern: str, since_epoch: float) -> Iterator[Path]:
     """Regular files under ``root`` matching ``pattern`` changed since
-    ``since_epoch``, never following a symlink, at most ``MAX_FILES``."""
+    ``since_epoch``, never following a symlink, at most ``MAX_FILES``.
+
+    Past the cap the NEWEST files are kept. Session files are named by date,
+    so keeping the first ones by name would drop exactly the current days.
+    The kept files come back in name order, so a scan reads them the same way
+    every time.
+    """
     if not root.is_dir():
         return
-    seen = 0
-    for path in sorted(root.rglob(pattern)):
-        if seen >= MAX_FILES:
-            return
+    changed: list[tuple[float, Path]] = []
+    for path in root.rglob(pattern):
         try:
             info = path.lstat()
         except OSError:
@@ -126,8 +131,9 @@ def _files(root: Path, pattern: str, since_epoch: float) -> Iterator[Path]:
             continue
         if info.st_mtime < since_epoch:
             continue
-        seen += 1
-        yield path
+        changed.append((info.st_mtime, path))
+    newest = heapq.nlargest(MAX_FILES, changed, key=lambda item: (item[0], str(item[1])))
+    yield from sorted(path for _mtime, path in newest)
 
 
 def _json_lines(path: Path) -> Iterator[dict]:

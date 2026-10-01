@@ -15,7 +15,7 @@ from .provider_usage_platform import (
     most_constrained_lane,
     provider_descriptor,
 )
-from .provider_usage_qol import format_lane_meter, format_reset_countdown
+from .provider_usage_qol import format_reset_countdown
 from .provider_usage_runtime import ProviderUsageState
 from .provider_usage_settings import MenuUsageDisplay
 from .usage_pace import PACE_CRITICAL, PACE_OUT, lane_pace, pace_phrase
@@ -29,8 +29,8 @@ class ProviderUsageMenuRow:
     usage_detail: str | None
     action_label: str | None
     stale: bool
-    #: One meter line per rate-limit lane ("▰▰▰▰▰▰▱▱  5-hour · 74% left ·
-    #: resets in 2h 10m") -- the codebar/t3code-style at-a-glance limits.
+    #: One line per rate-limit lane ("5-hour · 74% left · resets in 2h 10m"):
+    #: numbers and words, never a bar drawn from block characters.
     #: Renderers show these INSTEAD of `detail` when non-empty.
     lane_lines: tuple[str, ...] = ()
     #: Indexes into lane_lines whose lane has crossed the provider's
@@ -105,15 +105,10 @@ def _lane_lines(
             pace is not None and pace.verdict in {PACE_CRITICAL, PACE_OUT}
         ):
             alerts.append(index)
-        meter = (
-            f"{format_lane_meter(lane.remaining_percent)}  "
-            if display.show_meters
-            else ""
-        )
         phrase = pace_phrase(pace, now=now)
         pace_tag = f" · {phrase}" if phrase else ""
         lines.append(
-            f"{meter}{lane.label} · {lane.remaining_percent:.0f}% left"
+            f"{lane.label} · {lane.remaining_percent:.0f}% left"
             f" · {countdown}{pace_tag}"
         )
     return tuple(lines), tuple(alerts)
@@ -157,7 +152,7 @@ def _staleness_marker(snapshot: ProviderUsageSnapshot) -> str:
     act on "stale". Both mean the figure beside it is a LAST-KNOWN
     reading, not a live one.
     """
-    if snapshot.reason_code == "authentication_required":
+    if snapshot.reason_code in {"authentication_required", "usage_permission_missing"}:
         return "reconnect"
     return "stale"
 

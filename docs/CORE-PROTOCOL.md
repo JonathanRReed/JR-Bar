@@ -29,7 +29,24 @@ hand-written examples.
 - Framing: newline-delimited JSON (one object per line, UTF-8, `ensure_ascii`
   on the daemon side so no raw newline ever appears). Max frame 1 MiB in
   both directions: an oversize outbound frame is dropped and counted, an
-  oversize inbound frame closes that client.
+  oversize inbound frame closes that client. A `reply` obeys the same
+  limit, but the command it answers must not be left waiting for a frame
+  that never arrives, so an oversize reply is replaced by
+  `{"ok":false,"error":{"code":"frame_too_large","message":…}}` with the
+  command's own `id` (counted with the other oversize drops).
+- Numbers: a number that is not finite (NaN, `+Infinity`, `-Infinity`) is
+  never written as a bare token, which is not JSON and would cost the app
+  the whole frame. The daemon writes `null` in its place, in every frame
+  kind and at any depth, and counts the frame (`sanitized_frames`). `null`
+  already means "no reading" wherever the protocol allows it
+  (`used_pct: null`), so a consumer needs no new case. The app's decoder
+  also reads the quoted strings `"inf"`, `"-inf"` and `"nan"`, but the
+  daemon never sends them: the app turns some of these doubles into an
+  `Int`, which traps on an infinity, and `null` cannot. A frame that cannot
+  be written at all (an object JSON has no form for) is dropped and counted
+  (`dropped_unencodable`), and the connection carries on. A reply whose
+  result cannot be written is sent with the result's text (`{"repr": ...}`)
+  instead; only a reply with nothing writable in it is dropped.
 - Clients: up to 4 at once; the fifth is refused.
 - Lifecycle: the app launches the daemon as a child when `JRBAR_CORE_EXEC`
   is set (`CoreSupervisor`), otherwise it connects to whatever listens.
@@ -417,6 +434,22 @@ Vocabulary:
   daemon that could not say falls back to `observed_at`). An app reads "read
   N ago" from `read_at`, and treats a missing key (an older daemon) as
   `observed_at`.
+- `usage.refreshing` (2026-10-01) is true while a refresh is still asking
+  providers. A refresh asks up to four at a time, each under a 75 second
+  deadline, so one slow provider no longer holds up the rest. While it waits,
+  `usage` can arrive more than once with `refreshing: true`: a provider that
+  has answered carries its new reading, and one still being asked keeps the
+  reading it had (never a gap). The last `usage` of a refresh has
+  `refreshing: false`. A provider that has not answered by its deadline is
+  given up on for that refresh only: `state` `unavailable`, `reason`
+  `response_timed_out`, its last good reading kept as `stale`. Two reasons are
+  new: `response_timed_out`, and `usage_permission_missing` (`action` "Reconnect
+  Claude"), which is Claude's usage endpoint refusing a sign-in that lacks the
+  usage permission (an HTTP 403 whose body is the API's JSON error). Like any
+  failure it reads `needs_sign_in` for a provider with no earlier reading, and
+  `stale` carrying that same `reason` and `action` for one that has a last
+  good reading. Every other status, a 403 with a non-JSON body (a proxy's
+  page) and a network failure still read `network_unavailable`.
 - `usage.providers[].incident` is the provider's status-feed incident as
   one line (`"Anthropic: Elevated errors"`), or null. It is an outage on
   the vendor's side, never a quota verdict. It is null the moment the feed
@@ -1153,7 +1186,9 @@ Answer to a command.
 ```
 Error codes: `unknown_command`, `bad_frame`, `bad_command`, `internal`,
 `not_found`, `not_frontmost`, `invalid_args`, `invalid_path`,
-`invalid_value`, `read_only`, `refused`, `expired`, `busy`, `unsupported`;
+`invalid_value`, `read_only`, `refused`, `expired`, `busy`, `unsupported`,
+`frame_too_large` (any command whose answer would not fit in one 1 MiB
+frame; nothing is sent but the error, so ask for less, or for a page);
 `answer_ask` adds `accessibility_required`, `session_gone`, `stale_ask`,
 `stale_request` and
 `send_failed` (see below); the Effect
@@ -1164,8 +1199,11 @@ Studio commands add `unknown_effect`, `invalid_scope`, `invalid_target`,
 (`connection_required`, `device_conflict`, `recovery_required`,
 `keymap_changed`, `readback_mismatch`, `backup_failed`, `backup_invalid`,
 `backup_conflict`, `approved_device_changed`, `previous_owner_stopping`,
-`unsupported_file_protocol`, `setup_failed`, …) whose `message` is the
-Python app's sentence for that receipt.
+`unsupported_file_protocol`, `setup_failed`, `superseded`, …) whose
+`message` is the Python app's sentence for that receipt. `superseded` means
+the deck's settings changed (or the daemon began stopping) while a setup
+was running, so its result was dropped; the command answers at once and
+asking again is safe.
 
 ### log
 Content-free diagnostics for the app's log view: every `log_status_bar`
@@ -1184,16 +1222,21 @@ Commands are parsed on the socket thread and run on the AppKit main thread
 (`performSelectorOnMainThread`), one at a time, in order per client --
 except the slow-lane reads `usage_graph`, `usage_history`,
 `session_timeline`, `list_history`, `compare_sessions`, `session_usage` and
-`doctor`. Those queue on one daemon-wide worker at utility QoS, in order
-among themselves (two scans never overlap), and each replies by `id` when
-it is done, so a reply to a later command can arrive first and a scan never
-holds up an `answer_ask`. `mark_history_seen` queues on the same lane (it
+`doctor`, and the click `provider_sign_in`. Those queue on daemon-wide workers at utility QoS and each reply
+by `id` when it is done, so a reply to a later command can arrive first and
+a scan never holds up an `answer_ask`. There are three lanes, each with one
+worker. The scan lane carries `usage_graph` and `usage_history`, in order
+among themselves, so two scans never overlap. The read lane carries
+`session_timeline`, `list_history`, `compare_sessions`, `session_usage` and
+`doctor`, in order among themselves, so History opens while the Overview's
+graph is still being built. The action lane carries `provider_sign_in`: it
+is a click, not a read, and it can wait up to 90 s on Claude Code, so it has
+a lane of its own and nothing else the app sends waits behind it (a client
+allows it a reply time of about two minutes). `mark_history_seen` queues on the read lane (it
 still runs on the main thread when its turn comes), so a `list_history`
-sent before it computes `unseen` against the old watermark.
-`provider_sign_in` queues there too: it is a click, not a read, but it can
-wait up to 90 s on Claude Code, and nothing else the app sends should wait
-with it (a client allows it a reply time of about two minutes). Past 32
-queued, a new one is refused `busy`.
+sent before it computes `unseen` against the old watermark. Past 32
+queued on a lane, a new command for that lane is refused `busy`; a backlog
+of scans never makes a read busy.
 `install_hooks` / `uninstall_hooks` run on the socket thread because the
 Codex trust handshake can take seconds, and so do `open_session` and
 `resume_session`, whose osascript and tmux calls can wait on a first
@@ -1207,7 +1250,7 @@ the main thread). Unknown args are ignored.
 | `snooze` | session or `all`, seconds, scope (`family`, the default, or `run`) | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until, scope: "family"}`. `scope: "run"` ("Quiet this run") quiets that one row instead -- a main session or a single worker, on its exact work key (`snooze_scope: "run"` in `mailbox-preferences.json`), for exactly `seconds` (a week at most) -- so quieting a sub-agent never silences the session that spawned it, nor its siblings, and the family's shelf stays. It needs a named session (`all` is `invalid_args`) whose row has a work key (else `unsupported`); `seconds: 0` lifts it. `{sessions: [id], until, scope: "run"}`, `until` being whatever now quiets the row (its own deadline, or the family snooze already in force on that key, which a run snooze never replaces since that would wake the rest of the family; null when nothing does). Either way a live ask still breaks through, and the row's `snoozed_until` is the later of its family's deadline and its own. A family unsnooze of a named session (or `all`) also lifts that row's own run snooze, so Unsnooze always clears what the row shows. |
 | `clear_completed` | sessions[] or `all` | Acknowledges every row `sessions` is currently listing as over -- `completed`, `ended`, and any stale row -- through the Clear Agents plan/commit machinery with widened eligibility (`clearable_presentation_key`). Afterwards `sessions` holds only live rows and the rest are in `list_history`. `sessions` may name a subset; a named row that is not clearable (a live session) is simply not in the batch. Live sessions, asks, failures and worker rows are fenced as protected and never cleared. `{batch, cleared[]}` with every acknowledged session id, or `{batch: null, cleared: []}` when nothing was over. Refuses `busy` while a clear is in flight. |
 | `undo_clear` | batch | Undo that batch within its 300 s window; the rows return to `sessions` exactly as they were. `{batch, restored[]}`; `expired` after, `not_found` for another batch. |
-| `set_setting` | path, value | Dot-path write (`colors.agent_colors.claude`, `devices.0.brightness`) into `to_dict()`, re-validated through the real settings loader, saved, side effects applied (closed-lid, cloud ingest, transcript monitoring, remote peers), then a refresh. `{generation, path, value}` with the value as normalised. A read-only key (`cloud_ingest_token_path`) replies `read_only`. The reply comes first: the new `settings` document is out before it, the file is written by the persistence writer right after (a burst writes once; a failed write is retried on the next refresh and at quit), and the refresh runs after the reply, so the `state` and `lights` that show the change follow it. |
+| `set_setting` | path, value | Dot-path write (`colors.agent_colors.claude`, `devices.0.brightness`) into `to_dict()`, re-validated through the real settings loader, saved, side effects applied (closed-lid, cloud ingest, transcript monitoring, remote peers), then a refresh. `{generation, path, value}` with the value as normalised. A read-only key (`cloud_ingest_token_path`) replies `read_only`. The reply comes first: the new `settings` document is out before it, the file is written by the persistence writer right after (a burst writes once; an I/O error is retried on the next refresh and at quit), and the refresh runs after the reply, so the `state` and `lights` that show the change follow it. A write refused for good (a settings file from a newer version) is logged once and not retried; the value stays live for the session. A write that lost to an outside edit of `settings.json` (a hand edit, a restore, `jrbar battery configure`) is not retried either: the next refresh adopts the file when it parses and validates, keeps what the daemon held as `settings.json.replaced`, and sends the `settings` document again, so Settings shows what is on disk. This happens the next time the daemon saves a setting, not the moment the file changes. A file that does not parse is looked at again one refresh later, in case an editor is still saving it; if it has not changed, it is set aside as `settings.json.corrupt-<UTC stamp>` (the newest three kept) and the daemon's settings are written out again. A save refused because the file cannot be read right now (a half-written save) is retried on the next refresh and at quit. |
 | `reset_settings` | paths[] | Each path back to `AgentMonitorSettings()`'s default. `{generation, reset}`. |
 | `set_brightness` | device or `all`, value 0..1 | `set_device_brightness` (turns auto-brightness off, as the slider does). |
 | `set_device_display` | device, mode | `agent`, `battery`, `studio`, `quota_runway`. |
@@ -1224,7 +1267,7 @@ the main thread). Unknown args are ignored.
 | `provider_add_instance` | provider, instance, label? | Configures one more account for a provider (a second Codex or Claude sign-in, say). The instance starts enabled and metered with browser sources off; `label` is optional, not blank, at most 128 characters with no control characters, and defaults to `<Provider> · <instance>`. It is written through the settings document's optimistic concurrency, like `set_provider_enabled`, and forces a usage refresh for that provider. `{provider}` is the new row in the `list_providers` shape. `unknown_provider` for an unregistered id, `unsupported` for a provider that reads this Mac's own sign-in and has no per-instance source (a second account would report the first one twice), `invalid_args` for a missing or malformed `provider`, `instance` or `label` and for the `default` instance every provider already has, `already_exists` for an instance already configured, `settings_changed` for a concurrent settings edit. |
 | `provider_consent` | action (`list`/`grant`/`revoke`), provider?, browser?, profile?, instance?, background_repair? | The exact-scope consent store. `grant` binds provider + browser + profile + the provider's declared domain/field allowlist and imports nothing — the import remains its own action. `list` returns `{consents[]}`; grant/revoke return `{consent}` with the bound scope, `was_granted`, and on revoke `imported_data`: `removed`/`replaced`/`retained`/`none` — the imported credential is deleted only while the stored value still matches the import's digest, so a user-replaced token survives. `unsupported` for providers with no consented browser source. |
 | `provider_action` | provider, instance? | Runs the staged flow behind the provider's CURRENT action label — clipboard/LevelDB import, reconnect, repair — and returns `{provider, instance, message}` with the exact string the daemon surfaced (it may be a success note, not only an error). `unsupported` when no staged action matches the live state, `unknown_provider` for an unregistered id. Ownership is preserved: a credential the provider's own CLI owns (Grok's auth.json, Gemini's oauth_creds.json) produces a message pointing at that CLI, never a JR-Bar-side rewrite. |
-| `provider_sign_in` | provider, instance?, terminal? | The Usage Center's **Fix sign-in**: the best automatic thing for a provider whose card is not ready, tried in this order, always ending in one plain sentence the app shows verbatim. (1) Re-read what the provider's own tooling holds (the same re-pull as `provider_action` with `action: "resign_in"`). (2) Claude only, default instance: when that read finds Claude Code's Keychain copy expired and `claude auth status` (JSON, bounded) says Claude Code is logged in, ask Claude Code to renew its own Keychain item with one tiny real call, `claude -p "reply with the single word ok" --max-turns 1`: an argv list and never a shell, the resolved absolute path of `claude`, a fresh private (0700) temporary directory as its working directory, the owner's environment with every `JRBAR_*` variable removed and `JRBAR_STATE_DIR` pointing inside that directory (the hook shim honours it, so the call spools there and registers no session with this daemon), stdin closed, a hard 90 s timeout, output read only to keep the pipe clear, capped at 4 KB and never logged or returned. The directory is removed afterwards. It counts as renewed when the credential source's fingerprint changed (the Keychain item's modification stamps and `~/.claude/.credentials.json`; no secret is read, and the 60 s attribute cache is bypassed for the check); JR-Bar never touches Claude Code's refresh token. A second renewal inside 60 s is refused. A hung call is killed and reported as failed; a CLI that says it is not logged in, or a call that exits without renewing, falls through to (3). (3) Otherwise open the owner's own terminal on the provider's sign-in command, through the same opener as `new_session` (`terminal` as there; else the terminal of the most recent session, else Ghostty when installed, else Terminal.app), in the home folder. The command comes from a table fixed in the daemon and the executable is the CLI's resolved absolute path; the client sends neither: `claude auth login`, `grok login`, `codex login`, `opencode providers login`. Gemini CLI has no login command of its own, and Devin's usage is read from a browser session that `devin auth login` would not change, so those two (and any provider with no CLI) get the re-read's advice instead: for Devin, the session import or a `sign_in_url` to app.devin.ai. A provider whose sign-in the CLI cannot report on (Codex, OpenCode) is opened only when its card is signed out or unknown, never for a stale card whose problem is something else. (4) The outcome watch is armed and the provider's usage refresh is forced, as for `provider_action`, so the card recovers the moment the CLI saves its new sign-in. A second account (`instance` other than `default`) is only re-read: its sign-in is never the CLI's. `{provider, instance, outcome, message, command, sign_in_url}`: `outcome` is `renewed` (a stored or CLI-held sign-in is current again), `opened_terminal`, `already_ok` (the sign-in is current; `message` says what was refreshed), `unavailable` (nothing JR-Bar can do: `message` is the advice, `sign_in_url` a page to open or null, and a renewal inside 60 s of the last is refused this way) or `failed` (the call timed out, or the terminal could not be opened). `command` is the command as the person would type it (`grok login`) when a terminal was opened, else null. `unknown_provider` and `invalid_args` as for `provider_action`. Explicit only: a click, never a timer. Queued on the slow lane. |
+| `provider_sign_in` | provider, instance?, terminal? | The Usage Center's **Fix sign-in**: the best automatic thing for a provider whose card is not ready, tried in this order, always ending in one plain sentence the app shows verbatim. (1) Re-read what the provider's own tooling holds (the same re-pull as `provider_action` with `action: "resign_in"`). (2) Claude only, default instance: when that read finds Claude Code's Keychain copy expired and `claude auth status` (JSON, bounded) says Claude Code is logged in, ask Claude Code to renew its own Keychain item with one tiny real call, `claude -p "reply with the single word ok" --max-turns 1`: an argv list and never a shell, the resolved absolute path of `claude`, a fresh private (0700) temporary directory as its working directory, the owner's environment with every `JRBAR_*` variable removed and `JRBAR_STATE_DIR` pointing inside that directory (the hook shim honours it, so the call spools there and registers no session with this daemon), stdin closed, a hard 90 s timeout, output read only to keep the pipe clear, capped at 4 KB and never logged or returned. The directory is removed afterwards. It counts as renewed when the credential source's fingerprint changed (the Keychain item's modification stamps and `~/.claude/.credentials.json`; no secret is read, and the 60 s attribute cache is bypassed for the check); JR-Bar never touches Claude Code's refresh token. A second renewal inside 60 s is refused. A hung call is killed and reported as failed; a CLI that says it is not logged in, or a call that exits without renewing, falls through to (3). (3) Otherwise open the owner's own terminal on the provider's sign-in command, through the same opener as `new_session` (`terminal` as there; else the terminal of the most recent session, else Ghostty when installed, else Terminal.app), in the home folder. The command comes from a table fixed in the daemon and the executable is the CLI's resolved absolute path; the client sends neither: `claude auth login`, `grok login`, `codex login`, `opencode providers login`. Gemini CLI has no login command of its own, and Devin's usage is read from a browser session that `devin auth login` would not change, so those two (and any provider with no CLI) get the re-read's advice instead: for Devin, the session import or a `sign_in_url` to app.devin.ai. A provider whose sign-in the CLI cannot report on (Codex, OpenCode) is opened only when its card is signed out or unknown, never for a stale card whose problem is something else. (4) The outcome watch is armed and the provider's usage refresh is forced, as for `provider_action`, so the card recovers the moment the CLI saves its new sign-in. A second account (`instance` other than `default`) is only re-read: its sign-in is never the CLI's. `{provider, instance, outcome, message, command, sign_in_url}`: `outcome` is `renewed` (a stored or CLI-held sign-in is current again), `opened_terminal`, `already_ok` (the sign-in is current; `message` says what was refreshed), `unavailable` (nothing JR-Bar can do: `message` is the advice, `sign_in_url` a page to open or null, and a renewal inside 60 s of the last is refused this way) or `failed` (the call timed out, or the terminal could not be opened). `command` is the command as the person would type it (`grok login`) when a terminal was opened, else null. `unknown_provider` and `invalid_args` as for `provider_action`. Explicit only: a click, never a timer. Queued on the action lane. |
 | `provider_update` | provider | T3 Code's "Update now": runs the provider's own updater on a worker thread and returns at once. The argv comes from a table fixed in the daemon (`claude update`, `codex update`, `grok update`, `devin update`, `opencode upgrade`) and the client sends only a provider id; the executable is the CLI's resolved absolute path, with the owner's environment plus the login shell's `PATH`, stdin closed and a hard 600 s timeout. One update per provider at a time and at most two at once. The CLI's `--version` is read before and after (bounded), the output is kept as its last 20 lines and 4 KB with anything that looks like a token removed, and the result lands in `state.provider_updates[provider]`: `updated` (old to new), `unchanged`, or `failed` with the exit code and the last lines. An updater that exits asking for a terminal (a prompt, "not a terminal") gets one: `needs_terminal`, and the terminal is opened on the command through the opener `provider_sign_in` uses. `{provider, started, reason, message}`: `started: true` when the worker began; otherwise `started: false` with `reason` `no_updater` (Gemini CLI has none: `message` says to update it the way it was installed), `not_installed`, or `busy` and a sentence. `unknown_provider` and `invalid_args` as for `provider_action`. Never run unless clicked: no timer and no setting starts an updater. |
 | `provider_update_check` | | The Settings › Agents refresh asks whether newer CLI versions exist. Does nothing at all unless `provider_update_checks_enabled` is exactly `true`: then, off the main thread and at most once a minute, it asks the npm registry (see that setting) and the answer lands in `state.provider_updates[provider].latest_version`. `{enabled, started}`; with the setting off `{enabled: false, started: false}` and no request is made. |
 | `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider: install registers the hook command (with the compiled shim when available and the Codex trust hash recomputed); uninstall removes the managed hook blocks the installer wrote. `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, `null` while the daemon has not finished looking (see `health.detected`), and an install then goes ahead: only an explicit `false`, a CLI that was looked for and never found, is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success (uninstall has no such gate: it removes what is there). |

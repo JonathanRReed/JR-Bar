@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from jrbar.claude_quota import windows_from_payload
 from jrbar.provider_usage_parsers import (
     parse_antigravity_usage,
     parse_claude_usage,
     parse_codex_usage,
     parse_cursor_usage,
     parse_devin_usage,
+    parse_gemini_usage,
     parse_grok_usage,
     parse_openai_api_usage,
 )
+from jrbar.provider_usage_platform import ProviderSourceState
 
 
 def test_codex_preserves_spark_weekly_as_a_dynamic_lane__and_2_more() -> None:
@@ -273,3 +276,93 @@ def test_devin_reads_the_flat_shape_the_endpoint_actually_returns__and_2_more() 
     )
     assert snapshot.lanes[0].remaining_percent == 90.0
 
+
+
+# --- One window named twice must not discard the whole reading ---------------
+
+#: The shape the usage endpoint answers: the named top-level windows and the
+#: newer limits[] array, which repeats the same model's weekly cap.
+_CLAUDE_PAYLOAD_NAMING_SONNET_TWICE = {
+    "five_hour": {"utilization": 42.0, "resets_at": "2026-10-01T12:00:00Z"},
+    "seven_day": {"utilization": 61.0, "resets_at": "2026-10-05T00:00:00Z"},
+    "seven_day_sonnet": {"utilization": 12.0, "resets_at": "2026-10-05T00:00:00Z"},
+    "limits": [
+        {
+            "kind": "weekly_scoped",
+            "group": "weekly",
+            "percent": 12.0,
+            "resets_at": "2026-10-05T00:00:00Z",
+            "scope": {"model": {"id": "claude-sonnet", "display_name": "Sonnet"}},
+        },
+    ],
+}
+
+
+def test_a_claude_window_named_twice_keeps_the_first_lane_and_the_reading() -> None:
+    windows = windows_from_payload(_CLAUDE_PAYLOAD_NAMING_SONNET_TWICE)
+    # The payload really does hand over the same window twice.
+    assert [window["label"] for window in windows].count("Sonnet only") == 2
+
+    snapshot = parse_claude_usage(windows=windows, observed_at=1000.0)
+
+    assert snapshot.state is ProviderSourceState.READY
+    assert [lane.lane_id for lane in snapshot.lanes] == [
+        "five-hour",
+        "weekly",
+        "sonnet-only",
+    ]
+    assert snapshot.lanes[2].remaining_percent == 88.0
+
+
+def test_two_different_claude_windows_under_one_name_are_both_kept_but_only_the_first_binds() -> None:
+    windows = [
+        {"label": "weekly", "utilization": 61.0, "resets_at": "2026-10-05T00:00:00Z"},
+        {"label": "limit", "utilization": 3.0, "resets_at": "2026-10-05T00:00:00Z"},
+        {"label": "limit", "utilization": 4.0, "resets_at": "2026-10-06T00:00:00Z"},
+        {"label": "limit", "utilization": 3.0, "resets_at": "2026-10-05T00:00:00Z"},
+    ]
+
+    snapshot = parse_claude_usage(windows=windows, observed_at=1000.0)
+
+    assert [lane.lane_id for lane in snapshot.lanes] == ["weekly", "limit", "limit-2"]
+    first, second = snapshot.lanes[1], snapshot.lanes[2]
+    assert (first.label, first.remaining_percent) == ("limit", 97.0)
+    # The window that differs is shown, under a name that says it is another,
+    # and it is never one the lights can follow.
+    assert (second.label, second.remaining_percent) == ("limit (2)", 96.0)
+    assert second.bindable is False
+
+
+def test_a_codex_window_named_twice_keeps_one_lane() -> None:
+    window = {
+        "label": "primary",
+        "used_percent": 30,
+        "window_minutes": 300,
+        "resets_at": 2000,
+    }
+
+    snapshot = parse_codex_usage(windows=[window, dict(window)], observed_at=1000)
+
+    assert [lane.lane_id for lane in snapshot.lanes] == ["five-hour"]
+    assert snapshot.lanes[0].bindable is True
+
+
+def test_a_gemini_model_with_two_buckets_keeps_the_first_lane() -> None:
+    payload = {
+        "buckets": [
+            {"modelId": "gemini-2.5-pro", "tokenType": "REQUESTS", "remainingFraction": 0.5,
+             "resetTime": "2026-10-02T00:00:00Z"},
+            {"modelId": "gemini-2.5-pro", "tokenType": "REQUESTS", "remainingFraction": 0.5,
+             "resetTime": "2026-10-02T00:00:00Z"},
+            {"modelId": "gemini-2.5-flash", "remainingFraction": 0.9,
+             "resetTime": "2026-10-02T00:00:00Z"},
+        ]
+    }
+
+    snapshot = parse_gemini_usage(payload, observed_at=1000.0)
+
+    assert [lane.lane_id for lane in snapshot.lanes] == [
+        "model-gemini-2-5-pro",
+        "model-gemini-2-5-flash",
+    ]
+    assert snapshot.model_count == 2

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import queue
 import threading
 import time
 from collections import deque
@@ -16,6 +17,7 @@ from .adaptive_refresh import (
     plan_adaptive_refresh_cadence,
 )
 from .provider_feature_settings import (
+    ProviderCollectionFeature,
     ProviderPresentationSettings,
     project_collection_settings,
 )
@@ -54,6 +56,33 @@ _TRANSIENT_FAILURE_STATES = frozenset(
 
 Collector = Callable[[object, Path, float, object], ProviderUsageSnapshot]
 IncidentLookup = Callable[[str, float], str | None]
+
+#: How many providers a refresh asks at the same moment. Nearly all of a
+#: collector's time is spent waiting on a server or a child process, so a
+#: few at once is enough to keep one slow provider from holding up the rest,
+#: without opening a burst of connections together.
+DEFAULT_MAX_CONCURRENT_COLLECTORS = 4
+
+#: The longest one provider may take in one refresh. Past it the provider
+#: counts as a transient failure for this refresh only: it keeps its last good
+#: reading, marked stale, and the others are unaffected. It sits above the
+#: slowest source that can still succeed: Gemini makes three requests in a row
+#: (token refresh, project lookup, quota), each allowed 20 s per socket
+#: operation, and Cursor makes two. It stays well under the sum of every
+#: provider's worst case, which is what a refresh used to cost, and the quick
+#: providers are shown long before it.
+DEFAULT_COLLECTOR_DEADLINE_SECONDS = 75.0
+
+#: The longest the refresh's thread blocks on its collectors before it looks
+#: up again. A refresh that has been replaced (a newer request, or the service
+#: closing) notices within this long and stops waiting.
+SUPERSESSION_POLL_SECONDS = 0.25
+
+#: How long a refresh waits before it shows the providers that have already
+#: answered while others are still being asked. A refresh that finishes
+#: sooner publishes once, as it always did; a slower one shows the quick
+#: readings after this, and each slower one as it lands.
+DEFAULT_PARTIAL_PUBLISH_AFTER_SECONDS = 1.5
 
 
 def _default_incident_lookup(provider_id: str, observed_at: float) -> str | None:
@@ -351,6 +380,262 @@ def _machine_is_constrained() -> bool:
         return False
 
 
+@dataclass(frozen=True, slots=True)
+class _CollectJob:
+    """One provider instance a refresh has decided to ask."""
+
+    #: Where the answer goes among the refresh's snapshots (settings order).
+    slot: int
+    preference: ProviderCollectionFeature
+    collector: Collector
+    #: Nothing in these two is read once the job runs; they are what the
+    #: refresh decided on before it asked, kept for the failure gate.
+    gate: FailureGate
+    fingerprint: tuple | None
+    #: The person just ran `grok login`: clear a wedged stored-token copy
+    #: before the collector reads, so the fresh file wins at once.
+    #: Background-safe: file reads only, never a prompt.
+    repair_grok: bool
+
+    @property
+    def identity(self) -> tuple[str, str]:
+        return self.preference.identity
+
+    @property
+    def provider_id(self) -> str:
+        return self.preference.provider_id
+
+
+class _RefreshBooks:
+    """What one refresh carries from provider to provider.
+
+    Every entry is keyed by provider instance, so the answers can be settled
+    in whatever order they arrive and the books come out the same. Only the
+    refresh's own thread touches them; collectors never do.
+    """
+
+    __slots__ = (
+        "collector_incidents",
+        "failure_gates",
+        "found_provider_ids",
+        "incident_decisions",
+        "last_known_good",
+        "refreshed_provider_ids",
+    )
+
+    def __init__(
+        self,
+        failure_gates: dict[tuple[str, str], FailureGate],
+        last_known_good: dict[tuple[str, str, str], ProviderUsageSnapshot],
+    ) -> None:
+        self.failure_gates = failure_gates
+        self.last_known_good = last_known_good
+        self.refreshed_provider_ids: set[str] = set()
+        #: Providers with at least one source found on this Mac. Only these
+        #: are asked about an incident: a status page is never contacted for
+        #: a provider that is not installed.
+        self.found_provider_ids: set[str] = set()
+        self.collector_incidents: dict[tuple[str, str], str] = {}
+        self.incident_decisions: dict[str, str | None] = {}
+
+
+class _CollectionRound:
+    """Asks a refresh's providers a few at a time, each under a deadline.
+
+    Every collector runs on its own short-lived thread and reports through
+    one queue; the thread that drives the round is the only one that reads
+    that queue, so the refresh's bookkeeping stays single-threaded. Jobs
+    start in the order given (settings order). Two jobs for the same provider
+    never run together: several collectors keep small caches of their own,
+    and an account's second instance should not race its first.
+
+    A collector that is still running when its deadline passes is given up
+    on: the round reports a failure for it and moves on. Python cannot stop
+    a thread, so the late answer, if it ever comes, is dropped. A thread
+    that never returns is a daemon and costs one idle thread, where before
+    it would have held every later refresh behind it for good. Until that
+    thread ends its provider stays busy for the rest of the round, so a
+    second instance of the same provider is not started beside it; it is
+    reported as timed out too, since that provider is still not answering.
+    """
+
+    def __init__(
+        self,
+        jobs: list[_CollectJob],
+        *,
+        run: Callable[[_CollectJob], ProviderUsageSnapshot],
+        unanswered: Callable[[_CollectJob, str], ProviderUsageSnapshot],
+        max_concurrent: int,
+        deadline_seconds: float,
+        monotonic: Callable[[], float],
+        poll_seconds: float = SUPERSESSION_POLL_SECONDS,
+    ) -> None:
+        self._pending: deque[_CollectJob] = deque(jobs)
+        #: slot -> (job, monotonic time its deadline passes)
+        self._running: dict[int, tuple[_CollectJob, float]] = {}
+        #: slot -> the thread running it, while it is running.
+        self._threads: dict[int, threading.Thread] = {}
+        #: (provider id, thread) for collectors given up on or abandoned
+        #: whose thread has not ended yet.
+        self._given_up: list[tuple[str, threading.Thread]] = []
+        self._results: queue.SimpleQueue[tuple[int, ProviderUsageSnapshot]] = (
+            queue.SimpleQueue()
+        )
+        self._run = run
+        self._unanswered = unanswered
+        self._max_concurrent = max_concurrent
+        self._deadline_seconds = deadline_seconds
+        self._monotonic = monotonic
+        self._poll_seconds = poll_seconds
+
+    @property
+    def finished(self) -> bool:
+        return not self._pending and not self._running
+
+    @property
+    def in_flight(self) -> int:
+        """How many collectors are running and not yet given up on."""
+        return len(self._running)
+
+    def abandon(self) -> None:
+        """Stop waiting: ask no one else and give up on what is running.
+
+        For a refresh that has been replaced, whose answers would be thrown
+        away anyway. Nothing is interrupted (a thread cannot be): each
+        running collector finishes on its own daemon thread and its late
+        answer goes to this round's queue, which nobody reads. So an
+        abandoned collector can briefly overlap the replacing refresh's
+        collector for the same provider; that is the price of not holding a
+        newer request, such as a click on Fix sign-in, behind the slowest
+        provider of an older one.
+        """
+        self._pending.clear()
+        for slot in tuple(self._running):
+            self._give_up_on(slot)
+
+    def settled_all(self, provider_id: str) -> bool:
+        """True when no job for ``provider_id`` is waiting or running."""
+        return not any(
+            job.provider_id == provider_id
+            for job in (*self._pending, *(job for job, _ in self._running.values()))
+        )
+
+    def advance(
+        self,
+        *,
+        wake_at: float | None = None,
+    ) -> list[tuple[_CollectJob, ProviderUsageSnapshot]]:
+        """Start what can start, then wait for the next thing to happen.
+
+        Returns the jobs that finished or ran out of time, possibly none when
+        ``wake_at`` (a ``monotonic`` time) arrives first. A job that finishes
+        in the same moment its deadline passes counts as finished.
+        """
+        self._start_eligible()
+        if not self._running:
+            return []
+        wake = min(deadline for _job, deadline in self._running.values())
+        if wake_at is not None:
+            wake = min(wake, wake_at)
+        outcomes: list[tuple[int, ProviderUsageSnapshot]] = []
+        try:
+            # Never block longer than the poll: the caller looks up between
+            # calls to see whether this refresh was replaced.
+            outcomes.append(
+                self._results.get(
+                    timeout=max(0.0, min(wake - self._monotonic(), self._poll_seconds))
+                )
+            )
+        except queue.Empty:
+            pass
+        while True:
+            try:
+                outcomes.append(self._results.get_nowait())
+            except queue.Empty:
+                break
+        finished: list[tuple[_CollectJob, ProviderUsageSnapshot]] = []
+        for slot, candidate in outcomes:
+            entry = self._running.pop(slot, None)
+            if entry is not None:
+                self._threads.pop(slot, None)
+                finished.append((entry[0], candidate))
+        now = self._monotonic()
+        for slot, (job, deadline) in tuple(self._running.items()):
+            if deadline <= now:
+                self._give_up_on(slot)
+                finished.append((job, self._unanswered(job, "response_timed_out")))
+        # A job whose provider still has a collector that was given up on, and
+        # none running, will not get a turn this round: that provider is not
+        # answering, so it times out too rather than waiting for a thread that
+        # may never return.
+        running = {job.provider_id for job, _deadline in self._running.values()}
+        stuck = self._stuck_providers() - running
+        for job in tuple(self._pending):
+            if job.provider_id in stuck:
+                self._pending.remove(job)
+                finished.append((job, self._unanswered(job, "response_timed_out")))
+        self._start_eligible()
+        return finished
+
+    def _give_up_on(self, slot: int) -> None:
+        """Stop counting ``slot`` as running; remember its thread until it ends."""
+        job, _deadline = self._running.pop(slot)
+        thread = self._threads.pop(slot, None)
+        if thread is not None:
+            self._given_up.append((job.provider_id, thread))
+
+    def _stuck_providers(self) -> set[str]:
+        """Providers with a collector, given up on, whose thread still runs."""
+        self._given_up = [
+            (provider_id, thread)
+            for provider_id, thread in self._given_up
+            if thread.is_alive()
+        ]
+        return {provider_id for provider_id, _thread in self._given_up}
+
+    def _start_eligible(self) -> None:
+        while self._pending and len(self._running) < self._max_concurrent:
+            busy = {
+                job.provider_id for job, _deadline in self._running.values()
+            } | self._stuck_providers()
+            chosen = next(
+                (job for job in self._pending if job.provider_id not in busy),
+                None,
+            )
+            if chosen is None:
+                return
+            self._pending.remove(chosen)
+            self._running[chosen.slot] = (
+                chosen,
+                self._monotonic() + self._deadline_seconds,
+            )
+            try:
+                thread = threading.Thread(
+                    target=self._collect,
+                    args=(chosen,),
+                    name=f"JRBarProviderCollect-{chosen.provider_id}",
+                    daemon=True,
+                )
+                self._threads[chosen.slot] = thread
+                thread.start()
+            except Exception:
+                self._threads.pop(chosen.slot, None)
+                # No thread to run it on: a failure for this provider now,
+                # not a wait for a deadline that nothing is counting down to.
+                self._results.put(
+                    (chosen.slot, self._unanswered(chosen, "collector_failed"))
+                )
+
+    def _collect(self, job: _CollectJob) -> None:
+        try:
+            candidate = self._run(job)
+        except BaseException:
+            # `run` answers its own failures; this is the thread's last
+            # resort so the round is never left waiting for a deadline.
+            candidate = self._unanswered(job, "collector_failed")
+        self._results.put((job.slot, candidate))
+
+
 class ProviderUsageService:
     def __init__(
         self,
@@ -365,7 +650,35 @@ class ProviderUsageService:
         receipt_handler: Callable[[RefreshPublicationReceipt], object] | None = None,
         incident_lookup: IncidentLookup = _default_incident_lookup,
         extra_source: Callable[..., tuple[ProviderUsageSnapshot, ...]] | None = None,
+        max_concurrent_collectors: int = DEFAULT_MAX_CONCURRENT_COLLECTORS,
+        collector_deadline_seconds: float = DEFAULT_COLLECTOR_DEADLINE_SECONDS,
+        partial_publish_after_seconds: float | None = DEFAULT_PARTIAL_PUBLISH_AFTER_SECONDS,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
+        if type(max_concurrent_collectors) is not int or max_concurrent_collectors < 1:
+            raise ValueError("invalid collector concurrency")
+        if (
+            isinstance(collector_deadline_seconds, bool)
+            or not isinstance(collector_deadline_seconds, (int, float))
+            or not math.isfinite(float(collector_deadline_seconds))
+            or float(collector_deadline_seconds) <= 0.0
+        ):
+            raise ValueError("invalid collector deadline")
+        if partial_publish_after_seconds is not None and (
+            isinstance(partial_publish_after_seconds, bool)
+            or not isinstance(partial_publish_after_seconds, (int, float))
+            or not math.isfinite(float(partial_publish_after_seconds))
+            or float(partial_publish_after_seconds) < 0.0
+        ):
+            raise ValueError("invalid partial publication delay")
+        self._max_concurrent_collectors = max_concurrent_collectors
+        self._collector_deadline_seconds = float(collector_deadline_seconds)
+        self._partial_publish_after = (
+            None
+            if partial_publish_after_seconds is None
+            else float(partial_publish_after_seconds)
+        )
+        self._monotonic = monotonic
         self._settings_loader = settings_loader
         self._credentials = credentials
         self._home = Path(home)
@@ -616,7 +929,24 @@ class ProviderUsageService:
         providers: tuple[ProviderRefreshScope, ...] | None,
         force: bool = False,
         generation: int | None = None,
+        publish_partials: bool = False,
     ) -> tuple[ProviderUsageState, RefreshPublicationOutcome]:
+        """Ask the providers, a few at a time, and publish what they said.
+
+        Three steps. First, in settings order and on this thread, decide for
+        each configured instance whether it is skipped (out of scope, off,
+        no collector, retry gate armed) or asked. Second, ask the instances
+        that need asking a few at a time, each under a deadline; the answers
+        are settled here, on this thread, as they arrive, so the retry gates,
+        last-known-good readings and incident notes are exactly what they were
+        when the loop was serial (all of them are keyed per instance, so
+        arrival order cannot change them). Third, publish once, in settings
+        order whatever order the answers came in.
+
+        With ``publish_partials`` a refresh that is still waiting on slow
+        providers first publishes the quick ones: each slow provider keeps the
+        snapshot it had, so a partial state never drops a last good reading.
+        """
         observed_at = float(self._clock())
         settings, settings_revision = self._settings_with_revision()
         collection_settings = project_collection_settings(settings)
@@ -630,61 +960,59 @@ class ProviderUsageService:
         )
         with self._lock:
             previous_state = self._state
-            last_known_good = dict(self._last_known_good)
-            failure_gates = dict(self._failure_gates)
+            books = _RefreshBooks(
+                dict(self._failure_gates),
+                dict(self._last_known_good),
+            )
         previous_by_provider = {
             snapshot.identity: snapshot for snapshot in previous_state.snapshots
         }
-        snapshots: list[ProviderUsageSnapshot] = []
-        refreshed_provider_ids: set[str] = set()
-        #: Providers with at least one source found on this Mac. Only these
-        #: are asked about an incident: a status page is never contacted for
-        #: a provider that is not installed.
-        found_provider_ids: set[str] = set()
-        collector_incidents: dict[tuple[str, str], str] = {}
+        #: One entry per configured instance, in settings order. None is an
+        #: instance with nothing to show yet: out of scope with no earlier
+        #: snapshot, or still being asked.
+        slots: list[ProviderUsageSnapshot | None] = []
+        jobs: list[_CollectJob] = []
+        superseded = False
         for preference in collection_settings.providers:
             if generation is not None:
                 with self._lock:
                     if self._closed or generation != self._refresh_generation:
+                        superseded = True
                         break
             provider_id = preference.provider_id
             identity = preference.identity
+            slot = len(slots)
+            slots.append(None)
             if selected is not None and (
                 provider_id not in selected_provider_ids
                 and identity not in selected_instances
             ):
-                previous = previous_by_provider.get(identity)
-                if previous is not None:
-                    snapshots.append(previous)
+                slots[slot] = previous_by_provider.get(identity)
                 continue
             if not preference.enabled:
                 # A disabled provider's old failure gate must not
                 # outlive the disable: re-enabling should probe fresh,
                 # not serve the pre-disable failure for up to an hour.
-                failure_gates.pop(identity, None)
-                snapshots.append(
-                    _empty_snapshot(
-                        provider_id,
-                        observed_at=observed_at,
-                        state=ProviderSourceState.DISABLED,
-                        source_instance_id=preference.source_instance_id,
-                    )
+                books.failure_gates.pop(identity, None)
+                slots[slot] = _empty_snapshot(
+                    provider_id,
+                    observed_at=observed_at,
+                    state=ProviderSourceState.DISABLED,
+                    source_instance_id=preference.source_instance_id,
                 )
                 continue
             collector = self._collectors.get(provider_id)
             if collector is None:
-                snapshots.append(
-                    _empty_snapshot(
-                        provider_id,
-                        observed_at=observed_at,
-                        state=ProviderSourceState.SOURCE_NOT_FOUND,
-                        reason="collector_not_configured",
-                        action=f"Configure {provider_descriptor(provider_id).label}",
-                        source_instance_id=preference.source_instance_id,
-                    )
+                slots[slot] = _empty_snapshot(
+                    provider_id,
+                    observed_at=observed_at,
+                    state=ProviderSourceState.SOURCE_NOT_FOUND,
+                    reason="collector_not_configured",
+                    action=f"Configure {provider_descriptor(provider_id).label}",
+                    source_instance_id=preference.source_instance_id,
                 )
                 continue
-            gate = failure_gates.get(identity, FailureGate())
+            gate = books.failure_gates.get(identity, FailureGate())
             fingerprint = credential_fingerprint(self._home, provider_id)
             previous = previous_by_provider.get(identity)
             if previous is not None and not should_collect(
@@ -697,194 +1025,132 @@ class ProviderUsageService:
                 # snapshot instead of re-asking a server that already
                 # said no. This is what stops a 429 from becoming a
                 # permanent 429.
-                snapshots.append(previous)
+                slots[slot] = previous
                 continue
-            if (
-                provider_id == "grok"
-                and preference.source_instance_id == "default"
-                and gate.terminal
-                and fingerprint != gate.terminal_fingerprint
-            ):
-                # The user just ran `grok login`: clear any wedged
-                # stored-token copy so the fresh file wins immediately.
-                # Background-safe -- file reads only, never a prompt.
-                try:
-                    repair_grok_credential(
-                        self._credentials,
-                        home=self._home,
-                        now=observed_at,
-                    )
-                except Exception:
-                    pass
-            refreshed_provider_ids.add(provider_id)
-            try:
-                candidate = collector(
-                    preference,
-                    self._home,
-                    observed_at,
-                    _InstanceCredentialView(
-                        self._credentials,
-                        ProviderInstanceKey(
-                            provider_id,
-                            preference.source_instance_id,
-                        ),
+            books.refreshed_provider_ids.add(provider_id)
+            jobs.append(
+                _CollectJob(
+                    slot=slot,
+                    preference=preference,
+                    collector=collector,
+                    gate=gate,
+                    fingerprint=fingerprint,
+                    repair_grok=(
+                        provider_id == "grok"
+                        and preference.source_instance_id == "default"
+                        and gate.terminal
+                        and fingerprint != gate.terminal_fingerprint
                     ),
                 )
-                if type(candidate) is not ProviderUsageSnapshot:
-                    raise ValueError("collector returned invalid snapshot")
-                if candidate.identity != identity:
-                    candidate = replace(
-                        candidate,
-                        source_instance_id=preference.source_instance_id,
-                    )
-            except Exception:
-                candidate = _empty_snapshot(
-                    provider_id,
-                    observed_at=observed_at,
-                    state=ProviderSourceState.ERROR,
-                    reason="collector_failed",
-                    action="Retry",
-                    source_instance_id=preference.source_instance_id,
-                )
-            if candidate.state is not ProviderSourceState.SOURCE_NOT_FOUND:
-                # A source that is there but failing (signed out, rate
-                # limited, erroring) is exactly when "the provider is down"
-                # is worth saying, so only a missing source is skipped.
-                found_provider_ids.add(provider_id)
-            if candidate.incident:
-                collector_incidents[identity] = candidate.incident
-            if candidate.state in _TERMINAL_FAILURE_STATES:
-                failure_gates[identity] = note_failure(
-                    gate,
-                    now=observed_at,
-                    terminal=True,
-                    fingerprint=fingerprint,
-                )
-            elif candidate.state in _TRANSIENT_FAILURE_STATES:
-                failure_gates[identity] = note_failure(
-                    gate,
-                    now=observed_at,
-                    terminal=False,
-                    fingerprint=None,
-                )
-            else:
-                failure_gates.pop(identity, None)
-            continuity_key = self._continuity_key(candidate)
-            previous_good = (
-                last_known_good.get(continuity_key)
-                if self._can_retain(candidate)
-                else None
             )
-            if candidate.provider_id == "claude" and candidate.account_discriminator is not None:
-                last_known_good = {
-                    key: value
-                    for key, value in last_known_good.items()
-                    if key[:2] != identity or key == continuity_key
-                }
-            if (
-                candidate.state is ProviderSourceState.READY
-                and not candidate.lanes
-                and previous_good is not None
-                and previous_good.lanes
-            ):
-                # A lane-less READY means "the scan worked and found no
-                # quota evidence" -- e.g. Codex transcripts rotated away.
-                # That is the ABSENCE of a reading, not a newer reading;
-                # letting it overwrite last-known-good silently degraded
-                # "48% left" to a bare "ready" card with no number.
-                snapshots.append(
-                    replace(
-                        previous_good,
-                        observed_at=candidate.observed_at,
-                        # The scan ran now; the numbers were read earlier.
-                        read_at=previous_good.effective_read_at,
-                        state=ProviderSourceState.STALE,
-                        reason_code="reading_evidence_missing",
-                        action_label=previous_good.action_label or "Retry",
-                    )
-                )
-            elif candidate.state is ProviderSourceState.READY:
-                if self._can_retain(candidate):
-                    last_known_good[continuity_key] = candidate
-                snapshots.append(candidate)
-            elif candidate.state is ProviderSourceState.UNSUPPORTED:
-                # The source says this account HAS no quota (OpenCode
-                # without a Go subscription). Old lanes are not a stale
-                # reading of something that exists; they must go.
-                last_known_good = {
-                    key: value
-                    for key, value in last_known_good.items()
-                    if key[:2] != identity
-                }
-                snapshots.append(candidate)
-            elif candidate.state is ProviderSourceState.STALE and candidate.lanes:
-                # A stale-but-real reading is NEWER information than the
-                # last known good one, and it is the same numbers wearing
-                # an honest label. Substituting last_known_good here is
-                # what let a Codex quota frozen three days ago keep
-                # rendering as a live "ready" reading.
-                snapshots.append(candidate)
-            elif previous_good is not None:
-                snapshots.append(
-                    select_authoritative_snapshot(
-                        (candidate,),
-                        last_known_good=previous_good,
-                    )
-                )
-            else:
-                snapshots.append(candidate)
-        incident_decisions: dict[str, str | None] = {}
-        for provider_id in sorted(refreshed_provider_ids):
-            if provider_id not in found_provider_ids:
-                # No lookup, but the provider still takes part below so its
-                # collector's own note stands as it always did.
-                incident_decisions[provider_id] = None
-                continue
-            try:
-                incident_decisions[provider_id] = self._incident_lookup(
-                    provider_id, observed_at
-                )
-            except Exception:
-                incident_decisions[provider_id] = None
-        incident_snapshots = [
-            replace(
-                snapshot,
-                # The status feed's outage wins; a collector's own note
-                # (OpenCode logging a limit error) stands when it is quiet.
-                incident=(
-                    incident_decisions[snapshot.provider_id]
-                    or collector_incidents.get(snapshot.identity)
-                ),
+        #: What an instance shows while it is still being asked.
+        carried = {job.slot: previous_by_provider.get(job.identity) for job in jobs}
+
+        def current_snapshots() -> list[ProviderUsageSnapshot]:
+            shown = (
+                slot if slot is not None else carried.get(index)
+                for index, slot in enumerate(slots)
             )
-            if snapshot.provider_id in incident_decisions
-            else snapshot
-            for snapshot in snapshots
-        ]
-        ordered = tuple(incident_snapshots)
-        if self._extra_source is not None:
-            ordered = self._with_extra_snapshots(
-                ordered,
-                previous_state,
-                observed_at=observed_at,
-                force=force,
-                wanted=selected is None or bool({"claude", "codex"} & selected_provider_ids),
-            )
-        cadence_plan = plan_adaptive_refresh_cadence(
-            ordered,
-            observed_at=observed_at,
-            menu_last_opened_at=getattr(self, "_menu_last_opened_at", None),
-            constrained=_machine_is_constrained(),
-            ambient_usage_visible=bool(
-                getattr(self, "_ambient_usage_visible", False)
+            return [snapshot for snapshot in shown if snapshot is not None]
+
+        collection = _CollectionRound(
+            jobs,
+            run=lambda job: self._collect_job(job, observed_at),
+            unanswered=lambda job, reason: self._unanswered_snapshot(
+                job, observed_at, reason
             ),
-            reset_confirm_until=getattr(self, "_reset_confirm_until", None),
+            max_concurrent=self._max_concurrent_collectors,
+            deadline_seconds=self._collector_deadline_seconds,
+            monotonic=self._monotonic,
         )
-        state = ProviderUsageState(
-            snapshots=ordered,
-            refreshed_at=observed_at,
-            next_refresh_at=observed_at + cadence_plan.interval_seconds,
-            refreshing=False,
+        partial_due = (
+            self._monotonic() + self._partial_publish_after
+            if publish_partials and self._partial_publish_after is not None
+            else None
         )
+        unpublished = False
+        if superseded:
+            collection.abandon()
+        while not collection.finished:
+            if not superseded and generation is not None:
+                with self._lock:
+                    superseded = self._closed or generation != self._refresh_generation
+                if superseded:
+                    # This refresh's answers would only be thrown away, so stop
+                    # waiting for them at once. A newer request, such as a click
+                    # on Fix sign-in, must not sit behind this refresh's slowest
+                    # provider. The running collectors cannot be interrupted:
+                    # they finish on their own threads, and one can briefly
+                    # overlap the newer refresh's collector for the same provider.
+                    collection.abandon()
+                    break
+            answered = collection.advance(
+                wake_at=partial_due if unpublished else None
+            )
+            for job, candidate in answered:
+                slots[job.slot] = self._settle_candidate(
+                    job,
+                    candidate,
+                    books,
+                    observed_at=observed_at,
+                )
+            unpublished = unpublished or bool(answered)
+            if (
+                partial_due is not None
+                and unpublished
+                and not collection.finished
+                and self._monotonic() >= partial_due
+            ):
+                self._decide_incidents(books, observed_at, collection=collection)
+                shown = tuple(
+                    self._with_incident_decisions(current_snapshots(), books)
+                )
+                if self._extra_source is not None:
+                    # The hub's accounts keep what they showed until the
+                    # final state asks the hub again.
+                    shown = self._with_extra_snapshots(
+                        shown,
+                        previous_state,
+                        observed_at=observed_at,
+                        force=force,
+                        wanted=False,
+                    )
+                self._publish_partial(
+                    shown,
+                    books,
+                    generation=generation,
+                    settings_revision=settings_revision,
+                )
+                unpublished = False
+        state: ProviderUsageState | None = None
+        cadence_plan: AdaptiveRefreshPlan | None = None
+        if not superseded:
+            self._decide_incidents(books, observed_at)
+            ordered = tuple(self._with_incident_decisions(current_snapshots(), books))
+            if self._extra_source is not None:
+                ordered = self._with_extra_snapshots(
+                    ordered,
+                    previous_state,
+                    observed_at=observed_at,
+                    force=force,
+                    wanted=selected is None or bool({"claude", "codex"} & selected_provider_ids),
+                )
+            cadence_plan = plan_adaptive_refresh_cadence(
+                ordered,
+                observed_at=observed_at,
+                menu_last_opened_at=getattr(self, "_menu_last_opened_at", None),
+                constrained=_machine_is_constrained(),
+                ambient_usage_visible=bool(
+                    getattr(self, "_ambient_usage_visible", False)
+                ),
+                reset_confirm_until=getattr(self, "_reset_confirm_until", None),
+            )
+            state = ProviderUsageState(
+                snapshots=ordered,
+                refreshed_at=observed_at,
+                next_refresh_at=observed_at + cadence_plan.interval_seconds,
+                refreshing=False,
+            )
         # State publication and its durable save are one revision-fenced
         # critical section. An explicit settings edit cannot land between
         # the check and the save, and an older worker therefore cannot leak
@@ -901,13 +1167,15 @@ class ProviderUsageService:
             ):
                 publication_outcome = RefreshPublicationOutcome.SUPERSEDED
                 result = self._state
-            elif settings_revision != self._settings_revision:
+            elif state is None or settings_revision != self._settings_revision:
+                # `state` is None only for a replaced refresh, which the two
+                # checks above already caught; this is the defensive net.
                 publication_outcome = RefreshPublicationOutcome.SUPERSEDED
                 result = self._state
             else:
                 self._state = state
-                self._last_known_good = last_known_good
-                self._failure_gates = failure_gates
+                self._last_known_good = books.last_known_good
+                self._failure_gates = books.failure_gates
                 self._last_cadence_plan = cadence_plan
                 self._last_publication_revision = settings_revision
                 result = state
@@ -924,6 +1192,272 @@ class ProviderUsageService:
             error_code=publication_error,
         )
         return result, publication_outcome
+
+    def _collect_job(
+        self,
+        job: _CollectJob,
+        observed_at: float,
+    ) -> ProviderUsageSnapshot:
+        """Run one instance's collector. Runs on a collection thread.
+
+        Touches nothing but what it is handed and the service's read-only
+        fields; the refresh's books are settled by the thread that started
+        the round.
+        """
+        preference = job.preference
+        try:
+            if job.repair_grok:
+                # The user just ran `grok login`: clear any wedged
+                # stored-token copy so the fresh file wins immediately.
+                # Background-safe -- file reads only, never a prompt.
+                try:
+                    repair_grok_credential(
+                        self._credentials,
+                        home=self._home,
+                        now=observed_at,
+                    )
+                except Exception:
+                    pass
+            candidate = job.collector(
+                preference,
+                self._home,
+                observed_at,
+                _InstanceCredentialView(
+                    self._credentials,
+                    ProviderInstanceKey(
+                        job.provider_id,
+                        preference.source_instance_id,
+                    ),
+                ),
+            )
+            if type(candidate) is not ProviderUsageSnapshot:
+                raise ValueError("collector returned invalid snapshot")
+            if candidate.identity != job.identity:
+                candidate = replace(
+                    candidate,
+                    source_instance_id=preference.source_instance_id,
+                )
+            return candidate
+        except Exception:
+            return self._unanswered_snapshot(job, observed_at, "collector_failed")
+
+    @staticmethod
+    def _unanswered_snapshot(
+        job: _CollectJob,
+        observed_at: float,
+        reason: str,
+    ) -> ProviderUsageSnapshot:
+        """A transient failure for an instance that gave no usable answer.
+
+        A collector that raised is an error; one that ran past its deadline
+        is unavailable. Both ride the transient retry ladder, and a provider
+        with a last good reading keeps it, marked stale.
+        """
+        return _empty_snapshot(
+            job.provider_id,
+            observed_at=observed_at,
+            state=(
+                ProviderSourceState.UNAVAILABLE
+                if reason == "response_timed_out"
+                else ProviderSourceState.ERROR
+            ),
+            reason=reason,
+            action="Retry",
+            source_instance_id=job.preference.source_instance_id,
+        )
+
+    def _settle_candidate(
+        self,
+        job: _CollectJob,
+        candidate: ProviderUsageSnapshot,
+        books: _RefreshBooks,
+        *,
+        observed_at: float,
+    ) -> ProviderUsageSnapshot:
+        """Fold one instance's answer into the books; return what it shows."""
+        identity = job.identity
+        if candidate.state is not ProviderSourceState.SOURCE_NOT_FOUND:
+            # A source that is there but failing (signed out, rate
+            # limited, erroring) is exactly when "the provider is down"
+            # is worth saying, so only a missing source is skipped.
+            books.found_provider_ids.add(job.provider_id)
+        if candidate.incident:
+            books.collector_incidents[identity] = candidate.incident
+        if candidate.state in _TERMINAL_FAILURE_STATES:
+            books.failure_gates[identity] = note_failure(
+                job.gate,
+                now=observed_at,
+                terminal=True,
+                fingerprint=job.fingerprint,
+            )
+        elif candidate.state in _TRANSIENT_FAILURE_STATES:
+            books.failure_gates[identity] = note_failure(
+                job.gate,
+                now=observed_at,
+                terminal=False,
+                fingerprint=None,
+            )
+        else:
+            books.failure_gates.pop(identity, None)
+        continuity_key = self._continuity_key(candidate)
+        previous_good = (
+            books.last_known_good.get(continuity_key)
+            if self._can_retain(candidate)
+            else None
+        )
+        if candidate.provider_id == "claude" and candidate.account_discriminator is not None:
+            books.last_known_good = {
+                key: value
+                for key, value in books.last_known_good.items()
+                if key[:2] != identity or key == continuity_key
+            }
+        if (
+            candidate.state is ProviderSourceState.READY
+            and not candidate.lanes
+            and previous_good is not None
+            and previous_good.lanes
+        ):
+            # A lane-less READY means "the scan worked and found no
+            # quota evidence" -- e.g. Codex transcripts rotated away.
+            # That is the ABSENCE of a reading, not a newer reading;
+            # letting it overwrite last-known-good silently degraded
+            # "48% left" to a bare "ready" card with no number.
+            return replace(
+                previous_good,
+                observed_at=candidate.observed_at,
+                # The scan ran now; the numbers were read earlier.
+                read_at=previous_good.effective_read_at,
+                state=ProviderSourceState.STALE,
+                reason_code="reading_evidence_missing",
+                action_label=previous_good.action_label or "Retry",
+            )
+        if candidate.state is ProviderSourceState.READY:
+            if self._can_retain(candidate):
+                books.last_known_good[continuity_key] = candidate
+            return candidate
+        if candidate.state is ProviderSourceState.UNSUPPORTED:
+            # The source says this account HAS no quota (OpenCode
+            # without a Go subscription). Old lanes are not a stale
+            # reading of something that exists; they must go.
+            books.last_known_good = {
+                key: value
+                for key, value in books.last_known_good.items()
+                if key[:2] != identity
+            }
+            return candidate
+        if candidate.state is ProviderSourceState.STALE and candidate.lanes:
+            # A stale-but-real reading is NEWER information than the
+            # last known good one, and it is the same numbers wearing
+            # an honest label. Substituting last_known_good here is
+            # what let a Codex quota frozen three days ago keep
+            # rendering as a live "ready" reading.
+            return candidate
+        if previous_good is not None:
+            return select_authoritative_snapshot(
+                (candidate,),
+                last_known_good=previous_good,
+            )
+        return candidate
+
+    def _decide_incidents(
+        self,
+        books: _RefreshBooks,
+        observed_at: float,
+        *,
+        collection: _CollectionRound | None = None,
+    ) -> None:
+        """Look up each refreshed provider's status-page incident once.
+
+        With a ``collection`` still running, only providers whose every
+        instance has answered are looked up (an incident is a fact about a
+        provider, and "found" depends on all of its instances); without one,
+        every provider not decided yet is, in name order.
+        """
+        for provider_id in sorted(books.refreshed_provider_ids):
+            if provider_id in books.incident_decisions:
+                continue
+            if collection is not None and not collection.settled_all(provider_id):
+                continue
+            if provider_id not in books.found_provider_ids:
+                # No lookup, but the provider still takes part below so its
+                # collector's own note stands as it always did.
+                books.incident_decisions[provider_id] = None
+                continue
+            try:
+                books.incident_decisions[provider_id] = self._incident_lookup(
+                    provider_id, observed_at
+                )
+            except Exception:
+                books.incident_decisions[provider_id] = None
+
+    @staticmethod
+    def _with_incident_decisions(
+        snapshots: list[ProviderUsageSnapshot],
+        books: _RefreshBooks,
+    ) -> list[ProviderUsageSnapshot]:
+        return [
+            replace(
+                snapshot,
+                # The status feed's outage wins; a collector's own note
+                # (OpenCode logging a limit error) stands when it is quiet.
+                incident=(
+                    books.incident_decisions[snapshot.provider_id]
+                    or books.collector_incidents.get(snapshot.identity)
+                ),
+            )
+            if snapshot.provider_id in books.incident_decisions
+            else snapshot
+            for snapshot in snapshots
+        ]
+
+    def _publish_partial(
+        self,
+        snapshots: tuple[ProviderUsageSnapshot, ...],
+        books: _RefreshBooks,
+        *,
+        generation: int | None,
+        settings_revision: int,
+    ) -> None:
+        """Show the providers that have answered while others are still asked.
+
+        Revision-fenced like the final publication, so an older worker or an
+        edited setting publishes nothing. It stays `refreshing`, keeps the
+        schedule it had, is never written to disk (the file only ever holds a
+        finished refresh), records no receipt, and hands the same pending
+        callbacks the state without retiring them: they are retired by the
+        final publication. The books go with it so the gates and last good
+        readings always match the state on show.
+        """
+        with self._lock:
+            if (
+                self._closed
+                or (generation is not None and generation != self._refresh_generation)
+                or settings_revision != self._settings_revision
+            ):
+                return
+            state = ProviderUsageState(
+                snapshots=snapshots,
+                refreshed_at=self._state.refreshed_at,
+                next_refresh_at=self._state.next_refresh_at,
+                refreshing=True,
+            )
+            if state == self._state:
+                return
+            self._state = state
+            self._last_known_good = dict(books.last_known_good)
+            self._failure_gates = dict(books.failure_gates)
+            if generation is None:
+                return
+            callbacks = tuple(
+                callback
+                for callback_generation, callback in self._callbacks
+                if callback_generation == generation
+            )
+            for callback in callbacks:
+                try:
+                    callback(state)
+                except Exception:
+                    continue
 
     def _with_extra_snapshots(
         self,
@@ -1137,6 +1671,7 @@ class ProviderUsageService:
                 providers=providers,
                 force=force,
                 generation=generation,
+                publish_partials=True,
             )
             with self._lock:
                 if self._closed or generation != self._refresh_generation:

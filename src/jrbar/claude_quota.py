@@ -45,6 +45,10 @@ from .reset_policy import parse_reset_epoch
 MAX_CLAUDE_WINDOWS = 32
 CLAUDE_REMOTE_QUOTA_UNSUPPORTED = "claude_remote_quota_unsupported"
 CLAUDE_REMOTE_QUOTA_UNAUTHORIZED = "claude_remote_quota_unauthorized"
+#: A 403: the server knows the token and refuses it this endpoint (a sign-in
+#: that was not granted the profile scope usage needs). Retrying the same
+#: token cannot work, so it is told apart from a server error.
+CLAUDE_REMOTE_QUOTA_FORBIDDEN = "claude_remote_quota_forbidden"
 CLAUDE_REMOTE_QUOTA_RATE_LIMITED = "claude_remote_quota_rate_limited"
 CLAUDE_REMOTE_QUOTA_SERVER_ERROR = "claude_remote_quota_server_error"
 CLAUDE_REMOTE_QUOTA_NETWORK = "claude_remote_quota_network"
@@ -311,6 +315,22 @@ def _claude_code_user_agent() -> str:
     return f"claude-code/{CLAUDE_CODE_VERSION_FALLBACK}"
 
 
+def _is_json_error(body: bytes) -> bool:
+    """True when ``body`` is a JSON error object, the shape the API refuses with.
+
+    Judged only by shape and never repeated: the body can name an account.
+    """
+    if not body or len(body) > 64 * 1024:
+        return False
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return False
+    return isinstance(payload, dict) and (
+        payload.get("type") == "error" or isinstance(payload.get("error"), (dict, str))
+    )
+
+
 def fetch_windows(
     *,
     access_token: str | None = None,
@@ -351,6 +371,12 @@ def fetch_windows(
         raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_NETWORK) from None
     if status == 401:
         raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_UNAUTHORIZED)
+    if status == 403 and _is_json_error(body):
+        # Only the API's own JSON refusal (a `permission_error`) says this
+        # sign-in may not read usage. A 403 with any other body, such as a
+        # proxy's or Cloudflare's HTML page, is not the API speaking and
+        # stays a transient failure below.
+        raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_FORBIDDEN)
     if status == 429:
         raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_RATE_LIMITED)
     if status != 200:

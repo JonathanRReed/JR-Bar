@@ -57,6 +57,54 @@ def _remaining_from_entry(value: object) -> float | None:
     return None if used is None else 100.0 - used
 
 
+def _distinct_lanes(lanes: list[UsageLane]) -> tuple[UsageLane, ...]:
+    """One lane per id, so one repeated window cannot discard a whole reading.
+
+    A provider can name one window twice: Claude's ``seven_day_sonnet`` and
+    the same model's weekly cap in ``limits[]``, or two Gemini buckets for
+    one model. A snapshot with two lanes of one id is refused outright, and
+    the refusal threw away every other lane with it.
+
+    The first lane keeps the id. A later lane that reads exactly the same
+    (same remaining percentage, same reset) is the same window again and is
+    dropped. A later lane that reads differently is a different window under
+    a clashing name: it is kept, under the id with ``-2``, ``-3`` ... and a
+    label that says so, and it is never bindable, so it can be seen but can
+    never stand in for the first as the account's ceiling.
+    """
+    kept: list[UsageLane] = []
+    taken: set[str] = set()
+    #: The lanes kept under each id the provider asked for, renamed or not.
+    seen: dict[str, list[UsageLane]] = {}
+    for lane in lanes:
+        group = seen.setdefault(lane.lane_id, [])
+        if any(
+            item.remaining_percent == lane.remaining_percent
+            and item.reset_at == lane.reset_at
+            for item in group
+        ):
+            continue
+        shown = lane
+        if lane.lane_id in taken:
+            number = 2
+            while True:
+                suffix = f"-{number}"
+                lane_id = f"{lane.lane_id[: 128 - len(suffix)]}{suffix}"
+                if lane_id not in taken:
+                    break
+                number += 1
+            shown = replace(
+                lane,
+                lane_id=lane_id,
+                label=f"{lane.label} ({number})",
+                bindable=False,
+            )
+        taken.add(shown.lane_id)
+        group.append(shown)
+        kept.append(shown)
+    return tuple(kept)
+
+
 def _snapshot(
     provider_id: str,
     *,
@@ -242,7 +290,7 @@ def parse_codex_usage(
     return _snapshot(
         "codex",
         observed_at=observed_at,
-        lanes=tuple(lanes),
+        lanes=_distinct_lanes(lanes),
         account_label=account_label,
         account_plan=account_plan,
         input_tokens=input_tokens,
@@ -306,7 +354,7 @@ def parse_claude_usage(
     return _snapshot(
         "claude",
         observed_at=observed_at,
-        lanes=tuple(lanes),
+        lanes=_distinct_lanes(lanes),
         account_label=account_label,
         account_plan=account_plan,
         account_discriminator=account_discriminator,
@@ -702,12 +750,13 @@ def parse_gemini_usage(
                 model=model_id,
             )
         )
+    distinct = _distinct_lanes(lanes)
     return _snapshot(
         "gemini",
         observed_at=observed_at,
-        lanes=tuple(lanes),
+        lanes=distinct,
         account_label=account_label,
-        model_count=len(lanes),
+        model_count=len({lane.model for lane in distinct}),
     )
 
 
