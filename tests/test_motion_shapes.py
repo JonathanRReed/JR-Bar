@@ -13,11 +13,11 @@ from itertools import pairwise
 import pytest
 
 from jrbar import motion_shapes as shapes
-from jrbar._led_wasm_legacy import (  # raw engine: no safety compiler in the way
-    LedWasmUnavailableError,
-    SdLedWasmController,
-)
 from jrbar.flash_analysis import relative_luminance
+from jrbar.led_wasm import (  # raw engine: no safety compiler in the way
+    LedWasmUnavailableError,
+    RawSdLedWasmController,
+)
 
 FRAME_MS = 1000 // 60
 COLOR = "#00E5FF"
@@ -33,7 +33,7 @@ def sample(program: str, led_count: int, frames: int = 240, start_ms: int = 0):
     t=0 judges the hand-off, not the shape.
     """
     try:
-        controller = SdLedWasmController(led_count)
+        controller = RawSdLedWasmController(led_count)
     except LedWasmUnavailableError as error:  # pragma: no cover - macOS only
         pytest.skip(f"firmware engine unavailable: {error}")
     controller.reset(0)
@@ -334,7 +334,7 @@ def test_a_finish_can_land_or_ripple__and_ends_dark() -> None:
             assert loop_duration_ms(animation) is None
             end = animation_duration_ms(animation)
             try:
-                controller = SdLedWasmController(led_count)
+                controller = RawSdLedWasmController(led_count)
             except LedWasmUnavailableError as error:  # pragma: no cover
                 pytest.skip(str(error))
             controller.reset(0)

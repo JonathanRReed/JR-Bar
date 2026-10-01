@@ -40,7 +40,6 @@ from jrbar import (  # noqa: E402
     motion_shapes,
 )
 from jrbar import colors as colors_module  # noqa: E402
-from jrbar._led_wasm_legacy import SdLedWasmController  # noqa: E402  raw firmware
 from jrbar.animation import (  # noqa: E402
     animation_duration_ms,
     errors_only,
@@ -48,6 +47,7 @@ from jrbar.animation import (  # noqa: E402
     read_program,
 )
 from jrbar.effect_registry import EFFECT_REGISTRY  # noqa: E402
+from jrbar.led_wasm import RawSdLedWasmController  # noqa: E402  raw firmware
 from jrbar.lid_presets import LID_ANIMATION_PRESETS, LID_PRESET_SHAPES, lid_program  # noqa: E402
 from jrbar.models import AgentMode  # noqa: E402
 from jrbar.presentation_compiler import compile_presentation_program  # noqa: E402
@@ -104,7 +104,7 @@ def window_ms(program: str, led_count: int) -> int:
 
 
 def sample(program: str, led_count: int, span_ms: int) -> list[list[tuple[int, int, int]]]:
-    controller = SdLedWasmController(led_count)
+    controller = RawSdLedWasmController(led_count)
     controller.reset(0)
     result = controller.parse(program, 0)
     if not result.ok:

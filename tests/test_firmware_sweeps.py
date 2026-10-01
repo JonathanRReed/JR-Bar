@@ -19,10 +19,10 @@ import pytest
 
 from jrbar import colors as colors_module
 from jrbar import motion_shapes as shapes
-from jrbar._led_wasm_legacy import LedWasmUnavailableError, SdLedWasmController
 from jrbar.accessibility_display import AccessibilityDisplayPreferences
 from jrbar.animation import loop_duration_ms, parse_animation
 from jrbar.flash_analysis import relative_luminance
+from jrbar.led_wasm import LedWasmUnavailableError, RawSdLedWasmController
 from jrbar.presentation_policy import (
     GlanceInputs,
     MotionClass,
@@ -77,7 +77,7 @@ def _loop_ms(program: str, led_count: int = 8) -> int:
 
 def _frames(program: str, led_count: int, *, start_ms: float, span_ms: float):
     try:
-        controller = SdLedWasmController(led_count)
+        controller = RawSdLedWasmController(led_count)
     except LedWasmUnavailableError as error:  # pragma: no cover - macOS only
         pytest.skip(f"firmware engine unavailable: {error}")
     controller.reset(0)

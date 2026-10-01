@@ -29,12 +29,14 @@ if str(REPO / "src") not in sys.path:
     sys.path.insert(0, str(REPO / "src"))
 
 from jrbar import celebrations, core_effects, lid_presets  # noqa: E402
-from jrbar._led_wasm_legacy import SdLedWasmController  # noqa: E402
 from jrbar.effect_registry import PROVIDER_ANIMATION_EFFECTS  # noqa: E402
+from jrbar.led_wasm import RawSdLedWasmController  # noqa: E402
 
 DEFAULT_OUT = REPO / "app" / "Tests" / "JRBarLEDSTests" / "Fixtures" / "programs" / "motions"
 #: The times ``SamplerParityTests`` requires of every program fixture.
 SAMPLE_TIMES_MS: tuple[int, ...] = (0, 50, 100, 250, 500, 1000, 1500, 2000, 3700)
+# A provenance label stored in the committed fixtures: it names the module the
+# engine lived in before the facade collapse, so it stays as written.
 ENGINE = "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)"
 PALETTE = ("#FF2D55", "#5AC8FA", "#FFCC00", "#34C759")
 
@@ -52,7 +54,7 @@ def _end_value(parameter, *, high: bool):
 
 
 def _samples(program: str, led_count: int) -> list[dict]:
-    controller = SdLedWasmController(led_count)
+    controller = RawSdLedWasmController(led_count)
     controller.reset(0)
     result = controller.parse(program, 0)
     if not result.ok:

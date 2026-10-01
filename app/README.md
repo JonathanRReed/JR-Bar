@@ -233,7 +233,7 @@ within the tolerance at the firmware's own sample times.
 ### Parity
 
 `scripts/gen_leds_fixtures.py` samples 30 programs through
-`jrbar._led_wasm_legacy.SdLedWasmController` (raw firmware engine:
+`jrbar.led_wasm.RawSdLedWasmController` (raw firmware engine:
 `reset(0)`, `parse(program, 0)`, `step(t_ms)`) at the required times
 (0, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 3.7 s) plus a 37 ms sweep over the
 first four seconds. Programs: one embedded device program, every
