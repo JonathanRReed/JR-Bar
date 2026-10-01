@@ -221,6 +221,7 @@ final class NotchToy: Toy {
         }
         cardModel.onOpenRow = { [weak self] session in self?.openFromCard(session) }
         cardModel.onClose = { [weak self] in self?.collapseIsland() }
+        cardModel.popoverHold.onChange = { [weak self] held in self?.cardPopoverHoldChanged(held) }
         cardModel.onDropHover = { [weak self] in self?.shelfDragMoved() }
         cardModel.onDropLanded = { [weak self] in self?.shelfDragLanded() }
         cardModel.onOpenSession = { [weak self] in
@@ -803,10 +804,23 @@ final class NotchToy: Toy {
     /// away — a re-hover cancels the work before it fires, a pull owns
     /// the card it is holding, and a card the band click deliberately
     /// grew is its master's to let go.
-    private func collapseTimerFired() {
+    func collapseTimerFired() {
         collapseWork = nil
-        guard !hoverHeld, !pullActive, !pointerOnBand() else { return }
+        // A popover hanging from the card (the Custom timer's entry, a
+        // stack's grid, the new-reminder field) is the pointer's
+        // destination, not a leave: the card holds until it closes.
+        guard !hoverHeld, !pullActive, !pointerOnBand(),
+              !cardModel.popoverHold.isHeld else { return }
         if islandExpanded && !expandHeld { collapseIsland() }
+    }
+
+    /// A popover opened on or closed off the card. Opening needs nothing
+    /// (a leave check that comes due meanwhile sees the hold and waits);
+    /// closing re-runs the leave check for a hover-grown card the pointer
+    /// is no longer over, so it folds as it would have.
+    private func cardPopoverHoldChanged(_ held: Bool) {
+        guard !held, islandExpanded, !expandHeld, !hoverHeld, !pullActive else { return }
+        scheduleCollapseCheck()
     }
 
     /// A click or swipe on the band while our island is up: the island
