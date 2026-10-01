@@ -165,9 +165,13 @@ static double parent_start_time(pid_t ppid) {
  * at most META_INPUT_BYTES. The input is what names the request a PostToolUse
  * resolves (the daemon derives the request id from the turn, the tool and
  * this input), and a screenshot tool's input is a few bytes while its
- * response is the megabyte. Everything else, the content included, is left
- * behind. When the head does not name both the event and the session the
- * payload is dropped, as before: the daemon could not place it. */
+ * response is the megabyte. When the input is too large to keep (or the head
+ * ends inside it) the record carries instead a 64-bit FNV-1a fingerprint of
+ * the first META_INPUT_BYTES of its text, in 16 hex digits: two different
+ * huge calls in one session then differ, and a call's ask and its
+ * PostToolUse, both cut down, agree. Everything else, the content included,
+ * is left behind. When the head does not name both the event and the session
+ * the payload is dropped, as before: the daemon could not place it. */
 #define META_VALUE_BYTES 256
 #define META_PATH_BYTES 1024
 #define META_INPUT_BYTES (64 * 1024)
@@ -186,6 +190,17 @@ static const struct meta_key META_KEYS[] = {
     { "transcript_path", META_PATH_BYTES },
 };
 #define META_KEY_COUNT (sizeof META_KEYS / sizeof META_KEYS[0])
+
+/* FNV-1a, 64 bit: no secret, no security claim, just a stable short name
+ * for the leading bytes of a call's input. */
+static uint64_t fnv1a64(const char *p, size_t n) {
+    uint64_t hash = 14695981039346656037ULL;
+    for (size_t i = 0; i < n; i++) {
+        hash ^= (unsigned char)p[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
 
 static int metadata_provider(const char *provider) {
     return !strcmp(provider, "claude") || !strcmp(provider, "codex");
@@ -239,7 +254,8 @@ static size_t build_metadata(const char *b, size_t n, char *out, size_t cap) {
     struct { size_t at, len; int seen; } found[META_KEY_COUNT];
     memset(found, 0, sizeof found);
     size_t input_at = 0, input_len = 0;
-    int input_seen = 0;
+    int input_seen = 0, has_fingerprint = 0;
+    uint64_t fingerprint = 0;
     size_t i = json_skip_ws(b, 0, n);
     if (i >= n || b[i] != '{') return 0;
     i++;
@@ -255,14 +271,23 @@ static size_t build_metadata(const char *b, size_t n, char *out, size_t cap) {
         i = json_skip_ws(b, after_key, n);
         if (i >= n || b[i] != ':') break;
         i = json_skip_ws(b, i + 1, n);
+        if (i >= n) break;
         size_t end = json_skip_value(b, i, n);
-        if (!end) break;
-        if (key_len == strlen("tool_input") && !memcmp(b + key_at, "tool_input", key_len)) {
-            if (!input_seen) {
-                input_seen = 1;
-                if (b[i] == '{' && end - i <= META_INPUT_BYTES) { input_at = i; input_len = end - i; }
+        int is_input = key_len == strlen("tool_input") && !memcmp(b + key_at, "tool_input", key_len);
+        if (is_input && !input_seen) {
+            input_seen = 1;
+            if (b[i] == '{') {
+                /* A value the head ends inside runs to the end of the head. */
+                size_t span = end ? end - i : n - i;
+                if (end && span <= META_INPUT_BYTES) { input_at = i; input_len = span; }
+                else {
+                    fingerprint = fnv1a64(b + i, span < META_INPUT_BYTES ? span : META_INPUT_BYTES);
+                    has_fingerprint = 1;
+                }
             }
-        } else {
+        }
+        if (!end) break;
+        if (!is_input) {
             for (size_t k = 0; k < META_KEY_COUNT; k++) {
                 if (key_len != strlen(META_KEYS[k].name) || memcmp(b + key_at, META_KEYS[k].name, key_len)) continue;
                 if (found[k].seen) break;
@@ -296,6 +321,11 @@ static size_t build_metadata(const char *b, size_t n, char *out, size_t cap) {
     if (input_len) {
         if (!meta_put(out, cap, &o, ",\"tool_input\":", strlen(",\"tool_input\":"))
             || !meta_put(out, cap, &o, b + input_at, input_len)) return 0;
+    }
+    if (has_fingerprint) {
+        char text[48];
+        int written = snprintf(text, sizeof text, ",\"payload_fingerprint\":\"%016llx\"", (unsigned long long)fingerprint);
+        if (written <= 0 || (size_t)written >= sizeof text || !meta_put(out, cap, &o, text, (size_t)written)) return 0;
     }
     if (!meta_put(out, cap, &o, ",\"payload_truncated\":true}", strlen(",\"payload_truncated\":true}"))) return 0;
     return o;

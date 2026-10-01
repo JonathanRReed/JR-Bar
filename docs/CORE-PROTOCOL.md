@@ -1478,15 +1478,19 @@ already holds, buffering nothing more, and sends or spools a small record in
 its place: `hook_event_name`, `session_id`, `tool_name`, `turn_id`,
 `agent_id` and `transcript_path` when each is plain printable ASCII (at most
 256 bytes, 1 KiB for the path), the call's own `tool_input` when it is a
-whole object of at most 64 KiB, and `"payload_truncated":true`. The content
-is never copied. A head that does not name both the event and the session,
+whole object of at most 64 KiB, otherwise `payload_fingerprint` (the 64-bit
+FNV-1a of the first 64 KiB of that input's text, 16 lowercase hex digits),
+and `"payload_truncated":true`. The content is never copied. A head that does not name both the event and the session,
 and every other provider, is dropped as before. The daemon reads the record
 as the event it names: a PostToolUse resolves its request, a PermissionRequest
 opens an ask, and neither is ever parked for a verdict. The request id is
 the turn, the tool and the input (`provider_adapters`), so a record that
 kept its input names the same request as the whole payload would have, and
-one whose input was too large to keep names its call "the one that was cut
-down", which an ask and its PostToolUse cut down the same way share. The shim
+one whose input was too large to keep names its call by the fingerprint, which
+an ask and its PostToolUse cut down the same way share and a different huge
+call in the same session does not (two huge calls whose first 64 KiB are
+identical are one request). A PostToolUse cut down after an ask that arrived
+whole does not resolve it; the ask clears when the turn ends. The shim
 sends no `decide_ms` for such a record and prints nothing, so the agent's own
 prompt appears at once; `permission_facts` refuses it too. `python -m
 jrbar.hook_client` does not do this and still drops an oversize payload.

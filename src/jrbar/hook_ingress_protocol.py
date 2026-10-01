@@ -33,6 +33,11 @@ MAX_HOOK_LOG_PATH_BYTES: Final = 4096
 #: content does not. The daemon treats the record as the event it names, and
 #: never holds such an ask for a verdict: its input cannot be shown.
 PAYLOAD_TRUNCATED_FIELD: Final = "payload_truncated"
+#: On such a record whose ``tool_input`` was too large to keep: 16 lowercase hex
+#: digits, the 64-bit FNV-1a of the first 64 KiB of that input's JSON text. It
+#: tells two different huge calls in one session apart, and an ask and its
+#: PostToolUse, both cut down, agree on it.
+PAYLOAD_FINGERPRINT_FIELD: Final = "payload_fingerprint"
 
 _MAGIC: Final = b"JRBARHOOK\x01"
 _LENGTHS = struct.Struct("!II")
@@ -493,6 +498,7 @@ __all__ = [
     "MAX_HOOK_INGRESS_RESPONSE_BYTES",
     "MAX_HOOK_INGRESS_WIRE_BYTES",
     "MIN_HOOK_DECISION_WAIT_MS",
+    "PAYLOAD_FINGERPRINT_FIELD",
     "PAYLOAD_TRUNCATED_FIELD",
     "HookIngressDisposition",
     "HookIngressRequest",

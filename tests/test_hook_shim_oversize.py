@@ -54,6 +54,15 @@ def _compact(document: object) -> str:
     return json.dumps(document, separators=(",", ":"))
 
 
+def _fingerprint(tool_input: object) -> str:
+    """What the shim computes for a call whose input it could not keep: the
+    64-bit FNV-1a of the first 64 KiB of the input's JSON text, in 16 hex digits."""
+    value = 0xCBF29CE484222325
+    for byte in _compact(tool_input).encode()[: 64 * 1024]:
+        value = ((value ^ byte) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return f"{value:016x}"
+
+
 def _post_tool_use(**overrides: object) -> dict[str, object]:
     """Claude Code's PostToolUse for a screenshot tool: small input, giant response."""
     document: dict[str, object] = {
@@ -157,6 +166,8 @@ def test_a_large_write_permission_request_is_delivered_without_its_input_and_nev
         "session_id": "session-2",
         "tool_name": "Write",
         "transcript_path": TRANSCRIPT,
+        # What tells this call from another huge one in the same session.
+        "payload_fingerprint": _fingerprint({"file_path": "/Users/me/demo/big.txt", "content": "x" * (MIB + 10)}),
         "payload_truncated": True,
     }
 
@@ -201,7 +212,60 @@ def test_a_tool_input_too_large_to_name_the_call_is_left_out(shim: Path, sock_di
     record = json.loads(request.payload_text)
     assert "tool_input" not in record
     assert record["hook_event_name"] == "PostToolUse" and record["payload_truncated"] is True
+    assert record["payload_fingerprint"] == _fingerprint({"command": "echo " + "z" * (80 * 1024)})
     assert len(request.payload_text) < 4096
+
+
+def _write_ask_or_done(event: str, session: str, content: str, **extra: object) -> str:
+    document: dict[str, object] = {
+        "session_id": session,
+        "hook_event_name": event,
+        "tool_name": "Write",
+        "tool_input": {"file_path": "/Users/me/demo/big.txt", "content": content},
+    }
+    document.update(extra)
+    return _compact(document)
+
+
+def test_two_different_huge_calls_in_one_session_carry_different_fingerprints(shim: Path, sock_dir: Path) -> None:
+    """Without the input, two huge Writes in one session would be one request."""
+    first = _delivered(shim, sock_dir, "claude", _write_ask_or_done("PermissionRequest", "s", "a" * (MIB + 10)))
+    (sock_dir / "hook-ingress.sock").unlink()
+    second = _delivered(shim, sock_dir, "claude", _write_ask_or_done("PermissionRequest", "s", "b" * (MIB + 10)))
+    one = json.loads(first.payload_text)["payload_fingerprint"]
+    other = json.loads(second.payload_text)["payload_fingerprint"]
+    assert one != other
+    for fingerprint in (one, other):
+        assert len(fingerprint) == 16 and all(c in "0123456789abcdef" for c in fingerprint)
+
+
+def test_an_ask_and_its_post_tool_use_carry_the_same_fingerprint_whatever_follows_the_input(
+    shim: Path, sock_dir: Path
+) -> None:
+    """The same call, whose ask and result both went past the cap, names the
+    same request: the fingerprint is of the input alone, however far the event
+    around it ran and wherever the head ended."""
+    content = "c" * (MIB + 10)
+    ask = _delivered(shim, sock_dir, "claude", _write_ask_or_done("PermissionRequest", "s", content))
+    (sock_dir / "hook-ingress.sock").unlink()
+    done = _delivered(
+        shim,
+        sock_dir,
+        "claude",
+        _write_ask_or_done("PostToolUse", "s", content, tool_response={"type": "create", "filePath": "x"}),
+    )
+    assert json.loads(ask.payload_text)["payload_fingerprint"] == json.loads(done.payload_text)["payload_fingerprint"]
+
+
+def test_an_input_that_was_kept_needs_no_fingerprint_and_a_missing_one_gets_none(shim: Path, sock_dir: Path) -> None:
+    kept = _delivered(shim, sock_dir, "claude", _compact(_post_tool_use()))
+    assert "payload_fingerprint" not in json.loads(kept.payload_text)
+    (sock_dir / "hook-ingress.sock").unlink()
+    no_input = _compact(_post_tool_use(tool_input=None))
+    no_input = no_input.replace('"tool_input":null,', "")
+    assert "tool_input" not in no_input
+    record = json.loads(_delivered(shim, sock_dir, "claude", no_input).payload_text)
+    assert "tool_input" not in record and "payload_fingerprint" not in record
 
 
 def test_values_that_could_not_be_copied_safely_are_left_out(shim: Path, sock_dir: Path) -> None:

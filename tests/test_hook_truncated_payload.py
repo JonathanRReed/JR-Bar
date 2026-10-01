@@ -105,6 +105,55 @@ def test_an_oversize_ask_and_its_oversize_post_tool_use_name_the_same_request() 
     assert turn_a.request_facts[0].key != turn_b.request_facts[0].key
 
 
+FINGERPRINT_A = "0123456789abcdef"
+FINGERPRINT_B = "fedcba9876543210"
+
+
+def _huge(event: str, fingerprint: object, **fields: object) -> dict[str, object]:
+    return _truncated(event, tool_name="Write", tool_input=None, payload_fingerprint=fingerprint, **fields)
+
+
+def test_two_different_oversize_asks_in_one_session_are_two_requests() -> None:
+    """Two huge Writes with both asks live: one PostToolUse resolves its own
+    request only, and the other ask is still waiting."""
+    _, ask_a = _facts("claude", _huge("PermissionRequest", FINGERPRINT_A))
+    _, ask_b = _facts("claude", _huge("PermissionRequest", FINGERPRINT_B))
+    _, done_a = _facts("claude", _huge("PostToolUse", FINGERPRINT_A))
+    key_a, key_b = ask_a.request_facts[0].key, ask_b.request_facts[0].key
+    assert key_a != key_b
+    assert done_a.request_facts[0].key == key_a
+
+    state = empty_operator_state()
+    for number, batch in enumerate((ask_a, ask_b, done_a)):
+        state = reduce_operator_state(
+            state, batch, clock=ClockSample(batch.observed_at_epoch + number, 100.0 + number, BOOT)
+        ).state
+    phases = {request.key: request.phase for request in state.requests}
+    assert phases[key_a] is RequestPhase.RESOLVED
+    assert phases[key_b] is RequestPhase.LIVE_UNACKNOWLEDGED, "the second ask showed resolved while still waiting"
+
+
+def test_a_fingerprint_that_is_not_sixteen_lowercase_hex_digits_is_ignored() -> None:
+    _, plain = _facts("claude", _truncated("PermissionRequest", tool_name="Write", tool_input=None))
+    for bad in ("", "0123456789ABCDEF", "0123456789abcde", "0123456789abcdefg", "xyz", 12345, None, ["0123456789abcdef"]):
+        _, ask = _facts("claude", _huge("PermissionRequest", bad))
+        assert ask.request_facts[0].key == plain.request_facts[0].key, bad
+
+
+def test_two_oversize_post_tool_uses_in_the_same_second_are_not_one_event(tmp_path: Path) -> None:
+    log = tmp_path / "claude.jsonl"
+    stamp = "2026-01-01T00:00:00.000000Z"
+    outcomes = [
+        process_hook_payload("claude", log, json.dumps(_huge("PostToolUse", fingerprint)), refresh=False, logged_at=stamp)
+        for fingerprint in (FINGERPRINT_A, FINGERPRINT_B, FINGERPRINT_A)
+    ]
+    assert outcomes == [
+        HookProcessingOutcome.WRITTEN,
+        HookProcessingOutcome.WRITTEN,
+        HookProcessingOutcome.DUPLICATE,  # the same call twice is still one event
+    ]
+
+
 def test_a_cut_down_ask_is_not_the_same_request_as_one_that_kept_its_input() -> None:
     _, kept = _facts("claude", _truncated("PermissionRequest", tool_name="Write", tool_input=LARGE_INPUT))
     _, cut = _facts("claude", _truncated("PermissionRequest", tool_name="Write", tool_input=None))
