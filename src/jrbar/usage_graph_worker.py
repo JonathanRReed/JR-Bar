@@ -37,7 +37,7 @@ from .usage_heatmap import build_usage_heatmap
 #: unchanged, so a cached reply is identical to a fresh scan, not an
 #: approximation of one.
 _USAGE_DOC_CACHE_NAME = "usage-graph-doc-cache.json"
-_USAGE_DOC_CACHE_VERSION = 2
+_USAGE_DOC_CACHE_VERSION = 3
 _USAGE_DOC_CACHE_MAX_BYTES = 8 * 1024 * 1024
 _USAGE_DOC_CACHE_SLOTS = 12
 
@@ -455,6 +455,9 @@ def _build_payload(
             counts = extra_sessions.setdefault("antigravity", {})
             for day, sessions in activity_days.items():
                 counts[day] = max(counts.get(day, 0), len(sessions))
+    #: Tokens, per model name, that the cost graph could not price. Only the
+    #: cost graph draws dollars, so only it says what they leave out.
+    unpriced: dict[str, int] | None = {} if mode == "cost" else None
     if mode == "percent":
         model = usage_percent_history.shared_percent_graph_model(
             days=days,
@@ -473,6 +476,7 @@ def _build_payload(
             provider_ids=provider_ids,
             extra_sessions=extra_sessions,
             ledger_first_day=ledger_first_day,
+            unpriced=unpriced,
         )
     heatmap = model["heatmap"]
     if mode == "cost":
@@ -520,8 +524,29 @@ def _build_payload(
     if partial:
         summary += " · Partial local history: " + ", ".join(partial)
     if mode == "cost":
+        if unpriced:
+            summary += f" · {_unpriced_note(unpriced)}"
         summary += f" · {API_EQUIVALENT_COST_DISCLOSURE}"
     return model, summary
+
+
+def _unpriced_note(unpriced: dict[str, int]) -> str:
+    """"No price for a, b and 2 more": the models whose cost the graph leaves out.
+
+    Their tokens are counted everywhere else; only the dollars are missing,
+    and a missing price is never drawn as $0. Names come from files on this
+    Mac, so each is cut short and stripped of anything unprintable.
+    """
+    ranked = sorted(unpriced.items(), key=lambda item: (-item[1], item[0]))
+    names = [
+        "".join(char for char in name if char.isprintable())[:40] or "unnamed model"
+        for name, _tokens in ranked
+    ]
+    shown = names[:3]
+    note = "No price for " + ", ".join(shown)
+    if len(names) > len(shown):
+        note += f" and {len(names) - len(shown)} more"
+    return note + " (tokens counted, cost left out)"
 
 
 _VALID_DOCUMENT_DAYS = (7, 30, 90, 365)

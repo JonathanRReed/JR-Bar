@@ -393,10 +393,15 @@ _PROVIDER_CAPACITY_POLICIES = (
         CapacityPolicyState.DETAIL_ONLY,
         _source("anthropic", "usage-api", "organization"),
     ),
+    # OFFICIAL_API, not OFFICIAL_LOCAL: the Code Assist quota is read from
+    # Google's own endpoint with the person's OAuth token (which is itself
+    # refreshed over the network), so it is opt-in like the other API reads.
+    # Nothing registers this source yet; the declaration is what keeps it
+    # from being mistaken for a local read when something does.
     ProviderCapacityPolicy(
         "google-gemini-code-assist",
         "google",
-        CapacityEvidenceClass.OFFICIAL_LOCAL,
+        CapacityEvidenceClass.OFFICIAL_API,
         ("google-ai", "code-assist", "gemini-enterprise"),
         (
             _lane(
@@ -414,7 +419,7 @@ _PROVIDER_CAPACITY_POLICIES = (
                 bindable=True,
             ),
         ),
-        False,
+        True,
         CapacityPolicyState.OBSERVABLE,
         _source("google", "quota", "gemini-plan"),
     ),

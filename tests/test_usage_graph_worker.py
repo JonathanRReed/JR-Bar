@@ -1151,11 +1151,13 @@ def test_a_failing_first_event_lookup_leaves_counts_intact_and_adds_no_gaps(
     assert "Devin 1 session-days" in summary
 
 
-def test_the_document_cache_is_keyed_to_the_gap_days_semantics():
-    # Documents cached before gap days existed are zero-filled; the version
-    # is part of the cache key, so they are rebuilt rather than served.
-    assert usage_graph_worker._USAGE_DOC_CACHE_VERSION == 2
+def test_the_document_cache_is_keyed_to_the_gap_days_and_pricing_semantics():
+    # Documents cached before gap days existed are zero-filled, and cost
+    # documents cached before records were priced by their model's maker
+    # leave GPT and Gemini models at no cost; the version is part of the
+    # cache key, so they are rebuilt rather than served.
+    assert usage_graph_worker._USAGE_DOC_CACHE_VERSION == 3
     snapshot = usage_graph_worker._settings_snapshot(
         make_target(mode="sessions", providers=("devin",)).settings
     )
-    assert usage_graph_worker._usage_doc_cache_meta(snapshot, None)["v"] == 2
+    assert usage_graph_worker._usage_doc_cache_meta(snapshot, None)["v"] == 3

@@ -6,6 +6,20 @@ each provider is read in detail is in
 sources you can turn on or tune yourself, and the rules that keep the
 numbers honest.
 
+## How a refresh runs
+
+JR-Bar asks up to four providers at a time, so one slow provider never holds
+up the others. A refresh that finishes in a second or two shows all its
+answers at once. A slower one shows the providers that have answered after
+about a second and a half, and each of the others as it lands; a provider
+still being asked keeps the reading it had until its answer arrives.
+
+Each provider has 75 seconds to answer. A provider that does not is given up
+on for that refresh only: its card keeps its last good reading, marked stale,
+with "response timed out" as the reason, and JR-Bar asks again later on the
+same backoff as any other failure. A provider that fails or is rate limited
+backs off alone, too.
+
 ## OpenCode and OpenCode Go
 
 OpenCode itself reports no quota. Its card shows token totals from
@@ -160,6 +174,14 @@ A key matches when it appears inside the model name, and the longest key
 wins. An override always beats the snapshot. A model neither knows stays
 unpriced, never $0.
 
+Each record is priced by the model it ran, not by the agent that wrote it.
+Pi, OpenClaw and OpenCode run models from several makers, so a GPT model
+takes OpenAI's prices, a Gemini model Google's, and a Claude model
+Anthropic's, whichever agent ran it. The Gemini CLI uses Google's and Codex
+OpenAI's. When the cost graph meets a model with no price, its summary line
+says "No price for" and names it: those tokens are still counted, and only
+their dollars are left out.
+
 ## Reset credits
 
 Some providers give an account a few credits that reset a limit early.
@@ -191,6 +213,27 @@ A reset is celebrated, sent to the app, and passed to
 A reset waiting for its second read survives a restart. The celebration,
 the `quota_reset` event and the hooks share one `event_id`, so one reset
 is never announced twice.
+
+## When Claude's usage read is refused
+
+Claude's usage endpoint answers three kinds of "no", and the card tells
+them apart:
+
+- **Rate limited** (a 429): wait. JR-Bar backs off and asks again later.
+- **Signed out** (a 401): the sign-in is not accepted any more. The card
+  says "Reconnect Claude · authentication required".
+- **No usage permission** (a 403 that carries Claude's own error
+  message): the sign-in is known, but it was not granted the permission
+  that reading usage needs, for example a token made for running prompts
+  only. The card says "Reconnect Claude · usage permission missing".
+  Asking again with the same token gets the same answer, so JR-Bar waits
+  until the sign-in changes, and signing in to Claude again is the fix.
+
+A 403 whose body is not Claude's own error, such as a web page from a proxy
+or a network filter, is not Claude refusing the sign-in, so it is treated
+like any other failure. So is every other answer that is not a success, a
+401, a 403 or a 429, and so is a network failure: the card says "network
+unavailable" and JR-Bar asks again on a timer.
 
 ## Two more sources
 

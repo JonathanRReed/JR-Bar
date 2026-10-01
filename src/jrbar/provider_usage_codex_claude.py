@@ -719,6 +719,7 @@ def _with_local_usage(
 _OAUTH_REST_SECONDS = {
     "rate_limited": 600.0,
     "authentication_required": 1800.0,
+    "usage_permission_missing": 1800.0,
     "usage_connection_required": 1800.0,
     "network_unavailable": 120.0,
     "invalid_provider_response": 300.0,
@@ -892,6 +893,14 @@ def _collect_claude_oauth(
         if "unauthorized" in reason or "needs_sign_in" in reason:
             state = ProviderSourceState.NEEDS_SIGN_IN
             reason_code = "authentication_required"
+            action = "Reconnect Claude"
+        elif "forbidden" in reason:
+            # The token is known but may not read usage (it lacks the profile
+            # scope): signing in again is the fix, and the same token asked
+            # again would get the same answer, so this is a sign-in state
+            # (it waits for a changed credential), never "network unavailable".
+            state = ProviderSourceState.NEEDS_SIGN_IN
+            reason_code = "usage_permission_missing"
             action = "Reconnect Claude"
         elif "rate_limit" in reason:
             state = ProviderSourceState.RATE_LIMITED

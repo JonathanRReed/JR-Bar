@@ -179,9 +179,10 @@ GPT_MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
 # against ai.google.dev/gemini-api/docs/pricing: Gemini 3.1 Pro $2/$12
 # (<=200K); Gemini 3.6-3.8 Flash $0.75/$3.75 introductory through
 # 2026-12-31 (then $1.50/$7.50); Gemini 3 Flash $0.50/$3; 3.1 Flash-Lite
-# $0.25/$1.50; cache reads 0.1x input. The Gemini CLI keeps no local
-# transcript this scanner reads, so these only ever price a
-# usage_history quote, never a token row.
+# $0.25/$1.50; cache reads 0.1x input. The Gemini CLI's session files are
+# read by local_token_history, and so are the Gemini models that Pi,
+# OpenClaw and OpenCode run: this table prices those records in the graph
+# (rates_for_record) as well as a usage_history quote.
 GEMINI_MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
     ("3.1-flash-lite", 0.25, 1.50),
     ("flash-lite", 0.10, 0.40),
@@ -593,6 +594,58 @@ def _gemini_pricing_for_model(model: str) -> tuple[float, float] | None:
         if marker in lowered:
             return input_rate, output_rate
     return None
+
+
+#: How a record's cache writes are billed. Anthropic charges 1.25x the input
+#: rate for them; OpenAI and Google bill them at the plain input rate.
+_PLAIN_CACHE_WRITE = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class RecordRates:
+    """Dollars per million tokens for one record, and how its cache writes bill."""
+
+    input_rate: float
+    output_rate: float
+    #: The default cache-write multiplier; a person's override can still win.
+    cache_write_rate: float
+
+
+def rates_for_record(provider: str, model: str) -> RecordRates | None:
+    """The rates a record is priced at, by the model it ran; None when unpriced.
+
+    Codex and the Gemini CLI run one maker's models, so their own table
+    prices them, and Claude prices from Anthropic's. Every other agent (Pi,
+    OpenClaw, OpenCode, T3 Code) runs whatever model the person chose, so
+    the model's name decides: a GPT or Codex name takes OpenAI's table, a
+    Gemini name Google's, and anything else Anthropic's, which prices only
+    names it recognises. A model no table recognises is None, never $0.
+    """
+    lowered = str(model or "").lower()
+    if provider == "codex":
+        family = "openai"
+    elif provider == "gemini":
+        family = "google"
+    elif provider == "claude":
+        family = "anthropic"
+    elif "gpt" in lowered or "codex" in lowered:
+        family = "openai"
+    elif "gemini" in lowered:
+        family = "google"
+    else:
+        family = "anthropic"
+    if family == "openai":
+        rates = _gpt_pricing_for_model(model)
+        write = _PLAIN_CACHE_WRITE
+    elif family == "google":
+        rates = _gemini_pricing_for_model(model)
+        write = _PLAIN_CACHE_WRITE
+    else:
+        rates = _pricing_for_model(model)
+        write = CACHE_WRITE_RATE
+    if rates is None:
+        return None
+    return RecordRates(rates[0], rates[1], write)
 
 
 def _record_model_key(model: str) -> str:
@@ -2977,7 +3030,13 @@ def usage_summary_line(
         return None
     plural = "session" if count == 1 else "sessions"
     parts = [f"{count} {plural}"]
-    claude_tokens = totals.input_tokens + totals.cached_input_tokens + totals.output_tokens
+    # The same four counts the heatmap and the Codex totals add up.
+    claude_tokens = (
+        totals.input_tokens
+        + totals.cached_input_tokens
+        + totals.cache_creation_tokens
+        + totals.output_tokens
+    )
     if mode == "sessions":
         pass
     elif mode == "cost":
@@ -3034,11 +3093,22 @@ def nice_usage_scale(maximum: float) -> float:
     return 10.0 * magnitude
 
 
-def daily_buckets(records, days: int = 7, *, now: datetime | None = None):
+def daily_buckets(
+    records,
+    days: int = 7,
+    *,
+    now: datetime | None = None,
+    unpriced: dict[str, int] | None = None,
+):
     """Per local-calendar-day totals for the last N days:
     {day_iso: {"claude_cost": float, "codex_tokens": int, "sessions": int}}.
     Day keys come from each record's own timestamp converted to LOCAL
-    time (the CodexBar rule: a 23:30 UTC session lands in YOUR day)."""
+    time (the CodexBar rule: a 23:30 UTC session lands in YOUR day).
+
+    Each record is priced by the model it ran (``rates_for_record``). With
+    ``unpriced`` given, it is filled with the tokens, per model name, of the
+    records in the window that no table could price, so a caller can say
+    what the dollar figures leave out."""
     current = now or datetime.now()
     day_keys = [(current - timedelta(days=offset)).date().isoformat() for offset in range(days - 1, -1, -1)]
     buckets = {
@@ -3064,38 +3134,30 @@ def daily_buckets(records, days: int = 7, *, now: datetime | None = None):
             provider,
             {"tokens": 0, "cost": 0.0, "sessions": set()},
         )
-        provider_bucket["tokens"] += inp + cached_in + cache_create + out
+        record_tokens = inp + cached_in + cache_create + out
+        provider_bucket["tokens"] += record_tokens
         provider_bucket["sessions"].add(session)
         if provider == "codex":
-            bucket["codex_tokens"] += inp + cached_in + cache_create + out
-            # Codex cost was skipped by code choice while the records
-            # carried model + token splits the whole time (owner
-            # decision 2026-08-26: price it). No cache-write premium --
-            # OpenAI bills cache writes at the plain input rate.
-            gpt_pricing = _gpt_pricing_for_model(model)
-            if gpt_pricing is None:
-                continue
-            input_rate, output_rate = gpt_pricing
-            provider_bucket["cost"] += (
-                inp * input_rate
-                + cached_in * input_rate * cache_read_rate_for_model(model)
-                + cache_create * input_rate
-                + out * output_rate
-            ) / 1_000_000.0
-        else:
-            pricing = _pricing_for_model(model)
-            if pricing is None:
-                continue
-            input_rate, output_rate = pricing
-            cost = (
-                inp * input_rate
-                + cached_in * input_rate * cache_read_rate_for_model(model)
-                + cache_create * input_rate * cache_write_rate_for_model(model)
-                + out * output_rate
-            ) / 1_000_000.0
-            provider_bucket["cost"] += cost
-            if provider == "claude":
-                bucket["claude_cost"] += cost
+            bucket["codex_tokens"] += record_tokens
+        rates = rates_for_record(provider, model)
+        if rates is None:
+            if unpriced is not None and record_tokens > 0:
+                name = str(model or provider)
+                unpriced[name] = unpriced.get(name, 0) + record_tokens
+            continue
+        # Codex cost was skipped by code choice while the records carried
+        # model + token splits the whole time (owner decision 2026-08-26:
+        # price it). OpenAI and Google bill cache writes at the plain input
+        # rate, Anthropic at a premium; the person's own override still wins.
+        cost = (
+            inp * rates.input_rate
+            + cached_in * rates.input_rate * cache_read_rate_for_model(model)
+            + cache_create * rates.input_rate * cache_write_rate_for_model(model, rates.cache_write_rate)
+            + out * rates.output_rate
+        ) / 1_000_000.0
+        provider_bucket["cost"] += cost
+        if provider == "claude":
+            bucket["claude_cost"] += cost
     for bucket in buckets.values():
         bucket["sessions"] = len(bucket["sessions"])
         for provider_bucket in bucket["providers"].values():
@@ -3112,6 +3174,7 @@ def usage_graph_model(
     now: datetime | None = None,
     extra_sessions: dict[str, dict[str, int]] | None = None,
     ledger_first_day: dict[str, str] | None = None,
+    unpriced: dict[str, int] | None = None,
 ) -> dict:
     """Build one shared-axis, range-consistent graph projection.
 
@@ -3134,7 +3197,7 @@ def usage_graph_model(
         or not all(type(value) is str and value for value in provider_ids)
     ):
         raise ValueError("usage providers must be a nonempty unique tuple")
-    buckets = daily_buckets(records, days=days, now=now)
+    buckets = daily_buckets(records, days=days, now=now, unpriced=unpriced)
     if metric == "sessions" and extra_sessions:
         # Ledger-derived sessions for providers with no local
         # transcripts (grok, devin, any hook-emitting provider) --

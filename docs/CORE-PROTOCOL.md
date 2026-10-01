@@ -432,6 +432,22 @@ Vocabulary:
   daemon that could not say falls back to `observed_at`). An app reads "read
   N ago" from `read_at`, and treats a missing key (an older daemon) as
   `observed_at`.
+- `usage.refreshing` (2026-10-01) is true while a refresh is still asking
+  providers. A refresh asks up to four at a time, each under a 75 second
+  deadline, so one slow provider no longer holds up the rest. While it waits,
+  `usage` can arrive more than once with `refreshing: true`: a provider that
+  has answered carries its new reading, and one still being asked keeps the
+  reading it had (never a gap). The last `usage` of a refresh has
+  `refreshing: false`. A provider that has not answered by its deadline is
+  given up on for that refresh only: `state` `unavailable`, `reason`
+  `response_timed_out`, its last good reading kept as `stale`. Two reasons are
+  new: `response_timed_out`, and `usage_permission_missing` (`action` "Reconnect
+  Claude"), which is Claude's usage endpoint refusing a sign-in that lacks the
+  usage permission (an HTTP 403 whose body is the API's JSON error). Like any
+  failure it reads `needs_sign_in` for a provider with no earlier reading, and
+  `stale` carrying that same `reason` and `action` for one that has a last
+  good reading. Every other status, a 403 with a non-JSON body (a proxy's
+  page) and a network failure still read `network_unavailable`.
 - `usage.providers[].incident` is the provider's status-feed incident as
   one line (`"Anthropic: Elevated errors"`), or null. It is an outage on
   the vendor's side, never a quota verdict. It is null the moment the feed

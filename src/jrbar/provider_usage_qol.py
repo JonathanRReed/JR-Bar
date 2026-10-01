@@ -527,20 +527,6 @@ def threshold_crossings(
     return tuple(crossings)
 
 
-#: Eight meter cells, one per LED -- the meter speaks the strip's own
-#: language (codebar/t3code-style at-a-glance limits).
-METER_CELLS = 8
-
-
-def format_lane_meter(remaining: float) -> str:
-    filled = int(round(max(0.0, min(100.0, float(remaining))) / 100.0 * METER_CELLS))
-    if filled == 0 and remaining > 0.0:
-        # A nearly-exhausted lane still shows one lit cell: "almost out"
-        # and "out" must not render identically.
-        filled = 1
-    return "▰" * filled + "▱" * (METER_CELLS - filled)
-
-
 def format_reset_countdown(reset_at: float | None, *, now: float) -> str:
     if (
         reset_at is None
@@ -618,7 +604,6 @@ __all__ = [
     "UsageTotals",
     "confirm_reset_events",
     "detect_reset_events",
-    "format_lane_meter",
     "format_reset_countdown",
     "reset_confirm_deadline",
     "threshold_crossings",
