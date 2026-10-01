@@ -711,10 +711,13 @@ final class UsageCenterStore {
     /// clicked: the daemon's own sentence, kept long enough to read and to
     /// act on (the banner clears after four seconds).
     struct SignInNote: Equatable {
+        /// How the sentence reads: a thing that is done, something left for
+        /// the person (finish the sign-in in the terminal that opened, read
+        /// the advice), or plain information (a staged action's own words).
+        enum Tone: Equatable { case done, todo, info }
         let text: String
-        /// True when something is left for the person to do (finish the
-        /// sign-in in the terminal that opened, read the advice).
-        let needsPerson: Bool
+        let tone: Tone
+        var needsPerson: Bool { tone == .todo }
     }
     private(set) var signInNotes: [String: SignInNote] = [:]
     @ObservationIgnored private var signInNoteClear: [String: DispatchWorkItem] = [:]
@@ -729,10 +732,8 @@ final class UsageCenterStore {
     /// or a plain fallback if it sent none.
     nonisolated static func signInNote(for result: ProviderSignInResult) -> SignInNote {
         let words = result.message.trimmingCharacters(in: .whitespacesAndNewlines)
-        return SignInNote(
-            text: words.isEmpty ? "Checked \(result.provider)'s sign-in." : words,
-            needsPerson: result.outcome.needsPerson
-        )
+        let tone: SignInNote.Tone = result.outcome == .staged ? .info : (result.outcome.needsPerson ? .todo : .done)
+        return SignInNote(text: words.isEmpty ? "Checked \(result.provider)'s sign-in." : words, tone: tone)
     }
 
     /// "Fix sign-in": asks the daemon to do the best automatic thing for
@@ -760,7 +761,7 @@ final class UsageCenterStore {
                 }
                 self.loadProviderRows()
             } catch {
-                self.note(signIn: SignInNote(text: Self.describe(error), needsPerson: true), for: provider.identity)
+                self.note(signIn: SignInNote(text: Self.describe(error), tone: .todo), for: provider.identity)
             }
         }
     }

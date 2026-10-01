@@ -67,6 +67,11 @@ struct SignInUpdateRenderProofTests {
         let claude = CoreProviderUsage(id: "claude", state: "stale", action: "Reconnect Claude", reason: "authentication_required")
         let grok = CoreProviderUsage(id: "grok", state: "needs_sign_in", action: "Run grok login", reason: "authentication_required")
         let codex = CoreProviderUsage(id: "codex", state: "stale", action: "Retry", reason: "local_reading_stale")
+        let devin = CoreProviderUsage(id: "devin", state: "needs_sign_in", action: "Reconnect Devin", reason: "authentication_required")
+        let staged = ProviderSignInResult(
+            provider: "devin", outcome: .staged,
+            message: "The stored Devin session was rejected and has been cleared. Copy a fresh API key (page opened), then click 'Import Devin browser session'.",
+            signInURL: "https://app.devin.ai/settings/api-keys")
         let renewed = ProviderSignInResult(provider: "claude", outcome: .renewed,
                                            message: "Claude Code renewed its sign-in, so Claude usage is refreshing now.")
         let opened = ProviderSignInResult(
@@ -85,13 +90,18 @@ struct SignInUpdateRenderProofTests {
                 SignInNoteLine(note: UsageCenterStore.signInNote(for: opened))
             }
             VStack(alignment: .leading, spacing: 8) {
+                Text("Devin · token rejected (the card's own staged action)").font(.headline)
+                HStack(spacing: 10) { ProviderFixControls(provider: devin, store: store); Spacer() }
+                SignInNoteLine(note: UsageCenterStore.signInNote(for: staged))
+            }
+            VStack(alignment: .leading, spacing: 8) {
                 Text("Codex · stale for another reason (no Fix sign-in)").font(.headline)
                 HStack(spacing: 10) { ProviderFixControls(provider: codex, store: store); Spacer() }
             }
         }
         .padding(20)
         .frame(width: 560, alignment: .leading)
-        try Self.write("fix-controls", size: CGSize(width: 560, height: 300), view)
+        try Self.write("fix-controls", size: CGSize(width: 560, height: 400), view)
     }
 
     @Test(.enabled(if: WindowsRenderProofTests.enabled))

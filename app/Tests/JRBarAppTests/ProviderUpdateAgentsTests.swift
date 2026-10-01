@@ -159,6 +159,11 @@ import Testing
         let renewed = ProviderSignInResult(provider: "claude", outcome: .renewed,
                                            message: "Claude Code renewed its sign-in, so Claude usage is refreshing now.")
         #expect(!UsageCenterStore.signInNote(for: renewed).needsPerson)
+        #expect(UsageCenterStore.signInNote(for: renewed).tone == .done)
+        #expect(note.tone == .todo)
+        let staged = ProviderSignInResult(provider: "devin", outcome: .staged,
+                                          message: "The stored Devin session was rejected and has been cleared.")
+        #expect(UsageCenterStore.signInNote(for: staged).tone == .info, "a staged action's words are information")
         #expect(UsageCenterStore.signInNote(for: ProviderSignInResult(provider: "codex", outcome: .alreadyOK, message: "  ")).text
                 == "Checked codex's sign-in.")
     }
@@ -182,12 +187,42 @@ import Testing
         #expect(view.contains("accessibilityLabel(store.isFixingSignIn(provider)"))
     }
 
+    /// A Devin or Cursor 401 or 403 is needs_sign_in + authentication_required + "Reconnect Devin" (or Cursor). The
+    /// old button ran the staged flow that clears the rejected token and re-reads the browser session; the card now
+    /// has Fix sign-in instead, which asks the daemon for that same flow. It must stay a working button.
+    @Test func aRejectedDevinOrCursorCardStillGetsAWorkingButton() throws {
+        let devin = CoreProviderUsage(id: "devin", state: "needs_sign_in", action: "Reconnect Devin",
+                                      reason: "authentication_required")
+        let cursor = CoreProviderUsage(id: "cursor", state: "needs_sign_in", action: "Reconnect Cursor",
+                                       reason: "authentication_required")
+        #expect(devin.offersSignInFix)
+        #expect(cursor.offersSignInFix)
+
+        let view = try source("UsageCenterView.swift")
+        // The controls draw the button first and unconditionally for such a card; the daemon's label is
+        // only words beside it, never the only thing a card with that label gets.
+        let controls = try #require(view.range(of: "struct ProviderFixControls"))
+        let rest = String(view[controls.upperBound...])
+        let button = try #require(rest.range(of: "FixSignInButton(provider: provider, store: store)"))
+        let words = try #require(rest.range(of: "Text(action)"))
+        #expect(button.lowerBound < words.lowerBound)
+        #expect(!view.contains("if provider.offersSignInFix, provider.action == nil"))
+
+        // A staged outcome's token page is opened for the person, as the daemon returns it.
+        let store = try source("UsageCenterStore.swift")
+        #expect(store.contains("if let urlString = result.signInURL, let url = URL(string: urlString)"))
+        #expect(store.contains("NSWorkspace.shared.open(url)"))
+        // And the daemon is asked for it with the provider and instance only, never the label.
+        #expect(CoreModel.signInArgs(provider: "devin") == ["provider": .string("devin")])
+    }
+
     @Test func theHelpNamesOnlyWhatTheDaemonDoesForEachProvider() {
         #expect(FixSignInButton.help(for: "claude").contains("renew its own sign-in"))
         #expect(FixSignInButton.help(for: "grok").contains("grok login"))
         #expect(FixSignInButton.help(for: "codex").contains("codex login"))
         #expect(FixSignInButton.help(for: "opencode").contains("opencode providers login"))
-        #expect(FixSignInButton.help(for: "devin").contains("app.devin.ai"))
+        #expect(FixSignInButton.help(for: "devin").contains("rejected"))
+        #expect(FixSignInButton.help(for: "cursor").contains("rejected"))
         #expect(!FixSignInButton.help(for: "cursor").isEmpty)
     }
 }

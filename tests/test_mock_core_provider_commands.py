@@ -68,7 +68,7 @@ def test_fix_sign_in_answers_in_the_documented_shape(world) -> None:
     }
     assert call(world, "provider_sign_in", {"provider": "claude"})["result"]["outcome"] == "renewed"
     devin = call(world, "provider_sign_in", {"provider": "devin"})["result"]
-    assert (devin["outcome"], devin["sign_in_url"]) == ("unavailable", "https://app.devin.ai")
+    assert (devin["outcome"], devin["sign_in_url"]) == ("staged", "https://app.devin.ai/settings/api-keys")
     assert call(world, "provider_sign_in", {"provider": "nonsense"})["error"]["code"] == "unknown_provider"
     assert call(world, "provider_sign_in", {})["error"]["code"] == "invalid_args"
 
@@ -89,6 +89,16 @@ def test_an_update_returns_at_once_and_lands_in_the_state(world, timers) -> None
     assert (record["phase"], record["from_version"], record["to_version"]) == ("updated", "2.1.285", "2.1.290")
     assert record["message"] == "Updated 2.1.285 to 2.1.290"
     assert record["finished_at"] is not None
+
+
+def test_devins_updater_is_opened_in_a_terminal_not_run(world, timers) -> None:
+    reply = call(world, "provider_update", {"provider": "devin"})
+
+    assert reply["result"]["started"] is True
+    record = world.state()["provider_updates"]["devin"]
+    assert record["phase"] == "needs_terminal"
+    assert "opened Ghostty on `devin update`" in record["message"]
+    assert timers == [], "nothing pretends to finish"
 
 
 def test_gemini_has_no_updater_and_an_unknown_provider_is_refused(world, timers) -> None:

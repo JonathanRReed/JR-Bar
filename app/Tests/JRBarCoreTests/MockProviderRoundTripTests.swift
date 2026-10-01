@@ -30,8 +30,8 @@ struct MockProviderRoundTripTests {
         #expect(claude.command == nil)
 
         let devin = try await model.signInProvider("devin")
-        #expect(devin.outcome == .unavailable)
-        #expect(devin.signInURL == "https://app.devin.ai")
+        #expect(devin.outcome == .staged)
+        #expect(devin.signInURL == "https://app.devin.ai/settings/api-keys")
 
         await #expect(throws: CoreReplyError.self) { _ = try await model.signInProvider("nonsense") }
     }

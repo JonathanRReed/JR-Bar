@@ -2326,8 +2326,11 @@ class World:
                   "Opened Ghostty on `codex login`: finish signing in there, JR-Bar notices on its own.", None),
         "opencode": ("opened_terminal", "opencode providers login",
                      "Opened Ghostty on `opencode providers login`: finish signing in there, then refresh this card.", None),
-        "devin": ("unavailable", None, "Devin's sign-in lives in your browser session. Sign in at app.devin.ai.",
-                  "https://app.devin.ai"),
+        # The staged action behind "Reconnect Devin": the rejected token is cleared and the
+        # token page comes back for the app to open.
+        "devin": ("staged", None, "The stored Devin session was rejected and has been cleared. Copy a fresh API key "
+                  "(page opened), then click 'Import Devin browser session'.",
+                  "https://app.devin.ai/settings/api-keys"),
         "gemini": ("unavailable", None, "Gemini's sign-in belongs to the gemini CLI. Run `gemini` once in a terminal.", None),
     }
     UPDATABLE = ("claude", "codex", "grok", "devin", "opencode")
@@ -3078,6 +3081,17 @@ class World:
             if provider not in self.UPDATABLE:
                 message = self.GEMINI_ADVICE if provider == "gemini" else f"JR-Bar has no updater to run for {provider}."
                 result = {"provider": provider, "started": False, "reason": "no_updater", "message": message}
+            elif provider == "devin":
+                # `devin update` asks before it installs, so the daemon opens the terminal on it
+                # rather than running it blind.
+                with self.lock:
+                    self.provider_updates[provider] = {
+                        "phase": "needs_terminal", "from_version": "3000.3.27", "to_version": None,
+                        "latest_version": None, "finished_at": time.time(),
+                        "message": "Devin's updater needs a terminal: opened Ghostty on `devin update`. "
+                                   "Finish the update there."}
+                self.push_state()
+                result = {"provider": provider, "started": True, "reason": None, "message": "Updating Devin…"}
             elif self.provider_updates.get(provider, {}).get("phase") == "running":
                 result = {"provider": provider, "started": False, "reason": "busy",
                           "message": f"An update for {provider} is already running."}

@@ -995,7 +995,9 @@ struct FixSignInButton: View {
         case "opencode":
             return "Opens your terminal on `opencode providers login` when the card says signed out"
         case "devin":
-            return "Imports your browser session again, or opens app.devin.ai"
+            return "Clears the rejected session, imports your browser session again, or opens the token page"
+        case "cursor":
+            return "Clears the rejected token and opens Cursor's settings page"
         default:
             return "Re-checks this provider's sign-in and says what to do next"
         }
@@ -1008,9 +1010,9 @@ struct SignInNoteLine: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: note.needsPerson ? "arrow.up.forward.app" : "checkmark.circle")
+            Image(systemName: Self.symbol(note.tone))
                 .font(.caption)
-                .foregroundStyle(note.needsPerson ? Color.orange : Color.green)
+                .foregroundStyle(Self.tint(note.tone))
                 .accessibilityHidden(true)
             Text(note.text)
                 .font(.caption)
@@ -1018,6 +1020,22 @@ struct SignInNoteLine: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    static func symbol(_ tone: UsageCenterStore.SignInNote.Tone) -> String {
+        switch tone {
+        case .done: return "checkmark.circle"
+        case .todo: return "arrow.up.forward.app"
+        case .info: return "info.circle"
+        }
+    }
+
+    static func tint(_ tone: UsageCenterStore.SignInNote.Tone) -> Color {
+        switch tone {
+        case .done: return .green
+        case .todo: return .orange
+        case .info: return .secondary
+        }
     }
 }
 

@@ -2481,6 +2481,11 @@ public enum ProviderSignInOutcome: String, Codable, Hashable, Sendable {
     case openedTerminal = "opened_terminal"
     /// The sign-in was already current; the card refreshes.
     case alreadyOK = "already_ok"
+    /// The card's own staged action ran (Devin's rejected token cleared and
+    /// its browser session read again, a token page named, where Gemini signs
+    /// in): `message` says what it did or what to do next, and `signInURL`
+    /// is the token page to open.
+    case staged
     /// Nothing JR-Bar can do; `message` is the advice.
     case unavailable
     /// The renewal timed out, or the terminal could not be opened.
@@ -2490,7 +2495,9 @@ public enum ProviderSignInOutcome: String, Codable, Hashable, Sendable {
         self = wire.flatMap(ProviderSignInOutcome.init(rawValue:)) ?? .unavailable
     }
 
-    /// Whether the person has something left to do themselves.
+    /// Whether the person has something left to do themselves. A staged
+    /// action's sentence may be either a result or a next step, so it is
+    /// neither: it is shown as information.
     public var needsPerson: Bool { self == .openedTerminal || self == .unavailable || self == .failed }
 }
 

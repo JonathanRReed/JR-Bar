@@ -115,6 +115,14 @@ struct ProviderSignInUpdateCodecTests {
         #expect(strange.outcome == .unavailable)
         #expect(ProviderSignInResult(nil, provider: "codex").message == "")
         #expect(ProviderSignInResult(.object(["outcome": .string("already_ok")]), provider: "x").outcome == .alreadyOK)
+        // A staged action's sentence is information, and the token page it names rides along to be opened.
+        let staged = ProviderSignInResult(
+            .object(["outcome": .string("staged"), "message": .string("The stored Devin session was rejected and has been cleared."),
+                     "sign_in_url": .string("https://app.devin.ai/settings/api-keys")]),
+            provider: "devin")
+        #expect(staged.outcome == .staged)
+        #expect(!staged.outcome.needsPerson)
+        #expect(staged.signInURL == "https://app.devin.ai/settings/api-keys")
         #expect(!ProviderSignInOutcome.alreadyOK.needsPerson)
         #expect(ProviderSignInOutcome.failed.needsPerson)
     }
