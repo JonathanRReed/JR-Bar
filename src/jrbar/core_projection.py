@@ -588,14 +588,18 @@ def aggregate_counts(
     """
 
     mains = [row for row in sessions if str(row.get("kind") or "main") == "main"]
-    listed_ids = {str(row.get("id") or "") for row in mains}
+    listed_ids = {str(row.get("id") or "") for row in sessions}
+    main_ids = {str(row.get("id") or "") for row in mains}
     working_values = {mode.value for mode in _WORKING_MODES}
     return {
+        # An ask counts for whichever listed session it names. A worker's ask
+        # is in ``asks`` only while worker asks are on, and then it is as
+        # real as a main session's: the panel gives it a row of its own.
         "needs_you": sum(1 for ask in asks if str(ask.get("session") or "") in listed_ids),
         "active": sum(
             1 for row in mains if row.get("mode") in working_values and not row.get("stale")
         ),
-        "ready": sum(1 for identifier in set(ready_ids) if identifier in listed_ids),
+        "ready": sum(1 for identifier in set(ready_ids) if identifier in main_ids),
         "failed": sum(
             1 for row in mains if row.get("lifecycle") == "failed" and not row.get("stale")
         ),

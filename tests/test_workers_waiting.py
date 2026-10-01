@@ -1,9 +1,12 @@
-"""A quiet sub-agent is counted on its parent row.
+"""A quiet sub-agent is counted on its parent row, and a worker's ask is a real
+ask when worker asks are on.
 
 ``sessions[].workers_waiting`` is the honest counterpart of the quiet default:
 with ``subagent_asks_alert`` off a sub-agent's permission prompt raises no
 light, sound, banner or card, so the parent row says in words that a worker is
-waiting. It is information only. Synthetic ids only.
+waiting. It is information only. With the setting on the same request is an
+ordinary ask: ``asks`` carries it and ``aggregate.needs_you`` counts it.
+Synthetic ids only.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from types import SimpleNamespace
 
 from jrbar import core_runtime
 from jrbar.attention import project_attention, quiet_waiting_worker_ids
-from jrbar.core_projection import build_state_document
+from jrbar.core_projection import aggregate_counts, aggregate_mode, build_state_document
 from jrbar.models import AgentMode
 from jrbar.provider_facts import RequestIdentifier, RequestKey, SourceKey, WorkIdentifier, WorkKey
 from jrbar.settings import AgentMonitorSettings
@@ -185,6 +188,40 @@ def test_a_stale_worker_or_one_the_state_no_longer_holds_live_is_not_quiet_waiti
     assert quiet_waiting_worker_ids((keyed,), settings, live_request_keys=frozenset()) == frozenset()
 
 
+# --- the setting on: a worker's ask is a real ask ----------------------------
+
+
+def test_a_workers_ask_counts_as_needs_you_when_worker_asks_are_on() -> None:
+    worker = _worker(CLAUDE_WORKER_ID, waiting=True)
+    statuses = (_main(), worker)
+
+    document = _document(statuses, ask_statuses=[worker], quiet_worker_ids=frozenset())
+
+    assert [ask["session"] for ask in document["asks"]] == [CLAUDE_WORKER_ID]
+    assert document["aggregate"]["needs_you"] == 1
+    assert document["aggregate"]["mode"] == "needs_you"
+    # The worker's row is listed with its ask, so the count has a row behind it.
+    assert _row(document, CLAUDE_WORKER_ID)["ask"]["kind"] in {"permission", "approval"}
+    # The parent row still says nothing is quietly waiting.
+    assert _row(document, CLAUDE_ID)["workers_waiting"] == 0
+    # `total` stays a count of main sessions.
+    assert document["aggregate"]["total"] == 1
+
+
+def test_needs_you_counts_every_ask_whichever_listed_session_it_names() -> None:
+    sessions = [
+        {"id": "claude:session:a", "kind": "main", "mode": "waiting_for_input"},
+        {"id": "claude:agent:b", "kind": "worker", "parent": "claude:session:a", "mode": "waiting_for_input"},
+    ]
+    asks = [{"session": "claude:session:a"}, {"session": "claude:agent:b"}, {"session": "claude:session:gone"}]
+
+    counts = aggregate_counts(sessions, asks=asks)
+
+    assert counts["needs_you"] == 2
+    assert counts["total"] == 1
+    assert aggregate_mode(counts) == "needs_you"
+
+
 # --- the daemon wires both ---------------------------------------------------
 
 
@@ -209,6 +246,15 @@ def test_the_daemon_publishes_the_quiet_count_and_the_on_state_ask(headless) -> 
     assert off["asks"] == []
     assert off["aggregate"]["needs_you"] == 0
     assert off["aggregate"]["mode"] == "working"
+
+    # On: the same request is an ordinary ask, counted and listed.
+    controller.settings = replace(controller.settings, subagent_asks_alert=True)
+    _feed(controller, main, worker, other)
+    on = controller._core_build_state()
+    assert _row(on, CLAUDE_ID)["workers_waiting"] == 0
+    assert [ask["session"] for ask in on["asks"]] == [CLAUDE_WORKER_ID]
+    assert on["aggregate"]["needs_you"] == 1
+    assert on["aggregate"]["mode"] == "needs_you"
 
 
 def test_the_roster_rows_carry_the_same_quiet_count(headless) -> None:  # noqa: F811
@@ -235,3 +281,4 @@ def test_the_protocol_doc_names_the_new_key_and_the_worker_ask_rule() -> None:
     assert re.search(r"`workers_waiting`", state), "the state section never names workers_waiting"
     assert '"workers_waiting":0' in state, "the state example carries no workers_waiting"
     assert "never makes a state frame differ on its own" in state
+    assert "`needs_you` is the number of asks in `asks`" in state
