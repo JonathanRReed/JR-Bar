@@ -6,6 +6,20 @@ each provider is read in detail is in
 sources you can turn on or tune yourself, and the rules that keep the
 numbers honest.
 
+## How a refresh runs
+
+JR-Bar asks up to four providers at a time, so one slow provider never holds
+up the others. A refresh that finishes in a second or two shows all its
+answers at once. A slower one shows the providers that have answered after
+about a second and a half, and each of the others as it lands; a provider
+still being asked keeps the reading it had until its answer arrives.
+
+Each provider has 45 seconds to answer. A provider that does not is given up
+on for that refresh only: its card keeps its last good reading, marked stale,
+with "collector timeout" as the reason, and JR-Bar asks again later on the
+same backoff as any other failure. A provider that fails or is rate limited
+backs off alone, too.
+
 ## OpenCode and OpenCode Go
 
 OpenCode itself reports no quota. Its card shows token totals from
