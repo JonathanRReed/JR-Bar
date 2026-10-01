@@ -142,8 +142,8 @@ def test_identity_cache_returns_last_snapshot_without_blocking__and_2_more(tmp_p
     """First-batch Dots mount as ``PulseDot``: no ``SidePulse`` prefix, and
     an old STATUS.TXT may not carry a serial. Every classifier must still
     call it a 2-LED Dot, keyed by the volume UUID when no serial exists."""
-    from jrbar._device_writer_legacy import is_device_name
     from jrbar.device_identity import device_kind
+    from jrbar.device_writer import is_device_name
     from jrbar.led_status import led_count_for_target
     from jrbar.status_bar_legacy import device_display_name
 

@@ -155,8 +155,8 @@ def _status(provider: str, mode, index: int):
 @pytest.fixture
 def rig(headless_daemon, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:  # noqa: F811
     from jrbar import status_bar_legacy
-    from jrbar._device_writer_legacy import DeviceCandidate
     from jrbar.battery import BatterySnapshot
+    from jrbar.device_writer import DeviceCandidate
     from jrbar.models import AgentMode
 
     controller = headless_daemon

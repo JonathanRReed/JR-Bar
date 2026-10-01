@@ -228,7 +228,7 @@ def test_predictable_preplanted_scratch_cannot_modify_external_sentinel__and_2_m
     target = device_writer.write_led_program(PROGRAM_A, device_path=tmp_path)
     outside = tmp_path / "outside-sentinel.txt"
     outside.write_text("external sentinel", encoding="utf-8")
-    real_publish = device_writer._legacy._publish_scratch
+    real_publish = device_writer._publish_scratch
     replaced = False
 
     def replacing_publish(*args, **kwargs):
@@ -240,7 +240,7 @@ def test_predictable_preplanted_scratch_cannot_modify_external_sentinel__and_2_m
 
     with (
         patch.object(
-            device_writer._legacy,
+            device_writer,
             "_publish_scratch",
             side_effect=replacing_publish,
         ),
@@ -260,7 +260,7 @@ def test_predictable_preplanted_scratch_cannot_modify_external_sentinel__and_2_m
     outside.mkdir()
     outside_target = outside / target.name
     outside_target.write_text("external sentinel", encoding="utf-8")
-    real_publish = device_writer._legacy._publish_scratch
+    real_publish = device_writer._publish_scratch
     replaced = False
 
     def replacing_publish(*args, **kwargs):
@@ -272,7 +272,7 @@ def test_predictable_preplanted_scratch_cannot_modify_external_sentinel__and_2_m
 
     with (
         patch.object(
-            device_writer._legacy,
+            device_writer,
             "_publish_scratch",
             side_effect=replacing_publish,
         ),
@@ -457,7 +457,7 @@ def test_failed_scratch_write_preserves_prior_complete_target__and_1_more(tmp_pa
 
     with (
         patch.object(
-            device_writer._legacy,
+            device_writer,
             "_require_regular_leaf",
             side_effect=reject_scratch,
         ),
@@ -483,10 +483,9 @@ def test_the_dot_timing_runs_after_the_gate__and_2_more(tmp_path: Path) -> None:
     from jrbar import firmware_validation, presentation_compiler
     from jrbar.linked_sync import DeviceTiming
 
-    # The facade itself: conftest's volume guard wraps the module attribute
-    # with the pre-timing signature, and the controllers call the facade
-    # they imported, which is this one.
-    write_led_program = device_writer._legacy.write_led_program
+    # conftest's volume guard wraps the module attribute and passes every
+    # keyword through, ``timing`` included; this writes under tmp_path.
+    write_led_program = device_writer.write_led_program
     dot = tmp_path / "PulseDot"
     dot.mkdir()
     (dot / "LEDS.LED").write_text("off\n", encoding="utf-8")
