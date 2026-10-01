@@ -707,3 +707,138 @@ def test_atomic_private_write_rejects_non_private_modes(
         atomic_private_write(target, "payload", mode=file_mode)
 
     assert not target.exists()
+
+
+# --- quarantine: a file that cannot be read is moved aside, never overwritten ---
+
+
+_QUARANTINE_NOON = 1_788_264_000.0  # 2026-09-01T12:00:00Z
+
+
+def test_quarantine_moves_an_unreadable_file_aside_privately(tmp_path: Path) -> None:
+    from jrbar.private_io import quarantine_private_file
+
+    target = tmp_path / "state" / "effect-assignments.json"
+    target.parent.mkdir(mode=0o700)
+    target.write_bytes(b'{"assignments": [')
+    target.chmod(0o644)
+    lines: list[str] = []
+
+    moved = quarantine_private_file(
+        target, now=_QUARANTINE_NOON, reason="it did not decode", log=lines.append
+    )
+
+    assert moved == target.with_name("effect-assignments.json.corrupt-20260901T120000Z")
+    assert not target.exists()
+    assert moved.read_bytes() == b'{"assignments": ['
+    assert mode(moved) == 0o600
+    assert len(lines) == 1
+    assert "effect-assignments.json" in lines[0] and "it did not decode" in lines[0]
+    assert str(tmp_path) not in lines[0], "a log line names the file, not the path"
+
+
+def test_quarantine_keeps_only_the_three_newest_copies(tmp_path: Path) -> None:
+    from jrbar.private_io import quarantine_private_file
+
+    target = tmp_path / "state" / "operator-triage.json"
+    target.parent.mkdir(mode=0o700)
+    for index in range(5):
+        target.write_text(f"bad-{index}")
+        quarantine_private_file(
+            target, now=_QUARANTINE_NOON + index * 60, log=lambda _line: None
+        )
+
+    kept = sorted(target.parent.glob("operator-triage.json.corrupt-*"))
+    assert [path.read_text() for path in kept] == ["bad-2", "bad-3", "bad-4"]
+
+
+def test_quarantine_in_the_same_second_never_overwrites_an_earlier_copy(
+    tmp_path: Path,
+) -> None:
+    from jrbar.private_io import quarantine_private_file
+
+    target = tmp_path / "state" / "clear-agents.json"
+    target.parent.mkdir(mode=0o700)
+    for text in ("first", "second", "third"):
+        target.write_text(text)
+        quarantine_private_file(target, now=_QUARANTINE_NOON, log=lambda _line: None)
+
+    assert sorted(path.read_text() for path in target.parent.iterdir()) == [
+        "first",
+        "second",
+        "third",
+    ]
+    # Past the cap, the oldest of the same second goes first, not the newest.
+    target.write_text("fourth")
+    quarantine_private_file(target, now=_QUARANTINE_NOON, log=lambda _line: None)
+    assert sorted(path.read_text() for path in target.parent.iterdir()) == [
+        "fourth",
+        "second",
+        "third",
+    ]
+
+
+def test_quarantine_copy_leaves_the_original_and_does_not_repeat_itself(
+    tmp_path: Path,
+) -> None:
+    from jrbar.private_io import quarantine_private_file
+
+    target = tmp_path / "state" / "mailbox-preferences.json"
+    target.parent.mkdir(mode=0o700)
+    target.write_text('{"keep": 1, "bad": 2}')
+    lines: list[str] = []
+
+    first = quarantine_private_file(
+        target, now=_QUARANTINE_NOON, copy=True, reason="2 rows dropped", log=lines.append
+    )
+    again = quarantine_private_file(
+        target, now=_QUARANTINE_NOON + 90, copy=True, reason="2 rows dropped", log=lines.append
+    )
+
+    assert target.read_text() == '{"keep": 1, "bad": 2}'
+    assert first is not None and first.read_text() == '{"keep": 1, "bad": 2}'
+    assert mode(first) == 0o600
+    assert again == first, "an identical copy is not made twice"
+    assert len(lines) == 1
+    assert len(list(target.parent.glob("*.corrupt-*"))) == 1
+
+
+def test_quarantine_leaves_a_missing_linked_or_replaced_file_alone(tmp_path: Path) -> None:
+    from jrbar.private_io import private_file_identity, quarantine_private_file
+
+    quiet = {"now": _QUARANTINE_NOON, "log": lambda _line: None}
+    folder = tmp_path / "state"
+    folder.mkdir(mode=0o700)
+
+    assert quarantine_private_file(folder / "absent.json", **quiet) is None
+
+    outside = tmp_path / "outside.json"
+    outside.write_text("elsewhere")
+    link = folder / "linked.json"
+    link.symlink_to(outside)
+    assert quarantine_private_file(link, **quiet) is None
+    assert link.is_symlink() and outside.read_text() == "elsewhere"
+
+    swapped = folder / "swapped.json"
+    swapped.write_text("what failed to decode")
+    seen = private_file_identity(swapped)
+    assert seen is not None
+    swapped.unlink()
+    swapped.write_text("a good file another writer just published")
+    assert quarantine_private_file(swapped, expected_identity=seen, **quiet) is None
+    assert swapped.read_text() == "a good file another writer just published"
+
+
+def test_quarantine_logs_one_daemon_style_line_by_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from jrbar.private_io import quarantine_private_file
+
+    target = tmp_path / "state" / "x.json"
+    target.parent.mkdir(mode=0o700)
+    target.write_text("{")
+    quarantine_private_file(target, now=_QUARANTINE_NOON, reason="it did not decode")
+
+    out = capsys.readouterr().out.splitlines()
+    assert len(out) == 1
+    assert "x.json" in out[0] and "x.json.corrupt-20260901T120000Z" in out[0]

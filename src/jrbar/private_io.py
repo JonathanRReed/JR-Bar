@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import threading
 import time
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 PRIVATE_DIRECTORY_MODE = 0o700
@@ -267,6 +269,199 @@ def ensure_private_file(path: Path) -> Path:
             finally:
                 os.close(descriptor)
         return target
+
+
+#: How many ``<name>.corrupt-<stamp>`` copies of one file are kept.
+QUARANTINE_KEEP = 3
+_QUARANTINE_STAMP = "%Y%m%dT%H%M%SZ"
+_QUARANTINE_SUFFIX = re.compile(r"\.corrupt-(\d{8}T\d{6}Z)(?:-(\d+))?\Z")
+_QUARANTINE_COPY_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _daemon_log_line(message: str) -> None:
+    """One line in the shape the daemon's own log uses."""
+    stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        print(f"{stamp} {message}", flush=True)
+    except OSError:
+        # Logging is best effort during interpreter and test-runner teardown.
+        return
+
+
+def private_file_identity(path: Path) -> tuple[int, int] | None:
+    """``(device, inode)`` of a private regular file, or None when there is none.
+
+    Taken before a read, it lets ``quarantine_private_file`` refuse to move
+    a file another writer published after the failed read."""
+    try:
+        info = Path(path).expanduser().lstat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    return (info.st_dev, info.st_ino)
+
+
+def _quarantine_copies(
+    parent_descriptor: int,
+    name: str,
+) -> list[tuple[tuple[str, int], str]]:
+    """Existing quarantine copies of ``name``, oldest first."""
+    found: list[tuple[tuple[str, int], str]] = []
+    for entry in os.listdir(parent_descriptor):
+        if not entry.startswith(f"{name}.corrupt-"):
+            continue
+        match = _QUARANTINE_SUFFIX.fullmatch(entry[len(name):])
+        if match is not None:
+            found.append(((match.group(1), int(match.group(2) or 1)), entry))
+    found.sort()
+    return found
+
+
+def _next_quarantine_name(
+    name: str,
+    copies: list[tuple[tuple[str, int], str]],
+    now: float,
+) -> str:
+    """A name that sorts after every copy already there, even when the clock
+    went backwards or two files are set aside in the same second."""
+    stamp = time.strftime(_QUARANTINE_STAMP, time.gmtime(now))
+    count = 1
+    if copies and copies[-1][0][0] >= stamp:
+        stamp, count = copies[-1][0][0], copies[-1][0][1] + 1
+    suffix = "" if count == 1 else f"-{count}"
+    return f"{name}.corrupt-{stamp}{suffix}"
+
+
+def _prune_quarantine(parent_descriptor: int, name: str, keep: int) -> None:
+    copies = _quarantine_copies(parent_descriptor, name)
+    for _, entry in copies[: max(0, len(copies) - keep)]:
+        try:
+            info = _leaf_stat(parent_descriptor, entry)
+            if info is not None and stat.S_ISREG(info.st_mode):
+                os.unlink(entry, dir_fd=parent_descriptor)
+        except OSError:
+            continue
+
+
+def quarantine_private_file(
+    path: Path,
+    *,
+    now: float | None = None,
+    keep: int = QUARANTINE_KEEP,
+    copy: bool = False,
+    reason: str = "it could not be read",
+    expected_identity: tuple[int, int] | None = None,
+    log: Callable[[str], None] | None = None,
+) -> Path | None:
+    """Set a file aside as ``<name>.corrupt-<UTC stamp>`` so a save cannot destroy it.
+
+    A store that cannot decode its file starts empty, and its next save would
+    overwrite the only copy of what the person had. Move the file aside
+    first (``copy=True`` keeps it in place and writes a copy, for a file whose
+    good rows were kept). The newest ``keep`` copies stay, the copy is
+    private (0600), and one line goes to the log, naming the file and not its
+    folder. Returns the copy, or None when there was nothing to set aside: no
+    file, a link, or a file that is no longer the one that was read.
+
+    Best effort, like the reads it follows: a failure is logged and returns
+    None, because the store is already starting empty. The stores call this
+    right after a failed read; they are each the only writer of their file.
+    """
+    target = Path(path).expanduser()
+    emit = _daemon_log_line if log is None else log
+    moment = time.time() if now is None else float(now)
+    try:
+        with _private_parent(target, tighten=False) as (target, parent_descriptor, name):
+            info = _require_private_leaf(target, parent_descriptor, name)
+            if info is None:
+                return None
+            if expected_identity is not None and (
+                (info.st_dev, info.st_ino) != expected_identity
+            ):
+                return None
+            copies = _quarantine_copies(parent_descriptor, name)
+            if not copy:
+                for _ in range(8):
+                    destination = _next_quarantine_name(name, copies, moment)
+                    _chmod_leaf(target, parent_descriptor, name, info)
+                    try:
+                        os.link(
+                            name,
+                            destination,
+                            src_dir_fd=parent_descriptor,
+                            dst_dir_fd=parent_descriptor,
+                            follow_symlinks=False,
+                        )
+                    except FileExistsError:
+                        copies = _quarantine_copies(parent_descriptor, name)
+                        continue
+                    os.unlink(name, dir_fd=parent_descriptor)
+                    _fsync_private_parent(parent_descriptor)
+                    _prune_quarantine(parent_descriptor, name, keep)
+                    emit(f"{name}: {reason}; moved aside as {destination}")
+                    return target.with_name(destination)
+                raise OSError("no free quarantine name")
+        payload, identity = read_private_bytes_with_identity(
+            target,
+            tighten=False,
+            max_bytes=_QUARANTINE_COPY_MAX_BYTES,
+        )
+        if expected_identity is not None and identity != expected_identity:
+            return None
+        with _private_parent(target, tighten=False) as (_, parent_descriptor, name):
+            copies = _quarantine_copies(parent_descriptor, name)
+        for _, entry in reversed(copies):
+            try:
+                existing = read_private_bytes(
+                    target.with_name(entry),
+                    tighten=False,
+                    max_bytes=_QUARANTINE_COPY_MAX_BYTES,
+                )
+            except OSError:
+                continue
+            if existing == payload:
+                return target.with_name(entry)
+        for _ in range(8):
+            destination = _next_quarantine_name(name, copies, moment)
+            try:
+                atomic_private_write(
+                    target.with_name(destination),
+                    payload,
+                    overwrite=False,
+                    tighten_parent=False,
+                )
+            except FileExistsError:
+                with _private_parent(target, tighten=False) as (_, parent_descriptor, _):
+                    copies = _quarantine_copies(parent_descriptor, name)
+                continue
+            with _private_parent(target, tighten=False) as (_, parent_descriptor, _):
+                _prune_quarantine(parent_descriptor, name, keep)
+            emit(f"{name}: {reason}; kept a copy as {destination}")
+            return target.with_name(destination)
+        raise OSError("no free quarantine name")
+    except OSError as error:
+        emit(f"{target.name}: could not be set aside ({error.__class__.__name__})")
+        return None
+
+
+def _chmod_leaf(
+    target: Path,
+    parent_descriptor: int,
+    name: str,
+    expected: os.stat_result,
+) -> None:
+    """Tighten one leaf to 0600 through an open descriptor, never a link."""
+    descriptor = os.open(
+        name,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+        dir_fd=parent_descriptor,
+    )
+    try:
+        _require_opened_leaf(target, expected, os.fstat(descriptor))
+        os.fchmod(descriptor, PRIVATE_FILE_MODE)
+    finally:
+        os.close(descriptor)
 
 
 def atomic_private_write(
