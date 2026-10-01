@@ -3030,7 +3030,13 @@ def usage_summary_line(
         return None
     plural = "session" if count == 1 else "sessions"
     parts = [f"{count} {plural}"]
-    claude_tokens = totals.input_tokens + totals.cached_input_tokens + totals.output_tokens
+    # The same four counts the heatmap and the Codex totals add up.
+    claude_tokens = (
+        totals.input_tokens
+        + totals.cached_input_tokens
+        + totals.cache_creation_tokens
+        + totals.output_tokens
+    )
     if mode == "sessions":
         pass
     elif mode == "cost":
