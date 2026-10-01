@@ -16,7 +16,10 @@ final class NotchCardPresenter {
     private(set) var isShown = false
     var isPinned: Bool { panel.isPinned }
     /// Whether Esc is listened for — only while the card is pinned.
-    var listensForEscape: Bool { !pinnedKeyMonitors.isEmpty }
+    var listensForEscape: Bool { pinnedEscape?.isListening == true }
+    /// Where the Esc presses come from — AppKit's monitors; a test hands
+    /// in a fake.
+    var keySource: CardEscapeWatch.Source = .system
 
     /// The shown card's frame — both owners' hover regions union it in,
     /// so crossing band, island and card never counts as leaving.
@@ -62,8 +65,9 @@ final class NotchCardPresenter {
     private var lastFocus: ScreenBarFocus?
     /// Esc while a pinned card is up lets it go — the card never
     /// becomes key, so the presenter watches for it: local covers the
-    /// pointer having activated us, global every other app.
-    private var pinnedKeyMonitors: [Any] = []
+    /// pointer having activated us, global every other app. The local one
+    /// takes only an Esc no other JR-Bar window owns (`CardEscapeWatch`).
+    private var pinnedEscape: CardEscapeWatch?
 
     init(model: NotchCardModel) {
         panel = NotchCardPanel(model: model)
@@ -124,21 +128,15 @@ final class NotchCardPresenter {
 
     private func setPinned(_ pinned: Bool) {
         panel.setPinned(pinned)
-        for monitor in pinnedKeyMonitors { NSEvent.removeMonitor(monitor) }
-        pinnedKeyMonitors = []
+        pinnedEscape?.stop()
+        pinnedEscape = nil
         guard pinned else { return }
-        if let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            if event.keyCode == 53 {
-                Task { @MainActor [weak self] in self?.hide() }
-                return nil
-            }
-            return event
-        }) { pinnedKeyMonitors.append(local) }
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            if event.keyCode == 53 {
-                Task { @MainActor [weak self] in self?.hide() }
-            }
-        }) { pinnedKeyMonitors.append(global) }
+        let watch = CardEscapeWatch(
+            source: keySource,
+            ownWindows: { [weak self] in [self?.panel] },
+            onEscape: { [weak self] in self?.hide() })
+        pinnedEscape = watch
+        watch.start()
     }
 
     private func present() {

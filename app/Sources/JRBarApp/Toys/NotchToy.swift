@@ -114,8 +114,14 @@ final class NotchToy: Toy {
     /// until it steps down, then the expand lands.
     var bandExpandPending = false
     /// Esc lets the card go — the island never becomes key, so the toy
-    /// watches for it while grown.
-    @ObservationIgnored private var cardKeyMonitors: [Any] = []
+    /// watches for it while grown. Only an Esc no other JR-Bar window owns
+    /// (`CardEscapeWatch`): a Settings sheet or a field keeps its own.
+    @ObservationIgnored private var cardEscape: CardEscapeWatch?
+    /// Where the Esc presses come from — AppKit's monitors; a test hands
+    /// in a fake.
+    @ObservationIgnored var cardKeySource: CardEscapeWatch.Source = .system
+    /// Esc is being listened for — only while the card is grown.
+    var listensForEscape: Bool { cardEscape?.isListening == true }
     /// The frame last asked of the window — `reconcile` re-runs on every
     /// sessions doc, and a no-change applyFrame would snap an in-flight
     /// morph (the capsule slide-in dies on the doc that follows its
@@ -1111,31 +1117,19 @@ final class NotchToy: Toy {
     }
 
     /// Esc while the card is grown lets it go — the island never takes
-    /// key status, so the toy watches both monitors itself.
-    private func syncCardKeyMonitors() {
-        for monitor in cardKeyMonitors { NSEvent.removeMonitor(monitor) }
-        cardKeyMonitors = []
+    /// key status, so the toy watches both monitors itself. The local one
+    /// takes only an Esc that belongs to the island's own window or to no
+    /// window: Esc in a Settings sheet or a text field is that window's.
+    func syncCardKeyMonitors() {
+        cardEscape?.stop()
+        cardEscape = nil
         guard runtimeEnabled, islandExpanded else { return }
-        if let local = NSEvent.addLocalMonitorForEvents(
-            matching: .keyDown,
-            handler: { [weak self] event in
-                if event.keyCode == 53 {
-                    Task { @MainActor [weak self] in self?.collapseIsland() }
-                    return nil
-                }
-                return event
-            }) {
-            cardKeyMonitors.append(local)
-        }
-        if let global = NSEvent.addGlobalMonitorForEvents(
-            matching: .keyDown,
-            handler: { [weak self] event in
-                if event.keyCode == 53 {
-                    Task { @MainActor [weak self] in self?.collapseIsland() }
-                }
-            }) {
-            cardKeyMonitors.append(global)
-        }
+        let watch = CardEscapeWatch(
+            source: cardKeySource,
+            ownWindows: { [weak self] in [self?.island] },
+            onEscape: { [weak self] in self?.collapseIsland() })
+        cardEscape = watch
+        watch.start()
     }
 
     /// The frame spring's height progress toward its target — the
