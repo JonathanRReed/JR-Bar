@@ -9,12 +9,14 @@ import Testing
 @Suite("Power policy")
 struct PowerPolicyTests {
     private static let thermals: [PowerPolicy.Thermal] = [.nominal, .fair, .serious, .critical]
+    /// The rates the decorative passes run at, as intervals.
+    private static let bases: [Double] = [1.0 / 60, 1.0 / 30, 1.0 / 20, 1.0 / 15, 1.0 / 12, 0.25, 0.5, 1, 2]
 
     @Test("normal power is the full budget, and every interval and pause is exactly what it was")
     func normalPowerChangesNothing() {
         for policy in [PowerPolicy.normal, PowerPolicy(thermal: .fair)] {
             #expect(policy.budget == .full)
-            for base in [1.0 / 60, 1.0 / 30, 1.0 / 20, 1.0 / 15, 1.0 / 12, 0.25, 0.5, 1, 2] {
+            for base in Self.bases {
                 #expect(policy.interval(base) == base)
             }
             #expect(!policy.pauses(occluded: false))
