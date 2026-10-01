@@ -6,7 +6,6 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import jrbar.status_bar_legacy as status_bar_legacy
 from jrbar.accessibility_display import AccessibilityDisplayPreferences
 from jrbar.core_state import StateDelta
 from jrbar.dnd_policy import (
@@ -38,6 +37,7 @@ from jrbar.why_light_context import (
     ReduceMotionDecision,
     ValueAvailability,
     WinningPriority,
+    format_why_light_context,
 )
 from tests.test_jrbar import isolate_controller
 
@@ -354,7 +354,7 @@ class WhyLightWiringTests(unittest.TestCase):
         )
         self.assertIn(
             "Hardware write latency: latest 6.0 ms",
-            status_bar_legacy.format_why_light_context(context),
+            format_why_light_context(context),
         )
 
     def test_renderer_timing_stays_unavailable_when_only_refresh_duration_exists(

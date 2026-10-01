@@ -92,10 +92,10 @@ testpaths = ["tests"]
 addopts = ["--strict-config", "--strict-markers"]
 
 [tool.ruff]
-# Keep the lint surface deterministic. The retained AppKit controller is frozen
-# behind status_bar.py; all new behavior belongs in linted, testable modules.
+# Keep the lint surface deterministic. The retained controller sits behind
+# status_bar.py and is linted like everything else; new behavior still belongs
+# in testable modules of their own.
 line-length = 120
-extend-exclude = ["src/jrbar/status_bar_legacy.py"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP", "RUF"]
@@ -120,6 +120,14 @@ ignore = [
 # enabled, and every newly extracted module must pass without exceptions.
 "src/jrbar/settings.py" = ["I001"]
 "src/jrbar/_settings_legacy.py" = ["I001"]
+# The retained controller's import block is also the surface the facade
+# (status_bar.py forwards every read and monkeypatch here), the headless class
+# and the tests reach through: NSStatusBar is what test_core_runtime replaces
+# to prove the daemon never creates a status item, default_settings_path is
+# what a dozen tests patch, LED_DISPLAY_CHOICES is read by core_runtime. Ruff's
+# safe fix would delete those, and `make format` runs it. The order is the
+# controller's load order, left alone on purpose.
+"src/jrbar/status_bar_legacy.py" = ["F401", "I001"]
 "tests/test_capacity_authority.py" = ["I001"]
 "tests/test_claude_limits_reachable.py" = ["I001"]
 "tests/test_first_run_honesty.py" = ["I001"]

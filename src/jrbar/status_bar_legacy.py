@@ -17,10 +17,7 @@ from types import SimpleNamespace
 try:
     import objc
     from AppKit import (
-        NSApp,
-        NSColor,
         NSImage,
-        NSScreen,
         NSStatusBar,
         NSWorkspace,
         NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
@@ -96,7 +93,6 @@ from .animation import (
     errors_only,
     problems_for_program,
 )
-from .app_bundle import running_inside_bundle
 from .product_identity import PRODUCT_DISPLAY_NAME
 from .attention import (
     AttentionProjection,
@@ -119,24 +115,24 @@ from .battery import (
     program_for_battery,
     read_battery_snapshot,
 )
-from .announcer_stack import (  # noqa: E402
+from .announcer_stack import (
     AnnouncerAlertIdentity,
     AnnouncerStackIntent,
     project_announcer_stack,
     reconcile_announcer_stack,
 )
-from .answer_controller import (  # noqa: E402
+from .answer_controller import (
     AnswerBrowserCommand,
     AnswerController,
     AnswerSurfacePresentation,
 )
-from .answer_local import (  # noqa: E402
+from .answer_local import (
     AnswerRefusal,
     LocalAnswerSurface,
     LocalAnswerTarget,
 )
-from .answer_local import session_host as answer_local_session_host  # noqa: E402
-from .answer_runtime import ANSWER_CLOSE_TIMEOUT_SECONDS  # noqa: E402
+from .answer_local import session_host as answer_local_session_host
+from .answer_runtime import ANSWER_CLOSE_TIMEOUT_SECONDS
 from .brightness_policy import (
     idle_auto_off_due,
     plan_ambient_brightness,
@@ -235,7 +231,6 @@ from .credentials import (
     read_keychain_secret,
 )
 from .decision_trace import build_decision_trace
-from .why_light_context import format_why_light_context
 from .why_light_runtime import project_current_why_light_context
 from . import why_panel as why_panel_module
 from .device_writer import (
@@ -251,10 +246,6 @@ from .device_writer import (
     write_led_program,
 )
 from .freshness import bounded_age_seconds, is_recent
-from .install import (
-    install_provider_hooks,
-    uninstall_provider_hooks,
-)
 from .installed_agent_inventory import (
     InstalledAgentInventoryResult,
     default_inventory_roots,
@@ -292,7 +283,7 @@ from .headless_screen_bar import (
     VIRTUAL_DEVICE_NAME,
     HeadlessScreenBar,
 )
-from .window_presentation import activate_app, present_window
+from .window_presentation import activate_app
 from .led_status import (
     FIRST_LIGHT_SECONDS,
     first_light_program,
@@ -312,7 +303,6 @@ from .led_status import (
     quota_runway_program,
     style_to_program,
 )
-from .led_wasm import SdLedWasmController
 from .lid_sleep import (
     LID_POLL_SECONDS,
     ClosedLidAwakeController,
@@ -417,7 +407,6 @@ from .presentation_scheduler import (
     PresentationSchedulerState,
     plan_presentation_schedule,
 )
-from .private_io import atomic_private_write
 from .provider_capacity import negotiate_provider_capacity_policies
 from .provider_contracts import NegotiatedProviderContract, ProviderIdentifier
 from .provider_facts import NextActor, RequestKey, SourceFreshness, WorkKey
@@ -425,7 +414,6 @@ from .power_policy import apply_power_hold_settings
 from .quota_power_hold import QuotaPowerHoldCoordinator, quota_adjusted_work_mode
 from .providers import (
     HOOK_PROVIDERS,
-    PROVIDER_SPECS,
     default_state_dir,
     detect_log_path,
     negotiated_provider_sources,
@@ -507,7 +495,6 @@ from .status_bar_launch import (
     resolve_terminal_launch,
     terminal_launch_arguments,
 )
-from .trusted_tools import trusted_system_tool
 from .usage_view import (
     LocalActivitySection,
     ProviderUsageViewModel,
