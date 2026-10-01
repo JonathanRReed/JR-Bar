@@ -1859,6 +1859,19 @@ public struct CoreState: Codable, Hashable, Sendable {
         }
     }
 
+    /// Sub-agent sessions that carry an open ask the daemon published. The
+    /// daemon puts a worker's ask in `asks` only while sub-agent asks are on,
+    /// and then it counts in `aggregate.needs_you` like a main session's. The
+    /// panel lists main sessions, so without a row of its own such an ask
+    /// would raise an alert for something the panel cannot show: it joins
+    /// `mainSessions` and `orphanAsks` as the third kind of row. A worker with
+    /// no parent is already a main row, so it is not repeated here.
+    public var askingWorkers: [CoreSession] {
+        guard !asks.isEmpty else { return [] }
+        let asking = Set(asks.compactMap(\.session).filter { !$0.isEmpty })
+        return sessions.filter { $0.isChildWorker && asking.contains($0.id) }
+    }
+
     /// `health.sources[provider]` decoded: whether the provider's hook
     /// feed is still delivering (`fresh`) and how many seconds since the
     /// last event it accepted, nil when it never has. `health` stays a

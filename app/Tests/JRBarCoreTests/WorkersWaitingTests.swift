@@ -4,8 +4,9 @@ import Testing
 
 /// `sessions[].workers_waiting`: how many of a main row's workers wait on a
 /// request that stays quiet while sub-agent asks are off. It decodes
-/// tolerantly (absent is "not said", never a zero), and it is information
-/// only.
+/// tolerantly (absent is "not said", never a zero), it is information only,
+/// and a worker's ask, which the daemon publishes only while the setting is
+/// on, always has a row to land on.
 @Suite("Workers waiting on a quiet request")
 struct WorkersWaitingTests {
     private static let mainID = "claude:session:main-one"
@@ -98,7 +99,7 @@ struct WorkersWaitingTests {
         #expect(AgentAggregateState.from(aggregate: aggregate) == .working)
     }
 
-    // MARK: nothing asks
+    // MARK: a worker's ask always has a row
 
     @Test("with sub-agent asks off no worker ask is published and nothing asks")
     func offPublishesNothing() {
@@ -106,7 +107,50 @@ struct WorkersWaitingTests {
             CoreSession(id: Self.mainID, provider: "claude", mode: "working", workers: 1, workersWaiting: 1),
             Self.workerRow(),
         ])
+        #expect(state.askingWorkers.isEmpty)
         #expect(state.orphanAsks.isEmpty)
         #expect(state.mainSessions.map(\.id) == [Self.mainID])
+    }
+
+    @Test("with them on, a child worker that carries a published ask is a row of its own")
+    func onGivesTheWorkerARow() {
+        let asked = Self.workerRow(ask: Self.askFor(Self.workerID))
+        let state = CoreState(
+            aggregate: CoreAggregate(mode: "needs_you", needsYou: 1),
+            sessions: [CoreSession(id: Self.mainID, provider: "claude", mode: "working", workers: 2, workersWaiting: 0),
+                       asked, Self.workerRow(Self.otherID)],
+            asks: [Self.askFor(Self.workerID)])
+        #expect(state.askingWorkers.map(\.id) == [Self.workerID])
+        #expect(state.orphanAsks.isEmpty)
+    }
+
+    @Test("a worker that names no parent is already a main row and is not listed twice")
+    func parentlessIsNotRepeated() {
+        let loose = Self.workerRow(parent: nil, ask: Self.askFor(Self.workerID))
+        let state = CoreState(sessions: [loose], asks: [Self.askFor(Self.workerID)])
+        #expect(state.mainSessions.map(\.id) == [Self.workerID])
+        #expect(state.askingWorkers.isEmpty)
+    }
+
+    @Test("every ask the daemon publishes lands on a row: a main, a child worker, or an orphan")
+    func everyAskHasARow() {
+        let gone = "claude:session:cleared"
+        let state = CoreState(
+            aggregate: CoreAggregate(mode: "needs_you", needsYou: 4),
+            sessions: [CoreSession(id: Self.mainID, provider: "claude", mode: "waiting", ask: Self.askFor(Self.mainID)),
+                       Self.workerRow(ask: Self.askFor(Self.workerID)),
+                       Self.workerRow(Self.otherID, parent: nil, ask: Self.askFor(Self.otherID))],
+            asks: [Self.askFor(Self.mainID), Self.askFor(Self.workerID), Self.askFor(Self.otherID), Self.askFor(gone)])
+        let rowIDs = Set(state.mainSessions.map(\.id) + state.askingWorkers.map(\.id) + state.orphanAsks.compactMap(\.session))
+        let asked = Set(state.asks.compactMap(\.session))
+        #expect(asked.isSubset(of: rowIDs))
+        #expect(state.askingWorkers.map(\.id) == [Self.workerID])
+    }
+
+    @Test("an ask with no session at all is an orphan, never an asking worker")
+    func sessionlessIsOrphan() {
+        let state = CoreState(sessions: [Self.workerRow()], asks: [Self.askFor(nil), Self.askFor("")])
+        #expect(state.askingWorkers.isEmpty)
+        #expect(state.orphanAsks.count == 2)
     }
 }

@@ -48,8 +48,12 @@ show a question as an ask. The app updates it the next time it refreshes its
 hooks after an upgrade, or you can reinstall it from Settings > Agents.
 
 OpenCode sub-agents group under their session, and their asks follow the
-Sub-agent asks setting. With it off, a sub-agent's approval raises no card and
-its session keeps reading Working while the sub-agent waits.
+Sub-agent asks setting. With it off, a sub-agent's approval raises no card,
+light, sound or banner. Its session keeps reading Working and says "1 worker
+waiting" beside its workers, so a stuck sub-agent is not passed off as a busy
+one; the agent still shows its own prompt. With it on, the approval is an
+ordinary ask: it counts in the header and gets a row of its own in the panel,
+with Approve and Deny.
 
 ## Usage cards
 

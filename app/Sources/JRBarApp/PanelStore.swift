@@ -726,7 +726,15 @@ final class PanelStore {
                        style: style(for: SessionRow.orphanProvider(of: $0)))
         }
         let usage = inputs.usage
-        let rows = state.mainSessions.map { session in
+        // A sub-agent's ask, published only while sub-agent asks are on and
+        // counted in the header like any other, gets a row of its own: its
+        // own session, carrying the same Approve and Deny as a main
+        // session's. Its card is keyed on that session id, as every card is,
+        // so it cannot share its parent's row (which may hold an ask of its
+        // own). With the setting off no worker ask is published and none of
+        // these rows exist.
+        let asking = state.askingWorkers
+        let rows = (state.mainSessions + asking).map { session in
             var row = SessionRow(session: session, pinnedAsk: pinned[session.id],
                                  document: document, style: style(for: session.provider))
             row.usage = usage[session.id]

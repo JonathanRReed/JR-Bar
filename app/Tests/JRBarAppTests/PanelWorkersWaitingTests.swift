@@ -3,12 +3,15 @@ import Testing
 @testable import JRBarCore
 @testable import JRBarApp
 
-/// The panel's words for a quiet sub-agent, told in the words and rows a
-/// person sees, with nothing timed and no daemon.
+/// The panel's two halves of the sub-agent ask story, each told in the
+/// words and rows a person sees, with nothing timed and no daemon.
 ///
-/// With sub-agent asks off, the default, a worker's request is quiet. The
-/// parent row says so in plain words ("1 worker waiting"); no ask row, no
-/// needs-you count and no header word follow.
+/// Off, the default: a worker's request is quiet. The parent row says so in
+/// plain words ("1 worker waiting"); no ask row, no needs-you count and no
+/// header word follow. On: the same request is an ordinary ask. It is
+/// counted in the header and it has a row, so an alert is never raised for
+/// something the panel cannot show, and Approve and Deny reach it through
+/// the one ask desk.
 @Suite("Panel workers waiting")
 @MainActor
 struct PanelWorkersWaitingTests {
@@ -48,6 +51,16 @@ struct PanelWorkersWaitingTests {
         CoreState(generation: 1, now: now,
                   aggregate: CoreAggregate(mode: "working", needsYou: 0, active: 1),
                   sessions: [mainRow(waiting: 1), workerRow(), workerRow(otherID)])
+    }
+
+    /// The same request with sub-agent asks on: published as an ask on the
+    /// worker's own row and counted in the header.
+    static var onState: CoreState {
+        let asked = workerRow(ask: askFor(workerID))
+        return CoreState(generation: 1, now: now,
+                         aggregate: CoreAggregate(mode: "needs_you", needsYou: 1, active: 1),
+                         sessions: [mainRow(waiting: 0), asked, workerRow(otherID)],
+                         asks: [askFor(workerID)])
     }
 
     // MARK: the words
@@ -108,5 +121,62 @@ struct PanelWorkersWaitingTests {
         let parent = try #require(store.rows.first)
         #expect(parent.workersWaitingText == nil)
         #expect(store.askRows.isEmpty)
+    }
+
+    // MARK: the setting on
+
+    @Test("on: the worker's ask has a row of its own, the same ask the desk answers")
+    func onGivesTheAskARow() throws {
+        let store = Self.makeStore(Self.onState)
+        let row = try #require(store.rows.first { $0.id == Self.workerID })
+        #expect(row.ask?.session == Self.workerID)
+        #expect(row.activity == .waiting)
+        #expect(row.label.contains("worker"), "the label names it as a worker of the parent's run")
+        // The parent keeps its own row and says nothing quiet is waiting.
+        let parent = try #require(store.rows.first { $0.id == Self.mainID })
+        #expect(parent.workersWaitingText == nil)
+        // The other worker has no ask, so it is no row.
+        #expect(store.rows.contains { $0.id == Self.otherID } == false)
+        #expect(Set(store.rows.map(\.id)) == [Self.mainID, Self.workerID])
+    }
+
+    @Test("on: the header counts the ask and the ask rows list it first")
+    func onCountsAndLists() {
+        let store = Self.makeStore(Self.onState)
+        #expect(store.aggregate == .needsInput)
+        #expect(store.headerWord == "Needs you")
+        #expect(store.askRows.map(\.id) == [Self.workerID])
+        #expect(store.rows.first?.id == Self.workerID, "an ask leads the list")
+        #expect(store.screenBarFocus.word == "Needs you")
+        #expect(store.screenBarFocus.clickSession == Self.workerID)
+    }
+
+    @Test("on: Approve and Deny reach the worker's ask through the ordinary desk and chords")
+    func onIsAnswerable() throws {
+        let store = Self.makeStore(Self.onState)
+        let row = try #require(store.askRows.first)
+        let ask = try #require(row.ask)
+        #expect(ask.canAnswer)
+        #expect(store.askDesk.refusal(ask, .approve) == nil)
+        #expect(store.askDesk.refusal(ask, .deny) == nil)
+        #expect(PanelStore.chordTarget(.approve, typingInField: false, selectedID: nil, askRows: store.askRows)
+                == .ask(id: Self.workerID))
+        #expect(PanelStore.chordTarget(.deny, typingInField: false, selectedID: nil, askRows: store.askRows)
+                == .ask(id: Self.workerID))
+    }
+
+    @Test("on: every ask in the state lands on a row, so no alert fires for something unshown")
+    func onNoAskWithoutARow() {
+        let gone = "claude:session:cleared"
+        var state = Self.onState
+        state.asks.append(Self.askFor(Self.mainID))
+        state.asks.append(Self.askFor(gone))
+        state.sessions[0] = Self.mainRow(waiting: 0, ask: Self.askFor(Self.mainID))
+        let store = Self.makeStore(state)
+        let rowIDs = Set(store.rows.map(\.id))
+        for ask in state.asks {
+            #expect(rowIDs.contains(ask.session ?? ""), "no row for \(ask.session ?? "-")")
+        }
+        #expect(store.askRows.count == 3)
     }
 }
