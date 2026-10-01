@@ -10,6 +10,7 @@ from jrbar.provider_feature_settings import (
     ProviderCollectionFeature,
     project_presentation_settings,
 )
+from jrbar.provider_reconnect import FailureGate
 from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
@@ -20,6 +21,9 @@ from jrbar.provider_usage_runtime import (
     ProviderUsageService,
     ProviderUsageState,
     RefreshPublicationOutcome,
+    _CollectionRound,
+    _CollectJob,
+    _RefreshBooks,
 )
 from jrbar.provider_usage_settings import default_provider_usage_settings
 
@@ -1571,3 +1575,519 @@ def test_stale_refresh_is_superseded_then_worker_reruns_latest_settings__and_1_m
     assert callbacks[-1].by_provider("grok").state is ProviderSourceState.DISABLED
     assert len(callbacks) == 1
     service.close()
+
+
+
+# --- Providers are asked together, and answered as they arrive --------------
+
+
+class _Published:
+    """The states a request's callback received, waited on by condition."""
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self.states: list[ProviderUsageState] = []
+
+    def __call__(self, state: ProviderUsageState) -> None:
+        with self._condition:
+            self.states.append(state)
+            self._condition.notify_all()
+
+    def wait_for(self, predicate, *, timeout: float = 30.0) -> ProviderUsageState:
+        with self._condition:
+            assert self._condition.wait_for(
+                lambda: any(predicate(state) for state in self.states),
+                timeout=timeout,
+            ), "the state the test waits for never arrived"
+            return next(state for state in self.states if predicate(state))
+
+
+def _percent(state: ProviderUsageState, provider_id: str):
+    lane = state.by_provider(provider_id).lanes[0]
+    return lane.remaining_percent
+
+
+def test_a_slow_provider_does_not_hold_back_a_quick_providers_reading(tmp_path) -> None:
+    settings = default_provider_usage_settings()
+    codex_running = threading.Event()
+    release_codex = threading.Event()
+
+    def slow_codex(_pref, _home, observed, _credentials):
+        codex_running.set()
+        assert release_codex.wait(30.0)
+        return snapshot("codex", remaining=40, observed=observed)
+
+    previous_codex = snapshot("codex", remaining=55, observed=500)
+    saved: list[ProviderUsageState] = []
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={
+            "codex": slow_codex,
+            "claude": lambda _pref, _home, observed, _credentials: snapshot(
+                "claude", remaining=70, observed=observed
+            ),
+        },
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000.0,
+        state_loader=lambda: ProviderUsageState((previous_codex,), 900.0, 0.0, False),
+        state_saver=saved.append,
+        incident_lookup=lambda *_args: None,
+        partial_publish_after_seconds=0.0,
+    )
+    published = _Published()
+    service.request(callback=published, providers=("codex", "claude"), force=True)
+
+    partial = published.wait_for(
+        lambda state: any(item.provider_id == "claude" for item in state.snapshots)
+    )
+
+    # Claude's reading is on show while Codex is still being asked ...
+    assert codex_running.is_set() and not release_codex.is_set()
+    assert partial.refreshing is True
+    assert _percent(partial, "claude") == 70
+    assert service.snapshot().by_provider("claude").state is ProviderSourceState.READY
+    # ... and the slow provider keeps its last good reading, not a gap.
+    assert partial.by_provider("codex") == previous_codex
+    # A partial is never written to disk: the file only holds a finished refresh.
+    assert saved == []
+
+    release_codex.set()
+    final = published.wait_for(lambda state: not state.refreshing)
+    assert _percent(final, "codex") == 40
+    assert _percent(final, "claude") == 70
+    assert [state.refreshing for state in saved] == [False]
+    assert service.refresh_receipts()[-1].outcome is RefreshPublicationOutcome.ACCEPTED
+    assert len(service.refresh_receipts()) == 1
+    service.close()
+
+
+def test_providers_are_asked_at_the_same_time(tmp_path) -> None:
+    # Two collectors that can only finish if both are running at once: run one
+    # after the other and the barrier breaks, and both come back as errors.
+    settings = default_provider_usage_settings()
+    meeting = threading.Barrier(2, timeout=30.0)
+
+    def meets(provider_id):
+        def collect(_pref, _home, observed, _credentials):
+            meeting.wait()
+            return snapshot(provider_id, observed=observed)
+
+        return collect
+
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={"codex": meets("codex"), "claude": meets("claude")},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000.0,
+        incident_lookup=lambda *_args: None,
+    )
+
+    state = service.refresh_now(providers=("codex", "claude"), force=True)
+
+    assert state.by_provider("codex").state is ProviderSourceState.READY
+    assert state.by_provider("claude").state is ProviderSourceState.READY
+
+
+def _round_job(slot: int, provider_id: str, instance: str = "default") -> _CollectJob:
+    from types import SimpleNamespace
+
+    return _CollectJob(
+        slot=slot,
+        preference=SimpleNamespace(
+            provider_id=provider_id,
+            source_instance_id=instance,
+            identity=(provider_id, instance),
+        ),
+        collector=lambda *_args: None,
+        gate=FailureGate(),
+        fingerprint=None,
+        repair_grok=False,
+    )
+
+
+def test_a_round_asks_a_bounded_number_at_once_in_settings_order() -> None:
+    jobs = [_round_job(slot, name) for slot, name in enumerate(("codex", "claude", "cursor", "devin"))]
+    release = {job.slot: threading.Event() for job in jobs}
+    started: list[int] = []
+
+    def run(job):
+        started.append(job.slot)
+        assert release[job.slot].wait(30.0)
+        return snapshot(job.provider_id)
+
+    collection = _CollectionRound(
+        jobs,
+        run=run,
+        unanswered=lambda job, reason: snapshot(job.provider_id),
+        max_concurrent=2,
+        deadline_seconds=45.0,
+        monotonic=lambda: 0.0,
+    )
+
+    # `wake_at` in the past makes advance() a poll: it starts what may start.
+    assert collection.advance(wake_at=-1.0) == []
+    assert collection.in_flight == 2
+
+    release[0].set()
+    finished: list[int] = []
+    while not collection.finished:
+        for job, _candidate in collection.advance():
+            finished.append(job.slot)
+            assert collection.in_flight <= 2
+            for later in jobs:
+                release[later.slot].set()
+    assert sorted(finished) == [0, 1, 2, 3]
+    # The third and fourth waited their turn, in order.
+    assert started.index(2) < started.index(3)
+    assert set(started[:2]) == {0, 1}
+
+
+def test_a_round_never_runs_two_instances_of_one_provider_together() -> None:
+    jobs = [
+        _round_job(0, "claude", "default"),
+        _round_job(1, "claude", "work"),
+        _round_job(2, "codex"),
+    ]
+    release = {job.slot: threading.Event() for job in jobs}
+
+    def run(job):
+        assert release[job.slot].wait(30.0)
+        return snapshot(job.provider_id)
+
+    collection = _CollectionRound(
+        jobs,
+        run=run,
+        unanswered=lambda job, reason: snapshot(job.provider_id),
+        max_concurrent=4,
+        deadline_seconds=45.0,
+        monotonic=lambda: 0.0,
+    )
+
+    assert collection.advance(wake_at=-1.0) == []
+    # The first Claude and Codex run; the second Claude waits for the first.
+    assert collection.in_flight == 2
+    assert collection.settled_all("claude") is False
+
+    release[0].set()
+    first = collection.advance()
+    assert [job.slot for job, _candidate in first] == [0]
+    assert collection.in_flight == 2  # the second Claude is up, beside Codex
+    for event in release.values():
+        event.set()
+    answered = []
+    while not collection.finished:
+        answered.extend(job.slot for job, _candidate in collection.advance())
+    assert sorted(answered) == [1, 2]
+
+
+def test_a_round_gives_up_on_a_collector_past_its_deadline_and_drops_its_late_answer() -> None:
+    clock = {"now": 0.0}
+    hung = _round_job(0, "claude")
+    fine = _round_job(1, "codex")
+    hung_running = threading.Event()
+    release_hung = threading.Event()
+    answered_by_hung: list[str] = []
+
+    def run(job):
+        if job is hung:
+            hung_running.set()
+            assert release_hung.wait(30.0)
+            answered_by_hung.append("late")
+        return snapshot(job.provider_id)
+
+    gave_up: list[tuple[int, str]] = []
+
+    def unanswered(job, reason):
+        gave_up.append((job.slot, reason))
+        return snapshot(job.provider_id, state=ProviderSourceState.UNAVAILABLE)
+
+    collection = _CollectionRound(
+        [hung, fine],
+        run=run,
+        unanswered=unanswered,
+        max_concurrent=4,
+        deadline_seconds=45.0,
+        monotonic=lambda: clock["now"],
+    )
+    # The fine collector answers promptly; the clock then passes the deadline.
+    answers = collection.advance(wake_at=-1.0)
+    assert hung_running.wait(30.0)
+    while not any(job is fine for job, _candidate in answers):
+        answers.extend(collection.advance(wake_at=-1.0))
+    clock["now"] = 46.0
+    answers.extend(collection.advance())
+
+    assert [(job.slot, candidate.state) for job, candidate in answers] == [
+        (1, ProviderSourceState.READY),
+        (0, ProviderSourceState.UNAVAILABLE),
+    ]
+    assert gave_up == [(0, "collector_timeout")]
+    assert collection.finished
+
+    # The hung collector comes back after it was given up on: nothing reports it.
+    release_hung.set()
+    assert collection.advance() == []
+    assert gave_up == [(0, "collector_timeout")]
+
+
+def test_the_published_order_follows_the_settings_whatever_order_providers_finish(tmp_path) -> None:
+    settings = default_provider_usage_settings()
+    order = ("codex", "cursor", "devin")
+    release = {name: threading.Event() for name in order}
+    lookups: list[str] = []
+
+    def collector(provider_id):
+        def collect(_pref, _home, observed, _credentials):
+            assert release[provider_id].wait(30.0)
+            return snapshot(provider_id, remaining=10, observed=observed)
+
+        return collect
+
+    previous = tuple(snapshot(name, remaining=90, observed=500) for name in order)
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={name: collector(name) for name in order},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000.0,
+        state_loader=lambda: ProviderUsageState(previous, 900.0, 0.0, False),
+        incident_lookup=lambda provider_id, _observed: lookups.append(provider_id),
+        partial_publish_after_seconds=0.0,
+    )
+    published = _Published()
+    service.request(callback=published, providers=order, force=True)
+
+    # Finish them in the reverse of the settings order, one at a time.
+    for name in reversed(order[1:]):
+        release[name].set()
+        published.wait_for(lambda state, name=name: (
+            state.refreshing and _percent(state, name) == 10
+        ))
+    release["codex"].set()
+    final = published.wait_for(lambda state: not state.refreshing)
+
+    assert tuple(item.provider_id for item in final.snapshots) == order
+    assert {_percent(final, name) for name in order} == {10}
+    for state in published.states:
+        assert tuple(item.provider_id for item in state.snapshots) == order
+    # Each partial showed the answered providers new and the others as they were.
+    devin_first = published.wait_for(lambda state: state.refreshing and _percent(state, "devin") == 10)
+    assert _percent(devin_first, "codex") == 90
+    # A status page is asked about each provider once for the whole refresh.
+    assert sorted(lookups) == sorted(order)
+    service.close()
+
+
+def test_a_collector_that_raises_costs_only_its_own_provider(tmp_path) -> None:
+    settings = default_provider_usage_settings()
+    calls: list[str] = []
+
+    def broken(*_args):
+        calls.append("claude")
+        raise RuntimeError("private body must not surface")
+
+    def fine(provider_id):
+        def collect(_pref, _home, observed, _credentials):
+            calls.append(provider_id)
+            return snapshot(provider_id, remaining=33, observed=observed)
+
+        return collect
+
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={"codex": fine("codex"), "claude": broken, "cursor": fine("cursor")},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000.0,
+        incident_lookup=lambda *_args: None,
+    )
+
+    state = service.refresh_now(providers=("codex", "claude", "cursor"), force=True)
+
+    assert state.by_provider("claude").state is ProviderSourceState.ERROR
+    assert state.by_provider("claude").reason_code == "collector_failed"
+    assert _percent(state, "codex") == 33
+    assert _percent(state, "cursor") == 33
+    assert tuple(item.provider_id for item in state.snapshots) == ("codex", "claude", "cursor")
+
+    # The retry gate is Claude's alone: the next unforced refresh skips Claude
+    # (its ladder is armed) and asks the other two again.
+    calls.clear()
+    service.refresh_now(providers=("codex", "claude", "cursor"))
+    assert sorted(calls) == ["codex", "cursor"]
+
+
+def test_a_collector_past_its_deadline_is_a_transient_failure_for_that_provider_only(
+    tmp_path,
+) -> None:
+    # The only test here that waits on a real deadline (half a second); the
+    # round's own deadline arithmetic is proved on a fake clock above.
+    settings = default_provider_usage_settings()
+    release_hung = threading.Event()
+    calls: list[str] = []
+
+    def hung(_pref, _home, observed, _credentials):
+        calls.append("codex")
+        assert release_hung.wait(30.0)
+        return snapshot("codex", remaining=1, observed=observed)
+
+    def fine(_pref, _home, observed, _credentials):
+        calls.append("claude")
+        return snapshot("claude", remaining=64, observed=observed)
+
+    previous_codex = snapshot("codex", remaining=55, observed=500)
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={"codex": hung, "claude": fine},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000.0,
+        state_loader=lambda: ProviderUsageState((previous_codex,), 900.0, 0.0, False),
+        incident_lookup=lambda *_args: None,
+        collector_deadline_seconds=0.5,
+        partial_publish_after_seconds=0.0,
+    )
+    published = _Published()
+    service.request(callback=published, providers=("codex", "claude"), force=True)
+    final = published.wait_for(lambda state: not state.refreshing)
+
+    # Claude answered; Codex ran out of time and shows its last good reading.
+    assert _percent(final, "claude") == 64
+    assert final.by_provider("claude").state is ProviderSourceState.READY
+    codex = final.by_provider("codex")
+    assert codex.state is ProviderSourceState.STALE
+    assert codex.reason_code == "collector_timeout"
+    assert codex.action_label == "Retry"
+    assert codex.lanes[0].remaining_percent == 55
+    assert codex.effective_read_at == previous_codex.effective_read_at
+    assert tuple(item.provider_id for item in final.snapshots) == ("codex", "claude")
+
+    # It arms Codex's transient retry gate and nobody else's: the next
+    # unforced refresh skips Codex and asks Claude again.
+    calls.clear()
+    again = service.refresh_now(providers=("codex", "claude"))
+    assert calls == ["claude"]
+    assert again.by_provider("codex").lanes[0].remaining_percent == 55
+
+    # The overdue collector finally returns; its answer changes nothing.
+    release_hung.set()
+    assert service.snapshot().by_provider("codex").lanes[0].remaining_percent == 55
+    service.close()
+
+
+def test_a_scoped_refresh_asks_only_the_named_provider_and_keeps_the_rest(tmp_path) -> None:
+    settings = default_provider_usage_settings()
+    asked: list[str] = []
+
+    def collector(provider_id, remaining):
+        def collect(_pref, _home, observed, _credentials):
+            asked.append(provider_id)
+            return snapshot(provider_id, remaining=remaining, observed=observed)
+
+        return collect
+
+    clock = iter((1000.0, 1100.0))
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={
+            "codex": collector("codex", 10),
+            "claude": collector("claude", 20),
+            "cursor": collector("cursor", 30),
+        },
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: next(clock),
+        incident_lookup=lambda *_args: None,
+    )
+    service.refresh_now(providers=("codex", "claude", "cursor"), force=True)
+    asked.clear()
+
+    scoped = service.refresh_now(providers=("claude",), force=True)
+
+    assert asked == ["claude"]
+    assert tuple(item.provider_id for item in scoped.snapshots) == ("codex", "claude", "cursor")
+    assert scoped.by_provider("claude").observed_at == 1100.0
+    assert scoped.by_provider("codex").observed_at == 1000.0
+    assert scoped.by_provider("cursor").observed_at == 1000.0
+
+
+def test_a_scoped_request_publishes_the_named_provider_quickly_beside_the_rest(tmp_path) -> None:
+    # The forced scoped path a "Fix sign-in" click uses: only Claude is asked,
+    # the others keep what they showed, and the state still arrives once.
+    settings = default_provider_usage_settings()
+    asked: list[str] = []
+
+    def claude(_pref, _home, observed, _credentials):
+        asked.append("claude")
+        return snapshot("claude", remaining=88, observed=observed)
+
+    previous_codex = snapshot("codex", remaining=55, observed=500)
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={"claude": claude, "codex": lambda *_args: pytest.fail("not in scope")},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000.0,
+        state_loader=lambda: ProviderUsageState((previous_codex,), 900.0, 0.0, False),
+        incident_lookup=lambda *_args: None,
+    )
+    published = _Published()
+    service.request(callback=published, providers=("claude",), force=True)
+    final = published.wait_for(lambda state: not state.refreshing)
+
+    assert asked == ["claude"]
+    assert _percent(final, "claude") == 88
+    assert final.by_provider("codex") == previous_codex
+    service.close()
+
+
+def test_a_partial_state_is_published_only_by_the_run_it_belongs_to(tmp_path) -> None:
+    settings = default_provider_usage_settings()
+    old = snapshot("codex", remaining=55, observed=500)
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000.0,
+        state_loader=lambda: ProviderUsageState((old,), 900.0, 3000.0, False),
+    )
+    shown = []
+    service._callbacks.append((0, shown.append))
+    fresh = (snapshot("codex", remaining=10, observed=1000),)
+    books = _RefreshBooks({}, {})
+
+    # A run of another generation, or one whose settings were edited, or a
+    # closed service: nothing is published.
+    service._publish_partial(fresh, books, generation=5, settings_revision=0)
+    service.note_settings_updated(settings)
+    service._publish_partial(fresh, books, generation=0, settings_revision=0)
+    assert service.snapshot().by_provider("codex") == old
+    assert shown == []
+
+    # The run that owns the current generation and revision publishes: still
+    # refreshing, on the schedule it had, its callbacks handed the state but
+    # not retired, and the books committed with it.
+    revision = service._settings_revision
+    books.last_known_good[("codex", "default", "")] = fresh[0]
+    service._publish_partial(fresh, books, generation=0, settings_revision=revision)
+    live = service.snapshot()
+    assert live.refreshing is True
+    assert live.next_refresh_at == 3000.0
+    assert live.refreshed_at == 900.0
+    assert _percent(live, "codex") == 10
+    assert shown == [live]
+    assert len(service._callbacks) == 1
+    assert service._last_known_good == books.last_known_good
+    assert service._last_known_good is not books.last_known_good
+
+    service.close()
+    service._publish_partial(
+        (snapshot("codex", remaining=1, observed=1100),),
+        books,
+        generation=service._refresh_generation,
+        settings_revision=revision,
+    )
+    assert _percent(service.snapshot(), "codex") == 10
