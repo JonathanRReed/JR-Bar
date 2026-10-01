@@ -41,7 +41,6 @@ FRAMEWORK_CALLBACKS = frozenset(
         # NSApplication invokes this delegate callback directly during
         # activation. It is intentionally framework-owned, not orphaned.
         "applicationDidBecomeActive_",
-        "menuDidClose_",
     }
 )
 

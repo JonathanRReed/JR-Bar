@@ -96,7 +96,6 @@ from .animation import (
     errors_only,
     problems_for_program,
 )
-from .adaptive_refresh import admit_menu_open_refresh
 from .animation_store import (
     AnimationLibrary,
     LibraryHealth,
@@ -214,7 +213,6 @@ from .completions import (
     COMPLETION_NOTIFY_FRESHNESS_SECONDS as COMPLETION_NOTIFY_FRESHNESS_SECONDS,
 )
 from .completion_visibility import (
-    plan_seen_completion_ids,
     select_clearable_completions,
     select_unseen_completions,
 )
@@ -363,10 +361,7 @@ from .mailbox_preferences import (
     apply_mailbox_preferences,
 )
 from .snooze_scope import filter_snoozed_statuses, status_snoozed
-from .menu_tracking import (
-    ExactBoundarySchedule,
-    StableNativeMenuRegistry,
-)
+from .menu_tracking import ExactBoundarySchedule
 from .models import (
     AgentMode,
     AgentStatus,
@@ -479,7 +474,6 @@ from .reset_policy import (
     MINIMUM_RESET_REFRESH_DELAY_SECONDS,
     ResetBoundaryPlan,
     evaluate_reset_continuity,
-    next_countdown_deadline,
     plan_reset_boundary_refresh,
 )
 from .runtime_scheduler import (
@@ -1727,7 +1721,6 @@ class StatusBarController(NSObject):
         self.mailbox_preferences_saver = self._save_mailbox_preferences
         self.operator_triage_saver = self._save_operator_triage
         self.navigation_candidates_by_work_key = {}
-        self.native_agent_menu_registry = StableNativeMenuRegistry()
         self.mailbox_boundary_schedule = ExactBoundarySchedule()
         self.mailbox_boundary_timer = None
         self.settings_fields = {}
@@ -1944,7 +1937,6 @@ class StatusBarController(NSObject):
         self.last_agent_modes = {}
         self.lid_animation_thumbs = {}
         self.peek_until = 0.0
-        self.status_menu_open = False
         self.studio_editor = None
         self.studio_library_popup = None
         self.studio_preview_program = ""
@@ -1962,9 +1954,7 @@ class StatusBarController(NSObject):
         self._focus_observation_available: bool | None = None
         self._keepalive_poke_in_flight = False
         self._last_event_refresh_at = 0.0
-        self._menu_rebuild_pending = None
         self._menu_signature = None
-        self.menu_last_opened_at = None
         self._pane_transition_generation = 0
         self._peek_hits = 0
         self._presentation_scheduler_state = PresentationSchedulerState()
@@ -2050,8 +2040,6 @@ class StatusBarController(NSObject):
         self._capacity_reset_timer = None
         self._capacity_reset_plan = ResetBoundaryPlan(None, (), ())
         self._capacity_reset_retry_deadline: float | None = None
-        self._capacity_countdown_timer = None
-        self._capacity_countdown_deadline: float | None = None
         self._capacity_reset_continuity = {}
         self._attempted_capacity_boundary_keys: tuple[str, ...] = ()
         # The authority decision for every lane of the last refresh, per
@@ -3750,45 +3738,6 @@ class StatusBarController(NSObject):
                 "capacityResetBoundary:",
             )
 
-        settings_window = getattr(self, "settings_window", None)
-        settings_visible = bool(
-            settings_window is not None
-            and callable(getattr(settings_window, "isVisible", None))
-            and settings_window.isVisible()
-            and getattr(self, "current_settings_pane", None) == "profile"
-        )
-        countdown_relevant = bool(
-            getattr(self, "status_menu_open", False) or settings_visible
-        )
-        reset_epochs = (
-            window.reset_epoch
-            for model in models.values()
-            for window in model.windows
-            if window.reset_known
-        )
-        countdown_deadline = (
-            next_countdown_deadline(reset_epochs, now=epoch_now)
-            if countdown_relevant
-            else None
-        )
-        countdown_timer = getattr(self, "_capacity_countdown_timer", None)
-        old_countdown_deadline = getattr(
-            self, "_capacity_countdown_deadline", None
-        )
-        if countdown_deadline is None:
-            if countdown_timer is not None:
-                countdown_timer.invalidate()
-            self._capacity_countdown_timer = None
-            self._capacity_countdown_deadline = None
-        elif countdown_timer is None or countdown_deadline != old_countdown_deadline:
-            if countdown_timer is not None:
-                countdown_timer.invalidate()
-            self._capacity_countdown_deadline = countdown_deadline
-            self._capacity_countdown_timer = self._schedule_capacity_timer(
-                max(0.05, countdown_deadline - epoch_now),
-                "capacityCountdown:",
-            )
-
     def _schedule_capacity_reset_retry(
         self,
         plan: ResetBoundaryPlan,
@@ -3890,14 +3839,6 @@ class StatusBarController(NSObject):
             )
             return
         self.schedule_capacity_timers(epoch_now=epoch_now)
-
-    @objc.IBAction
-    def capacityCountdown_(self, timer):
-        if timer is not getattr(self, "_capacity_countdown_timer", None):
-            return
-        self._capacity_countdown_timer = None
-        self._capacity_countdown_deadline = None
-        self.schedule_capacity_timers(epoch_now=time.time())
 
     def _usage_refresh_worker(self, requests: dict[SourceKey, int]) -> None:
         """Build one frozen local snapshot, then start every source independently."""
@@ -4739,74 +4680,6 @@ class StatusBarController(NSObject):
             self._runtime_preview_fire_at.pop(RuntimeFeature.SETUP_DEMO, None)
             self._runtime_timer_registry.invalidate(RuntimeFeature.SETUP_DEMO)
 
-    def menuWillOpen_(self, _menu):
-        self.status_menu_open = True
-        self.virtual_status_device.set_pointer_interaction_relevant(False)
-        snapshot = getattr(self, "last_snapshot", None)
-        if snapshot is not None and getattr(snapshot, "operator_state", None) is not None:
-            # build_menu projects this same state moments later; running
-            # it here too was pure duplicate work on the click path.
-            self.current_operator_state = snapshot.operator_state
-        # Opening the menu is a "visit": it clears the unseen-done badge
-        # (mirrors T3's lastVisitedAt read/unread model).
-        opened_at = datetime.now(timezone.utc)
-        self.menu_last_opened_at = opened_at
-        # The same visit, for the same reason, on the "what did I miss"
-        # ledger. The menu the user is looking at was already built, so this
-        # clears the section for the NEXT open, never underneath his cursor.
-        self.mark_activity_seen_now(opened_at.timestamp())
-        projection = getattr(self, "current_attention_projection", None)
-        if projection is not None:
-            seen_ids = plan_seen_completion_ids(
-                (
-                    row.source_status
-                    for row in projection.visible_rows
-                    if row.lifecycle_mode == LifecycleMode.COMPLETED_RECENTLY
-                ),
-                self.mailbox_seen_completion_ids,
-            )
-            self.mailbox_seen_completion_ids = set(seen_ids)
-            mailbox = project_mailbox_for_target(projection, self)
-            self.current_mailbox_projection = mailbox
-            self.mailbox_retained_order = dict(mailbox.retained_order)
-        self.schedule_capacity_timers()
-        # One explicit admission boundary records the attention signal and
-        # invokes only refresh planning. Provider collection stays on workers.
-        admit_menu_open_refresh(self)
-
-    def menuDidClose_(self, _menu):
-        self.status_menu_open = False
-        settings_window = getattr(self, "settings_window", None)
-        profile_settings_visible = bool(
-            settings_window is not None
-            and callable(getattr(settings_window, "isVisible", None))
-            and settings_window.isVisible()
-            and getattr(self, "current_settings_pane", None) == "profile"
-        )
-        if profile_settings_visible:
-            self.schedule_capacity_timers()
-        else:
-            countdown_timer = getattr(self, "_capacity_countdown_timer", None)
-            if countdown_timer is not None:
-                countdown_timer.invalidate()
-            self._capacity_countdown_timer = None
-            self._capacity_countdown_deadline = None
-        self.virtual_status_device.set_pointer_interaction_relevant(
-            bool(
-                SCREEN_BAR_FEATURE_ENABLED
-                and self.settings.virtual_status_device_enabled
-            )
-        )
-        self.native_agent_menu_registry.take_deferred_after_close()
-        pending = getattr(self, "_menu_rebuild_pending", None)
-        self._menu_rebuild_pending = None
-        if pending is not None:
-            # Deferred: never swap the menu during tracking teardown.
-            self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "refresh:", None, False
-            )
-
-
     def _finish_dnd_change(
         self,
         result: DndChangeResult,
@@ -4999,13 +4872,11 @@ class StatusBarController(NSObject):
             "liveness_timer",
             "failure_signal_timer",
             "_capacity_reset_timer",
-            "_capacity_countdown_timer",
         ):
             active_timer = getattr(self, name, None)
             if active_timer is not None:
                 active_timer.invalidate()
         self._capacity_reset_timer = None
-        self._capacity_countdown_timer = None
         for name in (
             "_capacity_refresh_deadline_timers",
             "_capacity_refresh_retry_timers",
@@ -5016,7 +4887,6 @@ class StatusBarController(NSObject):
             timers.clear()
         self._capacity_reset_plan = ResetBoundaryPlan(None, (), ())
         self._capacity_reset_retry_deadline = None
-        self._capacity_countdown_deadline = None
         self._attempted_capacity_boundary_keys = ()
         self.release_preview_engines()
         # Same reasoning for the peer-facing ledger: the live path is
@@ -5174,20 +5044,13 @@ class StatusBarController(NSObject):
 
     # --- "What did I miss" ledger -------------------------------------
     #
-    # "Left" is defined as: the last time the dropdown was opened.
+    # "Left" is defined as: the last time the app looked at History, which
+    # the `mark_history_seen` command stamps, or the last client going away.
     #
     # Screen lock and sleep were the alternatives, and both lie about THIS
-    # surface. The ledger lives in the dropdown; the dropdown is the thing
-    # that shows the facts. An owner whose screen never locked but who never
-    # looked at the menu still missed everything -- lock-based "seen" would
-    # quietly mark it read on his behalf. Opening the menu is also the visit
-    # the app ALREADY models (`menu_last_opened_at`, `unseen_completions`),
-    # and a second, contradicting definition of "seen" in the same dropdown
-    # is precisely the duplication this project keeps paying for.
-    #
-    # It is observable, not implied: the section's first row names the
-    # boundary and its age ("Menu last opened 12m ago"), so the owner can
-    # see which window he is being shown rather than infer it.
+    # surface. An owner whose screen never locked but who never looked at
+    # History still missed everything -- lock-based "seen" would quietly
+    # mark it read on his behalf.
 
     def ensure_activity_ledger(self) -> ActivityLedger:
         """Restore the persisted ledger once. Never raises into AppKit."""
@@ -5258,7 +5121,7 @@ class StatusBarController(NSObject):
                 )
 
     def mark_activity_seen_now(self, epoch: float | None = None) -> None:
-        """Opening the dropdown is the visit that clears "since you left"."""
+        """A look at History is the visit that clears "since you left"."""
         ledger = self.ensure_activity_ledger()
         stamp = time.time() if epoch is None else float(epoch)
         try:
@@ -8807,7 +8670,7 @@ class StatusBarController(NSObject):
         # the window stays fully click-through (mouse events ignored),
         # exactly as before.
         self.virtual_status_device.set_pointer_interaction_relevant(
-            display_asks and not self.status_menu_open
+            display_asks
         )
         click_target = self.screen_bar_click_status() if display_asks else None
         if click_target is not None:
@@ -11119,7 +10982,7 @@ class StatusBarController(NSObject):
     @objc.IBAction
     def peekTick_(self, _timer):
         window = getattr(self.virtual_status_device, "window", None)
-        if window is None or getattr(self, "status_menu_open", False):
+        if window is None:
             self._peek_hits = 0
             return
         from AppKit import NSEvent
@@ -12367,19 +12230,18 @@ def unseen_completions(
     *,
     within_seconds: float = COMPLETED_VISIBLE_SECONDS,
 ) -> list[AgentStatus]:
-    """Main-session completions the user has NOT seen: newer than the
-    last time the dropdown was opened. Opening the menu is the visit
-    that clears them -- modeled, not guessed (T3's lastVisitedAt).
+    """Main-session completions the user has NOT seen: finished inside
+    ``within_seconds``, not acknowledged by any surface and not answered at
+    the terminal moments ago.
 
     ``within_seconds`` narrows the window for surfaces with less
-    patience than the menu badge (the Screen Bar's green tip)."""
+    patience than the default (the Screen Bar's green tip)."""
     return list(
         select_unseen_completions(
             snapshot.statuses,
             getattr(snapshot, "stale_statuses", ()),
             collected_at=snapshot.collected_at,
             within_seconds=within_seconds,
-            menu_last_opened_at=getattr(target, "menu_last_opened_at", None),
             acknowledged_keys=clear_agents_state_for_target(target).acknowledged_keys,
             attended_prompt_monotonic=getattr(
                 target, "_attended_prompt_monotonic", {}

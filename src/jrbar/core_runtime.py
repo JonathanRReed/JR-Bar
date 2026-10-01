@@ -3526,9 +3526,8 @@ def _cmd_replay_events(self, args):
 def _cmd_mark_history_seen(self, args):
     """The user just looked at History: advance the ledger's ``last_seen``.
 
-    Same stamp the menu writes when the dropdown opens -- ``unseen`` rows
-    and the "while you were away" banner measure from the last look, not
-    from a restart. It waits on the slow lane behind the History read sent
+    ``unseen`` rows and the "while you were away" banner measure from the
+    last look, not from a restart. It waits on the slow lane behind the History read sent
     before it, so the look is stamped when the command arrived: a scan
     ahead of it must not mark what came in meanwhile as seen.
     """

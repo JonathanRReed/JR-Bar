@@ -547,34 +547,6 @@ def format_reset_countdown(
     return f"in {total_minutes}m"
 
 
-def next_countdown_deadline(reset_epochs, *, now: float) -> float | None:
-    """Return the next exact minute-display transition across reset epochs."""
-    current = _finite_number(now)
-    if current is None:
-        return None
-    deadlines: list[float] = []
-    for value in reset_epochs or ():
-        reset = parse_reset_epoch(value, now=current)
-        if reset is None:
-            continue
-        remaining = reset - current
-        if remaining < 60.0:
-            deadlines.append(reset)
-            continue
-        displayed_minutes = int(math.ceil(remaining / 60.0))
-        if displayed_minutes >= 24 * 60:
-            displayed_hours = int(math.ceil(displayed_minutes / 60.0))
-            next_boundary_remaining = (
-                (displayed_hours - 1) * 60.0 * 60.0
-                if displayed_hours > 24
-                else (displayed_minutes - 1) * 60.0
-            )
-        else:
-            next_boundary_remaining = (displayed_minutes - 1) * 60.0
-        deadlines.append(reset - next_boundary_remaining)
-    return min(deadlines) if deadlines else None
-
-
 def _mapping_or_attribute(value, name: str, default=None):
     if isinstance(value, Mapping):
         return value.get(name, default)

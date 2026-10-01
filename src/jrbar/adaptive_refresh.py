@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import math
-import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -74,26 +72,6 @@ class AdaptiveRefreshPlan:
         object.__setattr__(self, "interval_seconds", float(self.interval_seconds))
         if self.menu_age_seconds is not None:
             object.__setattr__(self, "menu_age_seconds", float(self.menu_age_seconds))
-
-
-@dataclass(frozen=True, slots=True)
-class MenuOpenAdmissionReceipt:
-    provider_service_notified: bool
-    refresh_planned: bool
-    reason: str
-    wall_clock: float
-
-    def __post_init__(self) -> None:
-        if (
-            type(self.provider_service_notified) is not bool
-            or type(self.refresh_planned) is not bool
-            or self.reason != "menu-open"
-            or type(self.wall_clock) not in {int, float}
-            or not math.isfinite(self.wall_clock)
-            or self.wall_clock < 0.0
-        ):
-            raise ValueError("invalid menu-open admission receipt")
-        object.__setattr__(self, "wall_clock", float(self.wall_clock))
 
 
 def plan_adaptive_refresh_cadence(
@@ -191,44 +169,8 @@ def plan_adaptive_refresh_cadence(
     )
 
 
-def admit_menu_open_refresh(
-    controller,
-    wall_clock: Callable[[], float] = time.time,
-) -> MenuOpenAdmissionReceipt:
-    """Notify the usage service and invoke only the refresh admission planner."""
-    observed = float(wall_clock())
-    service_notified = False
-    service = getattr(controller, "_jrbar_provider_usage_service", None)
-    note_menu_opened = getattr(service, "note_menu_opened", None)
-    if callable(note_menu_opened):
-        try:
-            note_menu_opened(now=observed)
-            service_notified = True
-        except Exception:
-            service_notified = False
-
-    refresh_planned = False
-    planner = getattr(controller, "maybe_refresh_usage_summary", None)
-    if callable(planner):
-        planner(reason="menu-open")
-        refresh_planned = True
-    receipt = MenuOpenAdmissionReceipt(
-        service_notified,
-        refresh_planned,
-        "menu-open",
-        observed,
-    )
-    try:
-        controller._jrbar_adaptive_refresh_visit_receipt = receipt
-    except Exception:
-        pass
-    return receipt
-
-
 __all__ = [
     "AdaptiveRefreshPlan",
     "AdaptiveRefreshReason",
-    "MenuOpenAdmissionReceipt",
-    "admit_menu_open_refresh",
     "plan_adaptive_refresh_cadence",
 ]

@@ -10493,11 +10493,9 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         # --- scenario: controller_initializes_bounded_capacity_timer_state
         self.setUp()  # fresh isolated controller per scenario
         self.assertIsNone(self.controller._capacity_reset_timer)
-        self.assertIsNone(self.controller._capacity_countdown_timer)
         self.assertIsNone(self.controller._capacity_reset_plan.deadline)
         self.assertEqual(self.controller._capacity_reset_plan.provider_ids, ())
         self.assertIsNone(self.controller._capacity_reset_retry_deadline)
-        self.assertIsNone(self.controller._capacity_countdown_deadline)
         self.assertEqual(self.controller._attempted_capacity_boundary_keys, ())
 
         # --- scenario: controller_initializes_exact_registry_scoped_refresh_authority
@@ -10547,7 +10545,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             patch("jrbar.status_bar.usage_stats.codex_rate_limits") as codex,
             patch("jrbar.status_bar.claude_quota.fetch_windows") as claude,
         ):
-            self.controller.menuWillOpen_(None)
+            self.controller.maybe_refresh_usage_summary(reason="menu-open")
 
         request.assert_called_once_with(
             (
@@ -10932,7 +10930,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         }
 
         with patch.object(self.controller, "request_usage_refresh") as request:
-            self.controller.menuWillOpen_(None)
+            self.controller.maybe_refresh_usage_summary(reason="menu-open")
 
         request.assert_called_once_with(
             (self._source("claude"),),
@@ -10947,8 +10945,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         }
 
         with patch("jrbar.status_bar.threading.Thread") as thread_type:
-            self.controller.menuWillOpen_(None)
-            self.controller.menuWillOpen_(None)
+            self.controller.maybe_refresh_usage_summary(reason="menu-open")
+            self.controller.maybe_refresh_usage_summary(reason="menu-open")
 
         self.assertEqual(thread_type.call_count, 1)
         thread_type.return_value.start.assert_called_once_with()
@@ -10969,7 +10967,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         }
 
         with patch.object(self.controller, "request_usage_refresh") as request:
-            self.controller.menuWillOpen_(None)
+            self.controller.maybe_refresh_usage_summary(reason="menu-open")
 
         request.assert_called_once_with(
             (self._source("codex"),),
@@ -11264,7 +11262,6 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
                 (self._source("claude"),),
                 reason="manual",
             )
-            self.controller.menuDidClose_(None)
             duplicate = self.controller.request_usage_refresh(
                 (self._source("claude"),),
                 reason="manual",
@@ -11322,7 +11319,6 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
                 (self._source("claude"),),
                 reason="manual",
             )
-            self.controller.menuDidClose_(None)
             duplicate = self.controller.request_usage_refresh(
                 (self._source("claude"),),
                 reason="manual",
@@ -11918,8 +11914,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
     def test_reset_timer_scheduling(self) -> None:
         """Apply schedules one earliest grouped reset timer across providers;
         a due normal refresh suppresses the reset boundary timer; an
-        unchanged plan keeps timer identity; timers join common run-loop
-        modes; an exact 24h countdown schedules the branch transition."""
+        unchanged plan keeps timer identity; timers join the default
+        run-loop mode."""
         # --- scenario: apply_schedules_one_earliest_grouped_reset_timer
         self.setUp()  # fresh isolated controller per scenario
         timer = MagicMock()
@@ -12035,13 +12031,10 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.setUp()  # fresh isolated controller per scenario
         from jrbar.usage_view import build_provider_usage_view
 
-        self.controller.status_menu_open = True
         reset_timer = MagicMock()
-        countdown_timer = MagicMock()
         timer_api = MagicMock()
         timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.side_effect = (
             reset_timer,
-            countdown_timer,
         )
         self.controller._usage_provider_states = {"codex": self._state("codex", last_success_at=500.0)}
         self.controller._usage_provider_models = {
@@ -12064,16 +12057,14 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
 
         self.assertEqual(
             timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.call_count,
-            2,
+            1,
         )
         self.assertIs(self.controller._capacity_reset_timer, reset_timer)
-        self.assertIs(self.controller._capacity_countdown_timer, countdown_timer)
 
-        # --- scenario: capacity_timers_join_common_run_loop_modes_for_open_menu_updates
+        # --- scenario: capacity_timers_join_the_default_run_loop_mode
         self.setUp()  # fresh isolated controller per scenario
         from jrbar.usage_view import build_provider_usage_view
 
-        self.controller.status_menu_open = True
         self.controller._usage_provider_states = {"codex": self._state("codex", last_success_at=500.0)}
         self.controller._usage_provider_models = {
             "codex": build_provider_usage_view(
@@ -12086,11 +12077,9 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             )
         }
         reset_timer = MagicMock()
-        countdown_timer = MagicMock()
         timer_api = MagicMock()
         timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.side_effect = (
             reset_timer,
-            countdown_timer,
         )
 
         with (
@@ -12100,49 +12089,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             self.controller.schedule_capacity_timers(epoch_now=1_000.0)
 
         add_timer = self.capacity_run_loop_type.currentRunLoop.return_value.addTimer_forMode_
-        self.assertEqual(add_timer.call_count, 2)
-        self.assertEqual(
-            [call.args[0] for call in add_timer.call_args_list],
-            [reset_timer, countdown_timer],
-        )
+        add_timer.assert_called_once_with(reset_timer, self.status_bar.NSDefaultRunLoopMode)
         reset_timer.invalidate.assert_not_called()
-        countdown_timer.invalidate.assert_not_called()
-
-        # --- scenario: exact_twenty_four_hour_countdown_schedules_the_branch_transition
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.usage_view import build_provider_usage_view
-
-        self.controller.status_menu_open = True
-        timer_api = MagicMock()
-        timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.side_effect = (
-            MagicMock(),
-            MagicMock(),
-        )
-        self.controller._usage_provider_states = {"codex": self._state("codex", last_success_at=500.0)}
-        self.controller._usage_provider_models = {
-            "codex": build_provider_usage_view(
-                "codex",
-                "Codex",
-                ({"used_percent": 20, "resets_at": 87_400.0},),
-                last_success_at=500.0,
-                now=500.0,
-                reset_now=1_000.0,
-            )
-        }
-
-        with (
-            patch.object(self.status_bar.time, "monotonic", return_value=500.0),
-            patch.object(self.status_bar, "NSTimer", timer_api),
-        ):
-            self.controller.schedule_capacity_timers(epoch_now=1_000.0)
-
-        countdown_calls = [
-            call
-            for call in timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.call_args_list
-            if call.args[2] == "capacityCountdown:"
-        ]
-        self.assertEqual(len(countdown_calls), 1)
-        self.assertEqual(countdown_calls[0].args[0], 60.0)
 
     def test_reset_callback_reconciliation__and_3_more(self) -> None:
         """The reset callback records keys before requesting providers; a
@@ -12293,9 +12241,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertEqual(self.controller._attempted_capacity_boundary_keys, ())
 
 
-    def test_capacity_invalidation__and_2_more(self) -> None:
-        """Attempt state caps at 64; the countdown callback only mutates
-        labels and reschedules; termination invalidates everything."""
+    def test_capacity_invalidation__and_1_more(self) -> None:
+        """Attempt state caps at 64; termination invalidates everything."""
         # --- scenario: controller_capacity_attempt_state_stays_capped_at_64
         self.setUp()  # fresh isolated controller per scenario
         timer = MagicMock()
@@ -12322,56 +12269,12 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertNotIn("old-00", self.controller._attempted_capacity_boundary_keys)
         self.assertEqual(self.controller._attempted_capacity_boundary_keys[-1], "new")
 
-        # --- scenario: countdown_callback_only_reschedules_and_starts_no_source_work
-        self.setUp()  # fresh isolated controller per scenario
-        from jrbar.usage_view import build_provider_usage_view
-
-        self.controller._usage_provider_states = {"codex": self._state("codex", last_success_at=500.0)}
-        self.controller._usage_provider_models = {
-            "codex": build_provider_usage_view(
-                "codex",
-                "Codex",
-                (
-                    {
-                        "used_percent": 20,
-                        "window_minutes": 300,
-                        "resets_at": 1_130.0,
-                    },
-                ),
-                last_success_at=500.0,
-                now=500.0,
-                reset_now=1_000.0,
-            )
-        }
-        timer = MagicMock()
-        self.controller._capacity_countdown_timer = timer
-
-        with (
-            patch.object(self.status_bar.time, "monotonic", return_value=510.0),
-            patch.object(self.status_bar.time, "time", return_value=1_010.0),
-            patch.object(self.controller, "_usage_refresh_worker") as worker,
-            patch("jrbar.status_bar.usage_stats.scan_usage") as scan,
-            patch("jrbar.status_bar.usage_stats.codex_rate_limits") as codex,
-            patch("jrbar.status_bar.claude_quota.fetch_windows") as claude,
-            patch.object(self.controller, "schedule_capacity_timers") as schedule,
-        ):
-            self.controller.capacityCountdown_(timer)
-
-        self.assertIsNone(self.controller._capacity_countdown_timer)
-        worker.assert_not_called()
-        scan.assert_not_called()
-        codex.assert_not_called()
-        claude.assert_not_called()
-        schedule.assert_called_once_with(epoch_now=1_010.0)
-
         # --- scenario: termination_invalidates_capacity_timers_and_clears_attempts
         self.setUp()  # fresh isolated controller per scenario
         reset_timer = MagicMock()
-        countdown_timer = MagicMock()
         deadline_timer = MagicMock()
         retry_timer = MagicMock()
         self.controller._capacity_reset_timer = reset_timer
-        self.controller._capacity_countdown_timer = countdown_timer
         self.controller._capacity_refresh_deadline_timers = {self._refresh_key("codex"): deadline_timer}
         self.controller._capacity_refresh_retry_timers = {self._refresh_key("claude"): retry_timer}
         self.controller._capacity_reset_retry_deadline = 530.0
@@ -12384,7 +12287,6 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             self.controller.applicationWillTerminate_(None)
 
         reset_timer.invalidate.assert_called_once_with()
-        countdown_timer.invalidate.assert_called_once_with()
         deadline_timer.invalidate.assert_called_once_with()
         retry_timer.invalidate.assert_called_once_with()
         self.assertEqual(self.controller._capacity_refresh_deadline_timers, {})
@@ -13553,9 +13455,9 @@ class AgentMailboxMenuTests(unittest.TestCase):
 
     def test_mailbox_projection_details(self) -> None:
         """Provider name, color and accessible icon survive projection;
-        background refresh does not mark seen but a visit does; a fresh
+        background refresh does not mark a completion seen; a fresh
         stale completion stays ready while another session is active."""
-        # --- scenario: background_refresh_does_not_mark_completion_seen_but_visit_does
+        # --- scenario: background_refresh_does_not_mark_completion_seen
         self.setUp()  # fresh isolated controller per scenario
         completed = self._status(
             "claude",
@@ -13570,15 +13472,6 @@ class AgentMailboxMenuTests(unittest.TestCase):
         self.assertEqual(
             [section.kind.value for section in self.controller.current_mailbox_projection.sections if section.rows],
             ["ready_for_review"],
-        )
-
-        self.controller.last_snapshot = snapshot
-        self.controller.menuWillOpen_(None)
-
-        self.assertIn(completed.agent_id, self.controller.mailbox_seen_completion_ids)
-        self.assertEqual(
-            [section.kind.value for section in self.controller.current_mailbox_projection.sections if section.rows],
-            ["recent"],
         )
 
         # --- scenario: fresh_stale_completion_stays_ready_while_another_session_is_active
@@ -14737,8 +14630,9 @@ class T3AdoptionTests(unittest.TestCase):
         )
 
     def test_ask_classification_and_plan_detection(self) -> None:
-        '''Hard vs soft ask, plan-ready detection, unseen completions cleared
-        by menu open, pause override consuming courtesy signals.'''
+        '''Hard vs soft ask, plan-ready detection, an unacknowledged
+        completion counted as unseen, pause override consuming courtesy
+        signals.'''
         # --- scenario: hard_vs_soft_ask
         self.setUp()  # fresh isolated controller per scenario
         hard = self._status("claude:session:a", AgentMode.WAITING_FOR_INPUT, event="PermissionRequest")
@@ -14758,17 +14652,13 @@ class T3AdoptionTests(unittest.TestCase):
         )
         self.assertTrue(plan.is_plan_ready)
 
-        # --- scenario: unseen_completions_cleared_by_menu_open
+        # --- scenario: unacknowledged_completion_is_unseen
         self.setUp()  # fresh isolated controller per scenario
         from types import SimpleNamespace as NS
 
         done = self._status("claude:session:a", AgentMode.COMPLETED, event="Stop")
         snapshot = NS(statuses=[done], stale_statuses=[], collected_at=datetime.now(timezone.utc))
-        # Never opened the menu: the completion is unseen.
         self.assertEqual(len(self.status_bar.unseen_completions(snapshot, self.controller)), 1)
-        # Opening the menu is the visit that clears it.
-        self.controller.menuWillOpen_(None)
-        self.assertEqual(self.status_bar.unseen_completions(snapshot, self.controller), [])
 
         # --- scenario: pause_override_consumes_courtesy_signals_without_replay
         self.setUp()  # fresh isolated controller per scenario
@@ -16006,38 +15896,6 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(label.setAlphaValue_.call_args, call(0.0))
         label.animator.return_value.setAlphaValue_.assert_not_called()
-
-        # --- scenario: task9g_deadline_dispatch_does_not_mutate_tracked_menu_hierarchy_or_controls
-        self.setUp()  # fresh isolated controller per scenario
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        inputs = self._inputs(screen_bar_enabled=False, visible=False)
-        self.controller._presentation_scheduler_inputs = inputs
-        self.controller.status_menu_open = True
-        self.controller._menu_rebuild_pending = ("operator-owned",)
-        self.controller.native_agent_menu_registry = MagicMock()
-        self.controller.current_settings_pane = "led_behavior"
-        fields = {"signal_preview:calendar": object()}
-        self.controller.settings_fields = fields
-        self.controller.refresh_ = MagicMock()
-        self.controller.test_signal_key = "calendar"
-        self.controller.test_signal_until = self.clock[0] + 1.0
-        self.controller._reconcile_current_presentation_inputs()
-        timer = next(
-            timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.TEST_SIGNAL_DEADLINE
-        )
-
-        self.clock[0] += 1.0
-        self.controller.runtimeTimerFired_(timer)
-
-        self.assertTrue(self.controller.status_menu_open)
-        self.assertEqual(
-            self.controller._menu_rebuild_pending,
-            ("operator-owned",),
-        )
-        self.controller.native_agent_menu_registry.take_deferred_after_close.assert_not_called()
-        self.assertEqual(self.controller.current_settings_pane, "led_behavior")
-        self.assertIs(self.controller.settings_fields, fields)
 
     def test_task10_status_transition_coordinator(self) -> None:
         """Status transitions drive the finite coordinator with keyed
@@ -18617,35 +18475,6 @@ class CanonicalAgentBrowserIntegrationTests(unittest.TestCase):
         )
         return monitor.snapshot()
 
-
-    def test_canonical_root_and_urgent_rows(self) -> None:
-        """The canonical root caps urgent rows and moves shelves to the
-        browser; menu open marks the visit and only plans capacity
-        refresh; urgent rows and the browser share action
-        descriptors."""
-        # --- scenario: status_menu_open_marks_visit_and_only_plans_capacity_refresh
-        self.setUp()  # fresh isolated controller per scenario
-        snapshot = self._canonical_snapshot(1)
-        self.controller.last_snapshot = snapshot
-        self.controller.current_operator_state = snapshot.operator_state
-        before_preferences = self.controller.mailbox_preferences
-        before_opened_at = self.controller.menu_last_opened_at
-
-        with (
-            patch.object(self.controller, "maybe_refresh_usage_summary") as usage,
-            patch.object(self.controller, "request_usage_refresh") as request_usage,
-            patch("jrbar.status_bar.detect_log_path") as detect,
-            patch("jrbar.status_bar.discover_devices") as discover,
-        ):
-            self.controller.menuWillOpen_(None)
-
-        usage.assert_called_once_with(reason="menu-open")
-        request_usage.assert_not_called()
-        detect.assert_not_called()
-        discover.assert_not_called()
-        self.assertEqual(self.controller.mailbox_preferences, before_preferences)
-        self.assertIsNone(before_opened_at)
-        self.assertIsNotNone(self.controller.menu_last_opened_at)
 
     def test_local_acknowledge_and_resume_update_content_free_history(self) -> None:
         """A local acknowledge and a resume from the deck path write content-free

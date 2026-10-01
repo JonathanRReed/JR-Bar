@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import time
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +9,6 @@ from jrbar import usage_stats
 from jrbar.capacity_refresh import RefreshStatusKind
 from jrbar.capacity_types import SourceKey
 from jrbar.providers import negotiated_provider_sources
-from jrbar.usage_view import build_provider_usage_view
 from tests.test_jrbar import isolate_controller
 
 CODEX_QUOTA = SourceKey(
@@ -94,82 +91,7 @@ def test_disabled_remote_capacity_never_owns_a_timer_or_healthy_state(
     thread_type.assert_not_called()
 
 
-def test_menu_close_releases_visibility_only_capacity_countdown(controller) -> None:
-    target, _status_bar = controller
-    countdown = MagicMock()
-    reset = MagicMock()
-    target._capacity_countdown_timer = countdown
-    target._capacity_countdown_deadline = 120.0
-    target._capacity_reset_timer = reset
-
-    target.menuDidClose_(None)
-
-    countdown.invalidate.assert_called_once_with()
-    assert target._capacity_countdown_timer is None
-    assert target._capacity_countdown_deadline is None
-    reset.invalidate.assert_not_called()
-
-
-def test_menu_close_preserves_countdown_needed_by_visible_profile_settings(
-    controller,
-) -> None:
-    target, _status_bar = controller
-    epoch_now = time.time()
-    monotonic_now = time.monotonic()
-    target.status_menu_open = True
-    target.current_settings_pane = "profile"
-    target.settings_window = SimpleNamespace(isVisible=lambda: True)
-    target._usage_provider_models = {
-        "codex": build_provider_usage_view(
-            "codex",
-            "Codex",
-            (
-                {
-                    "label": "5-hour",
-                    "used_percent": 20,
-                    "window_minutes": 300,
-                    "resets_at": epoch_now + 120.0,
-                },
-            ),
-            last_success_at=monotonic_now,
-            now=monotonic_now,
-            reset_now=epoch_now,
-        )
-    }
-    old_countdown = MagicMock()
-    target._capacity_countdown_timer = old_countdown
-    target._capacity_countdown_deadline = None
-    replacement = MagicMock()
-
-    with patch.object(
-        target,
-        "_schedule_capacity_timer",
-        return_value=replacement,
-    ):
-        target.menuDidClose_(None)
-
-    assert target.status_menu_open is False
-    assert target._capacity_countdown_timer is replacement
-    assert target._capacity_countdown_deadline is not None
-
-
-def test_canonical_menu_open_still_requests_usage_sources__and_1_more(controller) -> None:
-    # --- scenario: canonical_menu_open_still_requests_usage_sources
-    target, _status_bar = controller
-    target.last_snapshot = SimpleNamespace(
-        operator_state=SimpleNamespace(),
-        statuses=(),
-    )
-
-    with (
-        patch("jrbar.status_bar._canonical_agent_browser_projection"),
-        patch.object(target, "maybe_refresh_usage_summary") as refresh,
-    ):
-        target.menuWillOpen_(None)
-
-    refresh.assert_called_once_with(reason="menu-open")
-
-    # --- scenario: no_capacity_timer_exists_without_due_or_visible_reason
+def test_no_capacity_timer_exists_without_due_or_visible_reason(controller) -> None:
     target, _status_bar = controller
     target._usage_provider_states = {
         provider_id: state.__class__(
@@ -180,16 +102,12 @@ def test_canonical_menu_open_still_requests_usage_sources__and_1_more(controller
         for provider_id, state in target._usage_provider_states.items()
     }
     target._usage_provider_models = {}
-    target.status_menu_open = False
-    target.settings_window = None
 
     with patch.object(target, "_schedule_capacity_timer") as schedule:
         target.schedule_capacity_timers(epoch_now=1_000.0)
 
     schedule.assert_not_called()
     assert target._capacity_reset_timer is None
-    assert target._capacity_countdown_timer is None
-
 
 
 def test_duplicate_exact_sources_create_one_generation_and_one_batch_worker(
@@ -260,44 +178,4 @@ def test_warm_unchanged_exact_usage_source_performs_zero_disk_writes(
 
     assert warm.input_tokens == cold.input_tokens == 17
     assert warm.coverage.cache_hits == 1
-    write.assert_not_called()
-
-
-def test_countdown_tick_performs_no_disk_or_source_work(controller) -> None:
-    target, _status_bar = controller
-    epoch_now = time.time()
-    monotonic_now = time.monotonic()
-    target.status_menu_open = True
-    target._usage_provider_models = {
-        "codex": build_provider_usage_view(
-            "codex",
-            "Codex",
-            (
-                {
-                    "label": "5-hour",
-                    "used_percent": 20,
-                    "window_minutes": 300,
-                    "resets_at": epoch_now + 120.0,
-                },
-            ),
-            last_success_at=monotonic_now,
-            now=monotonic_now,
-            reset_now=epoch_now,
-        )
-    }
-    timer = MagicMock()
-    target._capacity_countdown_timer = timer
-
-    with (
-        patch("jrbar.status_bar.usage_stats.scan_usage") as scan,
-        patch("jrbar.status_bar.usage_stats.codex_rate_limits") as codex,
-        patch("jrbar.status_bar.claude_quota.fetch_windows") as claude,
-        patch("jrbar.usage_stats.atomic_private_write") as write,
-        patch.object(target, "_schedule_capacity_timer", return_value=MagicMock()),
-    ):
-        target.capacityCountdown_(timer)
-
-    scan.assert_not_called()
-    codex.assert_not_called()
-    claude.assert_not_called()
     write.assert_not_called()

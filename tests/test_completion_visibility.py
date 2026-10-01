@@ -10,7 +10,6 @@ from jrbar.completion_visibility import (
     VISIBLE_LIVE,
     acknowledged_epoch_by_session,
     filter_visible_sessions,
-    plan_seen_completion_ids,
     select_clearable_completions,
     select_unseen_completions,
     session_visibility,
@@ -153,18 +152,13 @@ def test_unseen_completions_apply_every_acknowledgement_exclusion__and_2_more() 
         updated_at=now - timedelta(seconds=301),
     )
     cleared = _status("claude:session:cleared", updated_at=now)
-    visited = _status(
-        "claude:session:visited",
-        updated_at=now - timedelta(seconds=30),
-    )
     attended = _status("claude:session:attended", updated_at=now)
 
     selected = select_unseen_completions(
-        (eligible, subagent, closed, expired, cleared, visited, attended),
+        (eligible, subagent, closed, expired, cleared, attended),
         (),
         collected_at=now,
         within_seconds=300,
-        menu_last_opened_at=now - timedelta(seconds=15),
         acknowledged_keys={
             CompletionPresentationKey(
                 source_key=SourceKey(
@@ -203,7 +197,6 @@ def test_unseen_completions_apply_every_acknowledgement_exclusion__and_2_more() 
         (stale_duplicate, stale_blocked, stale_only),
         collected_at=now,
         within_seconds=300,
-        menu_last_opened_at=None,
         acknowledged_keys=frozenset(),
         attended_prompt_monotonic={},
         now_monotonic=10_000.0,
@@ -221,7 +214,6 @@ def test_unseen_completions_apply_every_acknowledgement_exclusion__and_2_more() 
         (),
         collected_at=now,
         within_seconds=300,
-        menu_last_opened_at=None,
         acknowledged_keys=set(),
         attended_prompt_monotonic={completion.agent_id: 900.0},
         now_monotonic=1_020.001,
@@ -266,7 +258,6 @@ def test_unseen_completion_receipts_are_exact_to_event_time_and_source__and_2_mo
         (),
         collected_at=now,
         within_seconds=300,
-        menu_last_opened_at=None,
         acknowledged_keys={old_event_receipt, other_source_receipt},
         attended_prompt_monotonic={},
         now_monotonic=10_000.0,
@@ -293,7 +284,6 @@ def test_unseen_completion_receipts_are_exact_to_event_time_and_source__and_2_mo
         (),
         collected_at=now,
         within_seconds=300,
-        menu_last_opened_at=None,
         acknowledged_keys=frozenset(),
         attended_prompt_monotonic={},
         now_monotonic=10_000.0,
@@ -326,7 +316,6 @@ def test_unseen_completion_receipts_are_exact_to_event_time_and_source__and_2_mo
         (),
         collected_at=now,
         within_seconds=300,
-        menu_last_opened_at=None,
         acknowledged_keys={unrelated_receipt},
         attended_prompt_monotonic={},
         now_monotonic=10_000.0,
@@ -334,42 +323,6 @@ def test_unseen_completion_receipts_are_exact_to_event_time_and_source__and_2_mo
     )
 
     assert selected == (unkeyed,)
-
-
-
-def test_seen_id_plan_prioritizes_sorted_visible_completions_then_retained_ids() -> None:
-    now = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
-    newest = _status("claude:session:newest", updated_at=now)
-    tie_b = _status("claude:session:b", updated_at=now - timedelta(seconds=1))
-    tie_a = _status("claude:session:a", updated_at=now - timedelta(seconds=1))
-    duplicate_newest = _status(
-        newest.agent_id,
-        updated_at=now - timedelta(minutes=1),
-    )
-    closed = _status(
-        "claude:session:closed",
-        updated_at=now,
-        event_name="SessionEnd",
-    )
-    active = _status(
-        "claude:session:active",
-        mode=AgentMode.WORKING,
-        updated_at=now,
-    )
-
-    planned = plan_seen_completion_ids(
-        (tie_b, duplicate_newest, closed, newest, active, tie_a),
-        {tie_a.agent_id, "retained-z", "retained-a"},
-        limit=4,
-    )
-
-    assert planned == (
-        newest.agent_id,
-        tie_a.agent_id,
-        tie_b.agent_id,
-        "retained-a",
-    )
-    assert plan_seen_completion_ids((newest,), {"retained"}, limit=0) == ()
 
 
 # --- the list's own visibility policy ---------------------------------------

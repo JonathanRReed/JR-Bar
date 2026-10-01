@@ -881,21 +881,6 @@ else:
             self._last_event_refresh_at = time.monotonic()
             self.refresh_(None)
 
-        def menuWillOpen_(self, menu):
-            started = time.perf_counter()
-            outcome = "ok"
-            try:
-                return _LegacyStatusBarController.menuWillOpen_(self, menu)
-            except BaseException:
-                outcome = "error"
-                raise
-            finally:
-                self._performance().record(
-                    "menu_open",
-                    (time.perf_counter() - started) * 1000.0,
-                    outcome=outcome,
-                )
-
         def why_panel_body(self, *, why_context=None) -> str:
             report = self._performance().snapshot()
             health = self.local_health_snapshot(performance=report)

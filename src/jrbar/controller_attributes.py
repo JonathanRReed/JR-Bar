@@ -179,7 +179,6 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "peek_until": 0.0,
         "quota_blink_until": 0.0,
         "semantic_text_scale_percent": 100,
-        "status_menu_open": False,
         "studio_preview_program": "",
         "test_signal_until": 0.0,
     }
