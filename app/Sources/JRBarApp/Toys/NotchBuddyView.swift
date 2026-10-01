@@ -50,8 +50,8 @@ struct NotchBuddyView: View {
         // restraint (Low Power Mode, a hot machine) halves the rate
         // (`PowerPolicy`); the pose, the badge and the care mood still
         // read the same state every frame.
-        TimelineView(.animation(minimumInterval: PowerConditions.shared.policy
-                                    .interval(toy.frameInterval(scale: scale)),
+        let interval = PowerConditions.shared.policy.interval(toy.frameInterval(scale: scale))
+        TimelineView(.animation(minimumInterval: interval,
                                 paused: reduceMotion || !visible)) { context in
             // One reduce per tick: the pose, the badge, the tints, the
             // care mood and the hover line all read the same summary.
