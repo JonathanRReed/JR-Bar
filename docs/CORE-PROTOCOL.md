@@ -424,10 +424,13 @@ Vocabulary:
   `refreshing: false`. A provider that has not answered by its deadline is
   given up on for that refresh only: `state` `unavailable`, `reason`
   `response_timed_out`, its last good reading kept as `stale`. Two reasons are
-  new: `response_timed_out`, and `usage_permission_missing` (`state`
-  `needs_sign_in`, `action` "Reconnect Claude"), which is Claude's usage
-  endpoint refusing a sign-in that lacks the usage permission (HTTP 403); a
-  server error or a network failure still reads `network_unavailable`.
+  new: `response_timed_out`, and `usage_permission_missing` (`action` "Reconnect
+  Claude"), which is Claude's usage endpoint refusing a sign-in that lacks the
+  usage permission (an HTTP 403 whose body is the API's JSON error). Like any
+  failure it reads `needs_sign_in` for a provider with no earlier reading, and
+  `stale` carrying that same `reason` and `action` for one that has a last
+  good reading. Every other status, a 403 with a non-JSON body (a proxy's
+  page) and a network failure still read `network_unavailable`.
 - `usage.providers[].incident` is the provider's status-feed incident as
   one line (`"Anthropic: Elevated errors"`), or null. It is an outage on
   the vendor's side, never a quota verdict. It is null the moment the feed

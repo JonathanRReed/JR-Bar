@@ -222,15 +222,18 @@ them apart:
 - **Rate limited** (a 429): wait. JR-Bar backs off and asks again later.
 - **Signed out** (a 401): the sign-in is not accepted any more. The card
   says "Reconnect Claude · authentication required".
-- **No usage permission** (a 403): the sign-in is known, but it was not
-  granted the permission that reading usage needs, for example a token
-  made for running prompts only. The card says "Reconnect Claude · usage
-  permission missing". Asking again with the same token gets the same
-  answer, so JR-Bar waits until the sign-in changes, and signing in to
-  Claude again is the fix.
+- **No usage permission** (a 403 that carries Claude's own error
+  message): the sign-in is known, but it was not granted the permission
+  that reading usage needs, for example a token made for running prompts
+  only. The card says "Reconnect Claude · usage permission missing".
+  Asking again with the same token gets the same answer, so JR-Bar waits
+  until the sign-in changes, and signing in to Claude again is the fix.
 
-Only a network failure or a server error (a 5xx) reads as "network
-unavailable", and only those are retried on a timer.
+A 403 whose body is not Claude's own error, such as a web page from a proxy
+or a network filter, is not Claude refusing the sign-in, so it is treated
+like any other failure. So is every other answer that is not a success, a
+401, a 403 or a 429, and so is a network failure: the card says "network
+unavailable" and JR-Bar asks again on a timer.
 
 ## Two more sources
 
