@@ -1044,7 +1044,7 @@ def reconnect_provider(
             if not result.ok:
                 message = {
                     CredentialOutcome.DENIED: (
-                        "Keychain access was declined — click Re-sign in "
+                        "Keychain access was declined — click Fix sign-in "
                         "again and choose Allow."
                     ),
                     CredentialOutcome.COOLING_DOWN: (
@@ -1173,7 +1173,7 @@ def reconnect_provider(
         return ResignInResult(
             provider_id,
             "Copy an OpenAI ADMIN key (platform.openai.com → Settings → "
-            "Admin keys), then click Re-sign in again — "
+            "Admin keys), then click Fix sign-in again — "
             f"{PRODUCT_DISPLAY_NAME} reads it from the clipboard only when you click.",
         )
 

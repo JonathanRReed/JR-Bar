@@ -2760,6 +2760,7 @@ def _cmd_provider_sign_in(self, args):
         None,
     )
     reason_code = getattr(snapshot, "reason_code", None)
+    action_label = getattr(snapshot, "action_label", None)
     signed_out = None
     if snapshot is not None:
         card_state = getattr(getattr(snapshot, "state", None), "value", None)
@@ -2776,6 +2777,7 @@ def _cmd_provider_sign_in(self, args):
         terminal=terminal,
         reason_code=reason_code,
         signed_out=signed_out,
+        action_label=action_label if isinstance(action_label, str) else None,
     )
 
     def after_click() -> None:

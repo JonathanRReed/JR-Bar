@@ -46,7 +46,7 @@ from .provider_cli import (
 )
 from .provider_reconnect import RepairOutcome, ResignInResult, credential_fingerprint, reconnect_provider
 
-OUTCOMES: Final = ("renewed", "opened_terminal", "already_ok", "unavailable", "failed")
+OUTCOMES: Final = ("renewed", "opened_terminal", "already_ok", "staged", "unavailable", "failed")
 
 #: The one tiny real call that makes Claude Code renew its own Keychain item.
 #: A fixed argv: nothing in a client's request reaches it.
@@ -88,6 +88,9 @@ class ProviderSignIn:
         environ: Callable[[], Mapping[str, str]] | None = None,
         home: Callable[[], Path] = Path.home,
         log: Callable[[str], None] | None = None,
+        credential_store: Any = None,
+        clipboard_reader: Callable[[], str] | None = None,
+        session_importer: Callable[..., str | None] | None = None,
     ) -> None:
         self._locate = locate
         self._run = run
@@ -99,6 +102,12 @@ class ProviderSignIn:
         self._environ = environ
         self._home = home
         self._log = log or (lambda _line: None)
+        # What the card's own staged action reads and writes (Devin's rejected
+        # token, a clipboard key, the browser session). Defaults are the real
+        # ones; a test hands in fakes.
+        self._credential_store = credential_store
+        self._clipboard_reader = clipboard_reader
+        self._session_importer = session_importer
         self._lock = threading.Lock()
         self._active: set[tuple[str, str]] = set()
         self._last_renewal_at: float | None = None
@@ -113,12 +122,16 @@ class ProviderSignIn:
         terminal: object = None,
         reason_code: str | None = None,
         signed_out: bool | None = None,
+        action_label: str | None = None,
     ) -> SignInResult:
         """Do the best automatic thing for ``provider``. ``signed_out`` is
         the card's own word (True: it says sign in, False: it does not,
         None: nothing is known); a CLI that has no way to say whether it is
-        signed in (Codex, Devin, OpenCode) is only opened for a card that
-        does not rule it out."""
+        signed in (Codex, OpenCode) is only opened for a card that does not
+        rule it out. ``reason_code`` and ``action_label`` are the daemon's own
+        facts about that card, never the client's: a provider with no login
+        command of its own (Devin, Cursor, Gemini CLI, Antigravity, the OpenAI
+        API) runs the card's staged action for its ``action_label``."""
         key = (provider, instance)
         with self._lock:
             if key in self._active:
@@ -126,7 +139,7 @@ class ProviderSignIn:
                 return SignInResult("unavailable", f"A sign-in fix for {label} is already running.")
             self._active.add(key)
         try:
-            result = self._sign_in(provider, instance, terminal, reason_code, signed_out)
+            result = self._sign_in(provider, instance, terminal, reason_code, signed_out, action_label)
         finally:
             with self._lock:
                 self._active.discard(key)
@@ -145,7 +158,17 @@ class ProviderSignIn:
         terminal: object,
         reason_code: str | None,
         signed_out: bool | None,
+        action_label: str | None,
     ) -> SignInResult:
+        cli = PROVIDER_CLIS.get(provider)
+        if cli is None or cli.sign_in is None:
+            # No login command to open: the card's own staged action is the fix
+            # (clear a rejected token and re-import the browser session, open the
+            # token page, say where the CLI or app signs in). It is the button the
+            # card had before Fix sign-in, so it still works from this one.
+            staged = self._staged_action(provider, instance, action_label, reason_code)
+            if staged is not None:
+                return staged
         # 1. What the provider's own tooling holds.
         try:
             reread = self._reconnect(provider, instance, reason_code=reason_code)
@@ -188,6 +211,50 @@ class ProviderSignIn:
             return SignInResult("unavailable", reread.message, sign_in_url=reread.sign_in_url)
         return self._open_sign_in_terminal(provider, reread, terminal)
 
+    # -- providers with no login command: the card's own staged action ----------
+
+    def _staged_action(
+        self,
+        provider: str,
+        instance: str,
+        label: str | None,
+        reason_code: str | None,
+    ) -> SignInResult | None:
+        """Run the staged flow behind the card's current action label
+        (``provider_browser_access.handle_provider_usage_action``), or ``None``
+        when that label is not part of it. A token page it would open is
+        returned as ``sign_in_url`` for the app to open, so a page opens once."""
+        if not label:
+            return None
+        opened: list[str] = []
+        try:
+            from .provider_browser_access import handle_provider_usage_action
+
+            store = self._credential_store
+            if store is None:
+                from .provider_credential_store import ProviderCredentialStore
+
+                store = ProviderCredentialStore()
+            options: dict[str, Any] = {}
+            if self._clipboard_reader is not None:
+                options["clipboard_reader"] = self._clipboard_reader
+            if self._session_importer is not None:
+                options["session_importer"] = self._session_importer
+            message = handle_provider_usage_action(
+                provider,
+                label,
+                credential_store=store,
+                url_opener=opened.append,
+                reason_code=reason_code,
+                source_instance_id=instance,
+                **options,
+            )
+        except Exception:
+            return None
+        if message is None:
+            return None
+        return SignInResult("staged", message, sign_in_url=opened[0] if opened else None)
+
     # -- step 2: Claude Code renews its own Keychain item ---------------------
 
     def _now(self) -> float:
@@ -217,7 +284,16 @@ class ProviderSignIn:
                 "Claude Code was asked to renew its sign-in less than a minute ago. "
                 f"Give it a moment: {PRODUCT_DISPLAY_NAME} rechecks on its own.",
             )
-        scratch = self._make_scratch()
+        try:
+            scratch = self._make_scratch()
+        except Exception:
+            # No private folder, no call: a failure to report, never a crash.
+            return SignInResult(
+                "failed",
+                f"{PRODUCT_DISPLAY_NAME} could not make a private working folder to ask Claude "
+                "Code to renew its sign-in, so nothing was run. Run `claude auth login` in a "
+                "terminal instead.",
+            )
         try:
             os.chmod(scratch, 0o700)
             work = os.path.join(scratch, "work")

@@ -435,7 +435,10 @@ def test_the_terminal_is_only_ever_typed_the_tables_argv(
 
 def test_the_signin_function_takes_no_command_from_the_client() -> None:
     parameters = set(inspect.signature(ProviderSignIn.sign_in).parameters)
-    assert parameters == {"self", "provider", "instance", "terminal", "reason_code", "signed_out"}
+    # `reason_code`, `signed_out` and `action_label` are the daemon's own facts about the card.
+    assert parameters == {
+        "self", "provider", "instance", "terminal", "reason_code", "signed_out", "action_label",
+    }
     source = inspect.getsource(provider_sign_in)
     for forbidden in ("shell=True", "os.system", "os.popen"):
         assert forbidden not in source
@@ -552,6 +555,201 @@ def test_a_second_click_while_one_is_running_is_told_so(tmp_path: Path) -> None:
     assert b.fixer.sign_in("grok").outcome == "opened_terminal"
 
 
+# --- providers with no login command: the card's own staged action ---------------------
+
+
+class DictStore:
+    """The credential store the staged flow reads and writes, recording every call."""
+
+    def __init__(self, secrets=None) -> None:
+        self.secrets = dict(secrets or {})
+        self.calls: list[tuple] = []
+
+    def _read(self, key):
+        value = self.secrets.get(key)
+        return SimpleNamespace(available=value is not None, secret=value)
+
+    def get(self, provider, account):
+        self.calls.append(("get", provider, account))
+        return self._read((provider, "default", account))
+
+    def set(self, provider, account, secret):
+        self.calls.append(("set", provider, account))
+        self.secrets[(provider, "default", account)] = secret
+
+    def delete(self, provider, account):
+        self.calls.append(("delete", provider, account))
+        return self.secrets.pop((provider, "default", account), None) is not None
+
+    def set_for_instance(self, key, account, secret):
+        provider, instance = key.value
+        self.calls.append(("set_for_instance", provider, instance, account))
+        self.secrets[(provider, instance, account)] = secret
+
+    def delete_for_instance(self, key, account):
+        provider, instance = key.value
+        self.calls.append(("delete_for_instance", provider, instance, account))
+        return self.secrets.pop((provider, instance, account), None) is not None
+
+    def deletions(self) -> list[tuple]:
+        return [call for call in self.calls if call[0].startswith("delete")]
+
+
+def staged_bench(tmp_path: Path, provider: str, *, secrets=None, importer=None, clipboard=""):
+    store = DictStore(secrets)
+    b = bench(
+        tmp_path,
+        result=ResignInResult(provider, "the re-read's advice", sign_in_url="https://example.invalid/page"),
+        credential_store=store,
+        session_importer=importer or (lambda *args: None),
+        clipboard_reader=lambda: clipboard,
+    )
+    b.store = store
+    return b
+
+
+def test_a_rejected_devin_token_is_cleared_and_the_token_page_is_returned(tmp_path: Path) -> None:
+    b = staged_bench(tmp_path, "devin", secrets={("devin", "default", "token"): "rejected-token-value-000000"})
+
+    result = b.fixer.sign_in(
+        "devin", reason_code="authentication_required", signed_out=True, action_label="Reconnect Devin"
+    )
+
+    assert result.outcome == "staged"
+    assert b.store.deletions() == [("delete", "devin", "token")], "the wedged credential is cleared"
+    assert ("devin", "default", "token") not in b.store.secrets
+    assert result.sign_in_url == "https://app.devin.ai/settings/api-keys"
+    assert "rejected and has been cleared" in result.message
+    assert result.command is None
+    # The card's own flow answered: nothing else ran.
+    assert b.reread.calls == [] and b.terminal.calls == [] and b.run.calls == []
+
+
+def test_a_rejected_cursor_token_is_cleared_and_the_token_page_is_returned(tmp_path: Path) -> None:
+    b = staged_bench(tmp_path, "cursor", secrets={("cursor", "default", "token"): "rejected-token-value-000000"})
+
+    result = b.fixer.sign_in(
+        "cursor", reason_code="authentication_required", signed_out=True, action_label="Reconnect Cursor"
+    )
+
+    assert result.outcome == "staged"
+    assert b.store.deletions() == [("delete", "cursor", "token")]
+    assert result.sign_in_url == "https://cursor.com/settings"
+    assert "Cursor session was rejected" in result.message
+    assert b.reread.calls == [] and b.terminal.calls == []
+
+
+def test_a_consented_browser_session_replaces_the_rejected_devin_token(tmp_path: Path) -> None:
+    sessions: list[tuple] = []
+
+    def importer(provider, *rest):
+        sessions.append((provider, *rest))
+        return "Signed in as your Firefox session — no API key needed. Refreshing usage now."
+
+    b = staged_bench(
+        tmp_path, "devin", importer=importer, secrets={("devin", "default", "token"): "rejected-token-value-000000"}
+    )
+
+    result = b.fixer.sign_in("devin", reason_code="authentication_required", action_label="Reconnect Devin")
+
+    assert result.outcome == "staged"
+    assert result.message.startswith("Signed in as your Firefox session")
+    assert sessions == [("devin",)]
+    assert b.store.deletions() == [("delete", "devin", "token")]
+    assert result.sign_in_url is None, "a session was taken: there is no page to open"
+
+
+def test_a_second_devin_account_clears_only_its_own_token(tmp_path: Path) -> None:
+    b = staged_bench(
+        tmp_path,
+        "devin",
+        secrets={("devin", "default", "token"): "main-token-0000000000000", ("devin", "work", "token"): "work-token-0000000000000"},
+    )
+
+    result = b.fixer.sign_in("devin", "work", reason_code="authentication_required", action_label="Reconnect Devin")
+
+    assert result.outcome == "staged"
+    assert b.store.deletions() == [("delete_for_instance", "devin", "work", "token")]
+    assert ("devin", "default", "token") in b.store.secrets, "the main account's token is untouched"
+
+
+def test_gemini_and_antigravity_say_where_the_cli_or_app_signs_in(tmp_path: Path) -> None:
+    gemini = staged_bench(tmp_path / "g", "gemini")
+    antigravity = staged_bench(tmp_path / "a", "antigravity")
+
+    said = gemini.fixer.sign_in("gemini", reason_code="authentication_required", action_label="Run gemini once to sign in")
+    other = antigravity.fixer.sign_in("antigravity", action_label="Open Antigravity or run agy")
+
+    assert said.outcome == "staged" and "gemini CLI" in said.message
+    assert other.outcome == "staged" and "Antigravity" in other.message
+    assert gemini.terminal.calls == [] and antigravity.terminal.calls == []
+    assert gemini.store.calls == [] and antigravity.store.calls == []
+
+
+def test_a_label_the_staged_flow_does_not_handle_falls_through_to_the_re_read(tmp_path: Path) -> None:
+    b = staged_bench(tmp_path, "devin")
+
+    result = b.fixer.sign_in("devin", signed_out=True, action_label="Retry")
+    none = b.fixer.sign_in("devin", signed_out=True, action_label=None)
+
+    for reply in (result, none):
+        assert reply.outcome == "unavailable"
+        assert reply.message == "the re-read's advice"
+        assert reply.sign_in_url == "https://example.invalid/page"
+    assert len(b.reread.calls) == 2
+    assert b.store.calls == [], "nothing was cleared or stored for a label the flow does not own"
+
+
+def test_a_provider_with_a_login_command_never_runs_the_staged_flow(tmp_path: Path) -> None:
+    for provider, label in (
+        ("claude", "Reconnect Claude"),
+        ("grok", "Run grok login"),
+        ("codex", "Run codex login"),
+        ("opencode", "Open OpenCode"),
+    ):
+        b = staged_bench(tmp_path / provider, provider)
+
+        result = b.fixer.sign_in(provider, reason_code="authentication_required", signed_out=True, action_label=label)
+
+        assert result.outcome != "staged", provider
+        assert b.store.calls == [], f"{provider}'s credentials are its CLI's, never cleared from here"
+
+
+def test_the_staged_flow_failing_is_a_fall_through_not_a_crash(tmp_path: Path) -> None:
+    class Broken(DictStore):
+        def delete(self, provider, account):
+            raise RuntimeError("keychain is locked")
+
+    b = bench(
+        tmp_path,
+        result=ResignInResult("devin", "the re-read's advice"),
+        credential_store=Broken(),
+        session_importer=lambda *args: None,
+        clipboard_reader=lambda: "",
+    )
+
+    result = b.fixer.sign_in("devin", signed_out=True, action_label="Reconnect Devin")
+
+    assert result.outcome in ("staged", "unavailable")
+    assert result.message
+
+
+def test_a_scratch_folder_that_cannot_be_made_is_a_reported_failure(tmp_path: Path) -> None:
+    b = bench(tmp_path, result=expired_claude())
+
+    def no_space() -> str:
+        raise OSError("no space left on device")
+
+    b.fixer._make_scratch = no_space
+
+    result = b.fixer.sign_in("claude")
+
+    assert result.outcome == "failed"
+    assert "private working folder" in result.message and "claude auth login" in result.message
+    assert [call.argv[1] for call in b.run.calls] == [], "no tool was run"
+    assert b.terminal.calls == []
+
+
 # --- the daemon command ------------------------------------------------------------------
 
 
@@ -579,11 +777,14 @@ def controller(result: provider_sign_in.SignInResult, *, snapshots=()):
     )
 
 
-def snapshot(provider: str, state: str, reason: str | None, instance: str = "default"):
+def snapshot(
+    provider: str, state: str, reason: str | None, instance: str = "default", action_label: str | None = None
+):
     return SimpleNamespace(
         identity=(provider, instance),
         state=SimpleNamespace(value=state),
         reason_code=reason,
+        action_label=action_label,
     )
 
 
@@ -611,6 +812,7 @@ def test_the_command_runs_the_fixer_then_arms_the_watch_and_forces_a_refresh() -
                 "terminal": "com.mitchellh.ghostty",
                 "reason_code": "authentication_required",
                 "signed_out": True,
+                "action_label": None,
             },
         )
     ]
@@ -618,6 +820,21 @@ def test_the_command_runs_the_fixer_then_arms_the_watch_and_forces_a_refresh() -
     assert c._jrbar_reconnect_watch[:2] == ("grok", "default")
     assert c.feedback == ["Opened Ghostty on `grok login`: x."]
     assert c.hops == ["main"], "only the controller-bound tail hops to the main thread"
+
+
+def test_the_command_hands_the_fixer_the_cards_own_action_label_not_the_clients() -> None:
+    result = provider_sign_in.SignInResult("staged", "x", sign_in_url="https://app.devin.ai/settings/api-keys")
+    c = controller(
+        result,
+        snapshots=(snapshot("devin", "needs_sign_in", "authentication_required", action_label="Reconnect Devin"),),
+    )
+
+    reply = core_runtime._cmd_provider_sign_in(
+        c, {"provider": "devin", "action_label": "rm -rf ~", "action": "x", "label": "y"}
+    )
+
+    assert c.fixer.calls[0][2]["action_label"] == "Reconnect Devin"
+    assert (reply["outcome"], reply["sign_in_url"]) == ("staged", "https://app.devin.ai/settings/api-keys")
 
 
 def test_the_command_scopes_a_second_account_and_reads_the_cards_own_word() -> None:

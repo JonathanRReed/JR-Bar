@@ -100,10 +100,13 @@ runs until you click it.
 - **Codex and OpenCode.** Opens your terminal on `codex login` or `opencode
   providers login`, but only when the card says signed out. A card that is stale
   for another reason is told so instead.
-- **Gemini CLI, Devin and Cursor.** Their sign-in does not go through a login
-  command JR-Bar can open. Devin's usage comes from a browser session, so Fix
-  sign-in imports it again or opens app.devin.ai; the others say where to sign
-  in.
+- **Devin and Cursor.** Their usage comes from a session or token JR-Bar holds,
+  not from a CLI login, so Fix sign-in does what the card's old Reconnect button
+  did: it clears the rejected stored token, imports your browser session again
+  where you have allowed that, and otherwise opens the provider's token page and
+  says what to copy.
+- **Gemini CLI and Antigravity.** Their sign-in does not go through a login
+  command JR-Bar can open, so Fix sign-in says where to sign in.
 
 The terminal is the one you used last (Ghostty, Terminal or iTerm), opened in
 your home folder. JR-Bar types the CLI's full path and its login command; you
