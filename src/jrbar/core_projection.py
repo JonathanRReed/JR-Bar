@@ -1018,6 +1018,7 @@ def session_document(
     ask_ids: frozenset[str],
     extras: SessionExtras | None,
     workers: int,
+    workers_waiting: int | None = None,
     parent_label: str | None = None,
     snoozed_until: float | None = None,
     answer_contracts: object = None,
@@ -1088,7 +1089,7 @@ def session_document(
     # working-shaped mode -- and ``since`` says how long it has been quiet.
     if lifecycle in ("active", "stale") and mode is AgentMode.ENDED_UNCONFIRMED:
         mode = AgentMode.WORKING
-    return {
+    document: dict[str, Any] = {
         "id": agent_id,
         "provider": provider,
         "kind": "worker" if is_subagent else "main",
@@ -1152,6 +1153,12 @@ def session_document(
             acknowledged=acknowledged,
         ),
     }
+    if workers_waiting is not None and not is_subagent:
+        # Beside ``workers``: how many of them wait on a request that stays
+        # quiet. Only a main row says it, and a caller that cannot tell leaves
+        # it out so the app shows nothing rather than a false zero.
+        document["workers_waiting"] = max(0, int(workers_waiting))
+    return document
 
 
 def primary_window(windows: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -1466,6 +1473,7 @@ def project_session_rows(
     answer_contracts: object = None,
     has_answer_handler: object = None,
     acknowledged_keys: object = (),
+    quiet_worker_ids: frozenset[str] | None = None,
 ) -> tuple[list[dict[str, Any]], frozenset[str]]:
     """Every session the snapshot knows, projected — before panel visibility.
 
@@ -1477,6 +1485,11 @@ def project_session_rows(
     these rows, never a different set of facts. ``ask_ids`` is the set of
     session ids carrying a live ask (the pin ``session_visibility``
     honours).
+
+    ``quiet_worker_ids`` are the sub-agents blocked on a request that worker
+    asks keep quiet (``attention.quiet_waiting_worker_ids``). Each main row
+    counts its live ones as ``workers_waiting``. ``None`` means the caller
+    cannot tell, and no row then carries the key.
     """
     extras_by_id = extras_by_id or {}
     statuses: list[object] = []
@@ -1494,6 +1507,7 @@ def project_session_rows(
         statuses.append(status)
     ask_ids = frozenset(str(getattr(status, "agent_id", "")) for status in ask_statuses)
     workers_by_parent: dict[str, int] = {}
+    waiting_by_parent: dict[str, int] = {}
     for status in statuses:
         if getattr(status, "is_subagent", False) and not getattr(status, "stale", False):
             mode = getattr(status, "mode", None)
@@ -1501,6 +1515,8 @@ def project_session_rows(
                 parent = getattr(status, "parent_agent_id", None)
                 if parent:
                     workers_by_parent[parent] = workers_by_parent.get(parent, 0) + 1
+                    if quiet_worker_ids and str(getattr(status, "agent_id", "")) in quiet_worker_ids:
+                        waiting_by_parent[parent] = waiting_by_parent.get(parent, 0) + 1
     labels_by_id: dict[str, str] = {}
     ordered = sorted(statuses, key=lambda status: bool(getattr(status, "is_subagent", False)))
     documents_by_id: dict[str, dict[str, Any]] = {}
@@ -1515,6 +1531,9 @@ def project_session_rows(
             ask_ids=ask_ids,
             extras=extras_by_id.get(agent_id),
             workers=workers_by_parent.get(agent_id, 0),
+            workers_waiting=(
+                None if quiet_worker_ids is None else waiting_by_parent.get(agent_id, 0)
+            ),
             parent_label=labels_by_id.get(str(parent)) if parent else None,
             snoozed_until=(snoozed_until_by_id or {}).get(agent_id),
             answer_contracts=answer_contracts,
@@ -1555,6 +1574,7 @@ def build_state_document(
     detected_agents: Mapping[str, bool] | None = None,
     catalog_generation: int | None = None,
     provider_updates: Mapping[str, Mapping[str, Any]] | None = None,
+    quiet_worker_ids: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """The full ``state`` frame. ``snapshot`` is a MonitorSnapshot-shaped
     object; ``deck`` is ``core_deck.build_deck_document``'s ``state.deck``;
@@ -1576,6 +1596,7 @@ def build_state_document(
         answer_contracts=answer_contracts,
         has_answer_handler=has_answer_handler,
         acknowledged_keys=acknowledged_keys,
+        quiet_worker_ids=quiet_worker_ids,
     )
     extras_by_id = extras_by_id or {}
     # An ask is the loudest thing the panel can show, so visibility never
