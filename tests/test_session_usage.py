@@ -449,3 +449,23 @@ def test_the_command_counts_each_session_from_its_provider_s_window(tmp_path, mo
     session_usage.reset_cache()
     reply = _cmd_session_usage(controller, {"ids": ["claude:w"]})
     assert reply["sessions"]["claude:w"]["window_tokens"] is None
+
+
+def test_a_long_session_still_counts_a_repeated_message_once(tmp_path, monkeypatch):
+    # The first-sighting rule remembers ids; once the memory is full it used
+    # to stop remembering new ones, so every later message's repeated content
+    # blocks were counted again.
+    monkeypatch.setattr(session_usage, "_MAX_SEEN_IDS", 3)
+    path = _claude_path(tmp_path)
+    rows = []
+    for index in range(8):
+        message = _assistant(f"msg_{index}", at=f"2026-09-13T10:{index:02d}:00Z", out=100)
+        # One line per content block: each message's usage appears twice.
+        rows.extend([message, message])
+    _write(path, rows)
+
+    doc, gap = session_usage.session_usage("claude", SID, cwd="/tmp/work", home=tmp_path)
+
+    assert gap is None
+    assert doc["turns"] == 8
+    assert doc["tokens"]["output"] == 8 * 100
