@@ -12,7 +12,9 @@
  * file rotates to <provider>.overflow.jsonl at MAX_SPOOL_BYTES. Nothing here
  * can block an agent: everything after the payload is read is bounded by
  * HARD_BUDGET_MS -- by DECIDE_WAIT_MS for the verdict wait of --decide,
- * below -- and every failure path exits 0.
+ * below -- timed on a monotonic clock, and every failure path exits 0.
+ * A payload past MAX_PAYLOAD is not forwarded whole: for Claude and Codex a
+ * small "payload_truncated" record stands in for it (see build_metadata).
  *
  *   jrbar-hook --provider <id> [--log <path>] [--decide]
  *
