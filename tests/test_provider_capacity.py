@@ -99,10 +99,10 @@ def test_literal_policy_table_keeps_exact_provider_account_pools_separate__and_2
         (
             "google-gemini-code-assist",
             "google",
-            CapacityEvidenceClass.OFFICIAL_LOCAL,
+            CapacityEvidenceClass.OFFICIAL_API,
             ("google-ai", "code-assist", "gemini-enterprise"),
             ("google-ai-plan", "gemini-enterprise"),
-            False,
+            True,
             CapacityPolicyState.OBSERVABLE,
             SourceKey("google", "quota", "gemini-plan", "remote_quota_windows"),
         ),
@@ -396,3 +396,19 @@ def test_capacity_source_negotiation_rejects_unbounded_or_custom_sources_first__
     ]:
         assert select_opencode_capacity_policy(configured_model) is None
 
+
+
+
+def test_no_policy_that_reaches_the_network_is_declared_local_or_without_opt_in() -> None:
+    """The Gemini Code Assist read goes to Google with an OAuth token."""
+    gemini = next(
+        policy
+        for policy in provider_capacity_policies()
+        if policy.capacity_profile_id == "google-gemini-code-assist"
+    )
+    assert gemini.evidence_class is CapacityEvidenceClass.OFFICIAL_API
+    assert gemini.opt_in_required is True
+
+    # Whatever a policy declares, an API read can never be declared without opt-in.
+    with pytest.raises(ProviderCapacityPolicyError, match="requires opt-in"):
+        replace(gemini, opt_in_required=False)
