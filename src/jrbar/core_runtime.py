@@ -2734,6 +2734,88 @@ def _cmd_provider_action(self, args):
     return {"provider": provider, "instance": instance, "message": message}
 
 
+@command("provider_sign_in", main_thread=False)
+def _cmd_provider_sign_in(self, args):
+    """Fix sign-in: the best automatic thing for a provider whose card is not
+    ready (``provider_sign_in.py``). Explicit only: a click, never a timer.
+    It waits on the slow lane (``core_server.SLOW_LANE_COMMANDS``) because a
+    Claude Code renewal can take up to 90 s, and the app's other commands
+    must not wait behind it."""
+    provider = args.get("provider")
+    instance = args.get("instance") or "default"
+    terminal = args.get("terminal")
+    if not isinstance(provider, str) or not provider:
+        raise CommandError("invalid_args", "provider is required")
+    if not isinstance(instance, str) or not instance:
+        raise CommandError("invalid_args", "instance must be a nonempty string")
+    if terminal is not None and not isinstance(terminal, str):
+        raise CommandError("invalid_args", "terminal must be a bundle identifier")
+    from .provider_usage_platform import provider_descriptor
+
+    try:
+        provider_descriptor(provider)
+    except ValueError as exc:
+        raise CommandError("unknown_provider", f"unknown provider {provider!r}") from exc
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
+    state = getattr(self, "provider_usage_state", None)
+    snapshot = next(
+        (
+            item
+            for item in getattr(state, "snapshots", ()) or ()
+            if getattr(item, "identity", None) == (provider, instance)
+        ),
+        None,
+    )
+    reason_code = getattr(snapshot, "reason_code", None)
+    signed_out = None
+    if snapshot is not None:
+        card_state = getattr(getattr(snapshot, "state", None), "value", None)
+        signed_out = card_state == "needs_sign_in" or reason_code == "authentication_required"
+    fixer = getattr(self, "_jrbar_provider_sign_in", None)
+    if fixer is None:
+        from .provider_sign_in import ProviderSignIn
+
+        fixer = ProviderSignIn(log=getattr(self, "_core_log", None))
+        self._jrbar_provider_sign_in = fixer
+    result = fixer.sign_in(
+        provider,
+        instance,
+        terminal=terminal,
+        reason_code=reason_code,
+        signed_out=signed_out,
+    )
+
+    def after_click() -> None:
+        # The same tail the staged flow has: the sentence reaches the
+        # feedback sink, the outcome watch is armed, and the provider's usage
+        # refresh is forced so the card flips in seconds, not at the next poll.
+        feedback = getattr(self, "_show_provider_usage_feedback", None)
+        if callable(feedback):
+            try:
+                feedback(result.message)
+            except Exception:
+                pass
+        try:
+            self._jrbar_reconnect_watch = (provider, instance, time.time())
+        except Exception:
+            pass
+        try:
+            scope = (provider,) if instance == "default" else ((provider, instance),)
+            self._request_provider_usage(force=True, providers=scope)
+        except Exception:
+            pass
+
+    on_main(after_click)
+    return {
+        "provider": provider,
+        "instance": instance,
+        "outcome": result.outcome,
+        "message": result.message,
+        "command": result.command,
+        "sign_in_url": result.sign_in_url,
+    }
+
+
 def _hooks_command(self, args, *, install: bool):
     from .install import install_provider_hooks, uninstall_provider_hooks
     from .state_paths import default_state_dir

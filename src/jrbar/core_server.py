@@ -109,6 +109,9 @@ SLOW_LANE_COMMANDS: Final = frozenset(
         "compare_sessions",
         "session_usage",
         "doctor",
+        # Not a read: a click on Fix sign-in that can wait up to 90 s on
+        # Claude Code. On the lane, nothing else the app sends waits with it.
+        "provider_sign_in",
     }
 )
 # Stamped into a slow-lane command's args when it is queued (epoch
