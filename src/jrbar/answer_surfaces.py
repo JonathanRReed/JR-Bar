@@ -1363,10 +1363,17 @@ def run_command_in_terminal(
     ``new_session`` opens an agent. Explicit actions only (a click on Fix
     sign-in or Update); the command is chosen by the daemon, never the client.
     Raises ``CommandError``: ``not_found`` for a directory that is not there,
-    ``invalid_args`` for an unreviewed terminal, ``unsupported`` when the
-    terminal could not be opened."""
+    ``invalid_args`` for an unreviewed terminal or a command or directory with
+    a control character in it, ``unsupported`` when the terminal could not be
+    opened."""
     from .core_server import CommandError
 
+    # Typed into the owner's shell, so nothing but printable text goes in: a
+    # control character (Ctrl-C, an escape sequence, a return) would be input.
+    if not (type(command) is str and 1 <= len(command) <= 8_192 and command.isprintable()):
+        raise CommandError("invalid_args", "the command must be printable text")
+    if not (type(directory) is str and directory.isprintable()):
+        raise CommandError("invalid_args", "the directory must be printable text")
     if not os.path.isdir(directory):
         raise CommandError("not_found", "no such directory")
     chosen = _startable_terminal(terminal, recorder)

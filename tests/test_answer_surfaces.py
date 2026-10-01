@@ -844,6 +844,18 @@ def test_a_command_is_typed_into_the_owners_terminal_the_way_a_new_session_is(tm
     assert reply["raised"] == "new_window"
     assert runner.calls == [("launch", "com.apple.Terminal", f"cd '{home}' && '/opt/bin/grok' login")]
 
+    # Typed into the owner's shell, so a control character is refused before anything is sent: Ctrl-C,
+    # a bracketed-paste end, a return and a newline would each be input on the Ghostty path.
+    for command in ("x\x03", "x\x1b[201~ && rm -rf ~", "x\r", "x\ny", "x\ty", "", "x" * 9000):
+        runner = FakeRunner()
+        with pytest.raises(CommandError) as error:
+            run_command_in_terminal(str(home), command, runner=runner, recorder=recorder)
+        assert error.value.code == "invalid_args", repr(command)
+        assert runner.calls == [], "nothing reached the terminal"
+    with pytest.raises(CommandError) as error:
+        run_command_in_terminal(str(home) + "\x1b", "ok", runner=FakeRunner(), recorder=recorder)
+    assert error.value.code == "invalid_args"
+
     # Only a real directory, only a reviewed terminal, and a terminal that cannot open says so.
     for directory, terminal, runner, code in (
         (str(tmp_path / "missing"), None, FakeRunner(), "not_found"),
