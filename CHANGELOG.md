@@ -9,9 +9,8 @@ All notable changes to JR-Bar are documented here.
   and the SidePulse strip, and the courtesy signature and the Dot's ask
   heartbeat stay quiet for it too. LED repaints after a lid animation, a
   colour preview or a device setting, the day's needs-you tally, the
-  stage-three escalation banner, the desktop widget, and the older
-  `jrbar leds`, `status` and `watch` commands no longer treat a waiting
-  sub-agent as an ask. A main session's ask lights as before, and turning
+  stage-three escalation banner, and the older `jrbar leds`, `status` and
+  `watch` commands no longer treat a waiting sub-agent as an ask. A main session's ask lights as before, and turning
   the setting on restores the old behaviour.
 - While Sub-agent asks is off, JR-Bar no longer holds a sub-agent's
   PermissionRequest. Codex's own prompt for a sub-agent appears at once
@@ -115,6 +114,32 @@ All notable changes to JR-Bar are documented here.
   row and History still loads. A submodule keeps its own repository name and
   branch. Core log output with odd bytes or a last line without a newline is
   kept.
+- Provider status pages are opt-in. JR-Bar used to check status.anthropic.com,
+  status.openai.com and status.cursor.com every 10 minutes with no setting;
+  nothing is contacted now until you turn on Provider status pages in
+  Settings, and only providers that are installed are checked.
+- Asks only and Pause now hold banners and sounds by the kind of event.
+  The daemon's state carries `focus.outbound` (all, critical, asks or none)
+  beside the lights' own axis.
+- A usage card knows how old its reading is. Each snapshot carries when it
+  was actually read apart from when the last attempt was made, so a number
+  kept through a failed refresh shows its real age.
+- Dock hover previews read Accessibility off the main thread, so a slow
+  app can no longer stall the menu bar, Screen Bar or notch while you
+  hover its icon.
+- Words match what the daemon means: Overview, Palette and the Rail say
+  "Answered" for an answered ask instead of offering disabled buttons, and
+  Why this light names the same quota window the light itself used and says
+  so when every window has lapsed.
+- Removed: the old Python Settings window, global-hotkey stack, Screen Bar
+  drawing, Usage, Why and Agent Browser windows and the controller code only
+  they reached (about 51,000 lines; the Swift app owns every one of those
+  surfaces), and about 120 unused Swift declarations. JR-Bar no longer
+  writes `widget-snapshot.json` (nothing read it; an old copy in
+  `~/.local/state/jrbar` can be deleted), the Agent Overview card no longer
+  keeps unused grouping settings, and `examples/audio_monitor.py` and
+  `scripts/install-user.sh` are gone. Old plans and research moved to
+  `docs/archive`.
 - Docs and tests: CORE-PROTOCOL.md names every command and state field the
   daemon sends, and a contract test in `make fast` keeps commands from
   drifting out of it. The state cadence is described as it runs. The README
