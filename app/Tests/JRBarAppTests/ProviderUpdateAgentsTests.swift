@@ -3,7 +3,7 @@ import JRBarCore
 import Testing
 @testable import JRBarApp
 
-/// Settings › Agents' Update button and "Check for CLI updates" switch, and the Usage
+/// Settings › Agents' Update button and "Check for agent updates" switch, and the Usage
 /// Center's Fix sign-in: the words they show, the key the switch writes (off until
 /// turned on), and that nothing here runs by itself.
 @Suite struct ProviderUpdateAgentsTests {
@@ -125,7 +125,7 @@ import Testing
         #expect(words.contains("every 6 hours"))
         #expect(words.contains("Off by default"))
         #expect(words.contains("nothing is contacted until you turn it on"))
-        let row = SettingsSearch.rows.first { $0.title == "Check for CLI updates" }
+        let row = SettingsSearch.rows.first { $0.title == "Check for agent updates" }
         #expect(row?.subtitle == words, "the search index shares the page's words")
         #expect(row?.page == .agents)
     }

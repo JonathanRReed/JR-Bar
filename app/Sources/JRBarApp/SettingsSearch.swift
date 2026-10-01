@@ -58,7 +58,7 @@ enum SettingsSearch {
         .init(.usage, "Quota alerts", "Alert at thresholds", subtitle: "A nudge, then a warning, as a usage window fills."),
         .init(.usage, "Incidents", "Provider status pages", subtitle: ProviderStatusPagesCopy.subtitle,
               keywords: ["incident", "outage", "status page", "statuspage", "anthropic", "openai", "cursor", "network"]),
-        .init(.agents, "Updates", "Check for CLI updates", subtitle: ProviderUpdateChecksCopy.subtitle,
+        .init(.agents, "Updates", "Check for agent updates", subtitle: ProviderUpdateChecksCopy.subtitle,
               keywords: ["update", "upgrade", "version", "available", "npm", "registry", "network"]),
         .init(.usage, "Claude Code status line", "Read Claude Code's status line",
               subtitle: "Claude Code reports your 5-hour and weekly limits after each reply.",

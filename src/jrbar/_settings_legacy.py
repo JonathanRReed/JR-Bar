@@ -512,7 +512,7 @@ class AgentMonitorSettings:
     # Off by default -- it is a request that leaves the Mac, so nothing is
     # contacted until the person turns it on.
     provider_status_feeds_enabled: bool = False
-    # Settings > Agents' "Check for CLI updates" switch: when on, the daemon asks
+    # Settings > Agents' "Check for agent updates" switch: when on, the daemon asks
     # registry.npmjs.org for the latest version of each installed agent CLI that
     # has an npm package (provider_updates.py), every 6 hours and when the Agents
     # page is refreshed, so a row can say "2.1.290 available". Off by default --

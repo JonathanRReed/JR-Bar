@@ -1,6 +1,6 @@
 """`provider_update_checks_enabled`: off by default, and only a real true turns it on.
 
-The daemon's own switch for Settings > Agents' "Check for CLI updates". Off, no request
+The daemon's own switch for Settings > Agents' "Check for agent updates". Off, no request
 leaves the Mac and no thread starts: the registry is asked only after the person turns it
 on. The behaviour behind it is in test_provider_updates.py; this holds the key itself and
 proves the daemon's own settings drive it. Every fetch here is injected; nothing reaches a

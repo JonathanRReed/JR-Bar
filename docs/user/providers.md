@@ -127,7 +127,7 @@ Mac, and only when you click it.
 ### Update available
 
 A row can also say "2.1.290 available". That needs one more request, so it is
-off. Turn on **Check for CLI updates** in Settings > Agents and JR-Bar will ask
+off. Turn on **Check for agent updates** in Settings > Agents and JR-Bar will ask
 `registry.npmjs.org` for the latest version of each installed CLI that has an npm
 package: Claude Code, Codex, Grok, Gemini CLI and OpenCode (Devin has none). It
 asks every 6 hours and when you refresh the Agents page, with one plain request

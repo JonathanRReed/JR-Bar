@@ -142,7 +142,7 @@ struct SignInUpdateRenderProofTests {
                 AgentRow(store: store, provider: provider, doctor: entry(provider, versions[provider] ?? ""))
             }
             Divider()
-            SettingToggle(store, "Check for CLI updates", subtitle: ProviderUpdateChecksCopy.subtitle,
+            SettingToggle(store, "Check for agent updates", subtitle: ProviderUpdateChecksCopy.subtitle,
                           path: "provider_update_checks_enabled")
         }
         .padding(20)
