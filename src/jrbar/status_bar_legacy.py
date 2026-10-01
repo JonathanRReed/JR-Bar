@@ -86,8 +86,6 @@ from .agent_browser import (
 from .agent_browser_window import (
     AgentBrowserActionPayload,
     AgentBrowserAnswerPayload,
-    AgentBrowserOpenPayload,
-    AgentBrowserWindowController,
 )
 from .animation import (
     errors_only,
@@ -283,7 +281,6 @@ from .headless_screen_bar import (
     VIRTUAL_DEVICE_NAME,
     HeadlessScreenBar,
 )
-from .window_presentation import activate_app
 from .led_status import (
     FIRST_LIGHT_SECONDS,
     first_light_program,
@@ -1660,13 +1657,11 @@ class StatusBarController(NSObject):
         self._published_ledger_at = None
         self.status_item = None
         self.timer = None
-        self.agent_browser_controller = None
         self.current_operator_state = None
         self.mailbox_preferences: tuple[MailboxPreference, ...] = ()
         self.mailbox_preferences_dirty = False
         self.local_triage_state = LocalTriageState(())
         self.local_triage_dirty = False
-        self.operator_action_error: str | None = None
         self.mailbox_preferences_saver = self._save_mailbox_preferences
         self.operator_triage_saver = self._save_operator_triage
         self.navigation_candidates_by_work_key = {}
@@ -6368,71 +6363,6 @@ class StatusBarController(NSObject):
         if replayed:
             log_status_bar(f"startup_replay events={replayed}")
 
-    @objc.IBAction
-    def openAgentBrowser_(self, sender) -> bool:
-        payload = sender.representedObject() if sender is not None else None
-        if type(payload) is not AgentBrowserOpenPayload:
-            # The row may carry no payload (the compact root's Agents row,
-            # or any hand-built caller): opening the browser must never
-            # depend on what the menu happened to hold. Unscoped view.
-            payload = AgentBrowserOpenPayload(0, None, None)
-        snapshot = getattr(self, "last_snapshot", None)
-        if snapshot is None:
-            return False
-        projection = _canonical_agent_browser_projection(
-            snapshot,
-            self,
-            shelf=payload.shelf,
-            family_key=payload.family_key,
-        )
-        if projection is None and (
-            payload.shelf is not None or payload.family_key is not None
-        ):
-            # A stale menu's scope may no longer resolve; the click still
-            # opens the browser, just unscoped. Generation fencing remains
-            # on MUTATING actions (performAgentBrowserPayload_), where a
-            # stale menu really must not act.
-            payload = AgentBrowserOpenPayload(0, None, None)
-            projection = _canonical_agent_browser_projection(snapshot, self)
-        if projection is None:
-            return False
-        controller = getattr(self, "agent_browser_controller", None)
-        if controller is None:
-            controller = AgentBrowserWindowController.alloc().init()
-            self.agent_browser_controller = controller
-        controller.action_handler = self.performAgentBrowserPayload_
-        controller.visit_handler = self.recordAgentBrowserVisit_
-        controller.worker_scope = payload.family_key
-        controller.shelf_scope = payload.shelf
-        controller.query_handler = lambda text, *, family_key, selected_work_key: (
-            _canonical_agent_browser_projection(
-                self.last_snapshot,
-                self,
-                text=text,
-                shelf=payload.shelf if family_key is None else None,
-                family_key=family_key,
-                selected_work_key=selected_work_key,
-            )
-        )
-        controller.open_with_projection(
-            projection,
-            actions_by_work_key=_canonical_operator_actions(
-                self.current_operator_state,
-                self,
-            ),
-            error_message=self.operator_action_error,
-        )
-        activate_app()
-        return True
-
-    @objc.IBAction
-    def performBrowserAction_(self, sender) -> bool:
-        payload = sender.representedObject() if sender is not None else None
-        performed = self.performAgentBrowserPayload_(payload)
-        if performed and type(payload) is AgentBrowserActionPayload:
-            self.recordAgentBrowserVisit_(payload.work_key)
-        return performed
-
     def performAgentBrowserPayload_(self, payload) -> bool:
         if type(payload) is AgentBrowserAnswerPayload:
             state = getattr(self, "current_operator_state", None)
@@ -6492,23 +6422,6 @@ class StatusBarController(NSObject):
         }:
             return self._apply_triage_action(payload, state)
         return self._apply_preference_action(payload)
-
-    def recordAgentBrowserVisit_(self, work_key) -> bool:
-        state = getattr(self, "current_operator_state", None)
-        if state is None or not any(work.key == work_key for work in state.works):
-            return False
-        family_key = _family_work_key(state, work_key)
-        if family_key is None:
-            return False
-        preference = _preference_for_work_key(self.mailbox_preferences, family_key)
-        updated = dataclass_replace(
-            preference or MailboxPreference(family_key),
-            last_visited_at=time.time(),
-        )
-        self._publish_mailbox_preferences(
-            _replace_mailbox_preference(self.mailbox_preferences, updated)
-        )
-        return True
 
     def _apply_preference_action(self, payload: AgentBrowserActionPayload) -> bool:
         family_key = _family_work_key(
@@ -6659,12 +6572,9 @@ class StatusBarController(NSObject):
         try:
             self.operator_triage_saver(updated)
         except OSError:
-            self.operator_action_error = (
-                f"Could not save acknowledgement. {PRODUCT_DISPLAY_NAME} will retry."
-            )
+            pass  # retained in memory; the next save retries
         else:
             self.local_triage_dirty = False
-            self.operator_action_error = None
         self.observe_operator_history_triage(
             request,
             mutation,
@@ -6678,7 +6588,6 @@ class StatusBarController(NSObject):
         projection = getattr(self, "current_attention_projection", None)
         if isinstance(projection, AttentionProjection):
             self.track_ask_blocked(projection)
-        self._republish_operator_surfaces()
         return True
 
     def _publish_mailbox_preferences(self, preferences) -> None:
@@ -6687,41 +6596,9 @@ class StatusBarController(NSObject):
         try:
             self.mailbox_preferences_saver(self.mailbox_preferences)
         except OSError:
-            self.operator_action_error = (
-                f"Could not save mailbox change. {PRODUCT_DISPLAY_NAME} will retry."
-            )
+            pass  # retained in memory; the next save retries
         else:
             self.mailbox_preferences_dirty = False
-            self.operator_action_error = None
-        self._republish_operator_surfaces()
-
-    def _republish_operator_surfaces(self) -> None:
-        snapshot = getattr(self, "last_snapshot", None)
-        if snapshot is None or getattr(snapshot, "operator_state", None) is None:
-            return
-        browser = getattr(self, "agent_browser_controller", None)
-        if browser is not None:
-            projection = _canonical_agent_browser_projection(
-                snapshot,
-                self,
-                text=str(browser.search_field.stringValue()),
-                shelf=(
-                    browser.shelf_scope
-                    if browser.worker_scope is None
-                    else None
-                ),
-                family_key=browser.worker_scope,
-                selected_work_key=browser.selected_work_key,
-            )
-            if projection is not None:
-                browser.publish_projection(
-                    projection,
-                    actions_by_work_key=_canonical_operator_actions(
-                        self.current_operator_state,
-                        self,
-                    ),
-                    error_message=self.operator_action_error,
-                )
 
     def schedule_mailbox_boundary(self, deadline_epoch) -> None:
         if deadline_epoch is None:

@@ -42,12 +42,12 @@ os.environ["JRBAR_TESTING"] = "1"
 os.environ["JRBAR_TEST_VOLUME_ROOT"] = str(_TEST_VOLUMES)
 
 # The suite must NEVER take the desktop away from a person using this
-# machine. AppKit tests build real windows, and product code they
-# exercise calls makeKeyAndOrderFront_ / activateIgnoringOtherApps_ --
-# for a four-minute run that meant focus being yanked from the owner's
-# hands over and over ("makes this computer unusable", reported live
-# 2026-08-26). Two defenses, both belt-and-suspenders with the
-# JRBAR_TESTING guard inside window_presentation.py:
+# machine. AppKit tests once exercised product code that called
+# makeKeyAndOrderFront_ / activateIgnoringOtherApps_ -- for a four-minute
+# run that meant focus being yanked from the owner's hands over and over
+# ("makes this computer unusable", reported live 2026-08-26). The package
+# has no such call now (tests/test_no_desktop_takeover.py keeps it so);
+# this is the belt to that pair of braces:
 #   1. PROHIBITED activation policy: macOS itself refuses to ever make
 #      this process the active app, whatever the code under test asks.
 #   2. Set at conftest import time -- before any test module can touch
