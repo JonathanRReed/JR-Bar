@@ -1167,13 +1167,18 @@ Commands are parsed on the socket thread and run on the AppKit main thread
 (`performSelectorOnMainThread`), one at a time, in order per client --
 except the slow-lane reads `usage_graph`, `usage_history`,
 `session_timeline`, `list_history`, `compare_sessions`, `session_usage` and
-`doctor`. Those queue on one daemon-wide worker at utility QoS, in order
-among themselves (two scans never overlap), and each replies by `id` when
-it is done, so a reply to a later command can arrive first and a scan never
-holds up an `answer_ask`. `mark_history_seen` queues on the same lane (it
+`doctor`. Those queue on daemon-wide workers at utility QoS and each reply
+by `id` when it is done, so a reply to a later command can arrive first and
+a scan never holds up an `answer_ask`. There are two lanes, each with one
+worker. The scan lane carries `usage_graph` and `usage_history`, in order
+among themselves, so two scans never overlap. The read lane carries
+`session_timeline`, `list_history`, `compare_sessions`, `session_usage` and
+`doctor`, in order among themselves, so History opens while the Overview's
+graph is still being built. `mark_history_seen` queues on the read lane (it
 still runs on the main thread when its turn comes), so a `list_history`
 sent before it computes `unseen` against the old watermark. Past 32
-queued, a new one is refused `busy`.
+queued on a lane, a new command for that lane is refused `busy`; a backlog
+of scans never makes a read busy.
 `install_hooks` / `uninstall_hooks` run on the socket thread because the
 Codex trust handshake can take seconds, and so do `open_session` and
 `resume_session`, whose osascript and tmux calls can wait on a first

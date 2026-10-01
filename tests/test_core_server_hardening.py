@@ -1,8 +1,11 @@
 """The daemon's socket under the inputs it should never trust itself with.
 
-A frame is always JSON the app can decode (a number that is not finite goes
-out as ``null``), and a reply obeys the same size limit as every other frame.
-Everything here is deterministic: every wait only bounds a hang.
+Three promises the protocol makes and the server has to keep: a frame is
+always JSON the app can decode (a number that is not finite goes out as
+``null``), a reply obeys the same size limit as every other frame, and a
+scan that takes minutes does not hold up the short reads the person waits
+on. Everything here is deterministic: an Event stands in for the slow work,
+and every wait only bounds a hang.
 """
 
 from __future__ import annotations
@@ -278,3 +281,140 @@ def test_a_reply_just_under_the_limit_is_delivered_whole(sock_dir: Path) -> None
         client.close()
     finally:
         instance.stop()
+
+
+# -- 3. the short reads do not wait behind a scan ------------------------------
+
+
+def test_a_history_read_is_answered_while_a_usage_scan_is_still_running(sock_dir: Path) -> None:
+    """A usage_graph took 107 s and then 195 s; opening History used to
+    queue behind it on the one slow-lane worker."""
+    scan_running = threading.Event()
+    release_scan = threading.Event()
+    read_threads: dict[str, str] = {}
+
+    def dispatch(name: str, args: dict):
+        if name == "usage_graph":
+            scan_running.set()
+            assert release_scan.wait(HANG_BOUND_SECONDS)
+            return {"scan": True}
+        read_threads[name] = threading.current_thread().name
+        return {"name": name}
+
+    instance = _serve(sock_dir, dispatch)
+    try:
+        client = _connect(instance)
+        _read_strict(client, 1)
+        client.sendall(_command("scan", "usage_graph"))
+        assert scan_running.wait(HANG_BOUND_SECONDS)
+        client.sendall(_command("history", "list_history"))
+        client.sendall(_command("timeline", "session_timeline"))
+        client.sendall(_command("seen", "mark_history_seen"))
+        # Every short read answers with the scan still held.
+        replies = _read_strict(client, 3)
+        assert [reply["id"] for reply in replies] == ["history", "timeline", "seen"]
+        assert not release_scan.is_set()
+        assert len(set(read_threads.values())) == 1
+        assert next(iter(read_threads.values())) != "JRBarCoreClient1"
+        release_scan.set()
+        assert _read_strict(client, 1)[0]["id"] == "scan"
+        client.close()
+    finally:
+        release_scan.set()
+        instance.stop()
+
+
+def test_two_scans_still_never_overlap_and_the_short_reads_stay_in_order(sock_dir: Path) -> None:
+    running = 0
+    overlap: list[int] = []
+    guard = threading.Lock()
+    first_scan_running = threading.Event()
+    release_first_scan = threading.Event()
+    order: list[str] = []
+
+    def dispatch(name: str, args: dict):
+        nonlocal running
+        if name in ("usage_graph", "usage_history"):
+            with guard:
+                running += 1
+                overlap.append(running)
+            try:
+                if name == "usage_graph":
+                    first_scan_running.set()
+                    assert release_first_scan.wait(HANG_BOUND_SECONDS)
+            finally:
+                with guard:
+                    running -= 1
+        else:
+            order.append(name)
+        return {"name": name}
+
+    instance = _serve(sock_dir, dispatch)
+    try:
+        client = _connect(instance)
+        _read_strict(client, 1)
+        client.sendall(_command("graph", "usage_graph"))
+        assert first_scan_running.wait(HANG_BOUND_SECONDS)
+        client.sendall(_command("history", "usage_history"))
+        client.sendall(_command("list", "list_history"))
+        client.sendall(_command("mark", "mark_history_seen"))
+        client.sendall(_command("compare", "compare_sessions"))
+        first_replies = _read_strict(client, 3)
+        # The reads answer in the order they were sent, behind nothing.
+        assert [reply["id"] for reply in first_replies] == ["list", "mark", "compare"]
+        assert order == ["list_history", "mark_history_seen", "compare_sessions"]
+        # The second scan waits for the first: the one the person is watching
+        # on Overview must not be slowed by a second parse of the same files.
+        assert overlap == [1]
+        release_first_scan.set()
+        assert [reply["id"] for reply in _read_strict(client, 2)] == ["graph", "history"]
+        assert overlap == [1, 1]
+        client.close()
+    finally:
+        release_first_scan.set()
+        instance.stop()
+
+
+def test_a_backlog_of_scans_does_not_make_a_short_read_busy(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jrbar import core_server
+
+    scan_running = threading.Event()
+    release_scan = threading.Event()
+
+    def dispatch(name: str, args: dict):
+        if name == "usage_graph":
+            scan_running.set()
+            assert release_scan.wait(HANG_BOUND_SECONDS)
+        return {"name": name}
+
+    monkeypatch.setattr(core_server, "MAX_SLOW_LANE_QUEUED", 1)
+    instance = _serve(sock_dir, dispatch)
+    try:
+        client = _connect(instance)
+        _read_strict(client, 1)
+        client.sendall(_command("s1", "usage_graph"))
+        assert scan_running.wait(HANG_BOUND_SECONDS)
+        client.sendall(_command("s2", "usage_graph"))
+        client.sendall(_command("s3", "usage_graph"))
+        client.sendall(_command("read", "doctor"))
+        replies = {reply["id"]: reply for reply in _read_strict(client, 2)}
+        assert replies["s3"]["error"]["code"] == "busy"
+        assert replies["read"]["ok"] is True
+        release_scan.set()
+        assert [reply["id"] for reply in _read_strict(client, 2)] == ["s1", "s2"]
+        client.close()
+    finally:
+        release_scan.set()
+        instance.stop()
+
+
+def test_every_slow_lane_command_belongs_to_exactly_one_lane() -> None:
+    from jrbar.core_server import READ_LANE_COMMANDS, SCAN_LANE_COMMANDS, SLOW_LANE_COMMANDS
+
+    assert SCAN_LANE_COMMANDS == {"usage_graph", "usage_history"}
+    assert not SCAN_LANE_COMMANDS & READ_LANE_COMMANDS
+    assert SCAN_LANE_COMMANDS | READ_LANE_COMMANDS == SLOW_LANE_COMMANDS
+    # History's pair shares a lane: the mark must wait behind the read.
+    assert {"list_history", "mark_history_seen"} <= READ_LANE_COMMANDS
