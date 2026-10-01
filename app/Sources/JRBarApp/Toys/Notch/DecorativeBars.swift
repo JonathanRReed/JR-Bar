@@ -1,3 +1,4 @@
+import JRBarUI
 import SwiftUI
 
 /// The decorative playing tell every media surface shares — the island's
@@ -21,9 +22,20 @@ struct DecorativeBars: View {
     static let defaultCount = 6
     static let frameInterval: TimeInterval = 1.0 / 12.0
 
+    /// How the bars tick: their own 12 frames a second and moving while
+    /// `live` — unless the Mac asks for restraint (`PowerPolicy`): half the
+    /// rate under Low Power Mode or a serious thermal state, and the still
+    /// frame under a critical one.
+    nonisolated static func cadence(live: Bool, reduceMotion: Bool,
+                                    power: PowerPolicy) -> (interval: TimeInterval, moving: Bool) {
+        (power.interval(frameInterval), live && !reduceMotion && !power.pauses(occluded: false))
+    }
+
     var body: some View {
-        let moving = live && !reduceMotion
-        TimelineView(.animation(minimumInterval: Self.frameInterval, paused: !moving)) { context in
+        let cadence = Self.cadence(live: live, reduceMotion: reduceMotion,
+                                   power: PowerConditions.shared.policy)
+        let moving = cadence.moving
+        TimelineView(.animation(minimumInterval: cadence.interval, paused: !moving)) { context in
             let t = moving ? context.date.timeIntervalSinceReferenceDate : 0
             HStack(alignment: .center, spacing: spacing) {
                 ForEach(0..<count, id: \.self) { index in

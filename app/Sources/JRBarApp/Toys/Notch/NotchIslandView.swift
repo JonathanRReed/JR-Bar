@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 /// The island's faces — three of them on one window. At rest a black
@@ -156,13 +157,25 @@ struct NotchIslandView: View {
     /// breath is the same slow cosine the status chip uses, paused
     /// outright when nothing works, under Reduce Motion, while the
     /// island is ordered out, or while the face is bare.
+    /// How the breath ticks: 15 frames a second while the island has work
+    /// to show, and not at all otherwise. The Mac asking for restraint
+    /// (`PowerPolicy`) halves the rate, and a critical thermal state holds
+    /// the face still.
+    nonisolated static func breathCadence(working: Bool, shown: Bool, reduceMotion: Bool, bare: Bool,
+                                          power: PowerPolicy) -> (interval: TimeInterval, live: Bool) {
+        (power.interval(1.0 / 15.0),
+         working && shown && !reduceMotion && !bare && !power.pauses(occluded: false))
+    }
+
     private func idle(summary: NotchIslandSummary) -> some View {
         let layout = toy.idleLayout
         let notched = toy.notchDepth > 0
-        let live = summary.working > 0 && toy.islandVisible && !reduceMotion
-            && !(notched && layout.bare)
-        return TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: !live)) { context in
-            let breath = live
+        let breath = Self.breathCadence(
+            working: summary.working > 0, shown: toy.islandVisible, reduceMotion: reduceMotion,
+            bare: notched && layout.bare, power: PowerConditions.shared.policy)
+        let live = breath.live
+        return TimelineView(.animation(minimumInterval: breath.interval, paused: !live)) { context in
+            let swell = live
                 ? (1 - cos(context.date.timeIntervalSinceReferenceDate * .pi * 2 / 2.6)) / 2
                 : 0
             Group {
@@ -172,7 +185,7 @@ struct NotchIslandView: View {
                     centredRow(summary: summary)
                 }
             }
-            .opacity(0.85 + 0.15 * breath)
+            .opacity(0.85 + 0.15 * swell)
             // The hover wink's other half — the frame grows a few
             // points (the toy's `islandHoverPeek` reframe), and the
             // marks swell inside it. A passing cursor earns only this.
