@@ -863,6 +863,13 @@ struct SessionRowView: View {
                             CountBadge(text: "\(row.workers)", symbol: "square.stack")
                                 .help(row.workersText ?? "")
                         }
+                        if let waiting = row.workersWaitingText {
+                            // Sub-agents blocked on a request that stays
+                            // quiet (Sub-agent asks off): plain words, no
+                            // tint, no card, no verb — a fact, not an ask.
+                            Text("·").foregroundStyle(.quaternary)
+                            Text(waiting).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                        }
                         if let fact = row.activityFact {
                             // The hook's last word ("running Bash") — the
                             // row's activity made specific.
@@ -946,7 +953,8 @@ struct SessionRowView: View {
         let place: String = row.isRemote
             ? "on \(row.remoteMachine ?? "a peer")"
             : (row.cwdTail.map { "in \($0)" } ?? "no folder on record")
-        let parts: [String?] = [row.label, row.workersText, row.style.name, row.activity.word, elapsed, place]
+        let parts: [String?] = [row.label, row.workersText, row.workersWaitingText, row.style.name,
+                                row.activity.word, elapsed, place]
         return parts.compactMap { $0 }.joined(separator: ", ")
     }
 }

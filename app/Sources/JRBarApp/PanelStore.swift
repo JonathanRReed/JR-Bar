@@ -25,6 +25,16 @@ struct SessionRow: Identifiable, Equatable {
     var workersText: String? {
         workers <= 0 ? nil : (workers == 1 ? "1 worker" : "\(workers) workers")
     }
+    /// How many of those workers wait on a request that stays quiet
+    /// (`workers_waiting`; sub-agent asks off). 0 when the daemon says none
+    /// or says nothing.
+    let workersWaiting: Int
+    /// "1 worker waiting", "3 workers waiting"; nil with none. Plain words
+    /// on the parent row: information only, with no tint, no card and no
+    /// verb, because nothing here is an ask.
+    var workersWaitingText: String? {
+        workersWaiting <= 0 ? nil : (workersWaiting == 1 ? "1 worker waiting" : "\(workersWaiting) workers waiting")
+    }
     let ask: CoreAsk?
     let stale: Bool
     /// A peer's session mirrored onto this Mac (`remote:<machine>:…`):
@@ -68,6 +78,7 @@ struct SessionRow: Identifiable, Equatable {
         originLabel = session.isRemote ? nil : Self.shortFact(session.origin?.label, limit: 32)
         since = session.since.map { Date(timeIntervalSince1970: $0) }
         workers = session.workers
+        workersWaiting = session.workersWaiting ?? 0
         ask = pinnedAsk ?? session.ask.map { ask in
             var ask = ask
             ask.session = session.id
@@ -105,6 +116,7 @@ struct SessionRow: Identifiable, Equatable {
         activity = .waiting
         since = ask.openedAt.map { Date(timeIntervalSince1970: $0) }
         workers = 0
+        workersWaiting = 0
         self.ask = ask
         stale = false
         isRemote = remote
@@ -127,6 +139,11 @@ struct SessionRow: Identifiable, Equatable {
         if let cwd, !cwd.isEmpty { parts.append(cwd) }
         if isSnoozed(now: now), let until = snoozedUntil {
             parts.append("Snoozed until \(PanelStore.clockTime(Date(timeIntervalSince1970: until)))")
+        }
+        if let waiting = workersWaitingText {
+            // Said once, in the row's tooltip: the agent shows its own
+            // prompt, and JR-Bar stays quiet about it by default.
+            parts.append("\(waiting). The agent shows its own prompt; JR-Bar stays quiet because Sub-agent asks is off")
         }
         if let activityFact {
             parts.append("Last hook event: \(activityFact)")
