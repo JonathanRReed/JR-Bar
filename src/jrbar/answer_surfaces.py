@@ -477,7 +477,7 @@ class SurfaceRunner:
         reviewed launch plans the rest of the app uses. ``False`` when that
         terminal has no reviewed plan here (the plan fell back to another
         app): the caller's own ladder decides then."""
-        from ._status_bar_launch_legacy import resolve_terminal_launch, terminal_launch_arguments
+        from .status_bar_launch import resolve_terminal_launch, terminal_launch_arguments
 
         try:
             plan = resolve_terminal_launch(bundle_id)
