@@ -2983,9 +2983,6 @@ class StatusBarController(NSObject):
             return False
         return True
 
-    def refresh_why_panel(self) -> bool:
-        return why_panel_module.refresh_visible_panel(self, self.why_panel_body())
-
     def maybe_refresh_usage_summary(self, *, reason: str | None = None) -> None:
         """Plan due provider work without putting transcript IO on AppKit."""
         now = time.monotonic()

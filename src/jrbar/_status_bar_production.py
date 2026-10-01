@@ -699,12 +699,6 @@ else:
                 }
             )
 
-        def refresh_why_panel(self) -> bool:
-            if getattr(self, "_production_refresh_active", False):
-                self._production_why_panel_refresh_pending = True
-                return False
-            return _LegacyStatusBarController.refresh_why_panel(self)
-
         @_legacy.objc.IBAction
         def refresh_(self, sender):
             # Any completed refresh satisfies pending event wake-ups, no
@@ -764,15 +758,8 @@ else:
                 )
                 self._production_last_full_refresh = time.monotonic()
                 self._production_refresh_active = False
-                why_panel_pending = bool(
-                    getattr(self, "_production_why_panel_refresh_pending", False)
-                )
-                self._production_why_panel_refresh_pending = False
                 try:
-                    if why_panel_pending:
-                        _LegacyStatusBarController.refresh_why_panel(self)
-                    else:
-                        self.local_health_snapshot()
+                    self.local_health_snapshot()
                 except Exception:
                     pass
                 pending = bool(

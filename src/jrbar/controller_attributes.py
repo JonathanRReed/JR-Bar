@@ -154,7 +154,6 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "_production_last_full_refresh": 0.0,
         "_production_refresh_active": False,
         "_production_refresh_pending": False,
-        "_production_why_panel_refresh_pending": False,
         "_provider_probe_at": 0.0,
         "_refresh_led_write_seconds": 0.0,
         "_runtime_started": False,

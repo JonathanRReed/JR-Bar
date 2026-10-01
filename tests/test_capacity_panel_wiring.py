@@ -121,8 +121,7 @@ def _terminate(target) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_the_why_panel_carries_a_capacity_section_after_a_real_refresh__and_1_more(controller,) -> None:
-    # --- scenario: the_why_panel_carries_a_capacity_section_after_a_real_refresh
+def test_the_why_panel_carries_a_capacity_section_after_a_real_refresh(controller,) -> None:
     """The seam: one real codex refresh, and the panel gains the section.
 
     Driven through `_run_codex_refresh` -- worker to publish to
@@ -141,30 +140,6 @@ def test_the_why_panel_carries_a_capacity_section_after_a_real_refresh__and_1_mo
     assert "Codex" in section
     assert "5-hour" in section
     assert "15% left" in section
-
-    # --- scenario: the_open_panel_refresh_renders_the_same_body_as_opening_it
-    """An open panel that shrinks on its next tick is the same defect as a
-    section that never shipped."""
-    target, status_bar, _history = controller
-    _run_codex_refresh(target, status_bar, _limits(85.0))
-
-    rendered: list[str] = []
-    window = type(
-        "_Window",
-        (),
-        {"isVisible": lambda self: True},
-    )()
-    with patch.object(
-        status_bar.why_panel_module,
-        "set_text_preserving_position",
-        side_effect=lambda _view, text: rendered.append(text),
-    ):
-        target.why_panel_window = window
-        target.why_panel_text_view = object()
-        assert target.refresh_why_panel() is True
-
-    assert rendered and CAPACITY_SECTION_TITLE in rendered[0]
-
 
 
 def _drifted_spark_snapshot(status_bar):
