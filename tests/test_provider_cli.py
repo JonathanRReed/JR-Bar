@@ -103,6 +103,177 @@ def test_a_cli_is_found_as_one_absolute_path_or_not_at_all(tmp_path: Path) -> No
     assert os.path.isabs(exe)
 
 
+# --- only a tool nobody else can have changed is run -------------------------------------
+#
+# The daemon runs what resolve_cli returns on a click: an updater, `claude -p`, a command typed
+# into the owner's terminal. So it holds the installed-agent inventory's line: owned by root or the
+# person, writable by nobody else. What is judged, for the record: the directory that holds the PATH
+# entry, and -- after following every symlink, because npm, Homebrew and the CLIs' own installers all
+# link their commands -- the file the link lands on and the directory that holds it. The link itself
+# is not judged, only where it lands. Group-writable is refused everywhere except under a Homebrew
+# prefix (`/opt/homebrew`, `/usr/local`), where Homebrew makes `bin` writable by the admin group; a
+# test hands in a temporary folder as that prefix. World-writable is refused everywhere.
+
+
+def tool(directory: Path, name: str = "agent-tool", mode: int = 0o755) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    path.chmod(mode)
+    return path
+
+
+def find(directory: Path | str, name: str = "agent-tool", **kwargs) -> str | None:
+    return resolve_cli(name, environ={"PATH": str(directory)}, login_dirs=(), **kwargs)
+
+
+def test_a_plain_tool_in_a_private_directory_is_accepted(tmp_path: Path) -> None:
+    exe = tool(tmp_path / "bin")
+
+    assert find(tmp_path / "bin") == str(exe)
+
+
+def test_a_relative_or_empty_path_entry_is_never_searched(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tool(tmp_path / "relative" / "bin")
+    tool(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    # "relative/bin" and "." and the empty entry (which means "here") are all relative.
+    for entry in ("relative/bin", ".", "", "relative/bin" + os.pathsep + os.pathsep + "."):
+        assert resolve_cli("agent-tool", environ={"PATH": entry}, login_dirs=()) is None
+    # A child never inherits one either.
+    env = search_environment({"PATH": f"relative/bin{os.pathsep}.{os.pathsep}{os.pathsep}/usr/bin"}, login_dirs=("rel",))
+    assert env["PATH"] == "/usr/bin"
+
+
+def test_a_world_writable_directory_is_refused(tmp_path: Path) -> None:
+    directory = tmp_path / "open"
+    tool(directory)
+    directory.chmod(0o777)
+
+    assert find(directory) is None
+    # Not even under a trusted Homebrew prefix.
+    assert find(directory, group_writable_roots=(str(tmp_path),)) is None
+
+
+def test_a_group_writable_directory_is_refused_except_under_a_homebrew_prefix(tmp_path: Path) -> None:
+    directory = tmp_path / "prefix" / "bin"
+    exe = tool(directory)
+    directory.chmod(0o775)
+
+    assert find(directory) is None, "group-writable anywhere else is refused"
+    assert find(directory, group_writable_roots=(str(tmp_path / "prefix"),)) == str(exe), (
+        "Homebrew's own bin is writable by the admin group, and the owner's codex lives there"
+    )
+    assert find(directory, group_writable_roots=(str(tmp_path / "elsewhere"),)) is None
+
+
+def test_a_world_writable_or_group_writable_tool_is_refused_even_under_a_homebrew_prefix(tmp_path: Path) -> None:
+    roots = (str(tmp_path),)
+    for mode in (0o777, 0o757, 0o775, 0o755 | 0o020, 0o755 | 0o002):
+        directory = tmp_path / f"bin-{mode:o}"
+        tool(directory, mode=mode)
+        assert find(directory, group_writable_roots=roots) is None, oct(mode)
+
+
+def test_a_setuid_or_non_executable_or_non_regular_entry_is_refused(tmp_path: Path) -> None:
+    setuid = tmp_path / "setuid"
+    tool(setuid, mode=0o4755)
+    plain = tmp_path / "plain"
+    tool(plain, mode=0o644)
+    folder = tmp_path / "folder"
+    (folder / "agent-tool").mkdir(parents=True)
+
+    assert find(setuid) is None
+    assert find(plain) is None, "not executable"
+    assert find(folder) is None, "a directory is not a tool"
+    assert find(tmp_path / "missing") is None
+
+
+def test_a_tool_the_person_does_not_own_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    if os.getuid() == 0:
+        pytest.skip("root owns everything it makes, and root-owned is allowed")
+    exe = tool(tmp_path / "bin")
+    assert find(tmp_path / "bin") == str(exe)
+
+    # As someone else, the very same files are another user's.
+    someone_else = os.getuid() + 1000
+    monkeypatch.setattr(provider_cli.os, "getuid", lambda: someone_else)
+
+    assert find(tmp_path / "bin") is None
+
+
+def test_a_symlink_is_judged_by_where_it_lands_and_stays_allowed(tmp_path: Path) -> None:
+    target = tool(tmp_path / "versions" / "2.1.285", name="agent-real")
+    links = tmp_path / "links"
+    links.mkdir()
+    (links / "agent-tool").symlink_to(target)
+
+    # npm, Homebrew and the CLIs' own installers all link their commands.
+    assert find(links) == str(links / "agent-tool"), "the link is what is typed, the target is what is judged"
+
+    # A link to a world-writable file lands somewhere unsafe.
+    loose = tool(tmp_path / "loose", name="agent-real", mode=0o757)
+    (links / "agent-loose").symlink_to(loose)
+    assert find(links, "agent-loose") is None
+    # A link into a world-writable directory lands somewhere unsafe, even if the file is fine.
+    open_dir = tmp_path / "open"
+    inside = tool(open_dir, name="agent-real")
+    open_dir.chmod(0o777)
+    (links / "agent-open").symlink_to(inside)
+    assert find(links, "agent-open") is None
+    # A link to something that is not a file at all, or to nothing.
+    (links / "agent-dir").symlink_to(tmp_path / "versions")
+    (links / "agent-gone").symlink_to(tmp_path / "gone")
+    assert find(links, "agent-dir") is None and find(links, "agent-gone") is None
+    # A chain of links is followed to its end.
+    (links / "agent-chain").symlink_to(links / "agent-tool")
+    assert find(links, "agent-chain") == str(links / "agent-chain")
+
+
+def test_a_link_in_a_directory_others_can_write_is_refused_whatever_it_points_at(tmp_path: Path) -> None:
+    target = tool(tmp_path / "real")
+    links = tmp_path / "links"
+    links.mkdir()
+    (links / "agent-tool").symlink_to(target)
+    links.chmod(0o777)
+
+    assert find(links) is None, "anyone could swap the link"
+    links.chmod(0o775)
+    assert find(links) is None
+
+
+def test_a_path_that_is_not_printable_is_refused(tmp_path: Path) -> None:
+    odd = tmp_path / "bin\nx"
+    tool(odd)
+    escape = tmp_path / "bin\x1b[201~"
+    tool(escape)
+    plain = tmp_path / "bin"
+    tool(plain, name="agent\ttool")
+
+    assert find(odd) is None and find(escape) is None
+    assert find(plain, "agent\ttool") is None
+    for name in ("", "../agent-tool", "dir/agent-tool", "agent\n"):
+        assert resolve_cli(name, environ={"PATH": str(plain)}, login_dirs=()) is None
+
+
+def test_an_unsafe_directory_earlier_in_the_path_is_skipped_not_chosen(tmp_path: Path) -> None:
+    open_dir = tmp_path / "open"
+    tool(open_dir)
+    open_dir.chmod(0o777)
+    safe = tool(tmp_path / "safe")
+
+    found = resolve_cli(
+        "agent-tool", environ={"PATH": f"{open_dir}{os.pathsep}{tmp_path / 'safe'}"}, login_dirs=()
+    )
+
+    assert found == str(safe)
+
+
+def test_the_real_homebrew_prefixes_are_the_only_group_writable_ones() -> None:
+    assert provider_cli.GROUP_WRITABLE_ROOTS == ("/opt/homebrew", "/usr/local")
+
+
 # --- the bounded runner -------------------------------------------------------
 
 

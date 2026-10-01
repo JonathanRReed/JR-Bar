@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 import re
 import signal
+import stat
 import subprocess
 import threading
 from collections.abc import Callable, Mapping, Sequence
@@ -151,6 +152,13 @@ GEMINI_UPDATE_ADVICE: Final = (
 # ---------------------------------------------------------------------------
 # Finding the executable
 
+#: The two Homebrew prefixes the installed-agent inventory also trusts
+#: (``installed_agent_inventory.default_inventory_roots``). Homebrew makes its
+#: ``bin`` directories group-writable by the ``admin`` group, so a directory
+#: under one of these, owned by root or the person, may be group-writable and
+#: nowhere else may. World-writable is never allowed anywhere.
+GROUP_WRITABLE_ROOTS: Final[tuple[str, ...]] = ("/opt/homebrew", "/usr/local")
+
 
 def search_environment(
     environ: Mapping[str, str] | None = None,
@@ -164,7 +172,9 @@ def search_environment(
     answer is the last good one the daemon's probe fetched: this never
     waits on a shell. Every ``JRBAR_*`` variable is dropped: a child CLI has
     no business with this daemon's own settings, and one of them is a bearer
-    token."""
+    token. Relative and empty PATH entries are dropped too (an empty entry
+    means "the current folder"), so a child never finds a tool by looking in
+    whatever folder it happens to run in."""
     if login_dirs is None:
         from .installed_agent_inventory import login_shell_path_dirs
 
@@ -174,13 +184,61 @@ def search_environment(
         for key, value in (os.environ if environ is None else environ).items()
         if not key.startswith("JRBAR_")
     }
-    parts = [part for part in env.get("PATH", "").split(os.pathsep) if part]
-    for directory in login_dirs:
-        text = str(directory)
-        if text and text not in parts:
-            parts.append(text)
+    parts: list[str] = []
+    for part in [*env.get("PATH", "").split(os.pathsep), *(str(directory) for directory in login_dirs)]:
+        if part and os.path.isabs(part) and part.isprintable() and part not in parts:
+            parts.append(part)
     env["PATH"] = os.pathsep.join(parts)
     return env
+
+
+def _directory_is_safe(path: str, uid: int, group_roots: Sequence[str]) -> bool:
+    """A real directory owned by root or the person that nobody else can write
+    into: never world-writable, group-writable only under a Homebrew prefix,
+    no setuid, setgid or sticky bits (the inventory's own rule)."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, uid):
+        return False
+    mode = stat.S_IMODE(info.st_mode)
+    if mode & 0o7002:
+        return False
+    if mode & 0o020:
+        return any(path == root or path.startswith(root + os.sep) for root in group_roots)
+    return True
+
+
+def _executable_is_trusted(candidate: str, uid: int, group_roots: Sequence[str]) -> bool:
+    """Whether ``candidate`` (a PATH entry joined to the CLI's name) may be run.
+
+    What is judged: the directory that holds the entry, and, after following
+    every symlink (npm, Homebrew and the CLIs' own installers all link their
+    commands), the file it points at and the directory that holds that file.
+    The link itself is never judged, only where it lands. The file must be a
+    regular, executable file owned by root or the person, writable by no one
+    else, with no setuid or setgid bit; both directories pass
+    ``_directory_is_safe``."""
+    if not candidate.isprintable():
+        return False
+    try:
+        real = os.path.realpath(candidate)
+        entry_directory = os.path.realpath(os.path.dirname(candidate))
+        info = os.lstat(real)
+    except OSError:
+        return False
+    if not real.isprintable():
+        return False
+    mode = stat.S_IMODE(info.st_mode)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, uid):
+        return False
+    if mode & 0o6022 or not mode & 0o111 or not os.access(real, os.X_OK):
+        return False
+    roots = tuple(os.path.realpath(root) for root in group_roots)
+    return _directory_is_safe(entry_directory, uid, roots) and _directory_is_safe(
+        os.path.dirname(real), uid, roots
+    )
 
 
 def resolve_cli(
@@ -188,12 +246,33 @@ def resolve_cli(
     *,
     environ: Mapping[str, str] | None = None,
     login_dirs: Sequence[Path | str] | None = None,
+    group_writable_roots: Sequence[str] = GROUP_WRITABLE_ROOTS,
 ) -> str | None:
-    """The CLI's absolute path, or ``None`` when it is not on this Mac."""
-    from .hook_compatibility import locate_binary
+    """The CLI's absolute path, or ``None`` when it is not on this Mac or is
+    not safe to run.
 
-    found = locate_binary(binary, search_environment(environ, login_dirs=login_dirs))
-    return os.path.abspath(found) if found else None
+    Looks in the person's PATH, the login shell's PATH and the usual install
+    folders (``hook_compatibility``), in that order, ignoring relative entries.
+    A match that fails ``_executable_is_trusted`` is skipped, as if it were
+    not there. Because this daemon runs the result on a click (an updater,
+    ``claude -p``, a typed terminal command), it holds the same line as the
+    installed-agent inventory: owned by root or the person, writable by
+    nobody else."""
+    from .hook_compatibility import _search_path
+
+    if not binary or os.sep in binary or not binary.isprintable():
+        return None
+    uid = os.getuid()
+    search = _search_path(search_environment(environ, login_dirs=login_dirs))
+    seen: set[str] = set()
+    for directory in search.split(os.pathsep):
+        if not directory or not os.path.isabs(directory) or directory in seen:
+            continue
+        seen.add(directory)
+        candidate = os.path.join(directory, binary)
+        if _executable_is_trusted(candidate, uid, group_writable_roots):
+            return os.path.abspath(candidate)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +446,7 @@ def installed_version(
 
 __all__ = [
     "GEMINI_UPDATE_ADVICE",
+    "GROUP_WRITABLE_ROOTS",
     "OUTPUT_CAP_BYTES",
     "OUTPUT_TAIL_LINES",
     "PROVIDER_CLIS",
