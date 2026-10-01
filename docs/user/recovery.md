@@ -72,9 +72,16 @@ To get a file back, quit JR-Bar, copy the `.corrupt-` file over the original
 name, and open JR-Bar again. If it is still unreadable it will be set aside
 again.
 
-Settings follow the same rule with their own names. If `settings.json` is
-changed outside JR-Bar while it runs (by hand, by a restore, or by
-`jrbar battery configure`), JR-Bar takes the file as it is and keeps the
-settings it held as `settings.json.replaced`. A file that does not parse is set
-aside as `settings.json.corrupt` and the settings JR-Bar holds are written
-out again.
+Settings follow the same rule. A `settings.json` that cannot be read is set
+aside as `settings.json.corrupt-<date and time>`, with the same three-newest
+rule, and the next save writes a fresh one.
+
+If `settings.json` is changed outside JR-Bar while it runs (by hand, by a
+restore, or by `jrbar battery configure`), JR-Bar notices the next time it
+saves a setting. If the file is whole, JR-Bar takes it as it is, shows it in
+Settings, and keeps the settings it held as `settings.json.replaced` (one
+backup, the latest replacement). A file that does not parse is not taken: JR-Bar
+waits for the next refresh in case your editor is still saving, and if the file
+has not changed by then it sets it aside as `settings.json.corrupt-<date and
+time>` and writes the settings it holds out again. Until a setting is saved, an
+edit made while JR-Bar runs is not seen.
