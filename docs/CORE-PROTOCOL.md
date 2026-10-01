@@ -1448,11 +1448,17 @@ every byte at or above 0x80 verbatim), so the drain, `hooks_doctor`'s
 `\n` only. Every append and rotation holds an
 `flock` on the file its path still names, and the daemon takes that lock on
 a file it has renamed to drain, so no line lands in a file after it was
-rotated or read. The daemon drains those files once
-before it opens the ingress socket, so a startup backlog lands ahead of any
-live hook, every 30 s after that, and 0.3 s after a queue that refused a
-payload is empty again, registering each payload's agent
-process from `ppid`/`ppid_start` (for a node-hosted CLI such as pi or
+rotated or read. The daemon drains those files at launch,
+every 30 s after that, and 0.3 s after a queue that refused a payload is
+empty again. The launch drain runs before the sockets open but stops at a
+1.5 s budget (a line costs about 4 ms, so a full 5000-line file would keep
+the daemon deaf for about 21 s); the drain thread then finishes the same
+pass, the same files and lines in the same order, while the sockets are
+open. Live hooks that arrive meanwhile are accepted and processed after the
+backlog, so it still lands ahead of them, and a `--decide` hook among them
+is not held (its agent's own prompt appears at once). A drain thread that
+is stopped mid-pass puts back the lines it never reached. Every drain
+registers each payload's agent process from `ppid`/`ppid_start` (for a node-hosted CLI such as pi or
 Gemini the nearest `node` ancestor is the agent process); a line whose
 `ppid_start` is -1 still replays but registers no process, since only the
 start time tells a later replay that the pid was not reused. A record queued within the last
