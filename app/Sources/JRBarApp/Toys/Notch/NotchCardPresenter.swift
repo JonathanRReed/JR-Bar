@@ -10,7 +10,8 @@ import JRBarCore
 /// itself — and what is in it.
 @MainActor
 final class NotchCardPresenter {
-    private let panel: NotchCardPanel
+    /// The card's window. Internal so a test can name it as the card's own.
+    let panel: NotchCardPanel
     var model: NotchCardModel { panel.model }
 
     private(set) var isShown = false

@@ -154,35 +154,47 @@ struct CardEscapeWatchTests {
 
     // MARK: The owners
 
-    @Test("a pinned glass card ignores an Esc meant for another window, and goes on Esc in none")
-    func presenterTakesOnlyItsOwnEscape() {
-        let keys = FakeKeys()
+    /// A presenter whose card is pinned without anything being shown: with
+    /// no anchor to hang from, `pin` installs the Esc watch and draws nothing.
+    private func pinnedPresenter(_ keys: FakeKeys) -> NotchCardPresenter {
         let presenter = NotchCardPresenter(model: makeTestCardModel())
         presenter.keySource = keys.source
         presenter.surface = { .glass }
         presenter.focus = { ScreenBarFocus(style: nil, label: "JR-Bar", word: "Working", clickSession: nil) }
-        presenter.anchor = { NSRect(x: 0, y: 0, width: 180, height: 6) }
+        presenter.anchor = { nil }
         presenter.pin()
+        return presenter
+    }
+
+    @Test("a pinned glass card ignores an Esc meant for another window, and goes on Esc in none")
+    func presenterTakesOnlyItsOwnEscape() {
+        let keys = FakeKeys()
+        let presenter = pinnedPresenter(keys)
         #expect(presenter.isPinned && presenter.listensForEscape)
 
         #expect(!keys.press(in: FakeWindow()), "a Settings sheet's Esc is the sheet's")
-        #expect(presenter.isPinned && presenter.isShown, "the card is still up")
+        #expect(presenter.isPinned, "the card is still up")
 
         #expect(keys.press(in: nil))
-        #expect(!presenter.isPinned && !presenter.isShown, "an Esc nobody else owns lets it go")
+        #expect(!presenter.isPinned, "an Esc nobody else owns lets it go")
         #expect(!presenter.listensForEscape)
         #expect(keys.liveLocal == 0 && keys.liveGlobal == 0)
+    }
+
+    @Test("an Esc delivered to the glass card's own window is taken and lets it go")
+    func presenterTakesEscapeInItsOwnWindow() {
+        let keys = FakeKeys()
+        let presenter = pinnedPresenter(keys)
+        #expect(presenter.isPinned)
+        #expect(keys.press(in: presenter.panel), "the card's own window is the card's to answer")
+        #expect(!presenter.isPinned)
+        #expect(!presenter.listensForEscape)
     }
 
     @Test("a pinned glass card still goes on an Esc pressed in another app")
     func presenterGoesOnGlobalEscape() {
         let keys = FakeKeys()
-        let presenter = NotchCardPresenter(model: makeTestCardModel())
-        presenter.keySource = keys.source
-        presenter.surface = { .glass }
-        presenter.focus = { ScreenBarFocus(style: nil, label: "JR-Bar", word: "Working", clickSession: nil) }
-        presenter.anchor = { NSRect(x: 0, y: 0, width: 180, height: 6) }
-        presenter.pin()
+        let presenter = pinnedPresenter(keys)
         keys.pressElsewhere()
         #expect(!presenter.isPinned)
     }
@@ -223,6 +235,31 @@ struct CardEscapeWatchTests {
         #expect(!toy.islandExpanded, "an Esc nobody else owns lets the card go")
         #expect(!toy.listensForEscape)
         #expect(keys.liveLocal == 0 && keys.liveGlobal == 0, "the watch went with the card")
+    }
+
+    @Test("an Esc delivered to the island's own window is taken and folds the card")
+    func islandTakesEscapeInItsOwnWindow() {
+        let keys = FakeKeys()
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        toy.cardKeySource = keys.source
+        toy.expand(held: true)
+        // The island window exists but is never shown: it is assigned after
+        // the grow, which would otherwise order it onto the screen.
+        let window = NotchIslandWindow(toy: toy)
+        toy.island = window
+        defer {
+            toy.island = nil
+            window.close()
+        }
+        toy.runtimeEnabled = true
+        toy.syncCardKeyMonitors()
+        toy.runtimeEnabled = false
+        #expect(toy.listensForEscape)
+        #expect(!keys.press(in: FakeWindow()), "another window's Esc still passes through")
+        #expect(toy.islandExpanded)
+        #expect(keys.press(in: window), "the island's own window is the card's to answer")
+        #expect(!toy.islandExpanded)
     }
 
     @Test("a grown island card still folds on an Esc pressed in another app")
