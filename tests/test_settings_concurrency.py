@@ -565,3 +565,18 @@ def test_after_an_invalid_file_is_set_aside_a_new_file_is_still_caught_by_the_gu
     with pytest.raises(SettingsConcurrentWriteError):
         save_settings(memory, target)
     assert json.loads(target.read_text(encoding="utf-8")) == {"alert_burst": 9}
+
+
+def test_saving_over_a_file_that_cannot_be_read_is_a_retryable_refusal(tmp_path: Path) -> None:
+    from jrbar import settings as settings_module
+    from jrbar.settings import SettingsFileUnreadableError, SettingsWriteRefusedError
+
+    target = tmp_path / "settings.json"
+    target.write_text('{"half": ', encoding="utf-8")
+
+    with pytest.raises(SettingsFileUnreadableError) as caught:
+        save_settings(AgentMonitorSettings(), target)
+
+    assert isinstance(caught.value, SettingsWriteRefusedError)
+    assert target.read_text(encoding="utf-8") == '{"half": '
+    assert not issubclass(settings_module.SettingsConcurrentWriteError, SettingsFileUnreadableError)

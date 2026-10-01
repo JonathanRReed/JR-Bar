@@ -355,6 +355,47 @@ def test_a_file_that_is_unreadable_at_the_first_look_is_left_alone_at_quit(daemo
     assert daemon.path.read_text(encoding="utf-8") == '{"half": ' and daemon.kept() == []
 
 
+def test_a_file_that_cannot_be_read_yet_is_retried_next_refresh_and_at_quit(
+    daemon: _Daemon, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jrbar.settings import SettingsFileUnreadableError
+
+    controller = daemon.controller
+    attempts: list[int] = []
+    unreadable = [True]
+
+    def half_written(settings):
+        attempts.append(settings.alert_burst)
+        if unreadable[0]:
+            raise SettingsFileUnreadableError("settings file is unreadable; load it before saving")
+
+    monkeypatch.setattr(legacy, "save_settings", half_written)
+    daemon.toggle(6)
+    assert controller._core_flush_settings() is False
+    assert controller._core_settings_dirty is True, "the change is kept, not dropped"
+    unreadable_lines = [line for line in daemon.lines if "unreadable" in line]
+    assert len(unreadable_lines) == 1 and "retrying" in unreadable_lines[0]
+    assert controller._core_flush_settings() is False
+    assert len([line for line in daemon.lines if "unreadable" in line]) == 1, "said once"
+
+    # The next refresh retries it once nothing is queued.
+    monkeypatch.setattr(daemon.writer, "submit", daemon.inline_submit)
+    unreadable[0] = False
+    controller._core_settings_conflict = None  # the file is whole again
+    _tick(controller)
+    assert attempts[-1] == 6 and controller._core_settings_dirty is False
+
+    # And at quit: the change that could not be saved is tried once more.
+    controller.applicationDidFinishLaunching_(None)
+    unreadable[0] = True
+    daemon.toggle(7)
+    assert controller._core_settings_dirty is True
+    unreadable[0] = False
+    controller._core_settings_conflict = None  # the file is whole again
+    controller._core_quit_flush()
+    assert attempts[-1] == 7 and controller._core_settings_dirty is False
+
+
 def test_a_refused_settings_save_is_not_retried_every_refresh(
     daemon: _Daemon, monkeypatch: pytest.MonkeyPatch
 ) -> None:

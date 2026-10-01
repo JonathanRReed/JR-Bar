@@ -69,6 +69,12 @@ class SettingsConcurrentWriteError(SettingsWriteRefusedError):
     """The durable settings document changed after this process loaded it."""
 
 
+class SettingsFileUnreadableError(SettingsWriteRefusedError):
+    """The file on disk cannot be read (a half-written save, say), so a save
+    will not write over it. Unlike a newer-version or schema refusal this one
+    can pass: the file may be whole a moment later."""
+
+
 @dataclass(frozen=True, slots=True)
 class SettingsCompatibility:
     source_version: int
@@ -663,7 +669,7 @@ def save_settings(
                 current_document, _ = _read_document(target)
             except ValueError as error:
                 # Never overwrite a file that cannot be read.
-                raise SettingsWriteRefusedError(
+                raise SettingsFileUnreadableError(
                     "settings file is unreadable; load it before saving"
                 ) from error
             current_version = _settings_schema_version(current_document)
@@ -725,6 +731,7 @@ _legacy.SettingsCompatibility = SettingsCompatibility
 _legacy.LoadedSettings = LoadedSettings
 _legacy.SettingsWriteRefusedError = SettingsWriteRefusedError
 _legacy.SettingsConcurrentWriteError = SettingsConcurrentWriteError
+_legacy.SettingsFileUnreadableError = SettingsFileUnreadableError
 _legacy._preserve_corrupt_settings = _preserve_corrupt_settings
 _legacy.load_settings_document = load_settings_document
 _legacy.load_settings = load_settings

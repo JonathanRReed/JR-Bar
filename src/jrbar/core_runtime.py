@@ -6780,8 +6780,14 @@ def build_headless_controller_class() -> type:
             an outside edit of settings.json is not retried: the next refresh
             takes the file instead (``_core_adopt_settings_from_disk``). A
             write that is refused for good (a file from a newer version) is
-            said once and not retried: memory stays live for the session."""
-            from .settings import SettingsConcurrentWriteError, SettingsWriteRefusedError
+            said once and not retried: memory stays live for the session. A
+            file that cannot be read right now (a half-written save) is a
+            different case and is retried like an I/O error."""
+            from .settings import (
+                SettingsConcurrentWriteError,
+                SettingsFileUnreadableError,
+                SettingsWriteRefusedError,
+            )
 
             with self._core_settings_save_lock:
                 for _ in range(3):
@@ -6796,6 +6802,21 @@ def build_headless_controller_class() -> type:
                         # this covers a save that was replaced in a test.
                         if self._core_settings_conflict is None:
                             self._core_settings_conflict = str(exc)
+                        return False
+                    except SettingsFileUnreadableError as exc:
+                        # A half-written file can pass: keep the change, try
+                        # again on the next refresh and at quit, and let the
+                        # refresh look at the file the way it does after a
+                        # lost save (it may be an editor's save in progress).
+                        self._core_settings_dirty = True
+                        if self._core_settings_conflict is None:
+                            self._core_settings_conflict = str(exc)
+                        message = f"{exc.__class__.__name__}: {exc}"
+                        if message != self._core_settings_refusal:
+                            self._core_settings_refusal = message
+                            legacy.log_status_bar(
+                                f"core: settings are not saved yet, retrying on the next refresh: {message}"
+                            )
                         return False
                     except SettingsWriteRefusedError as exc:
                         message = f"{exc.__class__.__name__}: {exc}"
