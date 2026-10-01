@@ -472,7 +472,8 @@ def save_settings(
             sort_keys=True,
             allow_nan=False,
         ) + "\n"
-        written = _legacy.atomic_private_write(target, payload)
+        # settings.json is small, rewritten rarely, and a person's work: flush to the drive.
+        written = _legacy.atomic_private_write(target, payload, full_sync=True)
         current = SettingsCompatibility(CURRENT_SETTINGS_SCHEMA_VERSION)
         _remember_document(
             target,

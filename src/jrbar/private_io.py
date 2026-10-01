@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import stat
@@ -209,9 +210,30 @@ def _replace_private_leaf(
     )
 
 
-def _fsync_private_parent(parent_descriptor: int) -> None:
+_F_FULLFSYNC = getattr(fcntl, "F_FULLFSYNC", None)
+
+
+def _flush(descriptor: int, *, full: bool = False) -> None:
+    """Flush one descriptor; ``full`` asks the drive itself, not its cache.
+
+    On macOS ``os.fsync`` returns once the drive has the data in its own
+    cache, which a power cut loses. ``F_FULLFSYNC`` makes the drive write
+    its cache to the media first. On this Mac that is about 4 ms for a file
+    and 4 ms for its folder, against 0.1 ms for ``fsync`` and nothing for a
+    folder, so it is kept for small documents rewritten rarely. A filesystem
+    that cannot do it (a network share, some disk images) gets ``fsync``."""
+    if full and _F_FULLFSYNC is not None:
+        try:
+            fcntl.fcntl(descriptor, _F_FULLFSYNC)
+            return
+        except OSError:
+            pass
+    os.fsync(descriptor)
+
+
+def _fsync_private_parent(parent_descriptor: int, *, full: bool = False) -> None:
     """Durably publish a directory entry, kept narrow for fault injection."""
-    os.fsync(parent_descriptor)
+    _flush(parent_descriptor, full=full)
 
 
 def _write_all(descriptor: int, data: bytes) -> None:
@@ -472,10 +494,25 @@ def atomic_private_write(
     mode: int = PRIVATE_FILE_MODE,
     durable_directory: bool = True,
     tighten_parent: bool = True,
+    full_sync: bool = False,
 ) -> Path:
     """Publish a sensitive file atomically; optional create-only never replaces.
 
-    ``durable_directory=False`` skips the directory fsync after the rename:
+    What it guarantees. The bytes go to a scratch file that is renamed over
+    the target, so a reader sees the old file or the new one, never a torn
+    one, whatever happens to this process or in what order. That holds
+    against a crash of the process or a kill. It does not by itself hold
+    against a power cut: on macOS ``fsync`` only reaches the drive's cache,
+    so the write can be lost (the previous version then stays, still whole).
+
+    ``full_sync=True`` makes the write survive a power cut: the file and the
+    directory entry are flushed with ``F_FULLFSYNC`` (``fsync`` where the
+    filesystem has no such call). It costs about 10 ms a write on this Mac
+    against 0.3 ms, so it is for the small documents a person would be hurt
+    to lose, rewritten rarely (settings, the activity ledger), and never for
+    a log line or a state file written every few seconds.
+
+    ``durable_directory=False`` skips the directory flush after the rename:
     for a cache rebuilt from other records, a crash may then leave the
     previous version in place, never a torn one."""
     if mode not in (PRIVATE_FILE_MODE, PRIVATE_DIRECTORY_MODE):
@@ -500,7 +537,7 @@ def atomic_private_write(
             scratch_identity = (opened.st_dev, opened.st_ino)
             os.fchmod(descriptor, mode)
             _write_all(descriptor, payload)
-            os.fsync(descriptor)
+            _flush(descriptor, full=full_sync)
             os.close(descriptor)
             descriptor = None
 
@@ -515,7 +552,10 @@ def atomic_private_write(
                         dst_dir_fd=parent_descriptor, follow_symlinks=False)
                 os.unlink(scratch_name, dir_fd=parent_descriptor)
             if durable_directory:
-                _fsync_private_parent(parent_descriptor)
+                if full_sync:
+                    _fsync_private_parent(parent_descriptor, full=True)
+                else:
+                    _fsync_private_parent(parent_descriptor)
             return target
         finally:
             if descriptor is not None:

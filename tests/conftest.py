@@ -98,6 +98,18 @@ def isolate_live_settings_file(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def cheap_flush_in_tests():
+    """Settings and the activity ledger ask for F_FULLFSYNC, which costs about
+    10 ms a write on a Mac (more on a CI runner's virtual disk). The suite
+    writes those documents thousands of times into temporary folders that no
+    power cut matters to, so it keeps the cheap flush. A test that is about
+    the full flush puts it back (tests/test_private_io.py)."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("jrbar.private_io._F_FULLFSYNC", None)
+        yield
+
+
+@pytest.fixture(autouse=True)
 def isolate_integration_settings_file(tmp_path_factory):
     """One per-test integrations.json (and its deck sidecar files).
 

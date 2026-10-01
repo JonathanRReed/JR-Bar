@@ -842,3 +842,108 @@ def test_quarantine_logs_one_daemon_style_line_by_default(
     out = capsys.readouterr().out.splitlines()
     assert len(out) == 1
     assert "x.json" in out[0] and "x.json.corrupt-20260901T120000Z" in out[0]
+
+
+# --- full_sync: macOS fsync reaches the drive's cache, F_FULLFSYNC reaches the drive ---
+
+
+class _SyncRecorder:
+    """Stands in for the two flush calls and records which one ran."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, *, full_supported: bool = True) -> None:
+        import fcntl
+
+        from jrbar import private_io
+
+        self.full: list[int] = []
+        self.plain: list[int] = []
+        real_fsync = os.fsync
+
+        def fake_fcntl(descriptor: int, command: int, *args):
+            if command != fcntl.F_FULLFSYNC:
+                return fcntl.fcntl(descriptor, command, *args)
+            if not full_supported:
+                raise OSError(45, "Operation not supported")
+            self.full.append(descriptor)
+            return 0
+
+        def fake_fsync(descriptor: int) -> None:
+            self.plain.append(descriptor)
+            real_fsync(descriptor)
+
+        # The suite runs with the full flush off (tests/conftest.py): put it back.
+        monkeypatch.setattr(private_io, "_F_FULLFSYNC", fcntl.F_FULLFSYNC)
+        monkeypatch.setattr(private_io.fcntl, "fcntl", fake_fcntl)
+        monkeypatch.setattr(private_io.os, "fsync", fake_fsync)
+
+
+def test_full_sync_flushes_the_file_and_its_folder_to_the_drive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sync = _SyncRecorder(monkeypatch)
+    target = tmp_path / "state" / "settings.json"
+
+    atomic_private_write(target, "{}", full_sync=True)
+
+    assert target.read_text() == "{}"
+    assert len(sync.full) == 2 and sync.full[0] != sync.full[1], "the file, then its folder"
+    assert sync.plain == []
+
+
+def test_the_default_write_keeps_the_cheap_flush(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sync = _SyncRecorder(monkeypatch)
+
+    atomic_private_write(tmp_path / "state" / "latest.json", "{}")
+
+    assert sync.full == []
+    assert len(sync.plain) == 2
+
+
+def test_full_sync_on_a_rebuildable_cache_still_skips_the_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sync = _SyncRecorder(monkeypatch)
+
+    atomic_private_write(
+        tmp_path / "state" / "cache.json", "{}", full_sync=True, durable_directory=False
+    )
+
+    assert len(sync.full) == 1 and sync.plain == []
+
+
+def test_full_sync_falls_back_to_fsync_where_the_filesystem_cannot_do_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sync = _SyncRecorder(monkeypatch, full_supported=False)
+    target = tmp_path / "state" / "settings.json"
+
+    atomic_private_write(target, "{}", full_sync=True)
+
+    assert target.read_text() == "{}"
+    assert sync.full == [] and len(sync.plain) == 2
+
+
+def test_only_the_small_critical_documents_ask_for_the_full_flush(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jrbar.activity_ledger import ActivityLedger
+    from jrbar.activity_ledger_store import save_activity_ledger
+    from jrbar.settings import AgentMonitorSettings, save_settings
+
+    sync = _SyncRecorder(monkeypatch)
+
+    save_settings(AgentMonitorSettings(), tmp_path / "settings.json")
+    after_settings = len(sync.full)
+    save_activity_ledger(tmp_path / "activity-ledger.json", ActivityLedger())
+    after_ledger = len(sync.full)
+
+    assert after_settings == 2, "settings.json: file and folder"
+    assert after_ledger == after_settings + 2, "the activity ledger: file and folder"
+
+    # The hot paths keep the cheap flush: log appends and frequent state writes.
+    append_private_text(tmp_path / "events.log", "line\n")
+    atomic_private_write(tmp_path / "latest.json", "{}", durable_directory=False)
+    atomic_private_write(tmp_path / "usage.json", "{}")
+    assert len(sync.full) == after_ledger
