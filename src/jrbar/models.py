@@ -127,8 +127,20 @@ class AgentStatus:
         """Sub-agents (Claude Task workers, Codex/Devin spawned agents)
         carry provider:agent:<id> keys; main sessions are
         provider:session:<id>. A real install had 77 of 111 statuses be
-        sub-agents -- they need grouping, not top billing."""
-        return ":agent:" in self.agent_id
+        sub-agents -- they need grouping, not top billing.
+
+        The kind is the part right after the provider. The id after it is
+        the provider's own and may hold a colon and anything past it, so
+        ``claude:session:abc:agent:def`` is a main session, not a worker
+        that is its own parent. A peer's row carries its machine in front
+        (``remote:<machine>:claude:agent:<id>``, and a machine name holds
+        no colon), which is stripped before the kind is read."""
+        agent_id = self.agent_id
+        if agent_id.startswith("remote:"):
+            _namespace, separator, local = agent_id[len("remote:"):].partition(":")
+            if separator:
+                agent_id = local
+        return agent_id.startswith(f"{self.provider}:agent:")
 
     @property
     def parent_agent_id(self) -> str | None:
