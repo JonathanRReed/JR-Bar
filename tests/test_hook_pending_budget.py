@@ -234,6 +234,73 @@ def test_a_line_whose_submit_fails_is_requeued_across_the_handoff(tmp_path: Path
     assert pending_hook_files(tmp_path) == [tmp_path / f"claude{PENDING_SUFFIX}"]
 
 
+class _Interrupted(BaseException):
+    """Not an Exception: what a submit that is torn down mid-line raises."""
+
+
+def test_an_interrupt_in_the_middle_of_a_line_puts_that_line_back_with_the_rest(tmp_path: Path) -> None:
+    """The line being submitted when the pass is torn down was not delivered:
+    it goes back to the pending file with everything after it (the token
+    dedupe makes a line that did land harmless to replay)."""
+    _spool(tmp_path, "claude", 5)
+    clock = _Clock()
+    seen: list[HookIngressRequest] = []
+    flushed: list[int] = []
+
+    def submit(request: HookIngressRequest) -> None:
+        clock.now += 1.0
+        if json.loads(request.payload_text)["n"] == 2:
+            raise _Interrupted
+        seen.append(request)
+
+    hold = _Hold()
+    drainer = _drainer(
+        tmp_path, submit, clock, hold, first_pass_budget_seconds=100.0, after_drain=lambda: flushed.append(len(seen))
+    )
+    with pytest.raises(_Interrupted):
+        drainer.drain_now()
+    assert _seen(seen) == [("claude", 0), ("claude", 1)]
+    assert flushed == [2], "what landed still reaches the monitor"
+    assert hold.held == 0 and hold.released_count == 0
+    assert _remaining_files(tmp_path) == [f"claude{PENDING_SUFFIX}"]
+    later: list[HookIngressRequest] = []
+    assert drain_pending_hooks(later.append, state_dir=tmp_path) == 3
+    assert _seen(later) == [("claude", 2), ("claude", 3), ("claude", 4)]
+    assert _remaining_files(tmp_path) == []
+
+
+def test_an_interrupt_in_the_workers_continuation_puts_the_line_back_and_lets_live_hooks_go(
+    tmp_path: Path,
+) -> None:
+    _spool(tmp_path, "claude", 5)
+    clock = _Clock()
+    seen: list[HookIngressRequest] = []
+
+    def submit(request: HookIngressRequest) -> None:
+        clock.now += 1.0
+        if json.loads(request.payload_text)["n"] == 3:
+            raise _Interrupted
+        seen.append(request)
+
+    hold = _Hold()
+    drainer = _drainer(tmp_path, submit, clock, hold, first_pass_budget_seconds=2.0)
+    assert drainer.drain_now() == 2
+    # The worker thread dies with the interrupt, as a thread does; the line it
+    # was on and the rest are back on disk, and the live hooks are released.
+    previous = threading.excepthook
+    threading.excepthook = lambda _args: None
+    try:
+        drainer.start()
+        assert hold.released.wait(WAIT)
+    finally:
+        threading.excepthook = previous
+        drainer.stop()
+    assert _seen(seen) == [("claude", 0), ("claude", 1), ("claude", 2)]
+    later: list[HookIngressRequest] = []
+    assert drain_pending_hooks(later.append, state_dir=tmp_path) == 2
+    assert _seen(later) == [("claude", 3), ("claude", 4)]
+
+
 def test_the_startup_budget_is_short_enough_to_open_the_sockets_promptly() -> None:
     assert 0.5 <= PENDING_STARTUP_BUDGET_SECONDS <= 3.0
 

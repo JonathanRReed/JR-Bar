@@ -458,6 +458,12 @@ class _PendingDrain:
                 except Exception:
                     spool.retry.append(line)
                     continue
+                except BaseException:
+                    # Torn down mid-line: this line was not delivered, so
+                    # ``abandon`` puts it back with the rest (the token
+                    # dedupe makes one that did land harmless to replay).
+                    spool.index -= 1
+                    raise
                 self.submitted += 1
             self._current = None
             self._finish(spool)
@@ -721,12 +727,14 @@ class PendingHookDrainer:
         try:
             if not drain.run(out_of_time=self._stop.is_set, after_file=self._after_pass):
                 drain.abandon()
-        except Exception as exc:
-            self._log(f"hook_pending startup drain failed: {exc}")
+        except BaseException as exc:
+            self._log(f"hook_pending startup drain failed: {exc!r}")
             try:
                 drain.abandon()
             except Exception:
                 pass
+            if not isinstance(exc, Exception):
+                raise
         finally:
             self._after_pass()
             self._release()
