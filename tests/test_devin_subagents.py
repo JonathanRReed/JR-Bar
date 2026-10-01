@@ -12,7 +12,7 @@ import hashlib
 import time
 from datetime import UTC, datetime
 
-from jrbar import _collector_legacy as collector_module
+from jrbar import collector as collector_module
 from jrbar.capacity_types import SourceKey
 from jrbar.collector import LiveAgentMonitor
 from jrbar.core_projection import build_state_document

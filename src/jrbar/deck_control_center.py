@@ -74,7 +74,7 @@ def reveal_deck_session(target, identity: str, revision: int | None) -> DeckActi
     # This path reuses the canonical capability check, source generation check
     # and allowlisted navigation resolver. It does not call the legacy fallback
     # that might start a new terminal merely from a display name or working path.
-    from .agent_browser_window import AgentBrowserActionPayload
+    from .agent_browser_payloads import AgentBrowserActionPayload
     from .navigation_policy import OperatorActionKind
     success = bool(perform(AgentBrowserActionPayload(status.work_key, state.generation, OperatorActionKind.OPEN)))
     return DeckActionReceipt("navigation_requested" if success else "navigation_unavailable", success)

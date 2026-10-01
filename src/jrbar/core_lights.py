@@ -156,12 +156,12 @@ def burn_init(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     each device would get and every warning. INIT.LED replays at every boot,
     so the write is the one thing here a person cannot undo by looking away.
     """
-    from ._led_status_legacy import led_count_for_target
     from .animation import (
         AnimationValidationError,
         burn_power_up_animation,
         parse_animation,
     )
+    from .led_status import led_count_for_target
 
     program = args.get("program")
     if type(program) is not str or not program.strip():
@@ -231,7 +231,7 @@ def burn_init(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
 
 def calibration_profile(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     """Save the current calibration into a slot, apply one, or delete one."""
-    from ._settings_legacy import CALIBRATION_PROFILE_SLOTS
+    from .settings import CALIBRATION_PROFILE_SLOTS
 
     action = args.get("action")
     slot = args.get("slot")

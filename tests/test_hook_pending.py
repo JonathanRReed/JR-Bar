@@ -345,7 +345,7 @@ def test_a_fresh_replay_reaches_live_state_after_another_sessions_live_hook(tmp_
     moved the watermark to now, every line of session A's spooled backlog
     was older, and A never appeared. Inside the horizon a replay is stamped
     on arrival, so A lands; past it the record is history and stays out."""
-    from jrbar._collector_legacy import LiveAgentMonitor
+    from jrbar.collector import LiveAgentMonitor
     from jrbar.hook_ingress import AppOwnedHookIngressProcessor
     from jrbar.hook_pending import PENDING_REPLAY_HORIZON_SECONDS
 

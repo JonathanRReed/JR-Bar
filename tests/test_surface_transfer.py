@@ -163,7 +163,7 @@ def test_the_strips_response_is_one_named_constant__and_2_more() -> None:
     holds the strip beside a #808080 patch and they match, the firmware
     decodes sRGB itself and the whole transform has to collapse to identity --
     which it does, from this constant alone, with no other edit."""
-    import jrbar._led_status_legacy as led_status
+    import jrbar.led_status as led_status
 
     assert STRIP_CODE_TO_LIGHT_EXPONENT == 1.0
     assert strip_drive_code(128) == 55  # linear PWM: half the code, a fifth of full

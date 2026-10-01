@@ -79,7 +79,7 @@ def test_native_names_canonicalise_and_tool_permission_is_an_ask() -> None:
 
 def test_gemini_notifications_stay_source_neutral_and_tool_permission_stays_an_ask() -> None:
     """Gemini's other notifications say nothing about the source, and the ask still opens."""
-    from jrbar._collector_legacy import _registered_hook_source
+    from jrbar.collector import _registered_hook_source
     from jrbar.provider_adapters import (
         InertProviderRecord,
         NormalizedProviderRecord,

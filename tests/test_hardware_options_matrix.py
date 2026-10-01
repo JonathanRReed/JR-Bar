@@ -155,8 +155,8 @@ def _status(provider: str, mode, index: int):
 @pytest.fixture
 def rig(headless_daemon, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:  # noqa: F811
     from jrbar import status_bar_legacy
-    from jrbar._device_writer_legacy import DeviceCandidate
     from jrbar.battery import BatterySnapshot
+    from jrbar.device_writer import DeviceCandidate
     from jrbar.models import AgentMode
 
     controller = headless_daemon
@@ -825,7 +825,7 @@ def test_a_foreign_write_is_answered_once_then_left_alone(tmp_path: Path) -> Non
     over once and noted; a second inside ten minutes stops the rewrites so
     the two apps never fight over the flash. JR-Bar's own next change still
     goes out."""
-    from jrbar._led_status_legacy import AgentLedController, LedDisplayState
+    from jrbar.led_status import AgentLedController, LedDisplayState
 
     volume = tmp_path / "SidePulsePro"
     volume.mkdir()

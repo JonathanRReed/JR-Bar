@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from jrbar import _collector_legacy, cloud_ingest
+from jrbar import cloud_ingest, collector
 from jrbar.cloud_ingest import (
     INGEST_PATH,
     WIRE_VERSION,
@@ -574,7 +574,7 @@ def test_a_skewed_cloud_clock_is_clamped_to_arrival__and_1_more() -> None:
     now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
     epoch = now.timestamp()
     diagnostics: list[str] = []
-    real_reduce = _collector_legacy.reduce_operator_state
+    real_reduce = collector.reduce_operator_state
 
     def recording_reduce(*args, **kwargs):
         reduced = real_reduce(*args, **kwargs)
@@ -607,7 +607,7 @@ def test_a_skewed_cloud_clock_is_clamped_to_arrival__and_1_more() -> None:
         )
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(_collector_legacy, "reduce_operator_state", recording_reduce)
+        patch.setattr(collector, "reduce_operator_state", recording_reduce)
         monitor.ingest_record(local("UserPromptSubmit", "local-session"))
         monitor.ingest_record(hook_event_from_cloud_event(event))
         monitor.ingest_record(local("Stop", "local-session"))

@@ -106,7 +106,7 @@ def test_a_strobe_hidden_in_a_long_loop_is_slowed__and_2_more() -> None:
 
     # --- scenario: a_travelling_wave_is_never_touched
     """The Working relay compiles byte-for-byte as it was written."""
-    from jrbar._led_status_legacy import rolling_program
+    from jrbar.led_status import rolling_program
 
     program = rolling_program("#00E5FF", led_count=8)
     compiled = compile_presentation_program(program, led_count=8)

@@ -196,7 +196,7 @@ def _working_status(event_name: str, age_seconds: float):
 
 def test_working_after_tool_failure_demotes_like_post_tool__and_2_more() -> None:
     # --- scenario: working_after_tool_failure_demotes_like_post_tool
-    from jrbar._collector_legacy import status_for_snapshot
+    from jrbar.collector import status_for_snapshot
     from jrbar.models import AgentMode
 
     status, now = _working_status("PostToolUseFailure", 3 * 60.0)
@@ -209,7 +209,7 @@ def test_working_after_tool_failure_demotes_like_post_tool__and_2_more() -> None
     """A "working" agent with no hook events for 10 minutes is a dead one
     (crashed turn, killed terminal) -- it must not pulse for the full
     hour-long stale window as a phantom."""
-    from jrbar._collector_legacy import (
+    from jrbar.collector import (
         WORKING_SILENCE_SECONDS,
         status_for_snapshot,
     )
@@ -222,7 +222,7 @@ def test_working_after_tool_failure_demotes_like_post_tool__and_2_more() -> None
     assert effective.mode is AgentMode.ENDED_UNCONFIRMED
 
     # --- scenario: recent_working_stays_working
-    from jrbar._collector_legacy import status_for_snapshot
+    from jrbar.collector import status_for_snapshot
     from jrbar.models import AgentMode
 
     for event in ("PostToolUse", "PostToolUseFailure", "UserPromptSubmit"):
@@ -239,7 +239,7 @@ def test_long_thinking_turn_survives_the_post_tool_window__and_1_more() -> None:
     """WORKING that is NOT post-tool (agent mid-turn, thinking) gets the
     LONGER silence window, not the 2-minute post-tool one -- derived
     from the shared constant so the pin moves with the ratified line."""
-    from jrbar._collector_legacy import (
+    from jrbar.collector import (
         WORKING_SILENCE_SECONDS,
         status_for_snapshot,
     )
@@ -265,7 +265,7 @@ def test_long_thinking_turn_survives_the_post_tool_window__and_1_more() -> None:
     #010101 rendered as a clearly GREEN glow -- 'why is the SidePulse
     green when it should be off.' A whole LED whose brightest drive
     lands below STRIP_HUE_HOLDING_DRIVE goes dark instead of lying."""
-    from jrbar._led_status_legacy import (
+    from jrbar.led_status import (
         NEUTRAL_CHANNEL_GAINS,
         apply_strip_transfer_to_hex,
     )

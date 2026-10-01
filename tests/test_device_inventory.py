@@ -142,9 +142,9 @@ def test_identity_cache_returns_last_snapshot_without_blocking__and_2_more(tmp_p
     """First-batch Dots mount as ``PulseDot``: no ``SidePulse`` prefix, and
     an old STATUS.TXT may not carry a serial. Every classifier must still
     call it a 2-LED Dot, keyed by the volume UUID when no serial exists."""
-    from jrbar._device_writer_legacy import is_device_name
-    from jrbar._led_status_legacy import led_count_for_target
     from jrbar.device_identity import device_kind
+    from jrbar.device_writer import is_device_name
+    from jrbar.led_status import led_count_for_target
     from jrbar.status_bar_legacy import device_display_name
 
     (tmp_path / "PulseDot").mkdir()
@@ -176,7 +176,7 @@ def test_led_count_follows_the_serial_not_the_volume_label(tmp_path: Path) -> No
     mount name cannot tell a Pro from a Dot -- the firmware serial in
     STATUS.TXT can. A Pro's name guessing wrong must never shrink its
     eight segments to two."""
-    from jrbar._led_status_legacy import led_count_for_target
+    from jrbar.led_status import led_count_for_target
 
     pro = tmp_path / "SidePulse"
     pro.mkdir()
@@ -202,7 +202,7 @@ def test_led_count_serial_read_is_memoized_and_expires(tmp_path: Path, monkeypat
     per-refresh callers on the main thread must not each pay a FAT-volume
     read (one once blocked it for 13.7 s). A stale or invalidated entry
     is re-read."""
-    from jrbar import _led_status_legacy as led_status
+    from jrbar import led_status
 
     root = tmp_path / "SidePulse"
     root.mkdir()
@@ -273,7 +273,7 @@ def _backdate(led_status, root: Path, seconds: float) -> None:
 def test_a_failed_status_read_keeps_the_last_good_led_count(tmp_path: Path, monkeypatch) -> None:
     import time
 
-    from jrbar import _led_status_legacy as led_status
+    from jrbar import led_status
 
     root = _bare_label_root(tmp_path, "serial SPD-000120\n")
     status = _StatusReads(monkeypatch)
@@ -307,7 +307,7 @@ def test_a_failed_status_read_keeps_the_last_good_led_count(tmp_path: Path, monk
 def test_a_failed_first_status_read_is_retried_within_seconds_not_a_minute(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from jrbar import _led_status_legacy as led_status
+    from jrbar import led_status
 
     root = _bare_label_root(tmp_path, "serial SPD-000120\n")
     status = _StatusReads(monkeypatch)
@@ -331,7 +331,7 @@ def test_a_status_file_without_a_serial_is_still_memoized_for_the_full_ttl(
 ) -> None:
     """An old-firmware Dot has no serial line. That is an answer, and it
     stays cached for the whole minute: only a failed read is a non-answer."""
-    from jrbar import _led_status_legacy as led_status
+    from jrbar import led_status
 
     root = _bare_label_root(tmp_path, "reads 1\nticks 2\n")
     status = _StatusReads(monkeypatch)
@@ -351,7 +351,7 @@ def test_a_status_file_without_a_serial_is_still_memoized_for_the_full_ttl(
 
 
 def test_a_disconnect_still_drops_a_retained_count(tmp_path: Path, monkeypatch) -> None:
-    from jrbar import _led_status_legacy as led_status
+    from jrbar import led_status
 
     root = _bare_label_root(tmp_path, "serial SPD-000120\n")
     status = _StatusReads(monkeypatch)

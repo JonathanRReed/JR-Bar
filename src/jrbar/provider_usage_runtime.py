@@ -726,7 +726,6 @@ class ProviderUsageService:
         # transient failures ride an exponential ladder. In-memory only
         # -- a relaunch deliberately retries everything once.
         self._failure_gates: dict[tuple[str, str], FailureGate] = {}
-        self._refresh_receipts: deque[RefreshPublicationReceipt] = deque(maxlen=32)
         self._refresh_sequence = 0
         self._last_publication_revision: int | None = None
         #: When the owner last opened the menu -- the cadence ladder's
@@ -861,10 +860,6 @@ class ProviderUsageService:
         with self._lock:
             return self._last_cadence_plan
 
-    def refresh_receipts(self) -> tuple[RefreshPublicationReceipt, ...]:
-        with self._lock:
-            return tuple(self._refresh_receipts)
-
     def _record_receipt(
         self,
         outcome: RefreshPublicationOutcome,
@@ -880,7 +875,6 @@ class ProviderUsageService:
                 outcome,
                 error_code,
             )
-            self._refresh_receipts.append(receipt)
             handler = self._receipt_handler
         if handler is not None:
             try:

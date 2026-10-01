@@ -210,7 +210,7 @@ LEDSFlashAnalysis.analyse(steps, ledCount: 8)   // port of flash_analysis.py: me
 
 Colour note: the sampler's floats are the firmware codes over 255. The strip
 PWMs those linearly; the Screen Bar paints them straight into an sRGB context
-("identity transfer", see `_led_status_legacy.py`). The app does this in the
+("identity transfer", see `led_status.py`). The app does this in the
 sRGB colour space, so the hex codes mean what a colour picker says they mean.
 `LEDSTransfer.srgbToLinear` and `linearToSRGB` are the exact IEC 61966-2-1
 curve for anyone who needs light.
@@ -233,7 +233,7 @@ within the tolerance at the firmware's own sample times.
 ### Parity
 
 `scripts/gen_leds_fixtures.py` samples 30 programs through
-`jrbar._led_wasm_legacy.SdLedWasmController` (raw firmware engine:
+`jrbar.led_wasm.RawSdLedWasmController` (raw firmware engine:
 `reset(0)`, `parse(program, 0)`, `step(t_ms)`) at the required times
 (0, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 3.7 s) plus a 37 ms sweep over the
 first four seconds. Programs: one embedded device program, every

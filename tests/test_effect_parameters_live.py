@@ -132,7 +132,7 @@ def test_the_slowest_motion_still_fits_under_a_brightness_line() -> None:
     strip's brightness line in front of what Effect Studio rendered. At the
     longest cycle, with every knob at either end, that still fits the
     firmware: a slow Pendulum came to 520 bytes and the strip refused it."""
-    from jrbar._led_status_legacy import apply_brightness
+    from jrbar.led_status import apply_brightness
 
     longest = colors_module.MAX_CYCLE_SPEED_SECONDS
     for effect in PROVIDER_ANIMATION_EFFECTS:
@@ -300,8 +300,8 @@ def test_a_provider_assignment_with_parameters_reaches_the_live_light() -> None:
     """``set_assignment`` for a provider stores the Effect Studio values in
     settings, and the solo light the Pro plays changes with them."""
     from jrbar import core_runtime
-    from jrbar._settings_legacy import AgentMonitorSettings
     from jrbar.effect_studio import AssignmentScope
+    from jrbar.settings import AgentMonitorSettings
 
     saved = []
     host = SimpleNamespace(
@@ -403,10 +403,10 @@ def test_clearing_an_assignment_gives_back_the_providers_own_motion() -> None:
     Pendulum, not on an Automatic nobody chose, and takes the values with
     it; a provider without a motion of its own goes back to Automatic."""
     from jrbar import core_runtime
-    from jrbar._settings_legacy import AgentMonitorSettings
     from jrbar.effect_assignment_store import EffectAssignmentRecord
     from jrbar.effect_registry import EFFECT_REGISTRY
     from jrbar.effect_studio import AssignmentScope
+    from jrbar.settings import AgentMonitorSettings
 
     class Host:
         _effect_assignment_cache = SimpleNamespace(registry=lambda: EFFECT_REGISTRY)

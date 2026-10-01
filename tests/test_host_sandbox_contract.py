@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-import jrbar._settings_legacy
 import jrbar.integration_settings
 import jrbar.settings
 from jrbar import device_writer
@@ -82,7 +81,6 @@ def test_conftest_guards_survive_monkeypatch_undo(monkeypatch, tmp_path) -> None
 
     isolated_settings = tmp_path / "pytest-sidepulse-settings.json"
     assert jrbar.settings.default_settings_path() == isolated_settings
-    assert jrbar._settings_legacy.default_settings_path() == isolated_settings
     integrations = jrbar.integration_settings.default_integration_settings_path()
     assert integrations.parent.name.startswith("jrbar-config")
     assert integrations.parent != tmp_path

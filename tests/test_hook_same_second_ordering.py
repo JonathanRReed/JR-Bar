@@ -15,7 +15,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from jrbar._collector_legacy import LiveAgentMonitor
+from jrbar.collector import LiveAgentMonitor
 from jrbar.hook import format_hook_payload
 from jrbar.ipc import ProviderRefreshHint
 from jrbar.models import AgentMode, parse_datetime

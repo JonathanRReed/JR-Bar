@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass
 from functools import lru_cache
 
-from ._led_wasm_legacy import LedWasmUnavailableError, SdLedWasmController
+from .led_wasm import LedWasmUnavailableError, RawSdLedWasmController
 
 FIRMWARE_VALIDATION_CACHE_SIZE = 1024
 
@@ -30,7 +30,7 @@ class FirmwareValidationResult:
 _THREAD_LOCAL = threading.local()
 
 
-def _controller(led_count: int) -> SdLedWasmController:
+def _controller(led_count: int) -> RawSdLedWasmController:
     count = 2 if int(led_count) == 2 else 8
     controllers = getattr(_THREAD_LOCAL, "controllers", None)
     if controllers is None:
@@ -38,7 +38,9 @@ def _controller(led_count: int) -> SdLedWasmController:
         _THREAD_LOCAL.controllers = controllers
     controller = controllers.get(count)
     if controller is None:
-        controller = SdLedWasmController(led_count=count)
+        # The device's own parser, on the exact bytes: the safety-enforcing
+        # controller would compile the text first and judge the compiled one.
+        controller = RawSdLedWasmController(led_count=count)
         controllers[count] = controller
     return controller
 

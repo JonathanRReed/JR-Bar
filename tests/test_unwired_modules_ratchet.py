@@ -199,11 +199,6 @@ def test_cmd_effects_dispatches_through_the_runtime_owner__and_2_more(monkeypatc
         )
 
     monkeypatch.setattr(production, "active_screen_bar_ambient_presentation", ambient)
-    monkeypatch.setitem(
-        production.JRStatusBarController._ambient_bar.__globals__,
-        "active_screen_bar_ambient_presentation",
-        ambient,
-    )
     monkeypatch.setattr(
         production._legacy,
         "apply_brightness",
@@ -251,11 +246,6 @@ def test_cmd_effects_dispatches_through_the_runtime_owner__and_2_more(monkeypatc
 
     monkeypatch.setattr(
         production,
-        "active_hardware_ambient_presentation",
-        ambient,
-    )
-    monkeypatch.setitem(
-        production.JRStatusBarController._sync_hardware_device.__globals__,
         "active_hardware_ambient_presentation",
         ambient,
     )

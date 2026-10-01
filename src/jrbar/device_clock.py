@@ -4,10 +4,9 @@ A linked Dot only stays on the strip's beat if its program is written for
 the clock it actually has. The Pro's clock matches the Mac's to about 0.02%;
 the first Dot's ``ticks`` counter advances about 973 ms for every 1000 ms of
 real time, so after a perfect simultaneous start it falls behind by about
-27 ms a second (``research/hardware-sync.md``). Nothing here guesses that
-number for good: each device's rate is measured from its own STATUS.TXT,
-kept per device (another Dot has its own), and persisted, so a restart does
-not start from nothing.
+27 ms a second. Nothing here guesses that number for good: each device's
+rate is measured from its own STATUS.TXT, kept per device (another Dot has
+its own), and persisted, so a restart does not start from nothing.
 
 Two hard facts shape the reads:
 

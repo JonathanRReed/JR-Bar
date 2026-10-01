@@ -163,3 +163,15 @@ def test_tracker_advances_revision_and_reports_empty_receipt_for_unchanged_value
     assert not hasattr(projection.retention.provider("claude"), "consent_reference")
     assert not hasattr(projection.sharing.provider("claude"), "credential_account_reference")
 
+
+
+def test_the_retired_meter_switch_is_not_projected_or_announced() -> None:
+    initial = project_provider_feature_settings(
+        default_provider_usage_settings(),
+        default_provider_sync_settings(),
+    )
+
+    assert not hasattr(initial.presentation.menu, "show_meters")
+    assert not hasattr(initial.presentation, "show_meters")
+    assert "presentation.menu.show_meters" not in initial.receipt.changed_feature_ids
+    assert "presentation.menu.show_cost" in initial.receipt.changed_feature_ids

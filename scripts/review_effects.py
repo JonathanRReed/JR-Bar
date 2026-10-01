@@ -33,14 +33,13 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO / "src") not in sys.path:
     sys.path.insert(0, str(REPO / "src"))
 
-from jrbar import _led_status_legacy as led_status  # noqa: E402
 from jrbar import (  # noqa: E402
     celebrations,
     core_effects,
+    led_status,
     motion_shapes,
 )
 from jrbar import colors as colors_module  # noqa: E402
-from jrbar._led_wasm_legacy import SdLedWasmController  # noqa: E402  raw firmware
 from jrbar.animation import (  # noqa: E402
     animation_duration_ms,
     errors_only,
@@ -48,6 +47,7 @@ from jrbar.animation import (  # noqa: E402
     read_program,
 )
 from jrbar.effect_registry import EFFECT_REGISTRY  # noqa: E402
+from jrbar.led_wasm import RawSdLedWasmController  # noqa: E402  raw firmware
 from jrbar.lid_presets import LID_ANIMATION_PRESETS, LID_PRESET_SHAPES, lid_program  # noqa: E402
 from jrbar.models import AgentMode  # noqa: E402
 from jrbar.presentation_compiler import compile_presentation_program  # noqa: E402
@@ -104,7 +104,7 @@ def window_ms(program: str, led_count: int) -> int:
 
 
 def sample(program: str, led_count: int, span_ms: int) -> list[list[tuple[int, int, int]]]:
-    controller = SdLedWasmController(led_count)
+    controller = RawSdLedWasmController(led_count)
     controller.reset(0)
     result = controller.parse(program, 0)
     if not result.ok:
@@ -257,7 +257,7 @@ def write_timeline(path: Path, frames: list, *, cell_width: int = 26, cell_heigh
 
 def builtin_programs() -> list[tuple[str, str, int]]:
     """Every program the app can put on a strip, outside the effect registry."""
-    from jrbar._settings_legacy import AgentMonitorSettings
+    from jrbar.settings import AgentMonitorSettings
 
     settings = AgentMonitorSettings().colors
     entries: list[tuple[str, str, int]] = []
@@ -380,13 +380,13 @@ def solo_programs() -> list[tuple[str, str, int]]:
     that only plays one way shows up as a diagonal with its other half
     missing.
     """
-    from jrbar._settings_legacy import AgentMonitorSettings
     from jrbar.accessibility_display import AccessibilityDisplayPreferences
     from jrbar.presentation_policy import (
         GlanceInputs,
         compose_presentation_program,
         resolve_glance,
     )
+    from jrbar.settings import AgentMonitorSettings
 
     preferences = AccessibilityDisplayPreferences()
     resolved = resolve_glance(

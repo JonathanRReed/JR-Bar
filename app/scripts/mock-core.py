@@ -1036,7 +1036,7 @@ def mock_usage_graph(provider_ids: list, range_name: str, metric: str, now: floa
 
 
 # The settings document, seeded from `AgentMonitorSettings().to_dict()` in
-# src/jrbar/_settings_legacy.py (captured 2026-09-09) plus the one key the
+# src/jrbar/settings.py (captured 2026-09-09) plus the one key the
 # native Settings window needs that the Python dataclass has no field for
 # yet (cloud_ingest_token_path). `set_setting` writes into a deep copy of
 # this by dot path; `reset_settings` restores from it.

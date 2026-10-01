@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import re
 
-from jrbar._led_status_legacy import apply_brightness, fold_brightness, scale_program_brightness
 from jrbar.dot_role import apply_brightness_line
+from jrbar.led_status import apply_brightness, fold_brightness, scale_program_brightness
 
 _LINE = re.compile(r"(?im)^\s*brightness\s+(\d+)\s*$")
 

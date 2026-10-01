@@ -18,14 +18,14 @@ What is called, and why
 The Python app never samples LED colours itself. Its Screen Bar pipeline
 (``screen_bar_pipeline.ScreenBarSampler``) drives the firmware's own parser
 and renderer, ``jrbar/resources/sdled.wasm``, through JavaScriptCore via
-``jrbar._led_wasm_legacy.SdLedWasmController``:
+``jrbar.led_wasm.RawSdLedWasmController``:
 
-    controller = SdLedWasmController(led_count)   # raw firmware engine
+    controller = RawSdLedWasmController(led_count)   # raw firmware engine
     controller.reset(0)
     controller.parse(program, 0)                  # anchor at t = 0 ms
     controller.step(t_ms) -> [(r, g, b), ...]     # 8-bit codes after brightness
 
-``jrbar.led_wasm.SdLedWasmController`` (the safety facade) runs
+``jrbar.led_wasm.SdLedWasmController`` (the safety-enforcing controller) runs
 ``presentation_compiler.compile_presentation_program`` first; that transform
 is recorded separately in ``compiler.json`` so the Swift port of the compiler
 can be checked as text, and the engine fixtures stay a pure firmware truth.
@@ -61,26 +61,26 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
-from jrbar import _led_status_legacy as led_status  # noqa: E402
+from jrbar import led_status  # noqa: E402
 from jrbar.animation import errors_only, read_program  # noqa: E402
 from jrbar.flash_analysis import analyse  # noqa: E402
 
-# The raw firmware engine. Importing ``SdLedWasmController`` from
-# ``jrbar._led_wasm_legacy`` is order-dependent: once anything imports
-# ``jrbar.led_wasm`` (the safety facade), that name is the facade, which
-# compiles every program before it parses it and would sample the compiler's
-# output instead of the text. ``RawSdLedWasmController`` is the engine either way.
-from jrbar.led_wasm import RawSdLedWasmController as SdLedWasmController  # noqa: E402
+# The raw firmware engine, by name: ``SdLedWasmController`` compiles every
+# program before it parses it and would sample the compiler's output instead
+# of the text.
+from jrbar.led_wasm import RawSdLedWasmController  # noqa: E402
 from jrbar.models import AgentMode  # noqa: E402
 from jrbar.presentation_compiler import compile_presentation_program  # noqa: E402
 
 FIXTURES = REPO / "app" / "Tests" / "JRBarLEDSTests" / "Fixtures"
 REQUIRED_TIMES_S = [0, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 3.7]
+# A provenance label stored in the committed fixtures: it names the module the
+# engine lived in before the facade collapse, so it stays as written.
 ENGINE = "sdled.wasm via jrbar._led_wasm_legacy.SdLedWasmController: reset(0); parse(program, 0); step(t_ms)"
 
 
 def sample(program: str, led_count: int, times_ms: list[int]) -> list[dict]:
-    controller = SdLedWasmController(led_count)
+    controller = RawSdLedWasmController(led_count)
     controller.reset(0)
     result = controller.parse(program, 0)
     if not result.ok:
@@ -266,7 +266,7 @@ def verdict_rows() -> list[dict]:
     verdicts = []
     for led_count in (8, 2):
         for program in verdict_programs:
-            controller = SdLedWasmController(led_count)
+            controller = RawSdLedWasmController(led_count)
             controller.reset(0)
             result = controller.parse(program, 0)
             verdicts.append(

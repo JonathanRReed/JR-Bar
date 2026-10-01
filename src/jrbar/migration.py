@@ -35,8 +35,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ._settings_legacy import default_config_dir, legacy_config_dirs
 from .sd_eject_guard_launch import default_user_data_dir
+from .settings import default_config_dir, legacy_config_dirs
 from .state_paths import default_state_dir, legacy_state_dirs
 
 MIGRATION_MARKER_NAME = "migrated-from-sidepulse.json"

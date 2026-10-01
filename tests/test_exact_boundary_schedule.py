@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from jrbar.menu_tracking import ExactBoundarySchedule
+from jrbar.exact_boundary_schedule import ExactBoundarySchedule
 
 
 def test_early_and_stale_callbacks_are_rejected() -> None:
@@ -39,7 +39,7 @@ def test_clearing_fences_the_token_that_was_waiting() -> None:
 def test_a_deadline_that_is_not_a_finite_time_is_refused() -> None:
     schedule = ExactBoundarySchedule()
     for bad in (math.nan, math.inf, -1.0, True, "soon"):
-        with pytest.raises(ValueError, match="invalid menu boundary"):
+        with pytest.raises(ValueError, match="invalid boundary deadline"):
             schedule.replace(bad)  # type: ignore[arg-type]
     assert schedule.deadline_epoch is None
 

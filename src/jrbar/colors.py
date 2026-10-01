@@ -1,11 +1,10 @@
 """Per-mode and per-agent LED color customization, blending, and rendering.
 
-This module is the home for everything described in
-docs/superpowers/specs/2026-08-10-agent-color-customizer-design.md: the
-color data model (``ColorSettings``), the curated palette used for both
-default assignment and the Colors window's swatch strips, and the
-multi-agent-aware LED program renderer that supersedes the single-aggregate
-``led_status.program_for_display_state`` for anything beyond Classic mode.
+This module is the home for the color data model (``ColorSettings``), the
+curated palette used for both default assignment and the Colors window's
+swatch strips, and the multi-agent-aware LED program renderer that supersedes
+the single-aggregate ``led_status.program_for_display_state`` for anything
+beyond Classic mode.
 
 Kept as its own module (rather than growing ``settings.py`` or
 ``status_bar.py`` further) since both of those files are already large and

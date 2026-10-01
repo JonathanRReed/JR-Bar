@@ -314,9 +314,9 @@ def test_latest_state_is_written_every_thirty_seconds_at_once_on_a_transition_an
     offline fallback read the file, and the last change of a burst must not
     wait for the next hook event. A session starting or ending, or an ask
     opening, is written at once."""
-    from jrbar import _collector_legacy
+    from jrbar import collector
 
-    interval = _collector_legacy.LATEST_STATE_WRITE_INTERVAL_SECONDS
+    interval = collector.LATEST_STATE_WRITE_INTERVAL_SECONDS
     assert interval == 30.0
 
     class _Flush:
@@ -343,7 +343,7 @@ def test_latest_state_is_written_every_thirty_seconds_at_once_on_a_transition_an
     )
     writes: list[str] = []
     durable: list[bool] = []
-    real_write = _collector_legacy.atomic_private_write
+    real_write = collector.atomic_private_write
 
     def counted(path: Path, text: str, **kwargs) -> None:
         writes.append(text)
@@ -352,8 +352,8 @@ def test_latest_state_is_written_every_thirty_seconds_at_once_on_a_transition_an
 
     now = [1_000.0]
     with (
-        patch.object(_collector_legacy, "atomic_private_write", counted),
-        patch.object(_collector_legacy.time, "monotonic", lambda: now[0]),
+        patch.object(collector, "atomic_private_write", counted),
+        patch.object(collector.time, "monotonic", lambda: now[0]),
     ):
         monitor.ingest_batch(_restore_batch(WorkLifecycle.ACTIVE, 1), clock=_restore_clock(monotonic=101.0))
         assert len(writes) == 1

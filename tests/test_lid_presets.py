@@ -12,9 +12,9 @@ from __future__ import annotations
 import pytest
 
 from jrbar import lid_presets
-from jrbar._led_wasm_legacy import LedWasmUnavailableError, SdLedWasmController
 from jrbar.animation import animation_duration_ms, loop_duration_ms, parse_animation
 from jrbar.flash_analysis import relative_luminance
+from jrbar.led_wasm import LedWasmUnavailableError, RawSdLedWasmController
 from jrbar.settings import (
     LID_ANIMATION_CLOSED,
     LID_ANIMATION_CLOSED_ACTIVE,
@@ -34,7 +34,7 @@ def _drawn(kind: str, name: str, program: str, led_count: int) -> str:
 
 def _last_frame(program: str, led_count: int, at_ms: int):
     try:
-        controller = SdLedWasmController(led_count)
+        controller = RawSdLedWasmController(led_count)
     except LedWasmUnavailableError as error:  # pragma: no cover - macOS only
         pytest.skip(f"firmware engine unavailable: {error}")
     controller.reset(0)

@@ -27,7 +27,7 @@ def _record_launchctl(monkeypatch) -> list:
 
     monkeypatch.setattr(status_bar_launch.subprocess, "run", run)
     monkeypatch.setattr(
-        status_bar_launch._legacy,
+        status_bar_launch,
         "trusted_system_tool",
         lambda _name: Path("/bin/launchctl"),
     )

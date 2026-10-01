@@ -83,7 +83,7 @@ from .agent_browser import (
     build_agent_browser_documents,
     project_agent_browser,
 )
-from .agent_browser_window import (
+from .agent_browser_payloads import (
     AgentBrowserActionPayload,
     AgentBrowserAnswerPayload,
 )
@@ -334,7 +334,7 @@ from .mailbox_preferences import (
     apply_mailbox_preferences,
 )
 from .snooze_scope import filter_snoozed_statuses, status_snoozed
-from .menu_tracking import ExactBoundarySchedule
+from .exact_boundary_schedule import ExactBoundarySchedule
 from .models import (
     AgentMode,
     AgentStatus,
@@ -973,8 +973,6 @@ class HardwareWriteRequest:
     write_priority: RuntimeWorkPriority = RuntimeWorkPriority.COALESCIBLE
     coalesce_identity: str = "latest"
     preview_session_id: str | None = None
-    override_program: str | None = None
-    override_state: LedDisplayState | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -1029,14 +1027,6 @@ class HardwareWriteRequest:
         )
         if type(self.write_priority) is not RuntimeWorkPriority:
             raise ValueError("invalid hardware write priority")
-        if (self.override_program is None) != (self.override_state is None):
-            raise ValueError("incomplete hardware program override")
-        if self.override_program is not None and (
-            type(self.override_program) is not str
-            or not self.override_program
-            or not isinstance(self.override_state, LedDisplayState)
-        ):
-            raise ValueError("invalid hardware program override")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1073,8 +1063,6 @@ def hardware_presentation_sync_for_result(
 ) -> HardwarePresentationSync | None:
     if type(result) is not HardwareWriteResult:
         raise ValueError("invalid hardware write result")
-    if result.request.override_program is not None:
-        return None
     if not (
         result.write.changed
         or result.write.error is not None

@@ -1619,8 +1619,10 @@ def test_a_slow_provider_does_not_hold_back_a_quick_providers_reading(tmp_path) 
 
     previous_codex = snapshot("codex", remaining=55, observed=500)
     saved: list[ProviderUsageState] = []
+    receipts: list = []
     service = ProviderUsageService(
         settings_loader=lambda: settings,
+        receipt_handler=receipts.append,
         collectors={
             "codex": slow_codex,
             "claude": lambda _pref, _home, observed, _credentials: snapshot(
@@ -1657,8 +1659,8 @@ def test_a_slow_provider_does_not_hold_back_a_quick_providers_reading(tmp_path) 
     assert _percent(final, "codex") == 40
     assert _percent(final, "claude") == 70
     assert [state.refreshing for state in saved] == [False]
-    assert service.refresh_receipts()[-1].outcome is RefreshPublicationOutcome.ACCEPTED
-    assert len(service.refresh_receipts()) == 1
+    assert receipts[-1].outcome is RefreshPublicationOutcome.ACCEPTED
+    assert len(receipts) == 1
     service.close()
 
 

@@ -20,7 +20,7 @@ def _mounted_strip(runtime: Any):
 
     These commands run off the main thread (launchctl can take seconds);
     the device inventory is the controller's, so it is read there."""
-    from ._led_status_legacy import led_count_for_target
+    from .led_status import led_count_for_target
 
     legacy = runtime._core_legacy()
     on_main = getattr(runtime, "_core_on_main", None) or (lambda fn: fn())

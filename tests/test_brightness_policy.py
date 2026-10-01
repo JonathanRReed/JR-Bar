@@ -24,7 +24,7 @@ def test_brightness_policy_import_does_not_pull_the_legacy_led_renderer__and_2_m
     probe = (
         "import json, sys\n"
         "import jrbar.brightness_policy\n"
-        "print(json.dumps(sorted(m for m in sys.modules if m.startswith('sidepulse'))))\n"
+        "print(json.dumps(sorted(m for m in sys.modules if m.startswith('jrbar'))))\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", probe],
@@ -35,7 +35,6 @@ def test_brightness_policy_import_does_not_pull_the_legacy_led_renderer__and_2_m
     )
 
     assert result.returncode == 0, result.stderr
-    assert '"jrbar._led_status_legacy"' not in result.stdout
     assert '"jrbar.led_status"' not in result.stdout
 
     # --- scenario: ambient_brightness_preserves_the_current_factor_order

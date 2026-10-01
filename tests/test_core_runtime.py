@@ -588,7 +588,7 @@ def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused__and_2_mor
     it must reach every family actually snoozed. The old target list —
     the ask statuses — silently missed a snoozed session that was
     quietly working, leaving it dark forever."""
-    from jrbar.agent_browser_window import AgentBrowserActionPayload
+    from jrbar.agent_browser_payloads import AgentBrowserActionPayload
     from jrbar.capacity_types import SourceKey
     from jrbar.mailbox_preferences import MailboxPreference
     from jrbar.navigation_policy import OperatorActionKind
@@ -1674,7 +1674,7 @@ def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
     the Pro's command: one submission, the Dot written right after the Pro
     from the same presentation, both results applied on the main thread,
     the skew measured, and the lights document saying so."""
-    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
     from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult, StatusBarDevice
 
@@ -1764,7 +1764,7 @@ def test_the_skew_is_a_diagnostic_and_never_rotates_the_dot(headless) -> None:
     write (79 times in one day's log). The gap is still measured and
     published for old apps, from the writes' own I/O stamps -- and nothing
     reads it to plan anything."""
-    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
     from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
 
@@ -1881,7 +1881,7 @@ def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> 
     live bug: an ambient "binary heartbeat" write landed on the Dot right
     after the linked write and left it on a solid colour at full brightness.
     Operator previews still reach the Dot."""
-    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
     from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult, StatusBarDevice
 
@@ -1912,7 +1912,6 @@ def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> 
     controller.agent_controller_for_device = lambda device: FakeDotController()
     ambient = HardwareWriteRequest(
         dot_device, AgentMode.WORKING, None, (), None, 0.5,
-        override_program="0:#001B22 1:#14732D", override_state=LedDisplayState.WORKING,
         coalesce_identity="ambient-dot-heartbeat",
     )
     result = controller._sync_hardware_device(ambient)
@@ -1929,7 +1928,6 @@ def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> 
 
     preview = HardwareWriteRequest(
         dot_device, AgentMode.WORKING, None, (), None, 0.5,
-        override_program="#FFFFFF 500ms\nrepeat", override_state=LedDisplayState.ASK,
         coalesce_identity="preview-effect-studio", preview_session_id="s",
     )
     assert controller._core_linked_dot_follows(preview) is False
@@ -1972,7 +1970,7 @@ def test_a_finished_finite_cue_re_arms_the_live_program_on_either_device(headles
     import time as _time
     from pathlib import Path as _Path
 
-    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
     from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult, StatusBarDevice
 
@@ -2127,7 +2125,7 @@ def test_strip_unmount_forgets_the_program_the_dot_was_replaying(headless) -> No
     last program forever. The inventory seam in ``refresh_`` now forgets
     it, drops the departed device's anchor, and clears the Dot's dedupe
     identity so its next request falls through to its own display."""
-    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
     from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
 
@@ -2176,7 +2174,7 @@ def test_disconnect_forgets_the_devices_cached_led_count(headless, tmp_path) -> 
     """The STATUS.TXT LED count is memoized per volume root; the root a
     departed device leaves behind must be re-read, or a Dot swapped in for
     a Pro at the same mount is trusted on the Pro's serial."""
-    from jrbar import _led_status_legacy as led_status
+    from jrbar import led_status
     from jrbar.status_bar_legacy import StatusBarDevice
 
     root = tmp_path / "SidePulse"
@@ -2208,7 +2206,7 @@ def test_the_dot_rides_only_the_followed_strip__and_2_more(headless) -> None:
     inventory order -- the one the lights document calls ``hardware`` --
     and the second strip's writes neither carry the Dot nor overwrite the
     program it replays."""
-    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
     from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
 
@@ -2423,10 +2421,6 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     import re
     import time as _time
 
-    from jrbar._led_status_legacy import (
-        apply_strip_transform_to_program,
-        delivered_brightness,
-    )
     from jrbar.colors import (
         IDENTITY_LUMINANCE_FLOOR,
         MIRROR_LIFT_EXPONENT,
@@ -2434,6 +2428,10 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
         relative_luminance,
     )
     from jrbar.dot_role import replace_brightness_line as apply_brightness_line
+    from jrbar.led_status import (
+        apply_strip_transform_to_program,
+        delivered_brightness,
+    )
     from jrbar.status_bar_legacy import StatusBarDevice
 
     controller = headless
@@ -2587,9 +2585,9 @@ def test_linked_screen_bar_keeps_a_signals_cut_through(headless) -> None:
     ambient code."""
     import time as _time
 
-    from jrbar._led_status_legacy import style_to_program
     from jrbar.colors import lift_program_luminance
     from jrbar.dot_role import replace_brightness_line as apply_brightness_line
+    from jrbar.led_status import style_to_program
     from jrbar.signals import PATTERN_BREATHE, SignalStyle
     from jrbar.status_bar_legacy import (
         LED_DISPLAY_AGENT,
@@ -2828,7 +2826,7 @@ def test_lift_program_luminance_lifts_only_colour_literals__and_1_more() -> None
 def _calibration_devices(controller, *, stored_gains=(1.0, 0.38, 1.0), with_dot=True):
     """A strip (and Dot) with real dry-run controllers, so the preview's
     write path runs end to end and the exact bytes stay inspectable."""
-    from jrbar._led_status_legacy import AgentLedController
+    from jrbar.led_status import AgentLedController
     from jrbar.status_bar_legacy import StatusBarDevice
 
     pro = StatusBarDevice(
@@ -2866,7 +2864,7 @@ def test_calibration_preview_drives_the_given_gains_once__and_2_more(headless) -
     asked through the strip boundary -- not the stored profile on top, which
     is how the old double-application preview lied (a ~12 drive beside the
     applied 97 on the owner's strip)."""
-    from jrbar._led_status_legacy import apply_strip_transform_to_program
+    from jrbar.led_status import apply_strip_transform_to_program
 
     controller = headless
     controller.applicationDidFinishLaunching_(None)
@@ -2982,7 +2980,7 @@ def test_dot_companion_preview_lights_the_strip_with_its_stored_profile__and_2_m
     """Matching the Dot to the strip by eye needs the strip showing the same
     patch at the strip's OWN stored gains and brightness -- the thing the
     Dot will sit beside -- held for the same session."""
-    from jrbar._led_status_legacy import apply_strip_transform_to_program
+    from jrbar.led_status import apply_strip_transform_to_program
 
     controller = headless
     controller.applicationDidFinishLaunching_(None)
@@ -3158,7 +3156,7 @@ def test_calibration_preview_validates_and_finds__and_2_more(headless) -> None:
     hold then refused every repair for the rest of its 600 s. The hold is
     on the books before ``sync_transferred_program`` runs, and a refused
     write withdraws it."""
-    from jrbar._led_status_legacy import LedDisplayState
+    from jrbar.led_status import LedDisplayState
 
     controller = headless
     controller.applicationDidFinishLaunching_(None)
@@ -3235,8 +3233,8 @@ def test_calibration_preview_leaves_the_next_ask_its_arrival_crest(headless, mon
     reads ``last_state is not ASK``, so a preview that parked ASK there
     spent the next real ask's once-only crest."""
     from jrbar import colors as colors_module
-    from jrbar._led_status_legacy import LedDisplayState
     from jrbar.colors import ColorSettings
+    from jrbar.led_status import LedDisplayState
     from jrbar.models import AgentMode
 
     controller = headless
@@ -3272,14 +3270,13 @@ def test_battery_display_uses_the_strip_transfer(headless) -> None:
     ``brightness N`` never decoded. The battery boundary is now the strip's
     own transform, so the bytes match what the agent path would write for
     the same nominal program."""
-    from jrbar._battery_legacy import BatteryLedController
-    from jrbar._led_status_legacy import (
+    from jrbar.battery import BatteryLedController, BatterySnapshot, program_for_battery
+    from jrbar.led_status import (
         AgentLedController,
         LedDisplayState,
         apply_strip_transform_to_program,
         led_count_for_target,
     )
-    from jrbar.battery import BatterySnapshot, program_for_battery
 
     snapshot = BatterySnapshot(percent=64)
     gains = (1.0, 0.38, 1.0)
@@ -4460,7 +4457,7 @@ def test_quiet_this_run_snoozes_one_row_not_its_family(headless) -> None:
 def _tmp_pair(controller, tmp_path: Path):
     """A real Pro and a real Dot on scratch volumes: the controllers write
     through the whole boundary (gate, timing, firmware check, fsync)."""
-    from jrbar._led_status_legacy import AgentLedController
+    from jrbar.led_status import AgentLedController
     from jrbar.status_bar_legacy import StatusBarDevice
 
     devices = []
@@ -4521,7 +4518,7 @@ def test_every_strip_restart_rewrites_the_dot_and_nothing_else_does__and_2_more(
     narrowed text deduped, so the Dot kept the old start (116 strip-only
     restarts in 8.7 h of one day's log). Now every strip restart forces the
     Dot, phased from the strip's new start."""
-    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.linked_sync import phase_ms
 
     controller = headless
@@ -4568,7 +4565,7 @@ def test_a_continue_dots_anchor_carries_its_origin(headless, tmp_path: Path) -> 
     that. Only the coupled stamp added it: the Dot's own anchor -- what the
     lights frame falls back to when a batch did not land as a clean pair --
     was the bare strip start, 413 ms off for a comet."""
-    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.led_status import LedDisplayState, LedStatusWrite
 
     controller = headless
     pro, dot, controllers, submitted = _tmp_pair(controller, tmp_path)
@@ -4599,8 +4596,8 @@ def test_a_strip_reassert_restarts_the_pair_on_one_loop__and_1_more(headless, tm
     """A reassert drops the approach frame, so the strip loops a shorter
     lap; the Dot used to be re-planned from the untrimmed text and ran the
     longer one. Now both run the trimmed loop."""
-    from jrbar._led_status_legacy import LedDisplayState
     from jrbar.animation import loop_duration_ms, read_program
+    from jrbar.led_status import LedDisplayState
     from jrbar.presentation_compiler import compile_presentation_program
 
     controller = headless

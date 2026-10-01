@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from jrbar._collector_legacy import _registered_hook_source
+from jrbar.collector import _registered_hook_source
 from jrbar.hook import _normalized_hook_record, routed_hook_payload
 from jrbar.install import (
     install_opencode_plugin,

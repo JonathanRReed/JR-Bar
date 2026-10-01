@@ -942,7 +942,7 @@ def _set_run_snooze(self, status, seconds: float) -> bool:
 
 @command("snooze")
 def _cmd_snooze(self, args):
-    from .agent_browser_window import AgentBrowserActionPayload
+    from .agent_browser_payloads import AgentBrowserActionPayload
     from .navigation_policy import OperatorActionKind
 
     seconds = float(args.get("seconds") or 0)
@@ -1252,7 +1252,7 @@ def _cmd_set_setting(self, args):
 
 @command("reset_settings")
 def _cmd_reset_settings(self, args):
-    from ._settings_legacy import AgentMonitorSettings, DeviceDisplaySetting
+    from .settings import AgentMonitorSettings, DeviceDisplaySetting
 
     paths = [str(path) for path in (args.get("paths") or []) if isinstance(path, str)]
     defaults = AgentMonitorSettings().to_dict()
@@ -1388,7 +1388,7 @@ def _cmd_apply_calibration(self, args):
 
 @command("preview_program")
 def _cmd_preview_program(self, args):
-    from ._led_status_legacy import LedDisplayState, led_count_for_target
+    from .led_status import LedDisplayState, led_count_for_target
 
     legacy = self._core_legacy()
     surface = str(args.get("surface") or "screen_bar")
@@ -1440,7 +1440,7 @@ def _preview_in_desk_order(self, program: str, device) -> str:
     ``reversed``, exactly as its live light is, so Play on strip runs a
     comet the way the Effect Studio thumbnail and the strip's own agent
     light run it. Previews are drawn with LED 0 on the left."""
-    from ._led_status_legacy import led_count_for_target
+    from .led_status import led_count_for_target
     from .motion_shapes import oriented_program
 
     try:
@@ -1464,7 +1464,7 @@ def _cmd_preview_calibration(self, args):
     """
     import re
 
-    from ._led_status_legacy import (
+    from .led_status import (
         LedDisplayState,
         apply_brightness,
         apply_channel_gain_to_program,
@@ -2030,7 +2030,7 @@ def _cmd_play_lid_preset(self, args):
     """Plays one lid look on the connected strip and Dot exactly as a lid
     change would, drawn for each device, then hands the light back."""
     from . import lid_presets
-    from ._settings_legacy import LedAnimationSetting
+    from .settings import LedAnimationSetting
 
     kind = str(args.get("kind") or "")
     name = str(args.get("name") or "")
@@ -5038,7 +5038,7 @@ def build_headless_controller_class() -> type:
                         self._core_hardware_anchor[request.device.device_id] = anchor
                     self._core_linked_note_strip_start(request, write, started, anchor)
                 if request is not None and write is not None and write.error is None:
-                    from ._led_status_legacy import (
+                    from .led_status import (
                         finite_cue_duration_ms,
                         led_count_for_target,
                     )
@@ -5090,7 +5090,7 @@ def build_headless_controller_class() -> type:
             included, since a reassert restarts the strip too. A timed Dot
             plays the strip's loop from that same start, so its lights anchor
             is the strip's, not its own write's (jrbar.linked_runtime)."""
-            from ._led_status_legacy import led_count_for_target
+            from .led_status import led_count_for_target
             from .linked_runtime import LinkedEpoch
 
             device = request.device
@@ -5124,7 +5124,7 @@ def build_headless_controller_class() -> type:
             app already sees as the hardware, and the only one whose writes
             may set the program a linked Dot replays.
             """
-            from ._led_status_legacy import led_count_for_target
+            from .led_status import led_count_for_target
 
             try:
                 for device in self.status_bar_devices(remember=False):
@@ -5257,7 +5257,7 @@ def build_headless_controller_class() -> type:
             next own-display request looks "already written" against the
             program it is no longer supposed to play.
             """
-            from ._led_status_legacy import (
+            from .led_status import (
                 invalidate_led_count_cache,
                 led_count_for_target,
             )
@@ -5388,8 +5388,8 @@ def build_headless_controller_class() -> type:
             Off, the Dot's own policy (auto included) is the cap instead.
             """
             from . import core_power
-            from ._led_status_legacy import normalize_brightness
             from .dot_role import DotRole, normalize_dot_role, plan_dot_surface
+            from .led_status import normalize_brightness
 
             if not bool(getattr(self.settings, "devices_linked", True)):
                 return None
@@ -5486,8 +5486,8 @@ def build_headless_controller_class() -> type:
             ``asks`` needs no strip at all -- an attention beacon is not a
             continuation of anything.
             """
-            from ._led_status_legacy import led_count_for_target
             from .dot_role import DotRole, normalize_dot_role
+            from .led_status import led_count_for_target
 
             role = normalize_dot_role(getattr(self.settings, "dot_role", None))
             if role == DotRole.STATUS.value:
@@ -5684,7 +5684,7 @@ def build_headless_controller_class() -> type:
 
         def _core_linked_dot_device(self):
             """The connected Dot, when there is exactly the one to link."""
-            from ._led_status_legacy import led_count_for_target
+            from .led_status import led_count_for_target
 
             try:
                 dots = [
@@ -5747,7 +5747,7 @@ def build_headless_controller_class() -> type:
         def _core_linked_drop_force(self, request) -> None:
             """A Dot command that will not reach the linked write path spends
             any re-anchor that was queued for the Dot."""
-            from ._led_status_legacy import led_count_for_target
+            from .led_status import led_count_for_target
 
             try:
                 if led_count_for_target(request.device.target) != 2:
@@ -5804,7 +5804,7 @@ def build_headless_controller_class() -> type:
             as one. Other strips in the batch submit on their own --
             coupling them to the Dot's clock would make a second strip's
             write decide what the Dot replays."""
-            from ._led_status_legacy import led_count_for_target
+            from .led_status import led_count_for_target
 
             pro = dot = None
             if bool(getattr(self.settings, "devices_linked", True)) and len(requests) >= 2:
@@ -5970,7 +5970,7 @@ def build_headless_controller_class() -> type:
             reassert, a strip-only refresh): the Dot follows at once, on the
             strip's new start, instead of looping from the old one until
             something else happens to write it."""
-            from ._led_status_legacy import led_count_for_target
+            from .led_status import led_count_for_target
 
             try:
                 request = getattr(result, "request", None)
@@ -7324,7 +7324,7 @@ def build_headless_controller_class() -> type:
                         name = details.get("name")
                         cwd = cwd or details.get("cwd")
                 elif provider == "codex":
-                    from ._collector_legacy import codex_session_title
+                    from .collector import codex_session_title
 
                     name = codex_session_title(session_id)
             except Exception:
@@ -7387,7 +7387,7 @@ def build_headless_controller_class() -> type:
             return result, True
 
         def _core_device_facts(self) -> tuple[DeviceFacts, ...]:
-            from ._led_status_legacy import led_count_for_target
+            from .led_status import led_count_for_target
 
             facts: list[DeviceFacts] = []
             # Two different links, one field name -- which mechanism a row's
@@ -7820,10 +7820,10 @@ def build_headless_controller_class() -> type:
             )
 
         def _core_build_lights(self) -> dict[str, Any]:
-            from ._led_status_legacy import delivered_brightness, led_count_for_target
             from .colors import lift_program_luminance
             from .dot_role import normalize_dot_role, upsample_program
             from .dot_role import replace_brightness_line as apply_brightness_line
+            from .led_status import delivered_brightness, led_count_for_target
             from .presentation_policy import MotionClass
 
             glance = getattr(self, "_current_resolved_glance", None)

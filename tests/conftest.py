@@ -90,14 +90,13 @@ def _mark_guard(original, label):
 
 @pytest.fixture(autouse=True)
 def isolate_live_settings_file(tmp_path):
-    """Keep all settings facades on one per-test path."""
+    """Keep settings on one per-test path."""
     isolated = tmp_path / "pytest-sidepulse-settings.json"
 
     def _isolated_path(home=None):
         return isolated
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("jrbar._settings_legacy.default_settings_path", _isolated_path)
         mp.setattr("jrbar.settings.default_settings_path", _isolated_path)
         yield
 
@@ -132,10 +131,8 @@ def isolate_integration_settings_file(tmp_path_factory):
         return isolated
 
     with pytest.MonkeyPatch.context() as mp:
-        # The facade forwards attribute writes to the legacy module; modules
-        # that bound the name at import time are patched where already loaded.
+        # Modules that bound the name at import time are patched where already loaded.
         mp.setattr("jrbar.integration_settings.default_integration_settings_path", _isolated_path)
-        mp.setattr("jrbar._integration_settings_legacy.default_integration_settings_path", _isolated_path)
         for module_name in ("jrbar.deck_board_store", "jrbar.deck_control_settings", "jrbar.integration_cli"):
             module = sys.modules.get(module_name)
             if module is not None and hasattr(module, "default_integration_settings_path"):

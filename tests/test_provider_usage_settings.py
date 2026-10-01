@@ -443,3 +443,25 @@ def test_legacy_schema_two_rows_migrate_profile_defaults_and_refuse_mismatch__an
         if preference.source_instance_id != "default"
     ) == (("claude", "work"),)
 
+
+
+def test_a_saved_show_meters_flag_still_loads_and_is_kept(tmp_path: Path) -> None:
+    """The meter it switched is gone and nothing reads the flag, but a document
+    that carries it loads, and saving writes it back as it was."""
+    path = tmp_path / "provider-usage.json"
+    path.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": PROVIDER_USAGE_SETTINGS_SCHEMA_VERSION,
+                "menu_display": {"show_meters": False, "show_cost": False},
+            }
+        )
+    )
+
+    loaded = load_provider_usage_settings(path).settings
+    assert loaded.menu_display.show_meters is False
+    assert loaded.menu_display.show_cost is False
+
+    save_provider_usage_settings(loaded, path)
+    saved = json.loads(path.read_text())
+    assert saved["menu_display"]["show_meters"] is False

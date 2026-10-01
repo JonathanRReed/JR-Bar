@@ -310,7 +310,7 @@ def test_a_source_still_losing_is_not_released_by_the_lease__and_1_more() -> Non
     per-source stamps from the global uncertain_since -- impossible in
     that shape -- so the app's own latest.json failed its own validator
     and every restart lost its warm start."""
-    from jrbar._collector_legacy import (
+    from jrbar.collector import (
         _state_to_document,
         _v2_state_from_document,
     )
@@ -352,7 +352,7 @@ def test_a_rebooted_strip_voids_the_write_dedupe(tmp_path):
     tick assumed the steady program was still showing. A firmware
     uptime that goes BACKWARDS voids the dedupe so the next tick
     repaints unconditionally."""
-    from jrbar._led_status_legacy import AgentLedController
+    from jrbar.led_status import AgentLedController
 
     status = tmp_path / "STATUS.TXT"
     status.write_text("serial SPP-000067\nuptime_ms 5000000\nstate idle\n")

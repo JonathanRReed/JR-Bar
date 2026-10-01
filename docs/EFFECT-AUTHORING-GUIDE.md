@@ -24,7 +24,7 @@ steady = EffectDefinition(
 )
 ```
 
-The constructor validates parameter names, bounds, choices, palettes, fallback metadata, and surface adaptations. `EffectRegistry` rejects conflicting identifiers. For a local extension, build a new `EffectRegistry` containing the existing definitions and the new immutable definition. Do not mutate `EFFECT_REGISTRY` at runtime.
+The constructor validates parameter names, bounds, choices, palettes, and fallback metadata. `EffectRegistry` rejects conflicting identifiers. For a local extension, build a new `EffectRegistry` containing the existing definitions and the new immutable definition. Do not mutate `EFFECT_REGISTRY` at runtime.
 
 ## Semantic routing is the authority
 

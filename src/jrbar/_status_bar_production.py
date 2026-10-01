@@ -1,19 +1,17 @@
 """Stable production layer for JR-Bar's historical AppKit controller.
 
-The original controller remains the compatibility runtime while production
-boundaries are extracted into small, testable modules. The facade preserves
-the public ``jrbar.status_bar`` contract, including test monkeypatches and
-source introspection. Runtime mutation is owned by
-``jrbar.application_composition`` and never happens merely by importing
-this module.
+The retained controller in ``status_bar_legacy`` remains the compatibility
+runtime while production boundaries are extracted into small, testable
+modules, and ``JRStatusBarController`` is the production subclass of it.
+``jrbar.status_bar`` is the public name that forwards to both. Runtime
+mutation is owned by ``jrbar.application_composition`` and never happens
+merely by importing this module.
 """
 
 from __future__ import annotations
 
-import sys
 import threading
 import time
-from types import ModuleType
 
 from . import status_bar_legacy as _legacy
 from .ambient_effect_consumer import (
@@ -510,23 +508,6 @@ else:
             started = time.perf_counter()
             outcome = "ok"
             try:
-                if request.override_program is not None:
-                    controller = self.agent_controller_for_device(request.device)
-                    write = controller.sync_program(
-                        request.override_program,
-                        request.override_state,
-                    )
-                    return _legacy.HardwareWriteResult(
-                        request=request,
-                        write=write,
-                        label=(
-                            f"{request.device.name} Ambient effect"
-                            if request.coalesce_identity.startswith("ambient-")
-                            else f"{request.device.name} Calibration preview"
-                        ),
-                        agent_display_rendered=False,
-                        completed_at=self._runtime_worker_monotonic(),
-                    )
                 if request.display_kind == _legacy.LED_DISPLAY_AGENT:
                     controller = self.agent_controller_for_device(request.device)
                     preferences = request.accessibility_preferences
@@ -870,45 +851,3 @@ def install_status_bar_production():
     """Install the production controller layer at the explicit app boundary."""
     _legacy.StatusBarController = JRStatusBarController
     return JRStatusBarController
-
-
-class _StatusBarFacade(ModuleType):
-    """Forward reads and test monkeypatches to the retained runtime module."""
-
-    def __getattr__(self, name: str):
-        return getattr(_legacy, name)
-
-    def __setattr__(self, name: str, value) -> None:
-        if name in {
-            "__all__",
-            "__class__",
-            "__doc__",
-            "__file__",
-            "__loader__",
-            "__name__",
-            "__package__",
-            "__path__",
-            "__spec__",
-        } or name.startswith("_facade_"):
-            super().__setattr__(name, value)
-            return
-        setattr(_legacy, name, value)
-
-    def __delattr__(self, name: str) -> None:
-        if name in {"__all__", "__class__"} or name.startswith("_facade_"):
-            super().__delattr__(name)
-            return
-        delattr(_legacy, name)
-
-    def __dir__(self) -> list[str]:
-        return sorted(set(super().__dir__()) | set(dir(_legacy)))
-
-
-__all__ = (
-    *(name for name in dir(_legacy) if not name.startswith("_")),
-    "JRStatusBarController",
-    "install_status_bar_production",
-)
-_facade_module = sys.modules[__name__]
-_facade_module.__class__ = _StatusBarFacade
-_facade_module.__file__ = _legacy.__file__
