@@ -137,4 +137,31 @@ struct PanelDecidedAskRenderProofTests {
         try WindowsRenderProofTests.write("panel-decided-ask", size: WindowsRenderProofTests.panelSize(store),
                                           plate: .glass) { WindowsRenderProofTests.panel(store) }
     }
+
+    @Test("the session menu offers a decided ask no verb, from the daemon or from an older one")
+    func menuOffersNothingForADecidedAsk() {
+        typealias Fixture = DecidedAskFixture
+        for ask in [Fixture.decidedAsk(), Fixture.olderDaemonDecidedAsk(),
+                    Fixture.decidedAsk(answerable: true, replyable: nil, choices: [Fixture.pick])] {
+            let verbs = SessionContextMenu.askVerbs(ask)
+            #expect(verbs == SessionContextMenu.AskMenuVerbs())
+            #expect(!verbs.any)
+        }
+    }
+
+    @Test("the session menu keeps an open ask's verbs and a held question's options and Deny")
+    func menuKeepsTheOpenVerbs() {
+        typealias Fixture = DecidedAskFixture
+        let open = SessionContextMenu.askVerbs(Fixture.openAsk())
+        #expect(open == SessionContextMenu.AskMenuVerbs(approve: true, alwaysAllow: true, deny: true))
+        let plain = SessionContextMenu.askVerbs(Fixture.openAsk(always: false))
+        #expect(plain == SessionContextMenu.AskMenuVerbs(approve: true, deny: true))
+        let question = SessionContextMenu.askVerbs(Fixture.heldQuestion())
+        #expect(question == SessionContextMenu.AskMenuVerbs(choose: true, deny: true),
+                "never a bare Approve on a question")
+        let typed = CoreAsk(session: Fixture.session, summary: "Which branch?", answerable: true, replyable: true)
+        #expect(!SessionContextMenu.askVerbs(typed).any, "a reply ask is answered in its card")
+        let sealed = CoreAsk(session: Fixture.session, summary: "Edit a file", answerable: false)
+        #expect(!SessionContextMenu.askVerbs(sealed).any, "the daemon says it cannot be answered from here")
+    }
 }

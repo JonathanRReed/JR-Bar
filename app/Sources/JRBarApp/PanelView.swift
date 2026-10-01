@@ -960,6 +960,26 @@ struct SessionContextMenu: View {
     let row: SessionRow
     @Bindable var store: PanelStore
 
+    /// Which of an ask's verbs the menu offers: `AskVerbs`' rule, the one
+    /// every other surface reads. An ask JR-Bar already answered offers
+    /// none, whatever an older daemon still says about it, and a held
+    /// question offers its options and Deny, never a bare Approve.
+    struct AskMenuVerbs: Equatable {
+        var choose = false
+        var approve = false
+        var alwaysAllow = false
+        var deny = false
+
+        var any: Bool { choose || approve || alwaysAllow || deny }
+    }
+
+    static func askVerbs(_ ask: CoreAsk, at now: Date = Date()) -> AskMenuVerbs {
+        AskMenuVerbs(choose: AskVerbs.chooses(ask, at: now),
+                     approve: AskVerbs.approves(ask),
+                     alwaysAllow: AskVerbs.alwaysAllows(ask, at: now),
+                     deny: AskVerbs.denies(ask, at: now))
+    }
+
     var body: some View {
         if row.isRemote {
             Text(row.remoteMachine.map { "Runs on \($0)" } ?? "Runs on a peer Mac")
@@ -975,21 +995,19 @@ struct SessionContextMenu: View {
         } else {
             // The card's buttons, also on the menu — behind the daemon's
             // own answerability gate, never an offer it would refuse.
-            if let ask = row.ask, ask.session != nil, AskVerbs.chooses(ask) {
-                Menu(AskChoiceLayout.menuTitle(ask.decision?.choices ?? [], picks: store.picks(for: ask))) {
-                    AskChoiceMenuItems(choices: ask.decision?.choices ?? [], picks: store.picks(for: ask),
-                                       pick: { store.pick($0, in: $1, of: ask) },
-                                       send: { store.sendPicks(ask) })
+            if let ask = row.ask, ask.session != nil {
+                let verbs = Self.askVerbs(ask)
+                if verbs.choose {
+                    Menu(AskChoiceLayout.menuTitle(ask.decision?.choices ?? [], picks: store.picks(for: ask))) {
+                        AskChoiceMenuItems(choices: ask.decision?.choices ?? [], picks: store.picks(for: ask),
+                                           pick: { store.pick($0, in: $1, of: ask) },
+                                           send: { store.sendPicks(ask) })
+                    }
                 }
-                Button("Deny") { store.deny(ask) }
-                Divider()
-            } else if let ask = row.ask, ask.canAnswer, !ask.wantsTextReply, ask.session != nil {
-                Button("Approve") { store.approve(ask) }
-                if AskVerbs.alwaysAllows(ask) {
-                    Button("Always Allow") { store.alwaysAllow(ask) }
-                }
-                Button("Deny") { store.deny(ask) }
-                Divider()
+                if verbs.approve { Button("Approve") { store.approve(ask) } }
+                if verbs.alwaysAllow { Button("Always Allow") { store.alwaysAllow(ask) } }
+                if verbs.deny { Button("Deny") { store.deny(ask) } }
+                if verbs.any { Divider() }
             }
             Button(row.terminalApp.map { "Open in \($0)" } ?? "Open session") { store.open(row) }
             if !row.activity.isClearable, row.activity != .failed {
