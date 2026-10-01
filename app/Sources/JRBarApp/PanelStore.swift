@@ -35,6 +35,12 @@ struct SessionRow: Identifiable, Equatable {
     var workersWaitingText: String? {
         workersWaiting <= 0 ? nil : (workersWaiting == 1 ? "1 worker waiting" : "\(workersWaiting) workers waiting")
     }
+    /// "1 waiting", "3 waiting": the same fact for the panel row's second
+    /// line, which has room for the model name, the workers badge and one
+    /// short phrase. The full words are in the tooltip and the spoken label.
+    var workersWaitingShortText: String? {
+        workersWaiting <= 0 ? nil : "\(workersWaiting) waiting"
+    }
     let ask: CoreAsk?
     let stale: Bool
     /// A peer's session mirrored onto this Mac (`remote:<machine>:…`):
@@ -143,7 +149,7 @@ struct SessionRow: Identifiable, Equatable {
         if let waiting = workersWaitingText {
             // Said once, in the row's tooltip: the agent shows its own
             // prompt, and JR-Bar stays quiet about it by default.
-            parts.append("\(waiting). The agent shows its own prompt; JR-Bar stays quiet because Sub-agent asks is off")
+            parts.append("\(waiting). The agent shows its own prompt, and JR-Bar stays quiet about it while the Sub-agent asks setting is off")
         }
         if let activityFact {
             parts.append("Last hook event: \(activityFact)")

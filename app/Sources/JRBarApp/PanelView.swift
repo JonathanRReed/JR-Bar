@@ -861,16 +861,20 @@ struct SessionRowView: View {
                             // The run's workers ride the model line, so the
                             // title keeps the label column's whole width.
                             CountBadge(text: "\(row.workers)", symbol: "square.stack")
-                                .help(row.workersText ?? "")
+                                .help([row.workersText, row.workersWaitingText].compactMap { $0 }.joined(separator: ", "))
                         }
-                        if let waiting = row.workersWaitingText {
+                        if let waiting = row.workersWaitingShortText {
                             // Sub-agents blocked on a request that stays
-                            // quiet (Sub-agent asks off): plain words, no
-                            // tint, no card, no verb — a fact, not an ask.
+                            // quiet (Sub-agent asks off): "1 waiting" in
+                            // plain words, no tint, no card, no verb — a
+                            // fact, not an ask. It takes the activity
+                            // fact's place, because the model name, the
+                            // workers badge and a fact already fill the
+                            // label column; the full words ride the row's
+                            // tooltip and its spoken label.
                             Text("·").foregroundStyle(.quaternary)
-                            Text(waiting).foregroundStyle(.secondary).lineLimit(1).fixedSize()
-                        }
-                        if let fact = row.activityFact {
+                            Text(waiting).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                        } else if let fact = row.activityFact {
                             // The hook's last word ("running Bash") — the
                             // row's activity made specific.
                             Text("·").foregroundStyle(.quaternary)

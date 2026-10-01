@@ -70,10 +70,18 @@ struct PanelWorkersWaitingTests {
         func text(_ waiting: Int?) -> String? {
             SessionRow(session: Self.mainRow(waiting: waiting), pinnedAsk: nil).workersWaitingText
         }
+        func short(_ waiting: Int?) -> String? {
+            SessionRow(session: Self.mainRow(waiting: waiting), pinnedAsk: nil).workersWaitingShortText
+        }
         #expect(text(nil) == nil)
         #expect(text(0) == nil)
         #expect(text(1) == "1 worker waiting")
         #expect(text(3) == "3 workers waiting")
+        // The panel row's second line has room for the short phrase only.
+        #expect(short(nil) == nil)
+        #expect(short(0) == nil)
+        #expect(short(1) == "1 waiting")
+        #expect(short(12) == "12 waiting")
     }
 
     @Test("a worker's own row and an orphan ask say nothing about waiting workers")
@@ -88,7 +96,8 @@ struct PanelWorkersWaitingTests {
         let row = SessionRow(session: Self.mainRow(waiting: 2), pinnedAsk: nil)
         let help = try #require(row.help(now: Date(timeIntervalSince1970: Self.now)))
         #expect(help.contains("2 workers waiting"))
-        #expect(help.contains("Sub-agent asks"))
+        #expect(help.contains("Sub-agent asks setting is off"))
+        #expect(!help.contains("asks is off"), "the setting's name reads as a name, not as a subject")
         let none = SessionRow(session: Self.mainRow(waiting: 0), pinnedAsk: nil)
         #expect(none.help(now: Date(timeIntervalSince1970: Self.now))?.contains("waiting") != true)
     }
