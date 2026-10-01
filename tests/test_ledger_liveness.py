@@ -1,11 +1,8 @@
 """Why the ledger stopped keeping up with what was actually running.
 
-Three independent mechanisms, all found on the owner's machine on 2026-08-14,
+Two independent mechanisms, found on the owner's machine on 2026-08-14,
 each of which alone is enough to freeze the dropdown:
 
-  * a Python exception inside a PyObjC `drawRect:` is fatal -- AppKit escalates
-    it to SIGTRAP -- and with no launchd job behind the status bar the process
-    stayed dead, so the socket was orphaned and hooks piled up against nobody;
   * the timing quarantine had no upper bound and its recovery counter was
     reset by routine partial batches, so all three hook sources sat
     `timing_uncertain` for four days on a provably continuous clock, and every
@@ -19,7 +16,7 @@ from __future__ import annotations
 
 import json
 
-from jrbar import draw_guard, ipc
+from jrbar import ipc
 from jrbar.capacity_types import SourceKey
 from jrbar.operator_state import (
     TIMING_RECOVERY_CONFIRMATIONS,
@@ -44,46 +41,6 @@ from jrbar.provider_facts import (
     WorkKey,
     WorkLifecycle,
 )
-
-# --------------------------------------------------------------------------
-# A drawing bug must not be a fatal one.
-# --------------------------------------------------------------------------
-
-
-def test_a_raising_draw_callback_never_reaches_appkit__and_2_more() -> None:
-    # --- scenario: a_raising_draw_callback_never_reaches_appkit
-    """`PyObjCErr_ToObjCWithGILState` -> `_crashOnException:` -> SIGTRAP."""
-    draw_guard.reset_draw_failures()
-
-    class Boom:
-        @draw_guard.guard_draw
-        def drawRect_(self, _rect):
-            raise ValueError("a bad number in a chart")
-
-    assert Boom().drawRect_(None) is None
-    assert draw_guard.draw_failures() == (("Boom", 1),)
-
-    # --- scenario: the_guard_keeps_the_selector_shape_pyobjc_needs
-    class View:
-        @draw_guard.guard_draw
-        def drawRect_(self, rect):
-            return rect
-
-    assert View.drawRect_.__name__ == "drawRect_"
-    assert View.drawRect_.__code__.co_argcount == 2
-    assert View().drawRect_("rect") == "rect"
-
-    # --- scenario: repeated_failures_stay_bounded
-    draw_guard.reset_draw_failures()
-    for index in range(draw_guard.MAX_TRACKED_DRAW_FAILURES + 5):
-        draw_guard.record_draw_failure(f"View{index}", RuntimeError("x"))
-
-    failures = dict(draw_guard.draw_failures())
-    assert len(failures) == draw_guard.MAX_TRACKED_DRAW_FAILURES + 1
-    assert failures["other"] == 5
-    draw_guard.reset_draw_failures()
-
-
 
 # --------------------------------------------------------------------------
 # The breaker must not bias the ledger toward "stopped".

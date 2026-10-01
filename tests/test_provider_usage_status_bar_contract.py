@@ -110,12 +110,10 @@ def test_provider_feedback_dispatch_is_extracted_behind_controller_methods() -> 
         _function(FEEDBACK_ACTIONS_MODULE, helper_name)
 
 
-def test_usage_center_and_why_panel_forward_the_user_privacy_setting() -> None:
-    source = MODULE.read_text(encoding="utf-8")
+def test_why_panel_forwards_the_user_privacy_setting() -> None:
     why_method = _method("why_panel_body")
     why_helper = _function(STATUS_PROJECTION_MODULE, "provider_usage_why_panel_body")
 
-    assert "controller.set_privacy_mode(settings.menu_display.privacy_mode)" in source
     assert _calls(why_method).count("provider_usage_why_panel_body") == 1
     assert "privacy_mode=privacy_mode" in ast.unparse(why_helper)
 

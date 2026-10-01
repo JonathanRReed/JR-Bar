@@ -144,7 +144,7 @@ def test_the_provider_host_is_one_controller_class_the_composition_installs() ->
         node.name for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ClassDef)
     }
     assert classes == {"JRProviderUsageStatusBarController"}
-    assert "openProviderUsageCenter_" in source
+    assert "openProviderUsageCenter_" not in source
 
 
 

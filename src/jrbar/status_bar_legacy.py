@@ -4414,16 +4414,6 @@ class StatusBarController(NSObject):
         return why_panel_module.panel_body(self, why_context=why_context)
 
 
-    @objc.IBAction
-    def refreshUsageCenterTick_(self, timer):
-        window = timer.userInfo()
-        if window is None or not window.isVisible():
-            timer.invalidate()
-            return
-        refresh = getattr(self, "_request_provider_usage", None)
-        if callable(refresh):
-            refresh(force=False)
-
     def _record_persistence_receipt(self, receipt: PersistenceReceipt) -> None:
         if (
             type(receipt) is PersistenceReceipt

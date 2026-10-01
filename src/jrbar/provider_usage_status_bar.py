@@ -37,7 +37,6 @@ else:
     )
     from .provider_usage_controller_actions import (
         apply_provider_usage_settings_snapshot,
-        perform_provider_usage_action,
         profile_session_action,
     )
     from .provider_usage_event_store import save_reset_delivery_state
@@ -158,11 +157,6 @@ else:
 
         def _provider_usage_log(self, message: str) -> None:
             _legacy.log_status_bar(message)
-
-        def _show_provider_usage_feedback(self, message: str) -> None:
-            from .provider_usage_feedback import show_provider_usage_feedback
-
-            show_provider_usage_feedback(self, message)
 
         def _provider_usage_ready(self, state: ProviderUsageState) -> None:
             service = self._provider_usage_service()
@@ -306,9 +300,6 @@ else:
             self._alert_new_critical_pace(previous_state, state)
             self._alert_connection_loss(previous_state, state)
             self._report_reconnect_outcome(state)
-            controller = getattr(self, "_jrbar_provider_usage_window", None)
-            if controller is not None:
-                controller.refresh(state)
             if previous_state != state and getattr(self, "_runtime_started", False):
                 self.schedule_event_refresh()
 
@@ -456,28 +447,6 @@ else:
                 status,
                 profile_session_action(self, status, action),
                 remember=remember,
-            )
-
-        @_legacy.objc.IBAction
-        def openProviderUsageCenter_(self, _sender) -> None:
-            from .provider_usage_window import ProviderUsageWindowController
-
-            settings = self._usage_menu_settings()
-            controller = getattr(self, "_jrbar_provider_usage_window", None)
-            if controller is None:
-                controller = ProviderUsageWindowController(action_target=self)
-                self._jrbar_provider_usage_window = controller
-            if settings is not None:
-                controller.set_privacy_mode(settings.menu_display.privacy_mode)
-            controller.show(self.provider_usage_state)
-
-        @_legacy.objc.IBAction
-        def usageCenterAction_(self, sender) -> None:
-            perform_provider_usage_action(
-                self,
-                sender,
-                open_center=False,
-                log=_legacy.log_status_bar,
             )
 
         @_legacy.objc.IBAction

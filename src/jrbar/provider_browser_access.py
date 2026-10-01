@@ -529,26 +529,8 @@ def perform_provider_usage_action(
     return message
 
 
-def run_provider_usage_action(
-    controller,
-    provider_id: str,
-    source_instance_id: str = "default",
-) -> bool:
-    """Controller-level wrapper kept for the legacy call sites: True when
-    the staged flow handled the click."""
-    return (
-        perform_provider_usage_action(
-            controller,
-            provider_id,
-            source_instance_id,
-        )
-        is not None
-    )
-
-
 __all__ = [
     "PROVIDER_TOKEN_PAGES",
     "handle_provider_usage_action",
     "plausible_token",
-    "run_provider_usage_action",
 ]
