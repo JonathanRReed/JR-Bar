@@ -24,6 +24,7 @@ struct NotchIslandStageTests {
         let store = ToysStore(core: core, settings: SettingsStore(core: core), state: state,
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         let toy: NotchToy = store.notch
+        toy.reduceMotion = { false }
         toy.islandVisible = true
         let window = NotchIslandWindow(toy: toy)
         window.drivesSpringByHand = true

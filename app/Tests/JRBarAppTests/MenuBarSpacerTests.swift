@@ -725,6 +725,7 @@ struct MenuBarSpacerTests {
                     return true
                 }
                 var paintedFrames: [CGRect] = []
+                var pixelWidths: [CGFloat] = []
                 for spacer in [CGFloat(150), CGFloat(0)] {
                     let image = spacer > 0
                         ? StatusItemController.folded(source, spacer: spacer, chevron: true, hintTint: .white)
@@ -765,6 +766,7 @@ struct MenuBarSpacerTests {
                         }
                     }
                     paintedFrames.append(try #require(painted))
+                    pixelWidths.append(1 / scaleX)
                     let blank = StatusItemController.boundaryRevealBounds(for: button, spacer: spacer,
                                                                            glyphWidth: glyphWidth)
                     if spacer == 0 { #expect(blank.isEmpty) }
@@ -777,8 +779,11 @@ struct MenuBarSpacerTests {
                         try png.write(to: directory.appendingPathComponent(name))
                     }
                 }
-                #expect(abs(paintedFrames[0].minX - paintedFrames[1].minX) < 0.5)
-                #expect(abs(paintedFrames[0].maxX - paintedFrames[1].maxX) < 0.5)
+                let pixelTolerance = max(pixelWidths[0], pixelWidths[1])
+                let leftDrift = abs(paintedFrames[0].minX - paintedFrames[1].minX)
+                let rightDrift = abs(paintedFrames[0].maxX - paintedFrames[1].maxX)
+                #expect(leftDrift < pixelTolerance)
+                #expect(rightDrift < pixelTolerance)
             }
         }
     }
