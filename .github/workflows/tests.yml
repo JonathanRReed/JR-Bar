@@ -122,3 +122,9 @@ jobs:
         run: |
           swift test --filter 'ScreenBarPlanQueueTests|ScreenBarAsynchronousPlanningTests'
           swift test --no-parallel --skip 'ScreenBarPlanQueueTests|ScreenBarAsynchronousPlanningTests'
+      - name: Release card and compact-wing render proofs
+        working-directory: app
+        env:
+          JRBAR_RENDER_PROOF: "1"
+          JRBAR_RENDER_PROOF_DIR: ${{ runner.temp }}/jrbar-render-proofs
+        run: swift test --skip-build --no-parallel --filter 'combinedUnderlight|wingSilhouetteStaysFixedAcrossSensorAndAccessoryChanges|releaseCardRenderProofs'

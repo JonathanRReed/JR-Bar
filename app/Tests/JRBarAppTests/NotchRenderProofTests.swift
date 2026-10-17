@@ -46,8 +46,8 @@ struct NotchRenderProofTests {
             right: right)
         view.islandFrame = CGRect(x: 157.5, y: 28, width: 185, height: 32)
         view.relayout()
-        #expect(view.rightWingRect?.width == 54)
-        #expect(view.leftWingRect?.width == 54, "both ears yield to the tighter measured claim")
+        #expect(view.rightWingRect?.width == 19)
+        #expect(view.leftWingRect?.width == 19, "both wings keep compact caps")
         view.display(colors: Array(repeating: RGB(r: 1, g: 0.25, b: 0.25), count: 8))
         view.layoutSubtreeIfNeeded()
         let context = try #require(CGContext(
@@ -93,7 +93,7 @@ struct NotchRenderProofTests {
             view.wings = wings
             view.islandFrame = CGRect(x: 157.5, y: 28, width: 185, height: 32)
             view.relayout()
-            #expect(view.leftWingRect?.width == 74 && view.rightWingRect?.width == 74)
+            #expect(view.leftWingRect?.width == 19 && view.rightWingRect?.width == 19)
             let tray = try #require(view.trayRect)
             if let baseline { #expect(tray == baseline) } else { baseline = tray }
             view.display(colors: Array(repeating: RGB(r: 0.25, g: 0.65, b: 1), count: 8))
