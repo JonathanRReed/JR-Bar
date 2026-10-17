@@ -8,10 +8,28 @@ import PackageDescription
 // an Xcode toolchain needs none of this and gets a plain manifest.
 let commandLineTools = "/Library/Developer/CommandLineTools"
 let testingMacros = commandLineTools + "/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib"
-let developerDir = ProcessInfo.processInfo.environment["DEVELOPER_DIR"] ?? ""
+let developerDir: String = {
+    if let override = ProcessInfo.processInfo.environment["DEVELOPER_DIR"], !override.isEmpty {
+        return override
+    }
+    let selection = Process()
+    selection.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+    selection.arguments = ["-p"]
+    let output = Pipe()
+    selection.standardOutput = output
+    selection.standardError = FileHandle.nullDevice
+    do {
+        try selection.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        selection.waitUntilExit()
+        guard selection.terminationStatus == 0 else { return "" }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    } catch {
+        return ""
+    }
+}()
 let usingCommandLineToolsOnly = FileManager.default.fileExists(atPath: testingMacros)
-    && (developerDir.isEmpty || developerDir.hasPrefix(commandLineTools))
-    && !FileManager.default.fileExists(atPath: "/Applications/Xcode.app/Contents/Developer/usr/bin/swift")
+    && (developerDir == commandLineTools || developerDir.hasPrefix(commandLineTools + "/"))
 
 var testSwiftSettings: [SwiftSetting] = []
 var testLinkerSettings: [LinkerSetting] = []
