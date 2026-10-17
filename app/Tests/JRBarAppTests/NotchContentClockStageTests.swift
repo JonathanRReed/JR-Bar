@@ -185,7 +185,9 @@ struct NotchContentClockStageTests {
         window.advanceSpring(by: 1.0 / 120)
         window.advanceSpring(by: 1.0 / 60)
         #expect(seen.count == 2)
-        #expect(seen.map(\.1) == [1.0 / 120, 1.0 / 60])
+        let actualTicks = seen.map(\.1)
+        let expectedTicks: [TimeInterval] = [1.0 / 120.0, 1.0 / 60.0]
+        #expect(actualTicks == expectedTicks)
         #expect(seen[1].0 > seen[0].0)
     }
 }
