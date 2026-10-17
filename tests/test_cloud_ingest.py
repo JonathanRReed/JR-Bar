@@ -1105,13 +1105,16 @@ def test_a_client_that_never_finishes_its_headers_is_hung_up_on_at_the_deadline(
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     thread.start()
     try:
-        slow = socket.create_connection(server.server_address, timeout=10.0)
-        slow.sendall(b"POST /x HTTP/1.0\r\nHost: x\r\n")  # the headers never end
-        assert armed.wait(timeout=5.0)
-        fired[0].function(*fired[0].args)
-        slow.settimeout(5.0)
-        assert slow.recv(4096) == b""
-        slow.close()
+        with socket.create_connection(server.server_address, timeout=10.0) as slow:
+            slow.sendall(b"POST /x HTTP/1.0\r\nHost: x\r\n")  # the headers never end
+            assert armed.wait(timeout=5.0)
+            fired[0].function(*fired[0].args)
+            slow.settimeout(5.0)
+            try:
+                response = slow.recv(4096)
+            except ConnectionResetError:
+                response = b""
+            assert response == b""
     finally:
         server.shutdown()
         server.server_close()
