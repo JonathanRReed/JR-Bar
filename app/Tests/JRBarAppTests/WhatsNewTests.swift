@@ -140,12 +140,11 @@ import Testing
     @Test func releaseCardRenderProofs() throws {
         guard ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" else { return }
         let card = WhatsNewView(entries: WhatsNewCatalog.entries, tryIt: { _ in nil }, onDone: {})
-            .environment(\.accessibilityReduceMotion, true)
         let hosting = NSHostingController(rootView: card)
         let size = WhatsNewWindowController.contentSize(of: hosting)
         for dark in [false, true] {
             try ProofRender.write(card, size: size, name: "whats-new-\(dark ? "dark" : "light")",
-                                  dark: dark, settle: 0)
+                                  dark: dark)
         }
     }
 
