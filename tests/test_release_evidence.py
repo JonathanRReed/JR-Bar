@@ -576,6 +576,7 @@ def test_manifest_rejects_non_monotonic_upgrade_claims(
         ("0.5.0-beta.10", "0.5.0-rc.1"),
         ("0.5.0-rc.2", "0.5.0"),
         ("1.9", "1.10"),
+        ("0.9.17", "0.9.17.1"),
     ),
 )
 def test_version_comparator_accepts_numeric_and_prerelease_upgrades(
@@ -591,6 +592,7 @@ def test_version_comparator_accepts_numeric_and_prerelease_upgrades(
         ("0.5.0", "0.5.0"),
         ("0.5", "0.5.0"),
         ("0.5.1", "0.5.0"),
+        ("0.9.17.1", "0.9.17"),
         ("0.5.0", "0.5.0-rc.1"),
         ("0.5.0-rc.2", "0.5.0-beta.9"),
         ("0.5.0-beta.10", "0.5.0-beta.2"),

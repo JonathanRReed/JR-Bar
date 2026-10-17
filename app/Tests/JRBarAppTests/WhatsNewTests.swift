@@ -53,14 +53,6 @@ import Testing
         }
     }
 
-    @Test func theAquariumAndDotRowsOpenTheThingItself() {
-        let tankRow = WhatsNewCatalog.entries.first { $0.id == "aquarium" }
-        let dotRow = WhatsNewCatalog.entries.first { $0.id == "dot" }
-        #expect(tankRow?.tryIt == .aquarium)
-        #expect(tankRow?.opens == "Opens the Aquarium")
-        #expect(dotRow?.tryIt == .settings(page: "devices"))
-    }
-
     /// A Settings Try it lands on a page that exists, so the link
     /// never falls back to whatever page was open last.
     @Test func everySettingsTryItNamesAKnownPage() {
@@ -140,9 +132,21 @@ import Testing
             entries: WhatsNewCatalog.entries, tryIt: { _ in nil }, onDone: {}))
         let size = WhatsNewWindowController.contentSize(of: hosting)
         #expect(size.width == WhatsNewView.width)
-        #expect(size.height > 400, "eight rows, a header and Done: \(size.height)")
+        #expect(size.height > 300, "the header, release rows and Done fit: \(size.height)")
         #expect(size.height < 760, "the card fits a laptop screen: \(size.height)")
         #expect(WhatsNewView.versionLine(bundle: Bundle(for: WhatsNewWindowController.self)).isEmpty == false)
+    }
+
+    @Test func releaseCardRenderProofs() throws {
+        guard ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" else { return }
+        let card = WhatsNewView(entries: WhatsNewCatalog.entries, tryIt: { _ in nil }, onDone: {})
+            .environment(\.accessibilityReduceMotion, true)
+        let hosting = NSHostingController(rootView: card)
+        let size = WhatsNewWindowController.contentSize(of: hosting)
+        for dark in [false, true] {
+            try ProofRender.write(card, size: size, name: "whats-new-\(dark ? "dark" : "light")",
+                                  dark: dark, settle: 0)
+        }
     }
 
     @Test func theWindowIsAsTallAsTheCardAndStaysSoAcrossAReopen() {

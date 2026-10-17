@@ -379,11 +379,9 @@ final class MenuBarItemHider {
     /// The bar shifts left for a few seconds when macOS shows its
     /// screen-recording indicator (every Dock thumbnail capture); a
     /// spacer that chased it shrank, the indicator left, the spacer
-    /// grew — a reflow each way, several times a preview. Overflowed
-    /// for the shift's few seconds, the boundary and everything left
-    /// of it simply sit in macOS's own overflow, and come back on
-    /// their own when the bar shifts back. Nothing reappears: the
-    /// overflow is the run's tail, and the boundary heads it.
+    /// grew — a reflow each way, several times a preview. Keep that
+    /// hold while the icon is visible. Fresh native overflow over its
+    /// glyph bypasses the hold so the app's own control stays reachable.
     nonisolated static let shrinkHold: TimeInterval = 5.0
 
     /// Starts the reconcile cadence and the AX refresh loop. Safe to
@@ -884,7 +882,20 @@ final class MenuBarItemHider {
             lastConcealedLength = length
             lastConcealedEdgeKey = edgeKey()
         }
-        if let length = plan.hiddenControlLength, !settling || writeAtOnce { request(length) }
+        if let length = plan.hiddenControlLength, !settling || writeAtOnce {
+            // A shifted reservation may put our own icon in native overflow.
+            // Keep damping ordinary shifts, but restore an obscured icon from
+            // a post-write listing without teaching a permanent fit edge.
+            if !settling, showing, barIsVisible(), hasFreshControlListing,
+               !open.contains(.hidden), let hidden = controls.hidden,
+               hidden.intersects(row), let restMaxX, hidden.maxX < restMaxX - 2,
+               let standing = assignedLengths[.hidden], length.rounded() < standing,
+               Self.controlOverflowed(controlFrame: hidden, items: items, row: row,
+                                      glyph: controls.hiddenGlyph) {
+                writeAtOnce = true
+            }
+            request(length)
+        }
         onPlan?(plan)
         updateShutters(plan: plan, row: row, open: open)
         checkIcon(controls: controls, row: row, items: items, showing: showing)

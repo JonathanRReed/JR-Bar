@@ -845,6 +845,43 @@ struct MenuBarTests {
     }
 
     @MainActor
+    @Test("crossing the hidden space never completes a stationary hover dwell")
+    func movingAcrossBlankSpaceDoesNotReveal() {
+        let h = RevealHarness()
+        h.reveal.hoverDwell = 0.18
+        h.point = NSPoint(x: 400, y: 965)
+        h.reveal.pollHover()
+        for _ in 0..<8 {
+            h.time += 0.1
+            h.point.x += 12
+            h.reveal.pollHover()
+        }
+        #expect(h.reveals == 0)
+        h.time += 0.19
+        h.reveal.pollHover()
+        #expect(h.reveals == 1, "resting in the blank space still reveals at the configured delay")
+        h.time += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 1)
+    }
+
+    @MainActor
+    @Test("small pointer tremor does not prevent a deliberate hover reveal")
+    func hoverDwellAllowsSmallTremor() {
+        let h = RevealHarness()
+        h.reveal.hoverDwell = 0.18
+        h.point = NSPoint(x: 400, y: 965)
+        h.reveal.pollHover()
+        h.time += 0.1
+        h.point.x += 1
+        h.reveal.pollHover()
+        h.time += 0.1
+        h.point.x += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 1)
+    }
+
+    @MainActor
     @Test("hover admission and ownership share one pointer sample")
     func hoverUsesOnePoint() {
         let h = RevealHarness()

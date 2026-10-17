@@ -2,6 +2,12 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.17.1
+
+- Clicking the JR-Bar icon opens the main panel when macOS reports a centered status-item event.
+- JR-Bar restores its icon sooner when a menu-bar shift pushes it into native overflow.
+- Hover reveal waits for the pointer to rest, avoiding brief reveals while crossing the hidden space.
+
 ## 0.9.17
 
 JR-Bar 0.9.17 improves the Notch, menu bar, usage tracking and lighting, with new provider connections and fixes throughout the utilities and toys.

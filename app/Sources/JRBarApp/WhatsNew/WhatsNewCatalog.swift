@@ -33,52 +33,29 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "0.9.17"
+    static let releaseID = "0.9.17.1"
 
     /// The header's one line.
-    static let headline = "Steady provider turns, clearer quotas, and controls within reach."
+    static let headline = "Menu-bar access and hover fixes."
 
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
 
     static let entries: [WhatsNewEntry] = [
         WhatsNewEntry(
-            id: "provider-turns", symbol: "arrow.triangle.2.circlepath",
-            title: "Providers take steady turns",
-            detail: "Working providers take three-second turns; one stays still, and waiting asks keep priority."),
+            id: "menu-panel", symbol: "menubar.rectangle",
+            title: "Main panel access",
+            detail: "The JR-Bar icon opens the main panel with usage and Settings.",
+            tryIt: .panel(toggle: false), opens: "Opens the main panel"),
         WhatsNewEntry(
-            id: "quota-evidence", symbol: "chart.bar",
-            title: "Inspect each quota window",
-            detail: "Inspect a ring's reading, reset and forecast, then compare recent pace with its budget.",
-            tryIt: .window(.usage), opens: "Opens Usage, where the provider cards are"),
+            id: "menu-recovery", symbol: "arrow.triangle.2.circlepath",
+            title: "Icon recovery",
+            detail: "Shortens the delay when macOS briefly hides JR-Bar during a menu-bar shift.",
+            tryIt: .settings(page: "utilities"), opens: "Opens Utilities & Toys"),
         WhatsNewEntry(
-            id: "hook-health", symbol: "checkmark.circle",
-            title: "Recheck hook health",
-            detail: "Recheck the receiver and provider configuration, with failures and old reports clearly labeled.",
-            tryIt: .settings(page: "agents"), opens: "Opens Settings › Agents"),
-        WhatsNewEntry(
-            id: "notch-controls", symbol: "timer",
-            title: "Keep notch controls nearby",
-            detail: "Now keeps unanswered requests actionable and shows a timer; Clear Shelf offers Undo."),
-        WhatsNewEntry(
-            id: "aquarium", symbol: "fish",
-            title: "Aquarium Live or Still",
-            detail: "Pause visual motion and inspect fish from a menu while sessions and rewards keep updating.",
-            tryIt: .aquarium, opens: "Opens the Aquarium"),
-        WhatsNewEntry(
-            id: "dot", symbol: "light.strip.2",
-            title: "Device reports stay honest",
-            detail: "Disconnected devices label their last report, and calibration keeps refusals visible.",
-            tryIt: .settings(page: "devices"), opens: "Opens Settings › Devices, where Pro & Dot is"),
-        WhatsNewEntry(
-            id: "utility-controls", symbol: "moon.zzz",
-            title: "More useful utility controls",
-            detail: "Use one-time Awake sessions, Dock exclusions, and clearer menu-bar hiding status."),
-        WhatsNewEntry(
-            id: "reply-feedback", symbol: "text.bubble",
-            title: "Reply feedback stays nearby",
-            detail: "Refused or unconfirmed replies retain the draft and explain the outcome in the sheet.",
-            tryIt: .window(.overview), opens: "Opens Agent Overview"),
+            id: "hover-intent", symbol: "cursorarrow",
+            title: "Reveal after a pause",
+            detail: "Hover reveal waits for the pointer to rest before showing hidden icons."),
     ]
 }
 

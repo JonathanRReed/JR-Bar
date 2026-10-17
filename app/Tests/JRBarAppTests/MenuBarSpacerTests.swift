@@ -255,7 +255,7 @@ struct MenuBarSpacerTests {
     }
 
     @MainActor
-    @Test("a bar that shifted left under the same length is held, not chased — and teaches nothing")
+    @Test("a visible shifted icon keeps the shrink hold and teaches nothing")
     func shiftIsHeld() {
         var t = Date()
         @Captured var frames = controls
@@ -263,20 +263,19 @@ struct MenuBarSpacerTests {
         @Captured var generation = 0
         let store = MenuBarMemoryFitEdgeStore()
         let (hider, writes) = makeHider(controls: { frames }, store: store)
+        hider.listingIsScanned = { false }
         hider.listItems = { items }
         hider.listingGeneration = { generation }
         hider.now = { t }
+        defer { hider.stop() }
         settle(hider)
         #expect(writes().map(\.1) == [122])
         // The spacer landed: 902–1024.
         frames.hidden = CGRect(x: 902, y: 0, width: 122, height: 24)
         generation += 1
         hider.reconcile()
-        // macOS shows its recording indicator beside the clock: the whole
-        // bar shifts left 56 points, our item with it, and the « lands
-        // on our glyph because we no longer fit.
+        // The whole bar shifts left, but our glyph remains visible.
         frames.hidden = CGRect(x: 846, y: 0, width: 122, height: 24)
-        items = [item("«", owner: "MenuBarAgent", x: 1000, w: 17, overflow: true)]
         for _ in 0..<4 {
             t += 1.1
             generation += 1
@@ -298,6 +297,75 @@ struct MenuBarSpacerTests {
         t += MenuBarItemHider.shrinkHold + 0.5
         settle(hider)
         #expect(writes().last?.1 == 66)
+    }
+
+    @MainActor
+    @Test("a fresh overflow over a shifted icon shortens its reservation immediately")
+    func shiftedOverflowRestoresIcon() {
+        var t = Date()
+        @Captured var frames = controls
+        @Captured var items: [MenuBarItem] = []
+        let (hider, writes) = makeHider(controls: { frames })
+        hider.listingIsScanned = { false }
+        hider.barShowing = { true }
+        hider.barIsVisible = { true }
+        hider.listItems = { items }
+        hider.now = { t }
+        defer { hider.stop() }
+        settle(hider)
+        #expect(writes().map(\.1) == [122])
+        frames.hidden = CGRect(x: 846, y: 0, width: 122, height: 24)
+        items = [item("«", owner: "MenuBarAgent", x: 948, w: 17, overflow: true)]
+        t += 0.1
+        hider.reconcile()
+        #expect(writes().map(\.1) == [122, 66])
+        #expect(hider.learnedFitEdge == nil)
+    }
+
+    @MainActor
+    @Test("an older in-flight scan cannot shorten a shifted reservation before reflow refresh")
+    func shiftedOverflowWaitsForFreshRevision() async {
+        var t = Date()
+        @Captured var frames = controls
+        @Captured var items: [MenuBarItem] = []
+        @Captured var generation = 10
+        var release: CheckedContinuation<Void, Never>?
+        let (hider, writes) = makeHider(controls: { frames })
+        hider.listingIsScanned = { true }
+        hider.listingGeneration = { generation }
+        hider.barShowing = { true }
+        hider.barIsVisible = { true }
+        hider.listItems = { items }
+        hider.now = { t }
+        hider.settleSleep = { _ in }
+        hider.refreshListingAfterReflow = {
+            await withCheckedContinuation { release = $0 }
+            return true
+        }
+        defer { hider.stop(); release?.resume() }
+        settle(hider)
+        #expect(writes().map(\.1) == [122])
+        frames.hidden = CGRect(x: 846, y: 0, width: 122, height: 24)
+        items = [item("«", owner: "MenuBarAgent", x: 948, w: 17, overflow: true)]
+        generation += 1
+        t += 0.1
+        hider.reconcile()
+        #expect(!hider.hasFreshControlListing)
+        #expect(writes().map(\.1) == [122])
+        for _ in 0..<10_000 {
+            if release != nil { break }
+            await Task.yield()
+        }
+        #expect(release != nil)
+        let pending = release
+        release = nil
+        pending?.resume()
+        for _ in 0..<10_000 {
+            if writes().count == 2 { break }
+            await Task.yield()
+        }
+        #expect(writes().map(\.1) == [122, 66])
+        #expect(hider.learnedFitEdge == nil)
     }
 
     @MainActor

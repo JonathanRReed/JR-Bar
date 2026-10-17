@@ -125,9 +125,8 @@ final class MenuBarReveal {
     /// The poll's last inside-ness — entry is the gesture, not presence.
     private var hoverInside = false
     private var lastHoverPoint: NSPoint?
-    /// The dwell deadline a zone entry arms — the reveal answers only
-    /// when the pointer is still inside at the deadline.
-    private var hoverDwellDeadline: Date?
+    /// The pointer must stay near this point until the deadline.
+    private var pendingHover: (point: NSPoint, deadline: Date)?
     /// The last gesture, including one that only extended the reveal.
     private var lastGestureAt = Date.distantPast
 
@@ -158,6 +157,8 @@ final class MenuBarReveal {
     /// gesture. Two polls at the near cadence; an instance property so
     /// a test can pin the old fire-on-entry timing.
     nonisolated static let defaultHoverDwell: TimeInterval = MenuBarSettings.defaultHoverRevealSeconds
+    /// Small pointer tremor still counts as resting.
+    nonisolated static let hoverRestSlop: CGFloat = 3
     private var hoverDwellOverride: TimeInterval?
     var hoverDwell: TimeInterval {
         get { hoverDwellOverride ?? MenuBarSettings.clampedHoverReveal(settings().hoverRevealSeconds) }
@@ -256,7 +257,7 @@ final class MenuBarReveal {
     }
 
     private func keepPollingThroughDwell() {
-        guard moveToken != nil, hoverTimer == nil, hoverDwellDeadline != nil else { return }
+        guard moveToken != nil, hoverTimer == nil, pendingHover != nil else { return }
         let timer = Timer(timeInterval: Self.hoverPollInterval, repeats: false, block: { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -316,7 +317,7 @@ final class MenuBarReveal {
         // Entry is learned afresh on the way back.
         hoverInside = false
         lastHoverPoint = nil
-        hoverDwellDeadline = nil
+        pendingHover = nil
     }
 
     func unpark(_ reason: ParkReason) {
@@ -381,7 +382,7 @@ final class MenuBarReveal {
         guard settings().revealOnHover else {
             hoverInside = false
             lastHoverPoint = nil
-            hoverDwellDeadline = nil
+            pendingHover = nil
             return Self.idlePollInterval
         }
         pollHover()
@@ -405,7 +406,7 @@ final class MenuBarReveal {
         holdOpen = false
         hoverInside = false
         lastHoverPoint = nil
-        hoverDwellDeadline = nil
+        pendingHover = nil
         lastGestureAt = .distantPast
     }
 
@@ -532,7 +533,7 @@ final class MenuBarReveal {
         lastHoverPoint = point
         if gestureOwnedElsewhere(point) {
             hoverInside = false
-            hoverDwellDeadline = nil
+            pendingHover = nil
             return
         }
         let inZone = admitsReveal(at: point)
@@ -541,7 +542,7 @@ final class MenuBarReveal {
             // the pointer still resting where the drop landed is not an
             // entry once it lifts; a fresh entry waits the full dwell.
             hoverInside = inZone
-            hoverDwellDeadline = nil
+            pendingHover = nil
             return
         }
         // Divider and item reflow is not pointer intent. Keep the entry
@@ -550,18 +551,17 @@ final class MenuBarReveal {
         let entered = inZone && !hoverInside
         hoverInside = inZone
         guard inZone else {
-            hoverDwellDeadline = nil
+            pendingHover = nil
             return
         }
-        if entered {
-            // A graze on the way to the clock is not a gesture — the
-            // zone must be dwelt in before the reveal answers. The
-            // deadline is read on this and later polls, so no extra
-            // timer; a zero dwell (tests) fires on entry as before.
-            hoverDwellDeadline = now().addingTimeInterval(hoverDwell)
+        let drifted = pendingHover.map {
+            max(abs(point.x - $0.point.x), abs(point.y - $0.point.y)) > Self.hoverRestSlop
+        } ?? false
+        if entered || drifted {
+            pendingHover = (point, now().addingTimeInterval(hoverDwell))
         }
-        guard let deadline = hoverDwellDeadline, now() >= deadline else { return }
-        hoverDwellDeadline = nil
+        guard let pending = pendingHover, now() >= pending.deadline else { return }
+        pendingHover = nil
         pointerEnteredRow(at: point)
     }
 

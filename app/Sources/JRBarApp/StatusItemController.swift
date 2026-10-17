@@ -970,11 +970,12 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             return
         }
         let secondary = event?.type == .rightMouseUp || event?.modifierFlags.contains(.option) == true
+        let screenPoint = NSEvent.mouseLocation
         // Only blank space strictly left of the chevron reveals, whichever button.
-        if let event, let button = statusItem.button, boundarySpacer > 0 {
-            let point = button.convert(event.locationInWindow, from: nil)
+        if let event, let button = statusItem.button, boundarySpacer > 0,
+           let point = Self.clickPoint(button: button, screenPoint: screenPoint) {
             let x = point.x
-            Self.log.debug("status click: x=\(x, privacy: .public) spacer=\(self.boundarySpacer, privacy: .public) win=\(event.locationInWindow.x, privacy: .public) type=\(event.type.rawValue, privacy: .public)")
+            Self.log.debug("status click: x=\(x, privacy: .public) spacer=\(self.boundarySpacer, privacy: .public) win=\(event.locationInWindow.x, privacy: .public) type=\(event.type.rawValue, privacy: .public) pointerX=\(screenPoint.x, privacy: .public) width=\(button.bounds.width, privacy: .public)")
             if boundaryBlankBounds(for: button).contains(point) {
                 onBoundaryClick?()
                 return
@@ -988,6 +989,12 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         } else {
             onTogglePanel?()
         }
+    }
+
+    static func clickPoint(button: NSButton, screenPoint: NSPoint) -> NSPoint? {
+        guard let window = button.window else { return nil }
+        // Native status actions can report the whole item's center instead of the click.
+        return button.convert(window.convertPoint(fromScreen: screenPoint), from: nil)
     }
 
     /// The rows that depend on the moment: the hidden items, and Creator
