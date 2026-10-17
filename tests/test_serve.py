@@ -781,13 +781,16 @@ def test_a_client_that_never_finishes_its_headers_is_hung_up_on_at_the_deadline(
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
     thread.start()
     try:
-        slow = socket.create_connection(server.server_address, timeout=10.0)
-        slow.sendall(b"GET /status.json HTTP/1.1\r\nHost: x\r\n")  # headers never end
-        assert _ManualTimer.armed.wait(timeout=5.0), "the connection armed a deadline"
-        _ManualTimer.created[0].fire()
-        slow.settimeout(5.0)
-        assert slow.recv(4096) == b"", "the server closed the connection"
-        slow.close()
+        with socket.create_connection(server.server_address, timeout=10.0) as slow:
+            slow.sendall(b"GET /status.json HTTP/1.1\r\nHost: x\r\n")  # headers never end
+            assert _ManualTimer.armed.wait(timeout=5.0), "the connection armed a deadline"
+            _ManualTimer.created[0].fire()
+            slow.settimeout(5.0)
+            try:
+                response = slow.recv(4096)
+            except ConnectionResetError:
+                response = b""
+            assert response == b"", "the server closed the connection"
 
         # A normal request disarms its deadline once the headers are read.
         _ManualTimer.created.clear()
