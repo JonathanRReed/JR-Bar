@@ -221,7 +221,10 @@ final class MenuBarScriptRunner: @unchecked Sendable {
         if let failure = setup.first(where: { $0 != 0 }) {
             throw OutcomeError(outcome: .launchFailed(errno: failure))
         }
-        let arguments = ["/bin/sh", "-c", command].map { strdup($0) }
+        let argumentStrings: [String] = ["/bin/sh", "-c", command]
+        let arguments = argumentStrings.map { argument in
+            argument.withCString { strdup($0) }
+        }
         defer { for argument in arguments { free(argument) } }
         var argv = arguments + [nil]
         var pid: pid_t = 0
