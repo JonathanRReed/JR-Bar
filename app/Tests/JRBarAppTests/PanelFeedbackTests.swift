@@ -5,9 +5,8 @@ import SwiftUI
 import Testing
 @testable import JRBarApp
 
-/// Feedback you can see: a line that did not come from a panel click is
-/// said where someone will read it, and a toast with a button wraps
-/// rather than cut its reason off.
+/// Feedback reaches the visible panel, palette or HUD. Long toast
+/// messages wrap with or without an action button.
 @Suite("Panel feedback")
 @MainActor
 struct PanelFeedbackTests {
@@ -23,13 +22,16 @@ struct PanelFeedbackTests {
         NSHostingView(rootView: toast.frame(width: CGFloat(PanelLayout.width))).fittingSize.height
     }
 
-    @Test("a long toast with a button wraps to a second line; one without stays on one")
+    @Test("long toast messages wrap to two lines with or without an action")
     func actionToastWraps() {
-        let text = "The agent's permission hook refused that answer — its setting has to allow answers from JR-Bar"
+        let text = "The agent's permission hook refused that answer. Its setting has to allow answers from JR-Bar."
         let plain = height(ToastView(text: text, reduced: true))
-        let short = height(ToastView(text: "Quiet ended", action: (title: "Undo", run: {}), reduced: true))
+        let short = height(ToastView(text: "Quiet ended", reduced: true))
+        let shortAction = height(ToastView(text: "Quiet ended", action: (title: "Undo", run: {}), reduced: true))
         let wrapped = height(ToastView(text: text, action: (title: "Open Settings", run: {}), reduced: true))
-        #expect(plain == short, "one line either way")
-        #expect(wrapped > plain, "the reason wraps rather than truncate: \(wrapped) vs \(plain)")
+        #expect(short == shortAction, "short feedback stays on one line")
+        #expect(plain > short, "long feedback wraps without a button")
+        #expect(wrapped > shortAction, "long feedback wraps beside its button")
+        #expect(wrapped == plain, "both long messages use the same two-line height")
     }
 }

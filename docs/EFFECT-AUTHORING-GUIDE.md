@@ -117,6 +117,18 @@ for number. Change the Python gate, regenerate with
 `.venv/bin/python app/scripts/gen_leds_fixtures.py --compiler-only`, and port the
 change until the Swift suites pass.
 
+### How bright the strip really is
+
+The strip drives each channel at the colour byte times `brightness N`, so a
+dim colour under a low brightness reaches the LEDs at a few codes out of 255.
+At one or two codes the green die's extra efficiency decides the hue, and
+whatever you painted reads as a faint green. When a Working, Ask, Done or Failed
+program is written to a strip, JR-Bar raises `brightness` (and only
+`brightness`, so your colour ratios stay exact) until the brightest channel
+emits at least 12 codes; an idle whisper is held at 3, the lowest level that
+still has a hue. `brightness 0` is never touched. The Screen Bar is not
+affected, and neither is a linked Dot.
+
 ### Writing a shape that stays smooth
 
 `src/jrbar/motion_shapes.py` holds the geometry every JR-Bar animation is
@@ -174,7 +186,7 @@ The runtime owner composes routing, finite planning, admission and power policy,
 5. If distributing a pack, validate data-only safety, accessibility metadata, namespaced IDs, local fallbacks, collision behavior, and pack-level licensing. Include a safe preview descriptor and retain attribution.
 6. Add history assertions for shown, suppressed, acknowledged, and expired outcomes where the runtime uses the new effect.
 7. Add settings preview coverage, including unsupported surfaces, missing effects, invalid parameters, Reduce Motion, high contrast, and physical-preview consent.
-8. Run the targeted effect registry, semantic router, finite policy, pack, history, studio, runtime, and accessibility tests, then perform a rendered UI check. This documentation-only change did not run tests.
+8. Run the targeted effect registry, semantic router, finite policy, pack, history, studio, runtime, and accessibility tests, then perform a rendered UI check.
 
 ## Verification map
 

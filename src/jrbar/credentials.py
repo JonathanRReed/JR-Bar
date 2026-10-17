@@ -6,9 +6,9 @@ Every provider that needs a token comes through here, for three reasons.
 item raises a system dialog naming this app. A background refresh loop that
 does that is indistinguishable from malware, and after the first "Deny" it
 would ask again on the next tick, forever. A background read is allowed only
-after an explicit user action recorded a standing grant, and it uses a short
-non-prompting timeout. A denial earns an escalating cooldown that survives
-restarts.
+after an explicit user action recorded a successful read. An isolated reader
+disables Keychain interaction before background access. A denial earns an
+escalating cooldown that survives restarts.
 
 **Secrets must not leak into diagnostics.** This module returns a secret to
 its caller and does nothing else with it -- no logging, no error text, no
@@ -28,20 +28,21 @@ import binascii
 import json
 import os
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Final
 
+from .keychain_read import EXIT_INTERACTION_REQUIRED, EXIT_UNAVAILABLE
 from .private_io import atomic_private_write, read_private_text
 
 # `security` exits 128 when the user dismisses or denies the access dialog.
 _SECURITY_USER_CANCELED = 128
 #: One budget per kind of call, because they block on different things.
 #: A dialog the user must answer legitimately takes seconds. A background
-#: read must not park a worker thread for half a minute if the ACL has
-#: drifted and `security` decides to prompt anyway (2026-08-27 mining).
+#: read is noninteractive and must also have a bounded process lifetime.
 _SECURITY_PROMPT_TIMEOUT_SECONDS = 30.0
 _SECURITY_BACKGROUND_TIMEOUT_SECONDS = 2.0
 # Codex writes plain JSON; a real one is a few KB. Anything larger is not it.
@@ -134,13 +135,11 @@ class KeychainConsentLedger:
         return deadline
 
     def record_success(self, service: str, now: float) -> None:
-        """A consented read succeeded: remember the standing grant.
+        """A read succeeded: retain permission for noninteractive attempts.
 
-        macOS makes later reads by this same signed binary silent once
-        the user clicks Always Allow -- this stamp is what authorizes
-        BACKGROUND re-reads (allow_prompt=False) to try at all. Cleared
-        by a later denial, so a revoked grant falls back to
-        foreground-only on the next refusal.
+        The stamp cannot distinguish Allow from Always Allow. Background
+        reads must still prohibit interaction at the operating-system API.
+        A later explicit denial clears this record.
         """
         payload = self._read()
         payload[service] = {"granted_at": float(now)}
@@ -168,14 +167,18 @@ class KeychainConsentLedger:
             pass
 
 
-def _run_security(
+def _run_keychain_reader(
     item: KeychainItem,
     *,
     timeout: float = _SECURITY_PROMPT_TIMEOUT_SECONDS,
+    allow_prompt: bool,
 ) -> subprocess.CompletedProcess:
-    arguments = ["/usr/bin/security", "find-generic-password", "-w", "-s", item.service]
+    # The frozen daemon supports -m too. Both paths use the same signed reader.
+    arguments = [sys.executable, "-m", "jrbar.keychain_read", "--service", item.service]
     if item.account:
-        arguments += ["-a", item.account]
+        arguments += ["--account", item.account]
+    if allow_prompt:
+        arguments.append("--allow-prompt")
     return subprocess.run(
         arguments,
         capture_output=True,
@@ -215,8 +218,9 @@ def read_keychain_secret(
         if runner is not None:
             completed = runner(item)
         else:
-            completed = _run_security(
+            completed = _run_keychain_reader(
                 item,
+                allow_prompt=allow_prompt,
                 timeout=(
                     _SECURITY_PROMPT_TIMEOUT_SECONDS
                     if allow_prompt
@@ -233,7 +237,11 @@ def read_keychain_secret(
         if ledger is not None:
             ledger.record_success(item.service, reference)
         return CredentialResult(CredentialOutcome.OK, secret=secret)
-    if completed.returncode == _SECURITY_USER_CANCELED:
+    if completed.returncode == EXIT_UNAVAILABLE:
+        return CredentialResult(CredentialOutcome.UNAVAILABLE)
+    if completed.returncode == EXIT_INTERACTION_REQUIRED and not allow_prompt:
+        return CredentialResult(CredentialOutcome.PROMPT_NOT_ALLOWED)
+    if completed.returncode in (_SECURITY_USER_CANCELED, EXIT_INTERACTION_REQUIRED):
         deadline = (
             ledger.record_denial(item.service, reference)
             if ledger is not None

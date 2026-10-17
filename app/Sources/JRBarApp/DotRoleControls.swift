@@ -1,7 +1,7 @@
 import JRBarCore
 import SwiftUI
 
-/// Settings › Devices & Screen Bar: what the linked Dot is for
+/// Settings › Devices & Lighting: what the linked Dot is for
 /// (`dot_role`, `dot_role_include_completions`; `docs/CORE-PROTOCOL.md`,
 /// "The Dot's role"). The picker and the toggle live in the Dot's own card
 /// when the document has a Dot; the Pro + Dot section then shows only the
@@ -35,6 +35,7 @@ struct DotRoleControls: View {
     private var readout: DotRoleReadout {
         DotRoleReadout.make(chosen: chosen, includeCompletions: includeCompletions, linked: linked,
                             link: link, lidClosed: lidClosed,
+                            live: store.isLive,
                             dot: store.dotSurface)
     }
 
@@ -61,9 +62,9 @@ struct DotRoleControls: View {
                 }
                 .disabled(linkOff || !chosen.usesCompletions)
             }
-            DotRoleReadoutRow(readout: readout, program: store.dotSurface?.program, compact: false)
+            DotRoleReadoutRow(readout: readout, program: store.isLive ? store.dotSurface?.program : nil, compact: false)
         } else {
-            DotRoleReadoutRow(readout: readout, program: store.dotSurface?.program, compact: true)
+            DotRoleReadoutRow(readout: readout, program: store.isLive ? store.dotSurface?.program : nil, compact: true)
         }
     }
 }
@@ -112,7 +113,7 @@ struct DotRoleReadoutRow: View {
                             }
                         }
                         .frame(width: 56, height: 26)
-                        .accessibilityLabel("The Dot is dark")
+                        .accessibilityLabel("No Dot program reported")
                 }
             }
         } label: {

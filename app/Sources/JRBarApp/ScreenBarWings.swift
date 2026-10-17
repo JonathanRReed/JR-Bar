@@ -34,10 +34,21 @@ struct ScreenBarWingSlot: Equatable {
         case attention
         /// Failed is red.
         case alert
+
+        /// How loudly the ear speaks: a dismissal never outlasts a louder one.
+        var urgency: Int {
+            switch self {
+            case .neutral: return 0
+            case .attention: return 1
+            case .alert: return 2
+            }
+        }
     }
 
     var text: String
     var provider: String?
+    /// A working provider activity selected by the activity carousel.
+    var workingActivity = false
     /// An SF Symbol leading the words instead of a provider glyph —
     /// "bolt.fill" for a charger, "headphones" for an output route.
     var symbol: String?
@@ -83,8 +94,39 @@ struct ScreenBarWingSlot: Equatable {
             || artwork != nil || askAge != nil || glyph != nil
     }
 
+    @MainActor var minimumMarkWidth: CGFloat {
+        let bareProvider = provider != nil && symbol == nil && meter == nil
+            && !visualizer && artwork == nil && askAge == nil && glyph == nil
+        // A constrained bare mark uses 9 points with two-point margins.
+        // Privacy groups retain their existing full-size mark allowance.
+        if bareProvider { return showsSensors ? 17 : 13 }
+        if artwork != nil { return 19 }
+        if glyph != nil { return 19 }
+        if meter != nil || askAge != nil || visualizer { return 18 }
+        if symbol != nil { return 15 }
+        return 7
+    }
+
+    /// Keep the full provider glyph whenever its two-point margins fit.
+    static func providerMarkSize(width: CGFloat) -> CGFloat {
+        width >= 17 ? 13 : 9
+    }
+
     /// Whether the slot carries lit privacy dots.
     var showsSensors: Bool { sensors?.anyInUse ?? false }
+
+    /// Size the shoulder for its marks instead of an empty fixed-width slab.
+    @MainActor var preferredEarWidth: CGFloat {
+        let mark: CGFloat = hasMark ? ScreenBarView.markMinWidth : (showsSensors ? 0 : 4)
+        let extra = accessory == nil ? 0 : ScreenBarWingAccessory.width
+        if showsSensors {
+            let primary = hasMark ? (glyph == nil ? mark : ScreenBarWingGlyph.maxWidth) : 0
+            let separator = primary > 0 || extra > 0 ? ScreenBarSensorDots.inset : 0
+            return min(74, max(32, ScreenBarSensorDots.width(sensors)
+                              + 2 * ScreenBarSensorDots.inset + separator + primary + extra))
+        }
+        return min(74, max(32, mark + extra + 8))
+    }
 
     var textColor: Color {
         switch tone {
@@ -115,6 +157,7 @@ struct ScreenBarWingGlyph: Equatable {
 struct ScreenBarWingAccessory: Equatable {
     var symbol: String
     var tone: ScreenBarWingSlot.Tone = .neutral
+    var compactTurn = false
 
     /// The room it adds to its ear.
     static let width: CGFloat = 18
@@ -183,6 +226,52 @@ enum ScreenBarSensorDots {
     static func lead(_ sensors: NotchSensorState?) -> CGFloat {
         let dots = width(sensors)
         return dots > 0 ? inset + dots : 0
+    }
+
+    struct Layout: Equatable {
+        var dotX: CGFloat
+        var dotWidth: CGFloat
+        var diameter: CGFloat
+        var spacing: CGFloat
+        var markX: CGFloat = 0
+        var markWidth: CGFloat = 0
+        var accessoryX: CGFloat = 0
+        var accessoryWidth: CGFloat = 0
+    }
+
+    /// Coordinates run from the bezel toward the outer edge. Keep privacy
+    /// visible first; constrained dots-only groups center within the ear.
+    static func layout(_ sensors: NotchSensorState?, width: CGFloat,
+                       markWidth: CGFloat = 0, accessoryWidth: CGFloat = 0) -> Layout {
+        let width = width.isFinite ? max(0, width) : 0
+        let count = sensors?.dotCount ?? 0
+        let natural = Self.width(sensors)
+        let room = width - natural - 3 * inset
+        let keepsMark = markWidth > 0 && room >= markWidth
+        let keepsAccessory = accessoryWidth > 0
+            && (markWidth == 0 || keepsMark) && room >= markWidth + accessoryWidth
+        if count > 0, keepsMark || keepsAccessory {
+            let extra = keepsAccessory ? accessoryWidth : 0
+            let markX = inset + natural + inset
+            return Layout(dotX: inset, dotWidth: natural, diameter: diameter, spacing: spacing,
+                          markX: markX, markWidth: keepsMark ? width - inset - extra - markX : 0,
+                          accessoryX: width - inset - extra, accessoryWidth: extra)
+        }
+        guard count > 0 else { return Layout(dotX: 0, dotWidth: 0, diameter: 0, spacing: 0) }
+        if count == 1 {
+            let size = min(diameter, width)
+            return Layout(dotX: (width - size) / 2, dotWidth: size, diameter: size, spacing: 0)
+        }
+        // At 12 pt both colors remain separate: 3 pt dots, a 1 pt gap,
+        // and 2.5 pt margins. Full-size dots return as space permits.
+        let minimum: CGFloat = 7
+        let target = min(width, max(minimum, min(natural, width - 2 * inset)))
+        let blend = max(0, min(1, (target - minimum) / (natural - minimum)))
+        let scale = min(1, width / minimum)
+        let size = (3 + 2 * blend) * scale
+        let gap = (1 + 3 * blend) * scale
+        let group = 2 * size + gap
+        return Layout(dotX: (width - group) / 2, dotWidth: group, diameter: size, spacing: gap)
     }
 }
 
@@ -306,6 +395,7 @@ struct ScreenBarEarMarks: Equatable {
     var askAge: ScreenBarAskAge?
     var quiet: Quiet?
     var awake: Awake?
+    var compactAwakeTurn = false
 
     /// The lease's cup — Amphetamine's mark, the notch chip's glyph.
     static let leaseSymbol = "cup.and.saucer.fill"
@@ -343,7 +433,7 @@ struct ScreenBarEarMarks: Equatable {
                          tone: .attention)
         }
         if runway.adapterShort == true {
-            let fix = runway.fullSpeedWatts.map { " — a \(Int($0.rounded())) W adapter keeps up" } ?? ""
+            let fix = runway.fullSpeedWatts.map { " — a \(Int(saturating: $0.rounded())) W adapter keeps up" } ?? ""
             return Awake(symbol: adapterSymbol,
                          text: "The charger can't keep up with the agents" + fix,
                          tone: .attention)
@@ -437,7 +527,8 @@ struct ScreenBarEarMarks: Equatable {
         }
         if let awake = marks.awake {
             if var right = dressed.right {
-                right.accessory = ScreenBarWingAccessory(symbol: awake.symbol, tone: awake.tone)
+                right.accessory = ScreenBarWingAccessory(symbol: awake.symbol, tone: awake.tone,
+                                                         compactTurn: marks.compactAwakeTurn)
                 right.text += " · " + awake.text
                 dressed.right = right
             } else {
@@ -453,7 +544,9 @@ extension PanelStore {
     /// age (the same row the left ear names — asks lead `rows`, oldest
     /// first), the light-changing quiet, if one is in force, and the
     /// keep-awake hold read from `state.power`.
-    var screenBarEarMarks: ScreenBarEarMarks {
+    var screenBarEarMarks: ScreenBarEarMarks { screenBarEarMarks(at: providerClock()) }
+
+    func screenBarEarMarks(at now: Double) -> ScreenBarEarMarks {
         var marks = ScreenBarEarMarks()
         let document = settingsDocument ?? SettingsDocument()
         if let row = askRows.first {
@@ -467,6 +560,10 @@ extension PanelStore {
         if core.isLive {
             marks.awake = ScreenBarEarMarks.awake(power: core.state?.power)
         }
+        let canCycle = screenBarShown && compactAwakeEligible && marks.awake != nil
+            && screenBarWings.right != nil
+        let entries = canCycle ? ["mark", "power"] : []
+        marks.compactAwakeTurn = compactAwakeCarousel.update(entries, now: now) == "power"
         return marks
     }
 }
@@ -484,16 +581,9 @@ final class ScreenBarWingsModel {
     /// short of the handle slice, so the mark centres in what is left.
     var left: (slot: ScreenBarWingSlot, rect: CGRect)?
     var right: (slot: ScreenBarWingSlot, rect: CGRect)?
-    /// The right ear's full bounds — mark zone plus the handle slice —
-    /// for the hover wash. nil when no right ear draws.
+    /// The right ear's full bounds, for the hover wash. nil when no right
+    /// ear draws.
     var rightEar: CGRect?
-    /// The hidden-run handle's slice of the right ear — a control drawn
-    /// in our own surface, so it can never park the way a status item
-    /// does. The ‹ is the fallback affordance while the menu-bar
-    /// concealer runs and no mirror carries the icon (the Hidden style,
-    /// or an empty target); nil otherwise.
-    var rightHandle: CGRect?
-    var rightHandleRevealed = false
     /// The shared body — the ears are its visible ends, the stretch
     /// behind the bezel joins them. nil on notch-less screens, where the chips
     /// carry their own capsules beside the band.
@@ -501,6 +591,8 @@ final class ScreenBarWingsModel {
     /// The tray's bottom corner — the notch profile's radius, so the
     /// wrap's silhouette is the bezel's own.
     var notchCorner: CGFloat = NotchProfile.standardCornerRadius
+    var menuRowStemWidth: CGFloat = 0
+    var notchDepth: CGFloat = 0
     var viewHeight: CGFloat = 0
     /// The dismiss-pull: the ear rides the finger's horizontal travel,
     /// already eased, so a flick visibly drags it off the notch.
@@ -520,6 +612,51 @@ final class ScreenBarWingsModel {
 /// flush with the screen's top edge, where a centred capsule or bare
 /// text in open menu-bar space reads as clutter. The claim is only the
 /// ceiling on room; the ear's drawn bounds are what hit regions follow.
+struct ScreenBarTrayShape: Shape {
+    var stemWidth: CGFloat
+    var notchDepth: CGFloat
+    var radius: CGFloat
+    var tray: CGRect
+
+    func path(in rect: CGRect) -> Path {
+        let surface = ScreenBarGeometry.trayPath(tray, stemWidth: stemWidth,
+                                                notchDepth: notchDepth, radius: radius)
+        // A cutout leaves a translucent seam against the island's separate window.
+        // Geometry paths grow upward; SwiftUI shape coordinates grow downward.
+        var transform = CGAffineTransform(a: 1, b: 0, c: 0, d: -1,
+                                          tx: -tray.minX, ty: tray.maxY)
+        return Path(surface.copy(using: &transform) ?? CGMutablePath())
+    }
+
+    nonisolated static func islandPath(_ frame: CGRect, stemWidth: CGFloat,
+                                       notchDepth: CGFloat, radius: CGFloat) -> CGPath? {
+        guard frame.width > 0, frame.height > 0 else { return nil }
+        let shape = NotchSilhouette(notchDepth: notchDepth,
+            restingRadius: radius, notchWidth: stemWidth)
+        var transform = CGAffineTransform(a: 1, b: 0, c: 0, d: -1,
+                                          tx: frame.minX, ty: frame.maxY)
+        return shape.path(in: CGRect(origin: .zero, size: frame.size)).cgPath.copy(using: &transform)
+    }
+}
+
+private struct CompactMenuWingClip: ViewModifier {
+    var active: Bool
+    var height: CGFloat
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if active { content.clipShape(MenuWingBounds(height: height)) }
+        else { content }
+    }
+
+    private struct MenuWingBounds: Shape {
+        var height: CGFloat
+        func path(in rect: CGRect) -> Path {
+            Path(CGRect(x: rect.minX, y: rect.midY - height / 2,
+                        width: rect.width, height: height))
+        }
+    }
+}
+
 struct ScreenBarWingsView: View {
     @Bindable var model: ScreenBarWingsModel
 
@@ -527,38 +664,15 @@ struct ScreenBarWingsView: View {
         ZStack(alignment: .topLeading) {
             if let tray = model.tray {
                 // A continuous body joins the wings across the physical notch.
-                UnevenRoundedRectangle(bottomLeadingRadius: model.notchCorner,
-                                       bottomTrailingRadius: model.notchCorner,
-                                       style: .continuous)
+                ScreenBarTrayShape(stemWidth: model.menuRowStemWidth,
+                                   notchDepth: model.notchDepth, radius: model.notchCorner,
+                                   tray: tray)
                     .fill(.black)
                     .frame(width: tray.width, height: tray.height)
                     .position(x: tray.midX, y: model.viewHeight - tray.midY)
             }
             if let left = model.left { chip(left.slot, rect: left.rect, side: .left) }
             if let right = model.right { chip(right.slot, rect: right.rect, side: .right) }
-            if let handle = model.rightHandle {
-                // The hidden-run toggle — ‹ for "items parked left of
-                // the bar", › while the run is out. Our own surface,
-                // so it can never be covered or parked.
-                Image(systemName: model.rightHandleRevealed ? "chevron.right" : "chevron.left")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .frame(width: handle.width, height: handle.height)
-                    .position(x: handle.midX, y: model.viewHeight - handle.midY)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(Text("Hidden menu bar items"))
-            }
-            // A handle-only right ear still needs its hover wash.
-            if model.right == nil, let ear = model.rightEar, model.rightSwell {
-                UnevenRoundedRectangle(
-                    topLeadingRadius: 0,
-                    bottomLeadingRadius: 0,
-                    bottomTrailingRadius: model.notchCorner,
-                    topTrailingRadius: 0, style: .continuous)
-                    .fill(.white.opacity(0.10))
-                    .frame(width: ear.width, height: ear.height)
-                    .position(x: ear.midX, y: model.viewHeight - ear.midY)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .contain)
@@ -582,6 +696,31 @@ struct ScreenBarWingsView: View {
         // mark over the bezel.
         let swell = side == .left ? model.leftSwell : model.rightSwell
         let reach = swell ? Self.swellReach * (side == .left ? -1 : 1) : 0
+        let compactMenu = model.tray != nil && model.notchDepth > 0
+            && rect.width <= ScreenBarGeometry.wingMenuRowExtent
+        let showCompactAccessory = compactMenu && !slot.showsSensors
+            && slot.accessory?.compactTurn == true
+        let compactRing = compactMenu && slot.provider != nil
+            && (slot.meter != nil || slot.askAge != nil) && !slot.showsSensors
+            && rect.width >= ScreenBarGeometry.wingMenuRowExtent
+        let ringDiameter: CGFloat = compactRing ? 15 : 16
+        let ringOpticalOffset: CGFloat = compactRing && !showCompactAccessory ? (side == .left ? 1 : -1) : 0
+        let minimumMarkWidth = slot.minimumMarkWidth
+        let primaryWidth = slot.hasMark ? (slot.glyph == nil ? minimumMarkWidth : ScreenBarWingGlyph.maxWidth) : 0
+        let privacy = slot.showsSensors && !compactMenu ? ScreenBarSensorDots.layout(slot.sensors, width: rect.width,
+            markWidth: primaryWidth, accessoryWidth: slot.accessory == nil ? 0 : ScreenBarWingAccessory.width) : nil
+        let accessoryW: CGFloat = privacy?.accessoryWidth ?? (!compactMenu && slot.accessory != nil
+            && rect.width >= ScreenBarView.markMinWidth + ScreenBarWingAccessory.width
+            ? ScreenBarWingAccessory.width : 0)
+        let markZone = privacy.map {
+            CGRect(x: side == .right ? rect.minX + $0.markX : rect.maxX - $0.markX - $0.markWidth,
+                   y: rect.minY, width: $0.markWidth, height: rect.height)
+        } ?? CGRect(x: rect.minX + (side == .left ? accessoryW : 0), y: rect.minY,
+                              width: max(0, rect.width - accessoryW), height: rect.height)
+        let accessoryZone = CGRect(x: privacy.map {
+            side == .right ? rect.minX + $0.accessoryX : rect.maxX - $0.accessoryX - accessoryW
+        } ?? (side == .left ? rect.minX : markZone.maxX), y: rect.minY,
+                                   width: accessoryW, height: rect.height)
         let mark = Group {
             if let image = slot.artwork?.image {
                 // Album art — Alcove's media ear: a small rounded tile,
@@ -613,35 +752,28 @@ struct ScreenBarWingsView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(slot.textColor)
             } else if let meter = slot.meter {
-                ring(meter, slot: slot, tint: tint)
+                ring(meter, slot: slot, tint: tint, diameter: ringDiameter)
             } else if let age = slot.askAge {
                 // The ask's wait: the quota ear's ring grammar, in the
                 // ask's amber, filling toward the loudest stage.
                 TimelineView(ScreenBarAskAgeSchedule(age: age)) { context in
-                    ring(age.fraction(at: context.date), slot: slot, tint: tint)
+                    ring(age.fraction(at: context.date), slot: slot, tint: tint, diameter: ringDiameter)
                 }
             } else if let provider = slot.provider {
-                glyph(.style(for: provider), size: 13, tint: tint)
+                glyph(.style(for: provider), size: ScreenBarWingSlot.providerMarkSize(width: markZone.width), tint: tint)
             } else if !slot.showsSensors {
                 // A slot with words but no mark still holds its claim —
                 // the lone dot is the resting grammar.
                 Circle().fill(slot.textColor).frame(width: 5, height: 5)
             }
         }
-        .scaleEffect(swell ? Self.swellScale : 1)
+        .scaleEffect(swell && !compactMenu ? Self.swellScale : 1)
         .opacity(1 - min(1, abs(pull) / 40))
         // The privacy dots sit at the ear's inner edge, beside the bezel
         // — the camera LED's own neighbourhood — the accessory at its
         // outer end, and the mark centres in what is left of the zone.
         // A flank too tight for both gives up the accessory first.
-        let lead = slot.showsSensors ? ScreenBarSensorDots.lead(slot.sensors) : 0
-        let accessoryW: CGFloat = slot.accessory != nil
-            && rect.width - lead >= ScreenBarView.markMinWidth + ScreenBarWingAccessory.width
-            ? ScreenBarWingAccessory.width : 0
-        let markZone = CGRect(x: rect.minX + lead + (side == .left ? accessoryW : 0), y: rect.minY,
-                              width: max(0, rect.width - lead - accessoryW), height: rect.height)
-        let accessoryZone = CGRect(x: side == .left ? rect.minX : markZone.maxX, y: rect.minY,
-                                   width: accessoryW, height: rect.height)
+
 
         if model.tray != nil {
             // The wash covers the ear's full span — the mark's zone plus
@@ -663,9 +795,21 @@ struct ScreenBarWingsView: View {
                 }
                 // An ear the flank shrank below a mark's room draws the
                 // cap alone — a glyph that size clips against the edge.
-                if markZone.width >= ScreenBarView.markMinWidth {
-                    mark
-                        .offset(x: markZone.midX - wash.midX + pull + reach)
+                if markZone.width >= max(primaryWidth, minimumMarkWidth) {
+                    Group {
+                        if showCompactAccessory, let accessory = slot.accessory {
+                            Image(systemName: accessory.symbol)
+                                .resizable()
+                                .scaledToFit()
+                                .foregroundStyle(ScreenBarWingSlot(text: "", tone: accessory.tone).textColor)
+                                .frame(width: 13, height: 13)
+                                .accessibilityHidden(true)
+                        } else {
+                            mark
+                        }
+                    }
+                    .offset(x: markZone.midX - wash.midX + pull + ringOpticalOffset
+                            + (compactMenu ? 0 : reach))
                 }
                 if let accessory = slot.accessory, accessoryW > 0 {
                     accessoryMark(accessory)
@@ -675,18 +819,44 @@ struct ScreenBarWingsView: View {
                 }
                 // The dots outrank the mark for room: a privacy light
                 // is never the thing a crowded flank squeezes out.
-                if let sensors = slot.sensors, sensors.anyInUse,
-                   rect.width >= ScreenBarSensorDots.lead(sensors) {
-                    sensorDots(sensors)
-                        .offset(x: rect.minX + ScreenBarSensorDots.inset
-                                    + ScreenBarSensorDots.width(sensors) / 2 - wash.midX + pull)
+                if let sensors = slot.sensors, let privacy, privacy.dotWidth > 0 {
+                    sensorDots(sensors, diameter: privacy.diameter, spacing: privacy.spacing)
+                        .offset(x: (side == .right ? rect.minX + privacy.dotX + privacy.dotWidth / 2
+                                    : rect.maxX - privacy.dotX - privacy.dotWidth / 2) - wash.midX + pull)
                         .opacity(1 - min(1, abs(pull) / 40))
                 }
             }
-            .frame(width: wash.width, height: wash.height)
+            .overlay {
+                if compactMenu {
+                    if let sensors = slot.sensors, sensors.anyInUse {
+                        sensorDots(sensors, diameter: 3, spacing: 1)
+                            .offset(x: pull, y: slot.hasMark ? max(0, model.notchDepth / 2 - 4) : 0)
+                            .opacity(1 - min(1, abs(pull) / 40))
+                    }
+                }
+            }
+            .frame(width: wash.width, height: compactMenu ? model.notchDepth : wash.height)
+            .modifier(CompactMenuWingClip(active: compactMenu, height: model.notchDepth))
             // The wash stays welded to the tray; the mark rides the
             // pull and the outward reach inside it.
             .position(x: wash.midX, y: model.viewHeight - wash.midY)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(slot.text))
+        } else if let privacy, let sensors = slot.sensors {
+            ZStack {
+                if markZone.width >= max(primaryWidth, minimumMarkWidth) {
+                    mark.offset(x: markZone.midX - rect.midX)
+                }
+                if let accessory = slot.accessory, accessoryW > 0 {
+                    accessoryMark(accessory).offset(x: accessoryZone.midX - rect.midX)
+                }
+                sensorDots(sensors, diameter: privacy.diameter, spacing: privacy.spacing)
+                    .offset(x: (side == .right ? rect.minX + privacy.dotX + privacy.dotWidth / 2
+                                : rect.maxX - privacy.dotX - privacy.dotWidth / 2) - rect.midX)
+            }
+            .frame(width: rect.width, height: rect.height)
+            .background(Capsule(style: .continuous).fill(.black))
+            .position(x: rect.midX + pull + reach, y: model.viewHeight - rect.midY)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(slot.text))
         } else {
@@ -708,9 +878,9 @@ struct ScreenBarWingsView: View {
     }
 
     /// The ear's second mark — a symbol a size down, in its own tone.
-    private func accessoryMark(_ accessory: ScreenBarWingAccessory) -> some View {
+    private func accessoryMark(_ accessory: ScreenBarWingAccessory, size: CGFloat = ScreenBarWingAccessory.size) -> some View {
         Image(systemName: accessory.symbol)
-            .font(.system(size: ScreenBarWingAccessory.size, weight: .semibold))
+            .font(.system(size: size, weight: .semibold))
             .foregroundStyle(ScreenBarWingSlot(text: "", tone: accessory.tone).textColor)
             .frame(width: ScreenBarWingAccessory.width)
             .accessibilityHidden(true)
@@ -719,15 +889,16 @@ struct ScreenBarWingsView: View {
     /// The privacy dots — macOS's own convention in the island's dot
     /// language: green while a camera rolls, orange while a mic is live,
     /// the camera nearest the notch like the hardware LED it mirrors.
-    private func sensorDots(_ sensors: NotchSensorState) -> some View {
-        HStack(spacing: ScreenBarSensorDots.spacing) {
+    private func sensorDots(_ sensors: NotchSensorState, diameter: CGFloat = ScreenBarSensorDots.diameter,
+                            spacing: CGFloat = ScreenBarSensorDots.spacing) -> some View {
+        HStack(spacing: spacing) {
             if sensors.cameraInUse {
                 Circle().fill(.green)
-                    .frame(width: ScreenBarSensorDots.diameter, height: ScreenBarSensorDots.diameter)
+                    .frame(width: diameter, height: diameter)
             }
             if sensors.microphoneInUse {
                 Circle().fill(.orange)
-                    .frame(width: ScreenBarSensorDots.diameter, height: ScreenBarSensorDots.diameter)
+                    .frame(width: diameter, height: diameter)
             }
         }
     }
@@ -740,11 +911,14 @@ struct ScreenBarWingsView: View {
     /// tall beside Wi-Fi's 11.5 and the battery's 13.5 (measured
     /// 2026-09-22) and made the right ear read heavy. 16 pt keeps the
     /// inner mark — the OpenAI blossom included — legible at 8 pt.
-    private func ring(_ fraction: Double, slot: ScreenBarWingSlot, tint: Color?) -> some View {
-        ZStack {
+    private func ring(_ fraction: Double, slot: ScreenBarWingSlot, tint: Color?, diameter: CGFloat = 16) -> some View {
+        let inset: CGFloat = diameter < 16 ? 0.7 : 0
+        return ZStack {
             Circle()
+                .inset(by: inset)
                 .stroke(.white.opacity(0.22), lineWidth: 1.4)
             Circle()
+                .inset(by: inset)
                 .trim(from: 0, to: min(1, max(0, fraction)))
                 .stroke(tint ?? (slot.provider.map { ProviderStyle.style(for: $0).accent } ?? .white),
                         style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
@@ -753,7 +927,7 @@ struct ScreenBarWingsView: View {
                 glyph(.style(for: provider), size: 8, tint: tint)
             }
         }
-        .frame(width: 16, height: 16)
+        .frame(width: diameter, height: diameter)
     }
 
     /// The provider's bare mark in its accent — no badge: the boxed

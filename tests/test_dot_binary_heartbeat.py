@@ -57,8 +57,6 @@ def test_led_one_uses_the_existing_highest_priority_semantic_order__and_2_more()
     assert failure.mode is DotLedMode.STEADY
     assert ask.non_color_cue == "two short pulses"
     assert failure.non_color_cue == "steady high"
-    assert not ask.relies_on_color
-    assert not failure.relies_on_color
 
     # --- scenario: reduce_motion_makes_primary_output_static_and_preserves_urgent_distinction
     ask = plan_dot_binary_heartbeat(
@@ -221,8 +219,7 @@ def test_planner_rejects_mutable_unknown_or_unbounded_inputs__and_1_more() -> No
         unseen_notification_present=True,
     )
 
-    assert tuple(instruction.led_index for instruction in plan.instructions) == (1, 2)
-    assert all(not instruction.relies_on_color for instruction in plan.instructions)
+    assert (plan.primary.led_index, plan.secondary.led_index) == (1, 2)
     assert not hasattr(plan, "notification_content")
     assert not hasattr(plan, "controller")
 

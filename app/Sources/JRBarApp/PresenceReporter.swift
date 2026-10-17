@@ -105,8 +105,9 @@ final class PresenceReporter {
     /// `INFocusStatusCenter`'s `isFocused`, only once Focus access is
     /// granted — reading it must never be what raises the prompt.
     static func systemFocus() -> Bool? {
-        guard INFocusStatusCenter.default.authorizationStatus == .authorized else { return nil }
-        return INFocusStatusCenter.default.focusStatus.isFocused
+        FocusReadCache.shared.read(
+            authorized: { INFocusStatusCenter.default.authorizationStatus == .authorized },
+            focused: { INFocusStatusCenter.default.focusStatus.isFocused })
     }
 
     /// The Mirror's beat after it closes: long enough for its session's
@@ -172,7 +173,7 @@ final class PresenceReporter {
     /// A lens refused or missing is not the Mirror's.
     static func mirrorHasCamera(_ card: NotchCardModel) -> Bool {
         card.mirror.state == .live
-            || (card.pinned && card.mirrorSummoned && card.mirror.state == .off)
+            || (card.pinned && card.mirrorSummoned && card.mirror.state == .starting)
     }
 
     /// Whether the sensor monitor must run for the report: while the
@@ -323,4 +324,42 @@ final class PresenceReporter {
             self.pump()
         }
     }
+}
+
+
+/// Each `INFocusStatusCenter` property is its own synchronous round trip to
+/// the privacy daemon, on the main thread, and the 15 s Focus re-read made
+/// two of them every time: 478 `TCCAccessRequest` lines an hour from an
+/// idle app (24 h of the unified log, 2026-10-08). A grant changes only in
+/// System Settings, so a positive answer is kept for a minute and the
+/// re-read asks only whether a Focus is on. Not being authorized is asked
+/// every time, so a grant just given is seen at the next beat.
+@MainActor
+final class FocusReadCache {
+    static let shared = FocusReadCache()
+    static let authorizationLifetime: TimeInterval = 60
+
+    private let clock: @MainActor () -> Date
+    private var authorizedAt: Date?
+
+    init(clock: @escaping @MainActor () -> Date = { Date() }) {
+        self.clock = clock
+    }
+
+    /// Whether a Focus is on, or nil while access is not granted.
+    func read(authorized: () -> Bool, focused: () -> Bool?) -> Bool? {
+        let now = clock()
+        let known = authorizedAt.map { now.timeIntervalSince($0) < Self.authorizationLifetime } ?? false
+        if !known {
+            guard authorized() else {
+                authorizedAt = nil
+                return nil
+            }
+            authorizedAt = now
+        }
+        return focused()
+    }
+
+    /// Ask the system again at the next read — the person changed a grant.
+    func forget() { authorizedAt = nil }
 }

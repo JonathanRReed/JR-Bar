@@ -433,10 +433,14 @@ struct AquariumTurnLayoutTests {
     func completionMealChase() {
         var leaver = makeFish("meal-leaver", since: t0 - 100)
         let eaters: [Fish] = (0..<4).map { i in
-            Fish(id: "meal-eater-\(i)", label: "eater", providerID: "claude", state: .swimming,
-                 lane: 0.2 + 0.15 * Double(i), speed: 0.08 + 0.02 * Double(i), direction: 1,
-                 stateSince: Date(timeIntervalSince1970: t0 - 100), enteredAt: .distantPast,
-                 species: i % 2 == 0 ? .clownfish : .shark)
+            let step = Double(i)
+            let lane: Double = 0.2 + 0.15 * step
+            let speed: Double = 0.08 + 0.02 * step
+            let species: FishSpecies = i % 2 == 0 ? .clownfish : .shark
+            return Fish(id: "meal-eater-\(i)", label: "eater", providerID: "claude", state: .swimming,
+                        lane: lane, speed: speed, direction: 1,
+                        stateSince: Date(timeIntervalSince1970: t0 - 100), enteredAt: .distantPast,
+                        species: species)
         }
         var roster = [leaver] + eaters
         let tank = makeTank(roster)

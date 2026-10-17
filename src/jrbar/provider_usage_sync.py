@@ -10,6 +10,7 @@ import re
 import time
 from dataclasses import dataclass
 
+from .private_io import decode_strict_json
 from .provider_instances import ProviderInstanceError, ProviderInstanceKey
 from .provider_usage_platform import (
     DEFAULT_SOURCE_INSTANCE_ID,
@@ -106,7 +107,8 @@ class ProviderSyncPacket:
 
     def __post_init__(self) -> None:
         if (
-            self.schema_version != PROVIDER_SYNC_SCHEMA_VERSION
+            type(self.schema_version) is not int
+            or self.schema_version != PROVIDER_SYNC_SCHEMA_VERSION
             or not isinstance(self.device_id, str)
             or _DEVICE_ID.fullmatch(self.device_id) is None
             or isinstance(self.generated_at, bool)
@@ -121,6 +123,7 @@ class ProviderSyncPacket:
             or not all(type(item) is MachineUsageObservation for item in self.machine_usage)
             or type(self.categories) is not tuple
             or not self.categories
+            or not all(isinstance(category, str) for category in self.categories)
             or len(self.categories) != len(set(self.categories))
             or not set(self.categories).issubset(_ALLOWED_CATEGORIES)
         ):
@@ -178,6 +181,7 @@ def _snapshot_document(snapshot: ProviderUsageSnapshot) -> dict[str, object]:
         "provider_id": snapshot.provider_id,
         "account_label": snapshot.account_label,
         "observed_at": snapshot.observed_at,
+        "read_at": snapshot.read_at,
         "state": snapshot.state.value,
         "reason_code": snapshot.reason_code,
         "action_label": snapshot.action_label,
@@ -273,6 +277,7 @@ def _snapshot(value: object) -> ProviderUsageSnapshot:
         provider_id=value.get("provider_id"),
         account_label=value.get("account_label"),
         observed_at=value.get("observed_at"),
+        read_at=value.get("read_at"),
         state=ProviderSourceState(value.get("state")),
         reason_code=value.get("reason_code"),
         action_label=value.get("action_label"),
@@ -346,37 +351,48 @@ def decode_signed_packet(
     if not isinstance(data, bytes) or len(data) > MAX_SYNC_PACKET_BYTES:
         raise ValueError("invalid sync envelope")
     try:
-        envelope = json.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+        envelope = decode_strict_json(data.decode("utf-8"), ValueError)
+    except (UnicodeDecodeError, ValueError, RecursionError):
         raise ValueError("invalid sync envelope") from None
     if not isinstance(envelope, dict) or set(envelope) != {"payload", "signature"}:
         raise ValueError("invalid sync envelope")
     signature = envelope.get("signature")
-    if not isinstance(signature, str) or len(signature) != 64:
+    if not isinstance(signature, str) or re.fullmatch(r"[0-9a-f]{64}", signature) is None:
         raise ValueError("invalid sync signature")
     payload = envelope.get("payload")
-    payload_bytes = json.dumps(
-        payload,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    try:
+        payload_bytes = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (UnicodeError, ValueError, RecursionError):
+        raise ValueError("invalid sync payload") from None
     expected = hmac.new(_validate_secret(secret), payload_bytes, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, expected):
         raise ValueError("sync signature mismatch")
-    packet = _decode_packet_document(payload)
+    try:
+        packet = _decode_packet_document(payload)
+    except (TypeError, OverflowError):
+        raise ValueError("invalid sync payload") from None
     current = time.time() if now is None else float(now)
     if packet.generated_at < current - float(max_age_seconds):
         raise StaleSyncPacketError("sync packet is outside the freshness window")
     if packet.generated_at > current + SYNC_PACKET_FUTURE_SKEW_SECONDS:
         raise StaleSyncPacketError("sync packet is stamped too far in the future")
-    observations = (*packet.quota_snapshots, *packet.machine_usage)
+    observation_times = (
+        *(snapshot.observed_at for snapshot in packet.quota_snapshots),
+        *(snapshot.effective_read_at for snapshot in packet.quota_snapshots),
+        *(item.observed_at for item in packet.machine_usage),
+    )
     if any(
-        item.observed_at > current + SYNC_PACKET_FUTURE_SKEW_SECONDS
-        or item.observed_at
+        observed_at > current + SYNC_PACKET_FUTURE_SKEW_SECONDS
+        or observed_at
         < packet.generated_at - SYNC_OBSERVATION_MAX_PACKET_DELTA_SECONDS
-        or item.observed_at > packet.generated_at + SYNC_PACKET_FUTURE_SKEW_SECONDS
-        for item in observations
+        or observed_at > packet.generated_at + SYNC_PACKET_FUTURE_SKEW_SECONDS
+        for observed_at in observation_times
     ):
         raise StaleSyncPacketError("sync packet contains an inconsistent observation")
     return packet
@@ -393,7 +409,7 @@ def merge_provider_sync(
         for snapshot in packet.quota_snapshots:
             key = snapshot.identity
             previous = quotas.get(key)
-            if previous is None or snapshot.observed_at > previous.observed_at:
+            if previous is None or snapshot.effective_read_at > previous.effective_read_at:
                 quotas[key] = snapshot
         for observation in packet.machine_usage:
             key = observation.identity

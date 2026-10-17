@@ -85,6 +85,10 @@ final class OverviewStore {
             guard let core else { throw CoreClientError.notConnected }
             return try await core.usageGraph(days: days, metric: metric, providers: providers)
         }
+        self.fetchGraphProviderIDs = { [weak core] in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.listProviders().map(\.id)
+        }
         self.fetchRoster = { [weak core] in
             guard let core else { throw CoreClientError.notConnected }
             return try await core.listRoster(scope: "all", limit: 2000)
@@ -93,6 +97,14 @@ final class OverviewStore {
             guard let core else { throw CoreClientError.notConnected }
             return try await core.sessionTimeline(id: id, before: before, provider: provider,
                                                   session: session, cwd: cwd)
+        }
+        self.fetchComparison = { [weak core] a, b in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.compareRuns(a, b)
+        }
+        self.fetchAuditExport = { [weak core] args in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.send("audit_export", args: args)
         }
     }
 
@@ -202,7 +214,8 @@ final class OverviewStore {
         let clock = linksClock
         let time = linksTime(at: clock)
         let key = LinksKey(
-            connected: core.isLive, connecting: connecting,
+            connected: core.connection.isConnected, usableState: core.isLive, connecting: connecting,
+            stateRejected: core.stateRejected,
             offlineReason: offlineReason,
             coreVersion: core.hello?.coreVersion, corePID: core.hello?.pid,
             inFlight: core.inFlightCommands,
@@ -211,20 +224,19 @@ final class OverviewStore {
             time: time,
             peers: core.state?.peers ?? [], devices: core.devices,
             providers: core.usage,
-            deck: core.deck?.device,
-            hoarder: hoarderHealth
+            deck: core.deck?.device
         )
         if let cached = linksCache, cached.key == key { return cached.value }
         let value = OverviewLinkage.links(OverviewLinkage.Snapshot(
-            connected: key.connected, connecting: key.connecting,
+            connected: key.connected, usableState: key.usableState, stateRejected: key.stateRejected,
+            connecting: key.connecting,
             offlineReason: key.offlineReason,
             coreVersion: key.coreVersion, corePID: key.corePID,
             connectedAt: key.connectedAt, inFlight: key.inFlight,
             stateAge: core.stateAge(at: clock), stateStale: time.stale,
             localName: Host.current().localizedName ?? "This Mac",
             localSessions: key.localSessions, peers: key.peers,
-            devices: key.devices, providers: key.providers, deck: key.deck,
-            hoarder: key.hoarder
+            devices: key.devices, providers: key.providers, deck: key.deck
         ), now: clock)
         linksCache = (key, value)
         return value
@@ -234,7 +246,8 @@ final class OverviewStore {
     /// the clock so the strip's relative-age fact refreshes once a
     /// minute instead of once a tick.
     private struct LinksKey: Hashable {
-        var connected, connecting: Bool
+        var connected, usableState, connecting: Bool
+        var stateRejected: String?
         var offlineReason, coreVersion: String?
         var corePID: Int?
         var inFlight, localSessions: Int
@@ -244,7 +257,6 @@ final class OverviewStore {
         var devices: [CoreDevice]
         var providers: [CoreProviderUsage]
         var deck: DeckDevice?
-        var hoarder: OverviewLinkage.HoarderHealth?
     }
 
     /// What the chips draw from the clock, at the precision they draw it:
@@ -258,7 +270,6 @@ final class OverviewStore {
         var stale: Bool
         var staleAge: String?
         var connectedAge: String?
-        var captureAge: String?
     }
 
     func linksTime(at clock: Date) -> LinksTime {
@@ -267,11 +278,8 @@ final class OverviewStore {
         let connectedAge = core.isLive ? core.connectedAt.map {
             AgentMonitorFeed.ageText(clock.timeIntervalSince($0))
         } : nil
-        let captureAge = hoarderHealth?.archive.lastCapturedAt.map {
-            AgentMonitorFeed.ageText(max(0, clock.timeIntervalSince($0)))
-        }
         return LinksTime(minute: Int(clock.timeIntervalSince1970 / 60), stale: stale,
-                         staleAge: age, connectedAge: connectedAge, captureAge: captureAge)
+                         staleAge: age, connectedAge: connectedAge)
     }
 
     /// The tick's half of `linksClock`: move it only when what the chips
@@ -449,11 +457,11 @@ final class OverviewStore {
     /// Whether the window is on screen — the Graph animates only then.
     private(set) var windowOpen = false
 
-    func windowDidOpen() {
+    func windowDidOpen(selectingLink id: String? = nil) {
         windowOpen = true
         now = Date()
         linksClock = now
-        selectedLinkID = nil
+        selectLink(id)
         lastEventID = core.lastEvent?.id
         clock?.invalidate()
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -465,10 +473,14 @@ final class OverviewStore {
         RunLoop.main.add(timer, forMode: .common)
         clock = timer
         Task { await load() }
+        resumeUsageOnOpen()
     }
 
     func windowDidClose() {
         windowOpen = false
+        invalidateGraphContinuation()
+        rosterEventFollowUp = false
+        dismissComparison()
         clock?.invalidate()
         clock = nil
         loadWork?.cancel()
@@ -480,8 +492,8 @@ final class OverviewStore {
     private func tick() {
         now = Date()
         advanceLinksClock(to: now)
-        probeHoarderIfDue()
         guard core.isLive else { return }
+        _ = continueGraphScanIfDue(at: now, visible: windowOpen)
         // Per id at most every `SessionUsageStore.freshFor`.
         refreshSessionUsage()
         // The roster is a query surface: rows move with each collector
@@ -491,7 +503,7 @@ final class OverviewStore {
         let stale = loadedAt.map { now.timeIntervalSince($0) > Self.refreshInterval } ?? true
         if eventID != lastEventID {
             lastEventID = eventID
-            scheduleLoad()
+            scheduleLoad(eventDriven: true)
             // A fresh event naming the selected session refreshes its
             // newest timeline page — the inspector stays current without
             // a manual reload.
@@ -506,14 +518,28 @@ final class OverviewStore {
     /// Event bursts coalesce into one fetch: a 300 ms trailing debounce
     /// so a state push that lands as several events triggers one
     /// `list_roster`, not one per event.
-    func scheduleLoad() {
+    func scheduleLoad(eventDriven: Bool = false) {
+        guard !rosterReadInFlight else {
+            if eventDriven { rosterEventFollowUp = true }
+            return
+        }
         loadWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            Task { @MainActor [weak self] in await self?.load() }
+            Task { @MainActor [weak self] in await self?.loadBackground() }
         }
         loadWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
+
+    /// Clock refreshes wait for the current read; deliberate refreshes
+    /// still replace it through `load`.
+    func loadBackground() async {
+        guard !rosterReadInFlight else { return }
+        await load()
+    }
+
+    @ObservationIgnored private var rosterReadInFlight = false
+    @ObservationIgnored private var rosterEventFollowUp = false
 
     /// `userInitiated` marks a deliberate refresh (toolbar, ⌘R): only it
     /// and the first populate earn the spinner — the 15 s tick and event
@@ -527,9 +553,23 @@ final class OverviewStore {
         // older one landing late would leave the table a reply behind.
         loadSerial += 1
         let mine = loadSerial
+        rosterReadInFlight = true
+        rosterEventFollowUp = false
         let showSpinner = userInitiated || roster.isEmpty
         if showSpinner { loading = true }
-        defer { if showSpinner { loading = false } }
+        defer {
+            if mine == loadSerial {
+                loading = false
+                rosterReadInFlight = false
+                if rosterEventFollowUp {
+                    Task { @MainActor [weak self] in
+                        guard let self, self.rosterEventFollowUp, mine == self.loadSerial else { return }
+                        self.rosterEventFollowUp = false
+                        await self.loadBackground()
+                    }
+                }
+            }
+        }
         do {
             // The Overview is the everything-workspace: ask for the
             // daemon's ROSTER_MAX_LIMIT so a long-retained set is not
@@ -564,31 +604,6 @@ final class OverviewStore {
         let activity = SessionActivity.reduce(entry.session)
         guard activity == .working, !entry.session.isRemote else { return nil }
         return SessionRow.activityFact(session: entry.session, activity: activity)
-    }
-
-    // MARK: Archive capture health
-
-    /// The Data Hoarder's capture health for the connections strip — set
-    /// by the app delegate; answers nil while the utility is off, which
-    /// draws no archive chip.
-    var hoarderProbe: (() async -> OverviewLinkage.HoarderHealth?)?
-    private(set) var hoarderHealth: OverviewLinkage.HoarderHealth?
-    @ObservationIgnored private var hoarderProbedAt = Date.distantPast
-    @ObservationIgnored private var hoarderProbing = false
-    /// A capture is slow-moving; the strip asks this often.
-    static let hoarderProbeInterval: TimeInterval = 30
-
-    func probeHoarderIfDue(force: Bool = false) {
-        guard let hoarderProbe, !hoarderProbing,
-              force || now.timeIntervalSince(hoarderProbedAt) >= Self.hoarderProbeInterval else { return }
-        hoarderProbing = true
-        hoarderProbedAt = now
-        Task { [weak self] in
-            let health = await hoarderProbe()
-            guard let self else { return }
-            self.hoarderProbing = false
-            if self.hoarderHealth != health { self.hoarderHealth = health }
-        }
     }
 
     // MARK: A day from the heatmap
@@ -679,8 +694,16 @@ final class OverviewStore {
 
     /// The `compare_sessions` document for the two-row selection, shown
     /// in a sheet; nil hides it. `comparing` marks the fetch in flight.
-    var comparison: CoreRunComparison?
+    private(set) var comparison: CoreRunComparison?
     var comparing = false
+    @ObservationIgnored var fetchComparison: @MainActor (String, String) async throws -> CoreRunComparison
+    @ObservationIgnored private var comparisonSerial = 0
+
+    func dismissComparison() {
+        comparisonSerial += 1
+        comparison = nil
+        comparing = false
+    }
 
     /// Two rows selected AND both still in the filtered set — a ghost
     /// selection (rows aged out or filtered away) must not enable a
@@ -689,23 +712,30 @@ final class OverviewStore {
         selectedIDs.count == 2 && rows.filter { selectedIDs.contains($0.id) }.count == 2
     }
 
-    func compareSelected() {
-        guard canCompare else { return }
+    @discardableResult
+    func compareSelected() -> Task<Void, Never>? {
+        guard canCompare else { return nil }
         let pair = rows.filter { selectedIDs.contains($0.id) }.map(\.id)
-        guard pair.count == 2 else { return }
-        compare(pair[0], pair[1])
+        guard pair.count == 2 else { return nil }
+        return compare(pair[0], pair[1])
     }
 
-    private func compare(_ a: String, _ b: String) {
+    private func compare(_ a: String, _ b: String) -> Task<Void, Never> {
         // The sheet's Model/Tokens/Cost rows read both sides' usage; ask
         // now so they fill while the comparison is computed.
         sessionUsage.refresh(ids: [a, b], force: true)
+        comparisonSerial += 1
+        let mine = comparisonSerial
         comparing = true
-        Task {
-            defer { comparing = false }
+        return Task {
+            defer { if mine == comparisonSerial { comparing = false } }
+            guard mine == comparisonSerial else { return }
             do {
-                comparison = try await core.compareRuns(a, b)
+                let result = try await fetchComparison(a, b)
+                guard mine == comparisonSerial else { return }
+                comparison = result
             } catch {
+                guard mine == comparisonSerial else { return }
                 self.error = Self.describe(error)
             }
         }
@@ -731,7 +761,7 @@ final class OverviewStore {
 
     func compareWithPreviousRun(_ entry: CoreRosterEntry) {
         guard let previous = previousRun(for: entry) else { return }
-        compare(entry.id, previous.id)
+        _ = compare(entry.id, previous.id)
     }
 
     // MARK: Actions on rows
@@ -961,30 +991,27 @@ final class OverviewStore {
         await answerThroughDesk(ask, approve ? .approve : .deny)
     }
 
-    /// A typed reply to a `replyable` ask: `answer_ask` with `reply_text`,
-    /// awaited, the request pinned — the one answer the desk has no
-    /// verdict for yet. The daemon's refusal is surfaced verbatim.
-    func reply(entry: CoreRosterEntry, text: String) async {
-        // A silent early-return leaves actionIsError false, and the reply
-        // sheet reads that as "sent" — dismissing and dropping the draft.
-        // A stale ask must refuse loudly instead.
-        guard canReply(entry) else {
-            report(askDisabledReason(for: entry) ?? "This ask no longer takes a reply", isError: true)
-            return
+    /// A typed reply uses the shared desk so every surface sees it in
+    /// flight. The result belongs to this send, even if another action
+    /// changes the status line while the roster reloads.
+    @discardableResult
+    func reply(entry: CoreRosterEntry, text: String) async -> Bool {
+        let outcome = await replyOutcome(entry: entry, text: text)
+        return outcome.ok
+    }
+
+    func replyOutcome(entry: CoreRosterEntry, text: String) async -> AskAnswerDesk.Outcome {
+        guard canReply(entry), let ask = deskAsk(for: entry) else {
+            let outcome = AskAnswerDesk.Outcome(ok: false,
+                line: askDisabledReason(for: entry) ?? "This ask no longer takes a reply")
+            report(outcome.line, isError: true)
+            return outcome
         }
-        do {
-            let reply = try await core.answerAskNow(
-                session: entry.id, approve: true,
-                replyText: text, request: entry.session.ask?.request)
-            if reply.ok {
-                report(AskAnswerLine.replied(reply))
-                await load()
-            } else {
-                report(reply.error?.message ?? "Reply refused", isError: true)
-            }
-        } catch {
-            report(Self.describe(error), isError: true)
-        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let outcome = await askDesk.answer(ask, .reply(trimmed))
+        report(outcome.line, isError: !outcome.ok)
+        if outcome.ok { await load() }
+        return outcome
     }
 
     /// `dismiss_session`: acknowledge a live-but-going-nowhere row until
@@ -996,6 +1023,24 @@ final class OverviewStore {
             let reply = try await core.dismissSession(entry.id)
             if reply.ok {
                 report("Marked reviewed — returns if the session speaks again")
+                await load()
+            } else {
+                report(reply.error?.message ?? "Dismiss refused", isError: true)
+            }
+        } catch {
+            report(Self.describe(error), isError: true)
+        }
+    }
+
+    /// `dismiss_ask {session, request}` for an ask that may be stale: the
+    /// daemon takes that one ask off this Mac's surfaces. Never an answer:
+    /// the agent is told nothing. The refusal string is shown verbatim.
+    func dismissStaleAsk(entry: CoreRosterEntry) async {
+        guard let ask = entry.session.ask, ask.isDismissible else { return }
+        do {
+            let reply = try await core.dismissAsk(session: entry.id, request: ask.request)
+            if reply.ok {
+                report("Dismissed — the agent was not told, and its own prompt is unchanged")
                 await load()
             } else {
                 report(reply.error?.message ?? "Dismiss refused", isError: true)
@@ -1066,6 +1111,8 @@ final class OverviewStore {
     /// "waiting 23m" — the age of the row's open ask (`ask.openedAt`),
     /// the one duration that matters on a waiting row. nil without ask.
     static func waitingText(_ entry: CoreRosterEntry, now: Date) -> String? {
+        // A long-unanswered ask says so, with its age in words.
+        if let stale = entry.session.ask?.staleLine(now: now) { return stale }
         guard let openedAt = entry.session.ask?.openedAt else { return nil }
         let seconds = max(0, now.timeIntervalSince1970 - openedAt)
         return "waiting \(AgentMonitorFeed.ageText(seconds))"
@@ -1143,6 +1190,8 @@ final class OverviewStore {
     /// The export being previewed: the document the daemon produced and
     /// the markdown rendering of it, before any destination is chosen.
     var exportPreview: (document: JSONValue, markdown: String)?
+    @ObservationIgnored private var exportSerial = 0
+    @ObservationIgnored var fetchAuditExport: @MainActor ([String: JSONValue]) async throws -> CoreReply
 
     /// Fetch the export for preview (S7.4: preview, then destination).
     /// The same bytes the sheet shows are what Save writes — the preview
@@ -1155,12 +1204,17 @@ final class OverviewStore {
     /// slice in the bundle's gaps. `everything` is the old whole-fleet
     /// export, still one menu item away.
     func prepareExport(everything: Bool = false) async {
+        exportSerial += 1
+        let serial = exportSerial
+        exportPreview = nil
+        error = nil
         let args = everything ? Self.exportArgs(ids: nil, view: nil) : exportScope.args
         do {
-            let json = try await exportAudit(args: args, format: "json")
-            let markdown = try await exportAudit(args: args, format: "markdown")
-            exportPreview = (json.document, markdown.text ?? "")
+            let bundle = try await exportAudit(args: args)
+            guard serial == exportSerial, !Task.isCancelled else { return }
+            exportPreview = bundle
         } catch {
+            guard serial == exportSerial, !Task.isCancelled else { return }
             self.error = Self.describe(error)
         }
     }
@@ -1205,22 +1259,23 @@ final class OverviewStore {
         return args
     }
 
-    private func exportAudit(args: [String: JSONValue], format: String) async throws -> (document: JSONValue, text: String?) {
+    private func exportAudit(args: [String: JSONValue]) async throws -> (document: JSONValue, markdown: String) {
         var args = args
-        args["format"] = .string(format)
-        let reply = try await core.send("audit_export", args: args)
+        args["format"] = .string("markdown")
+        let reply = try await fetchAuditExport(args)
         guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "audit_export failed") }
-        guard let result = reply.result else {
-            throw CoreReplyError(code: "bad_reply", message: "audit_export: missing result")
+        guard let result = reply.result, let document = result["document"],
+              document.objectValue != nil, let markdown = result["text"]?.stringValue else {
+            throw CoreReplyError(code: "bad_reply", message: "audit_export: missing document or Markdown")
         }
-        return (result["document"] ?? .object([:]), result["text"]?.stringValue)
+        return (document, markdown)
     }
 
     // MARK: Export this run
 
     /// One run's Markdown, previewed before a destination is chosen: the
     /// roster's and the transcript's facts over the timeline the
-    /// inspector shows (the archived copy when the live one is gone).
+    /// inspector shows.
     var runExportPreview: (name: String, markdown: String)?
 
     func prepareRunExport(_ entry: CoreRosterEntry, generatedAt: Date = Date()) {
@@ -1235,16 +1290,10 @@ final class OverviewStore {
     func runMarkdown(for entry: CoreRosterEntry, generatedAt: Date = Date()) -> String? {
         guard timelineSessionID == entry.id, let page = timelinePage, !entry.session.remote else { return nil }
         let session = entry.session
-        let reconstruction: SessionReconstruction
+        let reconstruction = timelineReconstruction
         var notes: [String] = []
-        if let archived = archivedTimeline, archived.id == entry.id {
-            reconstruction = archived.reconstruction
-            notes.append("From the Data Hoarder's archived copy (\(archived.record.name)); the live transcript is gone.")
-        } else {
-            reconstruction = timelineReconstruction
-            if page.hasMore {
-                notes.append("Only the rows loaded in the inspector are here; Load earlier there to include older ones.")
-            }
+        if page.hasMore {
+            notes.append("Only the rows loaded in the inspector are here; Load earlier there to include older ones.")
         }
         let when = DateFormatter()
         when.dateFormat = "yyyy-MM-dd HH:mm"
@@ -1303,6 +1352,7 @@ final class OverviewStore {
     /// Bumped when a newest-page load starts; a read begun before it is
     /// dropped when it lands.
     @ObservationIgnored private var timelineSerial = 0
+    @ObservationIgnored private var timelineHasEarlierPages = false
     /// The last load ended in the error path — reselecting retries.
     var timelineFailed = false
 
@@ -1319,21 +1369,16 @@ final class OverviewStore {
         timelineSessionID = id
         timeline = []
         timelinePage = nil
+        timelineHasEarlierPages = false
         timelineFailed = false
         timelineLoading = true
-        defer { timelineLoading = false }
+        defer { if mine == timelineSerial { timelineLoading = false } }
         let fallback = timelineFallback(for: id)
-        archivedTimeline = nil
         do {
             let page = try await fetchTimeline(id, nil, fallback.provider, fallback.session, fallback.cwd)
             guard timelineSessionID == id, mine == timelineSerial else { return }
             timeline = page.events
             timelinePage = page
-            if page.gaps.contains("transcript_not_found") {
-                await loadArchivedTimeline(for: id)
-            } else {
-                await loadProxyEvidence(for: id)
-            }
         } catch {
             guard timelineSessionID == id, mine == timelineSerial else { return }
             timelinePage = CoreTimelinePage(gaps: [Self.describe(error)])
@@ -1343,8 +1388,8 @@ final class OverviewStore {
 
     /// The `session`/`provider`/`cwd` the daemon needs to resolve a
     /// transcript once the roster row is gone — `provider:session:<id>`
-    /// agent ids carry the session id as the `:` tail (same convention
-    /// `archiveSearchTerm` uses); other shapes send no session guess.
+    /// agent ids carry the session id as the `:` tail (the same convention
+    /// as elsewhere); other shapes send no session guess.
     private func timelineFallback(for id: String) -> (provider: String?, session: String?, cwd: String?) {
         guard let entry = rows.first(where: { $0.id == id }) else {
             return (nil, nil, nil)
@@ -1363,10 +1408,10 @@ final class OverviewStore {
         guard let id = timelineSessionID,
               let page = timelinePage, page.hasMore,
               let before = page.nextBefore, !timelineLoading else { return }
-        timelineLoading = true
-        defer { timelineLoading = false }
-        let fallback = timelineFallback(for: id)
         let mine = timelineSerial
+        timelineLoading = true
+        defer { if mine == timelineSerial { timelineLoading = false } }
+        let fallback = timelineFallback(for: id)
         do {
             let older = try await fetchTimeline(id, before, fallback.provider, fallback.session, fallback.cwd)
             guard timelineSessionID == id, mine == timelineSerial else { return }
@@ -1375,7 +1420,9 @@ final class OverviewStore {
             let known = Set(timeline.map(\.seq))
             timeline = older.events.filter { !known.contains($0.seq) } + timeline
             timelinePage = Self.mergeTimelinePage(older: older, into: page, events: timeline)
+            timelineHasEarlierPages = true
         } catch {
+            guard timelineSessionID == id, mine == timelineSerial else { return }
             self.error = Self.describe(error)
         }
     }
@@ -1402,10 +1449,10 @@ final class OverviewStore {
     /// Same `timelineSessionID` guard as the other loads.
     func refreshTimeline() async {
         guard let id = timelineSessionID, let page = timelinePage, !timelineLoading else { return }
-        timelineLoading = true
-        defer { timelineLoading = false }
-        let fallback = timelineFallback(for: id)
         let mine = timelineSerial
+        timelineLoading = true
+        defer { if mine == timelineSerial { timelineLoading = false } }
+        let fallback = timelineFallback(for: id)
         do {
             let fresh = try await fetchTimeline(id, nil, fallback.provider, fallback.session, fallback.cwd)
             guard timelineSessionID == id, mine == timelineSerial else { return }
@@ -1421,8 +1468,8 @@ final class OverviewStore {
             // page.events.count`, so storing the merged array would zero
             // that delta and silently drop the pulled pages.
             timelinePage = CoreTimelinePage(
-                events: fresh.events, hasMore: fresh.hasMore,
-                nextBefore: fresh.nextBefore, total: fresh.total,
+                events: fresh.events, hasMore: timelineHasEarlierPages ? page.hasMore : fresh.hasMore,
+                nextBefore: timelineHasEarlierPages ? page.nextBefore : fresh.nextBefore, total: fresh.total,
                 provider: fresh.provider ?? page.provider,
                 file: fresh.file ?? page.file,
                 gaps: fresh.gaps + page.gaps.filter { !fresh.gaps.contains($0) })
@@ -1446,14 +1493,11 @@ final class OverviewStore {
             let activity = SessionActivity.reduce(entry.session)
             return activity == .working || activity == .waiting || activity == .idle
         } ?? false
-        let requests = proxyEvidence?.id == timelineSessionID ? proxyEvidence?.requests ?? [] : []
         let key = TimelineReconstructionKey(
             session: timelineSessionID, count: timeline.count, first: timeline.first?.seq,
-            last: timeline.last?.seq, gaps: timelinePage?.gaps ?? [], running: running,
-            requests: requests.count)
+            last: timeline.last?.seq, gaps: timelinePage?.gaps ?? [], running: running)
         if let cached = timelineReconstructionCache, cached.key == key { return cached.value }
         let value = SessionReconstructor.reconstruction(from: timeline, gaps: key.gaps, running: running)
-            .withProxyRequests(requests)
         timelineReconstructionCache = (key, value)
         return value
     }
@@ -1463,71 +1507,12 @@ final class OverviewStore {
         var first, last: Int?
         var gaps: [String]
         var running: Bool
-        var requests: Int
     }
     @ObservationIgnored private var timelineReconstructionCache: (key: TimelineReconstructionKey, value: SessionReconstruction)?
 
     /// The transcript's last stated model — surfaced in the inspector as
     /// "Model (transcript)" so the source is named honestly.
     var transcriptModel: String? { timeline.last { $0.model != nil }?.model }
-
-    // MARK: Archive (Data Hoarder) honesty
-
-    /// Probes whether a transcript path is covered by the local Data
-    /// Hoarder archive. Set by the app delegate to the hoarder's
-    /// `archive.captureState(path:)`; nil → the inspector hides the
-    /// archive facts rather than claim a status it cannot know.
-    var archiveProbe: ((String) async -> CaptureStateRow?)?
-    /// Opens the Data Hoarder window seeded with a search term.
-    var onOpenArchive: ((String) -> Void)?
-    /// Probe results per path — one lookup per transcript, not per render.
-    var archiveStates: [String: CaptureStateRow?] = [:]
-
-    func probeArchive(file: String) async {
-        guard archiveStates[file] == nil, let archiveProbe else { return }
-        archiveStates[file] = await archiveProbe(file)
-    }
-
-    /// Rebuilds a session's archived transcript by its uuid — set by the
-    /// app delegate to the Data Hoarder's reader; nil hides the fallback.
-    var archiveTimeline: ((String) async -> (SessionReconstruction, ArchiveRecord)?)?
-    /// The CLIProxyAPI requests the archive holds under a session uuid —
-    /// set by the app delegate; nil leaves the live timeline as it is.
-    var archiveProxyEvidence: ((String) async -> [CLIProxyRequest])?
-    /// The proxy evidence for the timeline on screen, keyed by row id.
-    private(set) var proxyEvidence: (id: String, requests: [CLIProxyRequest])?
-
-    /// The proxy's side of the selected run, when the archive kept it:
-    /// the live timeline interleaves those requests between its turns.
-    func loadProxyEvidence(for id: String) async {
-        guard let archiveProxyEvidence,
-              let entry = rows.first(where: { $0.id == id }) ?? roster.first(where: { $0.id == id }) else { return }
-        let requests = await archiveProxyEvidence(Self.archiveSearchTerm(for: entry))
-        guard timelineSessionID == id else { return }
-        proxyEvidence = (id, requests)
-    }
-    /// The archived copy standing in for a transcript that is gone: the
-    /// row it belongs to, the rebuilt timeline and the record it came from.
-    private(set) var archivedTimeline: (id: String, reconstruction: SessionReconstruction, record: ArchiveRecord)?
-
-    /// An ended session whose transcript was cleaned up or moved still has
-    /// a story when the Data Hoarder kept it: rebuild that copy and show it
-    /// in the same timeline view, labelled as the archive's.
-    func loadArchivedTimeline(for id: String) async {
-        guard let archiveTimeline,
-              let entry = rows.first(where: { $0.id == id }) ?? roster.first(where: { $0.id == id }) else { return }
-        let sessionID = Self.archiveSearchTerm(for: entry)
-        guard let found = await archiveTimeline(sessionID), timelineSessionID == id else { return }
-        archivedTimeline = (id, found.0, found.1)
-    }
-
-    /// The term "Search archive for this session" seeds the hoarder
-    /// with: the session's uuid tail — transcripts are filed under it,
-    /// so a path/name/content search finds the same session's records.
-    static func archiveSearchTerm(for entry: CoreRosterEntry) -> String {
-        let id = entry.id
-        return id.split(separator: ":").last.map(String.init) ?? id
-    }
 
     // MARK: Observed tools
 
@@ -1543,7 +1528,11 @@ final class OverviewStore {
     enum Pane: String, Hashable {
         case roster, usage, graph
     }
-    var pane: Pane = .roster
+    var pane: Pane = .roster {
+        didSet {
+            if oldValue != pane { invalidateGraphContinuation() }
+        }
+    }
 
     // MARK: Graph pane
 
@@ -1554,6 +1543,7 @@ final class OverviewStore {
         var id: String { rawValue }
     }
     var graphScope: GraphScope = .active
+    var graphPresentation: OverviewGraphLayout.Presentation = .network
     /// How long a finished run stays on the Active graph.
     static let graphFinishedWindow: TimeInterval = 3_600
 
@@ -1639,32 +1629,74 @@ final class OverviewStore {
     /// overwrite a newer pick's document (same discipline as
     /// `timelineSessionID`).
     var graphRequestKey: String?
-    /// One `usage_graph` at a time. The daemon runs this client's
-    /// commands in order, so every extra scan queues ahead of each
-    /// Approve; a pick made mid-scan only marks `graphFollowUp`, and the
-    /// running load asks once more, with the latest picks, when it lands.
+    /// One graph request at a time, followed by the latest changed pick.
     @ObservationIgnored private(set) var graphInFlight = false
     @ObservationIgnored private var graphFollowUp = false
+    @ObservationIgnored private var graphContinuationGeneration: UInt64 = 0
+    @ObservationIgnored private var graphQueuedContinuation: UInt64?
+    private(set) var graphNextScanAt: Date?
+    @ObservationIgnored var graphClock: @MainActor () -> Date = { Date() }
+    static let graphScanRetryInterval: TimeInterval = 2
     /// The `usage_graph` round trip, replaceable in tests.
     @ObservationIgnored var fetchGraph: @MainActor (_ days: Int, _ metric: String, _ providers: [String]?)
         async throws -> CoreUsageGraphDocument
     var graphDays = 30
     /// `tokens` | `cost` | `sessions` | `percent`.
     var graphMetric = "tokens"
+    var graphComposition = false
     /// nil = the daemon's stored provider set; once the user toggles,
     /// the explicit set is what gets asked for.
     var graphProviders: [String]?
     /// Chartable provider ids for the picker — the daemon's registry
     /// plus any series-only source (t3code) a reply names.
     var graphProviderOptions: [String] = []
+    @ObservationIgnored private var graphRegistryProviderIDs: [String] = []
+    @ObservationIgnored var fetchGraphProviderIDs: @MainActor () async throws -> [String]
     var graphProvidersLoaded = false
 
     /// The sidebar's Usage row.
     func showUsage() {
         pane = .usage
         Task { await loadGraphProvidersIfNeeded() }
-        let stale = graphLoadedAt.map { Date().timeIntervalSince($0) > Self.graphStalenessHorizon } ?? true
+        let stale = graphLoadedAt.map { graphClock().timeIntervalSince($0) > Self.graphStalenessHorizon } ?? true
         if graph == nil || stale { Task { await loadGraph() } }
+    }
+
+    func resumeUsageOnOpen() {
+        if pane == .usage { showUsage() }
+    }
+
+    private func invalidateGraphContinuation() {
+        graphContinuationGeneration &+= 1
+        graphQueuedContinuation = nil
+        graphNextScanAt = nil
+    }
+
+    @discardableResult
+    func continueGraphScanIfDue(at instant: Date, visible: Bool) -> Task<Void, Never>? {
+        guard visible, pane == .usage, isLive, !graphInFlight,
+              graphQueuedContinuation == nil else { return nil }
+        guard let deadline = graphNextScanAt else {
+            let reading = graph?.graph.readingFiles ?? 0
+            if reading > 0, graphError == nil {
+                graphNextScanAt = instant.addingTimeInterval(Self.graphScanRetryInterval)
+            }
+            return nil
+        }
+        guard deadline <= instant else { return nil }
+        graphNextScanAt = nil
+        let generation = graphContinuationGeneration
+        graphQueuedContinuation = generation
+        return Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.graphQueuedContinuation == generation { self.graphQueuedContinuation = nil }
+            }
+            guard generation == self.graphContinuationGeneration,
+                  self.pane == .usage, self.isLive,
+                  (self.graph?.graph.readingFiles ?? 0) > 0, self.graphError == nil else { return }
+            await self.loadGraph()
+        }
     }
 
     /// The request key for the current picks.
@@ -1678,6 +1710,7 @@ final class OverviewStore {
     /// with the newest picks when its reply lands, so any number of
     /// picker clicks during a scan cost one more scan, not one each.
     func loadGraph() async {
+        invalidateGraphContinuation()
         graphRequestKey = graphPickKey
         graphLoading = true
         guard !graphInFlight else {
@@ -1693,6 +1726,7 @@ final class OverviewStore {
             graphFollowUp = false
             let days = graphDays, metric = graphMetric, providers = graphProviders
             let key = graphPickKey
+            let continuationGeneration = graphContinuationGeneration
             graphRequestKey = key
             let outcome: Result<CoreUsageGraphDocument, Error>
             do {
@@ -1706,15 +1740,15 @@ final class OverviewStore {
             switch outcome {
             case .success(let document):
                 graph = document
-                graphLoadedAt = Date()
-                graphError = nil
-                // A reply can name a source the registry did not (t3code
-                // appears only when its T3 coverage exists).
-                for id in document.graph.providers + document.graph.series.map(\.providerId)
-                where !graphProviderOptions.contains(id) {
-                    graphProviderOptions.append(id)
+                graphLoadedAt = document.graph.readingFiles > 0 ? nil : graphClock()
+                if document.graph.readingFiles > 0,
+                   continuationGeneration == graphContinuationGeneration, pane == .usage {
+                    graphNextScanAt = graphClock().addingTimeInterval(Self.graphScanRetryInterval)
                 }
+                graphError = nil
+                refreshGraphProviderOptions()
             case .failure(let error):
+                graphNextScanAt = nil
                 graphError = Self.describe(error)
             }
         } while graphFollowUp
@@ -1725,9 +1759,8 @@ final class OverviewStore {
     func loadGraphProvidersIfNeeded() async {
         guard !graphProvidersLoaded else { return }
         do {
-            let rows = try await core.listProviders()
-            var seen = Set<String>()
-            graphProviderOptions = rows.map(\.id).filter { seen.insert($0).inserted }
+            graphRegistryProviderIDs = try await fetchGraphProviderIDs()
+            refreshGraphProviderOptions()
             graphProvidersLoaded = true
         } catch {
             // The picker falls back to the ids the graph itself names.
@@ -1735,6 +1768,13 @@ final class OverviewStore {
             // transient error discards ids (t3code) no registry lists.
             graphProvidersLoaded = false
         }
+    }
+
+    private func refreshGraphProviderOptions() {
+        let currentSources = graph.map { $0.graph.providers + $0.graph.series.map(\.providerId) } ?? []
+        var seen = Set<String>()
+        graphProviderOptions = (graphRegistryProviderIDs + currentSources)
+            .filter { $0 != "t3code" && seen.insert($0).inserted }
     }
 
     /// The provider set the checkmarks show: the explicit pick, else

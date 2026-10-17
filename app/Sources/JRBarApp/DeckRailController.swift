@@ -19,6 +19,7 @@ final class DeckRailController {
     /// The cell whose pill is up, and the pointer's grace to reach it
     /// once the cell is left (`DeckRailPillHold`).
     private var pillCell: Int?
+    private var pillContent: DeckRailPillContent?
     private var pillGrace: DispatchWorkItem?
     private var graceSpent = false
 
@@ -50,6 +51,7 @@ final class DeckRailController {
             _ = store.railEdge
             _ = store.railHoveredCell
             _ = store.railPillHovered
+            _ = store.core.state
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -103,6 +105,7 @@ final class DeckRailController {
         pillGrace?.cancel()
         pillGrace = nil
         pillCell = nil
+        pillContent = nil
         label?.dismiss()
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             panel.alphaValue = 0
@@ -155,28 +158,62 @@ final class DeckRailController {
                                          interactive: interactive, inGrace: pillGrace != nil)
         guard let panel, let geometry, let cell = hold, let rect = geometry.cellRects[safe: cell] else {
             pillCell = nil
+            pillContent = nil
             label?.dismiss()
             return
         }
-        // The pill on the pointer stays put: re-presenting it under the
-        // pointer would only shuffle its buttons.
-        if store.railHoveredCell == nil, pillCell == cell, label?.isVisible == true { return }
+        let current = DeckRailPillContent(store: store, cell: cell)
+        // A pill held under the pointer must still follow a replaced or
+        // answered ask. An unchanged pill keeps its buttons in place.
+        if store.railHoveredCell == nil, pillCell == cell, pillContent == current,
+           label?.isVisible == true { return }
+        if store.railHoveredCell == nil, !DeckStore.pillAnswers(current.ask) {
+            pillCell = nil
+            pillContent = nil
+            store.railPillHovered = false
+            label?.dismiss()
+            return
+        }
         pillCell = cell
+        pillContent = current
         let onScreen = NSRect(x: geometry.frame.minX + rect.minX, y: geometry.frame.minY + rect.minY, width: rect.width, height: rect.height)
         let label = self.label ?? RailLabelPanel()
         self.label = label
-        let content: RailLabelView
+        let content = RailLabelView(title: current.title, subtitle: current.subtitle,
+                                    provider: current.provider, number: current.number,
+                                    detail: current.detail, ask: current.ask, desk: AskAnswerDesk.shared,
+                                    onHover: { [weak store] inside in store?.railPillHovered = inside })
+        label.present(content, beside: onScreen, edge: geometry.edge, screen: panel.screen ?? screen)
+    }
+}
+
+/// The displayed pill's facts, compared before changing a held pill.
+struct DeckRailPillContent: Equatable {
+    let title: String
+    let subtitle: String
+    let provider: String?
+    let number: String
+    let detail: String?
+    let ask: CoreAsk?
+
+    @MainActor
+    init(store: DeckStore, cell: Int) {
         if DeckRailGeometry.isOverflowCell(cell) {
-            content = RailLabelView(title: "Open Creator Micro", subtitle: store.banks.title, provider: nil, number: "…")
+            title = "Open Creator Micro"
+            subtitle = store.banks.title
+            provider = nil
+            number = "…"
+            detail = nil
+            ask = nil
         } else {
             let slot = store.slots[safe: cell] ?? DeckSlot(index: cell)
-            content = RailLabelView(title: slot.title, subtitle: store.railSubtitle(for: slot),
-                                    provider: slot.provider, number: "\(cell + 1)",
-                                    detail: store.askDetail(for: slot),
-                                    ask: store.ask(for: slot), desk: AskAnswerDesk.shared,
-                                    onHover: { [weak store] inside in store?.railPillHovered = inside })
+            title = slot.title
+            subtitle = store.railSubtitle(for: slot)
+            provider = slot.provider
+            number = "\(cell + 1)"
+            detail = store.askDetail(for: slot)
+            ask = store.ask(for: slot)
         }
-        label.present(content, beside: onScreen, edge: geometry.edge, screen: panel.screen ?? screen)
     }
 }
 
@@ -714,10 +751,18 @@ struct RailHoldRing: View {
     /// the deadline itself — then nothing more.
     nonisolated static func ticks(from now: Date, until deadline: Date, every step: TimeInterval) -> [Date] {
         guard deadline > now, step > 0 else { return [now] }
-        var ticks = Array(stride(from: now, to: deadline, by: step))
-        ticks.append(deadline)
+        // A hold lasts seconds to minutes. A deadline the daemon sent as
+        // milliseconds, or as a year, would otherwise build a schedule
+        // of billions of dates inside the view's body.
+        let horizon = now.addingTimeInterval(maximumHorizon)
+        let end = min(deadline, horizon)
+        var ticks = Array(stride(from: now, to: end, by: step))
+        ticks.append(end)
         return ticks
     }
+
+    /// The longest stretch the ring schedules ahead.
+    nonisolated static let maximumHorizon: TimeInterval = 600
 
     /// Whole seconds left, never below zero.
     nonisolated static func secondsLeft(of ask: CoreAsk, at now: Date) -> Int {

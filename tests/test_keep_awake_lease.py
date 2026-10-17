@@ -20,7 +20,11 @@ from jrbar.keep_awake import (
     LEASE_END_FINISHED,
     LEASE_FILE_NAME,
     LEASE_INDEFINITE,
+    MAX_LEASE_FILE_BYTES,
     MAX_LEASE_SECONDS,
+    MAX_LEASE_SESSION_ID_LENGTH,
+    MAX_LEASE_SESSIONS,
+    MAX_LEASE_SOURCE_LENGTH,
     POWER_LEASE_ENDED,
     POWER_LEASE_STARTED,
     POWER_RESUMED,
@@ -128,6 +132,7 @@ def test_lease_from_args_reads_each_shape() -> None:
         {},
         {"seconds": 60, "indefinite": True},
         {"seconds": "an hour"},
+        {"seconds": 10**1000},
         {"seconds": -5},
         {"seconds": MAX_LEASE_SECONDS + 60},
         {"until": NOW - 1},
@@ -141,6 +146,14 @@ def test_lease_from_args_reads_each_shape() -> None:
 def test_lease_from_args_refuses_malformed_requests(args) -> None:
     with pytest.raises(ValueError):
         lease_from_args(args, now=NOW, pending_ids=frozenset({"claude:b"}))
+
+
+def test_stored_lease_rejects_an_epoch_too_large_for_a_float() -> None:
+    assert AwakeLease.from_dict({
+        "kind": LEASE_INDEFINITE,
+        "started_at": 10**1000,
+        "until": None,
+    }) is None
 
 
 def test_until_a_local_time_resolves_to_the_next_occurrence_in_the_macs_zone() -> None:
@@ -381,6 +394,29 @@ def test_a_lease_survives_a_daemon_restart_and_an_expired_one_does_not(tmp_path:
     assert not (tmp_path / LEASE_FILE_NAME).exists()
 
 
+def test_maximum_escaped_agent_lease_survives_restart(tmp_path: Path) -> None:
+    clock = _Clock()
+    sessions = frozenset(
+        chr(0x1F600 + index) * MAX_LEASE_SESSION_ID_LENGTH
+        for index in range(MAX_LEASE_SESSIONS)
+    )
+    lease = lease_from_args(
+        {"until_agents_idle": True, "source": "\U0001f600" * MAX_LEASE_SOURCE_LENGTH},
+        now=NOW,
+        pending_ids=sessions,
+    )
+    first = _controller(clock)
+    first.attach_store(tmp_path)
+    first.start_lease(lease)
+    size = (tmp_path / LEASE_FILE_NAME).stat().st_size
+    assert 64 * 1024 < size <= MAX_LEASE_FILE_BYTES
+    assert first.last_error is None
+
+    second = _controller(clock)
+    second.attach_store(tmp_path)
+    assert second.lease == lease
+
+
 def test_the_power_log_is_bounded_persisted_and_reads_as_history(tmp_path: Path) -> None:
     clock = _Clock()
     log = PowerLog(tmp_path / "power-log.json", limit=3, clock=clock)
@@ -501,3 +537,20 @@ def test_low_power_mode_is_read_from_process_info_before_any_subprocess() -> Non
     assert keep_awake.read_low_power_mode(now=0.0, runner=runner, process_info=lambda: False) is False
     keep_awake._low_power_cache = None
     assert calls == []
+
+
+def test_the_chip_does_not_claim_an_agent_hold_the_battery_setting_blocked() -> None:
+    clock = _Clock()
+    factory = _Factory()
+    controller = _controller(clock, factory, grace_seconds=0)
+    controller.power_log = PowerLog(clock=clock)
+
+    # Agents are working, but "keep awake on battery" is off and the Mac
+    # is unplugged: nothing is held, so nothing may say it is.
+    assert not controller.update(AgentMode.WORKING, on_battery=True, hold_on_battery=False)
+    assert controller.hold_state() == "off"
+    assert controller.hold_document()["state"] == "off"
+
+    # Plugged in again, the same agents hold it.
+    assert controller.update(AgentMode.WORKING, on_battery=False, hold_on_battery=False)
+    assert controller.hold_state() == "agents"

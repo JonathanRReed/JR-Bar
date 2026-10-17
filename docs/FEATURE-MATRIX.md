@@ -1,8 +1,9 @@
 # JR-Bar feature matrix
 
-Updated 2026-10-01. [Version 0.9.16](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.16)
-is public. Its app and installer are Developer ID signed, notarized and
-stapled. The release notes disclose the checks that remain open.
+Source inventory revised 2026-10-15. Use the
+[release history](https://github.com/JonathanRReed/JR-Bar/releases) for published
+versions and the [changelog](../CHANGELOG.md) for pending source changes.
+Source coverage and live acceptance are separate, as described below.
 
 - **Implemented** means a reachable source path with regression coverage.
   It does not establish current physical acceptance for every provider,
@@ -19,13 +20,13 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 | Capability | Status | Default |
 | --- | --- | --- |
 | Hook intake through the compiled `jrbar-hook` shim (3 ms; queues to `<provider>.pending.jsonl` when no daemon listens; drained at start and every 30 s) | Implemented | Always |
-| Providers: Claude Code, Codex (CLI and desktop), Gemini CLI, Pi, Grok, Devin, OpenCode, OpenClaw, Antigravity | Implemented | Connect each chosen provider in Settings › Agents |
+| Providers: Claude Code, Codex (CLI and desktop), Gemini CLI, Pi, Grok, Devin, OpenCode, OpenClaw, Antigravity | Implemented | Connect each chosen provider in Settings › Agents & Usage |
 | Providers: Cursor, Hermes Agent, Kiro | Implemented, unverified live (none installed on the owner's Mac) | Same |
 | Session liveness: process registry from the hook's `ppid` and start time, 5 s sweep, Claude `~/.claude/sessions/<pid>.json`, Codex SessionEnd/interrupt hooks and rollout tailing, pi and Gemini transcript tails | Implemented (kill-to-ended measured at 2 s) | Always |
-| Main sessions vs sub-agent workers; seen vs unseen completions; real asks (permission, input, approval, review) vs turns that merely end with a question | Implemented | Always |
+| Main sessions vs sub-agent workers; seen vs unseen completions; real asks (permission, input, approval, review) vs turns that merely end with a question; a sub-agent's ask stays quiet unless Sub-agent asks is on; a session's row names the open ask, and a new prompt closes the ask the person walked away from | Implemented | Always |
 | Human session labels: the provider's own title, else project/prompt, else the working directory | Implemented | Always |
-| Hook doctor (`jrbar hooks doctor`; Settings › Advanced › Run Doctor) | Implemented | Manual |
-| Chosen hook installation and reinstall/remove per provider (Settings › Agents); upgrades refresh owned integrations and preserve disabled flags | Implemented | Manual selection |
+| Hook doctor (`jrbar hooks doctor`; the per-provider hook status on Settings › Agents & Usage, which also says when hooks are turned off in the agent's own settings) | Implemented | Manual |
+| Chosen hook installation and reinstall/remove per provider (Settings › Agents & Usage); upgrades refresh owned integrations and preserve disabled flags | Implemented | Manual selection |
 | Codex trust hash computed locally for the exact command written | Implemented | Always |
 | T3 Code read-only session projection (`jrbar integrations`) | Implemented, opt-in | Off |
 
@@ -33,21 +34,22 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 
 | Capability | Status | Default |
 | --- | --- | --- |
-| Status item with six icon styles (session dots, usage meters, meters + percent, glyph, glyph + usage ring, glyph + label), tinted by the aggregate, amber pulse during escalation | Implemented | Session dots |
-| Glass panel: asks pinned with Approve / Deny, sessions, usage bars, device chips, brightness, Quiet…, Clear done, keyboard navigation (↑↓ ↩ ⌘↩ ⌘D ⌘Y ⌘U ⌘K ⌘, ⌘Q) | Implemented | Click the icon |
+| Status item with nine icon styles (session dots, usage meters, usage meters with % left, compact % left, glyph only, glyph with usage ring, glyph with label, orbit, no icon), tinted by the aggregate, amber pulse during escalation | Implemented | Session dots |
+| Glass panel: asks pinned with Approve / Deny, sessions, usage bars, device chips, brightness, Quiet…, Clear finished, keyboard navigation (↑↓ ↩ ⌘↩ ⌘D ⌘⌫ ⌘Y ⌘R ⌘O ⌘U ⌘K ⌘, ⌘Q; ⌘K opens the command palette) | Implemented | Click the icon |
 | "Why this light" row with a hover popover (programs per surface, time in state, dimming, brightness settings) | Implemented | On |
-| Settings window: General, Agents, Usage, Devices & Screen Bar, Utilities, Lighting, Toys, Notifications & Focus, Remote, Advanced; every daemon control writes through `set_setting`, refused writes shown | Implemented | ⌘, |
-| First-run setup walkthrough: Welcome, Agents, Permissions, Menu bar & Screen Bar, Done; re-runnable from Settings | Implemented | First two launches |
-| History window: rows by day, away banner, filters, Clear completed with 5-minute Undo | Implemented | ⌘Y |
-| Overview window: sidebar presets (Needs me, Working, Unreviewed, This project, This Mac, All connected), scoped roster table, summary strip, inspector with per-session transcript Timeline (Claude/Codex, paginated), saved filters, search, two-run Compare sheet | Implemented | ⌘O |
-| Event Replay window: read-only journaled events, persistent REPLAY badge, journal coverage, live-attention indicator kept separate | Implemented | ⌘R |
+| Settings window: seven pages (General, Agents & Usage, Alerts & Sounds, Devices & Lighting, Utilities & Toys, Shortcuts, Remote), with the rarely changed settings behind one Advanced fold on each; links and search still name the older page names; search (⌘F) finds a control by name; every daemon control writes through `set_setting`, refused writes shown | Implemented | ⌘, |
+| First-run setup walkthrough: Welcome, Agents, Permissions, Menu bar & Screen Bar, Done; re-runnable from Settings (Run Setup Again…) | Implemented | Until finished, at most two launches |
+| History window: rows by day, away banner, filters, Clear completed with 5-minute Undo; its Events tab is the read-only journal | Implemented | ⌘Y |
+| Overview window: Cabinet and Network layouts, sidebar views (Needs me, Failed, Working, Unreviewed, This Mac, All connected) with per-project and per-branch rows, scoped roster table, summary strip, inspector with per-session transcript Timeline (Claude/Codex, paginated), saved filters, search, two-run Compare sheet | Implemented, current layouts unverified live | ⌘O |
+| Event journal (History's Events tab, once the Event Replay window): read-only journaled events with category chips and search, a persistent Read only badge, journal coverage, live-attention indicator kept separate | Implemented | ⌘R |
 | Usage Center: rings per window, forecast, tokens/cost graph by day or hour, cache savings, pricing disclosure | Implemented | ⌘U |
-| Effect Studio: library, inspector with parameters and live preview, preview on hardware, assignments by scope, scenes, pack import/export | Implemented | Settings › Lighting › Effects… |
-| Control Center and the Rail for the Creator Micro 2 | Implemented, unverified live (pad verified powered off only) | ⌘K |
+| Effect Studio: library, inspector with parameters and live preview, preview on hardware, assignments by scope, scenes, pack import/export | Implemented | Settings › Devices & Lighting › Effect Studio…, or Effect Studio… in the app menus |
+| Control Center (the "Creator Micro" window) and the Rail for the Creator Micro 2 | Implemented, unverified live (pad verified powered off only) | Creator Micro… in the panel's More menu and the status item's menu once a pad has been seen (always in the app menu), or Settings › Devices & Lighting › Creator Micro 2 |
 | Notifications: ask banners with Approve / Deny, completion banners, quota banners; system sounds; notch HUD for device and peer events | Implemented | Permission asked on first banner |
 | Sparkle updates: manual check, opt-in automatic checks, stable/beta channel, feed on this repository's releases | Implemented; the signed 0.9.16 feed and archive are public. An update between two public versions has not yet been observed live. | Automatic checks off |
 | Login item (`SMAppService`) | Implemented | On, registered on first launch |
 | Daemon supervision: restart with backoff, "Core crashed" with Restart, orderly quit | Implemented | Always |
+| Settings transfer (Settings › General › Advanced › Transfer): export every preference to one private (0600) JSON file, import by ticking the parts to take. An import never turns on a request that leaves the Mac, a hook program, a phone link or a permission prompt, and lists what it left off; exports carry no webhook URL or hook programs | Implemented | Manual |
 
 ## Light surfaces
 
@@ -75,17 +77,16 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 | Fold: lid-angle animation with Duo as the default look, Room as an alternate, and optional Bendy or Lid Plane handoff | Implemented | Off; needs Screen Recording |
 | Aquarium: every live session is a fish in a resizable tank window; idle game (pearls, shop, level, streaks, achievements, residents, fry schools) | Implemented | Off |
 | Notch Buddy: a creature by the notch that lives by agent state; ten characters, draggable off the notch, Tamagotchi-lite care log | Implemented | Off |
-| Confetti: a burst in the provider's colours out of the notch's lip (or the icon, the corners, or rain), landing on window tops and the Dock — weekly reset by default; session-completion, per-provider, banked-credits, all-clear and milestone triggers opt in; sizes, palettes, shapes, seasonal and moment styles | Implemented | Off |
+| Confetti: a burst in the provider's colours out of the notch's lip (or the icon, the corners, or rain), landing on window tops and the Dock — weekly reset by default (a reset noticed hours late, or one that refilled by less than 50 points, still celebrates; one the app missed while away is offered again on connect for 24 hours; every verdict, played, held or dropped, is logged); session-completion, per-provider, banked-credits, all-clear and milestone triggers opt in; sizes, palettes, shapes, seasonal and moment styles | Implemented | Off |
 
 ## Utilities (the Utilities page)
 
 | Capability | Status | Default |
 | --- | --- | --- |
-| Notch island: capsule hugging the notch — live counts, expand-on-hover card, event capsules (asks, completions, failures, quota resets, charging), Now Playing via the `mediaremote` helper, media HUD, system alerts, weather, Mirror row, audio visualizer, shelf; Alcove or Boring Notch can own the notch instead | Implemented | Off |
-| Menu Bar: hide items behind the JR-Bar item (the concealer on macOS 27, spacer engine elsewhere), reveal gestures, Item Bar with live tiles, ⌘⇧K command bar, hotkeys, triggers, profiles, cover appearance; Bartender, Ice or Hidden Bar can be handed the surface instead | Implemented | On (utility enabled; nothing hidden until items are dragged over) |
+| Notch island: capsule hugging the notch — live counts, expand-on-hover card, event capsules (asks, completions, failures, quota resets, charging), Now Playing via the `mediaremote` helper, media HUD, system alerts, Mirror row, audio visualizer, shelf; Alcove or Boring Notch can own the notch instead | Implemented | Off |
+| Menu Bar: hide items behind the JR-Bar icon (the icon is the divider: items left of it are hidden, right of it shown, and you ⌘-drag to change it). The card leads with one status line that says why hiding is paused or impossible (no room for the icon, a rival manager, no Accessibility, another manager rendering) with a one-click fix, then shows where your apps sit; Show everything always shows everything, and every warning offers Turn Menu Bar off. A quick relaunch waits for the old instance instead of leaving the bar without an icon. Reveal gestures, Item Bar with live tiles, ⌘⇧K command bar, hotkeys, triggers, profiles, cover appearance (JR-Bar has one status item and writes no Control Center preference); Bartender, Ice or Hidden Bar can be handed the surface instead | Implemented, unverified live (the relaunch and reveal checks need a hand pass) | On (utility enabled; nothing hidden until items are dragged over) |
 | Dock: hover window previews over Apple's Dock, per-window actions, app switcher; DockDoor or ActiveDock can render instead | Implemented | Off |
 | Agent Overview: the roster card — counts by state, session verbs (open, approve/deny, dismiss, snooze, clear), ⌘O window | Implemented | On |
-| Data Hoarder: local searchable archive of traces and session files — hash-deduped copies, per-source import consent, full export, recoverable Archive Trash; no automatic capture or proxy connection yet | Implemented (capture is manual/import-only so far) | Off |
 
 ## Quiet, Focus and power
 
@@ -102,17 +103,18 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 | Capability | Status | Default |
 | --- | --- | --- |
 | Windows (5 h, 7 d, daily, weekly, monthly, credits) with reset times for Claude, Codex, Gemini, Devin, Grok, Antigravity, OpenCode, Cursor and an optional OpenAI API org, where the provider exposes them | Implemented (Codex real turns pending the quota reset; Gemini on the derived tier) | Providers shown: all with data |
-| Claude official usage endpoint via Claude Code's OAuth | Implemented | Off (consent in Settings › Usage) |
-| Forecast: one sample per window when the percentage moves or five minutes pass, least-squares over the last 90 minutes, `pace` and `exhausts_at`; the app extrapolates locally until the daemon has enough spread | Implemented | On |
-| Tokens and cost by day or hour from local transcripts (7d–365d), cache savings, list-price disclosure | Implemented (the daemon reports no price table yet, so the cost lines read as approximate) | On |
+| Claude official usage endpoint via Claude Code's OAuth | Implemented | Off (consent in Settings › Agents & Usage) |
+| Forecast: one sample per window (and per account) when the percentage moves or five minutes pass, least-squares over the last 90 minutes, `pace` and `exhausts_at`; the app extrapolates locally until the daemon has enough spread | Implemented | On |
+| Tokens and cost by day or hour from local transcripts (7d–365d), cache savings, list-price disclosure | Implemented (every dollar figure is a list-price estimate from the price snapshot that ships with the app, marked ≈; a provider with no table reads as approximate) | On |
 | Quota alerts: threshold effects, pace notifications, reset sunrise sweep and banner | Implemented | Off |
 | Reset countdown on the quota ear (drain arc inside the ring + words in the peek and island card) | Implemented | On |
-| Provider incident badges from the public status pages of Anthropic, OpenAI and Cursor (ear tone, panel row, Usage Center header): one request per found provider every 10 minutes | Implemented | Off (Settings › Usage › Provider status pages; nothing is contacted until you turn it on) |
-| Fix sign-in on a stale or signed-out card: re-reads the provider's sign-in, asks Claude Code to renew its own expired Keychain item with one quiet `claude -p` call, or opens your terminal on the CLI's own login (`grok login`, `codex login`, `opencode providers login`) | Implemented, unverified live (the terminal flows and the renewal need a hand check) | On click only |
-| Update a provider's CLI from Settings › Agents: runs its own updater (`claude update`, `codex update`, `grok update`, `devin update`, `opencode upgrade`) and shows old → new version | Implemented, unverified live | On click only |
-| "Update available" on an agent CLI's row from `registry.npmjs.org`, once per 6 hours and on the Agents refresh | Implemented | Off (Settings › Agents › Check for agent updates; nothing is contacted until you turn it on) |
+| Provider incident badges from the public status pages of Anthropic, OpenAI and Cursor (ear tone, panel row, Usage Center header): one request per found provider every 10 minutes | Implemented | Off (Settings › Agents & Usage › Provider status pages; nothing is contacted until you turn it on) |
+| Fix sign-in on a stale or signed-out card: re-reads the provider's credential or offers its sign-in route. Claude Code renews its own expired sign-in; a named Claude profile retains its own credential. | Implemented, unverified live | On click only |
+| Update a provider's CLI from Settings › Agents & Usage: uses the updater or trusted npm/Homebrew installation that owns the CLI, preserves its installation prefix, and reports the version change or failure | Implemented, unverified live | On click only |
+| "Update available" on an agent CLI's row from `registry.npmjs.org`, once per 6 hours and on the Agents refresh | Implemented | Off (Settings › Agents & Usage › Check for agent updates; nothing is contacted until you turn it on) |
 | Quota Runway device display | Implemented | Selectable per device |
 | Capacity history and operator history behind retention consent | Implemented | Off |
+| Factory subscription usage through an explicitly connected browser session or optional API key, with separate Standard/Core windows or labeled organization allowances from the account's billing mode | Implemented, unverified live | Off |
 | Devin browser-session import: exact CLI consent, Usage Center import and revoke, token in Keychain | Implemented | Off |
 
 ## Remote and integrations
@@ -132,7 +134,7 @@ The [roadmap](ROADMAP.md) lists the remaining acceptance and release work.
 | --- | --- | --- |
 | `make package`: one signed bundle (app, frozen daemon as a nested helper app, shim, pinned Sparkle), PKG for `/` or `~`, Sparkle ZIP, signed appcast when the key is in the keychain | Implemented; the published 0.9.16 PKG and app are Developer ID signed, notarized and stapled, and the PKG passed a home install. The full release-verification manifest remains open. | Manual |
 | `make clean-install`: home-directory install without a password | Implemented | Manual |
-| Doctor: `jrbar doctor` and Settings › Advanced (commit the daemon was built from, memory, sockets, hooks, devices, checks) | Implemented | Manual |
+| Doctor: `jrbar doctor` and Settings › General › Advanced (commit the daemon was built from, memory, sockets, hooks, devices, checks) | Implemented | Manual |
 | SidePulse → JR-Bar migration of config, state, data, hooks, LaunchAgents, Keychain items | Implemented | Automatic, once |
 | `make fast`, the full pytest suite, `swift test`, and CI on hosted macOS 26 | Implemented | Every push |
 

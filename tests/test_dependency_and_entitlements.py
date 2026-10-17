@@ -1,16 +1,23 @@
+import importlib.util
 import plistlib
+import sys
 import tomllib
 from pathlib import Path
 
-from packaging.verify_entitlements import (
-    FORBIDDEN_ENTITLEMENTS,
-    REQUIRED_ENTITLEMENTS,
-    source_entitlements,
-    validate_entitlements,
-)
 from scripts.verify_dependency_policy import validate_dependency_policy
 
 ROOT = Path(__file__).resolve().parents[1]
+MODULE_PATH = ROOT / "packaging" / "verify_entitlements.py"
+spec = importlib.util.spec_from_file_location("jrbar_entitlements_verifier", MODULE_PATH)
+if spec is None or spec.loader is None:
+    raise ImportError(f"cannot load verifier from {MODULE_PATH}")
+verifier = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = verifier
+spec.loader.exec_module(verifier)
+FORBIDDEN_ENTITLEMENTS = verifier.FORBIDDEN_ENTITLEMENTS
+REQUIRED_ENTITLEMENTS = verifier.REQUIRED_ENTITLEMENTS
+source_entitlements = verifier.source_entitlements
+validate_entitlements = verifier.validate_entitlements
 
 
 def test_reviewed_dependency_policy_is_exact__and_2_more() -> None:

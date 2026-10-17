@@ -46,10 +46,9 @@ final class LyricsStore {
     /// its lyric line on nil; it never shows a stale track's words.
     private(set) var lyrics: SyncedLyrics?
 
-    /// Track key → parsed lyrics (or nil for "known unavailable").
-    /// Unbounded by design would leak across a long session — the
-    /// cap drops the oldest half when hit.
-    private var cache: [String: SyncedLyrics?] = [:]
+    /// Up to 64 answers by track key. Misses keep their expiry when
+    /// loaded from disk. The oldest answer leaves when the cache is full.
+    private var cache: [String: LyricsDiskCache.Entry] = [:]
     private var cacheOrder: [String] = []
     private static let cacheCap = 64
 
@@ -60,6 +59,9 @@ final class LyricsStore {
     /// double the request. Read by tests: a key here is a lookup on
     /// its way to LRCLIB.
     private(set) var inFlight: Set<String> = []
+    @ObservationIgnored private(set) var lookupTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var lookupOwners: [String: UUID] = [:]
+    @ObservationIgnored var lookupOverride: (@MainActor (LyricsQuery) async -> LyricsLookup)?
 
     /// Keys whose lookup could not be answered, and when each may ask
     /// again. In memory only, never on disk, and pruned with the cache's
@@ -96,20 +98,25 @@ final class LyricsStore {
     func note(media: AlcoveMedia?) {
         guard enabled(), let media,
               let query = LyricsQuery(media: media) else {
-            lyrics = nil
-            currentKey = nil
+            reset()
             return
         }
         let key = query.cacheKey
-        guard key != currentKey || retryDue(key) else { return }
+        let date = now()
+        let expired = cache[key]?.missExpiry.map { $0 <= date } ?? false
+        if expired {
+            cache.removeValue(forKey: key)
+            cacheOrder.removeAll { $0 == key }
+        }
+        guard key != currentKey || expired || retryDue(key) else { return }
         currentKey = key
         if let hit = cache[key] {
-            lyrics = hit
+            lyrics = hit.lyrics
             return
         }
-        if let stored = disk?.lookup(key) {
+        if let stored = disk?.lookupEntry(key, now: date) {
             remember(stored, for: key)
-            lyrics = stored
+            lyrics = stored.lyrics
             return
         }
         lyrics = nil
@@ -126,9 +133,9 @@ final class LyricsStore {
         return !inFlight.contains(key) && cache[key] == nil
     }
 
-    private func remember(_ found: SyncedLyrics?, for key: String) {
+    private func remember(_ found: LyricsDiskCache.Entry, for key: String) {
         guard cache[key] == nil else { return }
-        cache[key] = .some(found)
+        cache[key] = found
         cacheOrder.append(key)
         if cacheOrder.count > Self.cacheCap {
             for stale in cacheOrder.prefix(cacheOrder.count - Self.cacheCap) {
@@ -142,6 +149,10 @@ final class LyricsStore {
     func reset() {
         lyrics = nil
         currentKey = nil
+        for task in lookupTasks.values { task.cancel() }
+        lookupTasks.removeAll()
+        lookupOwners.removeAll()
+        inFlight.removeAll()
     }
 
     /// One ask per key, guarded against stale landing: whatever comes
@@ -149,9 +160,21 @@ final class LyricsStore {
     /// still the playing track. A lookup with no answer caches nothing.
     private func fetch(_ query: LyricsQuery, key: String) {
         guard inFlight.insert(key).inserted else { return }
-        Task {
-            let outcome = await Self.lookup(query, session: session)
-            inFlight.remove(key)
+        let owner = UUID()
+        lookupOwners[key] = owner
+        lookupTasks[key] = Task {
+            defer {
+                if lookupOwners[key] == owner {
+                    lookupOwners[key] = nil
+                    lookupTasks[key] = nil
+                    inFlight.remove(key)
+                }
+            }
+            guard !Task.isCancelled, enabled(), lookupOwners[key] == owner else { return }
+            let outcome: LyricsLookup
+            if let lookupOverride { outcome = await lookupOverride(query) }
+            else { outcome = await Self.lookup(query, session: session, allowed: { self.enabled() }) }
+            guard !Task.isCancelled, enabled(), lookupOwners[key] == owner else { return }
             switch outcome {
             case .found(let found):
                 settle(found, for: key)
@@ -167,8 +190,10 @@ final class LyricsStore {
     /// is still the playing track's.
     private func settle(_ found: SyncedLyrics?, for key: String) {
         retryAfter[key] = nil
-        remember(found, for: key)
-        disk?.store(found, for: key)
+        let date = now()
+        let expiry = found == nil ? date.addingTimeInterval(LyricsDiskCache.missLife) : nil
+        remember(LyricsDiskCache.Entry(lyrics: found, missExpiry: expiry), for: key)
+        disk?.store(found, for: key, now: date)
         if currentKey == key { lyrics = found }
     }
 
@@ -189,17 +214,21 @@ final class LyricsStore {
     /// gave nothing readable, the lookup is `.unavailable` — never a
     /// remembered "no lyrics".
     static func lookup(_ query: LyricsQuery,
-                       session: URLSession) async -> LyricsLookup {
-        let exact = await get(query, session: session)
+                       session: URLSession,
+                       allowed: @MainActor () -> Bool = { true }) async -> LyricsLookup {
+        guard !Task.isCancelled, allowed() else { return .unavailable }
+        let exact = await get(query, session: session, allowed: allowed)
+        guard !Task.isCancelled, allowed() else { return .unavailable }
         if case .found = exact { return exact }
-        let nearest = await search(query, session: session)
+        let nearest = await search(query, session: session, allowed: allowed)
+        guard !Task.isCancelled, allowed() else { return .unavailable }
         if case .found = nearest { return nearest }
         let bothAnswered = exact == .absent && nearest == .absent
         return bothAnswered ? .absent : .unavailable
     }
 
     private static func get(_ query: LyricsQuery,
-                            session: URLSession) async -> LyricsLookup {
+                            session: URLSession, allowed: @MainActor () -> Bool) async -> LyricsLookup {
         var items = [
             URLQueryItem(name: "track_name", value: query.title),
             URLQueryItem(name: "artist_name", value: query.artist),
@@ -211,7 +240,7 @@ final class LyricsStore {
             items.append(URLQueryItem(name: "duration", value: String(duration)))
         }
         guard let url = url(path: "/api/get", items: items) else { return .unavailable }
-        switch await data(for: url, session: session) {
+        switch await data(for: url, session: session, allowed: allowed) {
         case .failed:
             return .unavailable
         case .notFound:
@@ -227,13 +256,13 @@ final class LyricsStore {
     }
 
     private static func search(_ query: LyricsQuery,
-                               session: URLSession) async -> LyricsLookup {
+                               session: URLSession, allowed: @MainActor () -> Bool) async -> LyricsLookup {
         let items = [
             URLQueryItem(name: "track_name", value: query.title),
             URLQueryItem(name: "artist_name", value: query.artist),
         ]
         guard let url = url(path: "/api/search", items: items) else { return .unavailable }
-        switch await data(for: url, session: session) {
+        switch await data(for: url, session: session, allowed: allowed) {
         case .failed:
             return .unavailable
         case .notFound:
@@ -270,13 +299,15 @@ final class LyricsStore {
     }
 
     private static func data(for url: URL,
-                             session: URLSession) async -> LyricsResponse {
+                             session: URLSession, allowed: @MainActor () -> Bool) async -> LyricsResponse {
+        guard !Task.isCancelled, allowed() else { return .failed }
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
         request.setValue("JR-Bar/\(version) (https://github.com/jonathanreed/jr-bar)",
                          forHTTPHeaderField: "User-Agent")
         guard let (data, response) = try? await session.data(for: request),
+              !Task.isCancelled, allowed(),
               let http = response as? HTTPURLResponse
         else { return .failed }
         if http.statusCode == 404 { return .notFound }
@@ -292,6 +323,11 @@ final class LyricsStore {
 /// a track never reads it.
 @MainActor
 final class LyricsDiskCache {
+    struct Entry {
+        let lyrics: SyncedLyrics?
+        let missExpiry: Date?
+    }
+
     struct Stored: Codable {
         struct Line: Codable {
             var t: Double
@@ -321,11 +357,18 @@ final class LyricsDiskCache {
 
     /// `.some(nil)` is a remembered miss; nil is "never looked up".
     func lookup(_ key: String, now: Date = Date()) -> SyncedLyrics?? {
+        guard let entry = lookupEntry(key, now: now) else { return nil }
+        return .some(entry.lyrics)
+    }
+
+    func lookupEntry(_ key: String, now: Date) -> Entry? {
         guard let stored = load()[key] else { return nil }
         guard let lines = stored.lines else {
-            return now.timeIntervalSince(stored.at) < Self.missLife ? .some(nil) : nil
+            let expiry = stored.at.addingTimeInterval(Self.missLife)
+            return now < expiry ? Entry(lyrics: nil, missExpiry: expiry) : nil
         }
-        return .some(SyncedLyrics(lines: lines.map { SyncedLyrics.Line(time: $0.t, text: $0.s) }))
+        let lyrics = SyncedLyrics(lines: lines.map { SyncedLyrics.Line(time: $0.t, text: $0.s) })
+        return Entry(lyrics: lyrics, missExpiry: nil)
     }
 
     func store(_ lyrics: SyncedLyrics?, for key: String, now: Date = Date()) {

@@ -227,7 +227,7 @@ extension AquariumView {
     /// few minutes. Calm water draws nothing extra.
     private func drawFleetMood(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         let mood = fixture.map { $0.mood ?? .calm }
-            ?? toy?.waterMood(at: Date(timeIntervalSince1970: t)) ?? .calm
+            ?? toy?.waterMood(at: Date()) ?? .calm
         guard mood != .calm else { return }
         let rect = Path(CGRect(origin: .zero, size: size))
         if mood.low > 0 {

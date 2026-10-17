@@ -250,6 +250,19 @@ struct UtilityParityRenderProofTests {
     }
 
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the parity PNGs"))
+    func keepAwakeFailedRead() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let utility = KeepAwakeUtility(toggles: try Self.heldToggles(now: now))
+        let holders = [KeepAwakeHolders.Holder(name: "Presentation", bundleID: "test.presentation", display: true)]
+        let view = Self.sheet(KeepAwakeUtilityControls(utility: utility, holders: holders,
+                                                       now: now, holdersFailed: true).cardBodyStyle(), width: 580)
+        for dark in [false, true] {
+            try ProofRender.write(view, size: CGSize(width: 580, height: 950),
+                                  name: "keepawake-failed-read-\(dark ? "dark" : "light")", dark: dark)
+        }
+    }
+
+    @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the parity PNGs"))
     func awakeMenu() throws {
         let now = Date()
         let items = KeepAwakeMenu.items(durations: KeepAwakeMenu.defaultDurations,
@@ -289,7 +302,6 @@ struct UtilityParityRenderProofTests {
         tray.toggleSelection(chips[3])
         tray.actionNotice = "Compressed into Archive.zip"
         toy.cardModel.pinned = true
-        toy.cardModel.contentRevealed = true
         toy.cardModel.show(.shelf)
         try Self.writeCard(toy, name: "notch-card-shelf-multiselect")
 
@@ -327,7 +339,6 @@ struct UtilityParityRenderProofTests {
         model.focus = ScreenBarFocus(style: ProviderStyle.style(for: "claude"), label: "review-patch",
                                      word: "Working", clickSession: "claude:1")
         model.pinned = true
-        model.contentRevealed = true
         model.utility.start()
         defer { model.utility.stop() }
         monitor.onChange?(NotchSurfaceRenderProofTests.media())
@@ -338,105 +349,6 @@ struct UtilityParityRenderProofTests {
         }
         try Self.writeCard(toy, name: "notch-card-now-output-picker",
                            extra: AnyView(MenuStill(rows: rows, width: 240)))
-    }
-
-    // MARK: Data Hoarder
-
-    @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the parity PNGs"))
-    func hoarderFilters() async throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("jrbar-parity-archive-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let archive = DataHoarderArchive(root: root.appending(path: "archive"))
-        let entries: [(String, String, String, String)] = [
-            ("pi-1", "pi", "Tidy the LED effect names", "/Users/jr/JR-Bar"),
-            ("pi-2", "pi", "Port the comet to the Dot", "/Users/jr/SidePulse"),
-            ("gem-1", "gemini", "Site copy pass", "/Users/jr/site"),
-            ("grok-1", "grok", "Benchmark the parser", "/Users/jr/JR-Bar"),
-        ]
-        for (name, provider, title, project) in entries {
-            let file = root.appending(path: "\(name).jsonl")
-            try Data(#"{"type":"message","content":"\#(title)"}"#.utf8).write(to: file)
-            let record = try await archive.importFile(file)
-            try await archive.updateRecordMetadata(id: record.id, provider: provider, sessionID: "5f1c9a2e-\(name)",
-                                                   project: project, title: title,
-                                                   startedAt: Date().addingTimeInterval(-7200),
-                                                   lastActivityAt: Date().addingTimeInterval(-3600))
-        }
-        // Imported through Find History with no source capturing: the
-        // pi, Gemini and Grok records still get their own filter rows.
-        // Nothing of this Mac's own transcripts is read.
-        let model = DataHoarderModel(archive: archive)
-        model.enabled = true
-        await model.reload()
-        model.searchFilter.provider = "pi"
-        await model.runSearch()
-        model.selectedID = model.searchResults.first?.record.id
-        let menu = [MenuStill.Row(title: "All providers")]
-            + model.providerChoices.map { MenuStill.Row(title: DataHoarderProviders.title($0), checked: $0 == "pi") }
-        // The window's own background: the archive view draws on it.
-        let view = HStack(alignment: .top, spacing: 0) {
-            DataHoarderView(model: model).frame(width: 1040, height: 700)
-            ZStack(alignment: .top) {
-                Color(nsColor: .windowBackgroundColor)
-                MenuStill(rows: menu, width: 200).padding(.top, 150)
-            }
-            .frame(width: 240, height: 700)
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-        for dark in [false, true] {
-            try await Self.writeLoaded(view, size: CGSize(width: 1280, height: 700),
-                                       name: "hoarder-archive-filters\(dark ? "-dark" : "")", dark: dark,
-                                       model: model)
-        }
-        // A Grok record: its CLI resumes, so the detail offers Resume and
-        // the copyable line.
-        model.searchFilter.provider = "grok"
-        await model.runSearch()
-        model.selectedID = model.searchResults.first?.record.id
-        let resume = DataHoarderView(model: model).frame(width: 1040, height: 520)
-            .background(Color(nsColor: .windowBackgroundColor))
-        try await Self.writeLoaded(resume, size: CGSize(width: 1040, height: 520), name: "hoarder-record-resume",
-                                   dark: false, model: model)
-        await model.capture.stop()
-    }
-
-    /// The archive window as a still once it has loaded what it shows. Its
-    /// own `.task`s fetch the storage line, the list, the preview and the
-    /// detail when it appears, and they finish only while the test awaits
-    /// — so it is hosted, waited on (at most 30 s) until nothing is
-    /// loading, and then drawn.
-    private static func writeLoaded<V: View>(_ view: V, size: CGSize, name: String, dark: Bool,
-                                             model: DataHoarderModel) async throws {
-        let hosting = NSHostingView(rootView: view.environment(\.colorScheme, dark ? .dark : .light))
-        hosting.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        hosting.frame = CGRect(origin: .zero, size: size)
-        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless],
-                              backing: .buffered, defer: false)
-        window.appearance = hosting.appearance
-        window.contentView = hosting
-        defer { window.contentView = nil }
-        hosting.layoutSubtreeIfNeeded()
-        // Past the search's 200 ms debounce, so every load has begun.
-        try await Task.sleep(nanoseconds: 400_000_000)
-        let deadline = Date().addingTimeInterval(30)
-        while Date() < deadline, model.preview.isEmpty || model.measuringStorage || model.searching
-                || model.detailLoading || model.busy {
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
-        hosting.layoutSubtreeIfNeeded()
-        let scale: CGFloat = 2
-        let bitmap = try #require(NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: Int(ceil(size.width * scale)),
-            pixelsHigh: Int(ceil(size.height * scale)), bitsPerSample: 8, samplesPerPixel: 4,
-            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-            bytesPerRow: 0, bitsPerPixel: 0))
-        bitmap.size = size
-        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-        let png = try #require(bitmap.representation(using: .png, properties: [:]))
-        try FileManager.default.createDirectory(at: ProofRender.directory, withIntermediateDirectories: true)
-        try png.write(to: ProofRender.directory.appendingPathComponent("\(name).png"))
     }
 
     // MARK: Overview

@@ -11,7 +11,7 @@ import SwiftUI
 @MainActor
 final class WhatsNewWindowController: NSObject, NSWindowDelegate {
     /// Runs a Try it: the router, which does exactly what a link would.
-    var run: @MainActor (AppCommand) -> AppCommandRouter.Outcome = { AppCommandRouter.shared.perform($0) }
+    var run: @MainActor (AppCommand) async -> AppCommandRouter.Outcome = { await AppCommandRouter.shared.perform($0) }
     /// Stamps the release as seen (`setup.json`'s `whatsNewSeen`).
     var markSeen: @MainActor (_ release: String) -> Void = { _ in }
 
@@ -48,8 +48,8 @@ final class WhatsNewWindowController: NSObject, NSWindowDelegate {
     }
 
     /// Internal for the tests: a Try it's refusal, or nil once it ran.
-    func tryIt(_ command: AppCommand) -> String? {
-        if case .refused(let why) = run(command) { return why }
+    func tryIt(_ command: AppCommand) async -> String? {
+        if case .refused(let why) = await run(command) { return why }
         return nil
     }
 
@@ -60,7 +60,7 @@ final class WhatsNewWindowController: NSObject, NSWindowDelegate {
         WindowContentLifecycle.attach(to: window, title: "What's New in JR-Bar") {
             let hosting = NSHostingController(rootView: WhatsNewView(
                 entries: WhatsNewCatalog.entries,
-                tryIt: { [weak self] command in self?.tryIt(command) },
+                tryIt: { [weak self] command in await self?.tryIt(command) },
                 onDone: { [weak window] in window?.performClose(nil) }))
             hosting.sizingOptions = []
             let size = Self.contentSize(of: hosting)

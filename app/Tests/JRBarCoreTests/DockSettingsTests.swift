@@ -9,6 +9,20 @@ import Testing
 /// are ignored rather than carried.
 @Suite("Dock settings")
 struct DockSettingsTests {
+    @Test("switcher exclusions start empty on upgrade and stay independent of preview exclusions")
+    func switcherExclusionsDecodeAndRoundTrip() throws {
+        let legacy = try decode(DockSettings.self, #"{"enhance":{"excludedBundleIDs":["test.preview"]}}"#)
+        #expect(legacy.enhance.excludedBundleIDs == ["test.preview"])
+        #expect(legacy.enhance.switcherExcludedBundleIDs.isEmpty)
+        let malformed = try decode(DockSettings.self, #"{"enhance":{"switcherExcludedBundleIDs":"test.app"}}"#)
+        #expect(malformed.enhance.switcherExcludedBundleIDs.isEmpty)
+        var configured = legacy
+        configured.enhance.switcherExcludedBundleIDs = ["test.remote", "test.virtual"]
+        let restored = try JSONDecoder().decode(DockSettings.self, from: JSONEncoder().encode(configured))
+        #expect(restored == configured)
+        #expect(restored.enhance.excludedBundleIDs == ["test.preview"])
+    }
+
     private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
         try JSONDecoder().decode(T.self, from: Data(json.utf8))
     }

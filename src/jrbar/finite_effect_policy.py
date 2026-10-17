@@ -121,10 +121,6 @@ class FiniteEffectPlan:
     substitution_reason: StaticSubstitutionReason | None = None
 
     @property
-    def reduce_motion_substituted(self) -> bool:
-        return self.substitution_reason is StaticSubstitutionReason.REDUCE_MOTION
-
-    @property
     def has_motion(self) -> bool:
         return self.decision is FiniteEffectDecision.PLAY
 
@@ -393,10 +389,11 @@ def _bounded_loop_animation(
         steps[repeat_index] = RepeatStep(repetitions)
         if inserted_rest_ms:
             steps.insert(repeat_index, _cadence_rest(inserted_rest_ms))
-    elif repetitions > 1:
+    else:
         if inserted_rest_ms:
             steps.append(_cadence_rest(inserted_rest_ms))
-        steps.append(RepeatStep(repetitions))
+        if repetitions > 1:
+            steps.append(RepeatStep(repetitions))
     return Animation(name=animation.name, steps=tuple(steps))
 
 

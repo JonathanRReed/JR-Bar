@@ -4,6 +4,7 @@ what state.power says, the power rows in History, and the power events."""
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,7 +42,11 @@ class _Process:
 
 @pytest.fixture
 def powered(headless, monkeypatch: pytest.MonkeyPatch):  # noqa: F811
+    from tests.test_dnd_controller import _Timer
+
     controller = headless
+    controller.dnd_controller._timer_factory = _Timer
+    controller.dnd_controller._recovery_timer_factory = _Timer
     controller.applicationDidFinishLaunching_(None)
     controller.keep_awake.process_factory = _Process
     controller.keep_awake.watch_current_process = False
@@ -113,6 +118,29 @@ def test_replacing_or_cancelling_a_lease_sends_no_power_event(powered) -> None:
     reasons = [event.reason for event in controller._core_power_log.events if event.kind == "lease_ended"]
     assert reasons[-2:] == ["replaced", "cancelled"]
     assert [document for kind, document in server.published if kind == "event"] == []
+
+
+def test_release_failure_is_reported_and_a_second_command_retries(powered, monkeypatch) -> None:
+    controller = powered
+    controller.settings = replace(controller.settings, agent_keep_awake_enabled=False)
+    core_runtime._cmd_hold_awake(controller, {"seconds": 3600})
+    process = controller.keep_awake.process
+
+    def refused():
+        raise PermissionError("synthetic release refused")
+
+    monkeypatch.setattr(process, "terminate", refused)
+    monkeypatch.setattr(process, "kill", refused)
+    with pytest.raises(CommandError, match="could not stop"):
+        core_runtime._cmd_release_awake(controller, {})
+    hold = controller._core_build_state()["power"]["hold"]
+    assert hold["release_failed"] is True
+    assert hold["active"] is True
+    assert hold["state"] == "off"
+    monkeypatch.setattr(process, "terminate", lambda: setattr(process, "terminated", True))
+    reply = core_runtime._cmd_release_awake(controller, {})
+    assert reply["hold"]["active"] is False
+    assert reply["hold"]["release_failed"] is False
 
 
 def test_until_these_agents_finish_waits_on_the_live_main_sessions(powered) -> None:
@@ -265,6 +293,17 @@ def test_a_closed_lid_stretch_reports_what_finished_and_when_it_slept() -> None:
         ("lid_hold_ended", 2),
         ("slept", None),
     ]
+
+
+def test_closed_lid_controller_errors_reach_state_and_clear_after_recovery() -> None:
+    lid = SimpleNamespace(active=lambda: True, sleeper=None, last_error="synthetic release refused")
+    controller = SimpleNamespace(closed_lid_awake=lid)
+    document = {"power": {"closed_lid": {"holding": True}}}
+    core_power.augment_power_document(controller, document)
+    assert document["power"]["closed_lid"]["error"] == "synthetic release refused"
+    lid.last_error = None
+    core_power.augment_power_document(controller, document)
+    assert document["power"]["closed_lid"]["error"] is None
 
 
 def test_the_daemons_low_power_reads_time_left_too(powered) -> None:

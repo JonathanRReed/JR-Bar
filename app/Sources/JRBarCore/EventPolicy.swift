@@ -162,6 +162,8 @@ public enum EventPolicy {
         let session = event.session.flatMap { state?.session(withID: $0) }
         let provider = event.provider ?? session?.provider
         let providerName = provider.map(LightExplainer.providerName) ?? "An agent"
+        let quotaProviderName = QuotaAccountCaption.provider(provider, instance: event.instance,
+                                                           label: event.instanceLabel, privacyMode: state?.usage?.privacyMode)
         let label = event.label.flatMap { $0.isEmpty ? nil : $0 } ?? session?.shortLabel ?? providerName
 
         // Quiet's hold on sounds and banners is `holdingQuiet`, applied on
@@ -174,14 +176,18 @@ public enum EventPolicy {
 
         switch event.kind {
         case "completed":
-            // The daemon's own default is off (`completion_notification_enabled`
-            // defaults False in the Python settings); an absent key must not
-            // read as yes, or a fresh install banners every completion.
+            // The daemon's document always carries the key (it defaults on
+            // there). With no document at all the app cannot know the
+            // person's choice, so an absent key reads as no.
             let wanted = settings?.bool("completion_notification_enabled") ?? false
             var delivery = EventDelivery(sound: sound(completionSound))
-            if notify, wanted {
-                delivery.notification = .init(identifier: "completed:\(event.session ?? event.id)", title: "\(label) finished",
-                                              body: event.detail ?? "\(providerName) is done. Click to open the session.",
+            // The person is already looking at the session's terminal: it
+            // finished in front of them, and a banner would only repeat it.
+            if notify, wanted, !askingFrontmost {
+                delivery.notification = .init(identifier: "completed:\(event.session ?? event.id)",
+                                              title: FinishBanner.title(label: label, duration: event.duration),
+                                              body: FinishBanner.summary(event.summary) ?? event.detail
+                                                  ?? "\(providerName) is done. Click to open the session.",
                                               session: event.session)
             }
             return delivery
@@ -218,7 +224,7 @@ public enum EventPolicy {
         case "quota_crossed":
             guard notify, settings?.bool("quota_alerts_enabled") ?? false else { return .nothing }
             var delivery = EventDelivery(sound: sound(quotaSound))
-            delivery.notification = .init(identifier: "quota:\(provider ?? event.id)", title: "\(providerName) usage \(event.detail ?? "threshold crossed")",
+            delivery.notification = .init(identifier: quotaNotificationID(for: event, provider: provider), title: "\(quotaProviderName) usage \(event.detail ?? "threshold crossed")",
                                           body: event.label ?? "The window is nearly spent; expect throttling.", session: nil)
             return delivery
 
@@ -230,13 +236,13 @@ public enum EventPolicy {
             let facts = event.detail ?? "At this pace it runs out before the window resets."
             let body = lane.map { "\($0): \(facts)" } ?? facts
             var delivery = EventDelivery(sound: sound(quotaSound))
-            delivery.notification = .init(identifier: "quota:\(provider ?? event.id)", title: "\(providerName) is running low",
+            delivery.notification = .init(identifier: quotaNotificationID(for: event, provider: provider), title: "\(quotaProviderName) is running low",
                                           body: body, session: nil)
             return delivery
 
         case "quota_reset":
             guard notify, settings?.bool("quota_alerts_enabled") ?? false else { return .nothing }
-            return EventDelivery(notification: .init(identifier: "quota:\(provider ?? event.id)", title: "\(providerName) quota reset",
+            return EventDelivery(notification: .init(identifier: quotaNotificationID(for: event, provider: provider), title: "\(quotaProviderName) quota reset",
                                                      body: event.detail ?? "A fresh window. Off you go.", session: nil))
 
         case "escalation_stage":
@@ -275,6 +281,13 @@ public enum EventPolicy {
         default:
             return .nothing
         }
+    }
+
+    /// Scope replacement without putting private account metadata in visible text.
+    private static func quotaNotificationID(for event: CoreEvent, provider: String?) -> String {
+        let base = "quota:\(provider ?? event.id)"
+        let instance = event.instance?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "default"
+        return instance.isEmpty || instance == "default" ? base : "\(base):\(instance)"
     }
 
     /// The highest stage the user allows (`escalation_tier`): light 1,

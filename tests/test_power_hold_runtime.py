@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -187,10 +188,10 @@ def test_battery_release_does_not_rewrite_display_choice__and_1_more() -> None:
             calls.append(("mode", mode))
             return False
 
-    settings = (
-        AgentMonitorSettings()
-        .with_agent_keep_awake_enabled(False)
-        .with_keep_display_awake(True)
+    settings = replace(
+        AgentMonitorSettings(),
+        agent_keep_awake_enabled=False,
+        keep_display_awake=True,
     )
     target = SimpleNamespace(
         keep_awake=OrdinaryHold(),

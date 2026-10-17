@@ -161,7 +161,7 @@ final class T3CodeModel {
     }
 }
 
-/// Settings › Agents' T3 Code row — shown only when T3 Code's database is
+/// Settings › Agents & Usage' T3 Code row — shown only when T3 Code's database is
 /// on this Mac. The switch is the opt-in; nothing is read before it.
 struct T3CodeRow: View {
     let model: T3CodeModel

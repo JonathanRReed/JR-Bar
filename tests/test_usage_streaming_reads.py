@@ -229,7 +229,10 @@ def test_a_file_growing_mid_read_is_parsed_to_its_snapshot(tmp_path: Path) -> No
     assert tail.parsed_size == grown.st_size
 
 
-def test_a_line_over_a_megabyte_is_counted_but_never_held_whole(tmp_path: Path) -> None:
+def test_a_line_over_the_cap_is_counted_but_never_held_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(usage_stats, "USAGE_RECORD_MAX_BYTES", 1024 * 1024)
     cap = usage_stats.USAGE_RECORD_MAX_BYTES
     transcript = tmp_path / "session.jsonl"
     with transcript.open("wb") as handle:
@@ -318,7 +321,7 @@ def test_a_read_that_fails_part_way_is_unreadable_not_short(tmp_path: Path, monk
     handle = _FailingHandle([row])
     monkeypatch.setattr(
         usage_stats, "_read_verified_prefix",
-        lambda path, info, resume_offset=0: usage_stats._VerifiedPrefix(handle, resume_offset, info.st_size),
+        lambda path, info, resume_offset=0, **_options: usage_stats._VerifiedPrefix(handle, resume_offset, info.st_size),
     )
 
     result = usage_stats._parse_file(transcript, os.stat(transcript), SECRET)

@@ -36,10 +36,7 @@ struct PaletteSection: Hashable, Sendable {
     static let toys = PaletteSection(id: "toys", title: "Toys", order: 70)
     static let open = PaletteSection(id: "open", title: "Open", order: 80)
     static let settings = PaletteSection(id: "settings", title: "Settings", order: 90)
-    /// Data Hoarder's full-text hits — searched only once you type,
-    /// listed after everything the palette already knew.
-    static let archive = PaletteSection(id: "archive", title: "Archive", order: 100)
-    /// History's matches for a query, after the archive's.
+    /// History's matches for a query, after everything the palette already knew.
     static let history = PaletteSection(id: "history", title: "History", order: 110)
 }
 

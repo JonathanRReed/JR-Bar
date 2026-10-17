@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
 
+from . import firmware_hold
+
 DEFAULT_FILE_NAME = "LEDS.LED"
 POWER_UP_FILE_NAME = "INIT.LED"
 LED_FILE_NAMES = (DEFAULT_FILE_NAME, POWER_UP_FILE_NAME)
@@ -108,6 +110,9 @@ def _write_device_file(
         return target
     if type(preserve_existing_inode) is not bool:
         raise DeviceWriteError("invalid device write mode")
+    # A firmware update owns the drive until it has confirmed the new version
+    # (jrbar.firmware_hold): no LED program may reach it in the meantime.
+    firmware_hold.require_not_held(target)
     if _under_test_on_live_volume(target):
         # An OSError, like an unmounted volume: every caller already handles
         # it, and a DeviceWriteError would count as a refusal on a device card.
@@ -167,6 +172,10 @@ def _write_device_file(
             )
             if error.errno != errno.ENOSPC:
                 raise
+            # The root directory of these tiny FAT volumes holds 16 entries and
+            # macOS sidecars (``._LEDS.LED``) use two each; clear the ones that
+            # read as sidecars so this write, and a firmware update, have room.
+            _prune_sidecars_best_effort(target.parent)
             _fallback_in_place(
                 target=target,
                 parent_descriptor=parent_descriptor,
@@ -184,6 +193,15 @@ def _write_device_file(
                 parent_identity,
             )
             raise
+
+
+def _prune_sidecars_best_effort(root: Path) -> None:
+    try:
+        from .firmware_drive import DriveOps, prune_sidecars
+
+        prune_sidecars(DriveOps(), root)
+    except Exception:
+        pass
 
 
 def _directory_open_flags() -> int:

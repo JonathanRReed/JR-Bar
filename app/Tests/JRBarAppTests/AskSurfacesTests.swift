@@ -185,7 +185,7 @@ struct AskSurfacesTests {
     @Test("slower sources land in source order as each answers; searching holds until the last")
     func searchAnswers() {
         func item(_ id: String) -> PaletteItem {
-            PaletteItem(id: id, title: id, icon: .symbol("circle", .gray), kind: "T", section: .archive,
+            PaletteItem(id: id, title: id, icon: .symbol("circle", .gray), kind: "T", section: .history,
                         actions: [])
         }
         var answers = PaletteSearchAnswers(count: 3)
@@ -212,7 +212,7 @@ struct AskSurfacesTests {
         let controller = PaletteController()
         controller.presentsWindow = false
         let hit = PaletteItem(id: "fast.hit", title: "fast", icon: .symbol("circle", .gray), kind: "T",
-                              section: .archive, actions: [])
+                              section: .history, actions: [])
         // The slow read outlasts the test; closing the palette cancels it.
         let slow = PaletteClosureSource(build: { [] }, search: { _ in
             try? await Task.sleep(for: .seconds(60))
@@ -278,7 +278,7 @@ struct AskSurfacesTests {
             return nil
         }
         let item = PaletteItem(id: "x", title: "x", icon: .symbol("circle", .gray), kind: "T",
-                               section: .archive, actions: [action])
+                               section: .history, actions: [action])
         controller.run(action, of: item)
         #expect(ran, "the verb ran under a ticket")
         #expect(seen == nil, "nothing holds a silent verb's ticket once it has run")
@@ -626,13 +626,18 @@ struct AskSurfacesTests {
         let landed = await coordinator.answerFromBanner(session: session, request: "r2", approve: false)
         #expect(landed == nil)
         #expect(log.calls == ["\(AskVerdict.deny)|r2"], "pinned to the live request")
-        let gone = await coordinator.answerFromBanner(session: "claude:session:none", request: nil, approve: true)
+        let gone = await coordinator.answerFromBanner(session: "claude:session:none", request: "r9", approve: true)
         #expect(gone == NotificationBridge.replacedLine)
+        let unpinned = await coordinator.answerFromBanner(session: session, request: nil, approve: true)
+        #expect(unpinned == NotificationBridge.unpinnedLine, "a banner with no request never answers the live ask")
+        #expect(log.calls.count == 1, "nothing more was sent")
     }
 
     @Test("an ask banner offers Approve and Deny only where Approve would land")
     func bannerCategory() {
-        #expect(EventCoordinator.bannerCategory(for: CoreAsk(session: "s", summary: "Run", answerable: true)) == .ask)
+        #expect(EventCoordinator.bannerCategory(for: CoreAsk(session: "s", summary: "Run", answerable: true, request: "r1")) == .ask)
+        #expect(EventCoordinator.bannerCategory(for: CoreAsk(session: "s", summary: "Run", answerable: true)) == .plain,
+                "no request to pin the buttons to")
         #expect(EventCoordinator.bannerCategory(for: held(choices: [Self.single])) == .plain, "a held question")
         #expect(EventCoordinator.bannerCategory(
             for: CoreAsk(session: "s", summary: "?", answerable: true, replyable: true)) == .plain, "wants words")

@@ -2,7 +2,7 @@ import Foundation
 import JRBarCore
 import SwiftUI
 
-/// Settings › Usage › Hooks: the usage hooks the monitor runs when a quota
+/// Settings › Agents & Usage › Advanced › Hooks: the usage hooks the monitor runs when a quota
 /// event happens (`usage_hooks` in the settings document; the daemon's
 /// `usage_event_hooks`). One switch for all of them, and one row per rule
 /// with its own switch, a Test button and the rule's last result.
@@ -64,6 +64,7 @@ struct UsageHookRuleView: View {
                 .controlSize(.small)
                 .disabled(model.testing.contains(rule.id) || problem != nil || !store.core.isLive)
                 .help("Run this rule once now with a made-up \(rule.testEvent) event")
+                .accessibilityLabel("Test the rule: \(rule.scopeText)")
             }
             if let problem {
                 Label("Will not run: \(problem)", systemImage: "exclamationmark.triangle.fill")
@@ -125,7 +126,7 @@ struct UsageHookRuleRow: Identifiable, Hashable {
     var scopeText: String {
         var parts = [Self.eventWords[event] ?? event]
         if let provider { parts.append(ProviderStyle.style(for: provider).name) }
-        if let threshold { parts.append("at or below \(Int(threshold.rounded()))% left") }
+        if let threshold { parts.append("at or below \(Int(saturating: threshold.rounded()))% left") }
         return parts.joined(separator: " · ")
     }
 

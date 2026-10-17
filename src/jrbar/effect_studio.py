@@ -286,14 +286,6 @@ class GalleryPackProjection:
     attribution_url: str | None
 
     @property
-    def license_source_url(self) -> str | None:
-        return self.source_url
-
-    @property
-    def license_attribution_url(self) -> str | None:
-        return self.attribution_url
-
-    @property
     def license_metadata(self):
         """Return the pack's immutable license facts, when supplied."""
         return self.license

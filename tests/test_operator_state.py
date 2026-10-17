@@ -11,7 +11,6 @@ from jrbar.operator_state import (
     MAX_CANONICAL_WORKS,
     MAX_CLOCK_DELTA_DIVERGENCE_SECONDS,
     MAX_EVENTS_PER_REDUCTION,
-    REQUEST_LIVE_GRACE_SECONDS,
     TIMING_RECOVERY_CONFIRMATIONS,
     TIMING_UNCERTAINTY_LEASE_SECONDS,
     AcknowledgementEligibility,
@@ -186,6 +185,19 @@ def _initial_active_request(
     )
     result = reduce_operator_state(empty_operator_state(), batch, clock=_clock())
     return result.state, batch, work_key, request_key
+
+
+def _initial_asking_free_work() -> tuple[CanonicalOperatorState, WorkKey]:
+    """One active work that has never asked anything: day-old retention
+    applies to it. (A work with an ask the person has not answered is exempt
+    -- see ``test_a_work_with_an_unanswered_ask_outlives_day_old_retention``.)"""
+    work_key = _work_key()
+    watermark = _watermark()
+    batch = _batch(
+        watermark=watermark,
+        work_facts=(_work_fact(key=work_key, watermark=watermark),),
+    )
+    return reduce_operator_state(empty_operator_state(), batch, clock=_clock()).state, work_key
 
 
 def _event_kinds(result: object) -> tuple[TransitionKind, ...]:
@@ -428,44 +440,38 @@ def test_request_on_a_completed_work_never_goes_live__and_2_more() -> None:
     # phase is resolved, so nothing actionable follows from it.
     assert late.state.requests[0].phase is RequestPhase.RESOLVED
 
-    # --- scenario: ask_past_the_presence_horizon_is_held_not_live
-    """A silent source cannot keep 'needs you' lit forever. Past the same
-    hour every row and light already stops trusting, the ask demotes to
-    STALE_HOLD -- held, not resolved, so a real session re-observed gets
-    its claim back on the next batch."""
+    # --- scenario: an_unanswered_ask_stays_live_however_long_it_waits
+    """The reducer no longer holds a live ask at an hour. It used to
+    (REQUEST_LIVE_GRACE_SECONDS), which is how an ask read 'Ask' at 59
+    minutes and idle at 61 while ``operator_state`` itself promised that a
+    waiting ask never expires into invisibility. An ask now stays live until
+    the agent settles it or its session ends; ``ask_lifetime`` only marks it
+    'may be stale' (6 h) and archives it (7 days, no process)."""
     state, _, _, request_key = _initial_active_request()
     request = state.requests[0]
     assert request.phase is RequestPhase.LIVE_UNACKNOWLEDGED
 
-    horizon = request.opened_at_epoch + REQUEST_LIVE_GRACE_SECONDS + 10.0
-    mark = _watermark("event:age", epoch=horizon)
-    aged = reduce_operator_state(
-        state,
-        _batch(watermark=mark),
-        clock=_clock(wall=horizon, monotonic=horizon - 1_800_000_000.0 + 100.0),
-    )
-    aged_request = aged.state.requests[0]
-    assert aged_request.phase is RequestPhase.STALE_HOLD
-    assert aged_request.acknowledgement_eligibility is (
-        AcknowledgementEligibility.STALE_HOLD
-    )
-
-    # A genuinely live session that asks again is not punished: fresh
-    # facts about the same request re-promote it.
-    still_live = reduce_operator_state(
-        aged.state,
-        _batch(
-            watermark=_watermark("event:still", epoch=horizon + 5.0),
-            request_facts=(
-                _request_fact(
-                    key=request_key,
-                    watermark=_watermark("event:still", epoch=horizon + 5.0),
-                ),
-            ),
-        ),
-        clock=_clock(wall=horizon + 5.0, monotonic=horizon - 1_800_000_000.0 + 105.0),
-    )
-    assert still_live.state.requests[0].phase is RequestPhase.LIVE_UNACKNOWLEDGED
+    for label, after_seconds in (
+        ("59m", 59 * 60.0),
+        ("61m", 61 * 60.0),
+        ("6h", 6 * 3_600.0),
+        ("3d", 3 * 86_400.0),
+        ("8d", 8 * 86_400.0),
+    ):
+        moment = request.opened_at_epoch + after_seconds
+        mark = _watermark(f"event:age:{label}", epoch=moment)
+        aged = reduce_operator_state(
+            state,
+            _batch(watermark=mark),
+            clock=_clock(wall=moment, monotonic=moment - 1_800_000_000.0 + 100.0),
+        )
+        aged_request = aged.state.requests[0]
+        assert aged_request.phase is RequestPhase.LIVE_UNACKNOWLEDGED, label
+        assert aged_request.acknowledgement_eligibility is (
+            AcknowledgementEligibility.ELIGIBLE
+        ), label
+        # The work that owns the ask outlives the one-day retention too.
+        assert len(aged.state.works) == 1, label
 
     # --- scenario: acknowledgement_is_reversible_presentation_state_and_never_an_edge
     """Treating acknowledgement as provider truth would irreversibly hide a live ask."""
@@ -1369,7 +1375,7 @@ def test_reducer_rejects_noncanonical_inputs_without_executing_subclasses__and_2
     event is older than CANONICAL_WORK_RETENTION_SECONDS."""
     from jrbar.operator_state import CANONICAL_WORK_RETENTION_SECONDS
 
-    state, _batch_used, work_key, request_key = _initial_active_request()
+    state, work_key = _initial_asking_free_work()
     assert any(work.key == work_key for work in state.works)
 
     later_wall = 1_800_000_000.0 + CANONICAL_WORK_RETENTION_SECONDS + 3_600.0
@@ -1391,7 +1397,8 @@ def test_reducer_rejects_noncanonical_inputs_without_executing_subclasses__and_2
     surviving = {work.key for work in result.state.works}
     assert other_work_key in surviving
     assert work_key not in surviving
-    assert all(request.key != request_key for request in result.state.requests)
+    assert result.state.requests == ()
+
 
 def test_retention_fires_even_while_dead_sources_hold_timing_quarantine__and_2_more() -> None:
     # --- scenario: retention_fires_even_while_dead_sources_hold_timing_quarantine
@@ -1401,7 +1408,7 @@ def test_retention_fires_even_while_dead_sources_hold_timing_quarantine__and_2_m
     genuinely distrusted clock (discontinuity / future facts) blocks it."""
     from jrbar.operator_state import CANONICAL_WORK_RETENTION_SECONDS
 
-    state, _batch_used, work_key, _request_key = _initial_active_request()
+    state, work_key = _initial_asking_free_work()
 
     # A clock jump quarantines every known source; the dead work's source
     # never sends again, so its timing entry can only age out via lease.
@@ -1649,3 +1656,55 @@ def test_apply_acknowledgements_never_moves_terminal_requests__and_1_more() -> N
     with pytest.raises(OperatorStateValidationError):
         apply_acknowledgements(state, oversized)
 
+
+
+def test_a_work_with_an_unanswered_ask_outlives_day_old_retention() -> None:
+    """The catalog retires day-old work, but a session still waiting on the
+    person is not history: its ask is the point. It leaves only when the ask
+    is settled or the session ends."""
+    from jrbar.operator_state import CANONICAL_WORK_RETENTION_SECONDS
+
+    state, _batch_used, work_key, request_key = _initial_active_request()
+    later_wall = 1_800_000_000.0 + 3 * CANONICAL_WORK_RETENTION_SECONDS
+    other_source = _source("local:02")
+    other_work_key = _work_key(value="work:02", source=other_source)
+    other_watermark = _watermark(source=other_source, epoch=later_wall)
+    fresh_batch = _batch(
+        source=other_source,
+        watermark=other_watermark,
+        work_facts=(_work_fact(key=other_work_key, watermark=other_watermark),),
+    )
+    result = reduce_operator_state(
+        state,
+        fresh_batch,
+        clock=_clock(wall=later_wall, monotonic=100.0 + (later_wall - 1_800_000_000.0)),
+    )
+    assert any(work.key == work_key for work in result.state.works)
+    assert [request.phase for request in result.state.requests] == [
+        RequestPhase.LIVE_UNACKNOWLEDGED
+    ]
+
+    # Once the agent settles the ask, the old work is history again.
+    settled_watermark = _watermark(
+        "event:settled", epoch=later_wall + 1.0
+    )
+    settled = reduce_operator_state(
+        result.state,
+        _batch(
+            watermark=settled_watermark,
+            request_facts=(
+                _request_fact(
+                    ProviderRequestState.RESOLVED,
+                    key=request_key,
+                    watermark=settled_watermark,
+                    next_actor=NextActor.NONE,
+                ),
+            ),
+        ),
+        clock=_clock(
+            wall=later_wall + 1.0,
+            monotonic=101.0 + (later_wall - 1_800_000_000.0),
+        ),
+    )
+    assert not any(work.key == work_key for work in settled.state.works)
+    assert settled.state.requests == ()

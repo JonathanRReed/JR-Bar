@@ -89,13 +89,13 @@ struct MenuBarTriggerEngine: Sendable {
     /// rule id → the day stamp it last fired on (timeOfDay dedupe).
     private(set) var lastTimeFired: [String: String] = [:]
 
-    /// The actions one event earns, in rule order. `dayStamp` is any
+    /// The rules one event earns, in rule order. `dayStamp` is any
     /// string that changes once a day — the source passes a yyyy-MM-dd;
     /// a test passes "day-1"/"day-2".
-    mutating func actions(for event: MenuBarTriggerEvent,
+    mutating func matchedRules(for event: MenuBarTriggerEvent,
                           rules: [MenuBarTriggerRule],
-                          dayStamp: String = "") -> [MenuBarTriggerAction] {
-        var fired: [MenuBarTriggerAction] = []
+                          dayStamp: String = "") -> [MenuBarTriggerRule] {
+        var fired: [MenuBarTriggerRule] = []
         // The level edges are computed before rule matching so each
         // sample updates state even with no rules at all.
         var acEdge: Bool?
@@ -154,7 +154,7 @@ struct MenuBarTriggerEngine: Sendable {
                           ssidEdge: ssidEdge, micEdge: micEdge, focusEdge: focusEdge,
                           native: edges,
                           ruleID: rule.id, dayStamp: dayStamp) else { continue }
-            fired.append(rule.action)
+            fired.append(rule)
         }
         return fired
     }
@@ -257,7 +257,7 @@ struct MenuBarTriggerEngine: Sendable {
 /// Where events come from. The maintainer feeds the engine one
 /// implementation — `MenuBarSystemTriggerSource` below is the real
 /// one; a test feeds `MenuBarTriggerEvent`s straight into
-/// `engine.actions(for:rules:)` and never touches a source.
+/// `engine.matchedRules(for:rules:)` and never touches a source.
 @MainActor
 protocol MenuBarTriggerSource: AnyObject {
     /// Every event the source produces lands here.

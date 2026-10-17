@@ -24,10 +24,25 @@ private func tolerantRows<T: Decodable>(_ type: T.Type, _ raw: [JSONValue]?) -> 
 
 // MARK: - hello
 
+/// The challenge a daemon that holds an app secret puts in `hello`: a fresh
+/// nonce for this connection, answered by the `auth` command.
+public struct CoreHelloAuth: Codable, Hashable, Sendable {
+    public var scheme: String
+    public var nonce: String
+
+    public init(scheme: String = "hmac-sha256", nonce: String) {
+        self.scheme = scheme
+        self.nonce = nonce
+    }
+}
+
 public struct CoreHello: Codable, Hashable, Sendable {
     public var coreVersion: String?
     public var pid: Int?
     public var capabilities: [String]
+    /// Present only when the daemon was started by the app and holds its
+    /// secret; absent means nothing here can be proved to it.
+    public var auth: CoreHelloAuth?
     /// The daemon incarnation's event stream and its journal's tail
     /// cursor. A reconnect that sees the SAME stream can ask
     /// `replay_events` for the frames the drop ate; a different stream
@@ -36,12 +51,13 @@ public struct CoreHello: Codable, Hashable, Sendable {
     public var cursor: String?
 
     public init(coreVersion: String? = nil, pid: Int? = nil, capabilities: [String] = [],
-                stream: String? = nil, cursor: String? = nil) {
+                stream: String? = nil, cursor: String? = nil, auth: CoreHelloAuth? = nil) {
         self.coreVersion = coreVersion
         self.pid = pid
         self.capabilities = capabilities
         self.stream = stream
         self.cursor = cursor
+        self.auth = auth
     }
 
     enum CodingKeys: String, CodingKey {
@@ -50,6 +66,7 @@ public struct CoreHello: Codable, Hashable, Sendable {
         case capabilities
         case stream
         case cursor
+        case auth
     }
 
     public init(from decoder: Decoder) throws {
@@ -59,6 +76,9 @@ public struct CoreHello: Codable, Hashable, Sendable {
         capabilities = try c.decodeIfPresent([String].self, forKey: .capabilities) ?? []
         stream = try c.decodeIfPresent(String.self, forKey: .stream)
         cursor = try c.decodeIfPresent(String.self, forKey: .cursor)
+        // A malformed challenge reads as none: the app then says the daemon
+        // offers nothing to prove to, rather than failing the whole hello.
+        auth = try? c.decodeIfPresent(CoreHelloAuth.self, forKey: .auth)
     }
 }
 
@@ -152,8 +172,42 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
     /// `"destructive"` when the command is the kind that loses work if it
     /// runs by mistake; a mark for the card, never a block.
     public var risk: String?
+    /// What the card adds when the person expands it: the whole command, a
+    /// file edit's size, a plan. nil when the one line says it all, and on
+    /// older daemons. Read-only context; nothing is answered from it.
+    public var detail: CoreAskDetail?
+    /// The newest thing the ask's session said, in epoch seconds.
+    public var lastActivityAt: Double?
+    /// True once the ask is older than the "may be stale" mark and its
+    /// session has been silent for as long. It is still an ask, still
+    /// counted, still answerable where it was; surfaces say so with its
+    /// age (`staleLine`) and offer Dismiss. False on older daemons.
+    public var isStale: Bool
+    /// Whether the daemon would accept `dismiss_ask` for it: stale, on a
+    /// local session. A dismissal sends nothing to the agent.
+    public var isDismissible: Bool
 
     public var id: String { request ?? ((session ?? "") + "|" + (summary ?? "") + "|" + String(openedAt ?? 0)) }
+
+    /// "may be stale · asked 9 hours ago" for a stale ask, nil otherwise.
+    /// Every surface that shows the ask uses this one sentence.
+    public func staleLine(now: Date) -> String? {
+        guard isStale else { return nil }
+        guard let opened = openedAt else { return "may be stale" }
+        return "may be stale · asked \(Self.ageWords(now.timeIntervalSince1970 - opened)) ago"
+    }
+
+    /// An age in the words a person says ("12 minutes", "9 hours",
+    /// "3 days"); the daemon's `ask_age_words` says the same.
+    public static func ageWords(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "a while" }
+        if seconds < 60 { return "under a minute" }
+        let minutes = Int(seconds / 60)
+        if minutes < 60 { return minutes == 1 ? "1 minute" : "\(minutes) minutes" }
+        let hours = Int(seconds / 3600)
+        if hours < 48 { return hours == 1 ? "1 hour" : "\(hours) hours" }
+        return "\(Int(seconds / 86_400)) days"
+    }
 
     /// The agent's hook is holding this ask for JR-Bar's Approve/Deny.
     public var isHeldForDecision: Bool { decision.map { !$0.decided } ?? false }
@@ -189,7 +243,9 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
 
     public init(session: String? = nil, kind: String? = nil, openedAt: Double? = nil, summary: String? = nil,
                 answerable: Bool? = nil, replyable: Bool? = nil, request: String? = nil,
-                decision: CoreAskDecision? = nil, preview: String? = nil, risk: String? = nil) {
+                decision: CoreAskDecision? = nil, preview: String? = nil, risk: String? = nil,
+                lastActivityAt: Double? = nil, isStale: Bool = false, isDismissible: Bool = false,
+                detail: CoreAskDetail? = nil) {
         self.session = session
         self.kind = kind
         self.openedAt = openedAt
@@ -200,12 +256,19 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
         self.decision = decision
         self.preview = preview
         self.risk = risk
+        self.detail = detail
+        self.lastActivityAt = lastActivityAt
+        self.isStale = isStale
+        self.isDismissible = isDismissible
     }
 
     enum CodingKeys: String, CodingKey {
         case session, kind, summary, answerable, replyable, request
-        case decision, preview, risk
+        case decision, preview, risk, detail
         case openedAt = "opened_at"
+        case lastActivityAt = "last_activity_at"
+        case isStale = "stale"
+        case isDismissible = "dismissible"
     }
 
     public init(from decoder: Decoder) throws {
@@ -220,7 +283,90 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
         decision = try? c.decodeIfPresent(CoreAskDecision.self, forKey: .decision)
         preview = try? c.decodeIfPresent(String.self, forKey: .preview)
         risk = try? c.decodeIfPresent(String.self, forKey: .risk)
+        detail = (try? c.decodeIfPresent(CoreAskDetail.self, forKey: .detail)).flatMap { $0 }.flatMap { $0.isEmpty ? nil : $0 }
+        lastActivityAt = try? c.decodeIfPresent(Double.self, forKey: .lastActivityAt)
+        isStale = (try? c.decodeIfPresent(Bool.self, forKey: .isStale)) ?? false
+        isDismissible = (try? c.decodeIfPresent(Bool.self, forKey: .isDismissible)) ?? false
     }
+}
+
+/// `ask.detail` (docs/CORE-PROTOCOL.md): what an expanded ask shows beyond
+/// its one line. Text is already capped and masked by the daemon.
+public struct CoreAskDetail: Codable, Hashable, Sendable {
+    /// The whole shell command, when the line cut or flattened it.
+    public var command: String?
+    /// An `ExitPlanMode` plan.
+    public var plan: String?
+    /// A file edit's size.
+    public var edit: CoreAskEdit?
+    /// The daemon's cap cut the text.
+    public var truncated: Bool
+
+    public init(command: String? = nil, plan: String? = nil, edit: CoreAskEdit? = nil, truncated: Bool = false) {
+        self.command = command
+        self.plan = plan
+        self.edit = edit
+        self.truncated = truncated
+    }
+
+    public var isEmpty: Bool { command == nil && plan == nil && edit == nil }
+
+    enum CodingKeys: String, CodingKey { case command, plan, edit, truncated }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let commandText = (try? c.decodeIfPresent(String.self, forKey: .command)) ?? nil
+        let planText = (try? c.decodeIfPresent(String.self, forKey: .plan)) ?? nil
+        command = commandText.flatMap { $0.isEmpty ? nil : $0 }
+        plan = planText.flatMap { $0.isEmpty ? nil : $0 }
+        edit = (try? c.decodeIfPresent(CoreAskEdit.self, forKey: .edit)) ?? nil
+        truncated = (try? c.decodeIfPresent(Bool.self, forKey: .truncated)) ?? false
+    }
+}
+
+/// `ask.detail.edit`: how many files an edit touches and how many lines it
+/// adds and removes, counted by the daemon from the hook's own input.
+public struct CoreAskEdit: Codable, Hashable, Sendable {
+    /// `edit`, `write` or `patch`.
+    public var verb: String
+    public var files: Int
+    public var added: Int
+    public var removed: Int
+    public var paths: [String]
+
+    public init(verb: String = "edit", files: Int, added: Int, removed: Int, paths: [String] = []) {
+        self.verb = verb
+        self.files = files
+        self.added = added
+        self.removed = removed
+        self.paths = paths
+    }
+
+    /// "edit: 2 files, +14/-3". A write only adds, so it says "+14".
+    public var summary: String {
+        let noun = files == 1 ? "1 file" : "\(files) files"
+        let lines = verb == "write" ? "+\(added)" : "+\(added)/-\(removed)"
+        return "\(verb): \(noun), \(lines)"
+    }
+
+    enum CodingKeys: String, CodingKey { case verb, files, added, removed, paths }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        verb = (try? c.decodeIfPresent(String.self, forKey: .verb)) ?? "edit"
+        files = max(0, (try? c.decodeIfPresent(Int.self, forKey: .files)) ?? 0)
+        added = max(0, (try? c.decodeIfPresent(Int.self, forKey: .added)) ?? 0)
+        removed = max(0, (try? c.decodeIfPresent(Int.self, forKey: .removed)) ?? 0)
+        paths = (try? c.decodeIfPresent([String].self, forKey: .paths)) ?? []
+    }
+}
+
+extension CoreAsk {
+    /// The plan of an `ExitPlanMode` approval. Its answer is the person's,
+    /// in the session: JR-Bar shows the plan and opens the session.
+    public var isPlanApproval: Bool { detail?.plan != nil }
+    /// There is more to show than the one line, so the card offers a chevron.
+    public var hasDetail: Bool { detail != nil }
 }
 
 /// `ask.decision` (docs/CORE-PROTOCOL.md, "The decide lane").
@@ -231,7 +377,8 @@ public struct CoreAskDecision: Codable, Hashable, Sendable {
     public var always: Bool
     /// Answered from JR-Bar. It stays true until the agent's own events
     /// close the request (the tool finished, or the turn ended), however
-    /// long the approved tool runs; the daemon lets it go after an hour.
+    /// long the approved tool runs; the daemon lets it go at the ask's outer
+    /// lifetime (7 days).
     public var decided: Bool
     /// The questions of a held multiple-choice ask (Claude's
     /// AskUserQuestion), in the agent's order. Empty for a yes/no ask.
@@ -334,13 +481,15 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     /// roster fetch. nil on older daemons.
     public var axes: CoreSessionAxes?
 
+    public var sourceIntegration: String?
+
     public init(id: String, provider: String, kind: String = "main", parent: String? = nil, label: String? = nil,
                 shortId: String? = nil, cwd: String? = nil, mode: String? = nil, lifecycle: String? = nil, nextActor: String? = nil,
                 since: Double? = nil, updatedAt: Double? = nil, stale: Bool = false, pid: Int? = nil,
                 origin: CoreOrigin? = nil, ask: CoreAsk? = nil, terminal: CoreTerminal? = nil, workers: Int = 0,
                 workersWaiting: Int? = nil, snoozedUntil: Double? = nil, remote: Bool = false,
                 event: String? = nil, tool: String? = nil, message: String? = nil,
-                axes: CoreSessionAxes? = nil) {
+                axes: CoreSessionAxes? = nil, sourceIntegration: String? = nil) {
         self.id = id
         self.provider = provider
         self.kind = kind
@@ -366,11 +515,13 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         self.tool = tool
         self.message = message
         self.axes = axes
+        self.sourceIntegration = sourceIntegration
     }
 
     enum CodingKeys: String, CodingKey {
         case id, provider, kind, parent, label, cwd, mode, lifecycle, since, stale, pid, origin, ask, terminal, workers, remote
         case event, tool, message, axes
+        case sourceIntegration = "source_integration"
         case workersWaiting = "workers_waiting"
         case shortId = "short_id"
         case nextActor = "next_actor"
@@ -407,6 +558,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         tool = try c.decodeIfPresent(String.self, forKey: .tool)
         message = try c.decodeIfPresent(String.self, forKey: .message)
         axes = try? c.decodeIfPresent(CoreSessionAxes.self, forKey: .axes)
+        sourceIntegration = try? c.decodeIfPresent(String.self, forKey: .sourceIntegration)
     }
 }
 
@@ -1144,6 +1296,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     /// Which configured account this reading belongs to — two accounts of
     /// one provider arrive as two rows sharing `id`, distinguished here.
     public var instance: String?
+    public var instanceLabel: String? = nil
     /// False when the provider has no quota source at all (Pi, Kiro, …):
     /// a "meters" checkbox for it would be a dead control.
     public var quotaSource: Bool
@@ -1184,7 +1337,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
 
     public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil,
                 account: UsageAccount? = nil, action: String? = nil, reason: String? = nil,
-                instance: String? = nil, quotaSource: Bool = true, tokens: CoreUsageTokens? = nil,
+                instance: String? = nil, instanceLabel: String? = nil, quotaSource: Bool = true, tokens: CoreUsageTokens? = nil,
                 estimatedCostUSD: Double? = nil, creditsRemaining: Double? = nil, observedAt: Double? = nil,
                 constrained: CoreConstrainedLane? = nil, incident: String? = nil, readAt: Double? = nil) {
         self.id = id
@@ -1196,6 +1349,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         self.action = action
         self.reason = reason
         self.instance = instance
+        self.instanceLabel = instanceLabel
         self.quotaSource = quotaSource
         self.tokens = tokens
         self.estimatedCostUSD = estimatedCostUSD
@@ -1220,6 +1374,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         action = try? c.decodeIfPresent(String.self, forKey: .action)
         reason = try? c.decodeIfPresent(String.self, forKey: .reason)
         instance = try? c.decodeIfPresent(String.self, forKey: .instance)
+        instanceLabel = try? c.decodeIfPresent(String.self, forKey: .instanceLabel)
         quotaSource = (try? c.decodeIfPresent(Bool.self, forKey: .quotaSource)) ?? true
         tokens = try? c.decodeIfPresent(CoreUsageTokens.self, forKey: .tokens)
         estimatedCostUSD = try? c.decodeIfPresent(Double.self, forKey: .estimatedCostUSD)
@@ -1241,6 +1396,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, windows, fidelity, state, forecast, account, action, reason, instance, tokens, constrained, incident
+        case instanceLabel = "instance_label"
         case quotaSource = "quota_source"
         case estimatedCostUSD = "estimated_cost_usd"
         case creditsRemaining = "credits_remaining"
@@ -1260,6 +1416,16 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         guard let state = state?.lowercased() else { return false }
         return state.contains("sign") || state.contains("auth") || state.contains("login")
     }
+
+    /// The person has not turned this provider's usage on (`needs_consent`
+    /// with reason `usage_not_turned_on`): nothing was asked and no sign-in
+    /// was read, so the card says so instead of showing a number.
+    public var usageIsOff: Bool {
+        reason == Self.usageOffReason
+    }
+
+    /// The daemon's reason word for it (`provider_usage_platform.USAGE_OFF_REASON`).
+    public static let usageOffReason = "usage_not_turned_on"
 
     /// Anything the daemon did not measure directly (`derived`, `estimated`, …).
     public var isDerived: Bool {
@@ -1323,21 +1489,25 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
 }
 
 public struct CoreUsage: Codable, Hashable, Sendable {
+    public var privacyMode: Bool?
     public var refreshedAt: Double?
     public var providers: [CoreProviderUsage]
 
-    public init(refreshedAt: Double? = nil, providers: [CoreProviderUsage] = []) {
+    public init(refreshedAt: Double? = nil, providers: [CoreProviderUsage] = [], privacyMode: Bool? = nil) {
+        self.privacyMode = privacyMode
         self.refreshedAt = refreshedAt
         self.providers = providers
     }
 
     enum CodingKeys: String, CodingKey {
+        case privacyMode = "privacy_mode"
         case providers
         case refreshedAt = "refreshed_at"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        privacyMode = try? c.decodeIfPresent(Bool.self, forKey: .privacyMode)
         refreshedAt = try c.decodeIfPresent(Double.self, forKey: .refreshedAt)
         providers = tolerantRows(
             CoreProviderUsage.self,
@@ -1356,9 +1526,10 @@ public struct CoreClosedLid: Codable, Hashable, Sendable {
     public var sleepsOnRelease: Bool?
     public var lastSleepAt: Double?
     public var sleepError: String?
+    public var error: String?
 
     enum CodingKeys: String, CodingKey {
-        case policy, holding
+        case policy, holding, error
         case helperInstalled = "helper_installed"
         case lidClosed = "lid_closed"
         case sleepsOnRelease = "sleeps_on_release"
@@ -1407,10 +1578,14 @@ public struct CoreAwakeHold: Codable, Hashable, Sendable {
     public var lease: CoreAwakeLease?
     public var suspended: String?
     public var thermal: String?
+    public var persistenceError: String?
+    public var releaseFailed: Bool?
 
     enum CodingKeys: String, CodingKey {
         case state, agents, active, display, lease, suspended, thermal
         case graceUntil = "grace_until"
+        case persistenceError = "persistence_error"
+        case releaseFailed = "release_failed"
     }
 
     public var isManual: Bool { state == "manual" }
@@ -1644,11 +1819,14 @@ public struct CoreFocus: Codable, Hashable, Sendable {
     /// Full Disk Access of its own); nil until it has tried.
     public var namedReadable: Bool?
 
+    public var overrideRevision: String?
+
     enum CodingKeys: String, CodingKey {
         case mode, source, until, summary, outbound
         case bannerAllowed = "banner_allowed"
         case audibleAllowed = "audible_allowed"
         case namedReadable = "named_readable"
+        case overrideRevision = "override_revision"
     }
 
     /// False only when the daemon says sounds are off right now.
@@ -1760,13 +1938,16 @@ public struct CoreState: Codable, Hashable, Sendable {
     /// provider id. Absent from an older daemon, and a provider with no
     /// entry has never been updated or checked: both read as unknown.
     public var providerUpdates: [String: ProviderUpdateStatus]
+    /// `firmware`: the firmware update job, present only while one exists.
+    public var firmware: FirmwareJob?
 
     public init(generation: Int = 0, now: Double? = nil, aggregate: CoreAggregate = CoreAggregate(),
                 sessions: [CoreSession] = [], asks: [CoreAsk] = [], devices: [CoreDevice] = [], usage: CoreUsage? = nil,
                 power: CorePower? = nil, focus: CoreFocus? = nil, escalation: CoreEscalation? = nil,
                 health: JSONValue? = nil, settingsGeneration: Int? = nil, deck: DeckState? = nil, hiddenCount: Int? = nil,
                 catalogGeneration: Int? = nil, unseenCompletions: [String] = [], peers: [CorePeer]? = nil,
-                presence: CorePresence? = nil, providerUpdates: [String: ProviderUpdateStatus] = [:]) {
+                presence: CorePresence? = nil, providerUpdates: [String: ProviderUpdateStatus] = [:],
+                firmware: FirmwareJob? = nil) {
         self.generation = generation
         self.now = now
         self.aggregate = aggregate
@@ -1786,10 +1967,11 @@ public struct CoreState: Codable, Hashable, Sendable {
         self.peers = peers
         self.presence = presence
         self.providerUpdates = providerUpdates
+        self.firmware = firmware
     }
 
     enum CodingKeys: String, CodingKey {
-        case generation, now, aggregate, sessions, asks, devices, usage, power, focus, escalation, health, deck
+        case generation, now, aggregate, sessions, asks, devices, usage, power, focus, escalation, health, deck, firmware
         case providerUpdates = "provider_updates"
         case settingsGeneration = "settings_generation"
         case hiddenCount = "hidden_count"
@@ -1839,6 +2021,8 @@ public struct CoreState: Codable, Hashable, Sendable {
         // One malformed entry is one provider with nothing to say, never a lost state.
         let updates = try? c.decodeIfPresent([String: JSONValue].self, forKey: .providerUpdates)
         providerUpdates = (updates ?? [:]).compactMapValues { ProviderUpdateStatus($0) }
+        // A malformed job reads as no job, never a lost state.
+        firmware = (try? c.decodeIfPresent(JSONValue.self, forKey: .firmware)).flatMap { FirmwareJob($0) }
     }
 
     /// Sessions the panel lists: `kind == "main"`. Workers roll up into their parent's badge.
@@ -1949,6 +2133,7 @@ public struct CoreWhyDetail: Codable, Hashable, Sendable {
 
 public struct CoreLightSurface: Codable, Hashable, Sendable {
     public var program: String
+    public var stripTransfer: CoreStripTransfer?
     public var ledCount: Int?
     /// Epoch seconds at which the program's t=0 happened on the strip.
     public var anchor: Double?
@@ -1968,8 +2153,10 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
 
     public init(program: String, ledCount: Int? = nil, anchor: Double? = nil, motion: String? = nil,
                 staticFallback: String? = nil, brightness: Double? = nil, why: String? = nil,
-                whyDetail: CoreWhyDetail? = nil, role: String? = nil, cue: CoreLightCue? = nil) {
+                whyDetail: CoreWhyDetail? = nil, role: String? = nil, cue: CoreLightCue? = nil,
+                stripTransfer: CoreStripTransfer? = nil) {
         self.program = program
+        self.stripTransfer = stripTransfer
         self.ledCount = ledCount
         self.anchor = anchor
         self.motion = motion
@@ -1986,11 +2173,13 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
         case ledCount = "led_count"
         case staticFallback = "static_fallback"
         case whyDetail = "why_detail"
+        case stripTransfer = "strip_transfer"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         program = try c.decodeIfPresent(String.self, forKey: .program) ?? ""
+        stripTransfer = try? c.decodeIfPresent(CoreStripTransfer.self, forKey: .stripTransfer)
         ledCount = try c.decodeIfPresent(Int.self, forKey: .ledCount)
         anchor = try c.decodeIfPresent(Double.self, forKey: .anchor)
         motion = try c.decodeIfPresent(String.self, forKey: .motion)
@@ -2223,6 +2412,9 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     /// (the ask summary, the quota window), and the escalation stage
     /// (`escalation_stage` events; 0...3, or a stage name).
     public var provider: String?
+    /// Account behind a provider event; absent means the default account.
+    public var instance: String?
+    public var instanceLabel: String? = nil
     public var detail: String?
     public var stage: Int?
     /// `deck_input`: the observed control (`{index, kind, at}`, nested
@@ -2240,14 +2432,35 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     /// and got a partial or slow answer should ask again. `notify: false`;
     /// a daemon that never sends it costs nothing.
     public static let usageHistoryReadyKind = "usage_history_ready"
+    public static let usageHistoryFailedKind = "usage_history_failed"
 
     /// `quota_reset`'s lane (`"weekly"`, `"5h-weekly"`, …): the quota
-    /// window that reset. Confetti fires only on the weekly ones.
+    /// window that reset. Confetti can celebrate any confirmed quota lane.
     public var lane: String?
 
-    /// `list_history` rows: seconds the session ran when the daemon knows
-    /// both ends of it. nil for events without a measured span.
+    /// `quota_reset`'s stable fact identity — the same id the daemon's
+    /// celebration delivery and usage hooks carry (`provider:lane:digest`).
+    /// Unlike the journal's `id`/`cursor`, it survives a daemon restart,
+    /// so the Confetti dedup can tell a re-offered reset from a new one.
+    public var eventId: String?
+
+    /// A durable reset offered again by the daemon, outside cursor replay.
+    /// Receipt-aware consumers decide whether it is still owed.
+    public var isDurableResetReplay: Bool {
+        guard kind == "quota_reset", cursor == nil, notify == false,
+              let eventId, !eventId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return id == eventId
+    }
+
+    /// `list_history` rows and `completed` events: seconds the session ran
+    /// when the daemon knows both ends of it. nil for events without a
+    /// measured span.
     public var duration: Double?
+
+    /// `completed`: the first line of the agent's last message, already
+    /// stripped of markdown and scrubbed by the daemon. nil when the session
+    /// ended without one.
+    public var summary: String?
 
     /// The resume point this frame carries: `<stream>:<event id>`. The
     /// last cursor a client saw is what it replays from after a drop.
@@ -2278,7 +2491,7 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
                 notify: Bool? = nil, provider: String? = nil, detail: String? = nil, stage: Int? = nil,
                 input: DeckInput? = nil, code: String? = nil, message: String? = nil, range: String? = nil,
                 lane: String? = nil, duration: Double? = nil, cursor: String? = nil, request: String? = nil,
-                count: Int? = nil, window: String? = nil) {
+                count: Int? = nil, window: String? = nil, eventId: String? = nil, summary: String? = nil, instance: String? = nil, instanceLabel: String? = nil) {
         self.id = id
         self.kind = kind
         self.session = session
@@ -2287,6 +2500,8 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         self.sound = sound
         self.notify = notify
         self.provider = provider
+        self.instance = instance
+        self.instanceLabel = instanceLabel
         self.detail = detail
         self.stage = stage
         self.input = input
@@ -2299,12 +2514,17 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         self.request = request
         self.count = count
         self.window = window
+        self.eventId = eventId
+        self.summary = summary
     }
 
     enum CodingKeys: String, CodingKey {
         case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, lane, duration, cursor, request
+        case instanceLabel = "instance_label"
+        case summary, instance
         case count
         case window
+        case eventId = "event_id"
     }
 
     public init(from decoder: Decoder) throws {
@@ -2317,6 +2537,8 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         sound = try c.decodeIfPresent(String.self, forKey: .sound)
         notify = try c.decodeIfPresent(Bool.self, forKey: .notify)
         provider = try c.decodeIfPresent(String.self, forKey: .provider)
+        instance = try c.decodeIfPresent(String.self, forKey: .instance)
+        instanceLabel = try? c.decodeIfPresent(String.self, forKey: .instanceLabel)
         detail = try c.decodeIfPresent(String.self, forKey: .detail)
         if let number = try? c.decodeIfPresent(Int.self, forKey: .stage) {
             stage = number
@@ -2335,6 +2557,8 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         request = try? c.decodeIfPresent(String.self, forKey: .request)
         count = try? c.decodeIfPresent(Int.self, forKey: .count)
         window = try? c.decodeIfPresent(String.self, forKey: .window)
+        eventId = try? c.decodeIfPresent(String.self, forKey: .eventId)
+        summary = try? c.decodeIfPresent(String.self, forKey: .summary)
     }
 
     /// `deck_receipt` as a receipt value.
@@ -2584,15 +2808,22 @@ public struct ProviderUpdateStatus: Codable, Hashable, Sendable {
     /// One plain sentence, ready to show ("Updated 2.1.285 to 2.1.290").
     public var message: String
     public var finishedAt: Double?
+    public var updatable: Bool?
+    public var updateAdvice: String?
+    public var upToDateVersion: String?
 
     public init(phase: ProviderUpdatePhase = .idle, fromVersion: String? = nil, toVersion: String? = nil,
-                latestVersion: String? = nil, message: String = "", finishedAt: Double? = nil) {
+                latestVersion: String? = nil, message: String = "", finishedAt: Double? = nil,
+                updatable: Bool? = nil, updateAdvice: String? = nil, upToDateVersion: String? = nil) {
         self.phase = phase
         self.fromVersion = fromVersion
         self.toVersion = toVersion
         self.latestVersion = latestVersion
         self.message = message
         self.finishedAt = finishedAt
+        self.updatable = updatable
+        self.updateAdvice = updateAdvice
+        self.upToDateVersion = upToDateVersion
     }
 
     /// Tolerant: absent fields are nil, an unknown phase is `idle`, and
@@ -2609,7 +2840,10 @@ public struct ProviderUpdateStatus: Codable, Hashable, Sendable {
             toVersion: text("to_version"),
             latestVersion: text("latest_version"),
             message: value["message"]?.stringValue ?? "",
-            finishedAt: value["finished_at"]?.doubleValue
+            finishedAt: value["finished_at"]?.doubleValue,
+            updatable: value["updatable"]?.boolValue,
+            updateAdvice: text("update_advice"),
+            upToDateVersion: text("up_to_date_version")
         )
     }
 
@@ -2623,7 +2857,9 @@ public struct ProviderUpdateStatus: Codable, Hashable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case phase, message
+        case phase, message, updatable
+        case updateAdvice = "update_advice"
+        case upToDateVersion = "up_to_date_version"
         case fromVersion = "from_version"
         case toVersion = "to_version"
         case latestVersion = "latest_version"
@@ -2662,15 +2898,87 @@ public struct ProviderUpdateStart: Hashable, Sendable {
     }
 }
 
+/// The credential command acknowledges one account without returning its key.
+public struct ProviderCredentialReceipt: Codable, Hashable, Sendable {
+    public var provider: String
+    public var instance: String
+    public var account: String
+    public var available: Bool
+    public var removed: Bool?
+
+    public init(provider: String, instance: String, account: String, available: Bool, removed: Bool? = nil) {
+        self.provider = provider
+        self.instance = instance
+        self.account = account
+        self.available = available
+        self.removed = removed
+    }
+
+    public func matches(provider: String, instance: String, account: String, available: Bool) -> Bool {
+        self.provider == provider && self.instance == instance && self.account == account && self.available == available
+    }
+}
+
 /// Whether a credential account exists — never the secret itself.
 public struct ProviderCredentialRow: Codable, Hashable, Sendable {
     public var account: String
     public var available: Bool
 }
 
+/// The per-provider usage switch inside a `list_providers` row
+/// (`usage_consent`): whether the person has turned this provider's usage
+/// read on, and the plain words the daemon wrote for what turning it on
+/// lets JR-Bar do. The app shows `summary` and `detail` verbatim, so the
+/// sentence in Setup, Settings and the docs is one sentence.
+public struct ProviderUsageConsent: Codable, Hashable, Sendable {
+    public var granted: Bool
+    public var version: Int
+    /// `setup`, `settings`, `cli`, `usage_center`, or `migration` (an
+    /// upgrade kept a provider that was on and already returning usage).
+    public var source: String?
+    /// "Show Claude usage?"
+    public var question: String
+    /// The Setup sentence: who is asked, with whose sign-in, and what else
+    /// is (not) sent.
+    public var summary: String
+    /// The Settings line: the same, with the exact hosts.
+    public var detail: String
+    /// Who is asked; empty when nothing leaves the Mac.
+    public var hosts: [String]
+    public var credential: String
+
+    public init(granted: Bool = false, version: Int = 0, source: String? = nil, question: String = "",
+                summary: String = "", detail: String = "", hosts: [String] = [], credential: String = "") {
+        self.granted = granted
+        self.version = version
+        self.source = source
+        self.question = question
+        self.summary = summary
+        self.detail = detail
+        self.hosts = hosts
+        self.credential = credential
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case granted, version, source, question, summary, detail, hosts, credential
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        granted = (try? c.decodeIfPresent(Bool.self, forKey: .granted)) ?? false
+        version = (try? c.decodeIfPresent(Int.self, forKey: .version)) ?? 0
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
+        question = (try? c.decodeIfPresent(String.self, forKey: .question)) ?? ""
+        summary = (try? c.decodeIfPresent(String.self, forKey: .summary)) ?? ""
+        detail = (try? c.decodeIfPresent(String.self, forKey: .detail)) ?? ""
+        hosts = (try? c.decodeIfPresent([String].self, forKey: .hosts)) ?? []
+        credential = (try? c.decodeIfPresent(String.self, forKey: .credential)) ?? ""
+    }
+}
+
 /// `list_providers` row: what the daemon knows and can do for one
 /// provider — enabled flag, live source state, the source ladder,
-/// consents, credential availability. Secrets never cross the socket.
+/// consents and credential availability. Inspection rows never include secrets.
 public struct ProviderRow: Codable, Hashable, Sendable {
     public var id: String
     /// The configured source instance this row inspects ("default" for
@@ -2678,6 +2986,9 @@ public struct ProviderRow: Codable, Hashable, Sendable {
     public var instance: String
     public var label: String
     public var enabled: Bool
+    /// The usage switch. Nil from a daemon that predates it, which then has
+    /// nothing for the app to ask.
+    public var usageConsent: ProviderUsageConsent?
     public var menuVisible: Bool
     public var browserSourcesEnabled: Bool
     public var supportsBrowserSources: Bool
@@ -2709,6 +3020,7 @@ public struct ProviderRow: Codable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, instance, label, enabled, options, consents, credentials, state, reason, action
+        case usageConsent = "usage_consent"
         case menuVisible = "menu_visible"
         case browserSourcesEnabled = "browser_sources_enabled"
         case supportsBrowserSources = "supports_browser_sources"
@@ -2727,6 +3039,7 @@ public struct ProviderRow: Codable, Hashable, Sendable {
         instance = (try? c.decodeIfPresent(String.self, forKey: .instance)) ?? "default"
         label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? id
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        usageConsent = try? c.decodeIfPresent(ProviderUsageConsent.self, forKey: .usageConsent)
         menuVisible = (try? c.decodeIfPresent(Bool.self, forKey: .menuVisible)) ?? true
         browserSourcesEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .browserSourcesEnabled)) ?? false
         supportsBrowserSources = (try? c.decodeIfPresent(Bool.self, forKey: .supportsBrowserSources)) ?? false
@@ -2791,6 +3104,9 @@ public struct CoreUsageGraph: Codable, Hashable, Sendable {
     /// `api_equivalent_estimate` when `metric == cost`: the chart is
     /// pricing the transcripts, not billing the subscription.
     public var costSemantics: String?
+    public var costCoverage: CoreUsageCostCoverage?
+    public var sourceStatistics: [CoreUsageSourceStatistic]
+    public var readingFiles: Int
 
     public struct Series: Codable, Hashable, Sendable {
         public var providerId: String
@@ -2799,9 +3115,12 @@ public struct CoreUsageGraph: Codable, Hashable, Sendable {
         /// would merge them into one fabricated line. Non-percent
         /// series omit it entirely.
         public var sourceInstanceId: String?
+        public var sourceId: String?
         /// The daemon's display name — `provider · instance` for a
         /// non-default instance, the bare provider otherwise.
         public var label: String?
+        /// Cost graphs distinguish known zero rates from missing prices.
+        public var hasPricedUsage: Bool?
         public var values: [Double]
 
         /// The chart's identity for this row: `provider` when no
@@ -2813,18 +3132,22 @@ public struct CoreUsageGraph: Codable, Hashable, Sendable {
         }
 
         public init(providerId: String, sourceInstanceId: String? = nil,
-                    label: String? = nil, values: [Double]) {
+                    label: String? = nil, values: [Double], hasPricedUsage: Bool? = nil,
+                    sourceId: String? = nil) {
             self.providerId = providerId
             self.sourceInstanceId = sourceInstanceId
+            self.sourceId = sourceId
             self.label = label
             self.values = values
+            self.hasPricedUsage = hasPricedUsage
         }
     }
 
     public init() {
         days = 7; periodLabel = ""; metric = "tokens"
         labels = []; series = []; scaleMax = 1
-        heatmap = nil; providers = []; partialProviderIds = []; costSemantics = nil
+        heatmap = nil; providers = []; partialProviderIds = []; costSemantics = nil; costCoverage = nil
+        sourceStatistics = []; readingFiles = 0
     }
 
     enum CodingKeys: String, CodingKey {
@@ -2833,6 +3156,9 @@ public struct CoreUsageGraph: Codable, Hashable, Sendable {
         case scaleMax = "scale_max"
         case partialProviderIds = "partial_provider_ids"
         case costSemantics = "cost_semantics"
+        case costCoverage = "cost_coverage"
+        case sourceStatistics = "source_statistics"
+        case readingFiles = "reading_files"
     }
 
     public init(from decoder: Decoder) throws {
@@ -2845,7 +3171,14 @@ public struct CoreUsageGraph: Codable, Hashable, Sendable {
         heatmap = try? c.decodeIfPresent(CoreUsageHeatmap.self, forKey: .heatmap)
         providers = (try? c.decodeIfPresent([String].self, forKey: .providers)) ?? []
         partialProviderIds = (try? c.decodeIfPresent([String].self, forKey: .partialProviderIds)) ?? []
+        readingFiles = max(0, (try? c.decodeIfPresent(Int.self, forKey: .readingFiles)) ?? 0)
         costSemantics = try? c.decodeIfPresent(String.self, forKey: .costSemantics)
+        costCoverage = metric == "cost"
+            ? try? c.decodeIfPresent(CoreUsageCostCoverage.self, forKey: .costCoverage) : nil
+        sourceStatistics = tolerantRows(
+            CoreUsageSourceStatistic.self,
+            try? c.decodeIfPresent([JSONValue].self, forKey: .sourceStatistics)
+        )
         series = ((try? c.decodeIfPresent([Series].self, forKey: .series)) ?? [])
             .filter { !$0.providerId.isEmpty }
     }
@@ -2856,6 +3189,8 @@ extension CoreUsageGraph.Series {
         case values, label
         case providerId = "provider_id"
         case sourceInstanceId = "source_instance_id"
+        case sourceId = "source_id"
+        case hasPricedUsage = "has_priced_usage"
     }
 }
 

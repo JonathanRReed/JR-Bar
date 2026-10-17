@@ -8,6 +8,9 @@ struct RunningApp: Equatable, Sendable {
     let bundleID: String?
     let name: String?
     let policy: NSApplication.ActivationPolicy
+    /// Where the app's bundle sits, read once with the rest — what
+    /// `ExternalAppProbe.running` matches an app with no registered id by.
+    var bundleURL: URL? = nil
 }
 
 /// Where the index hears about launches and quits. The app's feed is the
@@ -52,6 +55,7 @@ final class RunningApps {
     @ObservationIgnored private var cachedApps: [RunningApp]?
     @ObservationIgnored private var cachedBundleIDs: Set<String>?
     @ObservationIgnored private var cachedNames: Set<String>?
+    @ObservationIgnored private var cachedBundleURLs: Set<URL>?
     @ObservationIgnored private var listeners: [Int: @MainActor (RunningAppsChange) -> Void] = [:]
     @ObservationIgnored private var nextListener = 0
     @ObservationIgnored private let feed: RunningAppsFeed
@@ -80,6 +84,17 @@ final class RunningApps {
         let ids = Set(byPID.values.compactMap(\.bundleID))
         cachedBundleIDs = ids
         return ids
+    }
+
+    /// Whether an app runs from the bundle at `url`, answered from the
+    /// index: the bundle paths are read once with each app, so asking from a
+    /// card body costs a set lookup, not a Launch Services trip per app.
+    func isRunning(bundleURL url: URL) -> Bool {
+        _ = version
+        if cachedBundleURLs == nil {
+            cachedBundleURLs = Set(byPID.values.compactMap { $0.bundleURL?.standardizedFileURL })
+        }
+        return cachedBundleURLs?.contains(url.standardizedFileURL) ?? false
     }
 
     /// The running app with this pid, if one runs.
@@ -137,6 +152,7 @@ final class RunningApps {
         cachedApps = nil
         cachedBundleIDs = nil
         cachedNames = nil
+        cachedBundleURLs = nil
         version &+= 1
         let change = RunningAppsChange(launched: arrived, quit: gone)
         for listener in listeners.values { listener(change) }
@@ -265,6 +281,6 @@ final class WorkspaceRunningAppsFeed: RunningAppsFeed {
 
     private static func read(_ app: NSRunningApplication) -> RunningApp {
         RunningApp(pid: app.processIdentifier, bundleID: app.bundleIdentifier,
-                   name: app.localizedName, policy: app.activationPolicy)
+                   name: app.localizedName, policy: app.activationPolicy, bundleURL: app.bundleURL)
     }
 }

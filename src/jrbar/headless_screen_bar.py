@@ -71,7 +71,7 @@ class HeadlessScreenBar:
 
     def presentation_scheduler_inputs(self) -> PresentationSchedulerInputs:
         """The bar is never enabled, visible or animating here, so the
-        scheduler plans no frame, deadline, Alcove or pointer timer for it,
+        scheduler plans no frame, deadline or pointer timer for it,
         whatever the pointer flag says. What changes is that the app is
         terminating."""
         return PresentationSchedulerInputs(
@@ -81,8 +81,6 @@ class HeadlessScreenBar:
             app_terminating=self._terminating,
             animation_active=False,
             next_visual_change_at=None,
-            alcove_enabled=False,
-            alcove_relevant=False,
             pointer_interaction_relevant=self._pointer_interaction_relevant,
         )
 
@@ -98,9 +96,6 @@ class HeadlessScreenBar:
         return None
 
     def presentationStaticDeadline(self) -> None:
-        return None
-
-    def presentationAlcoveObservation(self) -> None:
         return None
 
     # --- settings the controller pushes on every refresh ---------------

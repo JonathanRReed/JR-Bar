@@ -123,15 +123,15 @@ import Testing
         #expect(!controller.isArmed, "a close ends the wait for the automatic showing")
     }
 
-    @Test func aRefusedTryItIsSaidOnItsRow() {
+    @Test func aRefusedTryItIsSaidOnItsRow() async {
         let log = Log()
         let controller = WhatsNewWindowController()
         controller.run = { command in
             log.ran.append(command)
             return command == .shelf ? .refused("JR-Bar is still starting.") : .done
         }
-        #expect(controller.tryIt(.window(.usage)) == nil)
-        #expect(controller.tryIt(.shelf) == "JR-Bar is still starting.")
+        #expect(await controller.tryIt(.window(.usage)) == nil)
+        #expect(await controller.tryIt(.shelf) == "JR-Bar is still starting.")
         #expect(log.ran == [.window(.usage), .shelf])
     }
 

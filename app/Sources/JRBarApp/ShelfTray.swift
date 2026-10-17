@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import JRBarCore
 import os
 import Quartz
@@ -22,6 +23,7 @@ final class ShelfTrayModel {
     static let attachCopyBound: Int64 = 8 * 1024 * 1024
 
     private static let defaultsKey = "jrbar.shelfTray.paths"
+    private static let pasteFailureNotice = "Couldn't save this copy. Try Paste again."
 
     /// One file in the tray — the unit stacks are made of.
     struct Entry: Identifiable, Equatable {
@@ -162,7 +164,19 @@ final class ShelfTrayModel {
     /// and the tray takes no files.
     @ObservationIgnored var shelfEnabled: @MainActor () -> Bool = { true }
 
-    init() {
+    private let defaults: UserDefaults
+    private struct ClearedShelf {
+        var entries: [ShelfEntry]
+        var selectedIDs: Set<String>
+        var selectionAnchor: String?
+        var keyboardSelectionID: String?
+    }
+    private var clearedShelf: ClearedShelf?
+    var canUndoClear: Bool { clearedShelf != nil }
+    var clearedItemCount: Int { clearedShelf?.entries.flatMap(\.items).count ?? 0 }
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         load()
     }
 
@@ -190,7 +204,9 @@ final class ShelfTrayModel {
             }
         }
         guard !fresh.isEmpty else { return }
+        clearedShelf = nil
         evictionNotice = nil
+        let landed = Set(fresh.map(\.path))
 
         if let stackTarget,
            case .stack(let stack) = stackTarget,
@@ -202,7 +218,7 @@ final class ShelfTrayModel {
             stack.folder = ShelfEntry.Stack.commonFolder(of: stack.items)
             stack.name = ShelfEntry.Stack.name(for: stack.items)
             known[at] = .stack(stack)
-            finish(&known)
+            finish(&known, landed: landed)
             return
         }
 
@@ -217,7 +233,7 @@ final class ShelfTrayModel {
             let at = target.flatMap { t in known.firstIndex(where: { $0.id == t.id }) }
                 ?? landingIndex(in: known)
             known.insert(.stack(stack), at: at)
-            finish(&known)
+            finish(&known, landed: landed)
             return
         }
 
@@ -234,7 +250,7 @@ final class ShelfTrayModel {
                 stack.folder = ShelfEntry.Stack.commonFolder(of: stack.items)
                 stack.name = ShelfEntry.Stack.name(for: stack.items)
                 known[at] = .stack(stack)
-                finish(&known)
+                finish(&known, landed: landed)
                 return
             }
             if let at = known.firstIndex(where: {
@@ -247,7 +263,7 @@ final class ShelfTrayModel {
                     name: ShelfEntry.Stack.name(for: items),
                     items: items,
                     folder: ShelfEntry.Stack.commonFolder(of: items)))
-                finish(&known)
+                finish(&known, landed: landed)
                 return
             }
         }
@@ -263,7 +279,7 @@ final class ShelfTrayModel {
             stack.folder = ShelfEntry.Stack.commonFolder(of: stack.items)
             stack.name = ShelfEntry.Stack.name(for: stack.items)
             known[at] = .stack(stack)
-            finish(&known)
+            finish(&known, landed: landed)
             return
         }
         if let at = known.firstIndex(where: {
@@ -278,14 +294,14 @@ final class ShelfTrayModel {
                 items: [other, item],
                 folder: item.folder)
             known[at] = .stack(stack)
-            finish(&known)
+            finish(&known, landed: landed)
             return
         }
 
         let at = target.flatMap { t in known.firstIndex(where: { $0.id == t.id }) }
             ?? landingIndex(in: known)
         known.insert(.item(item), at: at)
-        finish(&known)
+        finish(&known, landed: landed)
     }
 
     /// Where a new chip with no aimed drop lands: the end, or the front
@@ -295,7 +311,10 @@ final class ShelfTrayModel {
     }
 
     /// Bound, revalidate, persist — the add paths' shared tail.
-    private func finish(_ known: inout [ShelfEntry]) {
+    /// `landed` is what this add just put on the shelf: eviction takes
+    /// the oldest chips that hold none of it first, so a drop is never
+    /// the thing that gets forgotten.
+    private func finish(_ known: inout [ShelfEntry], landed: Set<String> = []) {
         let total = known.reduce(0) { $0 + $1.items.count }
         if total > Self.maxItems {
             // The strip is bounded: the oldest chips drop their
@@ -307,18 +326,42 @@ final class ShelfTrayModel {
             var droppedItems = 0
             // The oldest chips sit at the far end from where new ones land.
             let fromFront = !newestFirst()
-            while over > 0, let oldest = fromFront ? known.first : known.last {
-                let count = oldest.items.count
-                droppedItems += count
+            func isNew(_ chip: ShelfEntry) -> Bool { chip.items.contains { landed.contains($0.path) } }
+            while over > 0 {
+                let order = fromFront ? Array(known.indices) : Array(known.indices.reversed())
+                guard let at = order.first(where: { !isNew(known[$0]) }) else { break }
+                let oldest = known.remove(at: at)
+                droppedItems += oldest.items.count
                 names.append(oldest.displayName)
-                if fromFront { known.removeFirst() } else { known.removeLast() }
-                over -= count
+                over -= oldest.items.count
             }
-            evictionNotice = droppedItems == 1
-                ? "Shelf full — \u{201C}\(names[0])\u{201D} dropped off (file untouched)"
-                : "Shelf full — \(droppedItems) oldest items dropped off (files untouched)"
+            // Only the new files' own chips are left and they are still
+            // too many (a drop of fifty into a stack): the stack gives up
+            // its oldest members, not the whole chip.
+            if over > 0 {
+                for at in known.indices where over > 0 {
+                    guard case .stack(var stack) = known[at] else { continue }
+                    let give = min(over, stack.items.count - 1)
+                    guard give > 0 else { continue }
+                    stack.items.removeFirst(give)
+                    stack.folder = ShelfEntry.Stack.commonFolder(of: stack.items)
+                    stack.name = ShelfEntry.Stack.name(for: stack.items)
+                    known[at] = .stack(stack)
+                    droppedItems += give
+                    names.append(stack.name)
+                    over -= give
+                }
+            }
+            if droppedItems > 0 {
+                evictionNotice = droppedItems == 1
+                    ? "Shelf full — \u{201C}\(names[0])\u{201D} dropped off (file untouched)"
+                    : "Shelf full — \(droppedItems) oldest items dropped off (files untouched)"
+            }
         }
         entries = known
+        let paths = Set(known.flatMap(\.items).map(\.path))
+        icons = icons.filter { paths.contains($0.key) }
+        pendingThumbs = pendingThumbs.filter { paths.contains($0.key) }
         revalidate()
         persist()
     }
@@ -331,24 +374,41 @@ final class ShelfTrayModel {
     func clearEvictionNotice() { evictionNotice = nil }
 
     func remove(_ entry: ShelfEntry) {
+        guard let current = entries.first(where: { $0.id == entry.id }) else { return }
         entries.removeAll { $0.id == entry.id }
-        for item in entry.items {
+        for item in current.items {
             icons.removeValue(forKey: item.path)
-            pendingThumbs.remove(item.path)
+            pendingThumbs.removeValue(forKey: item.path)
         }
-        selectedIDs.remove(entry.id)
+        remapSelection(from: [entry.id], to: [])
         evictionNotice = nil
         persist()
     }
 
     /// Clear Shelf: every reference goes; the files stay where they are.
     func removeAll() {
+        guard !entries.isEmpty else { return }
+        clearedShelf = ClearedShelf(entries: entries, selectedIDs: selectedIDs,
+                                    selectionAnchor: selectionAnchor, keyboardSelectionID: keyboardSelectionID)
         entries.removeAll()
         icons.removeAll()
         pendingThumbs.removeAll()
         selectedIDs.removeAll()
         selectionAnchor = nil
+        keyboardSelectionID = nil
         evictionNotice = nil
+        persist()
+    }
+
+    /// Restore the last cleared references until another file lands.
+    func undoClear() {
+        guard shelfEnabled(), let snapshot = clearedShelf else { return }
+        clearedShelf = nil
+        entries = snapshot.entries
+        selectedIDs = snapshot.selectedIDs
+        selectionAnchor = snapshot.selectionAnchor
+        keyboardSelectionID = snapshot.keyboardSelectionID
+        revalidate()
         persist()
     }
 
@@ -357,8 +417,105 @@ final class ShelfTrayModel {
     /// The chips picked with ⌘- and ⇧-click; a verb on one of them acts
     /// on them all.
     private(set) var selectedIDs: Set<String> = []
+    private(set) var keyboardSelectionID: String?
+    static let pasteKeyboardID = "shelf-paste-action"
+    private var keyboardTileIDs: [String] {
+        (pasteOffered ? [Self.pasteKeyboardID] : []) + entries.map(\.id)
+    }
     /// Where a ⇧-click range starts: the last chip ⌘-clicked or ⇧-clicked.
     @ObservationIgnored private var selectionAnchor: String?
+    @ObservationIgnored var openURL: @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
+
+    private func remapSelection(from oldIDs: Set<String>, to newIDs: [String]) {
+        let wasSelected = !selectedIDs.isDisjoint(with: oldIDs)
+        selectedIDs.subtract(oldIDs)
+        if wasSelected { selectedIDs.formUnion(newIDs) }
+        if let cursor = keyboardSelectionID, oldIDs.contains(cursor) {
+            keyboardSelectionID = newIDs.first
+        }
+        if let anchor = selectionAnchor, oldIDs.contains(anchor) {
+            selectionAnchor = newIDs.first
+        }
+    }
+
+    /// Keep the current pick, or start with the first chip in tray order.
+    func beginKeyboardSelection() {
+        revalidate()
+        selectedIDs.formIntersection(Set(entries.map(\.id)))
+        if pasteOffered, keyboardSelectionID == Self.pasteKeyboardID { return }
+        guard let first = entries.first else {
+            selectionAnchor = nil
+            keyboardSelectionID = pasteOffered ? Self.pasteKeyboardID : nil
+            return
+        }
+        if selectedIDs.isEmpty { selectedIDs = [first.id] }
+        if let cursor = keyboardSelectionID, selectedIDs.contains(cursor) { return }
+        keyboardSelectionID = selectionAnchor.flatMap { selectedIDs.contains($0) ? $0 : nil }
+            ?? entries.first { selectedIDs.contains($0.id) }?.id
+        selectionAnchor = keyboardSelectionID
+    }
+
+    func endKeyboardSelection() { keyboardSelectionID = nil }
+
+    /// Arrows stop at the ends, matching Finder's selection behavior.
+    func moveKeyboardSelection(by delta: Int) {
+        beginKeyboardSelection()
+        let ids = keyboardTileIDs
+        guard !ids.isEmpty else { return }
+        let current = keyboardSelectionID.flatMap { ids.firstIndex(of: $0) } ?? 0
+        let offset = delta > 0 ? min(delta, ids.count - 1 - current) : max(delta, -current)
+        selectKeyboardTile(ids[current + offset])
+    }
+
+    func moveKeyboardSelection(column: Int, row: Int) {
+        beginKeyboardSelection()
+        let ids = keyboardTileIDs
+        guard let cursor = keyboardSelectionID, let current = ids.firstIndex(of: cursor) else { return }
+        let rows = Self.stripRows(tiles: ids.count)
+        let targetColumn = current / rows + column
+        let targetRow = current % rows + row
+        guard targetColumn >= 0, (0..<rows).contains(targetRow) else { return }
+        let target = targetColumn * rows + targetRow
+        guard ids.indices.contains(target) else { return }
+        selectKeyboardTile(ids[target])
+    }
+
+    private func selectKeyboardTile(_ id: String) {
+        keyboardSelectionID = id
+        selectedIDs = id == Self.pasteKeyboardID ? [] : [id]
+        selectionAnchor = id == Self.pasteKeyboardID ? nil : id
+    }
+
+    /// Open live files in the pick, including a selected stack's members.
+    /// A missing file or refused opener says why instead of claiming success.
+    func openKeyboardSelection() -> String? {
+        guard shelfEnabled() else { return keyboardOpenRefusal("The Shelf is turned off.") }
+        revalidate()
+        selectedIDs.formIntersection(Set(entries.map(\.id)))
+        if let cursor = keyboardSelectionID, !selectedIDs.contains(cursor) { keyboardSelectionID = nil }
+        let picked = entries.filter { selectedIDs.contains($0.id) }
+        guard !picked.isEmpty else {
+            return keyboardOpenRefusal(entries.isEmpty ? "The Shelf has no files to open." : "No Shelf files are selected.")
+        }
+        let urls = presentURLs(of: picked)
+        guard !urls.isEmpty else { return keyboardOpenRefusal("The selected files moved or were deleted.") }
+        let missing = picked.flatMap(\.items).contains(where: \.missing)
+        var failed = false
+        for url in urls { if !openURL(url) { failed = true } }
+        if missing {
+            return keyboardOpenRefusal(failed
+                ? "Some selected files moved, were deleted, or could not be opened."
+                : "Some selected files moved or were deleted.")
+        }
+        if failed { return keyboardOpenRefusal("Some selected files could not be opened.") }
+        actionNotice = nil
+        return nil
+    }
+
+    private func keyboardOpenRefusal(_ words: String) -> String {
+        actionNotice = words
+        return words
+    }
 
     /// ⌘-click: this chip joins or leaves the selection.
     func toggleSelection(_ entry: ShelfEntry) {
@@ -382,9 +539,11 @@ final class ShelfTrayModel {
     }
 
     func clearSelection() {
-        guard !selectedIDs.isEmpty else { return }
         selectedIDs.removeAll()
         selectionAnchor = nil
+        clearedShelf?.selectedIDs.removeAll()
+        clearedShelf?.selectionAnchor = nil
+        clearedShelf?.keyboardSelectionID = nil
     }
 
     /// What a verb on `entry` acts on: the whole selection when `entry`
@@ -475,6 +634,8 @@ final class ShelfTrayModel {
         remove(entry)
     }
 
+    @ObservationIgnored var latestCopyTextToken: UUID?
+
     /// A line under the strip for what a verb just did — "Copied the
     /// text of 2 files". It fades on its own like the eviction line.
     var actionNotice: String?
@@ -483,20 +644,83 @@ final class ShelfTrayModel {
     /// in a stack or loose, rather than turning up missing.
     func relocate(from old: String, to new: String) {
         guard old != new else { return }
-        let moved = Entry(path: new, missing: false)
-        entries = entries.map { entry in
-            switch entry {
-            case .item(let item):
-                return item.path == old ? .item(moved) : entry
-            case .stack(var stack):
-                guard stack.items.contains(where: { $0.path == old }) else { return entry }
-                stack.items = stack.items.map { $0.path == old ? moved : $0 }
-                stack.folder = ShelfEntry.Stack.commonFolder(of: stack.items)
-                return .stack(stack)
+        var isDirectory: ObjCBool = false
+        let movedDirectory = FileManager.default.fileExists(atPath: new, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+        let prefix = old == "/" ? old : old + "/"
+        func relocatedEntries(_ source: [ShelfEntry])
+            -> (entries: [ShelfEntry], owners: [String: [String]], invalidated: Set<String>) {
+            var invalidated = Set<String>()
+            var existingOwners: [String: Int] = [:]
+            for (index, entry) in source.enumerated() {
+                for item in entry.items where item.path != old
+                    && !(movedDirectory && item.path.hasPrefix(prefix)) {
+                    if existingOwners[item.path] == nil { existingOwners[item.path] = index }
+                }
             }
+            func relocated(_ item: Entry) -> Entry {
+                let path: String
+                if item.path == old {
+                    path = new
+                } else if movedDirectory && item.path.hasPrefix(prefix) {
+                    path = URL(fileURLWithPath: new)
+                        .appendingPathComponent(String(item.path.dropFirst(prefix.count))).path
+                } else {
+                    return Entry(path: item.path, missing: !FileManager.default.fileExists(atPath: item.path))
+                }
+                invalidated.insert(item.path)
+                invalidated.insert(path)
+                return Entry(path: path, missing: !FileManager.default.fileExists(atPath: path))
+            }
+            let mapped = source.map { entry in
+                switch entry {
+                case .item(let item):
+                    return ShelfEntry.item(relocated(item))
+                case .stack(var stack):
+                    stack.items = stack.items.map(relocated)
+                    stack.folder = ShelfEntry.Stack.commonFolder(of: stack.items)
+                    return ShelfEntry.stack(stack)
+                }
+            }
+            let normalized = Self.uniqueEntries(mapped, preferredOwners: existingOwners)
+            var pathOwners: [String: String] = [:]
+            for entry in normalized {
+                for item in entry.items { pathOwners[item.path] = entry.id }
+            }
+            var owners: [String: [String]] = [:]
+            for (original, mappedEntry) in zip(source, mapped) {
+                var ids: [String] = []
+                for item in mappedEntry.items {
+                    if let owner = pathOwners[item.path], !ids.contains(owner) { ids.append(owner) }
+                }
+                owners[original.id] = ids
+            }
+            return (normalized, owners, invalidated)
         }
-        selectedIDs.remove(old)
-        icons.removeValue(forKey: old)
+        func remapped(_ ids: Set<String>, owners: [String: [String]]) -> Set<String> {
+            Set(ids.flatMap { owners[$0] ?? [$0] })
+        }
+        let active = relocatedEntries(entries)
+        entries = active.entries
+        selectedIDs = remapped(selectedIDs, owners: active.owners)
+        keyboardSelectionID = keyboardSelectionID.flatMap { active.owners[$0]?.first ?? $0 }
+        selectionAnchor = selectionAnchor.flatMap { active.owners[$0]?.first ?? $0 }
+        for path in active.invalidated {
+            icons.removeValue(forKey: path)
+            pendingThumbs.removeValue(forKey: path)
+        }
+        if var snapshot = clearedShelf {
+            let restored = relocatedEntries(snapshot.entries)
+            snapshot.entries = restored.entries
+            for path in restored.invalidated {
+                icons.removeValue(forKey: path)
+                pendingThumbs.removeValue(forKey: path)
+            }
+            snapshot.selectedIDs = remapped(snapshot.selectedIDs, owners: restored.owners)
+            snapshot.selectionAnchor = snapshot.selectionAnchor.flatMap { restored.owners[$0]?.first ?? $0 }
+            snapshot.keyboardSelectionID = snapshot.keyboardSelectionID.flatMap { restored.owners[$0]?.first ?? $0 }
+            clearedShelf = snapshot
+        }
         persist()
     }
 
@@ -505,7 +729,18 @@ final class ShelfTrayModel {
     /// files then upgrade to a real thumbnail when Quick Look answers
     /// off-actor; the generic face shows until it lands.
     private var icons: [String: NSImage] = [:]
-    private var pendingThumbs: Set<String> = []
+    private var pendingThumbs: [String: UUID] = [:]
+    @ObservationIgnored var loadThumbnail: @MainActor (
+        String, @escaping @MainActor @Sendable (NSImage?) -> Void
+    ) -> Void = { path, completion in
+        let request = QLThumbnailGenerator.Request(
+            fileAt: URL(fileURLWithPath: path), size: CGSize(width: 32, height: 32),
+            scale: NSScreen.main?.backingScaleFactor ?? 2, representationTypes: .thumbnail)
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
+            let image = representation?.nsImage
+            Task { @MainActor in completion(image) }
+        }
+    }
 
     func icon(for entry: Entry) -> NSImage {
         if let cached = icons[entry.path] { return cached }
@@ -525,25 +760,15 @@ final class ShelfTrayModel {
     /// (folders, binaries) simply keeps its type icon — nothing
     /// reverts, nothing retries in a loop.
     private func upgradeThumbnail(for path: String) {
-        guard pendingThumbs.insert(path).inserted else { return }
-        let request = QLThumbnailGenerator.Request(
-            fileAt: URL(fileURLWithPath: path),
-            // The tile's 26 pt face, with room to stay sharp.
-            size: CGSize(width: 32, height: 32),
-            scale: NSScreen.main?.backingScaleFactor ?? 2,
-            representationTypes: .thumbnail)
-        QLThumbnailGenerator.shared.generateBestRepresentation(
-            for: request) { [weak self] rep, _ in
-                // Read the image on the completion queue — the
-                // representation itself isn't Sendable, the image is.
-                guard let image = rep?.nsImage else { return }
-                image.size = NSSize(width: 11, height: 11)
-                Task { @MainActor in
-                    // The entry may have left the tray while the ask
-                    // was out — caching for a removed path is harmless,
-                    // the entry's re-add reads the warm slot.
-                    self?.icons[path] = image
-                }
+        guard pendingThumbs[path] == nil else { return }
+        let token = UUID()
+        pendingThumbs[path] = token
+        loadThumbnail(path) { [weak self] image in
+            guard let self, self.pendingThumbs[path] == token else { return }
+            self.pendingThumbs.removeValue(forKey: path)
+            guard let image else { return }
+            image.size = NSSize(width: 11, height: 11)
+            self.icons[path] = image
         }
     }
 
@@ -565,10 +790,11 @@ final class ShelfTrayModel {
     /// A stack taken apart — the ⌥-click / Split verb. Members land
     /// as loose chips where the stack stood.
     func dissolve(_ entry: ShelfEntry) {
-        guard case .stack(let stack) = entry,
-              let at = entries.firstIndex(where: { $0.id == entry.id })
+        guard let at = entries.firstIndex(where: { $0.id == entry.id }),
+              case .stack(let stack) = entries[at]
         else { return }
         entries.replaceSubrange(at...at, with: stack.items.map { .item($0) })
+        remapSelection(from: [entry.id], to: stack.items.map(\.id))
         persist()
     }
 
@@ -577,6 +803,7 @@ final class ShelfTrayModel {
     func mergeWithNext(_ entry: ShelfEntry) {
         guard let at = entries.firstIndex(where: { $0.id == entry.id }),
               at + 1 < entries.count else { return }
+        let oldIDs = Set([entries[at].id, entries[at + 1].id])
         let members = entries[at].items + entries[at + 1].items
         guard members.count >= 2 else { return }
         let stack = ShelfEntry.Stack(
@@ -585,6 +812,7 @@ final class ShelfTrayModel {
             items: members,
             folder: ShelfEntry.Stack.commonFolder(of: members))
         entries.replaceSubrange(at...(at + 1), with: [.stack(stack)])
+        remapSelection(from: oldIDs, to: [stack.id])
         persist()
     }
 
@@ -592,12 +820,17 @@ final class ShelfTrayModel {
     /// thinned to one member dissolves into that loose chip.
     func removeItem(_ item: Entry, from stackID: String) {
         guard let at = entries.firstIndex(where: { $0.id == stackID }),
-              case .stack(var stack) = entries[at] else { return }
+              case .stack(var stack) = entries[at],
+              stack.items.contains(where: { $0.id == item.id }) else { return }
         stack.items.removeAll { $0.id == item.id }
+        icons.removeValue(forKey: item.path)
+        pendingThumbs.removeValue(forKey: item.path)
         if stack.items.isEmpty {
             entries.remove(at: at)
+            remapSelection(from: [stackID], to: [])
         } else if stack.items.count == 1 {
             entries[at] = .item(stack.items[0])
+            remapSelection(from: [stackID], to: [stack.items[0].id])
         } else {
             stack.folder = ShelfEntry.Stack.commonFolder(of: stack.items)
             stack.name = ShelfEntry.Stack.name(for: stack.items)
@@ -684,7 +917,13 @@ final class ShelfTrayModel {
     /// Something copied the shelf could take, not yet pasted here — the
     /// strip offers a Paste chip. Read off the pasteboard's types and
     /// change count only; its contents are read on the click.
-    private(set) var pasteOffered = false
+    private(set) var pasteOffered = false {
+        didSet {
+            if !pasteOffered, keyboardSelectionID == Self.pasteKeyboardID {
+                keyboardSelectionID = nil
+            }
+        }
+    }
     /// The pasteboard generation last pasted — or written by a hand-off
     /// to an agent — so the same copy is not offered twice.
     private(set) var pastedChangeCount: Int?
@@ -697,12 +936,26 @@ final class ShelfTrayModel {
 
     /// The Paste chip: what was copied lands on the shelf the way a drop
     /// does — files as themselves, links as `.webloc`s, text as a clip.
-    func paste(from pasteboard: NSPasteboard = .general) {
-        let urls = ShelfTrayDrop.pasteURLs(pasteboard)
-        pastedChangeCount = pasteboard.changeCount
-        pasteOffered = false
-        guard !urls.isEmpty else { return }
-        add(urls)
+    func paste(from pasteboard: NSPasteboard = .general, directory: URL? = nil,
+               reader: (NSPasteboard, URL?) -> ShelfTrayDrop.PasteResult = ShelfTrayDrop.pasteResult) {
+        guard shelfEnabled() else { return }
+        let copiedGeneration = pasteboard.changeCount
+        let keyboardPaste = keyboardSelectionID == Self.pasteKeyboardID
+        switch reader(pasteboard, directory) {
+        case .files(let urls): add(urls)
+        case .empty: break
+        case .failed:
+            actionNotice = Self.pasteFailureNotice
+            notePasteboard(pasteboard)
+            return
+        }
+        pastedChangeCount = copiedGeneration
+        notePasteboard(pasteboard)
+        if actionNotice == Self.pasteFailureNotice { actionNotice = nil }
+        if keyboardPaste {
+            keyboardSelectionID = nil
+            beginKeyboardSelection()
+        }
     }
 
     func revalidate() {
@@ -734,25 +987,49 @@ final class ShelfTrayModel {
         ShelfQuickLook.shared.show(urls: live.map(\.url), at: index)
     }
 
+    /// Keep each path with its existing owner during a move, or its first
+    /// stored owner on load. Only references change, never the files.
+    private static func uniqueEntries(_ source: [ShelfEntry],
+                                      preferredOwners: [String: Int] = [:]) -> [ShelfEntry] {
+        var owners = preferredOwners
+        for (index, entry) in source.enumerated() {
+            for item in entry.items where owners[item.path] == nil { owners[item.path] = index }
+        }
+        var seen = Set<String>()
+        return source.enumerated().compactMap { index, entry in
+            let items = entry.items.filter { owners[$0.path] == index && seen.insert($0.path).inserted }
+            guard let first = items.first else { return nil }
+            if items.count == 1 { return .item(first) }
+            guard case .stack(var stack) = entry else { return .item(first) }
+            stack.items = items
+            stack.folder = ShelfEntry.Stack.commonFolder(of: items)
+            return .stack(stack)
+        }
+    }
+
     private func load() {
         // Two stores share the key's history: the flat [String] the
         // tray wrote before stacks, and the plist-dict list it writes
         // now. Anything unrecognized decodes to nothing — the shelf
         // never refuses to open over one bad record.
-        if let stored = UserDefaults.standard.array(
+        if let stored = defaults.array(
             forKey: Self.defaultsKey) as? [[String: Any]] {
             entries = stored.compactMap(Self.entry(from:))
         } else {
-            let paths = UserDefaults.standard.stringArray(
+            let paths = defaults.stringArray(
                 forKey: Self.defaultsKey) ?? []
             entries = paths.map { .item(Entry(path: $0, missing: false)) }
         }
+        let decoded = entries
+        entries = Self.uniqueEntries(decoded)
+        let repaired = entries != decoded
         var total = 0
         entries = entries.reversed().filter { entry in
             total += entry.items.count
             return total <= Self.maxItems
         }.reversed()
         revalidate()
+        if repaired { persist() }
     }
 
     /// One persisted record → an entry, tolerantly. A stack with no
@@ -789,25 +1066,24 @@ final class ShelfTrayModel {
                         "paths": stack.items.map(\.path)]
             }
         }
-        UserDefaults.standard.set(stored, forKey: Self.defaultsKey)
+        defaults.set(stored, forKey: Self.defaultsKey)
     }
 }
 
-/// The tray's drop handling: file URLs and promised files. A promised
-/// drop lands as the delivered file; one that fails delivery is simply
-/// never added — the strip doesn't invent an entry (T49).
+/// Resolves dropped files, web links and text clips in provider order.
 struct ShelfTrayDrop {
-    /// URL extraction for `onDrop` providers — resolves promised file
-    /// receivers through their delivered URL, plain file URLs directly,
-    /// and web links through a `.webloc` the shelf writes itself (a
-    /// link stays a real file, so reveal/share/AirDrop all answer it).
-    static func urls(from providers: [NSItemProvider],
+    enum PasteResult: Equatable {
+        case files([URL])
+        case empty
+        case failed
+    }
+
+    static func urls(from providers: [NSItemProvider], directory: URL? = nil,
                      completion: @escaping @MainActor ([URL]) -> Void) {
-        // `loadItem` completions can run on different queues — the
-        // collection lives behind a lock so the appends can't race.
-        let urls = OSAllocatedUnfairLock<[URL]>(initialState: [])
+        let urls = OSAllocatedUnfairLock<[URL?]>(
+            initialState: Array(repeating: nil, count: providers.count))
         let group = DispatchGroup()
-        for provider in providers {
+        for (index, provider) in providers.enumerated() {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 group.enter()
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
@@ -815,7 +1091,7 @@ struct ShelfTrayDrop {
                     let url = (item as? URL)
                         ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
                     if let url {
-                        urls.withLock { $0.append(url) }
+                        urls.withLock { $0[index] = url }
                     }
                 }
             } else if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
@@ -824,8 +1100,8 @@ struct ShelfTrayDrop {
                     defer { group.leave() }
                     let url = (item as? URL)
                         ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
-                    if let url, let loc = webLoc(for: url) {
-                        urls.withLock { $0.append(loc) }
+                    if let url, let loc = webLoc(for: url, directory: directory) {
+                        urls.withLock { $0[index] = loc }
                     }
                 }
             } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
@@ -836,14 +1112,14 @@ struct ShelfTrayDrop {
                     defer { group.leave() }
                     let text = (item as? String)
                         ?? (item as? Data).flatMap { String(data: $0, encoding: .utf8) }
-                    if let text, let loc = textLoc(for: text) {
-                        urls.withLock { $0.append(loc) }
+                    if let text, let loc = textLoc(for: text, directory: directory) {
+                        urls.withLock { $0[index] = loc }
                     }
                 }
             }
         }
         group.notify(queue: .main) {
-            MainActor.assumeIsolated { completion(urls.withLock { $0 }) }
+            MainActor.assumeIsolated { completion(urls.withLock { $0.compactMap { $0 } }) }
         }
     }
 
@@ -856,87 +1132,131 @@ struct ShelfTrayDrop {
     /// A pasteboard's shelf-able contents as tray-ready file URLs:
     /// copied files first, else links (as `.webloc`s), else text (as a
     /// `.txt` clip). Read only when the person asks for the paste.
-    static func pasteURLs(_ pasteboard: NSPasteboard) -> [URL] {
+    static func pasteResult(_ pasteboard: NSPasteboard, directory: URL? = nil) -> PasteResult {
         let fileOnly: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
         if let files = pasteboard.readObjects(forClasses: [NSURL.self], options: fileOnly) as? [URL],
            !files.isEmpty {
-            return files
+            return .files(files)
         }
         if pasteboard.types?.contains(.URL) == true,
            let links = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL], !links.isEmpty {
-            return trayURLs(from: links)
+            var files: [URL] = []
+            for link in links {
+                if link.isFileURL {
+                    files.append(link)
+                } else if link.scheme?.hasPrefix("http") == true {
+                    guard let loc = webLoc(for: link, directory: directory) else { return .failed }
+                    files.append(loc)
+                }
+            }
+            return files.isEmpty ? .empty : .files(files)
         }
         if let text = pasteboard.string(forType: .string) {
-            if let link = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
-               link.scheme?.hasPrefix("http") == true, let loc = webLoc(for: link) {
-                return [loc]
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return .empty }
+            if let link = URL(string: trimmed), link.scheme?.hasPrefix("http") == true {
+                return webLoc(for: link, directory: directory).map { .files([$0]) } ?? .failed
             }
-            return textLoc(for: text).map { [$0] } ?? []
+            return textLoc(for: text, directory: directory).map { .files([$0]) } ?? .failed
         }
-        return []
+        return .empty
     }
 
     /// Pasteboard-read URLs → tray-ready file URLs: files pass
     /// through, web links become `.webloc`s (the island's drop path,
     /// where the pasteboard is already open).
-    static func trayURLs(from urls: [URL]) -> [URL] {
-        urls.compactMap { $0.isFileURL ? $0 : webLoc(for: $0) }
+    static func trayURLs(from urls: [URL], directory: URL? = nil) -> [URL] {
+        urls.compactMap { $0.isFileURL ? $0 : webLoc(for: $0, directory: directory) }
     }
 
-    /// A dropped web link as a `.webloc` file under the shelf's own
-    /// folder — Yoink's same move. The name is a hash of the link, so
-    /// re-dropping the same page lands on the same file and the tray's
-    /// path dedupe keeps it one entry. nil when the folder can't be
-    /// made or written — the drop then adds nothing (T49's rule).
-    static func webLoc(for url: URL) -> URL? {
+    /// Reuses a matching link file and preserves occupied or edited files.
+    static func webLoc(for url: URL, directory: URL? = nil) -> URL? {
         guard url.scheme?.hasPrefix("http") == true,
-              let base = FileManager.default.urls(
-                for: .applicationSupportDirectory, in: .userDomainMask).first
-        else { return nil }
-        let dir = base.appendingPathComponent("JR-Bar/Shelf", isDirectory: true)
-        // A stable, filesystem-safe name: the host plus a short hash
-        // of the whole link (two links on one host still differ).
+              let dir = directory ?? clipDirectory() else { return nil }
         let hash = stableHash(url.absoluteString)
         let host = (url.host ?? "Link")
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
-        let loc = dir.appendingPathComponent("\(host)-\(hash).webloc")
-        let plist = ["URL": url.absoluteString] as NSDictionary
-        do {
-            try FileManager.default.createDirectory(
-                at: dir, withIntermediateDirectories: true)
-            try plist.write(to: loc)
-            return loc
-        } catch {
-            return nil
+        guard let data = try? PropertyListSerialization.data(
+            fromPropertyList: ["URL": url.absoluteString], format: .xml, options: 0) else { return nil }
+        return materialize(data, in: dir, base: "\(host)-\(hash)", ext: "webloc",
+                           maximumMatchBytes: max(data.count, 65_536)) { existing in
+            let plist = try? PropertyListSerialization.propertyList(from: existing, options: [], format: nil)
+            return (plist as? [String: Any])?["URL"] as? String == url.absoluteString
         }
     }
 
-    /// A dropped text clipping as a `.txt` under the shelf's own folder —
-    /// the `.webloc` move for plain strings: the clip stays a real file,
-    /// so reveal/share/AirDrop/QuickLook all answer it. The name is the
-    /// first line's head plus a hash of the whole text — re-dropping the
-    /// same clip lands on the same file and dedupes to one entry.
-    static func textLoc(for text: String) -> URL? {
+    /// Reuses an exact text clip, taking a numbered name after a collision.
+    static func textLoc(for text: String, directory: URL? = nil) -> URL? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
-              let base = FileManager.default.urls(
-                for: .applicationSupportDirectory, in: .userDomainMask).first
-        else { return nil }
-        let dir = base.appendingPathComponent("JR-Bar/Shelf", isDirectory: true)
+              let dir = directory ?? clipDirectory() else { return nil }
         let hash = stableHash(text)
         let head = String(trimmed.components(separatedBy: .newlines).first?.prefix(24) ?? "Clip")
         let safe = head.components(separatedBy: CharacterSet.alphanumerics.inverted)
             .joined()
-        let loc = dir.appendingPathComponent("\(safe.isEmpty ? "Clip" : safe)-\(hash).txt")
+        let data = Data(text.utf8)
+        return materialize(data, in: dir, base: "\(safe.isEmpty ? "Clip" : safe)-\(hash)", ext: "txt",
+                           maximumMatchBytes: data.count) { $0 == data }
+    }
+
+    private static func materialize(_ data: Data, in directory: URL, base: String, ext: String,
+                                    maximumMatchBytes: Int, matches: (Data) -> Bool) -> URL? {
+        let manager = FileManager.default
         do {
-            try FileManager.default.createDirectory(
-                at: dir, withIntermediateDirectories: true)
-            try text.write(to: loc, atomically: true, encoding: .utf8)
-            return loc
+            try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+            let occupied = Set(try manager.contentsOfDirectory(atPath: directory.path))
+            let candidates = (1...500).map {
+                directory.appendingPathComponent(ShelfActions.candidate(base, ext: ext, attempt: $0))
+            }
+            for candidate in candidates where occupied.contains(candidate.lastPathComponent) {
+                if let existing = regularClipData(at: candidate, maximumBytes: maximumMatchBytes),
+                   matches(existing) { return candidate }
+            }
+
+            let staging = directory.appendingPathComponent(".jrbar-clip-\(UUID().uuidString)")
+            let descriptor = open(staging.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+                                  mode_t(S_IRUSR | S_IWUSR))
+            guard descriptor >= 0 else { return nil }
+            let writer = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            defer {
+                try? writer.close()
+                try? manager.removeItem(at: staging)
+            }
+            try writer.write(contentsOf: data)
+            try writer.close()
+            for candidate in candidates where !occupied.contains(candidate.lastPathComponent) {
+                do {
+                    // A hard link publishes the complete file and cannot replace a racing writer.
+                    try manager.linkItem(at: staging, to: candidate)
+                    return candidate
+                } catch CocoaError.fileWriteFileExists {
+                    if let existing = regularClipData(at: candidate, maximumBytes: maximumMatchBytes),
+                       matches(existing) { return candidate }
+                }
+            }
         } catch {
             return nil
         }
+        return nil
+    }
+
+    private static func regularClipData(at url: URL, maximumBytes: Int) -> Data? {
+        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+              info.st_size >= 0, info.st_size <= maximumBytes,
+              let data = try? handle.read(upToCount: maximumBytes + 1),
+              data.count <= maximumBytes else { return nil }
+        return data
+    }
+
+    private static func clipDirectory() -> URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("JR-Bar/Shelf", isDirectory: true)
     }
 
     /// FNV-1a over the string's UTF-8 — deterministic across launches,

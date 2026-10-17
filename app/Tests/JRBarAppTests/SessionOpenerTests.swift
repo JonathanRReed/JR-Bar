@@ -63,6 +63,18 @@ struct SessionOpenerTests {
         #expect(missed.calls == ["open:claude:w", "raise:claude:w"])
     }
 
+    @Test("the daemon's specific refusal is shown whole, naming the app it could not bring forward")
+    func daemonSentenceShownWhole() async {
+        let sentence = "That session is still running in T3 Code (com.t3tools.t3code), but T3 Code did not come "
+            + "forward. Is T3 Code still open? Nothing new was started."
+        let reply = CoreReply(id: "1", ok: false, error: CoreReplyError(code: "not_found", message: sentence))
+        let log = Log()
+        let line = await SessionOpener.open("claude:w", via: wiring(log, reply: reply, raises: false,
+                                                                     sessions: [session("claude:w")]))
+        #expect(line == sentence, "the locator missed too: the daemon's own words are the refusal, unaltered")
+        #expect(log.calls == ["open:claude:w", "raise:claude:w"])
+    }
+
     @Test("an ended, failed, unknown or other refusal never tries the locator")
     func refusalsStand() async {
         let ended = Log()

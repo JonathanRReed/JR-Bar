@@ -89,7 +89,7 @@ import JRBarUI
         let ended = Self.row(CoreSession(id: "s5", provider: "claude", lifecycle: "ended"))
         #expect(ended.help(now: Self.now)?.contains("Went away without confirming") == true)
 
-        // A working row silent past quietAfter says so without crying stale.
+        // A working row silent past SilentSession.threshold says so without crying stale.
         let silent = Self.row(CoreSession(id: "s6", provider: "claude", mode: "working", lifecycle: "active",
                                           since: Self.now.timeIntervalSince1970 - 31 * 60))
         #expect(silent.help(now: Self.now)?.contains("last signal was") == true)
@@ -157,12 +157,13 @@ import JRBarUI
 
     @Test func theRingFollowsTheLeadingMetersMostExhaustedWindow() {
         // The ring's own figure still arrives as the 5h window's, but the
-        // leading meter now leads with the provider's most-exhausted
-        // window — a weekly at 100 % must not leave a calm 40 % ring.
+        // leading meter uses the provider's most-used window. Its exact
+        // fraction remains visible after the brief exhaustion notice.
         let exhausted = [StatusMeter(id: "claude", name: "Claude", glyph: .logo("claude"), fraction: 1.0)]
         let ring = StatusItemController.plan(style: .glyphRing, ringFraction: 0.4, meters: exhausted)
         #expect(ring.spec.ringFraction == 1.0)
-        #expect(ring.spec.ringWarning == .red)
+        #expect(ring.spec.ringWarning == .none,
+                "spent quota keeps its reading without a standing alarm")
         let orbit = StatusItemController.plan(style: .orbit, ringFraction: 0.4, meters: exhausted)
         #expect(orbit.spec.ringFraction == 1.0)
         // A calmer leading window never lowers the ring, and non-ring
@@ -426,7 +427,7 @@ import JRBarUI
 /// The pricing sentence under the Usage Center's totals: a table-priced
 /// quote is a list price, an estimated one names its stand-in, and an
 /// absent table keeps the old "no table" line.
-@Suite struct PricingDisclosureTests {
+@Suite @MainActor struct PricingDisclosureTests {
     static func history(pricing: UsagePricing?, unpriced: Int = 0, models: [String] = []) -> UsageHistory {
         UsageHistory(provider: "codex", range: "7d",
                      days: [UsageHistoryDay(date: "2026-09-20")],

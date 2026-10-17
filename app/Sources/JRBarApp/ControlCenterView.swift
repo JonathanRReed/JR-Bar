@@ -29,6 +29,9 @@ struct ControlCenterView: View {
             case .clearAbsent: ClearAbsentSheet(store: store)
             }
         }
+        .onChange(of: store.sheet) { _, sheet in
+            if sheet == nil { store.closeSheet() }
+        }
         .animation(.easeInOut(duration: 0.15), value: store.status == nil && store.lastError == nil)
     }
 
@@ -147,7 +150,7 @@ struct DeckAbsentPad: View {
             DeckNotice(symbol: "power",
                        title: "Turn on your Creator Micro 2 or plug it in",
                        text: "It connects over USB or Bluetooth (USB wins when both are up). The first pad seen with a stable serial is offered for approval here. The slots work without it.",
-                       footnote: "JR-Bar's hardware pad is the Creator Micro 2. For Stream Deck, see Settings › Remote.")
+                       footnote: "JR-Bar's hardware pad is the Creator Micro 2. For Stream Deck, see Settings › Devices & Lighting.")
             PadIllustration(store: store)
                 .opacity(0.72)
         }
@@ -470,6 +473,11 @@ struct KeyCap: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(slot.navigable ? .isButton : [])
+        // The pin button is hidden from VoiceOver with the rest of the key's
+        // parts, and only drawn on hover: its action rides the key.
+        .accessibilityAction(named: slot.pinned ? "Unpin" : "Pin") {
+            if !slot.isEmpty { store.togglePin(index: slot.index) }
+        }
     }
 
     /// The key's open ask, when this key is asking: the one its second
@@ -613,19 +621,44 @@ struct DialControl: View {
 
     private var lit: Bool { inputs.contains { store.isLit($0.index) } }
 
+    /// The knob face and the card behind it, split out of `body` so the
+    /// type checker reads each gradient and ternary on its own.
+    private var knobFill: LinearGradient {
+        LinearGradient(colors: [Color(white: 0.22), Color(white: 0.12)], startPoint: .top, endPoint: .bottom)
+    }
+
+    private var cardFill: LinearGradient {
+        LinearGradient(colors: [Color(white: 0.14), Color(white: 0.09)], startPoint: .top, endPoint: .bottom)
+    }
+
+    private var ringColor: Color { lit ? Color.white.opacity(0.9) : Color.white.opacity(0.12) }
+    private var ringWidth: CGFloat { lit ? 2 : 1 }
+    private var pointerColor: Color { Color.white.opacity(lit ? 0.9 : 0.35) }
+    private var glowColor: Color { lit ? Color.white.opacity(0.5) : Color.clear }
+
+    private var accessibilityText: String {
+        let parts = inputs.map { "\($0.label) \($0.mappingLabel ?? "not configured")" }
+        return "Dial: " + parts.joined(separator: ", ")
+    }
+
+    private func inputInk(_ input: DeckAuxControl) -> Color {
+        if store.isLit(input.index) { return Color.white }
+        let resting: Double = input.mapping == nil ? 0.35 : 0.65
+        return Color.white.opacity(resting)
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
-                Circle()
-                    .fill(LinearGradient(colors: [Color(white: 0.22), Color(white: 0.12)], startPoint: .top, endPoint: .bottom))
-                Circle().strokeBorder(lit ? Color.white.opacity(0.9) : Color.white.opacity(0.12), lineWidth: lit ? 2 : 1)
+                Circle().fill(knobFill)
+                Circle().strokeBorder(ringColor, lineWidth: ringWidth)
                 Capsule()
-                    .fill(Color.white.opacity(lit ? 0.9 : 0.35))
+                    .fill(pointerColor)
                     .frame(width: 3, height: 14)
                     .offset(y: -20)
             }
             .frame(width: 62, height: 62)
-            .shadow(color: lit ? .white.opacity(0.5) : .clear, radius: 8)
+            .shadow(color: glowColor, radius: 8)
             VStack(alignment: .leading, spacing: 3) {
                 Text("Dial").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.white.opacity(0.85))
                 ForEach(inputs) { input in
@@ -637,19 +670,18 @@ struct DialControl: View {
                             .lineLimit(1)
                     }
                     .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(store.isLit(input.index) ? Color.white : Color.white.opacity(input.mapping == nil ? 0.35 : 0.65))
-                    .help("\(input.label): \(input.mappingLabel ?? "Configure this auxiliary control in Settings > Devices.")")
+                    .foregroundStyle(inputInk(input))
+                    .help("\(input.label): \(input.mappingLabel ?? "Choose its action in the pickers below the pad.")")
                 }
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(LinearGradient(colors: [Color(white: 0.14), Color(white: 0.09)], startPoint: .top, endPoint: .bottom)))
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(cardFill))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
         .animation(.easeOut(duration: 0.2), value: lit)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Dial: " + inputs.map { "\($0.label) \($0.mappingLabel ?? "not configured")" }.joined(separator: ", "))
+        .accessibilityLabel(accessibilityText)
     }
 
     private func dialSymbol(_ input: DeckAuxControl) -> String {
@@ -682,7 +714,7 @@ struct JoystickControl: View {
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(on ? Color.white : Color.white.opacity(control?.mapping == nil ? 0.2 : 0.5))
                     .offset(x: [0, 30, 0, -30][n], y: [-28, 0, 28, 0][n])
-                    .help(control.map { "\($0.label): \($0.mappingLabel ?? "Configure this auxiliary control in Settings > Devices.")" } ?? "")
+                    .help(control.map { "\($0.label): \($0.mappingLabel ?? "Choose its action in the pickers below the pad.")" } ?? "")
             }
             Circle()
                 .fill(LinearGradient(colors: [Color(white: 0.26), Color(white: 0.14)], startPoint: .top, endPoint: .bottom))
@@ -811,6 +843,7 @@ struct AuxBindingsEditor: View {
                     }
                 }
                 .labelsHidden()
+                .accessibilityLabel(label ?? control.label)
                 .fixedSize()
             }
             .font(.caption)
@@ -971,7 +1004,9 @@ struct ApplyKeymapSheet: View {
                         }
                     }
                     .labelsHidden()
+                    .accessibilityLabel("Layer \(row.layer + 1) applies to")
                     .fixedSize()
+                    .disabled(store.sheetBusy)
                 }
                 .font(.callout)
             }
@@ -989,10 +1024,12 @@ struct ApplyKeymapSheet: View {
                     }
                 }
                 .accessibilityLabel("Profile to configure")
+                .disabled(store.sheetBusy)
             }
             Toggle("Also configure supported dial and joystick mappings", isOn: Binding(
                 get: { store.applyAuxiliary },
                 set: { store.applyAuxiliary = $0; store.loadPlan() }))
+            .disabled(store.sheetBusy)
             Divider()
             Text("Review Creator Micro 2 key changes").font(.headline)
             Group {
@@ -1045,11 +1082,12 @@ struct ApplyKeymapSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(store.sheetBusy || store.plan == nil)
+                .disabled(!store.canApplyKeymap)
             }
         }
         .padding(22)
         .frame(width: 560)
+        .interactiveDismissDisabled(store.sheetBusy)
     }
 }
 
@@ -1097,11 +1135,12 @@ struct RestoreKeymapSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(store.sheetBusy)
+                .disabled(store.sheetBusy || !store.isLive || !store.canWriteDevice)
             }
         }
         .padding(22)
         .frame(width: 500)
+        .interactiveDismissDisabled(store.sheetBusy)
     }
 }
 
@@ -1152,5 +1191,6 @@ struct ClearAbsentSheet: View {
         }
         .padding(22)
         .frame(width: 480)
+        .interactiveDismissDisabled(store.sheetBusy)
     }
 }

@@ -32,7 +32,7 @@ final class SetupStore {
         var subtitle: String {
             switch self {
             case .welcome: return "A one-minute tour of the two things to switch on."
-            case .agents: return "Choose the agents to monitor. Connecting updates that agent's configuration."
+            case .agents: return "Choose the agents to monitor, and which to show usage for. Connecting updates that agent's configuration; usage stays off until you turn it on."
             case .permissions: return "Each one unlocks a feature; grant what's useful, skip the rest."
             case .appearance: return "What the menu bar shows, and whether the band is up."
             case .done: return "What's set, and what's still waiting on you."
@@ -64,6 +64,9 @@ final class SetupStore {
     var onOpenToys: (@MainActor () -> Void)?
     /// Finish/Open Toys have run — the window closes itself on this.
     var onFinished: (@MainActor () -> Void)?
+    /// The Done step's "Try it": a made-up ask comes up where real ones
+    /// do (`DemoAsk`). Never reaches an agent; tests hand in their own.
+    var onTryDemoAsk: @MainActor () -> Void = { DemoAskStore.shared.tryIt() }
 
     private(set) var step: Step = .welcome
     /// Steps left by the primary button this run.
@@ -74,21 +77,51 @@ final class SetupStore {
     /// The persisted bookkeeping (`setup.json`); `finishedAt` and
     /// `presentedCount` are the launch gate's facts.
     private(set) var state: SetupState
-    @ObservationIgnored private let persist: (SetupState) -> Void
+    private(set) var persistenceFailure: String?
+    @ObservationIgnored private let persist: (SetupState) throws -> Void
 
     /// The permission rows' last probe, keyed by row.
     private(set) var statuses: [SetupPermission: SetupPermissionStatus] = [:]
+    private(set) var permissionBusy: Set<SetupPermission> = []
+    @ObservationIgnored private var permissionReadRevision = 0
+    @ObservationIgnored private var permissionReadTask: Task<[SetupPermission: SetupPermissionStatus], Never>?
+    @ObservationIgnored private var permissionHealthRevision = 0
+    @ObservationIgnored private var usageReadRevision = 0
     /// A hook install in flight per provider — the row's button becomes a spinner.
     private(set) var hookBusy: Set<String> = []
     /// The reply's own words under the row, cleared on a 6 s clock like
     /// the Settings page's notes.
     private(set) var hookNotes: [String: SetupNote] = [:]
 
+    /// The usage questions on the Agents step, one per provider found on
+    /// this Mac; `refreshUsageOffers()` fills them from the daemon.
+    private(set) var usageOffers: [SetupUsageOffer] = []
+    private var usageReadingRevision: Int?
+    private(set) var usageOffersFailure: String?
+    var loadingUsageOffers: Bool { usageReadingRevision != nil }
+
+    var usageOfferRefreshKey: [String]? {
+        guard monitorLive else { return nil }
+        return agentRows.filter { $0.detected == true }.map(\.id).sorted()
+    }
+    /// What the person answered this run. "Not now" is a choice too: it
+    /// leaves the provider off and stops the row asking again.
+    private(set) var usageChoices: [String: UsageChoice] = [:]
+    /// A usage write in flight per provider.
+    private(set) var usageBusy: Set<String> = []
+    private(set) var usageNotes: [String: SetupNote] = [:]
+
+    enum UsageChoice: Equatable, Sendable {
+        case on, notNow
+    }
+
     @ObservationIgnored private var hookNoteClear: [String: DispatchWorkItem] = [:]
     @ObservationIgnored private var hookNoteRevision: [String: Int] = [:]
     @ObservationIgnored private let scheduleHookNoteClear:
         (@escaping @MainActor () -> Void) -> DispatchWorkItem
     @ObservationIgnored private var permissionTimer: Timer?
+    /// Stopping retires poll ownership without canceling an admitted read.
+    @ObservationIgnored private var permissionPollID: UUID?
 
     /// The Screen Bar's visibility, mirrored locally so the toggle
     /// animates the moment it flips; writes through `model.setScreenBar`.
@@ -113,11 +146,8 @@ final class SetupStore {
 
     init(model: SetupModel = SetupModel(),
          load: () -> SetupState = { SetupStateFile().load() },
-         persist: @escaping (SetupState) -> Void = { state in
-             let file = SetupStateFile()
-             do { try file.save(state) } catch {
-                 NSLog("JR-Bar setup: could not write %@: %@", file.url.path, error.localizedDescription)
-             }
+         persist: @escaping (SetupState) throws -> Void = { state in
+             try SetupStateFile().save(state)
          },
          scheduleHookNoteClear: @escaping
              (@escaping @MainActor () -> Void) -> DispatchWorkItem = { clear in
@@ -149,23 +179,33 @@ final class SetupStore {
     /// it stops asking.
     static let autoPresentationLimit = 2
 
-    /// Called by the window on every presentation: counts it, re-seeds
+    /// Called by the window on every presentation: re-seeds
     /// the mirrored facts from the live model, and re-reads the
     /// permission rows. A re-run of a finished setup starts over — the
     /// finished stamp stays, so the launch gate never re-arms.
-    func present() {
-        if state.finishedAt != nil {
+    ///
+    /// `launch` is true for the launch gate's own showing: only that counts
+    /// toward `autoPresentationLimit` — a hand-opened Setup would
+    /// otherwise use up the launches that were meant to offer it.
+    /// `restart` is false when the window is already up, so a link or a
+    /// notice that opens Setup again never wipes a walkthrough in progress.
+    func present(launch: Bool = true, restart: Bool = true) {
+        if restart, state.finishedAt != nil {
             step = .welcome
             completedSteps = []
             skippedSteps = []
         }
-        state.presentedCount += 1
-        save()
+        var candidate = state
+        if launch { candidate.presentedCount += 1 }
+        candidate.completedSteps = completedSteps.sorted { $0.index < $1.index }.map(\.rawValue)
+        candidate.skippedSteps = skippedSteps.sorted { $0.index < $1.index }.map(\.rawValue)
+        commit(candidate)
         seedingMirrors = true
         screenBarShown = model.screenBarShown()
         menuBarIconStyle = model.iconStyle()
         seedingMirrors = false
         Task { await refreshPermissions() }
+        Task { await refreshUsageOffers() }
     }
 
     // MARK: Navigation
@@ -191,12 +231,14 @@ final class SetupStore {
         skippedSteps.remove(step)
         step = Step.allCases[step.index + 1]
         save()
+        if step == .agents { Task { await refreshUsageOffers() } }
         if step == .permissions { Task { await refreshPermissions() } }
     }
 
     func goBack() {
         guard canGoBack else { return }
         step = Step.allCases[step.index - 1]
+        if step == .agents { Task { await refreshUsageOffers() } }
     }
 
     /// Skip marks the step skipped — last word wins over an earlier
@@ -214,14 +256,21 @@ final class SetupStore {
     /// records the run's outcomes, and lets the window close. The first
     /// finish on a Mac also counts this release's What's New as seen:
     /// everything in it is simply how JR-Bar works for someone new.
-    func finish() {
-        completedSteps.insert(.done)
-        if state.finishedAt == nil, state.whatsNewSeen == nil {
-            state.whatsNewSeen = WhatsNewCatalog.releaseID
+    @discardableResult
+    func finish() -> Bool {
+        var completed = completedSteps
+        completed.insert(.done)
+        var candidate = state
+        candidate.completedSteps = completed.sorted { $0.index < $1.index }.map(\.rawValue)
+        candidate.skippedSteps = skippedSteps.sorted { $0.index < $1.index }.map(\.rawValue)
+        if candidate.finishedAt == nil, candidate.whatsNewSeen == nil {
+            candidate.whatsNewSeen = WhatsNewCatalog.releaseID
         }
-        state.finishedAt = Date().timeIntervalSince1970
-        save()
+        candidate.finishedAt = Date().timeIntervalSince1970
+        guard commit(candidate) else { return false }
+        completedSteps = completed
         onFinished?()
+        return true
     }
 
     // MARK: What's New
@@ -239,16 +288,21 @@ final class SetupStore {
     /// outcomes from this launch's empty ones.
     func markWhatsNewSeen(_ release: String) {
         guard state.whatsNewSeen != release else { return }
-        state.whatsNewSeen = release
-        persist(state)
+        var candidate = state
+        candidate.whatsNewSeen = release
+        commit(candidate)
     }
 
     /// The Done step's "Open Toys" — finishes like Finish and opens the
     /// Toys page too.
     func finishToToys() {
-        finish()
+        guard finish() else { return }
         onOpenToys?()
     }
+
+    /// The Done step's "Try it": see an ask on the real surfaces, with
+    /// Approve and Deny that answer nothing.
+    func tryDemoAsk() { onTryDemoAsk() }
 
     // MARK: Agents step
 
@@ -288,6 +342,80 @@ final class SetupStore {
         hookNoteClear[provider] = work
     }
 
+    // MARK: Usage questions (on the Agents step)
+
+    /// Asks the daemon which providers were found and what each switch says.
+    func refreshUsageOffers() async {
+        guard !Task.isCancelled else { return }
+        usageReadRevision += 1
+        let revision = usageReadRevision
+        usageReadingRevision = revision
+        usageOffersFailure = nil
+        defer {
+            if usageReadingRevision == revision { usageReadingRevision = nil }
+        }
+        do {
+            let offers = try await model.usageOffers()
+            guard revision == usageReadRevision, !Task.isCancelled else { return }
+            usageOffers = offers
+            for offer in offers where offer.isOn { usageChoices[offer.id] = .on }
+        } catch {
+            guard revision == usageReadRevision, !Task.isCancelled else { return }
+            usageOffersFailure = usageOffers.isEmpty ? "Usage choices could not be loaded."
+                : "Usage choices could not be refreshed. Showing the last choices."
+        }
+    }
+
+    func usageOffer(for provider: String) -> SetupUsageOffer? {
+        usageOffers.first { $0.id == provider }
+    }
+
+    /// "Turn on": the person read the row's sentence and said yes. Only this
+    /// provider changes. Returns the task so tests can await the answer.
+    @discardableResult
+    func turnOnUsage(for provider: String) -> Task<Void, Never>? {
+        setUsage(provider, on: true)
+    }
+
+    /// "Turn off" for a provider that was already on.
+    @discardableResult
+    func turnOffUsage(for provider: String) -> Task<Void, Never>? {
+        setUsage(provider, on: false)
+    }
+
+    /// "Not now": nothing is asked of the provider and nothing is sent to
+    /// the daemon; the row stops asking this run.
+    func declineUsage(for provider: String) {
+        guard !usageBusy.contains(provider), usageOffer(for: provider)?.isOn != true else { return }
+        usageChoices[provider] = .notNow
+        usageNotes[provider] = nil
+    }
+
+    private func setUsage(_ provider: String, on: Bool) -> Task<Void, Never>? {
+        guard monitorLive, !usageBusy.contains(provider) else { return nil }
+        usageReadRevision += 1
+        usageReadingRevision = nil
+        usageBusy.insert(provider)
+        return Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.usageBusy.remove(provider)
+                self.usageReadRevision += 1
+                self.usageReadingRevision = nil
+            }
+            let note = await self.model.setUsage(provider, on)
+            if note.isError {
+                self.usageNotes[provider] = note
+                return
+            }
+            self.usageNotes[provider] = nil
+            self.usageChoices[provider] = on ? .on : .notNow
+            if let index = self.usageOffers.firstIndex(where: { $0.id == provider }) {
+                self.usageOffers[index].isOn = on
+            }
+        }
+    }
+
     // MARK: Permissions step
 
     func status(of permission: SetupPermission) -> SetupPermissionStatus {
@@ -295,7 +423,28 @@ final class SetupStore {
     }
 
     func refreshPermissions() async {
-        statuses = await model.refreshPermissions()
+        permissionReadRevision += 1
+        let revision = permissionReadRevision
+        let read = model.refreshPermissions
+        let task = Task { await read() }
+        permissionReadTask = task
+        let probed = await task.value
+        acceptPermissions(probed, revision: revision)
+    }
+
+    private func acceptPermissions(_ probed: [SetupPermission: SetupPermissionStatus], revision: Int) {
+        guard revision == permissionReadRevision else { return }
+        statuses = probed
+        permissionReadTask = nil
+    }
+
+    private func awaitLatestPermissions(forHealthReview review: Int) async {
+        while review == permissionHealthRevision, let task = permissionReadTask {
+            let revision = permissionReadRevision
+            let probed = await task.value
+            guard review == permissionHealthRevision else { return }
+            acceptPermissions(probed, revision: revision)
+        }
     }
 
     /// The row's button: `act` runs the request or opens the pane, then
@@ -303,8 +452,13 @@ final class SetupStore {
     /// a pane takes a moment to reflect a toggle.
     @discardableResult
     func act(on permission: SetupPermission) -> Task<Void, Never> {
-        Task { [weak self] in
+        guard !permissionBusy.contains(permission), permission.action(for: status(of: permission)) != nil else {
+            return Task {}
+        }
+        permissionBusy.insert(permission)
+        return Task { [weak self] in
             guard let self else { return }
+            defer { self.permissionBusy.remove(permission) }
             await self.model.act(permission)
             await self.refreshPermissions()
         }
@@ -312,24 +466,39 @@ final class SetupStore {
 
     /// A live dot while System Settings is open elsewhere: a slow
     /// re-probe, on only while the Permissions step is on screen.
-    func startPermissionUpdates() {
-        guard permissionTimer == nil else { return }
+    @discardableResult
+    func startPermissionUpdates() -> Task<Void, Never>? {
+        guard permissionTimer == nil else { return nil }
         let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.schedulePermissionRefresh() }
+            MainActor.assumeIsolated { _ = self?.pollPermissions() }
         }
         timer.tolerance = 0.3
         RunLoop.main.add(timer, forMode: .common)
         permissionTimer = timer
-        Task { await refreshPermissions() }
+        return pollPermissions()
     }
 
     func stopPermissionUpdates() {
         permissionTimer?.invalidate()
         permissionTimer = nil
+        permissionPollID = nil
     }
 
-    private func schedulePermissionRefresh() {
-        Task { [weak self] in await self?.refreshPermissions() }
+    /// One tick of the live dot: a refresh, unless the last one is still
+    /// running (nil then).
+    func pollPermissions() -> Task<Void, Never>? {
+        guard permissionPollID == nil else { return nil }
+        let pollID = UUID()
+        permissionPollID = pollID
+        return Task { [weak self] in
+            guard let self, self.permissionPollID == pollID else { return }
+            defer {
+                if self.permissionPollID == pollID {
+                    self.permissionPollID = nil
+                }
+            }
+            await self.refreshPermissions()
+        }
     }
 
     /// Straight to one step — the lost-permission notice opens on
@@ -347,12 +516,17 @@ final class SetupStore {
     /// now — empty on the very first look, which only records. Writes
     /// only the remembered grants, never this run's step outcomes.
     func reviewPermissionHealth() async -> [SetupPermission] {
-        let probed = await model.refreshPermissions()
-        statuses = probed
-        let review = PermissionHealth.review(remembered: state.grantedPermissions, statuses: probed)
+        permissionHealthRevision += 1
+        let revision = permissionHealthRevision
+        await refreshPermissions()
+        guard revision == permissionHealthRevision else { return [] }
+        await awaitLatestPermissions(forHealthReview: revision)
+        guard revision == permissionHealthRevision else { return [] }
+        let review = PermissionHealth.review(remembered: state.grantedPermissions, statuses: statuses)
         if review.remember != state.grantedPermissions {
-            state.grantedPermissions = review.remember
-            persist(state)
+            var candidate = state
+            candidate.grantedPermissions = review.remember
+            commit(candidate)
         }
         return review.lost
     }
@@ -374,16 +548,31 @@ final class SetupStore {
         let hooked = agents.filter { $0.hookStatus == "ok" }
         if skippedSteps.contains(.agents) {
             rows.append(SummaryRow(symbol: "person.2.fill", text: "Agents",
-                                   detail: "Skipped — Settings › Agents installs hooks any time.", ok: false))
+                                   detail: "Skipped — Settings › Agents & Usage installs hooks any time.", ok: false))
+        } else if !monitorLive {
+            rows.append(SummaryRow(symbol: "person.2.fill", text: "Agents",
+                                   detail: "Monitor offline. Reconnect to check the installed hooks.", ok: false))
         } else if !hooked.isEmpty {
             rows.append(SummaryRow(symbol: "person.2.fill", text: "Agents",
                                    detail: "\(hooked.count) provider\(hooked.count == 1 ? "" : "s") reporting.", ok: true))
         } else if agents.contains(where: { $0.detected == true }) {
             rows.append(SummaryRow(symbol: "person.2.fill", text: "Agents",
-                                   detail: "Detected, hooks not installed yet — Settings › Agents.", ok: false))
+                                   detail: "Detected, hooks not installed yet — Settings › Agents & Usage.", ok: false))
         } else {
             rows.append(SummaryRow(symbol: "person.2.fill", text: "Agents",
-                                   detail: "No agent CLIs found yet — install one and it appears in Settings › Agents.", ok: false))
+                                   detail: "No agent CLIs found yet — install one and it appears in Settings › Agents & Usage.", ok: false))
+        }
+
+        if !usageOffers.isEmpty {
+            let on = usageOffers.filter(\.isOn).map(\.name)
+            if on.isEmpty {
+                rows.append(SummaryRow(symbol: "gauge.with.dots.needle.bottom.0percent", text: "Usage",
+                                       detail: "Off for every provider — Settings › Agents & Usage turns each one on.", ok: false))
+            } else {
+                rows.append(SummaryRow(symbol: "gauge.with.dots.needle.bottom.50percent", text: "Usage",
+                                       detail: "On for " + on.joined(separator: ", ") + ". Everything else stays off until you turn it on.",
+                                       ok: true))
+            }
         }
 
         let missing = activePermissions.filter { status(of: $0) != .granted }
@@ -403,12 +592,24 @@ final class SetupStore {
 
     // MARK: Persistence
 
-    /// Writes the current run's outcomes into the persisted state and
-    /// through the injected `persist` — a tiny JSON, safe to write on
-    /// every transition.
     private func save() {
-        state.completedSteps = completedSteps.sorted { ($0.index) < ($1.index) }.map(\.rawValue)
-        state.skippedSteps = skippedSteps.sorted { ($0.index) < ($1.index) }.map(\.rawValue)
-        persist(state)
+        var candidate = state
+        candidate.completedSteps = completedSteps.sorted { $0.index < $1.index }.map(\.rawValue)
+        candidate.skippedSteps = skippedSteps.sorted { $0.index < $1.index }.map(\.rawValue)
+        commit(candidate)
+    }
+
+    @discardableResult
+    private func commit(_ candidate: SetupState) -> Bool {
+        do {
+            try persist(candidate)
+            state = candidate
+            persistenceFailure = nil
+            return true
+        } catch {
+            persistenceFailure = "Setup could not be saved. Try again."
+            NSLog("JR-Bar setup: could not save: %@", error.localizedDescription)
+            return false
+        }
     }
 }

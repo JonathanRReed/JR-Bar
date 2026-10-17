@@ -91,6 +91,20 @@ struct PanelWorkersWaitingTests {
         #expect(SessionRow(orphanAsk: Self.askFor("claude:session:gone")).workersWaitingText == nil)
     }
 
+    @Test("two open asks on one unlisted session are one row, so no row id repeats")
+    func orphanAsksShareARow() {
+        let first = CoreAsk(session: "claude:session:gone", kind: "permission", openedAt: Self.now - 30,
+                            summary: "Run a command", answerable: true, request: "r1")
+        let second = CoreAsk(session: "claude:session:gone", kind: "permission", openedAt: Self.now - 10,
+                             summary: "Run another", answerable: true, request: "r2")
+        let state = CoreState(generation: 1, now: Self.now, aggregate: CoreAggregate(mode: "needs_you", needsYou: 2),
+                              sessions: [], asks: [first, second])
+        let store = Self.makeStore(state)
+        let ids = store.rows.map(\.id)
+        #expect(ids == ["claude:session:gone"])
+        #expect(store.rows.first?.ask?.request == "r1", "the oldest ask is the one the row answers")
+    }
+
     @Test("the tooltip and the spoken label carry it, and the tooltip names the setting")
     func tooltip() throws {
         let row = SessionRow(session: Self.mainRow(waiting: 2), pinnedAsk: nil)

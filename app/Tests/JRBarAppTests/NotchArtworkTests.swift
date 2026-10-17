@@ -78,6 +78,51 @@ struct NotchArtworkTests {
         #expect(NotchArtworkStore.decodeCover(huge) == nil, "an oversized payload is refused unread")
     }
 
+    @Test("the synchronous cache refuses a real oversized image instead of decoding it in full")
+    func thumbnailCacheRejectsOversizedImage() throws {
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1100, pixelsHigh: 1100,
+                                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                                   isPlanar: false, colorSpaceName: .deviceRGB,
+                                                   bytesPerRow: 0, bitsPerPixel: 0))
+        // An uncompressed TIFF is a valid image whose bytes exceed the cover limit.
+        let data = try #require(bitmap.representation(using: .tiff, properties: [.compressionMethod: 1]))
+        #expect(data.count > ShelfUtilityModel.maxArtworkBytes)
+        #expect(NSImage(data: data) != nil)
+        let cache = ArtworkThumbCache()
+        #expect(cache.image(for: data) == nil)
+        #expect(cache.image(for: data) == nil)
+    }
+
+    @Test("normal PNG, JPEG and TIFF covers remain bounded thumbnails")
+    func thumbnailCacheKeepsNormalFormats() throws {
+        let bitmap = try #require(NSBitmapImageRep(data: Self.cover(side: 640)))
+        let data = [
+            try #require(bitmap.representation(using: .png, properties: [:])),
+            try #require(bitmap.representation(using: .jpeg, properties: [:])),
+            try #require(bitmap.representation(using: .tiff, properties: [:])),
+        ]
+        let cache = ArtworkThumbCache()
+        for cover in data {
+            let image = try #require(cache.image(for: cover))
+            #expect(max(image.size.width, image.size.height) == CGFloat(NotchArtworkStore.thumbnailPixels))
+            #expect(cache.image(for: cover) === image)
+        }
+    }
+
+    @Test("the synchronous thumbnail cache keeps four covers in recent-use order")
+    func thumbnailCacheKeepsFourRecentCovers() throws {
+        let cache = ArtworkThumbCache()
+        let covers = [CGFloat(0.02), 0.2, 0.4, 0.6, 0.8].map { Self.cover(hue: $0) }
+        let first = try #require(cache.image(for: covers[0]))
+        let second = try #require(cache.image(for: covers[1]))
+        _ = cache.image(for: covers[2])
+        _ = cache.image(for: covers[3])
+        #expect(cache.image(for: covers[0]) === first)
+        _ = cache.image(for: covers[4])
+        #expect(cache.image(for: covers[0]) === first)
+        #expect(cache.image(for: covers[1]) !== second)
+    }
+
     @Test("the card's artwork and tint arrive off the main thread and stay put for a pause")
     func cardArtwork() {
         let monitor = ArtMonitor()
@@ -184,6 +229,38 @@ struct NotchArtworkTests {
         #expect(media[1] == nil, "the helper's null is nothing playing")
         #expect(media.last??.title == "Two")
         #expect(!lines.anyOnMain)
+    }
+
+    @Test("an oversized unterminated line is dropped and the next track recovers")
+    func oversizedLineRecovers() {
+        let lines = Lines()
+        let reader = AlcoveMediaLineReader(maxLineBytes: 128) { lines.add($0) }
+        reader.feed(Data(repeating: UInt8(ascii: "x"), count: 100))
+        reader.feed(Data(repeating: UInt8(ascii: "x"), count: 100))
+        reader.feed(Data(repeating: UInt8(ascii: "x"), count: 100))
+        reader.drain()
+        #expect(lines.media.isEmpty)
+        var tail = Data("discard this too\n".utf8)
+        tail.append(Self.line(title: "Recovered", playing: true, cover: nil))
+        reader.feed(tail)
+        reader.drain()
+        #expect(lines.media.count == 1)
+        #expect(lines.media.first??.title == "Recovered")
+    }
+
+    @Test("a complete oversized line does not erase the preceding track")
+    func oversizedCompleteLineIsIgnored() {
+        let lines = Lines()
+        let valid = Self.line(title: "Valid", playing: true, cover: nil)
+        let reader = AlcoveMediaLineReader(maxLineBytes: valid.count - 1) { lines.add($0) }
+        var stream = valid
+        stream.append(Data(repeating: UInt8(ascii: "x"), count: valid.count + 20))
+        stream.append(Data("\nnull\n".utf8))
+        reader.feed(stream)
+        reader.drain()
+        #expect(lines.media.count == 2)
+        #expect(lines.media.first??.title == "Valid")
+        #expect(lines.media.last! == nil)
     }
 
     @Test("a cover re-sent with a pause is the same bytes, not a second decode")

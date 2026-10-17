@@ -10,6 +10,38 @@ import Testing
 /// reaches `NSImage`.
 @MainActor
 @Suite struct ShelfUtilityTests {
+    @Test("retired output listeners cannot read after a fold or a new watch")
+    func retiredOutputListenersDoNotRead() {
+        let model = ShelfUtilityModel()
+        var callbacks: [@MainActor () -> Void] = []
+        var reads = 0
+        var removals = 0
+        model.readOutputs = { reads += 1; return ([], 0) }
+        model.readOutputVolume = { nil }
+        model.watchOutputs = { changed in
+            callbacks.append(changed)
+            return {
+                removals += 1
+                changed()
+            }
+        }
+        model.startWatchingOutputs()
+        callbacks[0]()
+        #expect(reads == 1)
+        model.stopWatchingOutputs()
+        callbacks[0]()
+        #expect(reads == 1)
+        model.startWatchingOutputs()
+        callbacks[0]()
+        #expect(reads == 1)
+        callbacks[1]()
+        #expect(reads == 2)
+        model.stopWatchingOutputs()
+        model.stopWatchingOutputs()
+        #expect(reads == 2)
+        #expect(removals == 2)
+    }
+
 
     @Test func noMediaMeansNoArtworkOrSource() {
         let model = ShelfUtilityModel()
@@ -30,6 +62,16 @@ import Testing
     @Test func oversizedArtworkIsDropped() {
         // The bound lives on the model; a payload past it decodes to nil.
         #expect(ShelfUtilityModel.maxArtworkBytes == 4 * 1024 * 1024)
+    }
+
+    @Test func aFoldDuringAScrubDropsTheDrag() {
+        let model = ShelfUtilityModel()
+        model.beginScrub()
+        model.mediaScrub = 42
+        #expect(model.elapsedShown() == 42, "while held, the slider follows the drag")
+        model.stop()
+        #expect(model.mediaScrub == nil)
+        #expect(model.elapsedShown() == 0, "after the fold the slider follows the media again")
     }
 
     @Test func monitorsAreOffUntilStarted() {
@@ -66,6 +108,7 @@ import Testing
         final class Route { var current: AudioDeviceID = 41; var writes: [AudioDeviceID] = [] }
         let route = Route()
         model.readOutputs = { ([speakers, airpods], route.current) }
+        model.readOutputVolume = { route.current == speakers.id ? 0.4 : 0.7 }
         model.writeOutput = { id in
             route.writes.append(id)
             route.current = id
@@ -77,6 +120,7 @@ import Testing
         model.pickOutput(airpods)
         #expect(route.writes == [77])
         #expect(model.currentOutput == airpods)
+        #expect(model.outputVolume == 0.7)
         #expect(airpods.symbol == "airpodspro")
         #expect(CoreAudioOutputs.symbol(name: "LG HDR 4K", transport: kAudioDeviceTransportTypeHDMI) == "tv")
     }
@@ -89,12 +133,15 @@ import Testing
                                               transport: kAudioDeviceTransportTypeBluetooth)
         final class Route {
             var devices: [CoreAudioOutputs.Device] = []
+            var current: AudioDeviceID = 41
+            var volume: Double? = 0.4
             var changed: (@MainActor () -> Void)?
             var stops = 0
         }
         let route = Route()
         route.devices = [speakers]
-        model.readOutputs = { (route.devices, 41) }
+        model.readOutputs = { (route.devices, route.current) }
+        model.readOutputVolume = { route.volume }
         model.watchOutputs = { changed in
             route.changed = changed
             return { route.stops += 1 }
@@ -106,6 +153,16 @@ import Testing
         route.devices = [speakers, airpods]
         route.changed?()
         #expect(model.outputs == [speakers, airpods])
+        route.current = airpods.id
+        route.volume = nil
+        route.changed?()
+        #expect(model.currentOutput == airpods)
+        #expect(model.outputVolume == nil, "an output without hardware volume hides the slider")
+        route.current = speakers.id
+        route.volume = 0.25
+        route.changed?()
+        #expect(model.currentOutput == speakers)
+        #expect(model.outputVolume == 0.25, "returning to speakers restores their current volume")
         // The card folds: the listeners go, once.
         model.stopWatchingOutputs()
         model.stopWatchingOutputs()

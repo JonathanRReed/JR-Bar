@@ -75,7 +75,7 @@ def format_hook_payload(
         return {"logged_at": timestamp, "event": payload}
     if isinstance(payload, dict):
         line = dict(payload)
-        line["logged_at"] = line.get("logged_at") or timestamp
+        line["logged_at"] = timestamp if logged_at is not None else line.get("logged_at") or timestamp
         return line
     return {"logged_at": timestamp, "event": payload}
 
@@ -232,6 +232,7 @@ def process_hook_payload(
     refresh: bool = True,
     appended_handler: Callable[[ProviderRefreshHint, AppendedLine | None], object] | None = None,
     deduplicator_for: Callable[[Path], object] | None = None,
+    _recent_replay: bool = False,
 ) -> HookProcessingOutcome:
     """Normalize and persist one payload without owning process stdio.
 
@@ -255,6 +256,21 @@ def process_hook_payload(
     if record is None:
         return HookProcessingOutcome.IGNORED
     hint = _refresh_hint_for_record(actual_provider, record)
+    if hint is not None and _recent_replay:
+        import time
+        from dataclasses import replace
+
+        from .ipc import _replay_admission
+
+        source = _hook_source(actual_provider)
+        if source is not None:
+            observed = time.time()
+            watermark = provider_facts_for_record(
+                record, contract=source.contract,
+                observation_authority=source.registration.observation_authority,
+                observed_at_epoch=observed,
+            ).watermark
+            hint = replace(hint, _replay=_replay_admission(watermark, observed))
     if hint is None:
         write_normalized_hook_record(actual_log_path, record)
         return HookProcessingOutcome.WRITTEN

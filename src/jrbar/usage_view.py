@@ -19,7 +19,7 @@ from .capacity_types import (
     SourceKey,
 )
 from .freshness import FUTURE_CLOCK_SKEW_SECONDS
-from .reset_policy import format_reset_countdown, parse_reset_epoch
+from .reset_policy import parse_reset_epoch
 
 MAX_SOURCE_TEXT_LENGTH = 120
 
@@ -92,11 +92,6 @@ class UsageWindowViewModel:
             return None
         return 100.0 - remaining
 
-    def reset_text(self, now: float) -> str | None:
-        if not self.reset_known:
-            return None
-        return format_reset_countdown(self.reset_epoch, now=now)
-
     @property
     def duration_text(self) -> str:
         minutes = self.window_minutes
@@ -107,28 +102,6 @@ class UsageWindowViewModel:
         if minutes % 60 == 0:
             return f"{minutes // 60}h"
         return f"{minutes}m"
-
-    @property
-    def compact_text(self) -> str:
-        duration = self.duration_text
-        label = self.label.strip()
-        generic = label.lower() in {
-            "",
-            "primary",
-            "secondary",
-            "five_hour",
-            "seven_day",
-            "5-hour",
-            "weekly",
-            "limit",
-        }
-        prefix = "" if generic or duration == "limit" else f"{label} "
-        if duration == "limit" and label:
-            duration = label
-        remaining = self.capacity.remaining
-        if remaining is None:
-            return f"{prefix}{duration}".strip()
-        return f"{prefix}{duration} {remaining:.0f}% left"
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,64 +161,6 @@ class ProviderUsageViewModel:
     def source_text(self) -> str | None:
         return self.local_activity.source_text
 
-    @property
-    def _usage_text(self) -> str:
-        window_text = " · ".join(window.compact_text for window in self.windows)
-        return window_text or self.summary_text or "No usage yet"
-
-    @property
-    def menu_line(self) -> str:
-        if self.missing:
-            if self.refreshing:
-                state = "Loading..."
-            elif self.error_text:
-                state = self.error_text
-            else:
-                state = "Not loaded"
-            return f"{self.provider_title} · {state}"
-
-        parts = [self.provider_title, self._usage_text]
-        if self.refreshing:
-            parts.append("refreshing")
-        if self.partial:
-            parts.append("partial")
-        if self.source_text:
-            parts.append(self.source_text)
-        if self.stale:
-            parts.append("stale")
-        if self.error_text:
-            parts.append(self.error_text)
-        return " · ".join(parts)
-
-    @property
-    def settings_text(self) -> str:
-        parts = []
-        if self.summary_text:
-            parts.append(self.summary_text)
-        window_text = " · ".join(window.compact_text for window in self.windows)
-        if window_text:
-            parts.append(window_text)
-        if not parts:
-            parts.append("No usage yet")
-        if self.detail_text:
-            parts.append(self.detail_text)
-        if self.cost_estimate.text:
-            parts.append(self.cost_estimate.text)
-        if self.partial:
-            parts.append("Partial")
-        if self.source_text:
-            parts.append(self.source_text)
-        if self.stale:
-            parts.append("Stale")
-        if self.error_text:
-            parts.append(self.error_text)
-        if self.missing:
-            # Same rule as `menu_line`: with nothing to show, the reason IS
-            # the line. Appending it after "No usage yet" read as two
-            # different explanations for one empty card.
-            parts = [self.error_text or ("Loading..." if self.refreshing else "Not loaded")]
-        return " · ".join(parts)
-
 
 def _elapsed(now: float, timestamp: float) -> float:
     age = float(now) - float(timestamp)
@@ -293,6 +208,11 @@ def source_text_for_coverage(coverage) -> str | None:
             )
         return _bounded_source_text(f"{prefix} · failed")
     if coverage.status.value == "partial":
+        pending = getattr(coverage, "pending_files", 0)
+        if pending > 0:
+            return _bounded_source_text(
+                f"{prefix} · {coverage.files_discovered} {file_word} · still reading {pending}"
+            )
         return _bounded_source_text(
             f"{prefix} · {coverage.files_discovered} {file_word} · partial"
         )

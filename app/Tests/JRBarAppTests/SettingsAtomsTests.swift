@@ -58,7 +58,7 @@ import Testing
     }
 }
 
-/// Settings › Agents: the rows whose CLI the daemon did not find fold
+/// Settings › Agents & Usage: the rows whose CLI the daemon did not find fold
 /// under one "CLI not found (N)" disclosure; the rest keep their order.
 @Suite struct AgentsPagePartitionTests {
     @Test func missingCLIsGroupAndUnknownsStay() {
@@ -71,7 +71,7 @@ import Testing
     }
 }
 
-/// Settings › Lighting: close colour pairs sit under one line that says
+/// Settings › Devices & Lighting: close colour pairs sit under one line that says
 /// how many there are.
 @MainActor
 @Suite struct ColorVisionNoteSummaryTests {
@@ -100,7 +100,7 @@ import Testing
 
     @Test func eachCardWearsItsOwnHueAndAnUnknownOneThePages() {
         let page = Color.pink
-        let ids = ["menuBar", "notch", "dock", "agents", "data-hoarder", "fold", "aquarium", "notch-buddy",
+        let ids = ["menuBar", "notch", "dock", "agents", "fold", "aquarium", "notch-buddy",
                    "confetti", "keepAwake"]
         let tints = ids.map { ToyCard.tint(for: $0, page: page).description }
         #expect(Set(tints).count == ids.count, "no two named cards share a hue")

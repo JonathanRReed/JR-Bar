@@ -1,6 +1,6 @@
 # JR-Bar roadmap
 
-Updated 2026-10-01. [Version 0.9.16](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.16)
+Updated 2026-10-07. [Version 0.9.16](https://github.com/JonathanRReed/JR-Bar/releases/tag/v0.9.16)
 is public with a signed, notarized and stapled installer. Its release notes
 name the acceptance checks that remain open.
 [FEATURE-MATRIX.md](FEATURE-MATRIX.md) describes implemented capabilities;
@@ -47,18 +47,16 @@ a source path is not a physical acceptance receipt.
   it. Keep the core protocol stable while doing so.
 - Reassess the deferred parity items from the
   [2026-09-21 audit](archive/audits/2026-09-21-systems-audit.md), including
-  optional live Dock thumbnails, widget hosting, island gestures and
-  broader token/cost history. Reliability and resource use come first.
+  widget hosting, island gestures and broader token/cost history.
+  Optional live Dock thumbnails are implemented; their live acceptance remains separate. Reliability and resource use come first.
 
 ## Deliberately not planned
 
 - A phone companion, a Waybar client, severe-weather alerts, a timebox
   timer, operator export, the external Agent Deck bridge: deleted in 0.8
-  and not coming back in that shape. Two things with similar names stay:
-  the notch card's Weather row (off by default, a keyless Open-Meteo read
-  of a city you type, IP location only if you opt in) and the shelf's
-  agent timers (a countdown to a quota reset, or a nudge if a session is
-  still running).
+  and not coming back in that shape. The notch card's Weather row went
+  too, and the shelf's agent timers (a countdown to a quota reset, or a
+  nudge if a session is still running) stay.
 - Executable effect plugins. Effects stay data-only JSON packs.
 - Windows or a native Linux runtime. Only remote-peer viewing crosses the
   Mac boundary.

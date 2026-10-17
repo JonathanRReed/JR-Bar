@@ -122,6 +122,13 @@ class _FileUsage:
     partial: bool = False
     #: model -> [input, cached_input, cache_creation, output]
     models: dict[str, list[int]] = field(default_factory=dict)
+    #: model -> how many of its cache_creation tokens were one-hour writes,
+    #: which bill at a higher rate. Counted inside ``models``, never added.
+    one_hour_writes: dict[str, int] = field(default_factory=dict)
+    #: model -> [input, cached_input, cache_creation, output] of the requests
+    #: over OpenAI's 272K prompt line, counted inside ``models``. Decided per
+    #: request as it is read; a session's sum cannot say which were long.
+    long_context: dict[str, list[int]] = field(default_factory=dict)
     last_model: str | None = None
     #: (epoch, tokens) per counted assistant turn, oldest first.
     turns: list[tuple[float, int]] = field(default_factory=list)
@@ -181,6 +188,12 @@ def _record(state: _FileUsage, model: str, parts: tuple[int, int, int, int], at:
     bucket = state.models.setdefault(model, [0, 0, 0, 0])
     for index, value in enumerate(parts):
         bucket[index] += value
+    from .usage_stats import is_long_context_request
+
+    if is_long_context_request(state.provider, model, parts[0] + parts[1] + parts[2]):
+        long_bucket = state.long_context.setdefault(model, [0, 0, 0, 0])
+        for index, value in enumerate(parts):
+            long_bucket[index] += value
     state.last_model = model
     if at is not None:
         state.turns.append((at, total))
@@ -228,6 +241,12 @@ def _claude_line(state: _FileUsage, line: str) -> None:
     # A `<synthetic>` placeholder carries zero usage and is dropped by the
     # zero-total guard in `_record`, so it never becomes "the model".
     _record(state, model, parts, _epoch(row.get("timestamp")))
+    if sum(parts) > 0:
+        from .usage_stats import one_hour_cache_writes
+
+        one_hour = one_hour_cache_writes(usage, parts[2])
+        if one_hour:
+            state.one_hour_writes[model] = state.one_hour_writes.get(model, 0) + one_hour
     if sum(parts) > 0 and not row.get("isSidechain"):
         # The prompt this turn sent: everything it read, cached or not. A
         # sub-agent's sidechain turn has its own, smaller context.
@@ -443,9 +462,15 @@ def _locate(
     return found, None
 
 
-def _cost(provider: str, models: dict[str, list[int]]) -> tuple[float | None, bool, list[str]]:
+def _cost(
+    provider: str,
+    models: dict[str, list[int]],
+    one_hour_writes: dict[str, int] | None = None,
+    long_context: dict[str, list[int]] | None = None,
+) -> tuple[float | None, bool, list[str]]:
     """(dollars, any stand-in rate, models with no price) for one run."""
     from .core_usage_history import default_codex_model, price_quote, quote_cost
+    from .usage_stats import ONE_HOUR_WRITE_SUFFIX
 
     codex_default = default_codex_model() if provider == "codex" else None
     total = 0.0
@@ -459,7 +484,19 @@ def _cost(provider: str, models: dict[str, list[int]]) -> tuple[float | None, bo
             continue
         priced = True
         estimated = estimated or quote.estimated
-        total += quote_cost(provider, quote, inp, cached, written, out)
+        hour = min(written, (one_hour_writes or {}).get(model, 0))
+        total += quote_cost(provider, quote, inp, cached, written - hour, out)
+        long_parts = (long_context or {}).get(model)
+        if long_parts:
+            # The requests over the 272K line pay the long-context uplift on
+            # top of what they already cost at the standard rate.
+            total += quote_cost(provider, quote, *long_parts, long_context=True) - quote_cost(
+                provider, quote, *long_parts
+            )
+        if hour:
+            # The same table row, billed at the one-hour write rate.
+            hour_quote = price_quote(provider, model + ONE_HOUR_WRITE_SUFFIX, codex_default_model=codex_default)
+            total += quote_cost(provider, hour_quote, 0, 0, hour, 0)
     return (round(total, 4) if priced else None), estimated, sorted(unpriced)
 
 
@@ -553,7 +590,7 @@ def usage_document(
     cached = sum(parts[1] for parts in state.models.values())
     written = sum(parts[2] for parts in state.models.values())
     out = sum(parts[3] for parts in state.models.values())
-    cost, estimated, unpriced = _cost(provider, state.models)
+    cost, estimated, unpriced = _cost(provider, state.models, state.one_hour_writes, state.long_context)
     window, window_source = _context_window(state)
     document: dict[str, Any] = {
         "provider": provider,

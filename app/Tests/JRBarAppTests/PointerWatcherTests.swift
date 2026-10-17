@@ -241,7 +241,7 @@ struct PointerWatcherTests {
         let watcher = Self.makeWatcher(source, rig)
         let reveal = MenuBarReveal()
         var reveals = 0
-        var point = NSPoint(x: 400, y: 400)
+        @Captured var point = NSPoint(x: 400, y: 400)
         reveal.pointerWatch = watcher
         reveal.settings = { MenuBarSettings(enabled: true, revealOnHover: true) }
         reveal.row = { NSRect(x: 0, y: 958, width: 1512, height: 27) }
@@ -272,7 +272,7 @@ struct PointerWatcherTests {
         let source = FakeSource()
         let rig = Rig()
         let reveal = MenuBarReveal()
-        var point = NSPoint(x: 400, y: 400)
+        @Captured var point = NSPoint(x: 400, y: 400)
         reveal.pointerWatch = Self.makeWatcher(source, rig)
         reveal.settings = { MenuBarSettings(enabled: true, revealOnHover: true) }
         reveal.row = { NSRect(x: 0, y: 958, width: 1512, height: 27) }
@@ -301,5 +301,18 @@ struct PointerWatcherTests {
             == DockEnhanceController.pollInterval, "polling, near: 20 Hz as before")
         #expect(DockEnhanceController.nextTickWait(watching: false, engaged: false, near: false)
             == DockEnhanceController.farPollInterval, "polling, far: 8 Hz as before")
+    }
+
+    @Test("a pointer parked over the Dock with no panel slows the beat; the watcher still ticks on a move")
+    func dockTickCadenceWhenParked() {
+        #expect(DockEnhanceController.nextTickWait(watching: true, engaged: true, near: false, parked: true)
+            == DockEnhanceController.parkedPollInterval)
+        #expect(DockEnhanceController.parkedPollInterval > DockEnhanceController.pollInterval)
+        #expect(DockEnhanceController.nextTickWait(watching: true, engaged: false, near: false, parked: true) == nil,
+                "nothing at stake is still no tick")
+        #expect(DockEnhanceController.nextTickWait(watching: false, engaged: false, near: true, parked: true)
+            == DockEnhanceController.pollInterval, "polling has no watcher to wake it, so it keeps its beat")
+        #expect(DockEnhanceController.nextTickWait(watching: true, engaged: true, near: false, parked: false)
+            == DockEnhanceController.pollInterval)
     }
 }

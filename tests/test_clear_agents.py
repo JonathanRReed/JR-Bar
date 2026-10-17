@@ -197,7 +197,7 @@ def test_preview_label_falls_back_instead_of_rendering_a_raw_path__and_1_more() 
 
     assert plan.previous_state == ClearAgentsState()
     assert plan.next_state.generation == 1
-    assert plan.cleared_count == 2
+    assert len(plan.batch_receipt.newly_added_keys) == 2
     assert plan.next_state.acknowledged_keys == frozenset(
         completion_presentation_key(row) for row in (first, second)
     )
@@ -503,7 +503,7 @@ def test_explicitly_queued_completed_row_is_protected_from_stale_completion__and
         second, batch_id="second", now_epoch=NOW_EPOCH + 300
     )
 
-    assert undo.restored_count == 1
+    assert len(undo.batch_receipt.newly_added_keys) == 1
     assert completion_presentation_key(preserved) in undo.next_state.acknowledged_keys
     assert completion_presentation_key(added) not in undo.next_state.acknowledged_keys
     assert undo.next_state.latest_batch is not None
@@ -603,14 +603,14 @@ def test_the_widened_preview_clears_the_rows_the_narrow_one_refused__and_1_more(
     preview = project_clear_agents_preview((closed, quiet), state=state, now_epoch=NOW_EPOCH, widened=True)
 
     plan = plan_clear_agents_commit(preview, preview, state, batch_id="batch-widened", committed_at_epoch=NOW_EPOCH)
-    assert plan.cleared_count == 2
+    assert len(plan.batch_receipt.newly_added_keys) == 2
     assert {key.agent_id for key in plan.next_state.acknowledged_keys} == {
         "codex:session:closed",
         "codex:session:quiet",
     }
 
     undo = plan_clear_agents_undo(plan.next_state, batch_id="batch-widened", now_epoch=NOW_EPOCH + 120.0)
-    assert undo.restored_count == 2 and undo.next_state.acknowledged_keys == frozenset()
+    assert len(undo.batch_receipt.newly_added_keys) == 2 and undo.next_state.acknowledged_keys == frozenset()
     # Still 300 s, and not a second more.
     with pytest.raises(ClearAgentsPlanError) as expired:
         plan_clear_agents_undo(plan.next_state, batch_id="batch-widened", now_epoch=NOW_EPOCH + 301.0)

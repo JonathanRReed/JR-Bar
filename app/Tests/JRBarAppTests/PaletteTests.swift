@@ -292,22 +292,22 @@ struct PaletteTests {
         #expect(model.selectedID == nil)
     }
 
-    @Test("a slower source's hits land under Archive, only for the query that asked")
+    @Test("a slower source's hits land under their own heading, only for the query that asked")
     func modelSearchResults() {
         let model = PaletteModel()
         model.load(items: [row("a", "Alpha"), row("b", "Alphabet")], usage: PaletteUsage(), now: now)
         model.query = "alp"
         model.move(1)
         #expect(model.selectedID == "b")
-        model.setSearchResults([row("archive.1", "alpine notes", section: .archive)], for: "alp")
-        #expect(model.sections.map(\.section) == [.results, .archive])
+        model.setSearchResults([row("history.1", "alpine notes", section: .history)], for: "alp")
+        #expect(model.sections.map(\.section) == [.results, .history])
         #expect(model.selectedID == "b", "a hit landing mid-arrow keeps the highlight")
         // An answer for an older query is dropped.
-        model.setSearchResults([row("archive.2", "old", section: .archive)], for: "al")
-        #expect(!model.rows.contains { $0.id == "archive.2" })
+        model.setSearchResults([row("history.2", "old", section: .history)], for: "al")
+        #expect(!model.rows.contains { $0.id == "history.2" })
         // Typing on clears hits that no longer belong to the words.
         model.query = "alph"
-        #expect(!model.rows.contains { $0.id == "archive.1" })
+        #expect(!model.rows.contains { $0.id == "history.1" })
     }
 
     @Test("⌘K opens the selected row's panel; its filter and selection are its own")
@@ -327,6 +327,66 @@ struct PaletteTests {
         let empty = PaletteModel()
         empty.load(items: [], usage: PaletteUsage(), now: now)
         #expect(!empty.openActions())
+    }
+
+    @Test("a refresh keeps the highlighted action by id when verbs move")
+    func refreshedActionKeepsItsIdentity() {
+        let model = PaletteModel()
+        model.load(items: [row("m", "Mail", verbs: ["Open", "Hide", "Always Hide"])],
+                   usage: PaletteUsage(), now: now)
+        model.openActions()
+        model.moveAction(1)
+        #expect(model.selectedAction?.id == "hide")
+        model.reload(items: [row("m", "Mail", verbs: ["Always Hide", "Open", "Hide"])])
+        #expect(model.actionsOpen)
+        #expect(model.selectedAction?.id == "hide")
+        #expect(model.actionSelection == 2)
+    }
+
+    @Test("a removed action leaves a usable highlight and Return runs that action")
+    func removedActionFallsBackToRemainingVerb() {
+        let controller = PaletteController()
+        controller.presentsWindow = false
+        let log = Log()
+        controller.sources = { [PaletteClosureSource(build: {
+            [self.row("m", "Mail", verbs: ["Open", "Hide", "Always Hide"], log: log)]
+        })] }
+        controller.open()
+        controller.toggleActions()
+        controller.model.moveAction(-1)
+        controller.model.reload(items: [row("m", "Mail", verbs: ["Open", "Hide"], log: log)])
+        #expect(controller.model.actionsOpen)
+        #expect(controller.model.selectedAction?.id == "hide")
+        #expect(controller.handle(.submit))
+        #expect(log.ran == ["m:Hide"])
+        #expect(!controller.isOpen)
+    }
+
+    @Test("a refresh closes actions when the row has no verbs")
+    func removedVerbsCloseTheActionPanel() {
+        let model = PaletteModel()
+        model.load(items: [row("m", "Mail")], usage: PaletteUsage(), now: now)
+        model.openActions()
+        model.reload(items: [row("m", "Mail", verbs: [])])
+        #expect(!model.actionsOpen)
+    }
+
+    @Test("slower results also preserve a filtered action selection on refresh")
+    func refreshedSearchActionKeepsItsIdentity() {
+        let model = PaletteModel()
+        model.load(items: [], usage: PaletteUsage(), now: now)
+        model.query = "mail"
+        model.setSearchResults([row("m", "Mail", section: .history,
+                                    verbs: ["Open", "Hide", "Always Hide"])], for: "mail")
+        model.openActions()
+        model.actionQuery = "hide"
+        model.moveAction(1)
+        model.setSearchResults([row("m", "Mail", section: .history,
+                                    verbs: ["Always Hide", "Hide"])], for: "mail")
+        #expect(model.actionQuery == "hide")
+        #expect(model.visibleActions.map(\.id) == ["hide", "always hide"])
+        #expect(model.selectedAction?.id == "always hide")
+        #expect(model.actionSelection == 1)
     }
 
     // MARK: Keys
@@ -354,6 +414,17 @@ struct PaletteTests {
         #expect(cmd(kVK_ANSI_V, "v", .command) == .passThrough)
         #expect(cmd(kVK_LeftArrow, "\u{F702}", .command) == .passThrough, "⌘← moves the caret")
         #expect(cmd(kVK_UpArrow, "\u{F700}", .shift) == .passThrough)
+    }
+
+    @Test("on a layout with no Latin letters a chord is named by the key it sits on")
+    func chordsOnOtherLayouts() {
+        func cmd(_ code: Int, _ chars: String?, _ flags: NSEvent.ModifierFlags = []) -> PaletteKeyCommand {
+            PaletteKeys.command(keyCode: UInt16(code), characters: chars, modifiers: flags)
+        }
+        #expect(cmd(kVK_ANSI_K, "л", .command) == .chord(.actionPanel), "⌘K on a Cyrillic layout")
+        #expect(cmd(kVK_ANSI_H, "Р", [.command, .shift]) == .chord(.commandShift("h")))
+        #expect(cmd(kVK_ANSI_C, "с", .command) == .passThrough, "⌘C still copies")
+        #expect(cmd(kVK_ANSI_V, "м", .command) == .passThrough)
     }
 
     // MARK: Reuse
@@ -423,11 +494,11 @@ struct PaletteTests {
         let menu = PaletteSection(id: "appMenu", title: "Safari", order: 95)
         let page = "menu.com.apple.Safari.History/A Private Page Title"
         controller.model.setSearchResults([row(page, "A Private Page Title", section: menu, log: log),
-                                           row("archive.7", "history notes", section: .archive, log: log)],
+                                           row("history.7", "history notes", section: .history, log: log)],
                                           for: "hist")
         controller.run(rowID: page, actionID: "open")
-        controller.run(rowID: "archive.7", actionID: "open")
-        #expect(log.ran == ["\(page):Open", "archive.7:Open"], "the hits still run")
+        controller.run(rowID: "history.7", actionID: "open")
+        #expect(log.ran == ["\(page):Open", "history.7:Open"], "the hits still run")
         #expect(recorded.ran.isEmpty, "no ranking reads them, so nothing is written")
         controller.run(rowID: "open.history", actionID: "open")
         #expect(recorded.ran == ["open.history"], "a gathered row is still a habit")

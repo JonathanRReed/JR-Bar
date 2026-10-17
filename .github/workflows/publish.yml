@@ -45,8 +45,9 @@ jobs:
         # live in the setup-python interpreter, so hand it over explicitly.
         env:
           PYTHON: ${{ env.pythonLocation }}/bin/python
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          python scripts/validate_release_version.py --tag "${{ inputs.tag }}"
+          python scripts/validate_release_version.py --tag "$RELEASE_TAG"
           ./scripts/verify.sh --no-bootstrap --portable
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

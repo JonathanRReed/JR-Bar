@@ -112,6 +112,7 @@ struct OverviewGraphRenderProofTests {
         store.roster = roster
         store.now = now
         store.pane = .graph
+        store.graphPresentation = .map
         store.sessionUsage.apply(usage(for: roster), asked: roster.map(\.id), now: now)
         return store
     }

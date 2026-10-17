@@ -7,6 +7,7 @@ import hmac
 import json
 import re
 import secrets
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from .state_paths import default_state_dir
 
 _SALT_BYTES = 32
 _SALT_FILE = "provider-account-identity.key"
+_PEER_PUBLISH_READS = 5
+_PEER_PUBLISH_PAUSE_SECONDS = 0.01
 _CLAUDE_CONFIG_MAX_BYTES = 8 * 1024 * 1024
 _EMAIL = re.compile(
     r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
@@ -62,7 +65,14 @@ def _identity_salt(home: Path) -> bytes | None:
         try:
             atomic_private_write(path, salt.hex(), overwrite=False)
         except FileExistsError:
-            pass
+            # A peer won the race. Until it drops its scratch link the key's
+            # link count is 2 and the private read refuses it, so a refusal
+            # here is read again before it is believed.
+            for _ in range(_PEER_PUBLISH_READS - 1):
+                peer = _read_identity_salt(path)
+                if peer is not None:
+                    return peer
+                time.sleep(_PEER_PUBLISH_PAUSE_SECONDS)
         except OSError:
             return None
         return _read_identity_salt(path)
@@ -116,6 +126,22 @@ def claude_account_metadata(home: Path) -> tuple[str | None, str | None]:
         hashlib.sha256,
     ).hexdigest()[:32]
     return plan, f"claude-account-{digest}"
+
+
+def grok_account_metadata(home: Path, email: object) -> tuple[str | None, str | None]:
+    """Normalize a known Grok email and bind it to a private account identity."""
+    if not isinstance(email, str):
+        return None, None
+    normalized = email.strip().casefold()
+    if len(normalized) > 254 or _EMAIL.fullmatch(normalized) is None:
+        return None, None
+    salt = _identity_salt(Path(home))
+    if salt is None:
+        return normalized, None
+    digest = hmac.new(
+        salt, f"grok\0{normalized}".encode(), hashlib.sha256,
+    ).hexdigest()[:32]
+    return normalized, f"grok-account-{digest}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +253,7 @@ __all__ = [
     "ProviderAccountIdentityPresentation",
     "claude_account_metadata",
     "configured_user_alias",
+    "grok_account_metadata",
     "human_readable_account_label",
     "project_provider_account_identity",
 ]

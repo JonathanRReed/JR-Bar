@@ -30,6 +30,7 @@ enum SessionOpener {
     static var wiring: Wiring?
 
     static let notAnswering = "The monitor is not answering"
+    static let cancelled = "Opening cancelled"
 
     /// Open `id` through the published wiring.
     static func open(_ id: String) async -> String? {
@@ -37,6 +38,7 @@ enum SessionOpener {
     }
 
     static func open(_ id: String, via wiring: Wiring?) async -> String? {
+        guard !Task.isCancelled else { return cancelled }
         // A mirrored peer session has no local window to raise.
         if CoreSession.isRemoteID(id) {
             return CoreSession.remoteMachine(inID: id).map { "Running on \($0) — open it there" }
@@ -47,13 +49,19 @@ enum SessionOpener {
         do {
             reply = try await wiring.send(id)
         } catch {
-            return notAnswering
+            return Task.isCancelled ? cancelled : notAnswering
         }
+        guard !Task.isCancelled else { return cancelled }
         if reply.ok { return nil }
         let session = wiring.sessions().first { $0.id == id }
         // The daemon could not find the window of a session that is
         // still running; the Dock's window locator may.
-        if raisesWindowInstead(reply.error, session: session), await wiring.raise(id) { return nil }
+        if raisesWindowInstead(reply.error, session: session) {
+            guard !Task.isCancelled else { return cancelled }
+            let raised = await wiring.raise(id)
+            guard !Task.isCancelled else { return cancelled }
+            if raised { return nil }
+        }
         return reply.error?.message ?? "Could not open \(session?.displayLabel ?? "that session")"
     }
 

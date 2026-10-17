@@ -33,7 +33,11 @@ hand-written examples.
   limit, but the command it answers must not be left waiting for a frame
   that never arrives, so an oversize reply is replaced by
   `{"ok":false,"error":{"code":"frame_too_large","message":…}}` with the
-  command's own `id` (counted with the other oversize drops).
+  command's own `id` (counted with the other oversize drops). The app
+  treats a `state` frame it cannot use (over the limit on its side, not
+  decodable, or of another protocol `v`) as "not current": the model is not
+  live, the status item's tooltip and the panel say the update could not be
+  read, and the next good `state` frame clears it.
 - Numbers: a number that is not finite (NaN, `+Infinity`, `-Infinity`) is
   never written as a bare token, which is not JSON and would cost the app
   the whole frame. The daemon writes `null` in its place, in every frame
@@ -47,12 +51,16 @@ hand-written examples.
   (`dropped_unencodable`), and the connection carries on. A reply whose
   result cannot be written is sent with the result's text (`{"repr": ...}`)
   instead; only a reply with nothing writable in it is dropped.
-- Clients: up to 4 at once; the fifth is refused.
+- Clients: up to 4 at once; the fifth is refused. A connection is `unauthenticated` until it proves it is the JR-Bar app (see "Who may send what"); the peer's pid is recorded in the daemon's log lines about it.
 - Lifecycle: the app launches the daemon as a child when `JRBAR_CORE_EXEC`
   is set (`CoreSupervisor`), otherwise it connects to whatever listens.
   The daemon refuses to start (exit 2) while another JR-Bar, the old
   Python status bar included, owns the hook event socket. A supervised
-  daemon (`JRBAR_SUPERVISED=1`) exits on its own when its parent is gone.
+  daemon (`JRBAR_SUPERVISED=1`) exits on its own when its parent is gone, and
+  is handed a new app secret on its stdin at every start (see "Who may send
+  what"). When the app finds that the daemon on the socket will not take its
+  proof it restarts the daemon it supervises once, and otherwise logs why and
+  shows the same words on a refused change.
   On connect the daemon sends `hello`, then the latest full `state`,
   `lights` and `settings`. Frames published while that greeting is being
   sent are held and follow it, in order: `hello` is always the first frame,
@@ -78,6 +86,227 @@ hand-written examples.
   says so (`cursor_expired`, with the `dropped` count) instead of
   pretending.
 
+## Who may send what
+
+Any process running as you can open `core.sock`: the daemon checks the peer's
+uid, and that is all the kernel can tell it. A prompt-injected agent, or
+anything an agent runs, is such a process. So the socket does not trust the
+user; it trusts the app.
+
+### The app secret
+
+- When `JR-Bar.app` starts the daemon (`CoreSupervisor`) it makes 32 random
+  bytes for that launch and hands them over the daemon's **stdin**, a pipe
+  that exists only for that child, with `JRBAR_AUTH_STDIN=1` in its
+  environment to say so. The secret is in no environment variable and no
+  argument, so `ps`, a hook child and a provider CLI the daemon starts never
+  see it. The daemon reads exactly 32 bytes from a pipe once at startup,
+  then points its stdin at `/dev/null` and removes the variable. The app and
+  the daemon each keep the secret in memory only. Every start of the daemon,
+  including a restart, makes a new secret.
+- The same pipe can carry a second 32 bytes, the **seal key** (see "Protected
+  settings"). `JRBAR_AUTH_STDIN=1` says the pipe holds the secret alone (32
+  bytes), `2` says it holds the secret and then the seal key (64 bytes) of a
+  Mac whose protected settings were sealed before, and `3` says the same of a
+  key the app only just made, under which nothing is sealed yet. The seal key is
+  read from the Keychain item the app created for it and is never written
+  anywhere else, so it is not in an argument, an environment variable or a
+  file, and unlike the secret it is the same at every start.
+- A daemon started any other way (`python -m jrbar core` by hand, a test, a
+  LaunchAgent) has no secret. It still serves every unprivileged command
+  below; it refuses every privileged one. The one exception is development:
+  `JRBAR_DEV_ALLOW_UNAUTH=1` in the daemon's own environment, read once at
+  startup, makes it accept privileged commands from any connection. It is
+  ignored by the frozen release daemon (`sys.frozen`), and nothing a hook
+  payload says can set it.
+
+### The handshake
+
+After `hello` (which carries the nonce, see above) the app sends
+
+```json
+{"t":"command","v":1,"id":"c-1","name":"auth","args":{"proof":"<64 hex characters>"}}
+```
+
+where `proof` is `HMAC-SHA256(secret, "jrbar-core-auth-v1\n" + nonce)`, with
+the nonce as the 32 hex characters the daemon sent. The secret never crosses
+the socket. The daemon compares in constant time. The nonce is good for one
+attempt: a wrong proof, a repeated nonce or an `auth` on a daemon with no
+secret is answered `auth_failed` / `auth_replayed` / `auth_unavailable`, and
+a wrong proof also closes the connection after a short delay that grows with
+the failures so far (so guessing is slow and no one is locked out). A right
+proof answers `{"ok":true,"result":{"authenticated":true}}` and the
+connection is authenticated for the rest of its life. The app also checks,
+before it sends a proof, that the socket's peer pid is the daemon it started.
+Commands on one connection run in order, so the app sends nothing else until
+the `auth` reply is in.
+
+### Privilege
+
+Each command is **privileged** (the app's authenticated connection only) or
+**open** (any connection). A command that is not in the daemon's table
+(`core_auth.COMMAND_PRIVILEGE`) is privileged, and
+`tests/test_core_auth.py` fails when a registered command has no row. A
+refusal is the error `unauthenticated` with a plain sentence that says the app
+has to do it (open JR-Bar and use Settings), is logged without any content
+("refused privileged command X from an unauthenticated connection"), and
+leaves the connection open.
+
+Open commands: `ping`, `list_commands`, `replay_events`, `doctor`,
+`hooks_doctor`, `list_history`, `list_roster`, `list_providers`,
+`list_effects`, `list_assignments`, `list_lid_presets`, `list_finish_looks`,
+`list_scene_packs`, `list_cues`, `list_focuses`, `list_light_log`,
+`usage_history`, `usage_graph`, `usage_hooks_status`, `session_energy`,
+`session_timeline`, `compare_sessions`, `session_usage`, `firmware_status`,
+`quiet`, `quiet_lease`, `scene_lease`, `snooze`, `confetti`, `hold_awake`, `release_awake`, `refresh_usage`, `set_brightness`,
+and `set_setting` / `reset_settings` for display preferences only. Every
+connection also receives the `hello`, `state`, `lights`, `settings`, `event`
+and `log` frames, so reading status needs no proof.
+
+A display preference, for `set_setting` and `reset_settings`, is the top-level
+setting `global_brightness_scale`, `active_scene`, `colors`, `led_display`,
+`idle_dim_enabled`, `idle_dim_after_minutes`, `idle_dim_fraction`,
+`sleep_dim_enabled`, `sleep_dim_fraction`, `auto_dim`, `screen_bar_gap_width`,
+`screen_bar_wing_length`, `screen_bar_notch_profile`,
+`screen_bar_notch_corner`, `screen_bar_notch_wings`,
+`screen_bar_bracket_style`, `screen_bar_min_glow`,
+`screen_bar_phase_offset_ms`, `screen_bar_gauges_enabled`,
+`screen_bar_show_in_full_screen`, `menu_bar_icon_style`, `tips_enabled`,
+`usage_graph_days` or `usage_display_mode`, or `devices.<n>.<field>` for
+`led_display`, `brightness`, `auto_brightness_enabled`, `red_gain`,
+`green_gain`, `blue_gain`, `resting_glow`, `blend_mode`, `provider_pin`,
+`signal_policy`, `led_direction` or `dot_travel_style`. Every other setting
+path is privileged, in particular the consent, egress and program-bearing
+ones: `serve_enabled`, `serve_answer_enabled`, the serve and access tokens,
+`escalation_webhook_url`, `webhook_events`, `ntfy_*`, `cloud_ingest_*`, `remote_peers`,
+`usage_hooks`, `usage_event_hook_path`, `cliproxy_hub`,
+`provider_extra_homes`, `claude_plan_limits_*`, `claude_statusline_source`,
+`closed_lid_*`, `global_action_shortcuts`, anything that names a path, and a
+setting added after this was written. A `reset_settings` whose `paths` include
+any privileged path is privileged.
+
+Privileged commands: everything else. That is every command that answers,
+approves, denies or types into an agent (`answer_ask`, `deck_answer`,
+`deck_press`, `open_session`, `new_session`, `resume_session`,
+`session_in_front`), `serve_token`, `install_hooks`, `uninstall_hooks`,
+`refresh_hooks`, `claude_statusline_install`, `claude_statusline_uninstall`,
+`usage_hooks_test`, the provider and consent commands (`set_provider_enabled`,
+`provider_consent`, `provider_add_instance`, `provider_action`,
+`provider_sign_in`, `provider_update`, `provider_update_check`),
+`set_closed_lid_policy`, `presence`, `clear_completed`, `undo_clear`,
+`dismiss_session`, `mark_history_seen`, `reset_receipt`, `audit_export`,
+`t3code_integration`, `adopt_seal`, `keep_protected_change`, `quit`, the LED,
+calibration, effect, scene-pack and cue writers, the SidePulse protection
+commands and every `deck_*` command.
+
+### What stays outside the socket
+
+The daemon's own `jrbar serve` server (`serve_answer_enabled`, the bearer
+token, the `Host` check) answers an ask through the daemon's in-process
+dispatch, not through `core.sock`, so it is not affected by the privilege
+table. A standalone `jrbar serve` has no such path and its answers are
+refused. The hook shim talks to `hook-ingress.sock`, which carries data and
+never a command. A same-user process can still read `serve-token` and
+edit `settings.json`, but an edit to a protected setting there changes nothing
+(next section); `SECURITY.md` says what that leaves.
+
+### Protected settings
+
+`core.sock` is not the only way into the daemon's settings: the daemon takes an
+outside edit of `settings.json` (a restart reads the file, and a save that finds
+the file changed takes it). Without more, any process running as you could
+switch on `serve_answer_enabled` there, read the serve token and answer an agent
+through `jrbar serve`, or set a webhook. So the settings that grant a
+capability are **sealed**.
+
+- **The sealed keys** (`jrbar.settings_seal.SEALED_KEYS`; a test fails when a
+  setting is added without being sorted into sealed, a display preference or a
+  reviewed "privileged but grants nothing" list): `serve_enabled`,
+  `serve_answer_enabled`, `escalation_webhook_url`, `webhook_events`,
+  `ntfy_enabled`, `ntfy_topic`, `ntfy_only_when_away`, `cloud_ingest_enabled`, `remote_peers`, `usage_hooks`,
+  `usage_event_hook_path`, `claude_plan_limits_enabled`,
+  `claude_plan_limits_consent_version`, `claude_statusline_source`,
+  `provider_status_feeds_enabled`, `provider_update_checks_enabled`,
+  `cliproxy_hub`, `provider_extra_homes`, `closed_lid_awake_policy`,
+  `closed_lid_grace_minutes`, `global_action_shortcuts` and
+  `companion_seals` (the consent files' seals, below). None of them is a
+  display preference (`OPEN_SETTING_ROOTS`), so an unauthenticated
+  `set_setting` never reaches them either. The serve and cloud-ingest access
+  tokens are not settings; they reach the daemon through its environment and the
+  token files, and neither opens anything while its switch is off.
+- **The seal** is the member `_seal` of `settings.json`:
+  `{"v":1,"keys":[…],"mac":"<64 hex>"}`, plus an advisory `notice` (below). `mac`
+  is `HMAC-SHA256(seal key, "jrbar-settings-seal-v1\n" + canonical)`, where
+  `canonical` is the JSON text (sorted keys, no spaces, ASCII, no NaN) of
+  `{"keys": [the covered names], "values": {name: the file's value, for the
+  names present}}`. A name in `keys` and missing from `values` is sealed as
+  absent. Only the daemon writes it, on a save, from the settings it holds in
+  memory: those change only through an authenticated command, so sealing what
+  is in memory seals only what the app asked for.
+- **The key** is 32 random bytes in a macOS Keychain item the app creates
+  (service `com.jonathanreed.jrbar.settings-seal`) with an access control list
+  that trusts the app's own code signature alone. A process that is not the app
+  gets a prompt or a refusal, not the key. The app hands it to the daemon it
+  starts over the stdin pipe above, so it never crosses a socket or a file. The
+  daemon needs no round trip to the app to check a file, which also means it can
+  check one before any client has connected.
+- **A load checks the seal.** On startup, on taking an outside edit and on a
+  once-a-second look at the file's size and time, the daemon recomputes the MAC
+  over the file. If it matches, the file's values are the daemon's own. If it
+  does not (or is missing from a Mac that has sealed before), the file's values
+  for the sealed keys are **ignored**: the daemon keeps the values it held, or
+  at startup the defaults (all off), and every other setting is taken from the
+  file as it always was. The daemon logs `settings.json changed a protected
+  setting outside JR-Bar; ignored` once per distinct edit (no values), keeps the
+  file it found as `settings.json.rejected` (private, one copy), writes the
+  held values back on its next save and puts the names of the keys into
+  `settings_seal.changed`.
+- **Consent files** (`jrbar.companion_seal`). Three more files hold a
+  consent the daemon acts on: `provider-usage.json` (each provider's usage
+  consent version, source and time), `browser-consent.json` (browser profiles,
+  sites and fields) and `integrations.json` (the integrations switches and the
+  folder and device they read). Each has a seal made by the same key: an
+  HMAC-SHA256 over `"jrbar-companion-seal-v1\n" + name + "\n" + canonical`, where
+  `canonical` is the JSON text of just the consent in that file. The three
+  digests are the sealed setting `companion_seals` (`{"provider_usage": hex,
+  "browser_consent": hex, "integrations": hex}`), so they change only as a
+  protected setting does; a copy of the sealed consent sits beside each file
+  as `<file>.sealed`. Every read of one of these files in the daemon goes
+  through the check, and every save the daemon makes seals what it wrote. A
+  file whose consent does not hash to its seal is read as follows: a change
+  that only takes consent away is accepted and sealed; a change that grants
+  more is **ignored**, the file is put back from the sealed copy (to nothing
+  consented if there is none), what was found is kept as `<file>.rejected`, and
+  `settings_seal.changed` names it (`provider_usage_consent`, `browser_consent`
+  or `integrations`) with `can_keep` true. `keep_protected_change` takes the
+  file's consent and seals it; `adopt_seal` seals the files as they are. A file
+  with no seal yet (the first start after an upgrade) is adopted as it is. A
+  process with no seal key, such as the `jrbar` command line, reads and writes
+  these files as before; while the daemon is sealed, what it grants there is
+  ignored until the person keeps it in Settings.
+- **No seal key** (a daemon the app did not start, or a Keychain that was
+  locked, denied or missing): the daemon behaves as it always did, sealed keys
+  included, `settings_seal.state` is `unavailable`, and Settings says so. It
+  never blocks startup, and the app asks the Keychain once per launch.
+- **`settings_seal`** is a read-only member of the `settings` document (like
+  `cloud_ingest_token_path`, so `set_setting` on it replies `read_only`):
+  `{"state": "sealed" | "not_sealed" | "unavailable", "changed": null | {"keys":
+  [name…], "at": epoch seconds, "can_keep": bool}}`. `not_sealed` is a seal key
+  under which nothing was sealed yet; the daemon behaves as `unavailable`
+  until `adopt_seal`.
+- **`adopt_seal`** (privileged, no arguments) records the settings the daemon
+  holds now as the sealed baseline, writes them with a fresh seal, clears
+  `changed` (so a foreign edit is kept out) and replies `{"state":"sealed"}`. The app
+  sends it after it authenticates when the daemon says `not_sealed` (the
+  first launch of a build with protection, or a new key) and from Settings >
+  General > Advanced > Protected settings. A fresh install seals its defaults the same way.
+- **`keep_protected_change`** (privileged, no arguments) takes the values the
+  daemon ignored (while it still holds them, otherwise `settings.json.rejected`
+  in the same folder), validates them like any `set_setting`, applies them,
+  seals them and replies `{"state":"sealed","kept":[name…]}`. It is the
+  banner's "Keep the change", the one way a hand edit of a protected setting
+  takes effect. With nothing to keep it replies `nothing_to_keep`.
+
 ## Daemon → app
 
 ### hello
@@ -86,6 +315,12 @@ hand-written examples.
  "capabilities":["sessions","lights","usage","devices","power","effects","calibration","history","peers","ingest","deck","roster","event_replay"],
  "stream":"1234-abc123","cursor":"1234-abc123:ev-42"}
 ```
+When this daemon holds an app secret (it was started by the JR-Bar app, see
+"Who may send what"), `hello` also carries `"auth":{"scheme":"hmac-sha256",
+"nonce":"<32 hex characters>"}`: a fresh random nonce for this connection
+only. A daemon with no secret sends no `auth` member. The app answers it with
+the `auth` command before any other command.
+
 `stream` identifies this daemon incarnation's event journal (pid +
 start epoch); `cursor` is its current tail — the position a fresh
 client anchors at. A reconnecting client that sees the SAME `stream`
@@ -94,8 +329,14 @@ frames the drop ate. A different `stream` means the journal restarted:
 anchor at the new `cursor`, never replay the whole journal. After the
 initial state, lights and settings, the server sends retained `quota_reset`
 events less than five minutes old. They keep their original cursors, so
-live delivery and reconnect recovery deduplicate the same reset. Other
-event kinds are not recovered on a fresh connection. The journal is bounded
+live delivery and reconnect recovery deduplicate the same reset. It then
+offers every confirmed reset from the last 24 hours that the app has not
+closed with a `reset_receipt` of `delivered` or `dropped` (read from the
+saved reset store, so it survives a daemon restart and an app that was away
+longer than the journal remembers). Those frames carry the reset's
+`event_id` as their `id`, no `cursor`, and the `at` the daemon confirmed it:
+the app dedups by `event_id`, never by stream position. Other event kinds
+are not recovered on a fresh connection. The journal is bounded
 (512 entries) and in-memory by design — replay survives socket churn,
 not a daemon restart.
 
@@ -115,6 +356,16 @@ time, as the app's `CoreModel.lastStateAt` does. The app replaces its model
 wholesale; there is no partial state message in protocol 1. Timestamps are
 Unix epoch seconds.
 
+The app checks an otherwise idle connection with the open `ping` command
+every 30 seconds after hello and authentication have settled. It skips
+probes while a command is pending. Replay blocks probes for one reply
+deadline, measured by a monotonic clock that includes sleep. Its reply ID
+remains valid afterward so a late result can still restore missed events.
+A silent probe times out under the client's reply deadline and reconnects,
+unless a newer request is now pending. These checks establish transport
+availability, not a new state reading; a quiet responsive daemon retains
+its deduplicated state.
+
 ```json
 {"t":"state","v":1,"generation":4812,"now":1788982892.4,
  "aggregate":{"mode":"needs_you","needs_you":1,"active":1,"ready":1,"failed":0,"total":3},
@@ -132,7 +383,7 @@ Unix epoch seconds.
  "asks":[{"session":"codex:session:…","kind":"permission","opened_at":1788982800.0,"summary":"Run: rm -rf build",
           "answerable":true,"replyable":false,"request":"request:v1:{…}",
           "decision":{"hold_until":1788982845.0,"always":false,"decided":false,"choices":[]},
-          "preview":"rm -rf build","risk":"destructive"}],
+          "preview":"rm -rf build","risk":"destructive","detail":null}],
  "devices":[{"id":"sidepulse:pro:B293A1","kind":"pro","name":"SidePulse","path":"/Volumes/SidePulse","leds":8,"connected":true,"brightness":79,"linked":true,"last_write":1788982891.31,"error":null},
             {"id":"sidepulse:dot:7F02C4","kind":"dot","leds":2,"connected":false,"error":"volume unmounted"},
             {"id":"screen-bar","kind":"screen_bar","name":"Screen Bar","leds":8,"enabled":true,"brightness":100,"linked":true,"error":null}],
@@ -157,6 +408,7 @@ Unix epoch seconds.
  "catalog_generation":42,
  "provider_updates":{"grok":{"phase":"updated","from_version":"1.0.44","to_version":"1.0.46","latest_version":null,
                              "message":"Updated 1.0.44 to 1.0.46","finished_at":1788982800.0}},
+ "firmware":{"id":"fw-1","device":"SPP-000067","model":"pro","phase":"restarting","outcome":null,…},
  "deck":{…}}
 ```
 
@@ -207,39 +459,44 @@ Vocabulary:
     end event. Grey, no check. A row demoted this way also carries
     `mode: "ended_unconfirmed"`, so neither field claims Done.
   - `failed` -- `blocked_error`.
+
   - `stale` -- a live-shaped session whose source stopped delivering.
     `stale: true` says the same thing on any row, `completed` and `ended`
     included, and is also set when a session's process died without an end
     event.
 
-  **Liveness beats silence: a session whose process is alive never reads
-  `ended`.** `ended_unconfirmed` is what the collector says when a working
-  session stops sending hooks past its window (`WORKING_SILENCE_SECONDS`,
-  four minutes; `POST_TOOL_WORKING_VISIBLE_SECONDS`, two, after a
-  `PostToolUse`) -- "probably over, nobody said so", which was the best
-  guess available when a silence timer was the only evidence there was. It
-  is not any more: the liveness sweep reads the process table every five
-  seconds, and when it can point at the agent's own process the session is
-  not over. A long tool run legitimately says nothing for many minutes, and
-  such a row reads exactly what it is -- `mode: "working"`,
-  `lifecycle: "active"` (or `"stale"` once its information is old enough
-  for the collector to say so), never `ended` and never `completed`, since
-  being alive is not a finish. `since` carries how long it has been quiet.
-  Nor is it `stale`: `stale` means "the source stopped delivering and
-  nobody can vouch for this row", and the registry just did. That matters
-  three times over -- a stale row is dropped from `sessions` ten quiet
-  minutes after its last event, is not counted in `active`, and is offered
-  to `clear_completed` -- so the header, the strip and the Dot keep showing
-  work that is still happening, and the row stays listed for as long as the
-  tool run takes. Finished, failed and idle modes keep their own clocks: a
-  terminal left open does not pin a Done row on screen for ever. The
-  evidence is affirmative only: no registry record, no readable process
-  table, or a reused pid all leave the silence rule exactly as it was, so a
-  session whose process is gone and which never sent a terminal event still
-  reads `ended`.
+  A typed usage-limit terminal retains `lifecycle: "failed"` in retained
+  roster and history records, with optional `terminal_cause` set to
+  `claude_rate_limit` or `codex_usage_limit`. The raw error text is not
+  carried. These rows do not claim persistent failure attention and are
+  absent from `state.sessions` unless a genuine open ask pins the row.
+  A fresh limit episode may give one four-second capacity notice, then
+  lighting returns to normal. Repeated attempts do not renew that notice;
+  verified positive quota or successful work rearms a later episode.
+  Already-spent windows and restored limit events do not announce again
+  on startup. Ordinary terminal failures retain their failed outcome but
+  leave the live list after the finished-session visibility window.
 
-  `next_actor` comes from canonical operator state (`user`, `provider`)
-  with a mode-based fallback. `snoozed_until` is the mailbox's active
+  Working, tool-running and long-progress rows retain their mode when a
+  recent process sweep verifies the matching agent process. Both production
+  monitor projections use this evidence. It stays valid for 30 seconds;
+  expired or future-dated evidence cannot preserve activity. The timestamp
+  and process set are read as one snapshot.
+  The sweep keeps an internal candidate list so it can re-verify old work
+  after sleep or restart. That list is not exposed as visible activity.
+  New or recovered proof requests one refresh; stable repeated proof does
+  not generate new progress or repeated refreshes.
+
+  Verified working rows remain present even after an hour of hook silence.
+  They are counted as active and remain available to provider marks and
+  lighting. `since` still records the last event, so verification does not
+  invent new progress. Finished, failed and idle rows keep their existing
+  visibility clocks. An open shared host, missing registry record, unreadable
+  process table or reused PID does not prove that a session is working.
+
+  `next_actor` preserves canonical operator state (`user`, `provider`,
+  `none`, `unknown`). A mode-based fallback applies only when no canonical
+  actor is available. `snoozed_until` is the mailbox's active
   snooze epoch for this session (a family `snooze` covers the family, not
   the row; a `scope: "run"` snooze covers this row alone; the later
   deadline wins), null while none is in effect -- the panel reads it to
@@ -314,6 +571,50 @@ Vocabulary:
   daemon refuses `stale_request` when the live request has moved on;
   `asks` itself is ordered by `opened_at` so a provider re-emitting a
   pending prompt never shuffles a card out from under the pointer.
+- **An unanswered ask stays on every surface until it is settled.** It does
+  not expire into idle at an hour (it used to read `Ask` at 59 minutes and
+  idle at 61), and no age alone hides it. It leaves `asks` only when:
+  a person answers it; the agent settles it itself (its tool's
+  `PostToolUse`, a new `UserPromptSubmit`, `Stop`, `SessionEnd`, or the
+  decide lane's hold lapsing and the agent carrying on); the session ends
+  (its process is gone, or it sent `SessionEnd`); the person dismisses it as
+  stale (below); or it expires unanswered (below). The panel row, the
+  Overview, the Screen Bar, the strip, the menu bar icon, the deck keys,
+  SidePulse Pro and Dot, the notch and History all read the same `asks`, so
+  they agree. Two clocks govern an ask nobody has touched, and they are the
+  only ones (`ask_lifetime.py`; the older one-hour grace, presence horizon,
+  stale window and mailbox section no longer apply to an ask):
+
+  | Constant | Default | Setting | Meaning |
+  | --- | --- | --- | --- |
+  | `ASK_MAY_BE_STALE_SECONDS` | 6 hours | `ask_stale_after_hours` (0.25–168) | An ask this old, from a session silent for as long, **may be stale**. |
+  | `ASK_EXPIRES_UNANSWERED_SECONDS` | 7 days | `ask_expire_after_days` (1–90, never before the mark) | A stale ask this old with **no process vouching for the session** is closed and recorded in History. |
+
+  `ask.stale` is true once an ask passes the first clock: `opened_at` and
+  `last_activity_at` (the newest thing its session said, epoch seconds) are
+  both older than the mark. The ask is still an ask, still `needs_you`, still
+  answerable where it was. Every surface says so in words with the ask's age
+  ("may be stale · asked 9 hours ago"): the panel row's subtitle, the Overview
+  row, the Screen Bar's tooltip, the notch card. The strip keeps the Ask colour
+  and shape but pulses about two and a half times more slowly, and only when
+  every light that is doing anything is a stale ask. `ask.dismissible` is true
+  for a stale ask on a local session; it is the only ask a surface offers
+  **Dismiss** for. `dismiss_ask` takes that one ask off the Mac's surfaces. It
+  sends nothing to the agent -- it approves, denies and replies to nothing --
+  and the agent's own prompt is untouched. A later ask on the same session is a
+  different ask and is not covered. A session with no process behind it is
+  ended by the liveness sweep long before any of this; the second clock exists
+  for sessions the process table cannot vouch for. An ask whose process is
+  still running is never closed by age. When the second clock closes an ask,
+  the session is ended through the ordinary hook pipeline (a synthetic
+  `SessionEnd` whose `reason` is `jrbar_ask_expired`, so its row reads
+  `ended`, never the green check) and `list_history` gets a row of kind
+  `ask_expired`: it never vanishes silently. The short rules for things that are
+  not asks are unchanged: a completion glows on the strip for 20 seconds and
+  keeps its row for 120, the glance light holds 900 seconds, and a finished
+  or stale non-ask row leaves `sessions` after the usual ten minutes. An ask
+  that names no request (a bare waiting notification) is dismissed by its
+  session and opening time, like any other.
 - `ask.decision` is non-null while the decide lane holds the request: the
   agent's own `PermissionRequest` hook ran as `jrbar-hook --decide` and is
   waiting on JR-Bar for a verdict (see "The decide lane" under
@@ -327,7 +628,8 @@ Vocabulary:
   the tool's `PostToolUse` or `PostToolUseFailure`, a fresh
   `PermissionRequest` for the same request, or the turn ending or moving on
   (`Stop`, `StopFailure`, `SessionEnd`, `UserPromptSubmit`, `Interrupt`) --
-  however long the tool runs, with an hour as the cap. While it is true a
+  however long the tool runs, with the ask's own outer lifetime (7 days) as the
+  cap. While it is true a
   second `answer_ask` for that request is refused `stale_ask` instead of
   typing into a terminal that is busy running the approved tool; an answer
   the hook could not take is not `decided`, so the keystroke path stays
@@ -344,8 +646,24 @@ Vocabulary:
   `find … -delete`, `curl … | sh`, …) -- a mark, never a block. `decision` is `null` for an
   ask the lane does not hold; `preview` and `risk` still come from the
   `PermissionRequest` the ingress saw for that exact request id (Claude,
-  Codex, Devin, Grok, OpenCode, pi; remembered for an hour), and are `null`
+  Codex, Devin, Grok, OpenCode, pi; remembered for as long as the ask can stand), and are `null`
   when there was none.
+  `detail` is what the card adds when the person chooses to expand it, and
+  `null` when the one-line `preview` already says everything. Only asks
+  carry it, and it is read-only context: no answer is built from it. It is
+  `{command?, plan?, edit?, truncated}`: `command` is the whole shell
+  command when it is longer than the line or spans lines, `plan` is an
+  `ExitPlanMode` plan, and `edit` is `{verb, files, added, removed, paths}`
+  for `Edit`, `MultiEdit`, `Write`, `NotebookEdit` and `apply_patch`
+  (`verb` is `edit`, `write` or `patch`; `added` and `removed` count lines
+  in the hook's own input; `paths` names at most five files). Text is
+  capped at 2,000 characters with token-shaped runs masked the way
+  `preview` masks them (`truncated` says the cap cut something), and file
+  contents never leave: a `Write` is its path and a line count. A surface
+  never opens it by itself. An `ExitPlanMode` ask is never held by the
+  decide lane (a yes/no does not decide a plan, so `decision` is `null`),
+  and its `detail.plan` is what the app shows beside an "Answer in the
+  session" action.
 - `ask.decision.choices` is non-empty while the lane holds a Claude
   `AskUserQuestion`: `[{question, header, options: [label…], multi}]`, one
   entry per question in the agent's order (1–4 questions, 1–8 distinct
@@ -403,6 +721,10 @@ Vocabulary:
   `devices_linked` pairing — true only while the setting is on AND one
   of each is actually connected, so a Dot with no strip never claims to
   be linked.
+- `usage.privacy_mode` is the current account-caption privacy choice. Clients
+  suppress account aliases when it is true, missing or malformed, including
+  aliases previously stored in History. It does not authorize showing the
+  collector's account email as a fallback.
 - `usage.providers[].windows[].name` is the short form the panel shows:
   `5h`, `7d`, `Daily`, `Weekly`, `Monthly`, `Credits` (a model-scoped lane
   such as Claude's Fable window is `7d Fable`; a lane with no short form
@@ -544,6 +866,10 @@ Vocabulary:
 - `focus` is the quiet state in the words a client reads: `mode` is the
   active quiet mode (`mute`, `dim`, `pause`, `asks_only`, `dark`) or the
   literal `off` -- never null -- while nothing quiet is in effect.
+  `override_revision` identifies the daemon's current override slot, even
+  when quiet is off. It changes after every accepted override edit,
+  including identical edits and cancellation, and after a daemon restart.
+  Natural expiry and unrelated quiet settings leave it unchanged.
   `source` is `override` (a `quiet` command's manual override),
   `schedule`, `focus` (a macOS or named Focus), or null under `off`.
   `until` is when *this* quiet ends: the override's own expiry for a
@@ -571,7 +897,9 @@ Vocabulary:
   (a lease is in force; `lease` is `{kind: duration|agents|indefinite,
   started_at, until, sessions[], display, source}`, `until` being the
   countdown's end for `duration` and the backstop for `agents`); `active`
-  is whether the assertion is actually held right now; `display` whether
+  is whether the assertion is actually held right now (the app draws a
+  `state` of `agents` or `manual` with `active: false` and no `suspended`
+  as "Not held", never as "Awake"); `display` whether
   the screen is held too; `grace_until` the end of the post-work grace
   while the agents' hold is in it; `suspended` names a yield that took the
   hold away while the demand stands -- `thermal` (the thermal state
@@ -583,6 +911,28 @@ Vocabulary:
   minute, while `keep_awake_yield_low_power_mode` is on, the default; heat
   and the battery floor outrank it);
   `thermal` is `nominal`/`fair`/`serious`/`critical` or null.
+  Optional `release_failed` is true when the owned Keep Awake process could
+  not be stopped. `active` stays true while that process lives, even if
+  `state` is `off` or `suspended` is set. `display` describes the surviving
+  process's policy. The daemon retains its handle and retries release;
+  it does not start a replacement before the old process exits.
+  Optional `persistence_error` is `save_failed` when a new lease could not
+  be saved, or `clear_failed` when cancellation could not be saved or a
+  failed start left uncertain saved data while no manual lease was active. It is
+  null or absent after a successful save or cleanup. This warning is
+  separate from assertion process errors and survives process recovery.
+  A failed save preserves the current lease in memory and any pending cleanup
+  warning. A write can publish before reporting failure. The daemon reads
+  back the bounded file and, if it matches the attempted lease, makes one
+  rollback attempt to the previous lease or a null cancellation marker.
+  Saved data may remain uncertain if readback or rollback fails. A
+  `save_failed` warning does not guarantee unchanged data on disk. Check
+  the current hold and retry before restarting the monitor.
+  Cancellation always ends the current manual lease. If deleting its file
+  fails, the daemon writes a JSON null cancellation marker instead. If both
+  operations fail, cancellation is not guaranteed across a restart.
+  Repeating `release_awake` retries cleanup even when no manual lease remains.
+  A successful new lease save replaces any pending cancellation.
   `closed_lid` adds `lid_closed` (the daemon's last reading, null while it
   has none or while nothing watches the lid -- the lid is polled only
   under a closed-lid policy, a hold or a lid animation, and a reading the
@@ -590,7 +940,13 @@ Vocabulary:
   unprivileged `pmset sleepnow` -- when the closed-lid hold drops with the
   lid shut and `AppleClamshellCausesSleep` says no external display is
   keeping clamshell mode; heat and the battery floor release even the
-  `always` policy), `last_sleep_at` and `sleep_error`. `last_release` is
+  `always` policy), `last_sleep_at` and `sleep_error`. Optional `error`
+  reports a closed-lid assertion, watchdog or helper failure, and clears
+  after recovery. `holding` remains true while an owned assertion or
+  system sleep-disable setting remains active after a failed release.
+  Release history and automatic sleep wait until those holds are released;
+  retries retain the original held stretch. Watchdog cleanup alone does
+  not count as an active power hold. `last_release` is
   the newest release worth reading, `{kind, reason, at, duration,
   finished, slept_at}`: `kind` `lease_ended` (`reason`
   `expired`/`finished`), `suspended` (`thermal`/`battery`/`low_power`),
@@ -630,7 +986,18 @@ Vocabulary:
   the empty desk. `focus.named_readable` says whether the daemon's helper
   can itself read which Focus is on (Full Disk Access is granted per
   binary, so the app's own probe can say "granted" while the helper still
-  cannot see); null until it has tried.
+  cannot see); null until it has tried. False also covers unreadable mode
+  identifiers or a malformed assertions file. A complete named reading
+  fits at most 64 distinct identifiers, each at most 256 UTF-8 bytes;
+  identifiers retain their exact spelling. DND named-detail callbacks take
+  at most 64 entries from this canonical reading, deduplicate them without
+  changing identifiers, and reject an invalid set as a whole under the
+  same UTF-8 bound.
+  The private assertion and configuration files are read without changing
+  their permissions, with an 8 MiB JSON-document budget. Invalid encoding,
+  parsing or traversal recursion failures and exceeded budgets are
+  unavailable readings. Unavailable named detail does not mean that the
+  public Focus activity reading is inactive.
 - `devices[].write_health` (a hardware device, once the daemon has tried
   to write it) says why a strip looks wrong instead of only "Connected":
   `{latency_ms, writes, transformed, refused, last_refusal,
@@ -660,22 +1027,45 @@ Vocabulary:
   been built once.
 - `provider_updates` is what each agent CLI's updater last did, keyed by
   provider id (`claude`, `codex`, `grok`, `devin`, `opencode`, `gemini`):
-  `{phase, from_version, to_version, latest_version, message, finished_at}`.
+  `{phase, from_version, to_version, latest_version, up_to_date_version, message, finished_at, updatable, update_advice}`.
   `phase` is `idle` (nothing has run; the entry exists only to carry
-  `latest_version`), `running`, `updated`, `unchanged`, `failed` or
-  `needs_terminal` (the updater wanted a terminal and one was opened on it).
+  `latest_version` or installation capability), `running`, `updated`, `unchanged`, `failed` or
+  `needs_terminal` (the updater requires a terminal; the message names the opened terminal or the manual step).
   `from_version` and `to_version` are the CLI's own `--version` before and
   after (null where it could not be read). `latest_version` is set only
   while update checks are on (`provider_update_checks_enabled`) and only
   when the npm registry offers a version newer than the installed one, so
   a non-null value means "an update is available"; it is null otherwise
-  and always null while the setting is off. `message` is one plain
+  and always null while the setting is off. `up_to_date_version` is the installed
+  version for which a successful registry check found no newer release. Both
+  versions must be readable dotted versions; an installed version newer than the
+  registry also qualifies. This optional fact is null while checks are off and
+  cleared when an updater starts. It never changes the last updater outcome.
+  Clients use it only when it matches the doctor's current installed version,
+  retaining progress and retries for running, failed or terminal-required updates.
+  `message` is one plain
   sentence, the one the app shows. `finished_at` is when the last run
   ended and is null while `running` or `idle`. A provider with no entry has
-  never been updated or checked since the daemon started; a client reads
-  that as unknown and an unrecognised `phase` as `idle`. Only a change of
-  phase, version or message moves the document: a running update never
-  broadcasts progress.
+  never been updated, checked or assessed since the daemon started; a client reads
+  that as unknown and an unrecognised `phase` as `idle`. `updatable` is true
+  when the installed CLI has a supported update command, false when it is
+  missing or its installer is unsupported, and null or absent when not assessed.
+  `update_advice` explains a false capability without replacing the last run's result.
+  The existing off-main `hooks_doctor` refresh assesses capability using local
+  installation paths and the same update-command resolver as an explicit update.
+  It launches no command and makes no outbound request. Serialization reads cached
+  facts only. An explicit update also records its capability preflight. A later
+  doctor refresh reassesses installations changed outside JR-Bar. Clients hide Update
+  for false capability or a confirmed current version without a newer offer, retain
+  running progress, and allow explicit retries when capability or version is unknown.
+  Only a change of phase, version, message or capability moves the document. A running update publishes
+  bounded stage messages for checking the installed version, running the updater
+  and verifying its result. The known installed version is retained if a later
+  stage fails. There are no invented percentages or raw output streams.
+- `firmware` is the firmware update job, present only while one exists: running,
+  or finished less than ten minutes ago. Its fields and meaning are under
+  "Firmware updates" below. It moves with every phase and with download
+  progress; a client that is not showing the job ignores it.
 
 #### The Creator Micro 2 deck (`state.deck`)
 
@@ -822,6 +1212,18 @@ volatile fields: `lights` follows the same `doc_significant_equal` rule as
   at the signal's own intensity (the strip's N over the strip's signal
   plan). The strip's drive bytes are never replayed on a display that
   has no die to calibrate.
+- On a linked mirrored-strip `screen_bar` surface, optional
+  `strip_transfer` describes how to read sampled strip drive colors on the
+  display: `{"channel_gains":[r,g,b],"display_channel_gains":[r,g,b],
+  "code_to_light_exponent":e}`. When present, `program` contains the
+  delivered strip-drive colors. The app samples those colors at the strip's
+  shared anchor and timing, decodes each normalized channel to emitted light
+  with `code_to_light_exponent`, removes the strip's `channel_gains`, then
+  applies `display_channel_gains` and sRGB encoding. The Screen Bar's own
+  `brightness N` remains independent of the strip's control and is applied
+  once after that conversion. Without this metadata, including legacy
+  daemons, unlinked programs, and surfaces that do not mirror a strip, the
+  existing color path is unchanged.
 - `cue` (on `screen_bar`, `hardware` or `dot`, only while one is staged
   there) names the semantic ambient cue on that surface, `{id, name}` --
   `{"id":"handoff_baton","name":"Handoff baton"}` -- so Why this light can
@@ -832,7 +1234,10 @@ volatile fields: `lights` follows the same `doc_significant_equal` rule as
   `linked` (the `link_screen_bar_to_hardware` setting) and a strip is
   connected the Screen Bar carries the strip's anchor, because the strip
   loops from its write and never re-anchors on a Screen Bar re-sync
-  (`core_runtime.screen_bar_anchor`). `screen_bar_phase_offset_ms`
+  (`core_runtime.screen_bar_anchor`). A finite, positive past anchor remains valid
+  regardless of age. Initial playback, same-program updates and wake map
+  that epoch onto the current media clock without restarting the loop.
+  `screen_bar_phase_offset_ms`
   (settings document, `set_setting`, ±1000 ms, default 0) shifts that
   anchor on the Screen Bar only: positive values hold the bar back, for
   when the two are visibly out of step.
@@ -986,6 +1391,16 @@ delivered and never touches the status pulse.
 {"t":"event","v":1,"id":"ev-12","kind":"completed","session":"…","provider":"claude","label":"jr-bar-b7","detail":null,"at":…,"cursor":"1234-abc123:ev-12"}
 {"t":"event","v":1,"id":"ev-13","kind":"escalation_stage","session":"…","label":"sidepulse-core","stage":3,"sound":"glass","at":…,"cursor":"1234-abc123:ev-13"}
 ```
+A `completed` event may also carry two facts for the finish banner, both
+absent when the daemon does not have them: `duration`, the seconds the
+session ran when the daemon saw both ends of the run (the same number
+`list_history` rows carry), and `summary`, the first line of the agent's last
+message when the session ended on a `Stop`. The summary is plain words: markdown
+markers are gone, token-shaped runs read `[removed]`, and it is at most 140
+characters. It rides the live event only; it is not in the activity ledger,
+`list_history`, a log or a webhook payload, and a session that ended any other
+way carries none.
+
 Every event carries `cursor` — its own resume point in the daemon's
 journal (`<stream>:<event id>`). The journal is written under the same
 lock as the socket fan-out, so the suffix a `replay_events` call returns
@@ -1009,18 +1424,29 @@ per observed control, whether or not input check is on) and
 change of the output service's reason, `ready`, `reconnecting`,
 `device_conflict`, …, with the Python app's sentence; the same receipt
 sits on `state.deck.device.receipt`) and `usage_history_ready` (`provider`,
-`range`, `records`, `scanned_at`; `label` is the provider, `detail` the
+`range`, `records`, `scanned_at`, `reading_files`; `label` is the provider, `detail` the
 range: a `usage_history` reply that went out `pending` or `stale` now has
-a fresh document behind it, ask again); `quota_reset` (`provider`,
+a fresh document behind it, ask again; with `reading_files > 0` the scan is
+still working through large transcripts and the event repeats after each
+bounded pass, see `usage_history`); `usage_history_failed` (`provider`,
+`range`, `code`, `message`; `notify: false`) means a scan that owed a
+completion failed. Keep the previous reading and observe its current status
+with `usage_history {observe: true}`. A delayed failure event must not replace
+a newer successful reading. Observation never starts or retries a scan.
+The message is public copy and contains no exception details; `quota_reset` (`provider`,
 `instance`, `label` such as "Weekly reset", `lane`: the usage lane that
 refilled, `weekly` / `five-hour` / a product-scoped id ending in
 `-weekly`, and `event_id`, the same id the celebration delivery and the
 usage hooks carry; published on every confirmed reset regardless of the
 celebration preferences, so the Usage Center can pulse the card and the
-Confetti toy can fire on the weekly one. A reset whose boundary passed
-between two reads fires at once; a jump of 50 points or more without the
-boundary passing waits for a confirming read 60 s to 30 min later whose
-reset time matches within two minutes — `provider_usage_qol.confirm_reset_events`); `quota_pace` (`provider`,
+Confetti toy can fire on every confirmed provider window. Durable reoffers use the stable `event_id` as `id`, omit `cursor`, and carry `notify: false`. Repeated reoffers reach Confetti's settlement check without repeating normal event effects. Known reset boundaries schedule a read; a temporary transport failure or successful response still quoting the same ended window retains one 15-second recovery read. Advancing or removing the boundary cancels it. Authentication, permission and rate-limit gates remain in force. A reset whose boundary passed
+between two reads fires at once. An ordered old-window read at or within 30 seconds after that boundary, followed by a new active window within the same 30 seconds, also counts as TIMING. Existing identity, source, account and replenishment guards still apply; a jump of 50 points or more without the
+boundary passing waits for a confirming read at least 60 s later (asked for
+inside 30 min, still accepted for a day, so a sleeping laptop loses nothing)
+whose reset time matches within two minutes. A window whose boundary had
+already passed when the previous read was taken (the source kept quoting the
+ended window) and that now reads 90% or more waits for the same
+confirmation — `provider_usage_qol.confirm_reset_events`); `quota_pace` (`provider`,
 `lane`, `label` the lane's name, `remaining_percent`, `runs_out_at` and
 `resets_at` as epochs, and `detail` in words, "30% left · runs out around
 3:40 PM · resets 5:30 PM"; once per reset window, when a lane is newly
@@ -1030,6 +1456,13 @@ banner posts nothing headless, so the app's `EventPolicy` banners this
 and History lists it); `peer_arrived` / `peer_departed`
 (`label` is the machine name; the reachable-set diff after the first
 applied refresh, never on daemon start).
+
+Quota events may also carry `instance` and `instance_label`. The instance is
+the configured source identity; the label is a safe caption from its visual
+settings, not the collector's account label. Keep the existing `label` as the
+quota window. Public History resolves captions under the current privacy
+choice. Clients retain provider-only wording when caption metadata is absent
+and keep notification identifiers independent of display captions.
 `open_window` (`window`: `overview`, `usage` or `control-center`) and
 `reveal_ask` go out when a Creator Micro key asks for one of the app's
 windows or for the waiting ask, and only while an app is connected; with
@@ -1086,9 +1519,12 @@ no sensor. `set_setting` writes it by dot path (`auto_dim.mode`,
 
 Keys the app catalogued first and the daemon serves since 2026-09-10:
 
-- `menu_bar_icon_style`: `glyph` (default), `glyph_ring`, `glyph_label`.
-  The status item's picture is the app's; the daemon only keeps the
-  choice. An unknown value normalises to `glyph`.
+- `menu_bar_icon_style`: `agents` (default, a dot per live session),
+  `meters`, `meters_percent`, `compact_percent`, `glyph`, `glyph_ring`,
+  `glyph_label`, `orbit`, `hidden`. The status item's picture is the
+  app's; the daemon only keeps the choice. An unknown value normalises
+  to `agents`, the same default the app's `StatusIconStyle` uses
+  (`tests/test_menu_bar_icon_style_default.py` pins the two together).
 - `quota_alert_thresholds`: a list of percentages (`[90.0, 95.0]` by
   default) the crossing detector feeds `quota_threshold` activity rows
   from. `set_setting` takes a list of numbers; it comes back normalised
@@ -1099,6 +1535,18 @@ Keys the app catalogued first and the daemon serves since 2026-09-10:
   it is a fact about the daemon added to the document at publish time,
   never a settings-file key, so `set_setting` on it replies `read_only`
   and `reset_settings` ignores it.
+- `settings_seal`: whether the protected settings are sealed, and whether a
+  foreign edit of one was ignored (see "Protected settings"). Read-only, like
+  `cloud_ingest_token_path`: a fact about the daemon added at publish time.
+- `scene_state`: read-only automatic scene state: `{revision, selected_scene,
+  effective_scene, lease_id, until}`. `selected_scene` is the person's saved
+  `active_scene`; `effective_scene` includes a live automatic rule. `lease_id`
+  and `until` are null without an overlay. The opaque revision identifies
+  manual scene or scene-pack intent within this daemon instance. It stays
+  stable through acquire, renewal, release and expiry. An accepted manual
+  write or reset, including a same-value write, invalidates automatic
+  ownership. This fact is not persisted, cannot be written or reset, and
+  may change in a settings frame at the same settings generation.
 - `active_scene_pack`: the id of the installed Scene pack whose validated
   policy rows override the built-in scene's, or `null` for the built-ins.
   Written from Effect Studio's "Use this pack" row; a pack id that names
@@ -1128,7 +1576,10 @@ never costs the rest of the file):
   legacy window's field) becomes the `legacy` rule's executable and turns
   the rule and hooks on, an empty one removes the rule, and a path with no
   `legacy` rule left adds it back. A rule the runner refuses stays in the
-  document; `usage_hooks_status` says why.
+  document; `usage_hooks_status` says why. If the background worker cannot
+  start, each admitted hook records an `error` with detail `did not start hook
+  worker`. Work that never started does not spend its cooldown. A later event
+  can retry; the failed event is not replayed automatically.
 - `provider_status_feeds_enabled` (default false): the provider status
   pages (`status.anthropic.com`, `status.openai.com`, `status.cursor.com`)
   are asked, every 10 minutes and only for a provider whose source was
@@ -1150,6 +1601,28 @@ never costs the rest of the file):
   off stops the next check and clears `latest_version`. A non-boolean value
   loads as `false`. The Update button (`provider_update`) never needs this:
   it runs the CLI's own updater, which is the person's click.
+- `ntfy_enabled` (default false), `ntfy_topic` (default empty) and
+  `ntfy_only_when_away` (default true): the phone alert (`ntfy_alert.py`).
+  Nothing is sent until the person has a usable topic AND `ntfy_enabled` is
+  exactly `true`; a non-boolean loads as off, and a topic that is not a
+  string loads as empty. `ntfy_topic` is a bare topic name (sent to
+  `https://ntfy.sh/<topic>`) or a full `https` URL of the person's own ntfy
+  server: port 443 or 8443, no credentials, query or fragment, exactly one
+  path segment for the topic, no `localhost` and no private address literal.
+  When an agent starts waiting on the person (the ledger's `asked` edge) or a
+  whole run finishes (the completion edge), and the quiet policy lets a
+  notification-webhook effect through, the daemon POSTs one fixed plain-text
+  line, `<Provider> needs you` or `<Provider> finished`, with the provider's
+  name from the daemon's own table (`Claude`, `Codex`; `An agent` when it has
+  none), the title `JR-Bar` and a `JR-Bar/<version>` User-Agent. Never prompt
+  text, a path, a project or session name, a token or an account id. With
+  `ntfy_only_when_away` on, the line goes only while the screen is locked or
+  the Mac has been idle for five minutes (read from the session, no input is
+  posted), or while the app's presence report says the same; when the daemon
+  cannot tell, it does not send. The same agent and line is sent at most once
+  per 20 seconds and no more than 30 lines an hour. No redirect is followed and
+  nothing is retried. It only notifies: no reply is read, and nothing on the
+  phone answers an ask.
 - `claude_statusline_source` (default false) lets Claude Code's statusLine
   readings stand in for OAuth; `statusline_text_enabled` (default true)
   keeps `statusline.txt` written while the source is on.
@@ -1211,6 +1684,15 @@ today keeps working exactly as configured:
 - `studio_library`: the named Studio programs shelf.
 - `notification_policy_version`: which notification-policy migration
   has already run.
+- `completion_notification_enabled`, `quota_alerts_enabled` (both on for a
+  new install and for a file that never wrote them; a stored value, off
+  included, is kept) and `escalation_tier`: the three switches the app's
+  Alerts profile (Quiet, Balanced, Loud) sets together. None is sealed
+  and none sends anything off the Mac.
+- `silent_session_banner_enabled` (default off): the app posts one local
+  banner when a working session has sent nothing for ten minutes with no tool
+  call open. The app counts the silence from `sessions[].since` and `event`;
+  the daemon only stores the choice.
 - `screen_bar_gauges_enabled`: the Screen Bar's wing-tip micro-gauges.
 - `screen_bar_bracket_style`: how the Alcove bracket colours itself
   (`auto`/`spatial`/`identity`/`bracket`).
@@ -1224,7 +1706,7 @@ Answer to a command.
 {"t":"reply","v":1,"id":"c-42","ok":true,"result":{…}}
 {"t":"reply","v":1,"id":"c-43","ok":false,"error":{"code":"not_found","message":"no such session"}}
 ```
-Error codes: `unknown_command`, `bad_frame`, `bad_command`, `internal`,
+Error codes: `unauthenticated` (a privileged command on a connection that is not the app's), `auth_failed`, `auth_unavailable`, `auth_replayed` (the `auth` command), `unknown_command`, `bad_frame`, `bad_command`, `internal`,
 `not_found`, `not_frontmost`, `invalid_args`, `invalid_path`,
 `invalid_value`, `read_only`, `refused`, `expired`, `busy`, `unsupported`,
 `frame_too_large` (any command whose answer would not fit in one 1 MiB
@@ -1255,20 +1737,64 @@ line the controller writes, mirrored. Bounded to 2000 characters a line.
 ## App → daemon
 
 ### command
+
+Usage providers and compatibility sources are separate identities. T3 Code is
+a compatibility integration. Its name is never a provider or an inferred
+agent driver. A v2 provider instance name is user-defined; the bound provider
+thread's driver identifies a current native provider. Historical attribution
+uses the turn's persisted native driver, never a mutable current registry
+entry. Generic ACP records remain unattributed unless their persisted record
+identifies the actual agent.
+
+`usage_graph` may add `graph.source_statistics`, an array of source readings.
+Each row contains `source_id`, `label`, `attribution_status` (`attributed`,
+`unattributed` or `mixed`), nullable `tokens` and `sessions`,
+`included_tokens`, `included_sessions`, `data_status` (`available`, `partial`
+or `unavailable`), confirmed `provider_ids` and `detail`. Missing counts mean
+unavailable, never zero. Counts describe the loaded range. Included counts
+describe that source's contribution to selected provider series; they are a
+subset of the source reading and must not be added again to provider totals.
+For T3 source readings, `sessions` and `included_sessions` count distinct T3
+threads. A thread switching providers still counts once in that source row.
+Clients label these source counts as threads; provider charts retain their
+session counts. Unattributed T3 history remains in source readings instead of
+provider series. A failed read stays partial and retries without turning
+missing counts into zero. Cache fingerprints include SQLite WAL changes.
+Stable omissions, such as a record cap or persisted partial turn usage, may
+reuse a cached document while remaining labeled partial. Failed and
+interrupted reads retry even when the source fingerprint is unchanged.
+Native records take precedence over an imported supplement for the same
+provider and range until stable cross-source deduplication is established.
+
+A provider series may carry `source_id: t3code` when its values came from
+that integration. Clients can say "from T3 Code" while retaining the actual
+provider name. Compatibility availability, completed-turn usage and account
+quota are independent capabilities. A successful source poll does not renew
+agent activity. A recorded requested model is not proof of the resolved model
+and must not establish historical pricing.
+`sessions[].source_integration` may be `t3code` when the session's validated
+work identity names that adapter. Clients can show "from T3 Code" beside the
+actual provider. Origin labels and user-defined instance names do not supply
+this fact. Native sessions omit the field.
+
 ```json
 {"t":"command","v":1,"id":"c-42","name":"open_session","args":{"session":"claude:session:…"}}
 ```
 Commands are parsed on the socket thread and run on the AppKit main thread
 (`performSelectorOnMainThread`), one at a time, in order per client --
 except the slow-lane reads `usage_graph`, `usage_history`,
-`session_timeline`, `list_history`, `compare_sessions`, `session_usage` and
-`doctor`, and the click `provider_sign_in`. Those queue on daemon-wide workers at utility QoS and each reply
+`session_timeline`, `list_history`, `compare_sessions`, `session_usage`,
+`doctor`, `firmware_status` and `firmware_update` (they read a device's
+`STATUS.TXT`, which a stalled SD reader can hold for seconds), and the click
+`provider_sign_in`. Those queue on daemon-wide workers at utility QoS and each reply
 by `id` when it is done, so a reply to a later command can arrive first and
-a scan never holds up an `answer_ask`. There are three lanes, each with one
+a scan never holds up an `answer_ask`. There are four lanes, each with one
 worker. The scan lane carries `usage_graph` and `usage_history`, in order
 among themselves, so two scans never overlap. The read lane carries
-`session_timeline`, `list_history`, `compare_sessions`, `session_usage` and
-`doctor`, in order among themselves, so History opens while the Overview's
+`session_timeline`, `list_history`, `compare_sessions`, `session_usage`,
+`doctor`, `firmware_status` and `firmware_update`, in order among themselves
+(the update itself runs on a thread of its own, so the reply to
+`firmware_update` comes as soon as the device has been read), so History opens while the Overview's
 graph is still being built. The action lane carries `provider_sign_in`: it
 is a click, not a read, and it can wait up to 90 s on Claude Code, so it has
 a lane of its own and nothing else the app sends waits behind it (a client
@@ -1277,19 +1803,51 @@ still runs on the main thread when its turn comes), so a `list_history`
 sent before it computes `unseen` against the old watermark. Past 32
 queued on a lane, a new command for that lane is refused `busy`; a backlog
 of scans never makes a read busy.
+The Deck lane carries `deck_plan_keymap`, `deck_apply_keymap`,
+`deck_restore_keymap`, `deck_approve_device`, `deck_disable` and
+`deck_set_settings`. It admits one operation across all clients and
+refuses another with `busy` immediately. It has no backlog, so a device
+write cannot wait in a queue and run later. Setup and settings share this
+worker; person-triggered `deck_answer` and `deck_press` keep their existing
+dispatch. Each setup phase allows 60 seconds. The app allows 65 seconds
+for Plan and Restore, 125 for Apply's inspection and write, 22 for approval's
+probe and save, and 20 for Disable's save. Settings keeps the ordinary
+client budget; its main-thread completion has no daemon time bound.
 `install_hooks` / `uninstall_hooks` run on the socket thread because the
 Codex trust handshake can take seconds, and so do `open_session` and
 `resume_session`, whose osascript and tmux calls can wait on a first
 Automation consent prompt (the controller state they read still hops to
 the main thread). Unknown args are ignored.
 
+Factory browser connections store bounded JSON in the instance-scoped
+`web-session` Keychain credential. The JSON contains `refresh_token`,
+optional `access_token`, optional `organization_id`, optional allowlisted
+`client_id`, `browser`, `profile`,
+`consent_version: 1`, and an optional opaque `identity` after `auth/me`
+proves both user and organization. Generic credential set/delete commands
+refuse this account. A saved browser session has priority over the optional
+API key. Invalid or rejected sessions never fall back to an API-key account.
+With provider usage enabled and consented, the collector may send the saved
+refresh token to `https://api.workos.com/user_management/authenticate` using
+its explicit refresh grant version 1. Refreshes preserve the prior refresh
+token when the response omits one. Valid replacement tokens are saved before
+the next request so a temporary `auth/me` failure does not lose a rotated
+refresh token. Account continuity must still pass before any quota request.
+Only a 400 or 401 response permits trying the other known Factory WorkOS
+client, with at most two attempts. The successful client is preferred next
+time. Fingerprint checks prevent refreshes from overwriting a
+new connection or disconnect. A final check after billing rejects readings
+for a session that changed during the request. No network call holds the
+session lock. Browser profiles are never reread by background collection.
+
+
 | name | args | effect / result |
 | --- | --- | --- |
-| `open_session` | session, action? | A session still running in a terminal is **raised, not resumed** (`answer_surfaces.py`): its tmux pane (`list-panes -a` matched by the session's tty, then `select-window`/`select-pane`, switching a lone client to that tmux session), its Terminal.app or iTerm2 tab (selected by tty over Apple events), or its Ghostty terminal (`focus` on the surface recorded when the session started, else the only terminal in the session's working directory, else the only one whose title carries the session's name; a tie brings Ghostty forward and never guesses); any other host app is activated. Reply `{session, activated, origin, raised: "pane"\|"tab"\|"terminal"\|"app", app, bundle_id, detail}`. Opening a Codex session also lets a request the decide lane holds for it fall through, so its prompt waiting behind the hook appears at once; a Claude hold stays, since its prompt is already on screen. A live session JR-Bar cannot find refuses `not_found` ("…still running, but JR-Bar can't find its window; nothing new was started.") instead of starting a second process on it. An ended CLI session whose open is a terminal resume resumes **in the terminal it ran in** (recorded at its SessionStart), not whichever app is in front: a new tab in Ghostty's front window at the session's directory with the resume command typed into the owner's own shell (a new window through the reviewed launch plan when Ghostty refuses the Apple event), or a new Terminal.app / iTerm2 window -- `raised: "new_tab"\|"new_window"`, `detail: "resumed"`. A remote row, a session hosted by its provider's desktop app, an explicit `action` of `app`/`vscode`, or a Clicks-open / provider-profile choice of `vscode` keeps the controller's `open_session` (provider URL, or `cd <cwd> && <cli> --resume <id>` in a terminal): `{session, activated, origin}`; a saved choice of `app` is for the sessions the app hosts, so a live session a terminal hosts is still raised. A session Claude.app runs opens as `claude://code/continue?session=local_…`, the id the app's own session store (`~/Library/Application Support/Claude/claude-code-sessions`, read-only) gives the CLI session, and lands on that session; with no match it is bare `claude://`. Automatic puts VS Code first for a Claude row only when LaunchServices has a `vscode://` handler. `action: "raise"` asks for the live path explicitly. |
+| `open_session` | session, action? | A session still running in a terminal is **raised, not resumed** (`answer_surfaces.py`): its tmux pane (`list-panes -a` matched by the session's tty, then `select-window`/`select-pane`, switching a lone client to that tmux session), its Terminal.app or iTerm2 tab (selected by tty over Apple events), or its Ghostty terminal (`focus` on the surface recorded when the session started, else the only terminal in the session's working directory, else the only one whose title carries the session's name; a tie brings Ghostty forward and never guesses); any other host app is activated. Reply `{session, activated, origin, raised: "pane"\|"tab"\|"terminal"\|"app", app, bundle_id, detail}`. Opening a Codex session also lets a request the decide lane holds for it fall through, so its prompt waiting behind the hook appears at once; a Claude hold stays, since its prompt is already on screen. A live session JR-Bar cannot find refuses `not_found` instead of starting a second process on it; the message names what it looked for -- the host app and its bundle id, the executables it looked through, or the tmux pane -- and ends "Nothing new was started." An ended CLI session whose open is a terminal resume resumes **in the terminal it ran in** (recorded at its SessionStart), not whichever app is in front: a new tab in Ghostty's front window at the session's directory with the resume command typed into the owner's own shell (a new window through the reviewed launch plan when Ghostty refuses the Apple event), or a new Terminal.app / iTerm2 window -- `raised: "new_tab"\|"new_window"`, `detail: "resumed"`. A remote row, a session hosted by its provider's desktop app, an explicit `action` of `app`/`vscode`, or a Clicks-open / provider-profile choice of `vscode` keeps the controller's `open_session` (provider URL, or `cd <cwd> && <cli> --resume <id>` in a terminal): `{session, activated, origin}`; a saved choice of `app` is for the sessions the app hosts, so a live session a terminal hosts is still raised. A session Claude.app runs opens as `claude://code/continue?session=local_…`, the id the app's own session store (`~/Library/Application Support/Claude/claude-code-sessions`, read-only) gives the CLI session, and lands on that session; with no match it is bare `claude://`. Automatic puts VS Code first for a Claude row only when LaunchServices has a `vscode://` handler. `action: "raise"` asks for the live path explicitly. |
 | `answer_ask` | session, decision (`approve`/`deny`, or `always` for a held request that offers it, or `answer` for a held question), answers (with `answer` only: `{<question text>: <label>}` for every question in `ask.decision.choices`, a list of labels for a `multi` one), reply_text (optional, for `input` asks), request (optional — the ask's `request` identity; a live request that does not match refuses `stale_request` before anything is armed or typed), only_if_frontmost (default true) | A request the decide lane holds (`ask.decision` non-null) is answered first, through the agent's own `PermissionRequest` hook: `{session, decision, answered, delivered, code: "sent", message, confirmation: "provider_pending", mechanism: "permission_hook"}` -- see "The decide lane" below. Anything else is answered **in its own terminal** (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). A bare `decision` posts the key that provider's CLI takes at its permission prompt. Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). With `reply_text` (non-empty printable, normalized to one line, at most 280 chars) the action becomes `reply`: the text is typed into the same verified window via `CGEventKeyboardSetUnicodeString` and submitted with Return -- same frontmost/ancestry/tty/accessibility fences, `mechanism: "synthetic_text"`, and the reply reports `decision: "reply"` plus `characters` instead of a key. A `reply_text` on an ask whose capability does not take text is `unsupported`. Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. Every fence is affirmative-only: unknown liveness (`liveness_unproven`), unwalkable ancestry (`ownership_unproven`), an unresolved session tty (`session_tty_unknown`), and a terminal that cannot name its focused tab (`focused_tab_unproven` -- kitty, WezTerm, Alacritty have no such call; Ghostty proves its focused terminal by it being the surface recorded at the session's SessionStart, and a session with no recorded surface stays unproven -- the only terminal in the session's directory is not proof, since a plain shell the owner opened there looks the same) all refuse; there is no send-anyway path. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, confirmation, host{pid, tty, app, app_pid, window_evidence}}`. `confirmation` is `provider_pending` on a posted key -- an attempted delivery, not a confirmed approval; the provider's own stream closing the request is the only proof it landed -- and `none` on a refusal. `window_evidence` on a sent answer is `focused_tab_tty` (the terminal named the focused tab and it is this session's) or, in Ghostty, `recorded_surface` (its focused terminal is the one the session started in, still in the session's directory). See the refusals below. |
 | `snooze` | session or `all`, seconds, scope (`family`, the default, or `run`) | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until, scope: "family"}`. `scope: "run"` ("Quiet this run") quiets that one row instead -- a main session or a single worker, on its exact work key (`snooze_scope: "run"` in `mailbox-preferences.json`), for exactly `seconds` (a week at most) -- so quieting a sub-agent never silences the session that spawned it, nor its siblings, and the family's shelf stays. It needs a named session (`all` is `invalid_args`) whose row has a work key (else `unsupported`); `seconds: 0` lifts it. `{sessions: [id], until, scope: "run"}`, `until` being whatever now quiets the row (its own deadline, or the family snooze already in force on that key, which a run snooze never replaces since that would wake the rest of the family; null when nothing does). Either way a live ask still breaks through, and the row's `snoozed_until` is the later of its family's deadline and its own. A family unsnooze of a named session (or `all`) also lifts that row's own run snooze, so Unsnooze always clears what the row shows. |
 | `clear_completed` | sessions[] or `all` | Acknowledges every row `sessions` is currently listing as over -- `completed`, `ended`, and any stale row -- through the Clear Agents plan/commit machinery with widened eligibility (`clearable_presentation_key`). Afterwards `sessions` holds only live rows and the rest are in `list_history`. `sessions` may name a subset; a named row that is not clearable (a live session) is simply not in the batch. Live sessions, asks, failures and worker rows are fenced as protected and never cleared. `{batch, cleared[]}` with every acknowledged session id, or `{batch: null, cleared: []}` when nothing was over. Refuses `busy` while a clear is in flight. |
-| `undo_clear` | batch | Undo that batch within its 300 s window; the rows return to `sessions` exactly as they were. `{batch, restored[]}`; `expired` after, `not_found` for another batch. |
+| `undo_clear` | batch | Remove that batch's acknowledgement receipts within its 300 s window. The receipt survives a daemon restart. Visibility is recomputed from current activity, preserving newer work. `{batch, restored[]}`; `expired` after, `not_found` for another batch, `refused` if already undone or invalidated by newer receipt writes. |
 | `set_setting` | path, value | Dot-path write (`colors.agent_colors.claude`, `devices.0.brightness`) into `to_dict()`, re-validated through the real settings loader, saved, side effects applied (closed-lid, cloud ingest, transcript monitoring, remote peers), then a refresh. `{generation, path, value}` with the value as normalised. A read-only key (`cloud_ingest_token_path`) replies `read_only`. The reply comes first: the new `settings` document is out before it, the file is written by the persistence writer right after (a burst writes once; an I/O error is retried on the next refresh and at quit), and the refresh runs after the reply, so the `state` and `lights` that show the change follow it. A write refused for good (a settings file from a newer version) is logged once and not retried; the value stays live for the session. A write that lost to an outside edit of `settings.json` (a hand edit, a restore, `jrbar battery configure`) is not retried either: the next refresh adopts the file when it parses and validates, keeps what the daemon held as `settings.json.replaced`, and sends the `settings` document again, so Settings shows what is on disk. This happens the next time the daemon saves a setting, not the moment the file changes. A file that does not parse is looked at again one refresh later, in case an editor is still saving it; if it has not changed, it is set aside as `settings.json.corrupt-<UTC stamp>` (the newest three kept) and the daemon's settings are written out again. A save refused because the file cannot be read right now (a half-written save) is retried on the next refresh and at quit. |
 | `reset_settings` | paths[] | Each path back to `AgentMonitorSettings()`'s default. `{generation, reset}`. |
 | `set_brightness` | device or `all`, value 0..1 | `set_device_brightness` (turns auto-brightness off, as the slider does). |
@@ -1300,23 +1858,37 @@ the main thread). Unknown args are ignored.
 | `end_calibration_preview` | device | Drops the held preview(s) that device owns -- its own and a companion strip's -- clears the dedupe identity the preview bytes left, and re-arms the live program. Idempotent: `{device, ended}`. |
 | `apply_effect` | effect, scope, target, parameters? | Effect Studio assignment (`EffectAssignmentRecord.create`); `effect` null or `"none"` removes it. Protocol-1 alias of `set_assignment`/`clear_assignment`: answers the same fuller assignment document, parameters sidecar included. |
 | `refresh_usage` | providers[] | Forces a provider usage refresh; the next `state` carries the result. |
+| `reset_receipt` | event_id, outcome, reason? | The app's account of a `quota_reset` it was sent: `outcome` is `delivered` (the burst was on screen), `held`, `dropped`, `expired` or `suppressed`, `reason` one word. Recorded on the event in `provider-reset-events.json`, so a celebration that never landed is visible there. `delivered` and `dropped` close the greet's replay offer; the others leave the reset re-offerable. `not_found` for an unknown `event_id`, `invalid_args` for an unknown outcome. |
 | `usage_hooks_status` | — | The Settings Hooks section's truth (lane oss, 2026-09-24): `{enabled, problem, events[], rules[{id, enabled, event, provider, threshold_remaining, executable, arguments[], timeout_seconds, argv, problem, last_result}]}`. `problem` on a rule says why it will never run (a relative executable, an unknown event, more than 32 arguments, a string over 4 KiB); `problem` on the document is set when more than 32 rules make every rule refuse (fail closed). `last_result` is `{rule, event, provider, at, outcome (ok, exit, timeout, refused, error), exit_code?, duration_seconds?, detail?, sentence}`, kept in memory while the daemon runs. Off the main thread. |
 | `usage_hooks_test` | event (one of the seven), provider, rule? | Runs the rules a made-up event would match (or just `rule`), whatever the master switch says, with `state: "test"` in the event, and waits at most 8 s: `{event, provider, results[…last_result shape…], status}`. `invalid_args` for an unknown event or rule. The Test button. Off the main thread. |
-| `list_providers` | provider?, instance? | The inspect surface behind `jrbar providers status`: one row per configured provider *instance* — `{id, instance, label, enabled, menu_visible, browser_sources_enabled, supports_browser_sources, supports_local_tokens, supports_quota, source_order, options, consents[], credentials[], imported_credential, state, reason, action, account_label, observed_at}`. `consents` carry `source_instance_id` so a row only lists the grants its own instance holds; `credentials` report `{account, available}` — availability, never the secret; `imported_credential` says the stored token came from a consented browser import (the only credential a revoke may remove). `state`/`reason`/`action` mirror the live snapshot for that exact instance. |
+| `list_providers` | provider?, instance? | The inspect surface behind `jrbar providers status`: one row per configured provider *instance* — `{id, instance, label, enabled, usage_consent, menu_visible, browser_sources_enabled, supports_browser_sources, supports_local_tokens, supports_quota, source_order, options, consents[], credentials[], imported_credential, state, reason, action, account_label, observed_at}`. `consents` carry `source_instance_id` so a row only lists the grants its own instance holds; `credentials` report `{account, available}` — availability, never the secret; `imported_credential` says the stored token came from a consented browser import (the only credential a revoke may remove). `state`/`reason`/`action` mirror the live snapshot for that exact instance. `usage_consent` (additive, 2026-10-07) is the per-provider switch for the read that asks the provider's servers for usage, or reads another app's sign-in to do it: `{granted, version, source, at, required_version, question, summary, detail, hosts[], credential}`. `granted` is true only while `version >= required_version`; `source` is `setup`, `settings`, `cli`, `usage_center` or `migration` (an upgrade that kept a provider that was enabled and already returning usage); `at` is when the person said yes (null for a migrated one). `question`, `summary` and `detail` are the plain sentences Setup and Settings show verbatim, `hosts` is who is asked (empty when nothing leaves the Mac) and `credential` is whose sign-in the request carries. Every provider starts with `granted: false`. |
+| `factory_session_profiles` | none | Lists up to 256 existing supported browser profiles as `{profiles: [{browser, profile, label}]}`. Reads directory metadata only, never sessions or remote services. Privileged local worker command. Errors `invalid_args`, `unavailable`. |
+| `factory_session_import` | browser, profile, instance?, confirm | Requires `confirm: true` after disclosing access to only the selected profile's `app.factory.ai` and `auth.factory.ai` local storage fields `workos:refresh-token` and `workos:access-token`, storage in JR-Bar's instance-scoped Keychain `web-session`, and WorkOS refresh grant version 1. Confirmation authorizes that one read. Reads bounded private snapshots, then saves exact browser consent with background repair off and validated session JSON. No remote request, API key change, usage enable, or usage consent change. Reply `{provider: "factory", instance, message}`. Errors `invalid_args`, `unknown_instance`, `browser_session_not_found`, `credential_unavailable`, `unavailable` contain no secrets. Missing sessions ask the person to sign in at `https://app.factory.ai` in the selected profile and import again. Privileged local worker command. |
+| `factory_session_disconnect` | instance? | Removes only this instance's JR-Bar Factory `web-session` and bound browser grants. Leaves API keys, other instances and usage settings unchanged. Reply `{provider: "factory", instance, message}`. Errors `invalid_args`, `unknown_instance`, `credential_unavailable`, `unavailable`. Privileged local worker command. |
+| `set_provider_credential` | provider, account, secret, instance? | Stores one explicitly supplied native-provider credential in JR-Bar's Keychain entry for that configured instance. Privileged local command. Provider and credential kind must be registered; instance defaults to `default`. Factory `web-session` writes and deletes require its dedicated commands. Secret is a trimmed, nonempty single-line string up to 64 KiB. It is never returned, logged, journaled, or placed in state. Saving does not enable usage, grant consent, or schedule a provider request. Reply `{provider, instance, account, available: true}`. `invalid_args`, `unknown_provider`, `unknown_instance`, `credential_unavailable` are sanitized errors. |
+| `delete_provider_credential` | provider, account, instance? | Removes that instance's JR-Bar-owned credential without changing provider settings or consent. Privileged local command with the same provider/account/instance validation. Reply `{provider, instance, account, available: false, removed}`; removing a missing key is a successful no-op. It never journals credential arguments or returns a secret. |
 | `set_provider_enabled` | provider, enabled, instance? | Persists the per-instance enabled flag through the settings document's optimistic concurrency — a concurrent edit answers `settings_changed`, never a silent merge; `unknown_instance` when no configured instance exists. `{provider}` is the row as persisted, and an enable triggers a usage refresh for that provider. |
+| `set_provider_usage_consent` | provider, enabled, instance?, source? | The per-provider usage switch (additive, 2026-10-07). `enabled: true` records the person's consent (`usage_consent.version` = the build's `required_version`, `source` one of `setup`, `settings`, `cli`, `usage_center`, default `settings`) and turns the provider on; `enabled: false` withdraws it and leaves the provider's local figures (token totals, Claude Code's status line) alone. Persisted through the settings document's optimistic concurrency like `set_provider_enabled` (`settings_changed` on a concurrent edit, `unknown_instance`, `unknown_provider`, `invalid_args`), and it forces a usage refresh for that provider. `{provider}` is the row as persisted, in the `list_providers` shape. Until a provider is on, its snapshot is `state: needs_consent`, `reason: usage_not_turned_on`, `action: "Turn on <Provider> usage"`, with no lanes and no incident: nothing is asked and no sign-in is read. `provider_action` and `provider_sign_in` for such a provider refuse with `usage_off` and the sentence to show. |
+| `set_provider_options` | provider, options, instance? | Saves a partial patch of non-secret usage source options through optimistic concurrency and returns `{provider}` as persisted. Kimi accepts `region: china or international` and `source: auto, api, web or cli`. Kilo accepts `organization_id`, a printable identifier of at most 128 ASCII letters, numbers, dots, underscores, colons or hyphens; an empty string removes it. Other keys or values are `invalid_args`; unconfigured instances are `unknown_instance`, unknown providers are `unknown_provider`, and concurrent edits are `settings_changed`. Existing unrelated options and consent are preserved. Changing these options never grants usage consent. The affected instance is refreshed through the existing consent gate. `list_providers.options` includes these non-secret values. |
 | `provider_add_instance` | provider, instance, label? | Configures one more account for a provider (a second Codex or Claude sign-in, say). The instance starts enabled and metered with browser sources off; `label` is optional, not blank, at most 128 characters with no control characters, and defaults to `<Provider> · <instance>`. It is written through the settings document's optimistic concurrency, like `set_provider_enabled`, and forces a usage refresh for that provider. `{provider}` is the new row in the `list_providers` shape. `unknown_provider` for an unregistered id, `unsupported` for a provider that reads this Mac's own sign-in and has no per-instance source (a second account would report the first one twice), `invalid_args` for a missing or malformed `provider`, `instance` or `label` and for the `default` instance every provider already has, `already_exists` for an instance already configured, `settings_changed` for a concurrent settings edit. |
 | `provider_consent` | action (`list`/`grant`/`revoke`), provider?, browser?, profile?, instance?, background_repair? | The exact-scope consent store. `grant` binds provider + browser + profile + the provider's declared domain/field allowlist and imports nothing — the import remains its own action. `list` returns `{consents[]}`; grant/revoke return `{consent}` with the bound scope, `was_granted`, and on revoke `imported_data`: `removed`/`replaced`/`retained`/`none` — the imported credential is deleted only while the stored value still matches the import's digest, so a user-replaced token survives. `unsupported` for providers with no consented browser source. |
-| `provider_action` | provider, instance? | Runs the staged flow behind the provider's CURRENT action label — clipboard/LevelDB import, reconnect, repair — and returns `{provider, instance, message}` with the exact string the daemon surfaced (it may be a success note, not only an error). `unsupported` when no staged action matches the live state, `unknown_provider` for an unregistered id. Ownership is preserved: a credential the provider's own CLI owns (Grok's auth.json, Gemini's oauth_creds.json) produces a message pointing at that CLI, never a JR-Bar-side rewrite. |
-| `provider_sign_in` | provider, instance?, terminal? | The Usage Center's **Fix sign-in**: the best automatic thing for a provider whose card is not ready, tried in this order, always ending in one plain sentence the app shows verbatim. (0) A provider with no login command of its own (Devin, Cursor, Gemini CLI, Antigravity, the OpenAI API) first runs the staged action behind its card's CURRENT action label, the one the card's old button ran (`handle_provider_usage_action`): "Reconnect Devin" or "Reconnect Cursor" clears the rejected stored token and re-reads the browser session, else names the token page; the Gemini and Antigravity labels say where the CLI or app signs in; "Add OpenAI Admin key" reads the clipboard because the person just clicked. A token page it would open is returned as `sign_in_url` for the app to open (the daemon opens nothing), and the outcome is `staged`. A label that is not part of that flow falls through to (1), and so does a second account's. (1) Re-read what the provider's own tooling holds (the same re-pull as `provider_action` with `action: "resign_in"`). (2) Claude only, default instance: when that read does not find a current sign-in (Claude Code's Keychain copy expired, empty or missing) and `claude auth status` (JSON, bounded) says Claude Code is logged in, ask Claude Code to renew its own Keychain item with one tiny real call, `claude -p "reply with the single word ok" --max-turns 1`: an argv list and never a shell, the resolved absolute path of `claude`, a fresh private (0700) temporary directory as its working directory, the owner's environment with every `JRBAR_*` variable removed and `JRBAR_STATE_DIR` pointing inside that directory (the hook shim honours it, so the call spools there and registers no session with this daemon), stdin closed, a hard 90 s timeout, output read only to keep the pipe clear, capped at 4 KB and never logged or returned. The directory is removed afterwards. It counts as renewed when the credential source's fingerprint changed (the Keychain item's modification stamps and `~/.claude/.credentials.json`; no secret is read, and the 60 s attribute cache is bypassed for the check); JR-Bar never touches Claude Code's refresh token. A second renewal inside 60 s is refused. A hung call is killed and reported as failed; a CLI that says it is not logged in, or a call that exits without renewing, falls through to (3). (3) Otherwise open the owner's own terminal on the provider's sign-in command, through the same opener as `new_session` (`terminal` as there; else the terminal of the most recent session, else Ghostty when installed, else Terminal.app), in the home folder. The command comes from a table fixed in the daemon and the executable is the CLI's resolved absolute path (see `provider_update` for what makes a tool safe to run); the client sends neither: `claude auth login`, `grok login`, `codex login`, `opencode providers login`. Gemini CLI has no login command of its own, and Devin's usage is read from a browser session that `devin auth login` would not change, so those two (and any provider with no CLI) are never opened in a terminal: they take (0), else the re-read's advice, for Devin the session import or a `sign_in_url` to app.devin.ai. A provider whose sign-in the CLI cannot report on (Codex, OpenCode) is opened only when its card is signed out or unknown, never for a stale card whose problem is something else. (4) The outcome watch is armed and the provider's usage refresh is forced, as for `provider_action`, so the card recovers the moment the CLI saves its new sign-in. A second account (`instance` other than `default`) is only re-read: its sign-in is never the CLI's. `{provider, instance, outcome, message, command, sign_in_url}`: `outcome` is `renewed` (a stored or CLI-held sign-in is current again), `opened_terminal`, `already_ok` (the sign-in is current; `message` says what was refreshed), `staged` (the card's own staged action ran: `message` says what it did or what to do next, `sign_in_url` the token page to open or null), `unavailable` (nothing JR-Bar can do: `message` is the advice, `sign_in_url` a page to open or null, and a renewal inside 60 s of the last is refused this way) or `failed` (the call timed out, no private working folder could be made, or the terminal could not be opened). `command` is the command as the person would type it (`grok login`) when a terminal was opened, else null. `unknown_provider` and `invalid_args` as for `provider_action`. Explicit only: a click, never a timer. Queued on the action lane. |
-| `provider_update` | provider | T3 Code's "Update now": runs the provider's own updater on a worker thread and returns at once. The argv comes from a table fixed in the daemon (`claude update`, `codex update`, `grok update`, `devin update`, `opencode upgrade`) and the client sends only a provider id; the executable is the CLI's resolved absolute path, with the owner's environment plus the login shell's `PATH`, stdin closed and a hard 600 s timeout. A tool is run only if it holds the installed-agent inventory's line: relative and empty `PATH` entries are ignored, the file (after following any symlink, which npm and Homebrew use, so the link is judged by where it lands) is a regular executable owned by root or the person with no setuid or setgid bit and writable by nobody else, and the directory that holds the entry and the one that holds the file are owned by root or the person and not world-writable, nor group-writable except under `/opt/homebrew` and `/usr/local`, where Homebrew makes `bin` writable by the admin group. A path with a control character is refused. A match that fails is skipped as if it were not there, and the child's own `PATH` has the relative entries dropped too. One update per provider at a time and at most two at once. The CLI's `--version` is read before and after (bounded), the output is kept as its last 20 lines and 4 KB with anything that looks like a token removed, and the result lands in `state.provider_updates[provider]`: `updated` (old to new), `unchanged`, or `failed` with the exit code and the last lines. An updater that fails asking for a terminal (a `[y/N]` or `(yes/no)` prompt, "press enter", "not a tty", "not a terminal") gets one: `needs_terminal`, and the terminal is opened on the command through the opener `provider_sign_in` uses; only those specific phrases count, so a plain failure is never re-run in a visible terminal. Devin's updater is never run blind: `devin update` checks and only optionally installs, and has no non-interactive flag, so with no input it could exit 0 having installed nothing and read as "already up to date"; its Update always opens the terminal (`needs_terminal`). `{provider, started, reason, message}`: `started: true` when the worker began; otherwise `started: false` with `reason` `no_updater` (Gemini CLI has none: `message` says to update it the way it was installed), `not_installed`, or `busy` and a sentence. `unknown_provider` and `invalid_args` as for `provider_action`. Never run unless clicked: no timer and no setting starts an updater. |
-| `provider_update_check` | | The Settings › Agents refresh asks whether newer CLI versions exist. Does nothing at all unless `provider_update_checks_enabled` is exactly `true`: then, off the main thread and at most once a minute, it asks the npm registry (see that setting) and the answer lands in `state.provider_updates[provider].latest_version`. `{enabled, started}`; with the setting off `{enabled: false, started: false}` and no request is made. |
+| `provider_action` | provider, instance? | Runs the staged flow behind the provider's CURRENT action label — clipboard/LevelDB import, reconnect, repair — and returns `{provider, instance, message}` with the exact string the daemon surfaced (it may be a success note, not only an error). `unsupported` when no staged action matches the live state, `unknown_provider` for an unregistered id. Ownership is preserved: a credential the provider's own CLI owns (Grok's auth.json, Gemini's oauth_creds.json) produces a message pointing at that CLI, never a JR-Bar-side rewrite. Factory uses this explicit action to queue a consent-gated usage refresh for the selected instance; it never runs a CLI sign-in. |
+| `provider_sign_in` | provider, instance?, terminal? | The Usage Center's **Fix sign-in**: the best automatic thing for a provider whose card is not ready, tried in this order, always ending in one plain sentence the app shows verbatim. (0) A provider with no login command of its own (Devin, Cursor, Gemini CLI, Antigravity, the OpenAI API) first runs the staged action behind its card's CURRENT action label, the one the card's old button ran (`handle_provider_usage_action`): "Reconnect Devin" or "Reconnect Cursor" clears the rejected stored token and re-reads the browser session, else names the token page; the Gemini and Antigravity labels say where the CLI or app signs in; "Add OpenAI Admin key" reads the clipboard because the person just clicked. A token page it would open is returned as `sign_in_url` for the app to open (the daemon opens nothing), and the outcome is `staged`. A label that is not part of that flow falls through to (1), and so does a second account's. (1) Re-read what the provider's own tooling holds (the same re-pull as `provider_action` with `action: "resign_in"`). (2) Claude only, default instance: when that read does not find a current sign-in (Claude Code's Keychain copy expired, empty or missing) and `claude auth status` (JSON, bounded) says Claude Code is logged in, ask Claude Code to renew its own Keychain item with one tiny real call, `claude -p "reply with the single word ok" --max-turns 1`: an argv list and never a shell, the resolved absolute path of `claude`, a fresh private (0700) temporary directory as its working directory, the owner's environment with every `JRBAR_*` variable removed and `JRBAR_STATE_DIR` pointing inside that directory (the hook shim honours it, so the call spools there and registers no session with this daemon), stdin closed, a hard 90 s timeout, output read only to keep the pipe clear, capped at 4 KB and never logged or returned. The directory is removed afterwards. It counts as renewed when the credential source's fingerprint changed (the Keychain item's modification stamps and `~/.claude/.credentials.json`; no secret is read, and the 60 s attribute cache is bypassed for the check); JR-Bar never touches Claude Code's refresh token. A second renewal inside 60 s is refused. A hung call is killed and reported as failed; a CLI that says it is not logged in, or a call that exits without renewing, falls through to (3). (3) Otherwise open the owner's own terminal on the provider's sign-in command, through the same opener as `new_session` (`terminal` as there; else the terminal of the most recent session, else Ghostty when installed, else Terminal.app), in the home folder. The command comes from a table fixed in the daemon and the executable is the CLI's resolved absolute path (see `provider_update` for what makes a tool safe to run); the client sends neither: `claude auth login`, `grok login`, `codex login`, `opencode providers login`, `kiro-cli login`. Gemini CLI has no login command of its own, and Devin's usage is read from a browser session that `devin auth login` would not change, so those two (and any provider with no CLI) are never opened in a terminal: they take (0), else the re-read's advice, for Devin the session import or a `sign_in_url` to app.devin.ai. A provider whose sign-in the CLI cannot report on (Codex, OpenCode) is opened only when its card is signed out or unknown, never for a stale card whose problem is something else. (4) The outcome watch is armed and the provider's usage refresh is forced, as for `provider_action`, so the card recovers the moment the CLI saves its new sign-in. A second account (`instance` other than `default`) is only re-read: its sign-in is never the CLI's. `{provider, instance, outcome, message, command, sign_in_url}`: `outcome` is `renewed` (a stored or CLI-held sign-in is current again), `opened_terminal`, `already_ok` (the sign-in is current; `message` says what was refreshed), `staged` (the card's own staged action ran: `message` says what it did or what to do next, `sign_in_url` the token page to open or null), `unavailable` (nothing JR-Bar can do: `message` is the advice, `sign_in_url` a page to open or null, and a renewal inside 60 s of the last is refused this way) or `failed` (the call timed out, no private working folder could be made, or the terminal could not be opened). `command` is the command as the person would type it (`grok login`) when a terminal was opened, else null. `unknown_provider` and `invalid_args` as for `provider_action`. Explicit only: a click, never a timer. Queued on the action lane. |
+| `provider_update` | provider | Runs a provider updater or its proven global installation manager on a worker thread and returns at once. The argv comes from a table fixed in the daemon (`claude update`, `grok update`, `devin update`, `opencode upgrade`), or from the owning trusted npm/Homebrew installation for Codex and Gemini and the client sends only a provider id; the executable is the resolved CLI or manager's absolute path, with the owner's environment plus the login shell's `PATH`, stdin closed and a hard 600 s timeout. A tool is run only if it holds the installed-agent inventory's line: relative and empty `PATH` entries are ignored, the file (after following any symlink, which npm and Homebrew use, so the link is judged by where it lands) is a regular executable owned by root or the person with no setuid or setgid bit and writable by nobody else, and the directory that holds the entry and the one that holds the file are owned by root or the person and not world-writable, nor group-writable except under `/opt/homebrew` and `/usr/local`, where Homebrew makes `bin` writable by the admin group. A path with a control character is refused. A match that fails is skipped as if it were not there, and the child's own `PATH` has the relative entries dropped too. One update per provider at a time and at most two at once. Codex and Gemini also reserve the owning npm prefix or Homebrew executable, preventing overlapping updates that share an installation manager. The CLI's `--version` is read before and after (bounded), the output is kept as its last 20 lines and 4 KB with anything that looks like a token removed, and the result lands in `state.provider_updates[provider]`: `updated` (old to new), `unchanged`, or `failed` with the exit code and the last lines. An updater that fails asking for a terminal (a `[y/N]` or `(yes/no)` prompt, "press enter", "not a tty", "not a terminal") returns `needs_terminal`. Native updaters open the terminal through the opener `provider_sign_in` uses. Managed npm/Homebrew updates instead give manual guidance, so no detached installer outlives its manager reservation. Only those specific phrases count; a plain failure is never re-run in a visible terminal. Devin's updater is never run blind: `devin update` checks and only optionally installs, and has no non-interactive flag, so with no input it could exit 0 having installed nothing and read as "already up to date"; its Update always opens the terminal (`needs_terminal`). `{provider, started, reason, message}`: `started: true` when the worker began; otherwise `started: false` with `reason` `no_updater` (the CLI has no supported updater or its installation manager cannot be established; `message` says to use the original installer), `not_installed`, or `busy` and a sentence. `unknown_provider` and `invalid_args` as for `provider_action`. Never run unless clicked: no timer and no setting starts an updater. |
+| `provider_update_check` | | The Settings › Agents & Usage refresh asks whether newer CLI versions exist. Does nothing at all unless `provider_update_checks_enabled` is exactly `true`: then, off the main thread and at most once a minute, it asks the npm registry (see that setting) and the answer lands in `state.provider_updates[provider].latest_version`. `{enabled, started}`; with the setting off `{enabled: false, started: false}` and no request is made. |
+| `firmware_status` | | What Settings › Devices & Lighting shows in each device's Firmware group, read fresh from each connected device's `STATUS.TXT` and compared offline with the releases pinned in the app. Makes no network request and writes nothing. `{catalog[{model, name, version, notes[], package{host, name, bytes, cached}, drive, image_bytes}], devices[{id, name, root, mounted, model, serial, version, active_slot, build, uptime_ms, latest, update_available, can_update, why_not{code, message}\|null, other_slot{name, has_image, valid, version}\|null, colour_note}], job, download_host}`. `update_available` is true when the device runs an older release than the catalog's, false when it is current, null when its version cannot be read. `can_update` is true only when an update would be accepted right now; `why_not` says why not (`not_mounted`, `model_unknown`, `model_mismatch`, `no_release`, `facts_unknown`, `device_busy`, `battery_low`) and is null for a device that is simply up to date. `colour_note` is true for a Pro whose firmware balances colour itself (1.1.0 and later). `package.cached` says whether the verified package is already on this Mac. Off the main thread. |
+| `firmware_update` | device (a `devices[].id`), confirm (must be exactly `true`), package? (path of a package zip on this Mac) | Starts the firmware update of one device and returns at once: `{started: true, job}`, the job being the document under "Firmware updates". Progress follows in `state.firmware`. `confirm` other than `true` is `invalid_args` (nothing happens), an unknown device is `not_found`, a second update while one runs is `busy`, and every other reason the device cannot be updated now is `refused` with the plain sentence `why_not.message` gives. Fetching the package is the only network request, it happens inside this command and only when the package is not already cached or named with `package`, and nothing else in the daemon ever asks for it. |
+| `ntfy_test` | | Settings › Remote's **Test** button: one fixed line, `JR-Bar test: your phone will hear from your agents here.`, to the saved `ntfy_topic`, now, because the person clicked. It needs a usable topic but not `ntfy_enabled` or the away condition, and waits (up to 8 s) for ntfy's answer. `{sent, reason, message}`: `reason` is `sent`, `no_topic`, `invalid_target`, `unreachable` or `rejected`, and `message` is the sentence the app shows verbatim. Off the main thread. Nothing else calls it, and no timer or event ever does. |
 | `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider: install registers the hook command (with the compiled shim when available and the Codex trust hash recomputed); uninstall removes the managed hook blocks the installer wrote. Claude's `settings.json` and Codex's `config.toml` are the ones in the folder the daemon's environment names with `CLAUDE_CONFIG_DIR` / `CODEX_HOME` when it names a folder that exists, else in `~/.claude` / `~/.codex` — the same home the usage scans read (`provider_homes.py`); `refresh_hooks`, the detectors and `hooks_doctor` follow it too, and no other home is touched. The daemon reads the variables from the environment the app launched it with (the app passes its own through), so one exported only in a shell profile is not seen. `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, `null` while the daemon has not finished looking (see `health.detected`), and an install then goes ahead: only an explicit `false`, a CLI that was looked for and never found, is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success (uninstall has no such gate: it removes what is there). |
 | `refresh_hooks` | | Refreshes only integrations still owned by JR-Bar when the command executes. The daemon detects ownership and updates under the same cross-process mutation lock used by app and CLI installs/removals. It preserves provider-level disabled flags and leaves foreign hooks and removed integrations alone. Returns `{providers, results{provider: {ok, changed, config_path, codex_trust, warning}}}`. Per-provider failures remain failures; the app advances its build stamp only after the selected batch succeeds. No caller-supplied provider snapshot authorizes a refresh. |
 | `set_closed_lid_policy` | policy | `never`, `agents`, `always`. |
-| `quiet` | mode (`dnd`/`pause`, `dim`, `mute`, `dark`, `asks_only`), seconds | A DND override for that long (0 ends the override). `{until, mode}`. |
+| `quiet` | mode (`dnd`/`pause`, `dim`, `mute`, `dark`, `asks_only`), seconds | A DND override for a finite duration, clamped to 60 seconds through seven days. A finite nonpositive duration ends the override. Booleans and non-finite or overflowing durations are `invalid_args`. Returns `{until, mode}` when applied or `{until: null}` when ended; a refused save returns `refused` for either action. |
 | `confetti` | session?, provider?, reason? | A burst asked for from outside JR-Bar -- `jrbar confetti [--session ID \| --provider NAME \| --from-hook] [--why TEXT]`, a Stop hook, `make test && …`, CI (`confetti_requests.py`). `session` is the daemon's id (`claude:session:…`) or the agent's own (`session_id` from its hook payload, which names the session's main row before any worker); `provider` (`[a-z][a-z0-9._-]{0,31}`) wins over the session's own; `reason` is one printable line, at most 80 chars. Journals one `confetti` event (see event) and replies `{sent: true, coalesced: false, event, cursor, session, provider, unmatched}`. The daemon only states the fact: the app's Confetti toy fires it when the toy is on and the room is clear, with its own cooldown. A second ask inside 3 s (the app's cooldown) is answered `{sent: false, coalesced: true}` and never journaled, so a loop in a hook cannot evict the events a reconnecting app replays. A named session nobody watches still celebrates, in the Toys colour: `session: null`, `unmatched: <the id>`. Bad args are `invalid_args`. |
-| `hold_awake` | exactly one of `seconds` (> 0), `until` (epoch), `until_time` (a local `HH:MM`, the next one, resolved in the Mac's zone so "until 08:00" survives a daylight-saving night), `until_agents_idle: true` (+ optional `sessions[]`), `indefinite: true`; `display` (default false); `source` (a short word, default `app`) | The person's keep-awake lease, the one hold every surface shares (the notch chip, a deck key, a CLI verb). It replaces any earlier lease, lasts at most 24 h (an agents lease: until none of its sessions is working or waiting on the person, backstop 12 h; without `sessions` it waits on every main session running now), holds the display too with `display: true` (the screen will not lock), outranks the agent-only switches (`agent_keep_awake_enabled`, `keep_awake_on_battery`) and survives a daemon restart. It yields -- never ends -- to heat and to the low-battery floor (`state.power.hold.suspended`). `seconds: 0` ends it, like `quiet`. `{lease, hold}`; `refused` "No agent is working right now." for an agents lease with nothing to wait on, `invalid_args` otherwise. |
-| `release_awake` | | Ends the person's lease (the agent hold keeps its own switch). `{ended, hold}`; `ended: false` when no lease was in force. |
+| `quiet_lease` | action (`acquire` or `release`), lease_id (1 to 128 ASCII characters), expected_revision (required for acquire) | A rule's daemon-owned 900-second Pause lease. Acquire compares the override revision before writing. Repeating the same lease ID with its latest receipt revision renews it. An active manual override ending more than 900 seconds later returns `{status: "deferred", revision, until}` without writing or claiming ownership. Successful acquire returns `{status: "acquired", revision, until}`. Release requires the owned lease ID and restores the displaced override's exact original deadline if still active, otherwise clears it; returns `{status: "released", revision, until}`. Every accepted manual override edit invalidates ownership, including identical edits and cancellation. A stale revision, foreign lease, or release after restart returns `conflict` without writing. Save failure returns `refused` and retains ownership and settings. Lease IDs are unique per rule activation. The daemon forgets leases at restart; their persisted overrides expire normally. |
+| `scene_lease` | action (`acquire` or `release`), lease_id, expected_revision and scene for acquire | Holds a temporary scene over the person's saved choice. IDs are 1 to 128 ASCII characters. Acquisition compares the manual-selection revision and rejects another owner with `conflict`. The same ID and scene can renew for 30 seconds using the original revision. Expiry uses a monotonic clock and leaves the saved scene unchanged. Release retires only that ID, so a delayed acquisition cannot revive it or release a replacement. Returns `{status: acquired\|released, revision, scene, until}` with the effective scene and a finite epoch deadline or null. Manual scene or pack writes supersede the overlay, including same-value writes. Daemon restart forgets overlays; the app renews live rules every 10 seconds. Retired IDs are bounded to 256; eviction advances the revision conservatively. No automatic scene is saved to the settings file. |
+
+| `hold_awake` | exactly one of `seconds` (> 0), `until` (epoch), `until_time` (a local `HH:MM`, the next one, resolved in the Mac's zone so "until 08:00" survives a daylight-saving night), `until_agents_idle: true` (+ optional `sessions[]`), `indefinite: true`; `display` (default false); `source` (a short word, default `app`) | The person's keep-awake lease, the one hold every surface shares (the notch chip, a deck key, a CLI verb). It replaces any earlier lease, lasts at most 24 h (an agents lease: until none of its sessions is working or waiting on the person, backstop 12 h; without `sessions` it waits on every main session running now), retains captured sessions whose last-known row is stale and still pending until a fresh replacement, the normal retirement policy or the 12-hour backstop resolves them; stale rows do not admit new leases or count as current work; an empty `Unknown` snapshot is not a completion observation; holds the display too with `display: true` (the screen will not lock), outranks the agent-only switches (`agent_keep_awake_enabled`, `keep_awake_on_battery`) and survives a daemon restart. It yields -- never ends -- to heat and to the low-battery floor (`state.power.hold.suspended`). `seconds: 0` ends it, like `quiet`. `{lease, hold}`; `refused` "No agent is working right now." for an agents lease with nothing to wait on, `invalid_args` otherwise. A failed lease save returns `unavailable`, publishes the current hold, and does not replace the lease in memory. Saved data may be uncertain; retry before restarting the monitor. |
+| `release_awake` | | Ends the person's lease (the agent hold keeps its own switch). `{ended, hold}`; `ended: false` when no lease was in force, including a successful cleanup retry. The daemon resyncs the hold before returning `unavailable` if saved-data cleanup or process release fails. A later command retries a failed process release even when the manual lease has already ended. Agent holds continue. |
 | `session_energy` | | Which agent session is keeping the CPU busy -- the battery reading no battery app can make (`jrbar.session_energy`). Each live main session's process (the pid its hook recorded, still running under the same start time) and every process under it -- the builds, tests and servers its tools started -- billed to the nearest session above it, so a session started from another's shell is never counted twice; shared-host providers are never billed. `{sampled_at, window_seconds, sessions[{session, provider, cpu_percent, cpu_seconds, processes}], total_percent, heaviest}`: `cpu_percent` is Activity Monitor's (100 is one core fully busy) averaged over `window_seconds` -- the time since the previous ask when that was 1.5 s to 15 min ago, else a 1.5 s window the command waits for -- and null for a session whose pid the earlier sample did not see; heaviest first; `heaviest` is the top session at 5 % or more, else null. One `ps` fork per sample and nothing sampled in the background; no command line or argument is read. Socket thread. |
 | `list_cues` | | The semantic ambient cues by name (`jrbar.ambient_cues`), highest priority first: `{cues[{id, name, meaning, enabled, default_enabled, setting, priority}]}`. `id` is the ambient family (`firefly_completion`, `completion_meniscus`, `handoff_baton`, `recovery_grace`, `ask_heartbeat`, `turn_length_ember`, `fleet_arrival_departure`, `courtesy_signature`, `glance_light`, `rainstick_idle`, `milestone_odometer`); `setting` names what switches it -- `ambient_cues_disabled` for the nine that default on, the cue's own flag (`rainstick_idle_enabled`, `milestone_odometer_enabled`) for the two opt-in ones. The Dot's binary heartbeat and the assigned semantic effects are displays, not cues, and are not listed. The `milestone_odometer` row adds `count` (the exact completions this daemon has counted since it started) and `next_step` (the next of `milestone_odometer_steps` above it, or null), so its cue arrives with a meaning you could see coming. |
 | `set_cue` | id, enabled | Switches one cue through its `setting` (a switched-off cue is still planned and simply never reaches a surface), saved like `set_setting`. `{generation, cues}`; `invalid_args` for an unknown id or a non-bool. |
@@ -1327,9 +1899,9 @@ the main thread). Unknown args are ignored.
 | `preview_fleet` | scenario? (default `fleet`: two working, one done; or `quiet`, `one_working`, `one_needs_you`, `same_provider_duo`, `pair`, `full_team`, `busy_team`), blend_mode? (`color_blend`, `round_robin`, `spatial_split`, `relay`, `cycle`, `classic`; default the device's own, else the global), cycle_speed_seconds? (the speed that mode plays at, even over its own override), device? (whose blend to use), led_count? (2 or 8, default 8) | A blend mode played against a synthetic fleet in the person's own colours, before choosing it -- how a mixed desk reads, which a single swatch hides. Compiled exactly as the device would play it; nothing is written to a device. `{scenario, label, blend_mode, cycle_speed_seconds, led_count, program, transformed, agents[{provider, mode}]}`. A scenario with an ask in it shows one strip under every blend: an ask takes the strip. `invalid_args` for an unknown scenario (or `live`), blend mode or LED count. Socket thread. |
 | `resolve_effect` | semantic (`ask`, `failure`, `notification`, `handoff`, `work`, `completion`, `recovery`, `environment`, `idle`), scene? (default the active scene), provider?, instance?, project?, device? | Situation preview for the Effect Studio: which assignment wins before the situation happens. `{semantic, scene, urgent, winner{scope, target_id, effect_id} or null, ladder[{scope, target_id, applicable, effect_id, wins}]}` -- the ladder walked in precedence order (device, project, provider instance, provider, scene, meaning, everywhere), each rung's own assignment shown so a losing one is visible too. An ask or a failure keeps its reserved alert: `urgent` is true and only the meaning rung is walked. `invalid_args` for an unknown meaning or scene, or an empty id. Socket thread. |
 | `list_light_log` | limit? (default 20, at most 200) | The light log for Why this light: the content-free effect history (`effect_history`, 200 events, persisted) newest first -- `{rows[{at, effect, category, surface, outcome, explanation, unseen}], total, last_seen}`, where `outcome` is `shown`/`suppressed`/`acknowledged`/`expired` and `explanation` is the history's own sentence ("Suppressed on the Dot by Do Not Disturb."). No provider text, session or path is ever in it. `invalid_args` for a non-positive limit. |
-| `list_focuses` | | The Focuses this Mac has configured, so a per-Focus rule can name a custom one: `{available, reason, focuses[{id, name}], active[]}`. macOS keeps the roster beside the Focus assertions it guards with Full Disk Access; without that grant `available` is false and `reason` says why. Socket thread. |
+| `list_focuses` | | The Focuses this Mac has configured, so a per-Focus rule can name a custom one: `{available, reason, focuses[{id, name}], active[], active_available, active_reason}`. `available` and `reason` describe the configured roster. `active_available` separately says whether active identifiers were read completely under the `focus.named_readable` validation and limits. Unreadable identifiers, malformed record collections, encoding failures and exceeded limits make it false. `active_reason` then gives a safe explanation, otherwise null. `active` stays empty when unavailable; only `active_available: true` makes an empty list an observed absence of active modes. When the roster read fails, active names are not attempted and both availability fields are false. macOS guards these files with Full Disk Access. These fields do not change the public Focus activity reading. Socket thread. |
 | `presence` | mic, camera, screen_shared (bools), locked? (bool), idle_seconds? (≥ 0), focus? (bool, INFocusStatusCenter's `isFocused` from the app's grant), meeting_until? (epoch of a calendar meeting's end, at most 12 h ahead), next_event_start? (epoch, or null for "nothing coming"), reminders_due? (list of up to 32 reminder ids) | The app's report of what it senses (`jrbar.presence`). `next_event_start` and `reminders_due` are the app's own Calendar and Reminders readings: while they keep arriving (each stands 180 s), the calendar and reminder glows use them and the helper never asks EventKit or needs a grant of its own -- one reader, so the glow and the shelf cannot disagree; absent keys leave the helper's own read in place, and a malformed one refuses the whole report. A live microphone, camera or screen share is a call: the quiet policy gains a `call` source per `call_quiet_mode` (default `sounds`: every light and banner stays, `audible_allowed` goes false), the escalation ladder holds at `ramp` (no menu-bar pulse on a shared screen, no chime into a headset; `escalation_stage` events follow the held stage), and `state.presence.celebrations_held` asks the app's celebrations to hold their burst. A meeting adds a `calendar` source per `meeting_quiet_mode` (default `off`) until `meeting_until`. `locked`, or `idle_seconds` of 300 or more, is away: an ask that reaches the menu-bar stage goes straight to the finale (still capped by `escalation_tier`). `focus: true` stands in for the daemon's own Focus reading while the daemon holds no Focus Status grant (Follow Focus must be on). A report stands for 180 s: the app renews it at least every minute while a sensor is live or `focus` is true, and a stale one ends the call (and the Focus stand-in) on its own. Unknown keys are ignored; a known key of the wrong type is `invalid_args`. `{presence}` (the `state.presence` document). |
-| `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `label` is the name the last published `state.sessions` row gives that session (the provider's own title), falling back to the label recorded with the row for a session `sessions` no longer lists; a `detail` that only repeated the new label is dropped. `duration` is set only when the daemon observed both ends of the active stint — a session first seen already over gets none. `unseen` is derived per row from `at > last_seen`, the ledger's persistent watermark; the daemon also marks everything seen when the last client disconnects. `{rows, total, last_seen}`. |
+| `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`, `ask_expired` (an ask closed by age, unanswered, with no process behind it). `label` is the name the last published `state.sessions` row gives that session (the provider's own title), falling back to the label recorded with the row for a session `sessions` no longer lists; a `detail` that only repeated the new label is dropped. `duration` is set only when the daemon observed both ends of the active stint — a session first seen already over gets none. `unseen` is derived per row from `at > last_seen`, the ledger's persistent watermark; the daemon also marks everything seen when the last client disconnects. `{rows, total, last_seen}`. |
 | `list_commands` | | The durable command journal: what was asked and how it settled. `answer_ask` writes its intent there before it types, so a crash mid-answer leaves a record behind. `{outcome_unknown[], counts{completed, failed, pending}, commands[]}`. `commands` is the newest 50 settled records, newest first, each `{command_id, command, args, status, accepted_at, settled_at, receipt, error}` with `status` `completed` or `failed`. `outcome_unknown` is the ids of records that are still `accepted` with no settlement: a command whose effect was never confirmed, which a restart must not pretend finished. `counts.pending` is its length. |
 | `list_roster` | scope (`all`/`live`/`workers`/`attention`/`finished`/`hidden`), provider, parent, since, limit | The independent roster: every session the collector retains — panel visibility never removes a row. Each row is the `state.sessions` shape, `axes` included (`{outcome, review, freshness}`, described once under `state`; Clear Agents acknowledgement is the review receipt), plus `schema` (record contract version), `pinned` (open ask) and `visibility` (the verdict the panel *would* give: `live`/`completion`/`hidden`). `hidden` scope is the audit cut: exactly what panel aging evicts. `{t:"roster", schema, now, scope, filters, sessions, counts{total, workers, attention, live, finished, hidden_from_panel, listed}, coverage}` — `coverage` names the bound: the collector's retained statuses; deeper history is `list_history`'s event ledger, not session records. `invalid_value` for an unknown scope. |
 | `session_timeline` | id? or session+provider, cwd?, limit (default 100, max 500), before? | A session's provider transcript as bounded, paginated items — the Overview inspector's Timeline (S7.2). `id` is a roster row id and resolves the status's provider/`session_id`/cwd itself (`not_found` for an unknown id); an ended session whose status aged out is still inspectable via `session` (the provider uuid) + `provider` + optional `cwd`. Items are `{seq, at, kind, role?, name?, text?, tool_use_id?, is_error?, sidechain?, model?, uuid?, parent_uuid?, origin:"transcript", recorded_at:null, untrusted?}` — `kind` is `message`/`tool_use`/`tool_result`/`turn_end`; `tool_use`/`tool_result` pair on `tool_use_id`; `at` is the row's own stamp (occurrence) and `recorded_at` stays null because per-row ingestion time was never kept. `untrusted` marks tool output and assistant text — content, never a command. `before` is the seq of the oldest item the caller holds; the reply is `{schema, events[], has_more, next_before, total, source{provider, file}, gaps[]}` where `gaps` names `transcript_not_found`, `transcript_unreadable`, `transcript_too_large:N`, `timeline_item_cap:N`, or `unsupported_provider` (providers without a transcript reader answer that, not an empty success). Supported: `claude` (`~/.claude/projects/**/*.jsonl`) and `codex` (`~/.codex/sessions/**/*.jsonl`), matched by uuid-in-filename. Reads are bounded (64 MB file cap, 5000-item cap, 600-char text, secret-run redaction). `invalid_value` without a provider. |
@@ -1338,15 +1910,16 @@ the main thread). Unknown args are ignored.
 | `mark_history_seen` | | The user just looked at History: advances the ledger's `last_seen` to when the command arrived (it waits on the slow lane, so not when it ran), so `unseen` rows and the "while you were away" banner measure from the last look, not from an app restart. `{last_seen}`. |
 | `audit_export` | scope (roster scopes), provider?, parent?, since?, ids?, view?, format (`json`/`markdown`), path? | The redacted audit bundle over the SAME `list_roster`/`list_history` projections the surfaces show: `{format, document{t:"audit_export", schema, core_version, generated_at, scope, counts, coverage, gaps[], sessions[], activity[], pricing?, redaction, audit_only}}` — sessions/activity rows are the projected fields only (no raw provider payloads), with the home prefix collapsed to `~` and secret-shaped runs (≥24 unseparated chars) replaced by `[redacted]`. `gaps[]` names what is missing: no collector snapshot, ledger rows past the `since` cut, a usage scan still pending. `pricing` is the cached per-provider usage coverage (`records`, `estimated_records`, `unpriced_records`, `unpriced_models`, `pending`/`stale` flags over the 30d range) — the export never blocks on a cold scan. `format: "markdown"` adds `text` (the rendered report). `path` writes the bundle through `write_private_export` to a user-picked destination (`written{path, bytes}` in the reply); without it the document returns for preview. `ids` (a list of roster ids) narrows sessions and activity to the rows a surface is showing — the Overview's preset, project, search and selection are app-side cuts no roster scope expresses — and `view` names that cut; the bundle's `gaps` then say "Exported the N sessions in <view>; the roster retains M." An application audit, not a compliance record. `invalid_value` for an unknown scope. |
 | `replay_events` | after?, limit? (default 500, capped at the journal size) | The event stream's resumable suffix. `after` is a `cursor` from an `event` frame or `hello`; omitting it replays the whole retained journal. Replies `{t:"events", stream, retained, dropped, events[], cursor, has_more, resync_required}` — `events` are the exact journaled frames in order, `cursor` is the last one returned, `has_more` means the page cut before the tail (call again with that `cursor`). A cursor from another stream incarnation answers `resync_required: true, reason: "foreign_stream"`; one the bounded journal already evicted answers `reason: "cursor_expired"` — never a fabricated empty catch-up. `retained`/`dropped` are the journal's coverage/gap counters. `unsupported` when the core cannot replay. |
-| `dismiss_session` | session | Acknowledges one live or stuck row until it next speaks — the same receipt `clear_completed` writes, aimed at a single session the batch clear would never touch; the row leaves `sessions` now and returns the moment a newer event lands. `not_found` for an unknown session, `refused` for a `remote:` row (the peer's to manage) or a session with an open ask (the ask is the point). |
+| `dismiss_ask` | session, request? | Takes one ask that **may be stale** (`ask.dismissible`) off the Mac's surfaces: the strip, the Screen Bar, the panel, the deck and History's open asks stop showing it. Sends nothing to the agent -- it is never an answer. The dismissal is remembered across a restart (`dismissed-asks.json`, 0600, content-free: a session id and the millisecond the ask opened) and covers only that ask. `request` pins the ask the card shows; a replaced one refuses `stale_request`. `{session, dismissed, opened_at}`. `not_found` for a session with no open ask, `refused` for a `remote:` row or an ask that is not stale ("only an ask that may be stale can be dismissed"). |
+| `dismiss_session` | session | Acknowledges one live or stuck row until it next speaks — the same receipt `clear_completed` writes, aimed at a single session the batch clear would never touch; the row leaves `sessions` now and returns the moment a newer event lands. `not_found` for an unknown session, `refused` for a `remote:` row (the peer's to manage) or a session with an open ask (the ask is the point; a stale one is dismissed with `dismiss_ask`). |
 | `new_session` | provider, cwd, terminal? | Starts that agent's CLI (`claude`, `codex`, `devin`, `grok`, `cursor-agent`, `hermes`) in `cwd`, in the owner's own terminal: `terminal` (`com.mitchellh.ghostty`, `com.apple.Terminal`, `com.googlecode.iterm2`) when named, else the terminal the most recent recorded session ran in, else Ghostty when installed, else Terminal.app. Ghostty gets a new tab in its front window at `cwd` with the command typed into the owner's shell (a new window through the reviewed launch plan when it refuses the Apple event); Terminal.app and iTerm2 a new window. `{provider, cwd, raised: "new_tab"\|"new_window", app, bundle_id}`. `invalid_args` for an unknown agent, a relative path or an unreviewed terminal; `not_found` for a directory that does not exist; `unsupported` when the terminal could not be opened. Explicit only -- the Overview's "New session here"; the agent's first prompt is still the owner's to type. |
 | `resume_session` | session, terminal? | History's Resume, by agent id (`list_history` rows carry it). A session `sessions` still lists opens exactly as `open_session` would. One it no longer lists is found in the process registry, which knows its directory: ended, it resumes in the terminal named by `terminal` (`com.mitchellh.ghostty`, `com.apple.Terminal` or `com.googlecode.iterm2`), else **in the terminal it ran in** (recorded at its SessionStart), else the terminal of the owner's most recent session, else Ghostty when installed -- as a new Ghostty tab at the session's directory with the resume typed into the owner's own shell, or a new Terminal.app / iTerm2 window: `{session, provider, cwd, raised: "new_tab"\|"new_window", app, bundle_id, detail: "resumed"}`. Still running (cleared from the list, not ended), its own tab, pane or Ghostty terminal is raised instead -- `raised: "pane"\|"tab"\|"terminal"\|"app"` -- and one JR-Bar cannot find refuses `not_found` ("…nothing new was started."): a second process on a live session is never started. `not_found` also for no registry record or a directory that is gone; `unsupported` for a remote row, a worker, or an agent JR-Bar cannot resume (Claude, Codex, Devin, Grok, Cursor, Hermes CLIs only); `invalid_args` for another `terminal`. Explicit only. |
-| `hooks_doctor` | | `jrbar hooks doctor` as data, for a per-provider line in Settings › Agents: `{checked_at, state_dir, shim, shim_env, ingress_socket{path, answers}, core_socket{path, answers}, pending[{file, lines}], providers[{provider, label, config_path, config_home, installed, hook_events, registered[], registered_commands[], would_install, would_install_command, last_event_at, pending_lines, decide?}]}`. `config_home` is `environment` when the provider's config lives in a folder the daemon's environment names (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) and `default` otherwise. `last_event_at` is the provider's event log's modification time (when a hook last reached the daemon), `pending_lines` the payloads queued for it while the daemon was down, `decide` (Claude and Codex only) `installed`/`missing`/`not_installed` for the decide lane. Content free: paths, command shapes, counts and times. Repair is `install_hooks`. |
-| `t3code_integration` | enabled? (bool) | Settings › Agents' T3 Code row, `jrbar-integrations enable\|disable t3code` as data: `{present, database, enabled, activity_statistics, read_only, observation}`. `present` is whether T3 Code's database (`$T3_HOME` or `~/.t3`, `userdata/state.sqlite`) exists, `read_only` whether `integrations.json` was written by a newer build. With `enabled` the opt-in is written first through the integration-settings facade (a no-op when already so) and the T3 reader is reconciled at once rather than on the next refresh; a file it cannot safely replace refuses `refused` and stays as it was. `observation` is null while off, else the reader's last look `{available, threads, active, needs_user, reason, in_flight}`. The read stays local and read-only. A non-bool `enabled` is `invalid_args`. |
+| `hooks_doctor` | | `jrbar hooks doctor` as data, for a per-provider line in Settings › Agents & Usage: `{checked_at, state_dir, shim, shim_env, ingress_socket{path, answers}, core_socket{path, answers}, pending[{file, lines}], providers[{provider, label, config_path, config_home, installed, hook_events, hooks_enabled, registered[], registered_commands[], would_install, would_install_command, last_event_at, pending_lines, decide?}]}`. `config_home` is `environment` when the provider's config lives in a folder the daemon's environment names (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) and `default` otherwise. `last_event_at` is the provider's event log's modification time (when a hook last reached the daemon), `pending_lines` the payloads queued for it while the daemon was down, `decide` (Claude and Codex only) `installed`/`missing`/`not_installed` for the decide lane, `hooks_enabled` false when the hooks are installed but the agent's own settings turn them off (Claude's `disableAllHooks`, Codex's hooks feature). Content free: paths, command shapes, counts and times. Repair is `install_hooks`. |
+| `t3code_integration` | enabled? (bool) | Settings › Agents & Usage' T3 Code row, `jrbar-integrations enable\|disable t3code` as data: `{present, database, enabled, activity_statistics, read_only, observation}`. `present` is whether T3 Code's database exists (`$T3CODE_HOME`, else `$T3_HOME`, else `~/.t3`; under `userdata/`, `statev2.sqlite` when a 0.0.46 nightly writes it, else `state.sqlite`, whichever changed last, and `database` names the one read), `read_only` whether `integrations.json` was written by a newer build. With `enabled` the opt-in is written first through the integration-settings facade (a no-op when already so) and the T3 reader is reconciled at once rather than on the next refresh; a file it cannot safely replace refuses `refused` and stays as it was. `observation` is null while off, else the reader's last look `{available, threads, active, needs_user, reason, in_flight}`. The read stays local and read-only. A non-bool `enabled` is `invalid_args`. |
 | `session_in_front` | session | Whether the owner is looking at that session's own tab, pane or Ghostty terminal right now, for "Quiet while you watch" (every Ghostty window is one process, so the app alone cannot tell a background tab from the one in front): `{session, in_front, evidence, app}`. `in_front` is `true` only on proof -- `focused_tab_tty` (Terminal.app / iTerm2 named the focused tab and it is the session's), or `recorded_surface` (Ghostty's focused terminal is the one recorded at the session's SessionStart, still in the session's directory -- the process's, or the one it started in; being the only terminal in that directory is never enough); `false` for `other_app`, `other_tab` or `other_surface` (the focused Ghostty terminal is in another directory, or the recorded one is open and something else is focused); `null` when it cannot be told -- `tmux_unproven` (the terminal around a tmux pane is not the session's ancestor), `tab_unproven` (kitty, WezTerm, an IDE: the app is in front, the tab unknown), `automation_not_granted` (macOS has not yet allowed JR-Bar's Apple events to that terminal; this command never asks), `focused_tab_unproven`, `focused_surface_unproven`, `ownership_unproven`, `not_running`, `remote`. Nothing is raised, typed or prompted. A surface reads `null` as "keep its own rule". |
-| `doctor` | | `{ok, core_version, commit, python, pid, socket, uptime_seconds, clients, hooks, devices, settings_generation, state_generation, commands, checks[{name, ok, detail}], memory, performance}` from `doctor.py` plus the hook shim and pending-file checks. `commit` is `JRBAR_COMMIT` from an installed deployment (`scripts/install-agents.sh`), else the checkout's HEAD; `alcove_follow_state` never fails the daemon (Alcove following is the app's). `performance` is `{metrics{name: {count, p50_ms, p95_ms, max_ms, outcomes}}}` (the `PerformanceRegistry` timings the legacy Why panel renders), `cpu{user_s, system_s, percent_since_last}` (rusage deltas between doctor calls; `percent_since_last` is `null` on the first), and `frames{state_generation, lights_generation, state_per_minute, lights_per_minute}` (documents actually broadcast, counted over a rolling 60 s window). `jrbar doctor` appends these as a `performance:` section when a daemon answers (its `--socket` selects another daemon); `--json` carries it under `daemon.performance`. |
-| `usage_history` | provider, range (`7d`, `30d`, `90d`, `365d`) | Daily and hourly token/cost rows for one provider from the local transcript scan (`usage_stats.scan_usage`, the same one the Python Usage window ran): `{provider, range, days[{date, tokens_in, tokens_out, cache_read, cost_usd}], hours[{hour, at, …}] (last 7×24), pricing{input_per_mtok, output_per_mtok, cache_read_per_mtok, as_of, approximate, currency, model, source, estimated} or null, account, state, records, estimated, estimated_records, unpriced_records, unpriced_models[], models[{model, tokens, cost_usd, records, priced, estimated}]}`. `tokens_in` counts input plus cache writes. `models` splits the range's tokens and dollars by the model each record ran on, most tokens first (Claude records carry the pricing key, `opus-4-5`; Codex records the turn's model) — it sums to the `days` rows it was cut from. `pricing` is the dominant model's quote from the Python price tables (`usage_stats.MODEL_PRICING`, `GPT_MODEL_PRICING`, `GEMINI_MODEL_PRICING`; cache reads 0.1× input, Anthropic cache writes 1.25×, OpenAI cache writes 1×): `source` is `table` (the model's own row), `codex_default` (a Codex record that names no model, the literal `codex` from rollouts without a `turn_context` row, is priced at the `model` in `~/.codex/config.toml`; records after a `turn_context` carry that turn's model, `gpt-5.6-sol`, `gpt-6-astra`, and are priced as it) or `reference` (a model the table does not know, priced at the provider's mid-range reference model, `sonnet` / `gpt-5.6` / `gemini-3-flash`, with `estimated: true` rather than $0). The document's `estimated` says whether any counted record was priced that way. `unpriced_records`/`unpriced_models` are the other failure: counted records whose model has no quote at all (a provider with no price table and no reference rate) — their tokens are in the rows, the $0 they contribute is a real absence rather than a price, and they are never blended into `estimated`. Claude and Codex have transcripts; Gemini and any other provider answer empty rows, Gemini with its reference quote so the rate card still shows. Every dollar figure is approximate. The scan runs on its own thread and the reply waits for it at most 2 s (`core_usage_history.REPLY_BUDGET_SECONDS`): a warm scan (the on-disk cache under `~/.local/state/jrbar/usage-scan-cache.*` is incremental, keyed by file mtime and size, so only new or changed transcripts are parsed) answers inside that; a cold one answers what memory holds, `pending: true` with empty rows when there is nothing yet, or the last document with `stale: true`, and the `usage_history_ready` event follows when the scan lands. `scanned_at` is the epoch of the scan behind the rows (null while pending). A document younger than 60 s answers as is. The daemon warms both providers' 30-day scans 8 s after it is ready, so on the Mac the first request is normally warm (measured 2026-09-10: cold Codex 45 s, Claude 11 s; warm Codex 1.5 s, Claude 1.0 s, plus 0.3 s of bucketing). |
-| `usage_graph` | days? (`7`/`30`/`90`/`365`), metric? (`tokens`/`cost`/`sessions`/`percent`), providers? (nonempty list of registry ids) | The shared-axis multi-provider usage chart — the same local-transcript scan `usage_history` runs, assembled by `usage_graph_worker.usage_graph_document` into `{graph, summary}`. `graph` is `{days, period_label, metric, labels[] (strided "MM/DD", empty slots draw no tick), series[{provider_id, values[], source_instance_id?, identity?, label?}], scale_max, heatmap, providers[], partial_provider_ids[], cost_semantics?}` — `values` and `labels` are index-aligned one slot per calendar day, and a series value `< 0` is a gap day (before the provider had samples): the client must break the line there, not bridge it. In `sessions` mode a provider whose sessions are counted only from its hook log (it has no transcript reader) gets gap days for every day before the first event that log still retains, because the log is compacted to its newest events: those days are unknown, not zero. Percent mode emits one series per (provider, source instance): two rows can share `provider_id`, so chart identity must carry `source_instance_id` (`label` is the daemon's display name, `provider · instance` for a non-default instance) — keying on `provider_id` alone merges them into a fabricated single line. `providers` echoes the resolved request so a picker can tell unchecked from checked-but-empty. `heatmap` is the JSON-projected day grid `{days[] (ISO), providers{id: {provider_id, cells[{day, tokens, sessions, intensity 0–4, color, accessibility_label}], totals{tokens, sessions}, data_status}}, aggregate, timezone}` — the same GitHub-style calendar the old Settings window drew. `summary` is the scan's own sentence ("Last 30 days: Claude 12.3M · 45 sessions") including its `Partial local history:` and `API-equivalent estimate` disclosures — the client shows it verbatim rather than recomputing. All three args are per-request overrides: absent means the stored `usage_graph_*` settings, and nothing the pane picks is written back. Invalid overrides are `invalid_args`, never a silent substitution. The scan is heavy on a cold transcript cache (~30 s): the command runs on the client's socket thread at utility QoS, so the reply can take that long — clients should pass a long timeout and show a scanning state. |
+| `doctor` | | `{ok, core_version, commit, python, pid, socket, uptime_seconds, clients, hooks, devices, settings_generation, state_generation, commands, checks[{name, ok, detail}], memory, performance}` from `doctor.py` plus the hook shim and pending-file checks. `commit` is `JRBAR_COMMIT` from an installed deployment (`scripts/install-agents.sh`), else the checkout's HEAD; `performance` is `{metrics{name: {count, p50_ms, p95_ms, max_ms, outcomes}}}` (the `PerformanceRegistry` timings the legacy Why panel renders), `cpu{user_s, system_s, percent_since_last}` (rusage deltas between doctor calls; `percent_since_last` is `null` on the first), and `frames{state_generation, lights_generation, state_per_minute, lights_per_minute}` (documents actually broadcast, counted over a rolling 60 s window). `jrbar doctor` appends these as a `performance:` section when a daemon answers (its `--socket` selects another daemon); `--json` carries it under `daemon.performance`. |
+| `usage_history` | provider, range (`7d`, `30d`, `90d`, `365d`), observe? (bool, default false) | Daily and hourly token/cost rows for one provider from the local transcript scan (`usage_stats.scan_usage`, the same one the Python Usage window ran): `{provider, range, days[{date, tokens_in, tokens_out, cache_read, cost_usd}], hours[{hour, at, …}] (last 7×24), pricing{input_per_mtok, output_per_mtok, cache_read_per_mtok, as_of, approximate, currency, model, source, estimated} or null, account, state, records, estimated, estimated_records, unpriced_records, unpriced_models[], models[{model, tokens, cost_usd, records, priced, estimated}], reading_files, partial}`. `partial` is true while the rows are a first answer (`pending`) or `reading_files` is above 0, which is when the app keeps its "still reading transcripts" note and asks again; it is false for a finished scan, including a `stale` one that is only being refreshed. Clients retain `stale` separately from scan progress and label completed cached rows as the previous reading while refreshing. A stale empty reading does not confirm that no local records exist. Older replies without `stale` default to false; a nonboolean value is malformed. `reading_files` is how many transcripts the scan has not finished reading (0 once every transcript in the window is read to its last complete line). A transcript of any size is streamed, never skipped: the scan reads in bounded passes of about 2 s, each stopping at a clean line boundary and saving where it stopped, so a cold start over many gigabytes shows what has been read so far (`stale: true`, `reading_files > 0`) and a `usage_history_ready` event follows each pass until `reading_files` is 0. A line over 16 MiB (`usage_stats.USAGE_RECORD_MAX_BYTES`) is skipped as one unparseable record; a transcript over 8 GiB (`USAGE_FILE_SANITY_BYTES`) is skipped whole. Both are counted in the scan's coverage, which is why the Usage Center says partial only while reading or after such a skip. `tokens_in` counts input plus cache writes. `models` splits the range's tokens and dollars by the model each record ran on, most tokens first (Claude records carry the pricing key, `opus-4-5`; Codex records the turn's model) — it sums to the `days` rows it was cut from. `pricing` is the dominant model's quote from the Python price tables (`usage_stats.MODEL_PRICING`, `GPT_MODEL_PRICING`, `GEMINI_MODEL_PRICING`; cache reads 0.1× input, Anthropic cache writes 1.25×, OpenAI cache writes 1×): `source` is `table` (the model's own row), `codex_default` (a Codex record that names no model, the literal `codex` from rollouts without a `turn_context` row, is priced at the `model` in `~/.codex/config.toml`; records after a `turn_context` carry that turn's model, `gpt-5.6-sol`, `gpt-6-astra`, and are priced as it) or `reference` (a model the table does not know, priced at the provider's mid-range reference model, `sonnet` / `gpt-5.6` / `gemini-3-flash`, with `estimated: true` rather than $0). The document's `estimated` says whether any counted record was priced that way. `unpriced_records`/`unpriced_models` are the other failure: counted records whose model has no quote at all (a provider with no price table and no reference rate) — their tokens are in the rows, the $0 they contribute is a real absence rather than a price, and they are never blended into `estimated`. Supported providers scan their configured local history. A provider without a local-history adapter answers empty rows, with a reference quote when available. Every dollar figure is approximate. The scan runs on its own thread. A normal request starts or joins it and immediately returns what memory holds: `pending: true` with empty rows when there is nothing yet, or the last document with `stale: true`. The socket scan lane never waits for that background scan. The on-disk cache under `~/.local/state/jrbar/usage-scan-cache.*` is incremental, keyed by file mtime and size, so only new or changed transcripts are parsed. A `usage_history_ready` event follows when an owed scan lands. With `observe: true`, the request reports current memory without starting or retrying work. A running scan returns its pending or stale reading and owes a completion event; a completed failure returns `unavailable`; an unrequested range returns `unavailable` with no invented scan. Observation can be repeated by multiple clients without consuming the outcome. A nonboolean `observe` is `invalid_args`. `scanned_at` is the epoch of the scan behind the rows (null while pending). A completed failed scan returns `unavailable` with "Local history could not be refreshed. Try again." and emits `usage_history_failed` when it owed a completion, instead of `usage_history_ready`. The client retains its prior rows. An active retry can return the previous reading with `stale: true`, or `pending: true` when no reading exists. A document younger than 60 s answers as is only when no scan failure is recorded. The daemon warms both providers' 30-day scans 8 s after it is ready, so on the Mac the first request is normally warm (measured 2026-09-10: cold Codex 45 s, Claude 11 s; warm Codex 1.5 s, Claude 1.0 s, plus 0.3 s of bucketing). |
+| `usage_graph` | days? (`7`/`30`/`90`/`365`), metric? (`tokens`/`cost`/`sessions`/`percent`), providers? (nonempty list of registry ids) | The shared-axis multi-provider usage chart — the same local-transcript scan `usage_history` runs, assembled by `usage_graph_worker.usage_graph_document` into `{graph, summary}`. `graph` is `{days, period_label, metric, labels[] (strided "MM/DD", empty slots draw no tick), series[{provider_id, values[], source_instance_id?, identity?, label?, has_priced_usage?}], scale_max, heatmap, providers[], partial_provider_ids[], cost_semantics?, cost_coverage?}` — `values` and `labels` are index-aligned one slot per calendar day, and a series value `< 0` is a gap day (before the provider had samples): the client must break the line there, not bridge it. In `sessions` mode a provider whose sessions are counted only from its hook log (it has no transcript reader) gets gap days for every day before the first event that log still retains, because the log is compacted to its newest events: those days are unknown, not zero. Percent mode emits one series per (provider, source instance): two rows can share `provider_id`, so chart identity must carry `source_instance_id` (`label` is the daemon's display name, `provider · instance` for a non-default instance) — keying on `provider_id` alone merges them into a fabricated single line. `providers` echoes the resolved request so a picker can tell unchecked from checked-but-empty. `reading_files` (graph, additive) counts transcripts the bounded scan pass did not finish; while it is above 0 the sums are what was read so far, the summary says `Still reading N files`, and the reply is not remembered, so the next ask continues from the saved offsets. A visible Usage pane continues positive `reading_files` replies at a paced interval, with one request at a time. Until it reaches zero, the client labels totals as read so far and does not stamp the document as a completed refresh. Hidden or closed panes do not continue; failures retain the document and require retry. Stable partial source coverage with zero `reading_files` does not trigger this continuation. `heatmap` is the JSON-projected day grid `{days[] (ISO), providers{id: {provider_id, cells[{day, tokens, sessions, intensity 0–4, color, accessibility_label}], totals{tokens, sessions}, data_status}}, aggregate, timezone}` — the same GitHub-style calendar the old Settings window drew. `summary` is the scan's own sentence ("Last 30 days: Claude 12.3M · 45 sessions") including its `Partial local history:`, `Still reading N files` and `API-equivalent estimate` disclosures — the client shows it verbatim rather than recomputing. In cost mode, optional `cost_coverage` contains nonnegative `observed_records`, `priced_records`, `unpriced_records`, `unpriced_sessions` and unpriced `token_categories` (`input`, `cached_input`, `cache_creation`, `output`). Counts cover deduplicated positive-token records in the selected range and providers; priced plus unpriced equals observed. A mixed-model session counts once among sessions with unpriced usage. This is price coverage, separate from incomplete source history. Cost series optionally include `has_priced_usage`: false means positive-token usage has no price estimate, so the client labels the subtotal `Unpriced`. True includes known zero-cost usage. Negative cost values mark days with unpriced usage and no known subtotal; empty days remain zero. All three args are per-request overrides: absent means the stored `usage_graph_*` settings, and nothing the pane picks is written back. Invalid overrides are `invalid_args`, never a silent substitution. Cold transcript scans can be slow. The command uses the daemon's serial scan lane, separate from short reads and person-triggered actions. Clients use a longer request timeout and show scanning progress. |
 | `list_effects` | | `{effects[], packs[], cadences[], generation}`: every effect in the runtime registry (builtins, the provider animations and installed packs) with typed `parameters[]`, a `preview {program, led_count}` rendered at the defaults, the blink `cadence` when one applies; `packs[]` is `{id, name, version, effects[ids], license?, path?}` from the pack store; `cadences[]` the three safe blink cadences. `generation` is derived from the catalog's own content -- every effect id and version, every installed pack's id, version and effect list, plus the assignment cache's save counter -- so it changes when the registry, the installed packs or the assignments change, and does not otherwise (`core_effects.catalog_generation`). It is stable across daemon restarts and never 0. |
 | `render_effect` | effect_id, parameters, led_count, color? | `{effect_id, program, led_count, parameters, cadence}`: the LEDS program the daemon would play for those parameters (unknown parameters dropped, bounds enforced), through the presentation safety compiler. Builtins use their registered shapes, provider animations the live solo renderer (`duration_seconds` sets the cycle), pack effects their `motion`/`color`/`cadence` data or a primitive for their meaning. |
 | `list_assignments` | | `{assignments[{effect_id, scope, target_id, parameters}], active_scene, generation}` from the effect assignment store; `parameters` come from the daemon's sidecar (`effect-assignment-parameters.json`). `generation` is derived from the assignments and the active scene (`core_effects.assignments_generation`). |
@@ -1363,6 +1936,8 @@ the main thread). Unknown args are ignored.
 | `import_scene_pack` | path, update? | Validates the pack file first (`preview_source`, so nothing writes before the plan exists — a version-1 pack is migrated in memory, `invalid_pack` when the validator refuses it), then `ScenePackStore.install` (or `update` with `update: true`). `{pack_id, name, scenes[], installed, migrated, status}`; `conflict` when the pack id is installed and no update was asked for. Scene packs are data-only, network-free and bounded, must declare reduced-motion / high-contrast / non-colour-cue support, and may only name the known scenes (`focus`, `calm`, `night`, `demo`, `travel`, `dnd`). |
 | `preview_scene_pack` | pack_id, led_count? | `not_found` when no installed pack has that id. Else renders the pack's scene-by-scene policy tour — one step per overridden scene, the scene's colour dimmed by its brightness policy, the motion policy choosing step length and interpolation — through the presentation safety compiler at the requested LED count (clamped 2–24). `{pack_id, led_count, program}` — an `EffectPreview` with a `pack_id` extra the app ignores. |
 | `serve_token` | | `{token, enabled, running}` — the bearer `JRBAR_SERVE_ACCESS_TOKEN` the daemon was launched with (null when none), whether `serve_enabled` is on, and whether the loopback server is actually bound. When `serve_enabled` and the token are both present the daemon hosts `serve.create_serve_server` in-process (port `JRBAR_SERVE_PORT`, default 8737); a missing token means no endpoint, never anonymous. The token travels on the local socket only, never inside the HTTP document it guards. The same server carries `GET /asks.json` and `POST /answer` (see "Answering from serve" below), which act only while `serve_answer_enabled` is on. |
+| `adopt_seal` | | Seals the settings the daemon holds as the baseline for the protected keys (see "Protected settings"). `{state}`. Refused `seal_unavailable` when the daemon has no seal key, and `refused` when the file could not be written (nothing is sealed then). |
+| `keep_protected_change` | | Applies and seals the protected values a foreign edit of `settings.json` tried to set and the daemon ignored. `{state, kept}`; `nothing_to_keep` when there is none. |
 | `deck_press` | index 0…23 | What a press of that control does, from the screen (the physical key runs the same rule through `DeckInputDispatch`). An explicit `deck-controls.json` mapping wins (`{index, action: <kind>, receipt}`; `next_bank` / `previous_bank` add `bank`, `next_scope` / `previous_scope` add `scope`; a failed app shortcut is `refused` with the deck controller's sentence). Else a session key: when that session has a live ask the decide lane holds -- in any terminal, frontmost or not -- or a live ask whose terminal or origin app is frontmost, the press approves it through the `answer_ask` path (`{action: "answer_ask", decision: "approve", answered: true}`); otherwise it reveals the session through the board's navigation resolver (`{action: "reveal_session", receipt, activated}`). `not_found` with "No session assigned." / "Reserved: session not observed." / "Configure this control in the Creator Micro window."; `input_check` while input check is on. |
 | `deck_answer` | index 0…12, decision (`approve`, `deny`, `always`, `answer`), answers? (with `answer`), request?, command_id? | An explicit answer from a session key -- the Rail's Deny, Always allow (from its own button) or a picked choice, a Stream Deck key through serve's `/answer` -- where a press can only approve. The key's session is answered through `answer_ask` with `only_if_frontmost: true`: the same fences, command journal and decide lane (`always` and `answer` only while the lane holds the agent's own prompt), so a key can never do what the panel's own buttons could not. Never falls back to revealing: a key whose session has no live ask refuses `not_found`. `{index, identity, session, action: "answer_ask", …the answer_ask receipt}`. `invalid_args` for another decision or an index past the session keys; `not_found` for an empty or reserved key; `input_check` while input check is on. Runs on the socket thread. |
 | `deck_pin` | index 0…12 | Toggles the pin on the identity at that key (pins are per identity and survive Clear absent). `{index, identity, pinned}`; `not_found` for an unassigned key. |
@@ -1370,7 +1945,7 @@ the main thread). Unknown args are ignored.
 | `deck_scope` | delta | Steps the board scope through `automatic` plus the configured provider scopes, wrapping (what the `next_scope` / `previous_scope` aux actions run). `{scope, scopes}`. |
 | `deck_rail` | edge (`off`, `left`, `right`, `top`, `bottom`) | The compact rail's edge, persisted with the board. `{edge}`. |
 | `deck_clear_absent` | | Unpinned identities with no observed session leave the board; later keys move up. `{removed, banks}`. |
-| `deck_plan_keymap` | profile, layer, include_auxiliary, layers? | `creator_micro_keymap.plan_keymap` for that layer over the inspected keymap: `{profile, layer, include_auxiliary, changes[], preview, controls[{index, label}]}`, `preview` being the Python review alert's text. `layers` (`[{"layer": int, "name": str}]`) previews the multi-layer write instead: every listed layer is claimed and named. The first call (and any call after 120 s, or after a write) inspects the device: the output service is stopped, the keymap read, the pad handed back. `invalid_plan` with the ValueError message; otherwise the receipt code (`connection_required` when the pad is not approved, `busy` while another setup runs). Socket thread. |
+| `deck_plan_keymap` | profile, layer, include_auxiliary, layers? | `creator_micro_keymap.plan_keymap` for that layer over the inspected keymap: `{profile, layer, include_auxiliary, changes[], preview, controls[{index, label}]}`, `preview` being the Python review alert's text. `layers` (`[{"layer": int, "name": str}]`) previews the multi-layer write instead: every listed layer is claimed and named. The first call (and any call after 120 s, or after a write) inspects the device: the output service is stopped, the keymap read, the pad handed back. `invalid_plan` with the ValueError message; otherwise the receipt code (`connection_required` when the pad is not approved, `busy` while another setup or settings operation runs). Deck worker. |
 | `deck_apply_keymap` | profile, layer, include_auxiliary, layers? | `CreatorMicroSetup.apply` of that plan (private backup first, verified write, readback): `{code: keymap_verified\|already_configured, message, changes, state, backup_at, generation}`; input check turns on after a verified write. With `layers`, one write claims and names every listed layer (`apply` re-derives the whole plan, so a forged selection cannot write arbitrary JSON). Refusals are error replies whose code is the receipt (`keymap_changed`, `recovery_required`, `readback_mismatch`, …). No alert is shown; the confirmation is the app's. |
 | `deck_restore_keymap` | | `CreatorMicroSetup.restore` from the first private backup: `{code: keymap_restored\|already_restored, message, state, backup_at, generation}`, same refusals (`backup_invalid` with no backup, `keymap_changed` for later device edits). |
 | `deck_approve_device` | | The Devices pane's Enable, for a pad that is here: the daemon probes HID once more and refuses with `no_device` ("No Creator Micro 2 is connected.") when it sees none, so a remembered serial is never enabled blindly; otherwise the sole stable serial becomes `creator_micro_device_serial` with `creator_micro_enabled` and the output service is reconfigured. `{serial, approved}`; `ambiguous_device_identity`, `device_identity_unavailable`. |
@@ -1491,8 +2066,11 @@ bearer-authenticated like `/status.json` -- never anonymous, whatever
 `serve_answer_enabled` is on (off by default; separate from
 `serve_enabled`, since reading the fleet and answering for the owner are
 different grants). The daemon's own server reads the switch on every
-request; a standalone `jrbar serve --allow-answers` reaches the daemon over
-`core.sock` and reads the same switch. Its answer waits up to 12 s for the
+request; a standalone `jrbar serve --allow-answers` reads the switch and the
+asks over `core.sock`, but its answers are refused there (`unauthenticated`,
+HTTP `403`): answering is app-only on the socket, and only the serve server
+inside the daemon answers, through the daemon's own dispatch and not the
+socket. Its answer waits up to 12 s for the
 reply -- past `answer_ask`'s own 6 s budget and the hops to the main
 thread -- so a slow focus check is never reported as an unreachable monitor
 while the answer is still delivered.
@@ -1506,7 +2084,7 @@ while the answer is still delivered.
   `always` only when the agent offered a rule to remember, `answer` only
   for a held question (`choices`); once the decide lane has `decided`, the
   hold is spent, and stays spent until the agent's own events close the
-  request (an hour at most): neither `always` nor `answer` (nor its
+  request (7 days at most): neither `always` nor `answer` (nor its
   `choices`) is offered.
 - `POST /answer` names one `session` (the daemon's id) or one `slot` and an
   explicit `decision`, in the query string (`/answer?slot=2&decision=deny`,
@@ -1674,7 +2252,16 @@ daemon's LaunchAgent, and runs `jrbar agent-monitor install all` so every
 provider with a config on this Mac -- claude, codex, devin, grok, cursor,
 hermes, openclaw, opencode, antigravity, kiro, pi, gemini -- runs it; an
 installed package can also locate a sibling shim). The packaged app uses
-`Contents/Helpers/jrbar-hook` and the chosen-provider policy below.
+`Contents/Helpers/jrbar-hook` and the chosen-provider policy below. Provider
+configs do not name that path, which dies with the bundle: they run a launcher
+at `~/.local/share/jrbar/hook/jrbar-hook` (a small `sh` script, mode 0755, that
+runs the bundled shim and exits 0 when the bundle is gone, so a trashed or moved
+app never fails an agent's tool call). `install.stable_hook_shim` writes it on
+every install and refresh, and the app's hook stamp includes the bundle's shim
+path, so moving the app between `~/Applications` and `/Applications` refreshes
+the hooks once. `jrbar agent-monitor uninstall all` removes the launcher with
+the last hook. A shim outside an app bundle (the development layout) is named
+as it is.
 The OpenClaw handler,
 the OpenCode plugin and the pi extension embed the shim argv; Antigravity's
 envelope pipes into it.
@@ -1687,12 +2274,12 @@ install would write, the shim path, whether the ingress and core sockets
 answer, and any queued payloads; for Claude and Codex it also says whether
 the decide lane is installed (`decide=installed|missing|not_installed`).
 An install from before the lane existed keeps working and reads `missing`
-until Settings › Agents reinstalls the hooks.
+until Settings › Agents & Usage reinstalls the hooks.
 
 ### Claude Code's status line (`--statusline`)
 
 `jrbar-hook --statusline [--then <command>]` is Claude Code's `statusLine`
-command when the person turns on Settings › Usage › Claude Code status line
+command when the person turns on Settings › Agents & Usage › Advanced › Claude Code status line
 (or runs `jrbar agent-monitor install claude-statusline [--wrap]`). It sends
 the statusLine JSON as one frame whose header carries `"kind":"statusline"`
 (provider `claude`). The daemon never treats that frame as a hook event:
@@ -1800,7 +2387,7 @@ puts it there without a password): the app supervises
 child (`JRBAR_SUPERVISED=1`, `JRBAR_HOOK_EXEC` = the bundled shim,
 `JRBAR_COMMIT` from the bundle's `JRBarCommit`) and registers itself as a
 login item. A fresh installation leaves provider configs alone until the
-person connects a provider in Settings › Agents. On an upgrade, the app
+person connects a provider in Settings › Agents & Usage. On an upgrade, the app
 asks the live daemon to `refresh_hooks` for its currently owned integrations,
 preserving disabled flags and custom log destinations. It records the new
 build stamp only after the daemon affirms every selected result.
@@ -1829,7 +2416,13 @@ Under the Swift app in development: `JRBAR_CORE_EXEC=scripts/run-core.sh`
 makes the app spawn and supervise the daemon (`CoreSupervisor`; the script
 execs `.venv/bin/python -m jrbar core`, passing `JRBAR_CORE_SOCKET` through
 as `--socket`). A dev daemon run by hand (`.venv/bin/python -m jrbar core`)
-needs the packaged app quit first: one process owns the event socket.
+needs the packaged app quit first: one process owns the event socket. A
+daemon started that way holds no app secret, so it refuses privileged commands
+(see "Who may send what"); `JRBAR_DEV_ALLOW_UNAUTH=1 .venv/bin/python -m jrbar
+core` lets a source checkout take them from any connection, for development
+with no app attached. The frozen release daemon ignores that variable. A
+daemon the app starts, `JRBAR_CORE_EXEC` ones included, is handed the secret
+and needs no variable.
 
 The two development LaunchAgents (`com.jonathanreed.jrbar.core` / `.ui`,
 `scripts/install-agents.sh`) are parked as `*.plist.disabled` in the state
@@ -2056,6 +2649,84 @@ plays `pendulum` at 2.2 s (Effect Studio's Pendulum default) when it has no moti
 Automatic for it is stored as `"auto"`, the one provider-animation value
 that is ever written as a word.
 
+## Firmware updates
+
+A person updates a SidePulse's firmware from Settings › Devices & Lighting (a
+"Download and update" button and a confirmation sheet) or with
+`jrbar firmware upgrade`. It is the vendor's procedure, run by JR-Bar and
+watched: copy the model's `FIRMWARE.BIN` alone to the top of the device's
+drive, leave the device untouched for at least ten seconds, and read
+`STATUS.TXT` again. The device applies the file only from a complete valid
+image, so a failure at any step leaves it on its old firmware.
+
+**Nothing leaves the Mac by itself.** The app pins every release it knows
+(`device_firmware.RELEASES`): the host, the path, the zip's SHA-256, the image's
+SHA-256, size and header. "Is there an update" is answered offline by comparing
+what the device reports with that table; there is no check for news, no timer
+and no request at launch. The one request is a single `GET` for the package, to
+`raw.githubusercontent.com` over https, made only inside `firmware_update` (or
+`jrbar firmware upgrade --yes`) when the verified package is not already cached
+under `~/.local/state/jrbar/firmware/` (private files) and no `package` file was
+named. No redirect is followed and no other host is contacted; the body is
+capped at 1 MiB and 45 s. The bytes are checked against the pinned zip hash
+before the zip is opened, then each member name is validated (the four
+expected files, no `..`, no absolute path, no link, no encryption, size caps),
+then `FIRMWARE.BIN` is checked against its own pinned hash, size and header
+(`SDUP` for a Pro, `UF2` for a Dot). A package that fails any step is never
+used and never cached.
+
+**Job document** (`state.firmware`, `firmware_status.job`, `firmware_update.job`):
+`{id, device, model, name, serial, from_version, to_version, phase,
+phase_label, outcome, code, message, what_to_do, source, started_at,
+phase_started_at, updated_at, finished_at, download, removed_sidecars,
+new_slot, previous_firmware, colour_check, restarted}`.
+
+- `phase` runs `checking`, `downloading` (skipped for a cached or named
+  package), `verifying`, `preparing`, `copying`, `restarting`, `confirming`,
+  `done`. `phase_label` is the sentence the app shows.
+- `outcome` is null while it runs, then `updated` (the device itself reports
+  the new version), `failed` (the device is on its old firmware or an
+  unexpected one; `code` and `what_to_do` say which and what to do) or
+  `unconfirmed` (the device's drive did not come back within two minutes: the
+  honest "check the device and reconnect", never a success).
+- `code` on a failure is a `PackageError` code (`bad_hash`, `too_large`,
+  `bad_member`, `bad_zip`, `wrong_model`, `bad_header`, `bad_size`, `network`,
+  `timeout`, `http_error`, `redirected`, `unreadable`), a drive code
+  (`drive_full`, `no_space`, `no_room`, `copy_failed`), or `device_changed`,
+  `not_applied`, `unexpected_version`, `no_return`, `internal`.
+- `source` is `download`, `cache` or `file`. `download` is `{bytes, total}`
+  while downloading, else null.
+- `previous_firmware` is `{version, slot, valid, firmware}` after a Pro
+  update whose own status shows the old image still valid in the other slot
+  (the Pro keeps both: the old firmware is in slot A when B is now active);
+  null otherwise. JR-Bar writes no rollback: the vendor documents none.
+- `colour_check` is true when the update crossed Pro 1.1.0, whose firmware
+  applies its own colour gains, so the app can suggest re-checking colour
+  calibration.
+- `removed_sidecars` lists the macOS `._` files removed from the drive.
+
+**What runs, in order.** `checking`: the device is read past the host's cache
+(`mmap` + `msync(MS_INVALIDATE)` + `pread`) and refused unless it names one
+model, its serial prefix agrees (`SPP-` Pro, `SPD-` Dot), its slot or build is
+known, it is not mid-update, it runs an older release than the catalog's, no
+other update is running, and the Mac is not on battery below 30%. `preparing`:
+from here every write to that device's drive (and its linked partner's) is held
+(`firmware_hold`): the LED writer, the keepalive and the hardware worker wait.
+The root directory of these drives holds 16 entries, a long name or a macOS
+`._` sidecar takes two or three, and a plain copy of the Pro's image failed with
+"No space left on device" at 92% free for exactly that reason, so JR-Bar counts
+the entries and removes only `._` files it has read and found to be sidecars
+(empty, AppleDouble, or blanked), never a device file, and refuses with the
+names in the way if there is still no room. `copying`: a streamed write (no
+extended attributes) of `FIRMWARE.BIN`, replacing one that is there (the Dot's
+drive always shows a fixed `FIRMWARE.BIN`, so its presence proves nothing), then
+a flush. `restarting`: wait at least ten seconds, then up to 120 s in all for the
+drive (possibly under a new name, found by its serial) to answer.
+`confirming`: only the `release_version` (Pro) or `app_version` (Dot) the device
+itself reports counts. Then the `._FIRMWARE.BIN` sidecar macOS made is removed
+and the hold ends. The hold also ends on any failure and after a hard deadline
+whatever happens, and the LED program is rewritten once the device is back.
+
 ## Versioning
 
 `v` is bumped only for incompatible changes. Additive fields are always
@@ -2159,3 +2830,38 @@ the account has, so for the families it covered it is the whole truth —
 including which windows a family does **not** have. Rollout windows for those
 families are discarded rather than merged; only families the live read did
 not cover fall back to rollout evidence.
+
+Menu bar item shortcuts are app-owned preferences in
+`MenuBarSettings.itemHotkeyBindings`. The app resolves and presses the selected
+Accessibility item after a person presses its shortcut. These bindings are not
+core facts or daemon commands and do not require a Python settings migration.
+
+
+### Kiro CLI-owned allowances
+
+Kiro usage starts disabled and requires per-provider usage consent. The
+collector reads the default Kiro CLI account only. It opens the CLI-owned
+SQLite database read-only, using `KIRO_DATA_DIR/data.sqlite3` when that
+absolute directory is configured, otherwise
+`~/Library/Application Support/kiro-cli/data.sqlite3`. It reads the existing
+access token and profile ARN, never saves a Keychain key, refreshes the
+token, or invokes a chat command. Named instances cannot borrow this CLI
+account and return `unsupported`.
+
+The profile selects one of two fixed regional `GetUsageLimits` endpoints:
+`codewhisperer.us-east-1.amazonaws.com` or `q.eu-central-1.amazonaws.com`.
+The consent disclosure names both hosts and the access token and profile
+ARN sent to them. No credential read or request occurs before consent.
+Monthly plan credits and enabled, capped overage credits are separate
+lanes. Reset timestamps must be reported Unix seconds. A non-empty bonus
+list makes plan spend ambiguous, so that response supplies no monthly or
+trial lane. If no separable allowance remains, the snapshot is
+`unsupported` with reason `no_separable_quota`. This API path does not
+establish complete CLI trial or bonus usage parity.
+
+An explicit `provider_sign_in` action can open the resolved `kiro-cli`
+executable with the fixed `login` argument in the person's terminal. The
+CLI owns that interactive sign-in. Kiro has no configured updater or
+proven automatic sign-in watcher. After finishing login, the person
+refreshes the usage card, which reads the new CLI state through the same
+consent gate. Background collection never invokes `kiro-cli login`.

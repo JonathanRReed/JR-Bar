@@ -35,7 +35,7 @@ jrbar doctor          # the daemon's commit, memory, sockets, hooks, devices, ch
 jrbar hooks doctor    # what each provider's config runs today; every line should say runs=shim
 ```
 
-Settings › Advanced has the same Doctor as a checklist plus the daemon's
+Settings › General › Advanced has the same Doctor as a checklist plus the daemon's
 log tail. If a session looks wrong, the panel's "Why this light" row and
 its popover say which session and which rules produced the light.
 

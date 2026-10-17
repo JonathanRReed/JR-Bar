@@ -518,3 +518,35 @@ def test_provider_mismatch_preserves_hold() -> None:
         coordinator=QuotaPowerHoldCoordinator(),
         now=300.0,
     ) is AgentMode.WORKING
+
+
+def test_a_finished_agents_lease_does_not_hold_the_mac_for_the_working_one() -> None:
+    event_source = SourceKey("codex", "hooks", "local", "live_agent_events")
+    work_key = WorkKey(event_source, WorkIdentifier("session-2"))
+    status = type("Status", (), {})()
+    status.agent_id = "codex:session:session-2"
+    status.provider = "codex"
+    status.work_key = work_key
+    status.mode = AgentMode.WORKING
+    status.is_subagent = False
+    status.updated_at = type("Updated", (), {"timestamp": lambda self: 100.0})()
+    holds = QuotaPowerHoldCoordinator()
+    # A session that already finished: its lease was renewed once and
+    # nothing ever ended it.
+    holds.renew(AgentPowerHoldKey("codex:session:session-1", "codex", "account-a"), event_at=50.0)
+    first, context, binding = _runtime_capacity(110.0, 0.0)
+    second, _, _ = _runtime_capacity(120.0, 0.0)
+
+    def run(snapshot, now):
+        return quota_adjusted_work_mode(
+            AgentMode.WORKING,
+            statuses=(status,),
+            bindings_by_work={work_key: binding},
+            capacity_by_provider={"codex": snapshot},
+            context=context,
+            coordinator=holds,
+            now=now,
+        )
+
+    assert run(first, 110.0) is AgentMode.WORKING
+    assert run(second, 165.0) is AgentMode.IDLE_READY

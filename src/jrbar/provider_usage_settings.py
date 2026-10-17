@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .companion_seal import PROVIDER_USAGE, guard_companion, record_companion
+from .private_io import document_digest
 from .provider_instances import (
     DEFAULT_PROVIDER_INSTANCE_SOURCE_ID,
     OPEN_SESSION_APP,
@@ -19,6 +20,24 @@ from .provider_instances import (
 from .provider_usage_platform import provider_descriptor, provider_descriptors
 
 PROVIDER_USAGE_SETTINGS_SCHEMA_VERSION = 3
+
+#: The version of the usage consent a person gives. A provider's quota read
+#: leaves the Mac (or reads the sign-in another app keeps), so it runs only
+#: while the provider's saved ``usage_consent_version`` is at least this. A
+#: later build that changes what a read sends or reads bumps it, and every
+#: provider asks again.
+USAGE_CONSENT_VERSION = 1
+
+#: Where a consent came from, kept so "I turned this on" can be told apart
+#: from "an upgrade kept what already worked".
+USAGE_CONSENT_SOURCES = frozenset(
+    {"setup", "settings", "cli", "usage_center", "migration"}
+)
+
+#: The migration that carried working installs forward (see
+#: ``provider_usage_consent.migrate_usage_consent``). Zero means it has not
+#: run on this document yet.
+USAGE_CONSENT_MIGRATION_VERSION = 1
 
 
 class ProviderUsageSettingsError(ValueError):
@@ -88,6 +107,17 @@ class ProviderPreference:
     open_session_action: str = OPEN_SESSION_APP
     consent_reference: str | None = None
     credential_account_reference: str | None = None
+    #: The person's consent to this provider's usage read, versioned like
+    #: ``claude_plan_limits_consent_version``. Zero is "never asked": the
+    #: read is off. ``usage_consent_source`` says where the consent came from
+    #: and ``usage_consented_at`` when (epoch seconds, None for a carried one).
+    usage_consent_version: int = 0
+    usage_consent_source: str | None = None
+    usage_consented_at: float | None = None
+
+    @property
+    def usage_consented(self) -> bool:
+        return self.usage_consent_version >= USAGE_CONSENT_VERSION
 
     def __post_init__(self) -> None:
         descriptor = provider_descriptor(self.provider_id)
@@ -142,8 +172,24 @@ class ProviderPreference:
                 for key, value in self.options
             )
             or (self.browser_sources and not descriptor.supports_browser_sources)
+            or type(self.usage_consent_version) is not int
+            or self.usage_consent_version < 0
+            or (
+                self.usage_consent_source is not None
+                and self.usage_consent_source not in USAGE_CONSENT_SOURCES
+            )
+            or (
+                self.usage_consented_at is not None
+                and (
+                    isinstance(self.usage_consented_at, bool)
+                    or not isinstance(self.usage_consented_at, (int, float))
+                    or not 0.0 <= float(self.usage_consented_at) < 1e13
+                )
+            )
         ):
             raise ProviderUsageSettingsError("invalid provider preference")
+        if self.usage_consented_at is not None:
+            object.__setattr__(self, "usage_consented_at", float(self.usage_consented_at))
         object.__setattr__(self, "threshold_remaining", float(self.threshold_remaining))
         object.__setattr__(self, "source_instance_id", instance_key.source_instance_id.value)
         object.__setattr__(self, "label", profile.label)
@@ -214,6 +260,8 @@ class ProviderUsageSettings:
     schema_version: int
     providers: tuple[ProviderPreference, ...]
     menu_display: MenuUsageDisplay = MenuUsageDisplay()
+    #: Which consent migration has run on this document (0: none yet).
+    usage_consent_migration: int = 0
 
     def __post_init__(self) -> None:
         expected = tuple(descriptor.provider_id for descriptor in provider_descriptors())
@@ -231,6 +279,8 @@ class ProviderUsageSettings:
             or len(identities) != len(set(identities))
             or defaults != expected
             or type(self.menu_display) is not MenuUsageDisplay
+            or type(self.usage_consent_migration) is not int
+            or self.usage_consent_migration < 0
         ):
             raise ProviderUsageSettingsError("invalid provider usage settings")
 
@@ -291,6 +341,10 @@ class ProviderUsageSettings:
                 open_session_action=OPEN_SESSION_APP,
                 consent_reference=None,
                 credential_account_reference=None,
+                # A new account never inherits another account's consent.
+                usage_consent_version=0,
+                usage_consent_source=None,
+                usage_consented_at=None,
             )
         return self.with_instance(preference.with_profile(profile))
 
@@ -309,6 +363,55 @@ class ProviderUsageSettings:
                 enabled=enabled,
             )
         )
+
+    def with_usage_consent(
+        self,
+        provider_id: str,
+        granted: bool,
+        *,
+        source: str,
+        at: float | None = None,
+        source_instance_id: str = DEFAULT_PROVIDER_INSTANCE_SOURCE_ID,
+    ) -> ProviderUsageSettings:
+        """Record (or withdraw) the person's consent to this provider's
+        usage read. Turning it on also turns the provider on, so the switch
+        means what it says; turning it off leaves the provider's local
+        figures alone."""
+        if type(granted) is not bool:
+            raise ProviderUsageSettingsError("usage consent must be a boolean")
+        if granted and source not in USAGE_CONSENT_SOURCES:
+            raise ProviderUsageSettingsError("unknown usage consent source")
+        current = self.preference(provider_id, source_instance_id)
+        if granted:
+            updated = replace(
+                current,
+                enabled=True,
+                usage_consent_version=USAGE_CONSENT_VERSION,
+                usage_consent_source=source,
+                usage_consented_at=at,
+            )
+        else:
+            updated = replace(
+                current,
+                usage_consent_version=0,
+                usage_consent_source=None,
+                usage_consented_at=None,
+            )
+        # A person who is managing consent has no use for the upgrade
+        # migration: sealing it here means a later start can never turn a
+        # provider back on from an old reading.
+        sealed = self._replace(updated)
+        return replace(
+            sealed,
+            usage_consent_migration=max(
+                sealed.usage_consent_migration, USAGE_CONSENT_MIGRATION_VERSION
+            ),
+        )
+
+    def with_usage_consent_migration(self, version: int) -> ProviderUsageSettings:
+        if type(version) is not int or version < 0:
+            raise ProviderUsageSettingsError("invalid usage consent migration version")
+        return replace(self, usage_consent_migration=version)
 
     def with_browser_sources(
         self,
@@ -430,25 +533,6 @@ class ProviderUsageSettings:
             menu_display=replace(self.menu_display, **{flag: enabled}),
         )
 
-    def hidden_menu_providers(self) -> frozenset[str]:
-        provider_ids = {preference.provider_id for preference in self.providers}
-        return frozenset(
-            provider_id
-            for provider_id in provider_ids
-            if all(
-                not preference.menu_visible
-                for preference in self.providers
-                if preference.provider_id == provider_id
-            )
-        )
-
-    def hidden_menu_instances(self) -> frozenset[tuple[str, str]]:
-        return frozenset(
-            preference.identity
-            for preference in self.providers
-            if not preference.menu_visible
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class LoadedProviderUsageSettings:
@@ -470,7 +554,7 @@ def default_provider_usage_settings() -> ProviderUsageSettings:
         tuple(
             ProviderPreference(
                 descriptor.provider_id,
-                enabled=descriptor.provider_id != "openai-api",
+                enabled=descriptor.provider_id not in {"openai-api", "factory", "kimi", "kilo", "kiro"},
                 browser_sources=False,
             )
             for descriptor in provider_descriptors()
@@ -562,6 +646,17 @@ def _preference_from_payload(
     }
     menu_visible = payload.get("menu_visible", fallback.menu_visible)
     threshold = payload.get("threshold_remaining", fallback.threshold_remaining)
+    consent_version = payload.get("usage_consent_version", 0)
+    if type(consent_version) is not int or consent_version < 0:
+        consent_version = 0
+    consent_source = payload.get("usage_consent_source")
+    if consent_source not in USAGE_CONSENT_SOURCES:
+        consent_source = None
+    consented_at = payload.get("usage_consented_at")
+    if isinstance(consented_at, bool) or not isinstance(consented_at, (int, float)):
+        consented_at = None
+    elif not 0.0 <= float(consented_at) < 1e13:
+        consented_at = None
     raw_options = payload.get("options", {})
     options = ()
     if isinstance(raw_options, dict):
@@ -608,6 +703,9 @@ def _preference_from_payload(
             open_session_action=profile.open_session_action,
             consent_reference=profile.consent_reference,
             credential_account_reference=profile.credential_account_reference,
+            usage_consent_version=consent_version,
+            usage_consent_source=consent_source if consent_version else None,
+            usage_consented_at=consented_at if consent_version else None,
         )
     except (ProviderUsageSettingsError, TypeError, ValueError):
         return fallback
@@ -622,17 +720,6 @@ def _menu_display_from_payload(payload: object) -> MenuUsageDisplay:
         value = payload.get(flag, getattr(defaults, flag))
         values[flag] = value if type(value) is bool else getattr(defaults, flag)
     return MenuUsageDisplay(**values)
-
-
-def _document_digest(document: dict[str, object]) -> str:
-    encoded = json.dumps(
-        document,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _read_real_document(target: Path) -> dict[str, object]:
@@ -675,7 +762,9 @@ def load_provider_usage_settings(
             None,
             target if real_path else None,
         )
-    source_revision = _document_digest(document)
+    if real_path:
+        document = guard_companion(PROVIDER_USAGE, target, document)
+    source_revision = document_digest(document)
     version = document.get("settings_schema_version")
     if type(version) is not int:
         return LoadedProviderUsageSettings(
@@ -739,15 +828,23 @@ def load_provider_usage_settings(
         )
         for provider_id, source_instance_id in additional_identities
     )
+    migration = document.get("usage_consent_migration_version", 0)
     settings = ProviderUsageSettings(
         PROVIDER_USAGE_SETTINGS_SCHEMA_VERSION,
         default_preferences + additional_preferences,
         _menu_display_from_payload(document.get("menu_display")),
+        migration if type(migration) is int and migration >= 0 else 0,
     )
     unknown = tuple(
         (key, value)
         for key, value in document.items()
-        if key not in {"settings_schema_version", "providers", "menu_display"}
+        if key
+        not in {
+            "settings_schema_version",
+            "providers",
+            "menu_display",
+            "usage_consent_migration_version",
+        }
     )
     return LoadedProviderUsageSettings(
         settings,
@@ -785,9 +882,13 @@ def _settings_document(
             "open_session_action": preference.open_session_action,
             "consent_reference": preference.consent_reference,
             "credential_account_reference": preference.credential_account_reference,
+            "usage_consent_version": preference.usage_consent_version,
+            "usage_consent_source": preference.usage_consent_source,
+            "usage_consented_at": preference.usage_consented_at,
         }
         for preference in settings.providers
     ]
+    document["usage_consent_migration_version"] = settings.usage_consent_migration
     document["menu_display"] = {
         flag: getattr(settings.menu_display, flag)
         for flag in MENU_USAGE_DISPLAY_FLAGS
@@ -811,7 +912,7 @@ def save_provider_usage_settings(
     target = (default_provider_usage_settings_path() if path is None else Path(path)).expanduser().absolute()
     if loaded is not None and loaded.source_path == target:
         try:
-            current_revision = _document_digest(_read_real_document(target))
+            current_revision = document_digest(_read_real_document(target))
         except FileNotFoundError:
             current_revision = None
         except (OSError, UnicodeError, ValueError) as exc:
@@ -835,12 +936,17 @@ def save_provider_usage_settings(
 
         write = atomic_private_write
     write(target, text)
+    if writer is None:
+        record_companion(PROVIDER_USAGE, target, json.loads(text))
     return target
 
 
 __all__ = [
     "MENU_USAGE_DISPLAY_FLAGS",
     "PROVIDER_USAGE_SETTINGS_SCHEMA_VERSION",
+    "USAGE_CONSENT_MIGRATION_VERSION",
+    "USAGE_CONSENT_SOURCES",
+    "USAGE_CONSENT_VERSION",
     "LoadedProviderUsageSettings",
     "MenuUsageDisplay",
     "ProviderPreference",

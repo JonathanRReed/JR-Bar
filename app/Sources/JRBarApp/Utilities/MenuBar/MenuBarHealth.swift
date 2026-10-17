@@ -1,97 +1,35 @@
 import AppKit
 import JRBarCore
 
-/// Which engine hides the bar right now, and whether it is healthy — the
-/// card's "Right now" line. A framework that did not resolve, an
-/// assertion macOS keeps refusing, or an unnotarized build used to live
-/// only in the log; this says it where the person already looks. Pure
-/// over its inputs so a test pins every line.
+/// Whether the divider is hiding the bar — the card's "Right now" line.
+/// Pure over its input so a test pins every line.
 enum MenuBarEngineHealth: Equatable, Sendable {
     /// The utility is off or handed to another manager.
     case parked
-    /// macOS's concealer runs; `hidden` apps are concealed right now.
-    case concealer(hidden: Int)
-    /// The concealer is up and waiting out the start grace.
-    case concealerStarting
-    /// The concealer has a target but macOS refuses every assertion —
-    /// nothing is hidden and the real icon is handed back.
-    case concealerFailing
-    /// The spacer engine stands in, and why.
-    case spacer(SpacerReason)
+    /// The icon is the divider: items left of it are hidden, and
+    /// position is the setting.
+    case divider
 
-    enum SpacerReason: Equatable, Sendable {
-        /// macOS 26, or a 27 point release that renamed the framework.
-        case frameworkMissing
-        /// This copy is not notarized and the person did not opt in.
-        case notNotarized
-        /// The Advanced toggle forces it — a diagnostic.
-        case forced
-        /// Still deciding: the notarization check has not answered.
-        case pending
+    nonisolated static func assess(running: Bool) -> MenuBarEngineHealth {
+        running ? .divider : .parked
     }
 
-    /// The inputs, gathered by the utility.
-    struct Inputs: Equatable, Sendable {
-        var running: Bool
-        var frameworkAvailable: Bool
-        var forced: Bool
-        var notarized: Bool?
-        var concealUnnotarized: Bool
-        var engineUp: Bool
-        var assertionLive: Bool
-        var activationFailing: Bool
-        var inStartGrace: Bool
-        var concealedCount: Int
-    }
-
-    nonisolated static func assess(_ i: Inputs) -> MenuBarEngineHealth {
-        guard i.running else { return .parked }
-        if i.engineUp {
-            if i.activationFailing, !i.assertionLive { return .concealerFailing }
-            if !i.assertionLive, i.inStartGrace, i.concealedCount > 0 { return .concealerStarting }
-            return .concealer(hidden: i.assertionLive ? i.concealedCount : 0)
-        }
-        if !i.frameworkAvailable { return .spacer(.frameworkMissing) }
-        if i.forced { return .spacer(.forced) }
-        guard let notarized = i.notarized else { return .spacer(.pending) }
-        if !notarized, !i.concealUnnotarized { return .spacer(.notNotarized) }
-        return .spacer(.pending)
-    }
-
-    /// Whether this is worth an alert tone: hiding stopped working.
-    var isAlert: Bool { self == .concealerFailing }
-
-    /// The card's line. `fitEdge` joins the spacer engine's line: the x
-    /// it packs against on this screen.
+    /// The card's line. `fitEdge` joins it: the x the spacer packs
+    /// against on this screen.
     func line(fitEdge: CGFloat? = nil) -> String {
         switch self {
         case .parked:
             return "Parked"
-        case .concealer(let hidden):
-            return hidden == 0 ? "macOS concealer · nothing hidden"
-                : "macOS concealer · \(hidden) app\(hidden == 1 ? "" : "s") hidden"
-        case .concealerStarting:
-            return "macOS concealer · starting"
-        case .concealerFailing:
-            return "The concealer is failing — macOS refused the last assertion, so nothing is hidden and the real icon is back."
-        case .spacer(let reason):
-            let why: String
-            switch reason {
-            case .frameworkMissing: why = "macOS's concealer isn't available on this system"
-            case .notNotarized: why = "this copy isn't notarized"
-            case .forced: why = "forced in Advanced"
-            case .pending: why = "checking the concealer"
-            }
+        case .divider:
             let edge = fitEdge.map { " · edge at \(Int($0.rounded())) pt" } ?? ""
-            return "Spacer engine · \(why)\(edge)"
+            return "Divider · the icon is the divider, position is the setting\(edge)"
         }
     }
 }
 
-/// The other menu-bar managers that fight ours when both run: live
-/// assertions combine as a union of allowlists, so another manager's
-/// assertion quietly un-hides what JR-Bar conceals, and two spacer
-/// engines push each other's items around. Nothing detected this before.
+/// The other menu-bar managers that fight ours when both run: two spacer
+/// engines push each other's items around, and another manager's hiding
+/// can undo what JR-Bar hides.
 enum MenuBarRivals {
     struct Rival: Equatable, Sendable {
         var name: String

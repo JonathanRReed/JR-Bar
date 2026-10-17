@@ -9,7 +9,7 @@ import SwiftUI
 /// holds and other applications are independent. It is the same hold as the notch
 /// card's Awake chip and the footer's cup (`SystemTogglesStore`), so a
 /// change anywhere shows everywhere. The agents' own hold is a daemon
-/// setting; its four rows sit here too, and Settings › Notifications ›
+/// setting; its four rows sit here too, and Settings › Alerts & Sounds ›
 /// Power keeps them as well.
 @MainActor
 @Observable
@@ -25,7 +25,7 @@ final class KeepAwakeUtility: Toy {
     let id = "keepAwake"
     let name = "Keep Awake"
     let switchLabel = "Manual session"
-    let blurb = "Hold this Mac awake for a while, until the morning, or until the agents finish — the same hold as the notch's Awake chip."
+    let blurb = "Keeps the Mac awake for a set time or until agents finish."
     let symbol = "cup.and.saucer.fill"
 
     private var reading: KeepAwakeReading { toggles.state.awakeReading }
@@ -42,7 +42,9 @@ final class KeepAwakeUtility: Toy {
 
     var status: ToyStatus {
         let reading = reading
+        if reading.releaseFailed { return .paused("Still held") }
         if let why = reading.suspendedWords { return .paused("Paused · \(why)") }
+        if reading.holdFailed { return .paused("Not held") }
         switch reading.state {
         case .off:
             return .off
@@ -75,12 +77,17 @@ struct KeepAwakeUtilityControls: View {
     var holders: [KeepAwakeHolders.Holder]?
     /// A fixed moment for proofs; nil is now.
     var now: Date?
+    /// A failed read for render proofs; nil follows the live read.
+    var holdersFailed: Bool?
     @Environment(SettingsStore.self) private var settings: SettingsStore?
     /// The last read, shown at once while a fresh one runs off the main
     /// thread.
     @ViewState private var readHolders: [KeepAwakeHolders.Holder] = KeepAwakeHolders.lastRead
+    @ViewState private var readingHolders = false
+    @ViewState private var holdersReadFailed = false
+    @ViewState private var hasReadHolders = false
     @ViewState private var durations: [Int] = KeepAwakeMenu.durations()
-    @ViewState private var newMinutes = 45
+    @ViewState private var newMinutes = "45"
 
     private var toggles: SystemTogglesStore { utility.toggles }
 
@@ -159,7 +166,7 @@ struct KeepAwakeUtilityControls: View {
     @ViewBuilder
     private func agentRows(_ settings: SettingsStore) -> some View {
         CardSectionHeader("While agents run")
-        SettingToggle(settings, "Keep Mac awake", subtitle: "Prevent idle system sleep while agents run, subject to power and thermal safeguards.",
+        SettingToggle(settings, "Keep Mac awake", subtitle: KeepAwakeReading.agentSleepHelp,
                       path: "agent_keep_awake_enabled", default: true)
         SettingToggle(settings, "Keep display awake",
                       subtitle: KeepAwakeReading.displaySleepHelp,
@@ -178,19 +185,44 @@ struct KeepAwakeUtilityControls: View {
 
     @ViewBuilder
     private var durationRows: some View {
-        CardSectionHeader("Presets")
+        let minutes = KeepAwakeMenu.customMinutes(newMinutes)
+        let seconds = minutes.flatMap { KeepAwakeMenu.customSeconds(minutes: $0) }
+        let applying = toggles.state.applying.contains(.keepAwake)
+        let canSave = seconds.map { !durations.contains($0) } == true
+            && durations.count < KeepAwakeMenu.maxDurations
+        CardSectionHeader("Durations")
         LabeledContent {
             HStack(spacing: SettingsMetrics.s) {
-                Stepper(value: $newMinutes, in: 1...1440, step: newMinutes < 60 ? 5 : 15) {
-                    ValueText(text: KeepAwakeMenu.shortTitle(seconds: newMinutes * 60), width: 64)
+                HStack(spacing: 4) {
+                    TextField("Minutes", text: $newMinutes)
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                        .frame(width: 56)
+                        .accessibilityLabel("Custom duration in minutes")
+                    Text("min").foregroundStyle(.secondary).fixedSize()
+                    Stepper("Minutes", value: Binding(
+                        get: { KeepAwakeMenu.customMinutes(newMinutes) ?? 45 },
+                        set: { newMinutes = String($0) }), in: 1...1440)
+                        .labelsHidden()
+                        .fixedSize()
+                        .accessibilityLabel("Adjust custom duration in minutes")
                 }
-                Button("Add") { setDurations(durations + [newMinutes * 60]) }
+                Button("Start") {
+                    if let minutes { KeepAwakeMenu.startCustomDuration(minutes: minutes, on: toggles) }
+                }
                     .controlSize(.small)
-                    .disabled(durations.contains(newMinutes * 60) || durations.count >= KeepAwakeMenu.maxDurations)
+                    .disabled(seconds == nil || applying)
+                    .accessibilityLabel("Start custom Keep Awake session")
+                    .help("Start this duration without saving a preset. Replaces your current manual session.")
+                Button("Add preset") {
+                    if let seconds { setDurations(durations + [seconds]) }
+                }
+                .controlSize(.small)
+                .disabled(!canSave)
             }
         } label: {
-            SettingLabel(title: "Durations",
-                         subtitle: "The presets the Awake chip, the footer's cup and the Screen Bar's ear offer, up to eight.")
+            SettingLabel(title: "Custom duration",
+                         subtitle: "1 to 1,440 minutes. Start a one-time session or save one of eight presets for every Awake menu.")
         }
         FlowLayout {
             ForEach(durations, id: \.self) { seconds in
@@ -229,21 +261,27 @@ struct KeepAwakeUtilityControls: View {
     @ViewBuilder
     private var othersRows: some View {
         let shown = holders ?? readHolders
+        let failed = holdersFailed ?? holdersReadFailed
         CardSectionHeader("Other apps")
         LabeledContent {
             Button("Refresh") { _ = Task { await refreshHolders() } }
                 .controlSize(.small)
-                .disabled(holders != nil)
+                .disabled(holders != nil || readingHolders)
         } label: {
             SettingLabel(title: "Other apps holding this Mac awake",
                          subtitle: "Read from macOS's power assertions, never changed. Holds stack: the Mac sleeps once every one lets go.")
         }
-        if shown.isEmpty {
+        if failed {
+            CardNote("Could not read macOS's power assertions. Refresh to try again.",
+                     symbol: "exclamationmark.triangle", tint: .orange)
+        } else if holders == nil && !hasReadHolders && shown.isEmpty {
+            CardNote("Checking which other apps hold this Mac awake.")
+        } else if shown.isEmpty {
             CardNote("Nothing else is holding this Mac awake.")
-        } else {
-            ForEach(shown) { holder in
-                CardNote(holder.sentence, symbol: "cup.and.saucer", tint: .secondary)
-            }
+        }
+        ForEach(shown) { holder in
+            CardNote(failed ? "Last read: " + holder.sentence : holder.sentence,
+                     symbol: "cup.and.saucer", tint: .secondary)
         }
         // A keep-awake app running with no hold of its own yet.
         RivalGuardView(role: .keepAwake, rivals: idleRivals(besides: shown))
@@ -263,10 +301,14 @@ struct KeepAwakeUtilityControls: View {
     /// every process's assertions and asks LaunchServices about each
     /// holder, about 150 ms on a busy Mac — and shows the result.
     private func refreshHolders() async {
-        guard holders == nil else { return }
+        guard holders == nil, !readingHolders else { return }
+        readingHolders = true
+        defer { readingHolders = false }
         let result = await KeepAwakeHolders.readInBackground()
         guard !Task.isCancelled else { return }
-        readHolders = result
+        hasReadHolders = true
+        holdersReadFailed = result == nil
+        if let result { readHolders = result }
     }
 }
 
@@ -277,6 +319,10 @@ struct KeepAwakeUtilityControls: View {
 /// reports on.
 enum ClosedLidNote {
     static func text(_ lid: CoreClosedLid?) -> String {
+        if let error = lid?.error, !error.isEmpty {
+            let holding = lid?.holding == true ? " The Mac is still held awake." : ""
+            return "Closed-lid Keep Awake could not update." + holding + " " + error
+        }
         switch lid?.helperInstalled {
         case true?:
             let holding = lid?.holding == true ? " Holding now." : ""
@@ -339,22 +385,24 @@ enum KeepAwakeHolders {
 
     /// The last holders read, for the next card to show at once.
     @MainActor static var lastRead: [Holder] = []
+    @MainActor private static var readGeneration = 0
 
-    /// The holders right now, read on a background queue; `lastRead`
-    /// keeps the answer.
+    /// A failed read returns nil and keeps the last successful list.
     @MainActor
-    static func readInBackground() async -> [Holder] {
-        let holders = await Task.detached(priority: .userInitiated) { read() }.value
-        lastRead = holders
+    static func readInBackground(using reader: @escaping @Sendable () -> [Holder]? = { KeepAwakeHolders.read() }) async -> [Holder]? {
+        readGeneration += 1
+        let generation = readGeneration
+        let holders = await Task.detached(priority: .userInitiated) { reader() }.value
+        if let holders, !Task.isCancelled, generation == readGeneration { lastRead = holders }
         return holders
     }
 
     /// The holders right now. Safe off the main thread: IOKit's
     /// assertion list and `NSRunningApplication` lookups.
-    nonisolated static func read() -> [Holder] {
+    nonisolated static func read() -> [Holder]? {
         var raw: Unmanaged<CFDictionary>?
         guard IOPMCopyAssertionsByProcess(&raw) == kIOReturnSuccess,
-              let dictionary = raw?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else { return [] }
+              let dictionary = raw?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else { return nil }
         var byProcess: [Int32: [[String: Any]]] = [:]
         for (pid, list) in dictionary { byProcess[pid.int32Value] = list }
         return holders(from: byProcess, app: { pid in

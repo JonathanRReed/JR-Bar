@@ -403,6 +403,7 @@ class RemotePublishWiringTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
         self.publisher = _SynchronousLedgerPublisher(self.controller)
         self.controller._production_ledger_publisher = self.publisher
+        self.controller._ledger_publisher = lambda: self.publisher
 
     def _enable_publishing(self, **changes):
         from dataclasses import replace
@@ -731,6 +732,9 @@ class RemotePeerRefreshCadenceTests(unittest.TestCase):
         self.assertEqual(seen[0][0].host, "mac-b")
 
     def test_an_unchanged_peer_result_does_not_rebuild_the_menu(self) -> None:
+        self.controller.settings = self.controller.settings.with_remote_peers(
+            dataclass_replace(self.controller.settings.remote_peers, enabled=True)
+        )
         refreshes: list = []
         self.controller.refresh_ = lambda _sender: refreshes.append(1)
         result = PeerRefreshResult(

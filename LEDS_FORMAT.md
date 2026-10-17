@@ -5,25 +5,51 @@ No drivers are needed.
 SidePulse Pro fits into the SD card slot on MacBook Pro 2021+ models and has 8 RGB LEDs. SidePulse Dot is a tiny 2-LED USB-C device for Mac, iPhone, Linux, and Windows.
 
 
-On macOS they mount under `/Volumes/SidePulsePro` and `/Volumes/SidePulseDot`.
+On macOS the Pro mounts as `/Volumes/SidePulse` and the Dot as
+`/Volumes/PulseDot` (the drive names the firmware release notes give; earlier
+write-ups called them `SidePulsePro` and `SidePulseDot`, and JR-Bar still
+recognises all four). With more than one device the volume names can collide, so the `serial`
+line in `STATUS.TXT` (`SPP-` for a Pro, `SPD-` for a Dot) is what tells them
+apart.
 
 The simplest way to change the color is
 
-    $ echo "#FF00FF" > /Volumes/SidePulsePro/LEDS.LED
+    $ echo "#FF00FF" > /Volumes/SidePulse/LEDS.LED
 
 Or to slowly pulse it.
 
-     $ echo "off\n#FF00FF 1s pulse\nrepeat" > /Volumes/SidePulsePro/LEDS.LED
+     $ echo "off\n#FF00FF 1s pulse\nrepeat" > /Volumes/SidePulse/LEDS.LED
 
 
 There is a quirk with the MacBook SD card reader: it can power off SidePulse Pro after 3 minutes of inactivity.
 A simple way to prevent it is to 'touch' it once a minute like
 
-    $ touch /Volumes/SidePulsePro/keepalive
+    $ touch /Volumes/SidePulse/keepalive
 
 or
 
-    $ while touch /Volumes/SidePulsePro/keepalive; do sleep 60; done
+    $ while touch /Volumes/SidePulse/keepalive; do sleep 60; done
+
+The drives are small emulated FAT volumes with a fixed root directory (16
+entries on a Pro). A long file name takes extra entries, and macOS adds a
+hidden `._NAME` AppleDouble sidecar (two or three entries) beside any file it
+stamps with `com.apple.provenance`: `._LEDS.LED`, `._keepalive`, later
+`._FIRMWARE.BIN`. Enough of them and a copy of the 137 KB firmware file with
+`cp` (which copies the extended attribute, so needs room for the sidecar)
+fails with "No space left on device" or "could not copy extended attributes"
+while most of the disk is free; `cp -X`, or a plain streamed write, lands the
+file. JR-Bar writes the plain way, clears the sidecars it recognises before it
+copies a firmware file, and when a write runs out of room; it never removes a
+device file. To update the firmware,
+copy only `FIRMWARE.BIN` to the top of the drive, leave the device alone for
+10 seconds and check `release_version` (Pro) or `app_version` (Dot) in
+`STATUS.TXT`; JR-Bar does exactly that, with checks, from Settings > Devices & Lighting
+(docs/user/firmware.md).
+
+A read of `STATUS.TXT` that goes past the host's cache reaches the card the
+same way and writes nothing; JR-Bar does that once a minute and only touches
+`keepalive` when the read does not move the device's clock. SidePulse's own
+app made the same change to reads in late September 2026.
 
 To recap, write to LEDS.LED what you want displayed.
 That's all you have to know.

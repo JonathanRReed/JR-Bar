@@ -22,12 +22,24 @@ struct AgentUtilityControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if !utility.snapshot.live {
+                VStack(alignment: .leading, spacing: 6) {
+                    SettingLabel(title: "Monitor", subtitle: utility.connectionDescription())
+                    if utility.onOpenMonitorDetails != nil {
+                        Button("Open monitor details") { utility.openMonitorDetails() }
+                            .controlSize(.small)
+                            .fixedSize()
+                    }
+                }
+                .padding(.bottom, 8)
+            }
+
             AgentAlertRulesTable(utility: utility)
 
             CardSectionHeader("While you watch")
             Toggle(isOn: utility.bind(\.quietWhenPaneFrontmost)) {
                 SettingLabel(title: "Quiet while you watch",
-                             subtitle: "An ask whose terminal pane is already in front gets no pulse, chime or sound — the banner still lands for the record.")
+                             subtitle: "Mutes ask sounds and escalation while the session's terminal pane is in front. Banners still appear.")
             }
 
             if utility.onOpenOverview != nil {
@@ -36,7 +48,7 @@ struct AgentUtilityControls: View {
                         .controlSize(.small)
                 } label: {
                     SettingLabel(title: "Sessions",
-                                 subtitle: "Every session and its verbs are in the panel and the Overview.")
+                                 subtitle: "Session status and controls in the panel and Overview.")
                 }
             }
         }

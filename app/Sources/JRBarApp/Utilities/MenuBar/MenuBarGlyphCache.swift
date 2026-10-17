@@ -3,10 +3,9 @@ import CoreGraphics
 import JRBarCore
 import OSLog
 
-/// The Item Bar's real glyphs. Under the macOS 27 concealer a hidden
-/// app's item has no pixels at all — the agent owns them — so a live
-/// capture can only ever show the owner's app icon, and on a curated bar
-/// nearly every tile was one. Ice's PR #995 and Bartender for Golden
+/// The Item Bar's real glyphs. A hidden item that is parked off the row
+/// has no pixels at all, so a live capture can only ever show the
+/// owner's app icon, and on a curated bar nearly every tile was one. Ice's PR #995 and Bartender for Golden
 /// Gate photograph each item while it is legitimately on the row; this
 /// does the same: before the first conceal, during a reveal once the
 /// pointer has left the row, and in the narrow lift a tile click makes
@@ -115,7 +114,7 @@ enum MenuBarGlyphProcessing {
     /// Lift the glyph off the bar. The alpha ramps from `low` to `high`
     /// of RGB distance from the background — the material's own grain
     /// stays transparent, antialiased edges keep their softness. A rect
-    /// with next to nothing on it (an undrawn ghost, a frame before the
+    /// with next to nothing on it (an item not drawn, a frame before the
     /// fade-in) or covered nearly edge to edge (a highlight, a menu
     /// open) is no glyph: nil. A glyph whose opaque pixels are all near
     /// grey is a template and is stored black, for the renderer to tint.
@@ -476,8 +475,8 @@ final class MenuBarGlyphCamera {
     /// A photographed item changed its picture — show-for-updates' feed.
     var onChange: @MainActor (MenuBarItem) -> Void = { _ in }
     /// The item as listed right now, or nil when it is no longer
-    /// something to photograph — concealed since, gone, or sharing its
-    /// rect with a ghost. Asked before the first frame and after the
+    /// something to photograph — gone, or sharing its rect with another
+    /// item. Asked before the first frame and after the
     /// second: a photograph is kept only when both answers agree on
     /// where the item stands, so a bar that shifted between the frames
     /// (the recording indicator lighting up) never files a neighbour.

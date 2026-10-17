@@ -26,17 +26,15 @@ def _redact_text(value: object, *, home: str) -> object:
     """Home-prefix collapse plus secret-run redaction on any string."""
     if not isinstance(value, str) or not value:
         return value
-    if home and (value == home or value.startswith(home + "/")):
-        value = "~" + value[len(home):]
+    if home:
+        # Anywhere in the text, not only at its start: a label or an ask's
+        # summary can hold the path in the middle of a sentence.
+        value = re.sub(
+            rf"(?<![A-Za-z0-9_.\-/~]){re.escape(home)}(?![A-Za-z0-9_.\-])",
+            "~",
+            value,
+        )
     return _SECRET_RUN.sub(_REDACTED, value)
-
-
-def _redact(value: object, *, home: str) -> object:
-    if isinstance(value, dict):
-        return {key: _redact(item, home=home) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_redact(item, home=home) for item in value]
-    return _redact_text(value, home=home)
 
 
 #: Session-row fields that may hold a path or free text and therefore get

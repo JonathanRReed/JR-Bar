@@ -52,7 +52,9 @@ enum KeepAwakeMenu {
     nonisolated static func durations(_ defaults: UserDefaults = .standard) -> [Int] {
         let raw = (defaults.array(forKey: durationsDefaultsKey) ?? []).compactMap { value -> Int? in
             if let number = value as? Int { return number }
-            if let number = value as? Double, number.isFinite { return Int(number) }
+            if let number = value as? Double, number.isFinite,
+               number >= Double(durationRange.lowerBound),
+               number <= Double(durationRange.upperBound) { return Int(number) }
             return nil
         }
         return normalized(raw)
@@ -70,6 +72,24 @@ enum KeepAwakeMenu {
         } else {
             defaults.set(kept, forKey: durationsDefaultsKey)
         }
+    }
+
+    /// A one-time duration uses the same bounds as a saved preset.
+    nonisolated static func customSeconds(minutes: Int) -> Int? {
+        guard (1...1440).contains(minutes) else { return nil }
+        return minutes * 60
+    }
+
+    nonisolated static func customMinutes(_ text: String) -> Int? {
+        guard let minutes = Int(text.trimmingCharacters(in: .whitespaces)),
+              customSeconds(minutes: minutes) != nil else { return nil }
+        return minutes
+    }
+
+    @MainActor
+    static func startCustomDuration(minutes: Int, on store: SystemTogglesStore) {
+        guard let seconds = customSeconds(minutes: minutes) else { return }
+        perform(.seconds(seconds), on: store)
     }
 
     /// "15 minutes", "1 hour", "1 hour 30 minutes".
@@ -107,15 +127,33 @@ enum KeepAwakeMenu {
                           checked: reading.state == .lease(.indefinite)))
         items.append(Item(choice: .keepDisplayOn, title: "Keep the display on", checked: displayOn,
                           dividerBefore: true))
-        items.append(Item(choice: .turnOff, title: "End manual session", enabled: reading.leaseInForce,
+        let retryCleanup = reading.persistenceError == "clear_failed"
+        items.append(Item(choice: .turnOff, title: retryCleanup ? "Retry saved hold cleanup" : "End manual session",
+                          enabled: reading.leaseInForce || (retryCleanup && monitorLive),
                           dividerBefore: true))
         return items
     }
 
+    /// The panel's morning rule, kept inside what one lease may last. The
+    /// panel skips an 08:00 less than an hour away, which between 07:00
+    /// and 08:00 is a wait of 24 to 25 hours: the daemon refuses a lease
+    /// over a day, so the hold takes the 08:00 in front of it then.
+    nonisolated static func morningSeconds(from now: Date) -> Int {
+        let wait = PanelStore.secondsUntilMorning(from: now)
+        guard wait > maximumLeaseSeconds else { return wait }
+        let next = Calendar.current.nextDate(after: now, matching: DateComponents(hour: 8, minute: 0),
+                                             matchingPolicy: .nextTime)
+        let near = next.map { Int($0.timeIntervalSince(now)) } ?? maximumLeaseSeconds
+        return min(maximumLeaseSeconds, max(60, near))
+    }
+
+    /// What the daemon accepts for one lease: a day.
+    nonisolated static let maximumLeaseSeconds = 86_400
+
     /// The moment "Until 08:00" ends, on the minute: the rule counts
     /// whole seconds, so `now`'s fraction would otherwise name 07:59.
     nonisolated static func morning(from now: Date) -> Date {
-        let end = now.timeIntervalSinceReferenceDate + TimeInterval(PanelStore.secondsUntilMorning(from: now))
+        let end = now.timeIntervalSinceReferenceDate + TimeInterval(morningSeconds(from: now))
         return Date(timeIntervalSinceReferenceDate: (end / 60).rounded() * 60)
     }
 
@@ -125,7 +163,7 @@ enum KeepAwakeMenu {
     nonisolated static func seconds(for choice: Choice, now: Date) -> Int?? {
         switch choice {
         case .seconds(let seconds): return .some(seconds)
-        case .untilMorning: return .some(PanelStore.secondsUntilMorning(from: now))
+        case .untilMorning: return .some(morningSeconds(from: now))
         case .indefinitely: return .some(nil)
         case .turnOff: return .some(0)
         case .untilAgentsFinish, .keepDisplayOn: return .none

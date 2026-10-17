@@ -303,6 +303,15 @@ struct DeckModelTests {
         #expect(DeckKeymapPlan(.object(["changes": .array([])])) == nil, "no preview, no plan")
     }
 
+    @Test("firmware refusals are problem receipts")
+    func firmwareRefusals() {
+        for code in ["rpc_error", "capability_probe_failed"] {
+            let receipt = DeckReceipt(code: code, detail: "Synthetic firmware refusal")
+            #expect(receipt.isProblem)
+            #expect(receipt.text == "Pad replied: Synthetic firmware refusal")
+        }
+    }
+
     // MARK: Rail geometry
 
     static let screen = CGRect(x: 0, y: 0, width: 1512, height: 944)

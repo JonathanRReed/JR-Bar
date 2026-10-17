@@ -17,10 +17,7 @@ from types import MappingProxyType
 from typing import Final
 
 MAX_EVENTS: Final = 128
-MAX_AGENTS: Final = 16
 MAX_DEVICES: Final = 16
-MAX_MACHINES: Final = 16
-MAX_QUOTAS: Final = 16
 DEFAULT_START_TIME: Final = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 

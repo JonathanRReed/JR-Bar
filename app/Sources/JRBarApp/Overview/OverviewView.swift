@@ -95,10 +95,10 @@ struct OverviewView: View {
         }
         .sheet(isPresented: Binding(
             get: { store.comparison != nil },
-            set: { if !$0 { store.comparison = nil } }
+            set: { if !$0 { store.dismissComparison() } }
         )) {
             if let comparison = store.comparison {
-                CompareRunsSheet(comparison: comparison, usage: store.sessionUsage)
+                CompareRunsSheet(comparison: comparison, dismiss: store.dismissComparison, usage: store.sessionUsage)
             }
         }
         .sheet(item: $replyEntry) { entry in
@@ -671,6 +671,7 @@ struct OverviewAttentionCell: View {
 /// cannot carry.
 struct CompareRunsSheet: View {
     let comparison: CoreRunComparison
+    let dismiss: () -> Void
     /// Both sides' `session_usage` — model, tokens, cost — which the
     /// daemon's comparison names as untracked; read here, per side.
     let usage: SessionUsageStore
@@ -694,6 +695,8 @@ struct CompareRunsSheet: View {
                     Text("Replay-free · live facts")
                         .font(.system(size: 10)).foregroundStyle(.tertiary)
                 }
+                Button("Done", action: dismiss)
+                    .keyboardShortcut(.cancelAction)
             }
             if comparison.warnings.contains("not_a_controlled_benchmark") {
                 Label("Uncontrolled runs — not a fair model benchmark.",
@@ -775,6 +778,7 @@ struct CompareRunsSheet: View {
         }
         .padding(20)
         .frame(minWidth: 560)
+        .background(NonblockingSheetWindow().frame(width: 0, height: 0).allowsHitTesting(false))
     }
 
     /// The files each run's edits named: those both touched, then each
@@ -816,7 +820,7 @@ struct CompareRunsSheet: View {
     private func sideHeader(_ side: CoreRunSide) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(side.label ?? side.id).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-            Text(side.id).font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary).lineLimit(1)
+            Text(side.id).font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -824,7 +828,7 @@ struct CompareRunsSheet: View {
     private func compareRow(_ name: String,
                             _ value: (CoreRunSide) -> String) -> some View {
         GridRow {
-            Text(name).foregroundStyle(.tertiary).frame(width: 90, alignment: .leading)
+            Text(name).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
             Text(value(comparison.a)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             Text(value(comparison.b)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -997,7 +1001,45 @@ private struct ReplyPromptSheet: View {
     let entry: CoreRosterEntry
     @ViewState private var text = ""
     @ViewState private var sending = false
+    @ViewState private var outcome: AskAnswerDesk.Outcome?
     @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ReplyPromptForm(entry: entry, text: $text, sending: sending, outcome: outcome,
+                        onCancel: { dismiss() }, onSend: send)
+    }
+
+    private func send() {
+        guard !sending else { return }
+        let reply = text
+        sending = true
+        outcome = nil
+        Task {
+            let result = await store.replyOutcome(entry: entry, text: reply)
+            sending = false
+            outcome = result
+            if result.ok { dismiss() }
+        }
+    }
+}
+
+struct ReplyPromptForm: View {
+    let entry: CoreRosterEntry
+    @Binding var text: String
+    let sending: Bool
+    let outcome: AskAnswerDesk.Outcome?
+    let onCancel: () -> Void
+    let onSend: () -> Void
+    /// Draw the draft without AppKit's editor in detached render proofs.
+    var snapshot = false
+
+    static func failureText(for outcome: AskAnswerDesk.Outcome?) -> String? {
+        guard let outcome, !outcome.ok else { return nil }
+        if outcome.line == AskAnswerDesk.unconfirmedLine {
+            return "Not confirmed. Your reply may have landed. Check the session before answering again."
+        }
+        return outcome.line
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1006,19 +1048,38 @@ private struct ReplyPromptSheet: View {
             if let summary = entry.session.ask?.summary {
                 Text(summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3)
             }
-            TextEditor(text: $text)
+            Group {
+                if snapshot {
+                    Text(text)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(4)
+                } else {
+                    TextEditor(text: $text)
+                }
+            }
                 .font(.system(size: 12))
                 .frame(minHeight: 110)
                 .padding(6)
                 .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 8))
                 .accessibilityLabel("Reply text")
+            if let failure = Self.failureText(for: outcome) {
+                Label {
+                    Text(failure).fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+                .textSelection(.enabled)
+                .accessibilityElement(children: .combine)
+            }
             HStack {
                 if sending { DelayedWait(size: 12) }
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel", action: onCancel)
                     .keyboardShortcut(.cancelAction)
                     .disabled(sending)
-                Button("Send") { send() }
+                Button("Send", action: onSend)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sending)
@@ -1026,18 +1087,5 @@ private struct ReplyPromptSheet: View {
         }
         .padding(16)
         .frame(width: 380)
-    }
-
-    private func send() {
-        let reply = text
-        sending = true
-        Task {
-            await store.reply(entry: entry, text: reply)
-            sending = false
-            // The daemon's verdict lands on the store's status line;
-            // close only on a delivered answer — a refusal keeps the
-            // draft open so the text isn't lost.
-            if store.actionIsError == false { dismiss() }
-        }
     }
 }

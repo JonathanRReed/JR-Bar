@@ -128,9 +128,9 @@ def test_a_scan_reads_back_to_the_card_window_whatever_range_it_is_asked_for(
     reads: list[Path] = []
     real_read = usage_stats._read_verified_prefix
 
-    def watched(path, info, resume_offset=0):
+    def watched(path, info, resume_offset=0, **options):
         reads.append(path)
-        return real_read(path, info, resume_offset)
+        return real_read(path, info, resume_offset, **options)
 
     monkeypatch.setattr(usage_stats, "_read_verified_prefix", watched)
     graph = _scan(tmp_path, since=NOW - 7 * DAY)

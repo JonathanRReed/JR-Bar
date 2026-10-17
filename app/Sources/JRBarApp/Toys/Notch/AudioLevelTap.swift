@@ -65,6 +65,7 @@ final class AudioLevelTap {
     private var clientBundleID: String?
 
     private var engine: (any AudioTapEngine)?
+    private var engineGeneration = 0
 
     /// Push the gating facts. Any change re-evaluates the state table;
     /// a false verdict tears the tap down immediately (well inside the
@@ -94,9 +95,10 @@ final class AudioLevelTap {
     /// goes false. Called from `sync`'s verdict and from the toy's own
     /// teardown (park, shutdown), so no tap ever survives a collapse.
     func stop() {
-        guard engine != nil else { return }
-        engine?.stop()
-        engine = nil
+        guard let engine else { return }
+        engineGeneration &+= 1
+        self.engine = nil
+        engine.stop()
         live = false
         zeroLevels()
     }
@@ -119,22 +121,28 @@ final class AudioLevelTap {
     }
 
     private func start() {
+        engineGeneration &+= 1
+        let generation = engineGeneration
         let engine = makeEngine()
         // The engine publishes off a utility queue — hop, don't assume.
         engine.onLevels = { [weak self] bands in
-            Task { @MainActor [weak self] in self?.note(levels: bands) }
+            Task { @MainActor [weak self] in
+                guard let self, self.engineGeneration == generation, self.engine != nil else { return }
+                self.note(levels: bands)
+            }
         }
         engine.onDeath = { [weak self] in
-            Task { @MainActor [weak self] in self?.noteEngineDied() }
+            Task { @MainActor [weak self] in
+                guard let self, self.engineGeneration == generation, self.engine != nil else { return }
+                self.noteEngineDied()
+            }
         }
         // Adopt now so a stop() during the build still tears it down;
         // `live` only flips when the pipeline is genuinely up.
         self.engine = engine
-        let engineID = ObjectIdentifier(engine)
         engine.start(processes: targetProcesses()) { [weak self] result in
             Task { @MainActor [weak self] in
-                guard let self, let current = self.engine,
-                      ObjectIdentifier(current) == engineID else { return }
+                guard let self, self.engineGeneration == generation, self.engine != nil else { return }
                 switch result {
                 case .success:
                     self.live = true
@@ -143,17 +151,14 @@ final class AudioLevelTap {
                     // every failure reads the same to the row:
                     // decorative bars.
                     audioTapLog.error("audio tap: pipeline failed — \(error.localizedDescription, privacy: .public)")
-                    self.engine = nil
-                    self.live = false
+                    self.stop()
                 }
             }
         }
     }
 
     private func restart() {
-        engine?.stop()
-        engine = nil
-        live = false
+        stop()
         start()
     }
 
@@ -167,9 +172,7 @@ final class AudioLevelTap {
     /// or a tap the system killed, reports here — the row falls back
     /// to decorative bars rather than drawing a frozen reading.
     private func noteEngineDied() {
-        engine = nil
-        live = false
-        zeroLevels()
+        stop()
     }
 }
 
@@ -206,7 +209,7 @@ enum AudioTapError: Error {
 /// it only copies floats into a preallocated ring under an unfair
 /// lock, and a plain DispatchSourceTimer on a utility queue does the
 /// Goertzel + smoothing + publish hop.
-private final class TapSampleBuffer: @unchecked Sendable {
+final class TapSampleBuffer: @unchecked Sendable {
     struct Slot {
         /// The mono-mixed ring — newest samples overwrite oldest.
         var ring = [Float](repeating: 0, count: 8192)
@@ -249,7 +252,7 @@ private final class TapSampleBuffer: @unchecked Sendable {
         }
         for index in 0..<frames { scratch[index] = 0 }
         for buffer in list {
-            guard let data = buffer.mData else { continue }
+            guard let data = buffer.mData, buffer.mDataByteSize > 0 else { continue }
             let channels = max(1, Int(buffer.mNumberChannels))
             let samples = data.assumingMemoryBound(to: Float.self)
             for frame in 0..<frames {

@@ -6,13 +6,15 @@ from enum import Enum
 from typing import Any, Final
 
 from .provider_facts import (
+    _CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE as _CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE,
+)
+from .provider_facts import (
+    ProviderTerminalCause,
     RequestKey,
     WorkKey,
     request_key_to_payload,
     work_key_to_payload,
 )
-
-_CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE = object()
 
 
 class AgentMode(str, Enum):
@@ -148,6 +150,15 @@ class AgentStatus:
     work_key: WorkKey | None = None
     request_key: RequestKey | None = None
 
+    terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE
+
+    @property
+    def is_capacity_limited(self) -> bool:
+        return type(self.terminal_cause) is ProviderTerminalCause and self.terminal_cause in {
+            ProviderTerminalCause.CODEX_USAGE_LIMIT,
+            ProviderTerminalCause.CLAUDE_RATE_LIMIT,
+        }
+
     @property
     def is_hard_ask(self) -> bool:
         """Whether this status proves a request the user can still answer.
@@ -157,15 +168,6 @@ class AgentStatus:
         lifecycles, not error modes or text heuristics.
         """
         return is_ask_status(self.mode, self.event_name)
-
-    @property
-    def is_plan_ready(self) -> bool:
-        """A plan-approval prompt: the agent finished planning and is
-        waiting for a go/no-go, quieter than a permission ask."""
-        return (
-            self.mode == AgentMode.WAITING_FOR_INPUT
-            and self.tool_name == "ExitPlanMode"
-        )
 
     @property
     def is_subagent(self) -> bool:

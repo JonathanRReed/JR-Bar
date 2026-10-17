@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from jrbar import provider_browser_access
 from jrbar.browser_session_import import BrowserSession
 from jrbar.provider_browser_access import (
@@ -182,3 +184,43 @@ def test_import_takes_the_browser_session_and_never_mentions_a_key__and_2_more()
     )
     assert opened == []
     assert "Zen" in message
+
+
+@pytest.mark.parametrize("label", ["Run grok login", "Reconnect Grok"])
+def test_grok_action_preserves_the_selected_profile(monkeypatch, label):
+    calls = []
+
+    def repair(store, **kwargs):
+        calls.append((store, kwargs))
+        return SimpleNamespace(message="Synthetic named profile repair")
+
+    monkeypatch.setattr("jrbar.provider_reconnect.repair_grok_credential", repair)
+    store = FakeStore()
+    message = handle_provider_usage_action(
+        "grok", label, credential_store=store, source_instance_id="second",
+        reason_code="authentication_required",
+        clipboard_reader=lambda: pytest.fail("unexpected clipboard access"),
+        url_opener=lambda _url: pytest.fail("unexpected browser launch"),
+    )
+    assert message == "Synthetic named profile repair"
+    assert len(calls) == 1 and calls[0][0] is store
+    assert calls[0][1].get("source_instance_id") == "second"
+    assert calls[0][1]["server_rejected"] is True
+
+
+def test_a_grok_action_label_cannot_repair_another_provider(monkeypatch):
+    monkeypatch.setattr("jrbar.provider_reconnect.repair_grok_credential",
+                        lambda *_a, **_k: pytest.fail("unrelated Grok repair"))
+    assert handle_provider_usage_action("claude", "Reconnect Grok", credential_store=FakeStore()) is None
+
+
+def test_failed_named_grok_repair_does_not_direct_a_default_cli_login(monkeypatch):
+    def repair(*_a, **_k):
+        raise OSError("synthetic credential failure")
+
+    monkeypatch.setattr("jrbar.provider_reconnect.repair_grok_credential", repair)
+    message = handle_provider_usage_action(
+        "grok", "Reconnect Grok", credential_store=FakeStore(), source_instance_id="second",
+    )
+    assert "profile" in message
+    assert "grok login" not in message

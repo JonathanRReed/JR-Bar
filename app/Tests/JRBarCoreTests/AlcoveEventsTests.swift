@@ -379,6 +379,44 @@ struct AlcoveEventsTests {
                 == CGSize(width: 240, height: 22))
     }
 
+    @Test("a one-line notice is as wide as its copy asks, between a least and a most")
+    func noticeFitsItsCopy() {
+        let slot: CGFloat = 185
+        let short = NotchIslandLayout.noticeWidth(slotWidth: slot, copyWidth: 50)
+        let medium = NotchIslandLayout.noticeWidth(slotWidth: slot, copyWidth: 200)
+        let long = NotchIslandLayout.noticeWidth(slotWidth: slot, copyWidth: 400)
+        #expect(short == slot + 2 * NotchIslandLayout.noticeMinShoulder, "a short line is the least lip: \(short)")
+        #expect(short < 278, "and narrower than the fixed lip it replaces")
+        #expect(medium > short && medium < long)
+        #expect(long == slot + 2 * NotchIslandLayout.noticeMaxShoulder, "a long line stops at the most")
+        #expect(long <= NotchIslandLayout.expandedWidth(slotWidth: slot), "never wider than the grown card")
+        // Whole points, and monotone in the copy.
+        var last: CGFloat = 0
+        for copy in stride(from: CGFloat(0), through: 400, by: 1) {
+            let width = NotchIslandLayout.noticeWidth(slotWidth: slot, copyWidth: copy)
+            #expect(width >= last && width == width.rounded())
+            last = width
+        }
+        // Where the copy is not clamped, the body holds the glyph, the words and the air.
+        for copy in stride(from: CGFloat(60), through: 150, by: 10) {
+            let width = NotchIslandLayout.noticeWidth(slotWidth: slot, copyWidth: copy)
+            let room = width - 2 * NotchIslandLayout.bodyInset - 2 * NotchIslandLayout.noticeLineAir
+                - NotchIslandLayout.noticeGlyphRoom
+            #expect(room >= copy, "copy \(copy) in room \(room)")
+        }
+        // The height is the same either way, and the housing's foot still clears the line.
+        #expect(NotchIslandLayout.noticeSize(slotWidth: slot, notchDepth: 32, copyWidth: 50).height
+                == NotchIslandLayout.noticeSize(slotWidth: slot, notchDepth: 32).height)
+        #expect(NotchIslandLayout.noticeSize(slotWidth: slot, notchDepth: 32, copyWidth: 50).width == short)
+        let housed = NotchIslandLayout.noticeSize(slotWidth: slot, notchDepth: 32, underHousing: 8, copyWidth: 50)
+        #expect(housed.width == short)
+        #expect(housed.height - NotchIslandLayout.housingClimb(size: housed, notchDepth: 32, restingRadius: 8)
+                >= 32 + NotchIslandLayout.noticeLineRoom)
+        // Notch-less: the pill fits too, between its own bounds.
+        #expect(NotchIslandLayout.noticeWidth(slotWidth: 0, copyWidth: 10) == NotchIslandLayout.noticeFloatingMinWidth)
+        #expect(NotchIslandLayout.noticeWidth(slotWidth: 0, copyWidth: 900) == NotchIslandLayout.noticeFloatingMaxWidth)
+    }
+
     @Test("media adds its fixed strip width to the idle content")
     func idleMediaWidth() {
         var s = NotchIslandSummary()
@@ -404,7 +442,7 @@ struct AlcoveEventsTests {
         // Under the bar the tray ends at the bezel (`wingEarDrop` is
         // zero) and owes nothing above the line, but the strip's housing
         // climbs over the island's bottom corners. At the standard 8 pt
-        // corner that is 32 + 16 of line room + the ~12.6 pt climb,
+        // corner that is 32 + 16 of line room + the ~12.7 pt climb,
         // rounded up: 61, where the bare 54 put the housing's top edge
         // through the line's caps.
         #expect(NotchIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32,
@@ -491,6 +529,58 @@ extension AlcoveEventsTests {
         let timeless = AlcoveMedia(title: "A", playing: true, duration: 200,
                                    elapsed: 30, timestamp: nil)
         #expect(timeless.liveElapsed() == 30)
+    }
+
+    @Test("dictionary and helper rates advance the actual playhead at their reported speed", arguments: [0.5, 1.0, 2.0])
+    func playbackRateSurvivesReducers(_ rate: Double) throws {
+        let stamp = 1000.0
+        let at = Date(timeIntervalSinceReferenceDate: stamp + 10)
+        let info: [String: Any] = [
+            "kMRMediaRemoteNowPlayingInfoTitle": "Track",
+            "kMRMediaRemoteNowPlayingInfoPlaybackRate": NSNumber(value: rate),
+            "kMRMediaRemoteNowPlayingInfoElapsedTime": NSNumber(value: 30),
+            "kMRMediaRemoteNowPlayingInfoTimestamp": NSNumber(value: stamp),
+        ]
+        let bridge = try #require(AlcoveMedia.summarize(info))
+        let helper = try #require(AlcoveMedia.summarize(adapter: [
+            "title": "Track", "playing": true, "playbackRate": rate,
+            "elapsed": 30.0, "timestamp": stamp,
+        ]))
+        #expect(bridge.playbackRate == rate)
+        #expect(helper.playbackRate == rate)
+        #expect(bridge.liveElapsed(at: at) == 30 + rate * 10)
+        #expect(helper.liveElapsed(at: at) == bridge.liveElapsed(at: at))
+        var paused = helper
+        paused.playing = false
+        #expect(paused.liveElapsed(at: at) == 30)
+        var ended = helper
+        ended.duration = 32
+        #expect(ended.liveElapsed(at: at) == 32)
+        #expect(helper.liveElapsed(at: Date(timeIntervalSinceReferenceDate: stamp - 10)) == 30)
+    }
+
+    @Test("missing and invalid rates keep the 1x fallback while a speed change is observable")
+    func playbackRateFallbackAndEquality() {
+        let at = Date(timeIntervalSinceReferenceDate: 1010)
+        let normal = AlcoveMedia(title: "Track", playing: true, elapsed: 30, timestamp: 1000)
+        #expect(normal.liveElapsed(at: at) == 40)
+        let legacy = AlcoveMedia.summarize(adapter: [
+            "title": "Track", "playing": true, "elapsed": 30.0, "timestamp": 1000.0,
+        ])
+        #expect(legacy?.liveElapsed(at: at) == 40)
+        for rate in [0.0, -1.0, .nan, .infinity, -.infinity] {
+            let invalid = AlcoveMedia(title: "Track", playing: true, elapsed: 30, timestamp: 1000,
+                                      playbackRate: rate)
+            #expect(invalid.playbackRate == nil)
+            #expect(invalid.liveElapsed(at: at) == 40)
+        }
+        let faster = AlcoveMedia(title: "Track", playing: true, elapsed: 30, timestamp: 1000, playbackRate: 2)
+        #expect(faster != normal)
+        #expect(faster == faster)
+        #expect(AlcoveMedia(title: "Track", playing: true, playbackRate: 2).liveElapsed(at: at) == nil)
+        let overflow = AlcoveMedia(title: "Track", playing: true, elapsed: 30, timestamp: 1000,
+                                   playbackRate: .greatestFiniteMagnitude)
+        #expect(overflow.liveElapsed(at: at) == 30)
     }
 
     @Test("the now-playing dict's elapsed/duration/timestamp reduce through summarize")

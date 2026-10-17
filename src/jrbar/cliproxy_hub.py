@@ -42,9 +42,14 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-from .provider_usage_platform import ProviderSourceState, ProviderUsageSnapshot, UsageLane
+from .provider_usage_platform import (
+    ProviderSourceState,
+    ProviderUsageSnapshot,
+    UsageLane,
+    select_authoritative_snapshot,
+)
 from .usage_source_settings import normalize_cliproxy_hub
 
 HUB_SOURCE_ID = "cliproxy"
@@ -110,7 +115,9 @@ def _default_transport(method: str, url: str, *, headers: dict[str, str], body: 
     request = Request(url, data=payload, headers={"Accept": "application/json", **headers}, method=method)
     if payload is not None:
         request.add_header("Content-Type", "application/json")
-    opener = build_opener(_NoRedirect())
+    # No proxy, whatever the environment or the system settings name: this
+    # call carries the management key and is meant for this Mac alone.
+    opener = build_opener(ProxyHandler({}), _NoRedirect())
     try:
         with opener.open(request, timeout=timeout) as response:
             data = response.read(MAX_RESPONSE_BYTES + 1)
@@ -536,8 +543,11 @@ def collect_hub(
                 now, state=ProviderSourceState.UNAVAILABLE, reason="cliproxy_management_off",
                 action="Set secret-key in CLIProxyAPI's config",
             )
-        return _hub_status(
-            now, state=ProviderSourceState.UNAVAILABLE, reason="cliproxy_unreachable", action="Retry",
+        return (
+            *_hub_status(
+                now, state=ProviderSourceState.UNAVAILABLE, reason="cliproxy_unreachable", action="Retry",
+            ),
+            *_kept_accounts(previous, now),
         )
     mine = identities if identities is not None else local_identities()
     snapshots: list[ProviderUsageSnapshot] = []
@@ -552,7 +562,9 @@ def collect_hub(
             continue
         try:
             if account.provider in ("claude", "codex"):
-                snapshots.append(_account_snapshot(client, account, now))
+                snapshots.append(
+                    _keep_last_reading(_account_snapshot(client, account, now), previous)
+                )
             elif account.provider in _QUOTA_PROVIDER_IDS:
                 if quota_api is None:
                     quota_api = client.quota_api_available()
@@ -570,9 +582,12 @@ def collect_hub(
             provider_id = account.provider if account.provider in ("claude", "codex") else None
             if provider_id is not None:
                 snapshots.append(
-                    _failure(
-                        provider_id, account.instance, now=now, state=ProviderSourceState.UNAVAILABLE,
-                        reason="cliproxy_read_failed", action="Retry", label=account.email,
+                    _keep_last_reading(
+                        _failure(
+                            provider_id, account.instance, now=now, state=ProviderSourceState.UNAVAILABLE,
+                            reason="cliproxy_read_failed", action="Retry", label=account.email,
+                        ),
+                        previous,
                     )
                 )
     seen: set[tuple[str, str]] = set()
@@ -583,6 +598,44 @@ def collect_hub(
         seen.add(snapshot.identity)
         unique.append(snapshot)
     return tuple(unique)
+
+
+#: A failure that says "try again" rather than "this account is signed out":
+#: the numbers it replaces are still the best reading there is.
+_TRANSIENT_ACCOUNT_STATES = frozenset(
+    {ProviderSourceState.RATE_LIMITED, ProviderSourceState.UNAVAILABLE, ProviderSourceState.ERROR}
+)
+
+
+def _keep_last_reading(
+    failure: ProviderUsageSnapshot,
+    previous: Mapping[tuple[str, str], ProviderUsageSnapshot] | None,
+) -> ProviderUsageSnapshot:
+    """``failure`` with the account's last good numbers behind it, marked
+    stale and carrying the time they were read, when the failure is a
+    transient one. A signed-out account keeps nothing."""
+    kept = (previous or {}).get(failure.identity)
+    if failure.state not in _TRANSIENT_ACCOUNT_STATES or kept is None or not kept.lanes:
+        return failure
+    return select_authoritative_snapshot((failure,), last_known_good=kept)
+
+
+def _kept_accounts(
+    previous: Mapping[tuple[str, str], ProviderUsageSnapshot] | None,
+    now: float,
+) -> tuple[ProviderUsageSnapshot, ...]:
+    """Every account read earlier, as stale, for a hub that stopped answering."""
+    kept = []
+    for snapshot in (previous or {}).values():
+        if snapshot.source_instance_id == "cliproxy" or not snapshot.lanes:
+            continue
+        failure = _failure(
+            snapshot.provider_id, snapshot.source_instance_id, now=now,
+            state=ProviderSourceState.UNAVAILABLE, reason="cliproxy_unreachable", action="Retry",
+            label=snapshot.account_label,
+        )
+        kept.append(select_authoritative_snapshot((failure,), last_known_good=snapshot))
+    return tuple(kept)
 
 
 def _late_account(
@@ -663,7 +716,7 @@ class HubSource:
             return ()
         with self._lock:
             interval = HUB_FORCED_FLOOR_SECONDS if force else config["min_interval_seconds"]
-            if self._last_at is not None and now - self._last_at < interval:
+            if self._last_at is not None and 0.0 <= now - self._last_at < interval:
                 return self._last
             previous = {snapshot.identity: snapshot for snapshot in self._last}
         snapshots = collect_hub(

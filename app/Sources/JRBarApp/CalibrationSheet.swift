@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import Observation
 import SwiftUI
 
 // MARK: - Calibration
@@ -23,6 +24,17 @@ struct CalibrationSheet: View {
     @ViewState private var companion = false
     @ViewState private var fineTuneExpanded = false
     @ViewState private var previewWork: DispatchWorkItem?
+    @ViewState private var submission = CalibrationSubmission()
+
+    init(store: SettingsStore, deviceID: String, dismiss: @escaping () -> Void,
+         submission: CalibrationSubmission = CalibrationSubmission(),
+         fineTuneExpanded: Bool = false) {
+        self.store = store
+        self.deviceID = deviceID
+        self.dismiss = dismiss
+        _submission = ViewState(wrappedValue: submission)
+        _fineTuneExpanded = ViewState(wrappedValue: fineTuneExpanded)
+    }
 
     private var device: SettingsStore.DeviceEntry? { store.deviceEntries.first { $0.id == deviceID } }
     private var isScreenBar: Bool { deviceID == "virtual:status-bar" || device?.kind == "screen_bar" }
@@ -40,9 +52,33 @@ struct CalibrationSheet: View {
     private var canMatchStrip: Bool { device?.kind == "dot" && stripPresent && !isScreenBar }
 
     var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                calibrationControls
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+
+            Divider()
+            calibrationFooter
+                .padding(20)
+        }
+        .frame(minWidth: 320, idealWidth: 540, maxWidth: 540,
+               minHeight: 320, idealHeight: 640, maxHeight: 640)
+        .disabled(submission.isApplying)
+        .interactiveDismissDisabled(submission.isApplying)
+        .onAppear(perform: load)
+        .onDisappear { endPreview() }
+        .onChange(of: model) { _, _ in schedulePreview() }
+        .onChange(of: comparing) { _, _ in schedulePreview() }
+        .onChange(of: companion) { _, _ in schedulePreview() }
+    }
+
+    private var calibrationControls: some View {
         VStack(alignment: .leading, spacing: SettingsMetrics.l) {
             HStack(alignment: .center, spacing: SettingsMetrics.m) {
-                SettingsIconTile(symbol: deviceSymbol, tint: SettingsStore.Page.devices.tint, size: 40)
+                SettingsIconTile(symbol: deviceSymbol, tint: SettingsStore.Chapter.devices.tint, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Calibrate \(deviceName)").font(.title3.weight(.semibold))
                     Text("The device is showing the patch below. Hold it beside the screen and match it by eye.")
@@ -76,18 +112,13 @@ struct CalibrationSheet: View {
                     VStack(alignment: .leading, spacing: SettingsMetrics.s) {
                         Text("Does the light look white?")
                             .fontWeight(.medium)
-                        HStack(spacing: 6) {
-                            // fixedSize: these are the corrections, not
-                            // decoration -- a truncated "Too mage…" is a
-                            // button the user cannot read.
-                            Button("Too warm") { nudge(.cooler) }.fixedSize()
-                            Button("Too cool") { nudge(.warmer) }.fixedSize()
-                            Button("Too green") { nudge(.lessGreen) }.fixedSize()
-                            Button("Too magenta") { nudge(.greener) }.fixedSize()
-                            Spacer()
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 6)], spacing: 6) {
+                            Button("Too warm") { nudge(.cooler) }
+                            Button("Too cool") { nudge(.warmer) }
+                            Button("Too green") { nudge(.lessGreen) }
+                            Button("Too magenta") { nudge(.greener) }
                             Button("Looks white") { whiteMatched = true }
                                 .buttonStyle(.borderedProminent)
-                                .fixedSize()
                         }
                     }
                     .padding(SettingsMetrics.m)
@@ -96,24 +127,23 @@ struct CalibrationSheet: View {
             }
 
             DisclosureGroup(isExpanded: $fineTuneExpanded) {
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                VStack(alignment: .leading, spacing: 10) {
                     gainRow("Red", value: $model.red, tint: .red)
                     gainRow("Green", value: $model.green, tint: .green)
                     gainRow("Blue", value: $model.blue, tint: .blue)
-                    GridRow {
-                        Text("1.00 is the die as shipped; below dims the channel, above boosts a weak one.")
-                            .font(.callout).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .gridCellColumns(3)
-                    }
-                    GridRow {
-                        Text("Resting glow")
+                    Text("1.00 is the die as shipped; below dims the channel, above boosts a weak one.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 12) {
+                        Text("Resting glow").frame(width: 90, alignment: .leading)
                         Slider(value: $model.glow, in: CalibrationModel.glowRange)
+                            .frame(minWidth: 0, maxWidth: .infinity)
                         ValueText(text: SettingsStore.percent(model.glow), width: 48)
                     }
-                    GridRow {
-                        Text("Brightness")
+                    HStack(spacing: 12) {
+                        Text("Brightness").frame(width: 90, alignment: .leading)
                         Slider(value: $model.brightness, in: 0...1)
+                            .frame(minWidth: 0, maxWidth: .infinity)
                         ValueText(text: SettingsStore.percent(model.brightness), width: 48)
                     }
                 }
@@ -128,51 +158,66 @@ struct CalibrationSheet: View {
                              subtitle: "Each channel's gain, the resting glow and the brightness.")
             }
             .disclosureGroupStyle(SettingsDisclosureStyle())
+        }
+    }
 
-            Divider()
+    private var calibrationFooter: some View {
+        VStack(alignment: .leading, spacing: SettingsMetrics.s) {
+            if let error = submission.error {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: SettingsMetrics.s) { secondaryActions }
+                VStack(alignment: .leading, spacing: SettingsMetrics.s) { secondaryActions }
+            }
             HStack {
-                Toggle("Compare with before", isOn: $comparing).toggleStyle(.button)
-                Button("Reset to default") { model.reset() }
-                if !startingPoints.isEmpty {
-                    Menu("Start from") {
-                        ForEach(startingPoints) { point in
-                            Button(point.title) { start(from: point) }
-                        }
-                    }
-                    .fixedSize()
-                    .help("Begin from a look you already have instead of from scratch")
-                }
                 Spacer()
                 Button("Cancel") { endPreview(); dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Apply") {
+                Button {
                     // Awaited so a `not_found` (the device went away
                     // mid-sheet) is reported instead of looking applied.
+                    let profile = model.profileArguments()
+                    previewWork?.cancel()
+                    previewWork = nil
                     Task { [store] in
-                        do {
-                            let reply = try await store.core.applyCalibrationNow(device: deviceID, profile: model.profileArguments())
-                            if reply.ok {
-                                endPreview()
-                                dismiss()
-                            } else {
-                                store.report(error: reply.error?.message ?? reply.error?.code ?? "Apply refused")
-                            }
-                        } catch {
-                            store.report(error: "Apply failed: \(error)")
+                        let saved = await submission.apply {
+                            try await store.core.applyCalibrationNow(device: deviceID, profile: profile)
                         }
+                        if saved {
+                            endPreview()
+                            dismiss()
+                        }
+                    }
+                } label: {
+                    if submission.isApplying {
+                        DelayedWait { Text("Apply") }
+                    } else {
+                        Text("Apply")
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!model.isDirty)
+                .disabled(!model.isDirty || !store.core.isLive)
             }
         }
-        .padding(20)
-        .frame(width: 540)
-        .onAppear(perform: load)
-        .onDisappear { endPreview() }
-        .onChange(of: model) { _, _ in schedulePreview() }
-        .onChange(of: comparing) { _, _ in schedulePreview() }
-        .onChange(of: companion) { _, _ in schedulePreview() }
+    }
+
+    @ViewBuilder
+    private var secondaryActions: some View {
+        Toggle("Compare with before", isOn: $comparing).toggleStyle(.button)
+        Button("Reset to default") { model.reset() }
+        if !startingPoints.isEmpty {
+            Menu("Start from") {
+                ForEach(startingPoints) { point in
+                    Button(point.title) { start(from: point) }
+                }
+            }
+            .fixedSize()
+            .help("Begin from a look you already have instead of from scratch")
+        }
     }
 
     /// The nominal patch -- what the device SHOULD look like, so it is never
@@ -183,13 +228,15 @@ struct CalibrationSheet: View {
     }
 
     private func gainRow(_ title: String, value: Binding<Double>, tint: Color) -> some View {
-        GridRow {
+        HStack(spacing: 12) {
             HStack(spacing: 6) {
                 Circle().fill(tint.gradient).frame(width: 9, height: 9)
                 Text(title)
             }
+            .frame(width: 90, alignment: .leading)
             Slider(value: value, in: CalibrationModel.gainRange)
                 .tint(tint)
+                .frame(minWidth: 0, maxWidth: .infinity)
             ValueText(text: String(format: "%.2f", value.wrappedValue), width: 48)
         }
     }
@@ -295,6 +342,32 @@ struct CalibrationSheet: View {
         previewWork?.cancel()
         previewWork = nil
         store.core.endCalibrationPreview(device: deviceID)
+    }
+}
+
+/// One save at a time, with a refusal kept inside the calibration sheet.
+@MainActor
+@Observable
+final class CalibrationSubmission {
+    private(set) var isApplying = false
+    private(set) var error: String?
+
+    func apply(_ operation: @MainActor () async throws -> CoreReply) async -> Bool {
+        guard !isApplying else { return false }
+        isApplying = true
+        error = nil
+        defer { isApplying = false }
+        do {
+            let reply = try await operation()
+            guard reply.ok else {
+                error = reply.error?.message ?? reply.error?.code ?? "Apply refused"
+                return false
+            }
+            return true
+        } catch {
+            self.error = "Apply failed: \(error)"
+            return false
+        }
     }
 }
 

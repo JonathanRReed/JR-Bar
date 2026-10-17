@@ -28,11 +28,6 @@ enum MenuBarTileMath {
         return clipped
     }
 
-    /// The items a pass captures — on-row only, in bar order.
-    nonisolated static func capturableItems(_ items: [MenuBarItem], row: CGRect) -> [MenuBarItem] {
-        items.filter { captureRect(of: $0, row: row) != nil }
-    }
-
     /// The output pixel size for a capture rect at `scale` — a capture
     /// asks for whole pixels, never zero.
     nonisolated static func pixelSize(for rect: CGRect, scale: CGFloat) -> (width: Int, height: Int) {
@@ -57,8 +52,8 @@ enum MenuBarTileMath {
 /// windows, so what lands is the item itself, not the cover. One pass,
 /// not a loop: a 2 Hz loop lit the screen-recording indicator the whole
 /// time the bar was up, and the indicator shifts the whole bar.
-/// Everything a pass cannot see — a concealed app has no pixels at all —
-/// comes from `MenuBarGlyphCache`, photographed while it was drawn.
+/// Everything a pass cannot see comes from `MenuBarGlyphCache`,
+/// photographed while it was drawn.
 ///
 /// Without Screen Recording (or when a capture simply fails) the tile
 /// keeps the photographed glyph or the owner app's icon. Nothing is
@@ -77,12 +72,6 @@ final class MenuBarLiveTiles {
     /// The displays' menu bar rows in Quartz coordinates — each item
     /// captures against the row it actually stands on.
     var rowRects: @MainActor () -> [CGRect] = { MenuBarItemLister.menuBarRows() }
-    /// Whether an item has on-screen pixels worth capturing. A
-    /// concealed item's Accessibility ghost reports a frozen on-row
-    /// frame while the agent owns its pixels — capturing that rect
-    /// lands a picture of empty bar, so the utility marks ghosts
-    /// uncapturable and the tile falls back to the owner's icon.
-    var isCapturable: @MainActor (MenuBarItem) -> Bool = { _ in true }
     /// Seam: capture one Quartz rect of the main display → an image,
     /// or nil when capture is impossible. Tests stub it.
     var capture: @MainActor (CGRect) async -> CGImage?
@@ -133,7 +122,7 @@ final class MenuBarLiveTiles {
             // The item's own bar — a tile on a secondary display's strip
             // captures the rect there, never the main row's math.
             let row = rows.first { $0.intersects(item.bounds) }
-            guard isCapturable(item), let row,
+            guard let row,
                   let rect = MenuBarTileMath.captureRect(of: item, row: row),
                   MenuBarTileMath.needsRefresh(lastCapturedAt: capturedAt[item.id],
                                                now: Date(),

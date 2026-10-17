@@ -55,6 +55,50 @@ def snapshot(
     )
 
 
+def test_known_reset_crossing_accepts_exact_threshold_and_used_full_refill() -> None:
+    for before_remaining, after_remaining in [(40, 45), (95, 100), (98, 100)]:
+        events = detect_reset_events(
+            (snapshot(990, (lane(before_remaining, 1000),)),),
+            (snapshot(1001, (lane(after_remaining, 2000),)),),
+            seen_event_ids=frozenset(),
+        )
+        assert len(events) == 1
+        assert events[0].trigger == "timing"
+    for before_remaining, after_remaining in [(40, 44.99), (99.9, 100), (100, 100)]:
+        assert detect_reset_events(
+            (snapshot(990, (lane(before_remaining, 1000),)),),
+            (snapshot(1001, (lane(after_remaining, 2000),)),),
+            seen_event_ids=frozenset(),
+        ) == ()
+
+
+def test_grok_reset_events_require_known_account_continuity() -> None:
+    from dataclasses import replace
+
+    from jrbar.provider_usage_qol import ResetCandidate, confirm_reset_events
+
+    def grok_read(at, remaining, reset, account):
+        return replace(snapshot(at, ()), provider_id="grok", account_label=None,
+                       account_discriminator=account,
+                       lanes=(replace(lane(remaining, reset), provider_id="grok", source_id="grok-billing"),))
+
+    for before_account, after_account in [("grok-account-a", "grok-account-b"), (None, None)]:
+        assert detect_reset_events(
+            (grok_read(990, 5, 1000, before_account),),
+            (grok_read(1001, 100, 2000, after_account),),
+            seen_event_ids=frozenset(),
+        ) == ()
+    assert len(detect_reset_events(
+        (grok_read(990, 5, 1000, "grok-account-a"),),
+        (grok_read(1001, 100, 2000, "grok-account-a"),),
+        seen_event_ids=frozenset(),
+    )) == 1
+    anonymous = ResetCandidate("old-anonymous", "grok", "default", "weekly", "Weekly reset",
+                               1000, 2000, 100, 5, 1001)
+    result = confirm_reset_events((), (grok_read(1100, 100, 2000, None),), candidates=(anonymous,))
+    assert result.events == () and result.candidates == ()
+
+
 def test_reset_event_requires_boundary_crossing_and_fresh_replenishment__and_2_more() -> None:
     # --- scenario: reset_event_requires_boundary_crossing_and_fresh_replenishment
     before = snapshot(990, (lane(5, 1000),))

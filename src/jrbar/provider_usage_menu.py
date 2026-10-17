@@ -10,6 +10,8 @@ from .provider_account_identity import (
 )
 from .provider_feature_settings import ProviderInstanceVisualProjection
 from .provider_usage_platform import (
+    USAGE_OFF_REASON,
+    USAGE_OFF_WORDS,
     ProviderSourceState,
     ProviderUsageSnapshot,
     most_constrained_lane,
@@ -130,6 +132,8 @@ class ProviderUsageMenuProjection:
 
 
 def _state_label(snapshot: ProviderUsageSnapshot) -> str:
+    if snapshot.reason_code == USAGE_OFF_REASON:
+        return USAGE_OFF_WORDS
     return {
         ProviderSourceState.DISABLED: "off",
         ProviderSourceState.READY: "ready",

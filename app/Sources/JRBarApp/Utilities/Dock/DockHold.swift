@@ -4,8 +4,7 @@ import OSLog
 
 /// The seam `DockAutohideHold` toggles the running Dock's `autohide`
 /// through — the private `CoreDock` verbs `HIServices` exports,
-/// resolved at runtime the way `MenuBarAssessmentBackend` resolves
-/// `MenuBarClientCore`. Where `AppleDockControl`'s defaults write
+/// resolved at runtime. Where `AppleDockControl`'s defaults write
 /// needs a `killall Dock` to take, this pair applies live: it is how
 /// every Dock overlay holds Apple's Dock out while its panel is up
 /// (and why DockDoor once shipped the "stuck out of autohide" bug —

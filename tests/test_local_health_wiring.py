@@ -12,7 +12,6 @@ from jrbar.local_health import LocalHealthMonitor
 from jrbar.models import AgentMode, AgentStatus
 from jrbar.performance_metrics import PerformanceRegistry
 from jrbar.runtime_scheduler import RuntimeWorkerDomain, RuntimeWorkerSnapshot
-from jrbar.screen_bar_pipeline import PresentationMetrics
 
 
 class _WorkerRegistry:
@@ -53,11 +52,9 @@ def _target(performance: PerformanceRegistry) -> SimpleNamespace:
 def test_production_health_snapshot_reads_only_existing_memory_owners(
     monkeypatch,
 ) -> None:
-    metrics = PresentationMetrics()
     performance = PerformanceRegistry()
     performance.record("refresh", 12)
     target = _target(performance)
-    monkeypatch.setattr(production, "DEFAULT_PRESENTATION_METRICS", metrics)
 
     snapshot = production.JRStatusBarController.local_health_snapshot(target)
     rendered = production.JRStatusBarController.performance_diagnostics_text(target)

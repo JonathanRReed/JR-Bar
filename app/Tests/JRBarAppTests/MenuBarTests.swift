@@ -418,32 +418,505 @@ struct MenuBarTests {
 
     // MARK: Reveal — the state machine
 
+    @MainActor
+    private final class HoverBoundaryHost: MenuBarBoundaryHost {
+        let appKitFrame: NSRect
+        let spacer: CGFloat
+        var boundaryFrame: CGRect? {
+            let height = CGDisplayBounds(CGMainDisplayID()).height
+            return CGRect(x: appKitFrame.minX, y: height - appKitFrame.maxY,
+                          width: appKitFrame.width, height: appKitFrame.height)
+        }
+        var boundaryHoverFrame: NSRect? {
+            StatusItemController.boundaryRevealBounds(
+                NSRect(origin: .zero, size: appKitFrame.size), spacer: spacer,
+                glyphWidth: boundaryGlyphLength).offsetBy(dx: appKitFrame.minX, dy: appKitFrame.minY)
+        }
+        var boundaryGlyphLength: CGFloat { appKitFrame.width - spacer }
+        var onBoundaryClick: (@MainActor () -> Void)?
+        var hiddenItemsMenu: (@MainActor () -> NSMenu?)?
+        var hiddenCount = 0
+        var hiddenRevealed = false
+        var barAppearance: NSAppearance? { nil }
+        init(frame: NSRect, spacer: CGFloat) {
+            appKitFrame = frame
+            self.spacer = spacer
+        }
+        func setBoundarySpacer(_: CGFloat) {}
+    }
+
+    @MainActor
+    private func boundaryHoverHarness(spacer: CGFloat = 150) -> RevealHarness {
+        let h = RevealHarness()
+        let utility = MenuBarUtility()
+        let host = HoverBoundaryHost(
+            frame: NSRect(x: 450, y: 958, width: spacer + 24, height: 24), spacer: spacer)
+        utility.host = host
+        h.boundaryUtility = utility
+        h.boundaryHost = host
+        h.reveal.hotFrames = utility.reveal.hotFrames
+        h.reveal.clickHandledFrames = utility.reveal.clickHandledFrames
+        let row = h.rowRect
+        h.reveal.revealZone = {
+            MenuBarUtility.revealZone(row: row, boundary: host.appKitFrame,
+                                     hoverFrame: host.boundaryHoverFrame, fitEdge: nil)
+        }
+        h.reveal.hoverDwell = 0.2
+        return h
+    }
+
+    @MainActor
+    @Test("the shared native blank geometry never admits chevron or icon hover")
+    func chevronAndIconHoverNeverReveal() {
+        for x in [CGFloat(580), CGFloat(590), CGFloat(600), CGFloat(610), CGFloat(650)] {
+            let h = RevealHarness()
+            let bounds = NSRect(x: 0, y: 0, width: 174, height: 24)
+            let blank = StatusItemController.boundaryRevealBounds(bounds, spacer: 150)
+                .offsetBy(dx: 450, dy: 958)
+            h.reveal.revealZone = { blank }
+            h.reveal.hotFrames = { [blank] }
+            h.reveal.hoverDwell = 0.2
+            h.point = NSPoint(x: x, y: 965)
+            h.reveal.pollHover()
+            h.time += 1
+            h.reveal.pollHover()
+            #expect(h.reveals == 0)
+            #expect(h.pending == nil)
+        }
+    }
+
+    @MainActor
+    @Test("click, scroll and direct hover reject the chevron and everything to its right")
+    func strictBlankZoneGatesScrollAndDirectHover() {
+        let blank = NSRect(x: 450, y: 958, width: 130, height: 24)
+        for x in [CGFloat(580), CGFloat(590), CGFloat(600), CGFloat(610), CGFloat(650)] {
+            for gesture in 0..<3 {
+                let h = RevealHarness()
+                h.reveal.revealZone = { blank }
+                h.reveal.hotFrames = { [blank] }
+                let point = NSPoint(x: x, y: 965)
+                // The cursor has moved since the queued event was captured.
+                h.point = NSPoint(x: 470, y: 965)
+                switch gesture {
+                case 0: h.reveal.pointerDown(at: point)
+                case 1: h.reveal.scrolled(at: point)
+                default: h.reveal.pointerEnteredRow(at: point)
+                }
+                #expect(h.reveals == 0)
+                #expect(h.pending == nil)
+            }
+        }
+    }
+
+    @MainActor
+    @Test("a clipped composite reveals only its measured blank seat")
+    func clippedCompositeBlankRoutesAllGestures() {
+        let blank = StatusItemController.boundaryRevealBounds(
+            NSRect(x: 0, y: 0, width: 93, height: 24), spacer: 150,
+            glyphWidth: 24).offsetBy(dx: 450, dy: 958)
+        for x in [CGFloat(480), CGFloat(499), CGFloat(510), CGFloat(530), CGFloat(560)] {
+            for gesture in 0..<3 {
+                let h = RevealHarness()
+                var settings = MenuBarSettings()
+                settings.revealOnHover = true
+                settings.revealOnClick = true
+                settings.revealOnScroll = true
+                let configured = settings
+                h.reveal.settings = { configured }
+                h.reveal.revealZone = { blank }
+                h.reveal.hotFrames = { [blank] }
+                let point = NSPoint(x: x, y: 965)
+                switch gesture {
+                case 0: h.reveal.pointerDown(at: point)
+                case 1: h.reveal.scrolled(at: point)
+                default: h.reveal.pointerEnteredRow(at: point)
+                }
+                #expect(h.reveals == (x < 499 ? 1 : 0))
+            }
+        }
+    }
+
+    @MainActor
+    @Test("moving onto the chevron cancels a blank-space hover dwell")
+    func chevronEntryCancelsBlankDwell() {
+        let h = boundaryHoverHarness()
+        h.point = NSPoint(x: 570, y: 965)
+        h.reveal.pollHover()
+        h.time += 0.1
+        h.point.x = 590
+        h.reveal.pollHover()
+        h.time += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0)
+        #expect(h.pending == nil)
+    }
+
+    @MainActor
+    @Test("only the blank spacer left of the native chevron reveals after the hover dwell")
+    func boundarySpacerAndChevronHoverReveal() {
+        for x in [CGFloat(470), CGFloat(570)] {
+            let h = boundaryHoverHarness()
+            h.point = NSPoint(x: x, y: 965)
+            h.reveal.pollHover()
+            #expect(h.reveals == 0)
+            h.time += 0.2
+            h.reveal.pollHover()
+            #expect(h.reveals == 1)
+        }
+    }
+
+    @MainActor
+    @Test("hovering JR-Bar's own icon never starts a reveal dwell")
+    func boundaryIconHoverDoesNotReveal() {
+        let h = boundaryHoverHarness()
+        h.point = NSPoint(x: 610, y: 965)
+        h.reveal.pollHover()
+        h.time += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0)
+        #expect(!h.reveal.revealed)
+        #expect(h.pending == nil)
+    }
+
+    @MainActor
+    @Test("moving from the spacer onto JR-Bar's icon cancels its pending hover")
+    func boundarySpacerToIconCancelsDwell() {
+        let h = boundaryHoverHarness()
+        h.point = NSPoint(x: 570, y: 965)
+        h.reveal.pollHover()
+        h.time += 0.1
+        h.point.x = 610
+        h.reveal.pollHover()
+        h.time += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0)
+        h.point.x = 570
+        h.reveal.pollHover()
+        #expect(h.reveals == 0, "returning to the spacer must start a fresh dwell")
+        h.time += 0.2
+        h.reveal.pollHover()
+        #expect(h.reveals == 1)
+    }
+
+    @MainActor
+    @Test("a collapsed spacer gives hover an empty zone rather than the whole row")
+    func boundaryCollapsedSpacerDoesNotReveal() {
+        for x in [CGFloat(400), CGFloat(460)] {
+            let h = boundaryHoverHarness(spacer: 0)
+            h.point = NSPoint(x: x, y: 965)
+            #expect(h.reveal.revealZone() != nil)
+            h.reveal.pollHover()
+            h.time += 1
+            h.reveal.pollHover()
+            #expect(h.reveals == 0)
+        }
+    }
+
+    @MainActor
+    @Test("the utility's live reveal wiring cancels hover when its host disappears")
+    func missingHostWiringCancelsPendingHover() throws {
+        let h = boundaryHoverHarness()
+        h.point = NSPoint(x: 570, y: 965)
+        h.reveal.pollHover()
+        h.time += 0.1
+        let utility = try #require(h.boundaryUtility)
+        utility.host = nil
+        h.reveal.revealZone = utility.reveal.revealZone
+        #expect(h.reveal.revealZone() != nil)
+        #expect(h.reveal.revealZone()?.isEmpty == true)
+        h.point.x = 610
+        h.reveal.pollHover()
+        h.time += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0)
+        #expect(!h.reveal.revealed)
+        #expect(h.pending == nil)
+    }
+
+    @MainActor
+    @Test("missing or off-row boundaries never make JR-Bar's icon hoverable")
+    func unavailableBoundaryDoesNotRevealIcon() {
+        let offRow = NSRect(x: 450, y: 700, width: 174, height: 24)
+        for boundary in [nil, offRow] as [NSRect?] {
+            let h = RevealHarness()
+            let row = h.rowRect
+            h.reveal.hoverDwell = 0.2
+            h.reveal.revealZone = {
+                MenuBarUtility.revealZone(row: row, boundary: boundary,
+                                         hoverFrame: nil, fitEdge: nil)
+            }
+            h.reveal.hotFrames = { [] }
+            h.point = NSPoint(x: 610, y: 965)
+            h.reveal.pollHover()
+            h.time += 1
+            h.reveal.pollHover()
+            #expect(h.reveals == 0)
+            #expect(!h.reveal.revealed)
+            #expect(h.pending == nil)
+        }
+    }
+
+    @MainActor
+    @Test("losing the boundary cancels a spacer dwell before the pointer reaches the icon")
+    func unavailableBoundaryCancelsPendingDwell() {
+        let offRow = NSRect(x: 450, y: 700, width: 174, height: 24)
+        for lostBoundary in [nil, offRow] as [NSRect?] {
+            let h = RevealHarness()
+            let row = h.rowRect
+            var boundary: NSRect? = NSRect(x: 450, y: 958, width: 174, height: 24)
+            let blank = NSRect(x: 450, y: 958, width: 150, height: 24)
+            h.reveal.hoverDwell = 0.2
+            h.reveal.revealZone = {
+                MenuBarUtility.revealZone(row: row, boundary: boundary,
+                                         hoverFrame: blank, fitEdge: nil)
+            }
+            h.reveal.hotFrames = { [] }
+            h.point = NSPoint(x: 590, y: 965)
+            h.reveal.pollHover()
+            h.time += 0.1
+            boundary = lostBoundary
+            h.point.x = 610
+            h.reveal.pollHover()
+            h.time += 1
+            h.reveal.pollHover()
+            #expect(h.reveals == 0)
+            #expect(!h.reveal.revealed)
+            #expect(h.pending == nil)
+        }
+    }
+
+    @MainActor
+    @Test("restoring a lost boundary under a still pointer requires a fresh hover entry")
+    func restoredBoundaryNeedsPointerMovement() {
+        let offRow = NSRect(x: 450, y: 700, width: 174, height: 24)
+        for lostBoundary in [nil, offRow] as [NSRect?] {
+            let h = RevealHarness()
+            let row = h.rowRect
+            let standing = NSRect(x: 450, y: 958, width: 174, height: 24)
+            var boundary: NSRect? = standing
+            let blank = NSRect(x: 450, y: 958, width: 150, height: 24)
+            h.reveal.hoverDwell = 0.2
+            h.reveal.revealZone = {
+                MenuBarUtility.revealZone(row: row, boundary: boundary,
+                                         hoverFrame: blank, fitEdge: nil)
+            }
+            h.reveal.hotFrames = { [] }
+            h.point = NSPoint(x: 590, y: 965)
+            h.reveal.pollHover()
+            h.time += 0.1
+            boundary = lostBoundary
+            h.reveal.pollHover()
+            boundary = standing
+            h.reveal.pollHover()
+            h.time += 1
+            h.reveal.pollHover()
+            #expect(h.reveals == 0)
+            h.point.x += 1
+            h.reveal.pollHover()
+            #expect(h.reveals == 0)
+            h.time += 0.2
+            h.reveal.pollHover()
+            #expect(h.reveals == 1)
+        }
+    }
+
     /// A reveal wired to counters with a manual clock, a fixed row,
     /// and a pointer the test steers.
     @MainActor
     private final class RevealHarness {
         let reveal = MenuBarReveal()
+        var boundaryUtility: MenuBarUtility?
+        var boundaryHost: HoverBoundaryHost?
         var reveals = 0
         var hides = 0
+        var ownedElsewhere = false
         var point = NSPoint(x: 400, y: 400)
         var pending: (@MainActor () -> Void)?
+        var delays: [TimeInterval] = []
+        var traces: [String] = []
+        var time = Date(timeIntervalSince1970: 1000)
         let rowRect = NSRect(x: 0, y: 958, width: 1512, height: 27)
 
         init() {
+            reveal.diagnostic = { [weak self] in self?.traces.append($0) }
             reveal.onReveal = { [weak self] in self?.reveals += 1 }
             reveal.onHide = { [weak self] in self?.hides += 1 }
+            reveal.gestureOwnedElsewhere = { [weak self] _ in self?.ownedElsewhere ?? false }
             reveal.row = { [weak self] in self?.rowRect }
             reveal.mouseLocation = { [weak self] in self?.point ?? .zero }
+            reveal.now = { [weak self] in self?.time ?? .distantPast }
             // The dwell is a wall-clock deadline — zero keeps the
             // entry-fires-once semantics these tests pin.
             reveal.hoverDwell = 0
-            reveal.scheduleRehide = { [weak self] _, fire in
+            reveal.scheduleRehide = { [weak self] seconds, fire in
+                self?.delays.append(seconds)
                 self?.pending = fire
                 return {}
             }
         }
         /// The rehide clock's landing, fired by hand.
         func fireClock() { pending?() }
+    }
+
+    @MainActor
+    @Test("hover reveal uses a short exit grace while deliberate reveal keeps its timer")
+    func hoverExitGrace() {
+        let h = RevealHarness()
+        var settings = MenuBarSettings()
+        settings.rehideMode = .timed
+        settings.rehideSeconds = 15
+        let configured = settings
+        h.reveal.settings = { configured }
+        h.point = NSPoint(x: 400, y: 965)
+        h.reveal.pointerEnteredRow()
+        #expect((h.delays.last ?? 15) <= 0.35)
+        h.fireClock()
+        #expect(h.hides == 0)
+        #expect((h.delays.last ?? 15) <= 0.35)
+        h.point = NSPoint(x: 400, y: 400)
+        h.reveal.itemMenuOpen = { true }
+        h.fireClock()
+        #expect(h.hides == 0)
+        #expect(h.traces.contains { $0.contains("menu=true") })
+        h.reveal.itemMenuOpen = { false }
+        h.fireClock()
+        #expect(h.hides == 1)
+        h.time += 1
+        h.reveal.triggerReveal("deliberate click")
+        #expect(h.delays.last == 15)
+        h.reveal.pointerEnteredRow()
+        #expect(h.delays.last == 15, "Hovering over a deliberate reveal must not shorten its timer")
+    }
+
+    @MainActor
+    @Test("configured hover entry and exit clocks remain independent of deliberate reveals")
+    func configuredHoverClocks() {
+        let h = RevealHarness()
+        let settings = MenuBarSettings(rehideSeconds: 9, hoverRevealSeconds: 0.4, hoverHideSeconds: 0.6)
+        h.reveal.settings = { settings }
+        let reveal = MenuBarReveal()
+        reveal.settings = { settings }
+        #expect(reveal.hoverDwell == 0.4)
+        h.point = NSPoint(x: 400, y: 965)
+        h.reveal.pointerEnteredRow()
+        #expect(h.delays.last == 0.6)
+        h.reveal.cancelReveal()
+        h.time += 1
+        h.reveal.triggerReveal("click")
+        #expect(h.delays.last == 9)
+    }
+
+    @MainActor
+    @Test("Notch-owned hover, clicks and scrolls cannot start native reveal or its clock")
+    func notchOwnsRevealGesture() {
+        let h = RevealHarness()
+        h.point = NSPoint(x: 400, y: 965)
+        h.ownedElsewhere = true
+        let hotFrame = h.rowRect
+        h.reveal.hotFrames = { [hotFrame] }
+        h.reveal.pollHover()
+        h.reveal.pointerEnteredRow()
+        h.reveal.pointerDown(at: h.point)
+        h.reveal.scrolled()
+        #expect(h.reveals == 0)
+        #expect(!h.reveal.revealed)
+        #expect(h.pending == nil)
+    }
+
+    @MainActor
+    @Test("queued click and scroll ownership follows the event origin after the cursor moves")
+    func delayedGestureKeepsItsOrigin() {
+        let nativePoint = NSPoint(x: 400, y: 965)
+        let notchPoint = NSPoint(x: 1000, y: 965)
+        for scroll in [false, true] {
+            let native = RevealHarness()
+            native.point = notchPoint
+            native.reveal.gestureOwnedElsewhere = { $0.x >= 900 }
+            if scroll { native.reveal.scrolled(at: nativePoint) }
+            else { native.reveal.pointerDown(at: nativePoint) }
+            #expect(native.reveals == 1, "a native gesture keeps its origin")
+            let notch = RevealHarness()
+            notch.point = nativePoint
+            notch.reveal.gestureOwnedElsewhere = { $0.x >= 900 }
+            if scroll { notch.reveal.scrolled(at: notchPoint) }
+            else { notch.reveal.pointerDown(at: notchPoint) }
+            #expect(notch.reveals == 0 && notch.pending == nil, "a Notch gesture stays with the Notch")
+        }
+    }
+
+    @MainActor
+    @Test("hover admission and ownership share one pointer sample")
+    func hoverUsesOnePoint() {
+        let h = RevealHarness()
+        var reads = 0
+        h.reveal.mouseLocation = {
+            reads += 1
+            return NSPoint(x: reads == 1 ? 400 : 1000, y: 965)
+        }
+        h.reveal.gestureOwnedElsewhere = { $0.x >= 900 }
+        h.reveal.pollHover()
+        #expect(reads == 1 && h.reveals == 1)
+    }
+
+    @MainActor
+    @Test("an explicit item reveal remains available while the pointer is on the Notch")
+    func explicitRevealKeepsItsIntent() {
+        let h = RevealHarness()
+        h.ownedElsewhere = true
+        h.reveal.triggerReveal("explicit item pick")
+        #expect(h.reveals == 1 && h.reveal.revealed)
+        #expect(h.pending != nil)
+    }
+
+    @MainActor
+    @Test("losing Notch ownership under a stationary pointer is not a native hover entry")
+    func ownershipChangeNeedsFreshHover() {
+        let h = RevealHarness()
+        h.point = NSPoint(x: 400, y: 965)
+        h.ownedElsewhere = true
+        h.reveal.hoverDwell = 0.18
+        h.reveal.pollHover()
+        h.ownedElsewhere = false
+        h.time += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0)
+        h.point.x += 1
+        h.reveal.pollHover()
+        h.time += 0.1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0)
+        h.time += 0.1
+        h.reveal.pollHover()
+        #expect(h.reveals == 1)
+    }
+
+    @MainActor
+    @Test("divider reflow under a stationary pointer is not a fresh reveal gesture")
+    func dividerReflowDoesNotReveal() {
+        let h = RevealHarness()
+        h.point = NSPoint(x: 400, y: 965)
+        var zone = NSRect(x: 800, y: 958, width: 100, height: 27)
+        h.reveal.revealZone = { zone }
+        h.reveal.pollHover()
+        zone.origin.x = 350
+        h.reveal.pollHover()
+        h.time += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 0)
+        h.point.x += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 1)
+        h.reveal.cancelReveal()
+        zone.origin.x = 800
+        h.reveal.pollHover()
+        zone.origin.x = 350
+        h.time += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 1)
+        #expect(!h.reveal.revealed)
+        h.point.x += 1
+        h.reveal.pollHover()
+        #expect(h.reveals == 2)
     }
 
     @MainActor
@@ -476,6 +949,25 @@ struct MenuBarTests {
     }
 
     @MainActor
+    @Test("a sustained gesture burst keeps one reveal until the input pauses")
+    func sustainedRevealBurst() {
+        let h = RevealHarness()
+        defer { h.reveal.stop() }
+        h.reveal.triggerReveal()
+        for _ in 0..<4 {
+            h.time = h.time.addingTimeInterval(0.3)
+            h.reveal.triggerReveal()
+            #expect(h.reveals == 1)
+        }
+        h.time = h.time.addingTimeInterval(MenuBarReveal.revealThrottle + 0.01)
+        h.reveal.triggerReveal()
+        #expect(h.reveals == 2, "a new gesture after a pause can reopen the surface")
+        h.reveal.cancelReveal()
+        h.reveal.triggerReveal()
+        #expect(h.reveals == 3, "an explicit hide must not suppress the next reveal")
+    }
+
+    @MainActor
     @Test("hover reveals on row entry only — parking is not a gesture stream")
     func hoverEntryOnly() async {
         let h = RevealHarness()
@@ -504,6 +996,24 @@ struct MenuBarTests {
         #expect(h.reveals == 0)
         h.reveal.pointerDown(at: NSPoint(x: 500, y: 965))  // empty space
         #expect(h.reveals == 1)
+    }
+
+    @MainActor
+    @Test("the native button owns its click while blank-space hover can still reveal")
+    func dividerClickHasOneOwner() {
+        let h = RevealHarness()
+        let divider = NSRect(x: 450, y: 958, width: 150, height: 24)
+        h.reveal.clickHandledFrames = { [divider] }
+        h.reveal.hotFrames = { [divider] }
+        var shown = false
+        h.reveal.onReveal = { shown = true }
+        h.reveal.pointerDown(at: NSPoint(x: 500, y: 965))
+        #expect(!shown, "mouse-down must leave the native button's toggle alone")
+        shown.toggle()
+        #expect(shown, "the button's mouse-up opens rather than closes the reveal")
+        h.point = NSPoint(x: 500, y: 965)
+        h.reveal.pollHover()
+        #expect(h.reveal.revealed, "the native click owner must not suppress hover")
     }
 
     @MainActor
@@ -578,7 +1088,7 @@ struct MenuBarTests {
     @Test("the open Item Bar and holdOpen both keep a reveal alive")
     func holdOpenAndBar() async {
         let h = RevealHarness()
-        var bar: NSRect? = nil
+        @Captured var bar: NSRect? = nil
         h.reveal.barFrame = { bar }
         h.reveal.triggerReveal()
         h.point = NSPoint(x: 400, y: 400)
@@ -618,7 +1128,7 @@ struct MenuBarTests {
     }
 
     @MainActor
-    @Test("hovering another app's item is not the gesture — the zone is the chevron and empty space")
+    @Test("hovering another app's item is not an empty-space reveal gesture")
     func hoverZone() async {
         let h = RevealHarness()
         h.reveal.itemFrames = { [NSRect(x: 390, y: 958, width: 24, height: 24)] }
@@ -675,20 +1185,49 @@ struct MenuBarTests {
     // MARK: Utility — seed, cascade write, chevron
 
     @MainActor
-    @Test("a section pick writes just that item's mapping and persists as one write")
+    @Test("an always-hidden pick writes just that item's cover and persists as one write")
     func setSectionCascades() {
         let utility = MenuBarUtility()
         var state = MenuBarSettings(enabled: true)
         var writes = 0
         utility.settings = { state }
         utility.onSettingsChange = { draft in state = draft; writes += 1 }
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [self.item("A", x: 100), self.item("B", x: 200), self.item("C", x: 300)] }
         utility.hider.rowRect = { self.row }
         utility.hider.shuttersSuppressed = true
         utility.hider.reconcile()   // fills lastPlan through onPlan — no covers, nothing moves
-        utility.setSection(.hidden, for: "A")
+        utility.setSection(.alwaysHidden, for: "A")
         #expect(writes == 1)
-        #expect(state.sections == ["A": .hidden])
+        #expect(state.sections == ["A": .alwaysHidden])
+    }
+
+    @MainActor
+    @Test("under the divider a hide pick is answered with the ⌘-drag, and writes nothing")
+    func setSectionGuides() {
+        let utility = MenuBarUtility()
+        var state = MenuBarSettings(enabled: true)
+        var writes = 0
+        var notes: [String] = []
+        utility.settings = { state }
+        utility.onSettingsChange = { draft in state = draft; writes += 1 }
+        utility.presentDropNote = { notes.append($0) }
+        utility.hider.listingIsComplete = { true }
+        utility.hider.obscuredFrames = { [] }
+        utility.hider.listItems = { [self.item("A", x: 100), self.item("B", x: 200), self.item("C", x: 300)] }
+        utility.hider.rowRect = { self.row }
+        utility.hider.shuttersSuppressed = true
+        utility.hider.reconcile()
+        #expect(utility.lastPlan.shown.map(\.id) == ["A", "B", "C"])
+        #expect(utility.lastPlan.hidden.isEmpty)
+        utility.setSection(.hidden, for: "A")
+        #expect(writes == 0, "JR-Bar never moves another app's item")
+        #expect(state.sections.isEmpty)
+        #expect(notes.count == 1)
+        #expect(notes.first?.contains("⌘") == true && notes.first?.contains("left of the JR-Bar icon") == true)
+        // Asking for what is already so says nothing.
+        utility.setSection(.shown, for: "A")
+        #expect(notes.count == 1)
     }
 
     @MainActor
@@ -698,6 +1237,7 @@ struct MenuBarTests {
         let state = MenuBarSettings(enabled: true, sections: ["A": .hidden],
                                     revealStyle: .bar)
         utility.settings = { state }
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [self.item("A", x: 100)] }
         utility.hider.rowRect = { self.row }
         utility.hider.shuttersSuppressed = true
@@ -716,6 +1256,7 @@ struct MenuBarTests {
         let state = MenuBarSettings(enabled: true, sections: ["A": .hidden],
                                     revealStyle: .inline)
         utility.settings = { state }
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [self.item("A", x: 100)] }
         utility.hider.rowRect = { self.row }
         utility.hider.shuttersSuppressed = true
@@ -733,13 +1274,30 @@ struct MenuBarTests {
         let utility = MenuBarUtility()
         let state = MenuBarSettings(enabled: true, revealStyle: .bar)
         utility.settings = { state }
+        utility.hider.listingIsComplete = { true }
+        utility.hider.obscuredFrames = { [] }
         utility.hider.listItems = { [self.item("A", x: 100)] }
         utility.hider.rowRect = { self.row }
         utility.hider.shuttersSuppressed = true
         utility.hider.reconcile()
+        #expect(utility.lastPlan.shown.map(\.id) == ["A"])
+        #expect(utility.lastPlan.hidden.isEmpty)
         utility.reveal.onReveal()
         #expect(!utility.bar.isOpen)
         #expect(utility.hider.revealed.isEmpty)
+    }
+
+    @Test("synthetic menu obstruction alone changes shown items into hidden items")
+    func syntheticObstructionChangesThePlan() {
+        let items = [item("A", x: 100), item("B", x: 200)]
+        let obstructed = MenuBarItemHider.plan(
+            items: items, sections: [:], row: row, obscuredFrames: [row])
+        #expect(obstructed.shown.isEmpty)
+        #expect(obstructed.hidden.map(\.id) == ["A", "B"])
+        let clear = MenuBarItemHider.plan(
+            items: items, sections: [:], row: row, obscuredFrames: [])
+        #expect(clear.shown.map(\.id) == ["A", "B"])
+        #expect(clear.hidden.isEmpty)
     }
 
     @MainActor

@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import JRBarCore
 import QuartzCore
 import Testing
@@ -9,6 +9,77 @@ import Testing
 @Suite("Notch surface motion")
 @MainActor
 struct NotchSurfaceMotionTests {
+    private final class Panel: NSPanel {
+        var ordersOut = 0
+        override func orderFrontRegardless() {}
+        override func orderOut(_ sender: Any?) { ordersOut += 1 }
+    }
+
+    @Test("an old dismiss cannot retire a reopened panel, even at zero alpha")
+    func reopenedPanelRejectsOldDismiss() {
+        let panel = Panel()
+        var finish: (() -> Void)?
+        var retired = false
+        NotchSurfaceMotion.dismiss(panel, duration: 1, reducedDuration: 1,
+                                   animate: { _, completion in finish = completion },
+                                   then: { retired = true })
+        NotchSurfaceMotion.present(panel, from: 0, duration: 0, reducedDuration: 0)
+        panel.alphaValue = 0
+        finish?()
+        #expect(panel.ordersOut == 0)
+        #expect(!retired)
+    }
+
+    @Test("only the newest dismiss can retire a panel that was hidden twice")
+    func newerDismissOwnsCompletion() {
+        let panel = Panel()
+        var finishes: [() -> Void] = []
+        NotchSurfaceMotion.dismiss(panel, duration: 1, reducedDuration: 1, stillGone: { true },
+                                   animate: { _, completion in finishes.append(completion) })
+        NotchSurfaceMotion.present(panel, duration: 0, reducedDuration: 0)
+        NotchSurfaceMotion.dismiss(panel, duration: 1, reducedDuration: 1, stillGone: { true },
+                                   animate: { _, completion in finishes.append(completion) })
+        finishes[0]()
+        #expect(panel.ordersOut == 0)
+        finishes[1]()
+        #expect(panel.ordersOut == 1)
+    }
+
+    @Test("another panel's transition does not cancel this panel's dismissal")
+    func panelsHaveIndependentTransitions() {
+        let panel = Panel()
+        let other = Panel()
+        var finish: (() -> Void)?
+        NotchSurfaceMotion.dismiss(panel, duration: 1, reducedDuration: 1, stillGone: { true },
+                                   animate: { _, completion in finish = completion })
+        NotchSurfaceMotion.present(other, duration: 0, reducedDuration: 0)
+        finish?()
+        #expect(panel.ordersOut == 1)
+        #expect(other.ordersOut == 0)
+    }
+
+    @Test("the current dismiss still respects its owner's visibility guard")
+    func visibilityGuardStillApplies() {
+        let panel = Panel()
+        var finish: (() -> Void)?
+        NotchSurfaceMotion.dismiss(panel, duration: 1, reducedDuration: 1, stillGone: { false },
+                                   animate: { _, completion in finish = completion })
+        finish?()
+        #expect(panel.ordersOut == 0)
+    }
+
+    @Test("a directly recast shadow's fade invalidates its previous dismissal")
+    func directFadeRejectsOldDismiss() {
+        let panel = Panel()
+        var finish: (() -> Void)?
+        NotchSurfaceMotion.dismiss(panel, duration: 1, reducedDuration: 1,
+                                   animate: { _, completion in finish = completion })
+        NotchSurfaceMotion.fade(panel, to: 1, duration: 0, reducedDuration: 0, curve: nil)
+        panel.alphaValue = 0
+        finish?()
+        #expect(panel.ordersOut == 0)
+    }
+
     @Test("the shared curve is the one the surfaces used to paste")
     func sharedCurve() {
         let curve = NotchMotion.panelCurve

@@ -81,6 +81,13 @@ JR-Bar <version> (<commit>)
 
   The app is notarized and stapled *before* the ZIP and the PKG are cut, so
   both carry the ticket.
+
+  If the upload tool fails, the build stops and prints paths to private
+  stdout and stderr files under `build/macos-pkg/release-evidence-raw`.
+  Each attempt keeps its own files. Check
+  `xcrun notarytool history --keychain-profile jrbar-notary` before retrying,
+  because Apple may already have created a submission. The build never
+  resubmits a failed upload automatically.
 - **The PKG signature** needs a `Developer ID Installer` certificate. Create
   it at developer.apple.com → Certificates → Developer ID Installer, download
   it, and import it into Keychain Access. `make package` then signs the PKG.
@@ -151,7 +158,8 @@ Authoritative JR-Bar macOS release gate passed.
 and writes `dist/release-verification.json`. That manifest is fail-closed:
 `scripts/release_evidence.py` refuses to build one unless every receipt kind
 is present, passed, and bound to the same candidate — which is what makes
-"skipped" and "published" mutually exclusive.
+"skipped" and "published" mutually exclusive. (`hardware-smoke` is required
+only when `JRBAR_REQUIRED_HARDWARE` is not `software`.)
 
 What the receipts cover:
 
@@ -173,7 +181,13 @@ What the receipts cover:
 | `installed-upgrade`, `settings-preservation` | an older install upgraded in place and kept every existing setting |
 | `clean-install` | the installed tree hashes equal to the candidate, and the *installed* daemon's `doctor` and `hooks doctor` pass with every provider hook pointing at the shim inside that bundle |
 | `uninstall` | the supported uninstaller removed only JR-Bar's own state |
-| `sbom` | a CycloneDX SBOM covering every published artifact |
+| `sbom` | build-environment CycloneDX inventory bound to the candidate app tree and each release artifact |
+
+The SBOM records installed Python distributions from the build environment.
+It keeps runtime and dependency-graph coverage incomplete. Generation,
+release-manifest creation and checksum generation verify the app tree hash
+and artifact hashes and sizes. A matching JSON format label is insufficient.
+The SBOM and release manifest receive their own hashes in `SHA256SUMS`.
 
 Environment knobs:
 
@@ -218,7 +232,8 @@ CORE=~/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jr
 
 The app must be supervising `Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core core`,
 every provider's hook must run `Contents/Helpers/jrbar-hook` *from the
-installed bundle*, the panel must show live sessions, the Screen Bar must show
+installed bundle* (through the launcher at `~/.local/share/jrbar/hook/jrbar-hook`,
+which names the bundle's shim), the panel must show live sessions, the Screen Bar must show
 the daemon's program (the status menu's Lights line says `core`), and the
 login item must be registered:
 
@@ -274,6 +289,8 @@ correctly:
 6. Uploads `jr-bar-update-channel.json` first and `appcast.xml` last to the
    `updates` release. Metadata before pointer means a half-finished upload
    never advertises an archive that is not there yet.
+7. Puts the `v<version>` release back in GitHub's Latest slot, so downloads
+   lead to the installer and not to the feed.
 
 Then install the PKG on a Mac running the previous version and confirm
 Sparkle offers the update (Settings › General › Software Update).
@@ -289,7 +306,9 @@ the packager and the publisher call it. Before building a release, bump:
 
 - `pyproject.toml` → `version`
 - `src/jrbar/__init__.py` → `__version__`
-- `CHANGELOG.md` → a `## <version>` heading
+- `CHANGELOG.md` → a `## <version>` heading (the Unreleased heading becomes
+  this one; `scripts/release.sh` refuses a top section that still says
+  unreleased)
 
 ## Check release readiness
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import json
+from dataclasses import replace
 from pathlib import Path
 
 from jrbar.provider_feature_settings import (
@@ -449,4 +451,89 @@ def test_cached_merged_sync_is_none_when_sync_is_disabled__and_2_more(tmp_path: 
     result = runtime.refresh(usage_state())
     assert result.enabled is False
     assert result.remote_packets == ()
+
+
+def test_runtime_reports_malformed_signature_without_aborting(tmp_path):
+    runtime = ProviderSyncRuntime(
+        settings_loader=lambda: settings(tmp_path),
+        credentials=Credentials(b"x" * 32),
+        local_directory=tmp_path,
+        fetcher=lambda peer: SftpFetchResult(
+            peer.peer_id, True,
+            json.dumps({"payload": {}, "signature": "é" * 64}).encode(), None,
+        ),
+        publisher=lambda _packet, target: target,
+        clock=lambda: 1000,
+    )
+    result = runtime.refresh(usage_state())
+    assert result.remote_packets == ()
+    assert result.health[0].reason == "packet_authentication_failed"
+
+
+def test_cached_merge_rejects_symlink_to_valid_remote_packet(tmp_path):
+    from jrbar.provider_usage_sync_runtime import load_cached_merged_sync
+    from jrbar.provider_usage_sync_transport import publish_local_packet
+
+    configured = settings(tmp_path)
+    secret = b"x" * 32
+    remote = ProviderSyncPacket(1, "macbook", 1100, usage_state("remote").snapshots, (), ("quota",))
+    target = tmp_path / "other" / "packet"
+    publish_local_packet(encode_signed_packet(remote, secret), target)
+    directory = tmp_path / "cache"
+    directory.mkdir()
+    (directory / "macbook.remote.packet").symlink_to(target)
+    merged = load_cached_merged_sync(
+        usage_state(), settings_loader=lambda: configured,
+        credentials=Credentials(secret), local_directory=directory, now=1200,
+    )
+    assert merged.quota_snapshots == ()
+
+
+def test_enabled_settings_cannot_publish_after_revocation_between_peers(tmp_path):
+    configured = settings(tmp_path)
+    peer = replace(configured.peers[0], peer_id="second")
+    current = [replace(configured, peers=(*configured.peers, peer))]
+    published = []
+    fetched = []
+
+    def fetch(first):
+        fetched.append(first.peer_id)
+        current[0] = replace(current[0], enabled=False)
+        return SftpFetchResult(first.peer_id, False, None, "sftp_failed")
+
+    runtime = ProviderSyncRuntime(
+        settings_loader=lambda: current[0], credentials=Credentials(b"x" * 32),
+        local_directory=tmp_path, fetcher=fetch,
+        publisher=lambda _packet, target: published.append(target.name), clock=lambda: 1000,
+    )
+    result = runtime.refresh(usage_state())
+    assert published == ["macbook.packet"]
+    assert fetched == ["macbook"]
+    assert result.enabled is False
+    assert result.merged is None
+
+
+def test_status_sharing_revocation_during_secret_read_prevents_publish(tmp_path):
+    configured = settings(tmp_path)
+    sharing = [sharing_projection(("default", "status_only"))]
+    calls = []
+
+    class RevokingCredentials(Credentials):
+        def get(self, provider, account):
+            sharing[0] = sharing_projection(("default", "never"))
+            return super().get(provider, account)
+
+    runtime = ProviderSyncRuntime(
+        settings_loader=lambda: configured,
+        sharing_loader=lambda: sharing[0],
+        credentials=RevokingCredentials(b"x" * 32),
+        local_directory=tmp_path,
+        publisher=lambda *_args: calls.append("publish"),
+        fetcher=lambda *_args: calls.append("fetch"),
+        clock=lambda: 1000,
+    )
+    result = runtime.refresh(usage_state())
+    assert calls == []
+    assert result.local_packet is None
+    assert result.merged is None
 

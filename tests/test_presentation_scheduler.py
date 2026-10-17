@@ -12,8 +12,6 @@ from itertools import product
 import pytest
 
 from jrbar.presentation_scheduler import (
-    ALCOVE_INTERVAL_SECONDS,
-    ALCOVE_TOLERANCE_SECONDS,
     FRAME_FALLBACK_INTERVAL_SECONDS,
     POINTER_INTERVAL_SECONDS,
     POINTER_TOLERANCE_SECONDS,
@@ -39,8 +37,6 @@ def _inputs(
     app_terminating: bool = False,
     animation_active: bool = False,
     next_visual_change_at: float | None = None,
-    alcove_enabled: bool = False,
-    alcove_relevant: bool = False,
     pointer_interaction_relevant: bool = False,
 ) -> PresentationSchedulerInputs:
     return PresentationSchedulerInputs(
@@ -50,8 +46,6 @@ def _inputs(
         app_terminating=app_terminating,
         animation_active=animation_active,
         next_visual_change_at=next_visual_change_at,
-        alcove_enabled=alcove_enabled,
-        alcove_relevant=alcove_relevant,
         pointer_interaction_relevant=pointer_interaction_relevant,
     )
 
@@ -63,15 +57,13 @@ def _features(plan: PresentationSchedulePlan) -> tuple[RuntimeFeature, ...]:
 def test_all_relevance_and_lifecycle_combinations_follow_the_timer_matrix__and_2_more() -> None:
     # --- scenario: all_relevance_and_lifecycle_combinations_follow_the_timer_matrix
     """Catches any lifecycle or feature flag leaking a forbidden timer."""
-    for flags in product((False, True), repeat=8):
+    for flags in product((False, True), repeat=6):
         (
             screen_bar_enabled,
             visible,
             display_asleep,
             app_terminating,
             animation_active,
-            alcove_enabled,
-            alcove_relevant,
             pointer_interaction_relevant,
         ) = flags
         for deadline_kind in ("none", "future", "elapsed"):
@@ -87,8 +79,6 @@ def test_all_relevance_and_lifecycle_combinations_follow_the_timer_matrix__and_2
                 app_terminating=app_terminating,
                 animation_active=animation_active,
                 next_visual_change_at=deadline,
-                alcove_enabled=alcove_enabled,
-                alcove_relevant=alcove_relevant,
                 pointer_interaction_relevant=pointer_interaction_relevant,
             )
 
@@ -102,8 +92,6 @@ def test_all_relevance_and_lifecycle_combinations_follow_the_timer_matrix__and_2
                 expected.add(RuntimeFeature.PRESENTATION_FRAME_FALLBACK)
             if active_surface and deadline_kind == "future":
                 expected.add(RuntimeFeature.PRESENTATION_STATIC_DEADLINE)
-            if active_surface and alcove_enabled and alcove_relevant:
-                expected.add(RuntimeFeature.ALCOVE_OBSERVATION)
             if active_surface and pointer_interaction_relevant:
                 expected.add(RuntimeFeature.POINTER_PEEK)
             expected_features = tuple(
@@ -126,8 +114,6 @@ def test_all_relevance_and_lifecycle_combinations_follow_the_timer_matrix__and_2
         inputs = _inputs(
             animation_active=True,
             next_visual_change_at=NOW + 1.0,
-            alcove_enabled=True,
-            alcove_relevant=True,
             pointer_interaction_relevant=True,
             **inactive,
         )
@@ -236,8 +222,6 @@ def test_repeating_feature_intervals_tolerances_and_relevance_are_exact__and_1_m
         _inputs(
             animation_active=True,
             next_visual_change_at=deadline,
-            alcove_enabled=True,
-            alcove_relevant=True,
             pointer_interaction_relevant=True,
         ),
         now=NOW,
@@ -255,27 +239,16 @@ def test_repeating_feature_intervals_tolerances_and_relevance_are_exact__and_1_m
     assert static_deadline.interval is None
     assert static_deadline.tolerance == 0.0
 
-    alcove = by_feature[RuntimeFeature.ALCOVE_OBSERVATION]
-    assert alcove.fire_at == pytest.approx(NOW + ALCOVE_INTERVAL_SECONDS)
-    assert alcove.interval == ALCOVE_INTERVAL_SECONDS
-    assert alcove.tolerance == ALCOVE_TOLERANCE_SECONDS == 0.15
-    assert alcove.tolerance == pytest.approx(min(0.25, alcove.interval * 0.1))
-
     pointer = by_feature[RuntimeFeature.POINTER_PEEK]
     assert pointer.fire_at == pytest.approx(NOW + POINTER_INTERVAL_SECONDS)
     assert pointer.interval == POINTER_INTERVAL_SECONDS
     assert pointer.tolerance == POINTER_TOLERANCE_SECONDS == 0.02
     assert pointer.tolerance == pytest.approx(min(0.25, pointer.interval * 0.1))
 
-    alcove_disabled = plan_presentation_schedule(
-        _inputs(alcove_enabled=False, alcove_relevant=True),
-        now=NOW,
-    )
     pointer_irrelevant = plan_presentation_schedule(
         _inputs(pointer_interaction_relevant=False),
         now=NOW,
     )
-    assert RuntimeFeature.ALCOVE_OBSERVATION not in _features(alcove_disabled)
     assert RuntimeFeature.POINTER_PEEK not in _features(pointer_irrelevant)
 
     # --- scenario: inputs_plan_and_consumed_state_are_frozen_and_validate_scalar_boundaries
@@ -303,8 +276,6 @@ def test_repeating_feature_intervals_tolerances_and_relevance_are_exact__and_1_m
         "display_asleep",
         "app_terminating",
         "animation_active",
-        "alcove_enabled",
-        "alcove_relevant",
         "pointer_interaction_relevant",
     ):
         values = {
@@ -314,8 +285,6 @@ def test_repeating_feature_intervals_tolerances_and_relevance_are_exact__and_1_m
             "app_terminating": False,
             "animation_active": False,
             "next_visual_change_at": None,
-            "alcove_enabled": False,
-            "alcove_relevant": False,
             "pointer_interaction_relevant": False,
         }
         values[field] = 1
@@ -415,8 +384,6 @@ def test_same_plan_reconciles_one_timer_per_feature_and_termination_invalidates_
         _inputs(
             animation_active=True,
             next_visual_change_at=NOW + 5.0,
-            alcove_enabled=True,
-            alcove_relevant=True,
             pointer_interaction_relevant=True,
         ),
         now=NOW,
@@ -427,10 +394,10 @@ def test_same_plan_reconciles_one_timer_per_feature_and_termination_invalidates_
 
     snapshot = registry.snapshot()
     assert snapshot.active_features == _features(plan)
-    assert snapshot.created == len(plan.intents) == 4
+    assert snapshot.created == len(plan.intents) == 3
     assert snapshot.invalidated == 0
-    assert factory.live_timer_count == 4
-    assert len(factory.registrations) == 4
+    assert factory.live_timer_count == 3
+    assert len(factory.registrations) == 3
     assert all(timer.target is target for timer in factory.created)
     assert all(timer.selector == RUNTIME_TIMER_SELECTOR for timer in factory.created)
 
@@ -439,8 +406,6 @@ def test_same_plan_reconciles_one_timer_per_feature_and_termination_invalidates_
             app_terminating=True,
             animation_active=True,
             next_visual_change_at=NOW + 5.0,
-            alcove_enabled=True,
-            alcove_relevant=True,
             pointer_interaction_relevant=True,
         ),
         now=NOW,
@@ -462,8 +427,6 @@ def test_same_plan_reconciles_one_timer_per_feature_and_termination_invalidates_
 
     active = _inputs(
         animation_active=True,
-        alcove_enabled=True,
-        alcove_relevant=True,
         pointer_interaction_relevant=True,
     )
     for _ in range(50):
@@ -499,9 +462,9 @@ def test_same_plan_reconciles_one_timer_per_feature_and_termination_invalidates_
         )
         assert factory.live_timer_count == 0
 
-    assert max_live == 3
+    assert max_live == 2
     assert registry.snapshot().active_features == ()
-    assert registry.snapshot().created == registry.snapshot().invalidated == 300
+    assert registry.snapshot().created == registry.snapshot().invalidated == 200
     assert tuple(thread.ident for thread in threading.enumerate()) == before_threads
 
 
@@ -526,8 +489,6 @@ def test_planning_executes_no_poll_capture_file_subprocess_wait_or_thread_work(
         _inputs(
             animation_active=True,
             next_visual_change_at=NOW + 1.0,
-            alcove_enabled=True,
-            alcove_relevant=True,
             pointer_interaction_relevant=True,
         ),
         now=NOW,
@@ -536,6 +497,5 @@ def test_planning_executes_no_poll_capture_file_subprocess_wait_or_thread_work(
     assert _features(plan) == (
         RuntimeFeature.PRESENTATION_FRAME_FALLBACK,
         RuntimeFeature.PRESENTATION_STATIC_DEADLINE,
-        RuntimeFeature.ALCOVE_OBSERVATION,
         RuntimeFeature.POINTER_PEEK,
     )

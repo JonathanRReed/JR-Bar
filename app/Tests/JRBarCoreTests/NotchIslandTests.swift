@@ -205,20 +205,19 @@ struct NotchIslandTests {
         // other side.
         var uneven = NotchIdleLayout()
         uneven.leftWidth = 30
-        #expect(uneven.leftShoulder == 30 + 2 * NotchIslandLayout.shoulderPad)
+        #expect(uneven.leftShoulder == 30 + 2 * NotchIslandLayout.shoulderPad + NotchIslandLayout.bodyInset)
         #expect(uneven.rightShoulder == NotchIslandLayout.shoulder, "the resting shoulder, not a mirror")
         let size = NotchIslandLayout.idleSize(slotWidth: 185, notchDepth: 32,
                                               leftShoulder: uneven.leftShoulder,
                                               rightShoulder: uneven.rightShoulder)
-        #expect(size.width == 235)
+        #expect(size.width == 185 + 40 + 4 + NotchIslandLayout.shoulder)
         #expect(NotchIslandLayout.shoulderWidth(contentWidth: 0) == NotchIslandLayout.shoulder)
-        #expect(NotchIslandLayout.shoulderWidth(contentWidth: 2) == 2 + 2 * NotchIslandLayout.shoulderPad,
+        #expect(NotchIslandLayout.shoulderWidth(contentWidth: 2) == 2 + 2 * NotchIslandLayout.shoulderPad + NotchIslandLayout.bodyInset,
                 "any content earns its air; the bare shoulder is only the floor")
         // The window takes the wider shoulder on both sides and stays
         // centred on the notch — every face shares one centre, so a
         // morph never travels sideways.
-        #expect(uneven.windowShoulder == 40)
-        #expect(NotchIslandLayout.idleCenterX(slotCenterX: 756, leftShoulder: 44, rightShoulder: 12) == 756)
+        #expect(uneven.windowShoulder == 40 + NotchIslandLayout.bodyInset)
         // No notch: a floating pill sized to the content.
         let floating = NotchIslandLayout.floatingSize(contentWidth: 30)
         #expect(floating.height == 24)
@@ -268,10 +267,10 @@ struct NotchIslandTests {
         layout = NotchIsland.idleLayout(s, media: media, earsDrawn: false)
         #expect(layout.right == .media)
         #expect(layout.rightWidth == NotchIsland.mediaContentWidth)
-        #expect(layout.rightShoulder == NotchIsland.mediaContentWidth + 2 * NotchIslandLayout.shoulderPad)
-        #expect(layout.leftShoulder == 42,
+        #expect(layout.rightShoulder == NotchIsland.mediaContentWidth + 2 * NotchIslandLayout.shoulderPad + NotchIslandLayout.bodyInset)
+        #expect(layout.leftShoulder == 32 + 2 * NotchIslandLayout.shoulderPad + NotchIslandLayout.bodyInset,
                 "the left is its own two dots and count plus air")
-        #expect(layout.windowShoulder == NotchIsland.mediaContentWidth + 2 * NotchIslandLayout.shoulderPad,
+        #expect(layout.windowShoulder == NotchIsland.mediaContentWidth + 2 * NotchIslandLayout.shoulderPad + NotchIslandLayout.bodyInset,
                 "the window's shoulder is the wider side, both sides — centred on the notch")
         // The Screen Bar's ears over the same shoulders: bare, whatever
         // is live — and a bare housing has no shoulders at all.
@@ -279,6 +278,38 @@ struct NotchIslandTests {
         #expect(bare.bare)
         #expect(bare.contentWidth == 0)
         #expect(bare.leftShoulder == 0 && bare.rightShoulder == 0)
+    }
+
+    @Test("a playing track alone is Alcove's compact activity: cover left, waveform right, never a wide bar")
+    func compactMediaStrip() {
+        let slot: CGFloat = 185
+        let short = AlcoveMedia(title: "Ligeti", playing: true)
+        var long = AlcoveMedia(title: "A Very Long Title Indeed That Would Have Made A Wide Bar", playing: true)
+        long.artist = "An Artist With A Long Name Too"
+        let a = NotchIsland.idleLayout(NotchIslandSummary(), media: short, earsDrawn: false)
+        let b = NotchIsland.idleLayout(NotchIslandSummary(), media: long, earsDrawn: false)
+        #expect(a == b, "the title is not part of the layout: the width never moves with it")
+        #expect(a.mediaArtLeft && a.right == .media)
+        #expect(a.leftWidth == NotchIsland.mediaArtWidth && a.rightWidth == NotchIsland.mediaBarsWidth)
+        let size = NotchIslandLayout.idleSize(slotWidth: slot, notchDepth: 32,
+                                              leftShoulder: a.windowShoulder, rightShoulder: a.windowShoulder)
+        #expect(size.width < slot + 2 * 40, "the island reaches under 40 pt past the notch each side: \(size.width)")
+        #expect(size.width > slot + 2 * 20, "and still has room for its marks: \(size.width)")
+        // Something already in the left shoulder: the cover joins the waveform on the right.
+        var busy = NotchIslandSummary()
+        busy.working = 1
+        busy.workingProviders = ["claude"]
+        let both = NotchIsland.idleLayout(busy, media: short, earsDrawn: false)
+        #expect(!both.mediaArtLeft && both.rightWidth == NotchIsland.mediaContentWidth)
+        #expect(both.leftWidth > 0)
+        // The bar's ears over the shoulders: bare, so no strip at all.
+        let ears = NotchIsland.idleLayout(NotchIslandSummary(), media: short, earsDrawn: true)
+        #expect(ears.bare && !ears.mediaArtLeft && ears.windowShoulder == 0)
+        // An ask needing a hand outranks the strip, which then has no cover to place.
+        var asking = NotchIslandSummary()
+        asking.waiting = 1
+        let waiting = NotchIsland.idleLayout(asking, media: short, earsDrawn: false)
+        #expect(!waiting.mediaArtLeft && waiting.right == .attention(count: 1))
     }
 
     @Test("the idle content width follows the dots and the count")
@@ -345,7 +376,7 @@ struct NotchIslandTests {
         let idle = CGRect(x: 656, y: 945, width: 200, height: 37)
         let grown = CGRect(x: 596, y: 682, width: 320, height: 300)
         var spring = NotchFrameSpring(at: idle)
-        spring.retarget(grown, motion: NotchFrameSpring.expandMotion)
+        spring.retarget(grown, motion: NotchMotion.open)
         var ticks = 0
         while spring.integrate(dt: 1.0 / 120), ticks < 600 {
             ticks += 1
@@ -365,39 +396,5 @@ struct NotchIslandTests {
         // Notch-less: just the inset — the window already floats.
         #expect(NotchIslandLayout.expandedTopInset(notchDepth: 0)
                 == NotchIslandLayout.expandedNotchInset)
-    }
-
-    @Test("the card's reveal: rows at 60% of the grow, 20 ms apart, never more than six steps")
-    func revealTiming() {
-        #expect(NotchMotion.contentRevealThreshold == 0.6)
-        #expect(NotchMotion.rowStagger == 0.02)
-        #expect(NotchMotion.rowStaggerSteps == 6)
-        #expect(NotchMotion.rowFade == 0.12)
-        #expect(NotchMotion.rowRevealDelay(step: 0) == 0)
-        #expect(abs(NotchMotion.rowRevealDelay(step: 3) - 0.06) < 1e-9)
-        #expect(abs(NotchMotion.rowRevealDelay(step: 6) - 0.12) < 1e-9)
-        #expect(NotchMotion.rowRevealDelay(step: 22) == NotchMotion.rowRevealDelay(step: 6),
-                "a long card's last rows share the last step")
-        #expect(NotchMotion.rowRevealDelay(step: -1) == 0)
-        #expect(abs(NotchMotion.revealSpan - 0.24) < 1e-9, "the whole card within a quarter second of the reveal")
-    }
-
-    @Test("frame leads, content follows: the reveal waits for most of the grow's early travel")
-    func revealFollowsTheFrame() throws {
-        let idle = CGRect(x: 0, y: 0, width: 300, height: 32)
-        let grown = CGRect(x: 0, y: 0, width: 380, height: 520)
-        var spring = NotchFrameSpring(at: idle)
-        spring.retarget(grown, motion: NotchFrameSpring.motion(from: idle, to: grown))
-        var t = 0.0
-        var reveal: Double?
-        while spring.integrate(dt: 1.0 / 240), t < 2 {
-            t += 1.0 / 240
-            if reveal == nil, spring.frame.height / grown.height >= NotchMotion.contentRevealThreshold {
-                reveal = t
-            }
-        }
-        let at = try #require(reveal)
-        #expect(at > 0.05, "the rows never arrive with the frame's first ticks")
-        #expect(at < 0.15, "and never wait for the spring to settle")
     }
 }

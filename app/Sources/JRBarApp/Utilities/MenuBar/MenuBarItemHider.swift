@@ -104,6 +104,11 @@ struct MenuBarHidePlan: Equatable, Sendable {
     /// The length the boundary should claim; nil when it is not on the
     /// row (leave it be).
     var hiddenControlLength: CGFloat?
+    /// How far the spacer falls short of what would push every item left
+    /// of the icon off the row: a learned cap or the system's ceiling holds
+    /// it back. 0 when it reaches (or the run is revealed). While it is
+    /// short the items it cannot push off are covered in place.
+    var spacerShortBy: CGFloat = 0
     /// macOS's own « while it stands beside a hidden run — the Screen
     /// Bar's ear stops short of it. Quartz.
     var overflowControlFrame: CGRect?
@@ -161,6 +166,7 @@ final class MenuBarItemHider {
     /// Every reconcile hands the fresh plan up — the card's count row
     /// and the bar's tiles read it.
     var onPlan: (@MainActor (MenuBarHidePlan) -> Void)?
+    var onInventoryUpdate: (@MainActor () -> Void)?
 
     /// Seams so a test can drive `reconcile` without a screen, an AX
     /// scan, or control items: the row, the items the list would
@@ -173,6 +179,10 @@ final class MenuBarItemHider {
     /// the AX scan's cache. The 1 Hz pass stands down then unless a
     /// boundary is on the row (see `timerTick`).
     var listingIsScanned: @MainActor () -> Bool = { MenuBarItemLister.axTrusted() }
+    var listingIsComplete: @MainActor () -> Bool = { true }
+    /// Whether anybody can see the bar: the 1 Hz pass stands down while
+    /// the displays sleep or the screen is locked.
+    var barIsVisible: @MainActor () -> Bool = { MenuBarItemLister.barIsVisible }
     var controlFrames: @MainActor () -> MenuBarControlFrames = { MenuBarControlFrames() }
     /// The first guess at the fit edge — `fitInset` right of the notch
     /// on a notched display. nil means unknown: the controls stay
@@ -191,26 +201,60 @@ final class MenuBarItemHider {
     /// rule that reads item frames after a length write can wait for a
     /// listing taken after the bar reflowed.
     var listingGeneration: @MainActor () -> Int = { MenuBarItemLister.axGeneration }
+    /// Whether the menu bar is on screen to be judged: false while a
+    /// full-screen app hides it. A boundary found off the row then is the
+    /// bar leaving, not a spacer that was too long, and nothing is learned
+    /// from it.
+    var barShowing: @MainActor () -> Bool = { MenuBarItemHider.currentBarShowing() }
+    /// This process, so the icon's own items never count as overlapping it.
+    var ourPID: pid_t = ProcessInfo.processInfo.processIdentifier
     /// The utility's write path for a control's length.
     var setControlLength: @MainActor (MenuBarItemSection, CGFloat) -> Void = { _, _ in }
+    /// Sections that stand revealed whatever the gestures say — a
+    /// standing "Show everything" folds the divider away so every item
+    /// is drawn, the way out that always works.
+    var forcedReveal: @MainActor () -> Set<MenuBarItemSection> = { [] }
+    /// The longest spacer the system draws at all: past half the screen
+    /// it drops the item instead of clamping it (measured by others on
+    /// macOS 27 and consistent with a 3 000 pt item parking itself here).
+    var spacerCeiling: @MainActor () -> CGFloat = { MenuBarItemHider.currentSpacerCeiling() }
+    /// The boundary was found parked under its spacer and the cap
+    /// lowered — the divider's room watch counts these.
+    var onParkedLesson: @MainActor () -> Void = {}
+    var effectiveRevealedSections: Set<MenuBarItemSection> { revealed.union(lastForced) }
+    /// Whether a ⌘-drag has the bar in motion, or just finished (see
+    /// `MenuBarPointerGate`). While it does, `reconcile` writes nothing,
+    /// learns nothing and plans nothing: macOS is reflowing the row under
+    /// the person's hand, and every frame read now is mid-move. One
+    /// reconcile runs once it lets go.
+    var pointerHolds: @MainActor () -> Bool = { false }
+    /// How often a held reconcile asks again.
+    nonisolated static let pointerPoll: TimeInterval = 0.25
+    /// How a held reconcile waits between asks; a test cranks its own
+    /// clock here instead of sleeping.
+    var pointerSleep: @MainActor (TimeInterval) async -> Void = { seconds in
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
+    }
     /// Test seam: suppress the cover panels entirely — a unit test
     /// must not draw over the real menu bar.
-    /// Under the agent (`startConcealer`) this stands too — the spacer
-    /// stays down — but an `externalPlan` the utility hands over still
-    /// draws its covers (items the agent cannot target, e.g. helpers
-    /// with no bundle identifier).
     var shuttersSuppressed = false
-    /// The utility-owned plan drawn while `shuttersSuppressed` stands.
-    /// nil under the spacer engine.
-    var externalPlan: MenuBarHidePlan?
 
     private let hiddenShutter = MenuBarShutter()
     private let alwaysHiddenShutter = MenuBarShutter()
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
+    private var distributedObservers: [NSObjectProtocol] = []
     private var settleTask: Task<Void, Never>?
+    /// The one reconcile waiting for the pointer to let go of the bar.
+    private(set) var pointerTask: Task<Void, Never>?
     /// Sections a reveal gesture has uncovered.
     private(set) var revealed: Set<MenuBarItemSection> = []
+    /// What the plan treats as revealed: the gestures' and any section a
+    /// standing overlay forces open.
+    private var planRevealed: Set<MenuBarItemSection> { revealed.union(forcedReveal()) }
+    /// The forced sections the last pass saw, so a change writes on the
+    /// spot — the person is waiting on a Show everything.
+    private var lastForced: Set<MenuBarItemSection> = []
     /// The Item Bar's own reveal signal: under `.bar` style the covers
     /// never drop, so `revealed` stays empty — the utility reports the
     /// bar's open state here so `coverShown` fires under both styles.
@@ -224,9 +268,18 @@ final class MenuBarItemHider {
     /// The lengths last handed to `setControlLength`, so a parked
     /// control's cap can be derived from what it was asked to claim.
     private(set) var assignedLengths: [MenuBarItemSection: CGFloat] = [:]
+    private var writtenHiddenRevealed: Bool?
     /// The listing generation at the last length write — frames from
     /// that generation predate the reflow the write caused.
     private var lengthWrittenAtGeneration = -1
+    private var controlWriteRevision = 0
+    private var controlListingRevision = 0
+    private var lastControlRefreshAttempt: Int?
+    private var lastConcealedLength: CGFloat?
+    private var lastConcealedEdgeKey: String?
+    var hasFreshControlListing: Bool {
+        listingIsComplete() && (!listingIsScanned() || controlListingRevision == controlWriteRevision)
+    }
     /// Fresh listings in a row that showed the « on our glyph. A lesson
     /// needs two: one listing's proof can be the handoff at launch (the
     /// old instance's item still on the bar, so the new one's spacer
@@ -261,14 +314,43 @@ final class MenuBarItemHider {
     /// overflow moved it off the guess. Loaded from `edgeStore`.
     private(set) var learnedFitEdge: CGFloat?
     private var loadedEdgeKey: String?
+    private var overflowEdgeAnchor: CGFloat?
+
+    /// What the bar needs after something re-formed it (wake, displays,
+    /// session, Space): a quiet spell, a clean re-measure, and one re-seat
+    /// if the icon is still wrong. See `MenuBarWakeRecovery`.
+    private(set) var wake = MenuBarWakeRecovery()
+    private var wakeTask: Task<Void, Never>?
+    /// Reconcile passes, the clock of "fresh looks" where no scan runs.
+    private var passes = 0
+    private var lengthWrittenAtPass = -1
+    /// Passes in a row that found the icon not the width that was written,
+    /// outside any episode, and since when.
+    private var standingStrikes = 0
+    private var standingSince: TimeInterval?
+    /// How long the width must have been wrong, over at least three
+    /// passes, before a check opens: a reflow settles inside a second.
+    nonisolated static let standingHold: TimeInterval = 4
+    /// One self-opened check per real event: a width that never matches
+    /// (a system clamp) is reported, not chased.
+    private var selfCheckSpent = false
+    /// The icon's own width as the last pass read it, and as it was when
+    /// the standing length was written: the spacer is the length less it.
+    private var seenGlyph = MenuBarControlFrames.glyphLength
+    private var writtenGlyph = MenuBarControlFrames.glyphLength
 
     /// The AX listing's refresh cadence driver.
     private var listingTask: Task<Void, Never>?
+    private var settleNeedsFreshListing = false
+    var settleSleep: @MainActor (TimeInterval) async -> Void = { seconds in
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
+    }
+    var refreshListingAfterReflow: @MainActor () async -> Bool = {
+        await MenuBarItemLister.freshAXItems() != nil
+    }
     /// The `RunningApps` listener that tells the listing about launches
     /// and quits.
     private var runningAppsListener: Int?
-    /// How often the AX listing re-scans while the utility runs.
-    nonisolated static let listingInterval: TimeInterval = 2.0
     /// The menu-edge re-reads after an activation (`menuBarChangedHands`).
     private var menuEdgeTask: Task<Void, Never>?
     /// How long after an activation the menu edge is read a second
@@ -323,21 +405,58 @@ final class MenuBarItemHider {
                 MenuBarItemLister.invalidateGeometry()
                 self?.reloadFitEdge()
                 self?.resetCaps()
+                self?.noteBarReformed("the displays changed")
                 self?.reconcile()
             }
         })
+        MenuBarItemLister.resetPresence()
         for name in [NSWorkspace.willSleepNotification,
                      NSWorkspace.didWakeNotification,
                      NSWorkspace.screensDidSleepNotification,
                      NSWorkspace.screensDidWakeNotification,
                      NSWorkspace.sessionDidResignActiveNotification,
-                     NSWorkspace.sessionDidBecomeActiveNotification] {
+                     NSWorkspace.sessionDidBecomeActiveNotification,
+                     NSWorkspace.activeSpaceDidChangeNotification] {
+            let presence = Self.presenceEvent(for: name)
+            let reforms = Self.reformsBar(name)
             observers.append(NSWorkspace.shared.notificationCenter.addObserver(
                 forName: name, object: nil, queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
+                    // A Space change moves no item: no cached geometry is
+                    // dropped, no AX rescan forced. It only quiets the
+                    // spacer while the bar changes hands.
+                    if name == NSWorkspace.activeSpaceDidChangeNotification {
+                        self?.noteBarReformed("the Space changed", light: true)
+                        self?.scheduleSettle()
+                        return
+                    }
                     MenuBarItemLister.invalidateGeometry()
+                    if let presence { MenuBarItemLister.notePresence(presence) }
                     self?.resetCaps()
+                    if reforms == true {
+                        self?.noteBarReformed(name.rawValue)
+                    } else if reforms == false {
+                        self?.noteBarDark()
+                    }
+                    self?.scheduleSettle()
+                }
+            })
+        }
+        // A locked screen shows no bar either; the lock notices come on
+        // the distributed center.
+        let lockNotices: [(Notification.Name, DockTickPark.Event)] = [
+            (DockTickPark.lockedNotification, .locked),
+            (DockTickPark.unlockedNotification, .unlocked),
+        ]
+        for (name, presence) in lockNotices {
+            distributedObservers.append(DistributedNotificationCenter.default().addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    MenuBarItemLister.notePresence(presence)
+                    if presence == .unlocked { self?.noteBarReformed("the screen unlocked") }
+                    if presence == .locked { self?.noteBarDark() }
                     self?.scheduleSettle()
                 }
             })
@@ -362,29 +481,72 @@ final class MenuBarItemHider {
         }
         // The listing refreshes off-actor; each completed scan is a
         // reconcile. Skipped entirely without Accessibility — the
-        // scan would only collect errors.
+        // scan would only collect errors — and while nobody can see the
+        // bar (displays asleep, screen locked): the answers would go to
+        // an empty room, and a closed-lid Mac kept awake for its agents
+        // would ask every menu extra's app twice a second all night.
+        // A bar that sits still is asked about less often
+        // (`MenuBarListingPace`); anything that can move it ends the
+        // wait (`MenuBarItemLister.barActivity`).
         listingTask = Task { [weak self] in
-            while !Task.isCancelled {
-                if MenuBarItemLister.axTrusted() {
-                    _ = await MenuBarItemLister.refreshAXItems()
-                    self?.reconcile()
-                }
-                try? await Task.sleep(nanoseconds: UInt64(Self.listingInterval * 1e9))
-            }
+            let loop = MenuBarListingLoop(
+                visible: { MenuBarItemLister.barIsVisible },
+                trusted: { MenuBarItemLister.axTrusted() },
+                scan: { await MenuBarItemLister.refreshAXItems() },
+                activity: { MenuBarItemLister.barActivity },
+                afterScan: { self?.inventoryDidRefresh() },
+                sleep: { seconds in
+                    _ = try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
+                },
+                complete: { MenuBarItemLister.axInventoryComplete })
+            await loop.run()
         }
         reconcile()
     }
 
+    func inventoryDidRefresh() {
+        onInventoryUpdate?()
+        reconcile()
+    }
+
     /// The 1 Hz pass, for what the listing loop cannot see. A boundary on
-    /// the row is the spacer engine's: the host item's frame drifts as
-    /// the bar reflows and is read live each pass. Without Accessibility
-    /// there is no loop and the window list is read per pass. Otherwise
-    /// — the concealer, whose plan has no boundary, with the grant — the
-    /// pass would re-plan the same cached listing the loop reconciled
-    /// after its last scan and run the whole `onPlan` pipeline for
-    /// nothing, two passes in three. Reveals, hides, settles and screen
-    /// changes still reconcile on their own.
+    /// the row is the divider's: the host item's frame drifts as the bar
+    /// reflows and is read live each pass. Without Accessibility there is
+    /// no loop and the window list is read per pass. Otherwise — with no
+    /// boundary on the row and the grant — the pass would re-plan the
+    /// same cached listing the loop reconciled after its last scan and run
+    /// the whole `onPlan` pipeline for nothing, two passes in three.
+    /// Reveals, hides, settles and screen changes still reconcile on their
+    /// own.
+    /// The presence fact a workspace notice carries, if it carries one.
+    nonisolated static func presenceEvent(for name: Notification.Name) -> DockTickPark.Event? {
+        switch name {
+        case NSWorkspace.screensDidSleepNotification: return .displaysSlept
+        case NSWorkspace.screensDidWakeNotification: return .displaysWoke
+        case NSWorkspace.sessionDidResignActiveNotification: return .sessionLeft
+        case NSWorkspace.sessionDidBecomeActiveNotification: return .sessionReturned
+        default: return nil
+        }
+    }
+
+    /// Whether a workspace notice re-forms the bar (true: the Mac, its
+    /// displays or the session came back, or the Space changed), takes it
+    /// away (false: asleep, locked, switched out) or neither (nil).
+    nonisolated static func reformsBar(_ name: Notification.Name) -> Bool? {
+        switch name {
+        case NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification,
+             NSWorkspace.sessionDidBecomeActiveNotification, NSWorkspace.activeSpaceDidChangeNotification:
+            return true
+        case NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification,
+             NSWorkspace.sessionDidResignActiveNotification:
+            return false
+        default:
+            return nil
+        }
+    }
+
     func timerTick() {
+        guard barIsVisible() else { return }
         guard controlFrames().hidden != nil || !listingIsScanned() else { return }
         reconcile()
     }
@@ -398,6 +560,13 @@ final class MenuBarItemHider {
         listingTask = nil
         settleTask?.cancel()
         settleTask = nil
+        wakeTask?.cancel()
+        wakeTask = nil
+        wake = MenuBarWakeRecovery()
+        standingStrikes = 0
+        standingSince = nil
+        pointerTask?.cancel()
+        pointerTask = nil
         menuEdgeTask?.cancel()
         menuEdgeTask = nil
         if let runningAppsListener { RunningApps.shared.removeListener(runningAppsListener) }
@@ -407,18 +576,31 @@ final class MenuBarItemHider {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
         observers = []
+        for observer in distributedObservers {
+            DistributedNotificationCenter.default().removeObserver(observer)
+        }
+        distributedObservers = []
         restoreAll()
+        // Restoring the spacer can arm a settle; stopping must retire it too.
+        settleTask?.cancel()
+        settleTask = nil
+        settleNeedsFreshListing = false
     }
 
     isolated deinit {
         timer?.invalidate()
         listingTask?.cancel()
         settleTask?.cancel()
+        wakeTask?.cancel()
+        pointerTask?.cancel()
         menuEdgeTask?.cancel()
         if let runningAppsListener { RunningApps.shared.removeListener(runningAppsListener) }
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        for observer in distributedObservers {
+            DistributedNotificationCenter.default().removeObserver(observer)
         }
     }
 
@@ -426,6 +608,7 @@ final class MenuBarItemHider {
     /// back, reveals forgotten.
     func restoreAll() {
         revealed = []
+        lastForced = []
         barCoveringShown = false
         hiddenShutter.orderOut()
         alwaysHiddenShutter.orderOut()
@@ -446,6 +629,9 @@ final class MenuBarItemHider {
     /// the lengths handed to the old items mean nothing to the new ones.
     func controlsReinstalled() {
         assignedLengths = [:]
+        lastConcealedLength = nil
+        lastConcealedEdgeKey = nil
+        writtenHiddenRevealed = nil
         pendingLength = nil
         lastWriteAt = .distantPast
         resetCaps()
@@ -456,6 +642,7 @@ final class MenuBarItemHider {
     /// for a bar that has changed under us.
     func forgetFitEdge() {
         learnedFitEdge = nil
+        overflowEdgeAnchor = nil
         edgeStore.save(nil, key: edgeKey())
         resetCaps()
         reconcile()
@@ -471,6 +658,7 @@ final class MenuBarItemHider {
         guard let current = fitEdge else { return }
         let next = current + delta
         learnedFitEdge = next
+        overflowEdgeAnchor = nil
         edgeStore.save(next, key: edgeKey())
         resetCaps()
         reconcile()
@@ -485,12 +673,43 @@ final class MenuBarItemHider {
         guard key != loadedEdgeKey else { return }
         loadedEdgeKey = key
         learnedFitEdge = edgeStore.load(key: key)
+        overflowEdgeAnchor = nil
+    }
+
+    /// A screen-sized cache key cannot tell that the divider moved left.
+    /// An edge inside its glyph leaves no room for the hiding spacer.
+    private func discardUnusableFitEdge(controls: MenuBarControlFrames, row: CGRect) {
+        guard let edge = learnedFitEdge,
+              Self.learnedFitEdgeNeedsReset(edge, controls: controls, row: row) else { return }
+        // A fresh overflow lesson at this anchor describes a crowded bar.
+        // Replacing it with the guess again would repeat that overflow.
+        if let anchor = overflowEdgeAnchor, let boundary = controls.hidden,
+           boundary.maxX >= anchor - 2 { return }
+        learnedFitEdge = nil
+        overflowEdgeAnchor = nil
+        edgeStore.save(nil, key: edgeKey())
+        resetCaps()
+        overflowStreak = 0
+        overflowSeenAtGeneration = -1
+        pendingLength = nil
+        shrinkWantedSince = nil
+        writeAtOnce = true
+        Self.log.notice("bar: remembered fit edge no longer leaves room left of the divider; measuring again")
+    }
+
+    nonisolated static func learnedFitEdgeNeedsReset(
+        _ edge: CGFloat, controls: MenuBarControlFrames, row: CGRect
+    ) -> Bool {
+        guard let boundary = controls.hidden, boundary.intersects(row),
+              boundary.maxX > row.minX, boundary.maxX <= row.maxX else { return false }
+        return !edge.isFinite || edge < row.minX || edge > boundary.maxX - controls.hiddenGlyph
     }
 
     /// A gesture asks for these sections back for a while; `hide`
     /// pushes them off again.
     func reveal(_ sections: Set<MenuBarItemSection>) {
         revealed.formUnion(sections)
+        MenuBarItemLister.noteBarActivity()
         writeAtOnce = true
         reconcile()
         scheduleSettle()
@@ -500,6 +719,7 @@ final class MenuBarItemHider {
     func hide() {
         guard !revealed.isEmpty else { return }
         revealed = []
+        MenuBarItemLister.noteBarActivity()
         writeAtOnce = true
         reconcile()
         scheduleSettle()
@@ -512,23 +732,39 @@ final class MenuBarItemHider {
     func setBarCoveringShown(_ covering: Bool) {
         guard barCoveringShown != covering else { return }
         barCoveringShown = covering
+        MenuBarItemLister.noteBarActivity()
         reconcile()
     }
 
     /// One more reconcile after the bar has had a beat to reflow.
-    func scheduleSettle() {
+    func scheduleSettle(refreshListing: Bool = false) {
+        settleNeedsFreshListing = settleNeedsFreshListing || refreshListing
         settleTask?.cancel()
+        let sleep = settleSleep
         settleTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(Self.settleDelay * 1e9))
-            guard !Task.isCancelled else { return }
-            self?.reconcile()
+            await sleep(Self.settleDelay)
+            guard !Task.isCancelled, let self else { return }
+            if self.settleNeedsFreshListing, self.barIsVisible(), self.barShowing(), self.listingIsScanned() {
+                let revision = self.controlWriteRevision
+                self.lastControlRefreshAttempt = self.listingGeneration()
+                let refreshed = await self.refreshListingAfterReflow()
+                guard !Task.isCancelled else { return }
+                if refreshed, revision == self.controlWriteRevision {
+                    self.controlListingRevision = revision
+                    self.settleNeedsFreshListing = false
+                }
+            } else if !self.listingIsScanned() {
+                self.settleNeedsFreshListing = false
+            }
+            self.settleTask = nil
+            self.reconcile()
         }
     }
 
     /// Another app took the menu bar: forget the parked caps, settle,
     /// and re-read the new owner's menu edge now and once more a beat
-    /// later. The icon's mirror, the concealer's reveal zone and the
-    /// obscured frames all start right of that edge; left to the 2 s
+    /// later. The reveal zone and the obscured frames all start right of
+    /// that edge; left to the 2 s
     /// scan, a switch to an app whose menus run past the notch had the
     /// zone over its "Window" and "Help" until the next one. A read
     /// that moves the edge re-arms the settle, which is debounced, so
@@ -546,48 +782,243 @@ final class MenuBarItemHider {
         }
     }
 
+    /// A reconcile asked for while the pointer holds the bar still is
+    /// not run: one task waits for the gate to let go and runs a single
+    /// reconcile then, however many were asked for in between.
+    private func deferForPointer() -> Bool {
+        guard pointerHolds() else { return false }
+        guard pointerTask == nil else { return true }
+        pointerTask = Task { [weak self] in
+            var polls = 0
+            while let self, !Task.isCancelled, self.pointerHolds(), polls < 400 {
+                await self.pointerSleep(Self.pointerPoll)
+                polls += 1
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.pointerTask = nil
+            Self.log.notice("drag: the bar is still again — reading it once")
+            self.reconcile()
+        }
+        return true
+    }
+
     /// Recompute the plan, the spacer lengths and the covers.
     func reconcile() {
+        if deferForPointer() { return }
+        if settleNeedsFreshListing, settleTask == nil, barIsVisible(), barShowing(), listingIsScanned(),
+           lastControlRefreshAttempt != listingGeneration() {
+            scheduleSettle(refreshListing: true)
+        }
+        guard listingIsComplete() else {
+            overflowStreak = 0
+            overflowSeenAtGeneration = -1
+            hiddenShutter.orderOut()
+            alwaysHiddenShutter.orderOut()
+            let forced = forcedReveal()
+            if forced != lastForced {
+                lastForced = forced
+                writeAtOnce = true
+            }
+            if writeAtOnce {
+                let row = rowRect()
+                let controls = controlFrames()
+                seenGlyph = controls.hiddenGlyph
+                planningMaxX = controls.hidden.flatMap { $0.intersects(row) ? $0.maxX : nil }
+                if effectiveRevealedSections.contains(.hidden) {
+                    assign(.hidden, length: controls.hiddenGlyph)
+                } else if barIsVisible(), barShowing(), planningMaxX != nil,
+                          lastConcealedEdgeKey == edgeKey(), let length = lastConcealedLength {
+                    assign(.hidden, length: max(controls.hiddenGlyph, min(length, spacerCeiling())))
+                }
+            }
+            return
+        }
         let row = rowRect()
         let controls = controlFrames()
         let items = listItems()
-        learnCaps(controls: controls, row: row)
-        learnOverflow(controls: controls, row: row, items: items)
+        passes += 1
+        seenGlyph = controls.hiddenGlyph
+        let clock = wakeClock
+        // The bar just re-formed (wake, displays, session, Space): leave
+        // it alone until it has settled, learn nothing from frames read
+        // mid-move, and read clean afterwards.
+        if wake.takeRemeasure(now: clock) {
+            resetCaps()
+            overflowStreak = 0
+            overflowSeenAtGeneration = -1
+            pendingLength = nil
+            shrinkWantedSince = nil
+            Self.log.notice("bar: settled after a change — measuring it again")
+        }
+        let settling = wake.isQuiet(now: clock)
+        if !settling {
+            discardUnusableFitEdge(controls: controls, row: row)
+        }
+        let showing = barShowing()
+        if !settling, showing {
+            learnCaps(controls: controls, row: row)
+            learnOverflow(controls: controls, row: row, items: items)
+        }
         let edge = fitEdge
         planningMaxX = controls.hidden.flatMap { $0.intersects(row) ? $0.maxX : nil }
+        let forced = forcedReveal()
+        if forced != lastForced {
+            lastForced = forced
+            writeAtOnce = true
+        }
+        let open = revealed.union(forced)
         let coverShown = settings().hideShownWhileRevealing
-            && (revealed.contains(.hidden) || barCoveringShown)
+            && (open.contains(.hidden) || barCoveringShown)
+        var cappedAt = caps
+        cappedAt.hidden = min(caps.hidden, spacerCeiling())
         let plan = Self.plan(items: items,
                              sections: settings().sections, row: row,
                              otherRows: MenuBarItemLister.menuBarRows().filter { $0 != row },
                              controls: controls, fitEdge: edge,
-                             revealed: revealed, caps: caps,
+                             revealed: open, caps: cappedAt,
                              protectedFrames: protectedFrames(),
                              obscuredFrames: obscuredFrames(),
                              coverShown: coverShown)
         lastPlan = plan
-        if let length = plan.hiddenControlLength { request(length) }
-        // The plan lands with the utility before the shutters update:
-        // under the concealer the callback hands back `externalPlan`,
-        // and reading it here keeps the cover pass on this listing
-        // instead of lagging one behind.
+        if !open.contains(.hidden), let length = plan.hiddenControlLength {
+            lastConcealedLength = length
+            lastConcealedEdgeKey = edgeKey()
+        }
+        if let length = plan.hiddenControlLength, !settling || writeAtOnce { request(length) }
         onPlan?(plan)
-        updateShutters(plan: plan, row: row)
+        updateShutters(plan: plan, row: row, open: open)
+        checkIcon(controls: controls, row: row, items: items, showing: showing)
         // Debug, and only when an item changes section: on every plan
         // difference, the clock's x jitter and minute title alone made
         // ~150 persisted lines an hour. The plan named is the one that
-        // stands — under the concealer that is the utility's, not this
-        // pass's positional one.
-        let standing = externalPlan ?? plan
-        let sections = standing.sectionIDs
+        // stands.
+        let sections = plan.sectionIDs
         if sections != loggedSections {
             loggedSections = sections
             let describe = { (r: CGRect?) -> String in
                 r.map { String(format: "%.0f–%.0f@%.0f", $0.minX, $0.maxX, $0.minY) } ?? "none"
             }
             let tag = { (i: MenuBarItem) in "\(i.id)@\(Int(i.bounds.minX))" }
-            Self.log.debug("plan: boundary \(describe(controls.hidden), privacy: .public) → \(plan.hiddenControlLength.map { String(format: "%.0f", $0) } ?? "–", privacy: .public); fit edge \(edge.map { String(format: "%.0f", $0) } ?? "nil", privacy: .public)\(self.learnedFitEdge == nil ? " (guess)" : " (learned)", privacy: .public); revealed \(self.revealed.map(\.rawValue).sorted().joined(separator: ","), privacy: .public); shown \(standing.shown.map(tag).joined(separator: " | "), privacy: .public); hidden \(standing.hidden.map(tag).joined(separator: " | "), privacy: .public); always \(standing.alwaysHidden.map(tag).joined(separator: " | "), privacy: .public); covers \(standing.hiddenCovers.count + standing.alwaysHiddenCovers.count, privacy: .public)")
+            Self.log.debug("plan: boundary \(describe(controls.hidden), privacy: .public) → \(plan.hiddenControlLength.map { String(format: "%.0f", $0) } ?? "–", privacy: .public); fit edge \(edge.map { String(format: "%.0f", $0) } ?? "nil", privacy: .public)\(self.learnedFitEdge == nil ? " (guess)" : " (learned)", privacy: .public); revealed \(self.revealed.map(\.rawValue).sorted().joined(separator: ","), privacy: .public); shown \(plan.shown.map(tag).joined(separator: " | "), privacy: .public); hidden \(plan.hidden.map(tag).joined(separator: " | "), privacy: .public); always \(plan.alwaysHidden.map(tag).joined(separator: " | "), privacy: .public); covers \(plan.hiddenCovers.count + plan.alwaysHiddenCovers.count, privacy: .public)")
         }
+    }
+
+    // MARK: When the bar re-forms
+
+    /// The clock the wake rules run on: the hider's own, so a test cranks it.
+    private var wakeClock: TimeInterval { now().timeIntervalSinceReferenceDate }
+
+    /// The Mac, its displays or the session came back, a display changed or
+    /// a Space did: the bar is being rebuilt and every app puts its items
+    /// back one at a time. Leave it alone, then measure again and check the
+    /// icon once (`MenuBarWakeRecovery`).
+    func noteBarReformed(_ why: String, light: Bool = false) {
+        wake.noteEvent(now: wakeClock, light: light)
+        selfCheckSpent = false
+        standingStrikes = 0
+        standingSince = nil
+        Self.log.notice("bar: \(why, privacy: .public) — leaving the spacer alone for a few seconds, then checking the icon")
+        scheduleWakeCheck()
+    }
+
+    /// The bar went dark: nothing to judge until it is back.
+    func noteBarDark() {
+        wake.noteDark()
+        wakeTask?.cancel()
+        wakeTask = nil
+    }
+
+    /// Passes at the end of the quiet and after a re-seat, so the check
+    /// happens even on a bar that sits still. Three at most, then the
+    /// episode is the scans' and the timer's alone. Nothing polls.
+    private func scheduleWakeCheck() {
+        wakeTask?.cancel()
+        wakeTask = Task { [weak self] in
+            let beats = [MenuBarWakeRecovery.quiet + 0.1,
+                         MenuBarWakeRecovery.reseatSettle + 0.5,
+                         MenuBarWakeRecovery.reseatSettle + 0.5]
+            for beat in beats {
+                try? await Task.sleep(nanoseconds: UInt64(beat * 1e9))
+                guard !Task.isCancelled, let self else { return }
+                self.reconcile()
+                guard self.wake.isOpen else { return }
+            }
+        }
+    }
+
+    /// One look at the icon's seat: on the row, the width that was
+    /// written, clear of other apps' items. Opens an episode of its own
+    /// (once per event) when the width has been wrong for three passes in
+    /// a row, and acts on the episode's verdict: re-seat once.
+    private func checkIcon(controls: MenuBarControlFrames, row: CGRect,
+                           items: [MenuBarItem], showing: Bool) {
+        guard let frame = controls.hidden else { return }
+        let onRow = frame.intersects(row)
+        let scanned = listingIsScanned()
+        let stands = !onRow || MenuBarWakeRecovery.widthStands(
+            frame: frame, written: assignedLengths[.hidden], writtenGlyph: writtenGlyph,
+            glyph: controls.hiddenGlyph,
+            floor: writtenHiddenRevealed == true ? 0 : MenuBarUtility.boundaryAffordance)
+        if !wake.isOpen, !selfCheckSpent, onRow, showing, !pointerHolds() {
+            standingStrikes = stands ? 0 : standingStrikes + 1
+            if stands { standingSince = nil } else if standingSince == nil { standingSince = wakeClock }
+            if standingStrikes >= 3, let since = standingSince, wakeClock - since >= Self.standingHold {
+                selfCheckSpent = true
+                standingStrikes = 0
+                standingSince = nil
+                Self.log.notice("bar: the icon is not the width that was written — checking it")
+                wake.noteEvent(now: wakeClock)
+                scheduleWakeCheck()
+            }
+        }
+        guard wake.isOpen else { return }
+        // Only the icon's own face can be overlapped: the stretch of spacer
+        // left of it is where pushed items pass on their way off the row.
+        let face = CGRect(x: frame.maxX - controls.hiddenGlyph, y: frame.minY,
+                          width: controls.hiddenGlyph, height: frame.height)
+        let overlapping = scanned
+            ? MenuBarWakeRecovery.overlapping(icon: face, row: row, items: items, ourPID: ourPID)
+            : []
+        let health = MenuBarWakeRecovery.Health(onRow: onRow, spacerStands: stands,
+                                                overlapping: overlapping)
+        let action = wake.assess(
+            now: wakeClock,
+            generation: scanned ? listingGeneration() : passes,
+            floor: scanned ? lengthWrittenAtGeneration : lengthWrittenAtPass,
+            judgeable: showing && barIsVisible() && !pointerHolds(),
+            health: health)
+        if action == .reseat, let trouble = health.trouble {
+            reseat(because: trouble, glyph: controls.hiddenGlyph)
+        } else if case .stuck(let trouble) = wake.verdict {
+            Self.log.notice("bar: the icon is still wrong after one re-seat (\(String(describing: trouble), privacy: .public)) — leaving it")
+        }
+    }
+
+    /// Fold the spacer and write it again, once: a length write makes macOS
+    /// sort the row afresh. Caps and lessons are forgotten with it.
+    private func reseat(because trouble: MenuBarWakeRecovery.Trouble, glyph: CGFloat) {
+        Self.log.notice("bar: re-seating the icon once (\(String(describing: trouble), privacy: .public))")
+        resetCaps()
+        overflowStreak = 0
+        overflowSeenAtGeneration = -1
+        pendingLength = nil
+        shrinkWantedSince = nil
+        let floor = glyph + MenuBarUtility.boundaryAffordance
+        // Fold to the floor; when the item already wears it, a hair more,
+        // so the write is a change the bar can feel.
+        let standing = assignedLengths[.hidden] ?? 0
+        let fold = standing > floor + 1 ? glyph : floor + 2
+        assignedLengths[.hidden] = nil
+        assign(.hidden, length: fold)
+        writeAtOnce = true
+    }
+
+    /// Whether the menu bar is on screen: false while a full-screen app has
+    /// hidden it (the menu bar's strip then lies inside the screen's usable
+    /// area). On a bar that is always hidden nothing is learned either.
+    static func currentBarShowing() -> Bool {
+        guard let screen = MenuBarItemLister.managedScreen else { return true }
+        return screen.frame.maxY - screen.visibleFrame.maxY > 1
     }
 
     /// A control that should stand on the row but is off it was parked
@@ -602,6 +1033,7 @@ final class MenuBarItemHider {
             if asked > glyph + 1 {
                 caps.hidden = max(glyph, asked - Self.capStep)
                 Self.log.notice("boundary parked at \(asked, privacy: .public)pt; cap now \(self.caps.hidden, privacy: .public)")
+                onParkedLesson()
                 assign(.hidden, length: glyph)
             }
         }
@@ -629,7 +1061,7 @@ final class MenuBarItemHider {
         let generation = listingGeneration()
         guard generation > lengthWrittenAtGeneration else { return }
         guard let hidden = controls.hidden, hidden.intersects(row),
-              !revealed.contains(.hidden),
+              !planRevealed.contains(.hidden),
               let asked = assignedLengths[.hidden],
               asked > controls.hiddenGlyph + 1 else { return }
         guard Self.controlOverflowed(controlFrame: hidden, items: items, row: row,
@@ -655,6 +1087,7 @@ final class MenuBarItemHider {
         let current = fitEdge ?? placedEdge
         let next = max(current, placedEdge) + Self.overflowStep
         learnedFitEdge = next
+        overflowEdgeAnchor = hidden.maxX
         edgeStore.save(next, key: edgeKey())
         // One step per listing, and the shorter spacer goes out on this
         // pass: an overflowed boundary is not drawn at all.
@@ -671,7 +1104,8 @@ final class MenuBarItemHider {
     /// read mid-way, and writing it would keep the bar reflowing.
     private func request(_ length: CGFloat) {
         let rounded = length.rounded()
-        if let current = assignedLengths[.hidden], abs(current - rounded) < 1 {
+        if let current = assignedLengths[.hidden], abs(current - rounded) < 1,
+           writtenHiddenRevealed == effectiveRevealedSections.contains(.hidden) {
             pendingLength = nil
             shrinkWantedSince = nil
             return
@@ -699,18 +1133,25 @@ final class MenuBarItemHider {
         }
     }
 
-    /// Hand a length to the utility only when it changes — a status
-    /// item's length write reflows the whole bar.
+    /// A reveal can fold the affordance even when the planned width
+    /// stays glyph-only. Deduplicate the width and reveal state together.
     private func assign(_ section: MenuBarItemSection, length: CGFloat) {
         let rounded = length.rounded()
         writeAtOnce = false
-        if let current = assignedLengths[section], abs(current - rounded) < 1 { return }
+        let hiddenRevealed = effectiveRevealedSections.contains(.hidden)
+        if let current = assignedLengths[section], abs(current - rounded) < 1,
+           section != .hidden || writtenHiddenRevealed == hiddenRevealed { return }
         assignedLengths[section] = rounded
+        if section == .hidden { writtenHiddenRevealed = hiddenRevealed }
+        controlWriteRevision += 1
+        lastControlRefreshAttempt = nil
+        writtenGlyph = seenGlyph
         lengthWrittenAtGeneration = listingGeneration()
+        lengthWrittenAtPass = passes
         lastWriteAt = now()
         restMaxX = planningMaxX
         setControlLength(section, rounded)
-        scheduleSettle()
+        scheduleSettle(refreshListing: true)
     }
 
     /// The last blend probe's answer and when it ran — re-sampling is
@@ -721,28 +1162,22 @@ final class MenuBarItemHider {
     private let blendFilterSource = DisplayFilterSource()
 
     /// Make the shutters match the plan and the reveal state.
-    private func updateShutters(plan: MenuBarHidePlan, row: CGRect) {
-        // Under the agent the reconcile's own positional plan draws
-        // nothing — unless the utility handed over an external plan
-        // carrying covers for items the agent cannot target.
-        let effective = externalPlan ?? plan
-        guard !shuttersSuppressed || externalPlan != nil else {
+    private func updateShutters(plan: MenuBarHidePlan, row: CGRect, open: Set<MenuBarItemSection>) {
+        guard !shuttersSuppressed else {
             hiddenShutter.orderOut()
             alwaysHiddenShutter.orderOut()
             return
         }
         var appearance = MenuBarCoverAppearance(settings: settings())
         if appearance.material == .blend {
-            appearance.blendHex = blendHex(plan: effective, row: row)
+            appearance.blendHex = blendHex(plan: plan, row: row)
         }
-        hiddenShutter.cover(revealed.contains(.hidden) ? [] : effective.hiddenCovers,
+        hiddenShutter.cover(open.contains(.hidden) ? [] : plan.hiddenCovers,
                             rowHeight: row.height, appearance: appearance)
-        // The swap's covers ride this shutter: `shownCovers` come from
-        // the fresh plan (never `externalPlan` — the concealer's
-        // handoff carries no shown coverage) and paint while any
-        // reveal surface is up.
+        // The swap's covers ride this shutter: `shownCovers` paint while
+        // any reveal surface is up.
         alwaysHiddenShutter.cover(
-            (revealed.contains(.alwaysHidden) ? [] : effective.alwaysHiddenCovers)
+            (open.contains(.alwaysHidden) ? [] : plan.alwaysHiddenCovers)
                 + plan.shownCovers,
             rowHeight: row.height, appearance: appearance)
     }
@@ -792,7 +1227,7 @@ final class MenuBarItemHider {
     /// here, so the midpoint stands in — a spacer that reaches past the
     /// real edge is parked, learned, and capped.
     static func currentGuessedFitEdge() -> CGFloat? {
-        guard let screen = NSScreen.main else { return nil }
+        guard let screen = MenuBarItemLister.managedScreen else { return nil }
         if let right = screen.auxiliaryTopRightArea {
             // AppKit and Quartz share x on the main display.
             return right.minX + fitInset
@@ -800,13 +1235,28 @@ final class MenuBarItemHider {
         return screen.frame.midX
     }
 
+    /// Half the main screen's width less the item's own chrome: the
+    /// longest status item the system still draws.
+    static func currentSpacerCeiling() -> CGFloat {
+        guard let screen = MenuBarItemLister.managedScreen else { return .infinity }
+        return spacerCeiling(screenWidth: screen.frame.width)
+    }
+
+    nonisolated static func spacerCeiling(screenWidth: CGFloat) -> CGFloat {
+        max(MenuBarControlFrames.glyphLength, screenWidth / 2 - 24)
+    }
+
     /// The learned edge's key: the main screen's size.
     static func currentEdgeKey() -> String {
-        guard let screen = NSScreen.main else { return "none" }
+        guard let screen = MenuBarItemLister.managedScreen else { return "none" }
         return "\(Int(screen.frame.width))x\(Int(screen.frame.height))"
     }
 
     // MARK: Plan (pure)
+
+    /// How far short a spacer may fall before the items it leaves are
+    /// covered: a few points is the rounding of a length, not a gap.
+    nonisolated static let spacerShortSlack: CGFloat = 8
 
     /// The spacer a control on the row should claim so that every item
     /// left of it is pushed off: from the fit edge to the control's
@@ -870,6 +1320,19 @@ final class MenuBarItemHider {
             otherRows.contains { $0.intersects(bounds) }
         }
 
+        // A spacer held short of the fit edge leaves the items nearest the
+        // icon drawn, left of it where they should be hidden. They are
+        // covered in place, the honest fallback, until the spacer reaches.
+        var shortBy: CGFloat = 0
+        if let hiddenControl, !revealed.contains(.hidden), let fitEdge {
+            let reach = { (cap: CGFloat) in
+                spacerLength(controlFrame: hiddenControl, fitEdge: fitEdge, cap: cap,
+                             glyph: controls.hiddenGlyph)
+            }
+            shortBy = reach(.infinity) - reach(caps.hidden)
+        }
+        let spacerShort = shortBy >= spacerShortSlack
+
         var hiddenToCover: [MenuBarItem] = []
         var ahToCover: [MenuBarItem] = []
         var parked: [MenuBarItem] = []
@@ -917,7 +1380,10 @@ final class MenuBarItemHider {
                 plan.hidden.append(item)
                 // Covers are painted on the managed row — a foreign-
                 // display item must never feed a run's X-range.
-                if managed, positional == .shown { hiddenToCover.append(item) }
+                if managed, positional == .shown
+                    || (spacerShort && !obscuredFrames.contains(where: { $0.intersects(item.bounds) })) {
+                    hiddenToCover.append(item)
+                }
             case .alwaysHidden:
                 plan.alwaysHidden.append(item)
                 if managed, positional == .shown { ahToCover.append(item) }
@@ -966,7 +1432,8 @@ final class MenuBarItemHider {
             plan.overflowControlFrame = overflow
         }
 
-        // The spacer length.
+        // Revealing collapses the native boundary to its painted glyph.
+        // A wider spacer would push the requested items farther off the row.
         if let hiddenControl {
             if revealed.contains(.hidden) || fitEdge == nil {
                 plan.hiddenControlLength = controls.hiddenGlyph
@@ -974,6 +1441,7 @@ final class MenuBarItemHider {
                 plan.hiddenControlLength = spacerLength(
                     controlFrame: hiddenControl, fitEdge: fitEdge, cap: caps.hidden,
                     glyph: controls.hiddenGlyph)
+                plan.spacerShortBy = shortBy
             }
         }
         return plan

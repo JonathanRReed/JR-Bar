@@ -27,6 +27,12 @@ from typing import Final
 
 INTERVAL_SECONDS: Final = 0.25
 THRESHOLD_SECONDS: Final = 0.75
+# A run loop that has answered this many pings in a row on time is healthy;
+# the watchdog then pings once a second instead of four times, because each
+# ping wakes the run loop and the watchdog's own thread, forever, on an
+# otherwise idle Mac. A late ping brings the quick pace back at once.
+QUIET_AFTER_ON_TIME_PINGS: Final = 20
+QUIET_INTERVAL_SECONDS: Final = 1.0
 # A stall this long is logged while it is still going, in case it never ends.
 ONGOING_REPORT_SECONDS: Final = 5.0
 LOG_EVERY_SECONDS: Final = 30.0
@@ -58,6 +64,8 @@ class RunLoopWatchdog:
         in_flight: Callable[[], str | None] = lambda: None,
         record: Callable[[float], None] | None = None,
         interval_seconds: float = INTERVAL_SECONDS,
+        quiet_interval_seconds: float = QUIET_INTERVAL_SECONDS,
+        quiet_after: int = QUIET_AFTER_ON_TIME_PINGS,
         threshold_seconds: float = THRESHOLD_SECONDS,
         ongoing_report_seconds: float = ONGOING_REPORT_SECONDS,
         log_every_seconds: float = LOG_EVERY_SECONDS,
@@ -70,6 +78,9 @@ class RunLoopWatchdog:
         self._in_flight = in_flight
         self._record = record
         self.interval_seconds = interval_seconds
+        self._quiet_interval = max(interval_seconds, quiet_interval_seconds)
+        self._quiet_after = quiet_after
+        self._on_time_pings = 0
         self._threshold = threshold_seconds
         self._ongoing = ongoing_report_seconds
         self._log_every = log_every_seconds
@@ -102,6 +113,8 @@ class RunLoopWatchdog:
             sent, answered = self._sent_at, self._answered_at
         if sent is not None and answered is None:
             waited = now - sent
+            if waited > self._threshold:
+                self._on_time_pings = 0
             if waited > self._threshold and self._captured is None:
                 # Now, while the run loop is still stuck: afterwards the
                 # stack would only show whatever it went on to do.
@@ -112,7 +125,10 @@ class RunLoopWatchdog:
             return
         if sent is not None and answered is not None:
             late = answered - sent
-            if late > self._threshold:
+            if late <= self._threshold:
+                self._on_time_pings += 1
+            else:
+                self._on_time_pings = 0
                 self.stalls += 1
                 if self._record is not None:
                     try:
@@ -132,6 +148,18 @@ class RunLoopWatchdog:
         except Exception:
             with self._lock:
                 self._sent_at = None
+
+    def next_wait_seconds(self) -> float:
+        """How long the thread sleeps before its next step: the quick pace
+        until the run loop has answered enough pings on time, then the quiet
+        one, and the quick one again the moment a ping is late."""
+        with self._lock:
+            sent, answered = self._sent_at, self._answered_at
+        if sent is not None and answered is None and self._clock() - sent > self._threshold:
+            return self.interval_seconds
+        if self._on_time_pings >= self._quiet_after:
+            return self._quiet_interval
+        return self.interval_seconds
 
     def _report(self, seconds: float, *, ongoing: bool) -> None:
         now = self._clock()
@@ -171,7 +199,7 @@ class RunLoopWatchdog:
         self._thread = None
 
     def _run(self) -> None:
-        while not self._stop.wait(self.interval_seconds):
+        while not self._stop.wait(self.next_wait_seconds()):
             try:
                 self.tick()
             except Exception:

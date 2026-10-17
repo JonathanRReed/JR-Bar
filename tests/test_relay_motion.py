@@ -407,3 +407,16 @@ def test_semantic_relay_is_callback_count_independent_and_wraps_exactly() -> Non
     assert repeated.dsl == first.dsl
     assert _semantic_pulse_indices(first.dsl)[0] == 4
     assert _semantic_pulse_indices(wrapped.dsl)[0] == 0
+
+
+def test_known_failed_provider_keeps_a_steady_marker_in_mixed_relay() -> None:
+    import re
+
+    statuses = (_status("claude", AgentMode.BLOCKED_ERROR), _status("codex", AgentMode.COMPLETED))
+    settings = _relay_settings().with_agent_animation("claude", "blink")
+    _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
+    colors_by_led: dict[str, set[str]] = {}
+    for led, color in re.findall(r"(\d+):(#[0-9A-Fa-f]{6})", program):
+        colors_by_led.setdefault(led, set()).add(color)
+    assert colors_by_led
+    assert all(len(colors) == 1 for colors in colors_by_led.values()), program

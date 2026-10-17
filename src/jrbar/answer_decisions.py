@@ -54,6 +54,7 @@ is at the terminal and the prompt should appear at once.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import threading
@@ -62,6 +63,10 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Final
+
+from .ask_lifetime import ASK_EXPIRES_UNANSWERED_SECONDS
+
+_log = logging.getLogger(__name__)
 
 #: How long a parked request waits for a click. Short enough that a
 #: Codex prompt held behind the hook still appears within the minute;
@@ -79,9 +84,13 @@ MAX_PARKED_DECISIONS: Final = 16
 #: much sooner in practice, when the agent's own events close the request
 #: (``DecisionBroker.observe``): the tool's PostToolUse, a fresh
 #: PermissionRequest for it, or the turn ending or moving on. This is only the
-#: upper bound, equal to ``operator_state.REQUEST_LIVE_GRACE_SECONDS``, after
-#: which canonical state stops treating a live request as live anyway.
-DECIDED_TOMBSTONE_CAP_SECONDS: Final = 3600.0
+#: upper bound, and it is the ask's own outer lifetime
+#: (``ask_lifetime.ASK_EXPIRES_UNANSWERED_SECONDS``): an approved tool may run
+#: for hours, and canonical state keeps its request live for as long, so the
+#: answer is remembered for as long as the ask can be on a surface. At an hour
+#: it used to lapse and a build the person had approved read as an unanswered
+#: ask again.
+DECIDED_TOMBSTONE_CAP_SECONDS: Final = ASK_EXPIRES_UNANSWERED_SECONDS
 #: How long ``decide`` waits for the parked connection to write the line.
 DELIVERY_WAIT_SECONDS: Final = 2.0
 
@@ -129,6 +138,10 @@ _ALWAYS_DESTINATIONS: Final = frozenset(
     {"session", "localSettings", "projectSettings", "userSettings"}
 )
 _PREVIEW_LIMIT: Final = 200
+#: The most characters of a command or a plan the expanded ask carries.
+DETAIL_TEXT_LIMIT: Final = 2000
+#: The most file paths an edit summary names.
+_DETAIL_MAX_PATHS: Final = 5
 
 
 class DecisionVerb(str, Enum):
@@ -490,14 +503,19 @@ _SECRET_RUN: Final = re.compile(r"(?<![A-Za-z0-9_\-+=])[A-Za-z0-9_\-+=]{32,}")
 _PATCH_FILE: Final = re.compile(r"^\*\*\* (?:Update|Add|Delete) File: (.+)$", re.MULTILINE)
 
 
-def _one_line(value: str) -> str:
-    text = " ".join(value.split())
-    text = _SECRET_RUN.sub(
+def _mask_secrets(text: str) -> str:
+    """Token-shaped runs (long, with both letters and digits) masked; the
+    one rule every line of the card goes through."""
+    return _SECRET_RUN.sub(
         lambda match: "[redacted]"
         if any(c.isdigit() for c in match.group(0)) and any(c.isalpha() for c in match.group(0))
         else match.group(0),
         text,
     )
+
+
+def _one_line(value: str) -> str:
+    text = _mask_secrets(" ".join(value.split()))
     return text if len(text) <= _PREVIEW_LIMIT else text[: _PREVIEW_LIMIT - 1] + "…"
 
 
@@ -533,6 +551,103 @@ def tool_preview(tool_name: object, tool_input: object) -> str | None:
         if len(parts) >= 3 and parts[1] and parts[2]:
             return _one_line(f"{parts[1]} · {'__'.join(parts[2:])}")
     return None
+
+
+def _capped_text(value: str) -> tuple[str, bool]:
+    """``(text, cut)``: ``value`` masked and held to ``DETAIL_TEXT_LIMIT``.
+    The mask runs on a little more than the cap, so a token that straddles
+    the cut is seen whole and never shipped as a fragment."""
+    cut = len(value) > DETAIL_TEXT_LIMIT
+    text = _mask_secrets(value[: DETAIL_TEXT_LIMIT + 64] if cut else value)
+    if len(text) > DETAIL_TEXT_LIMIT:
+        text = text[:DETAIL_TEXT_LIMIT]
+        cut = True
+    return text.rstrip(), cut
+
+
+def _line_count(value: object) -> int:
+    return len(value.splitlines()) if type(value) is str else 0
+
+
+def _edit_summary(tool_name: str, tool_input: Mapping[str, Any], command: object) -> dict[str, Any] | None:
+    """How many files an edit touches and how many lines it adds and
+    removes, counted from the hook's own input. Only numbers and paths
+    leave: never the text being written."""
+    if tool_name == "Edit":
+        verb, paths = "edit", [tool_input.get("file_path")]
+        added, removed = _line_count(tool_input.get("new_string")), _line_count(tool_input.get("old_string"))
+    elif tool_name == "MultiEdit":
+        verb, paths = "edit", [tool_input.get("file_path")]
+        edits = tool_input.get("edits")
+        added = removed = 0
+        for edit in edits if isinstance(edits, list) else ():
+            if isinstance(edit, Mapping):
+                added += _line_count(edit.get("new_string"))
+                removed += _line_count(edit.get("old_string"))
+    elif tool_name == "Write":
+        # A write is counted as lines added: whether it replaces a file
+        # is not in the input.
+        verb, paths = "write", [tool_input.get("file_path")]
+        added, removed = _line_count(tool_input.get("content")), 0
+    elif tool_name == "NotebookEdit":
+        verb, paths = "edit", [tool_input.get("notebook_path")]
+        added, removed = _line_count(tool_input.get("new_source")), 0
+    elif tool_name == "apply_patch" and type(command) is str:
+        paths = [path.strip() for path in _PATCH_FILE.findall(command)]
+        if not paths:
+            return None
+        verb = "patch"
+        added = removed = 0
+        for line in command.splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                added += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                removed += 1
+    else:
+        return None
+    named = [_one_line(path) for path in paths if type(path) is str and path.strip()]
+    if not named:
+        return None
+    return {
+        "verb": verb,
+        "files": len(named),
+        "added": added,
+        "removed": removed,
+        "paths": named[:_DETAIL_MAX_PATHS],
+    }
+
+
+def tool_detail(tool_name: object, tool_input: object) -> dict[str, Any] | None:
+    """What an ask adds when the person expands it, or ``None`` when the
+    one-line preview already says everything: the whole command (capped,
+    token-shaped runs masked), a file edit's size, or an ExitPlanMode plan.
+    ``{command?, plan?, edit?, truncated}``; read-only context for the
+    person deciding, never something an answer is built from."""
+    if type(tool_name) is not str or not isinstance(tool_input, Mapping):
+        return None
+    if tool_name in CHOICE_TOOLS:
+        return None
+    document: dict[str, Any] = {}
+    cut = False
+    if tool_name == "ExitPlanMode":
+        plan = tool_input.get("plan")
+        if type(plan) is str and plan.strip():
+            document["plan"], cut = _capped_text(plan.strip())
+    command = tool_input.get("command")
+    if isinstance(command, list) and all(type(part) is str for part in command):
+        command = " ".join(command)
+    if type(command) is str and command.strip() and tool_name != "apply_patch":
+        # Worth expanding only when the line above cut or flattened it.
+        full, cut_command = _capped_text(command.strip())
+        if cut_command or full != _one_line(command):
+            document["command"], cut = full, cut or cut_command
+    edit = _edit_summary(tool_name, tool_input, command)
+    if edit is not None:
+        document["edit"] = edit
+    if not document:
+        return None
+    document["truncated"] = cut
+    return document
 
 
 # What the card marks "destructive". It is advice for the person deciding and
@@ -931,7 +1046,7 @@ class DecisionBroker:
             try:
                 on_change()
             except Exception:
-                pass
+                _log.warning("ask decision change listener failed", exc_info=True)
 
     def delivered(self, slot: _Slot, ok: bool) -> None:
         """The parked connection's report: the verdict line was written."""
@@ -1248,10 +1363,11 @@ class DecisionBroker:
 
 
 #: How many ask previews are remembered, and for how long: an ask card
-#: lives as long as its prompt, and a prompt nobody answers for an hour
-#: has been answered in the terminal or abandoned.
+#: lives as long as its prompt, and an unanswered ask now stays on every
+#: surface until it is settled (``ask_lifetime``), so its preview is kept for
+#: the ask's whole possible lifetime. Held in memory only.
 MAX_ASK_PREVIEWS: Final = 64
-ASK_PREVIEW_TTL_SECONDS: Final = 3600.0
+ASK_PREVIEW_TTL_SECONDS: Final = ASK_EXPIRES_UNANSWERED_SECONDS
 #: Providers whose PermissionRequest carries ``tool_name``/``tool_input``.
 PREVIEW_PROVIDERS: Final = frozenset({"claude", "codex", "devin", "grok", "opencode", "pi"})
 
@@ -1265,7 +1381,7 @@ class AskPreviews:
     def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
         self._lock = threading.Lock()
-        self._rows: dict[tuple[str, str], tuple[float, str | None, str | None]] = {}
+        self._rows: dict[tuple[str, str], tuple[float, str | None, str | None, dict[str, Any] | None]] = {}
 
     def note(self, provider: object, payload_text: object) -> bool:
         if (
@@ -1289,11 +1405,12 @@ class AskPreviews:
             return False
         preview = tool_preview(tool_name, tool_input)
         risk = tool_risk(tool_name, tool_input)
-        if preview is None and risk is None:
+        detail = tool_detail(tool_name, tool_input)
+        if preview is None and risk is None and detail is None:
             return False
         now = self._clock()
         with self._lock:
-            self._rows[(actual, request_id)] = (now, preview, risk)
+            self._rows[(actual, request_id)] = (now, preview, risk, detail)
             if len(self._rows) > MAX_ASK_PREVIEWS:
                 for key in sorted(self._rows, key=lambda key: self._rows[key][0])[
                     : len(self._rows) - MAX_ASK_PREVIEWS
@@ -1302,16 +1419,27 @@ class AskPreviews:
         return True
 
     def lookup(self, provider: object, request_id: object) -> tuple[str | None, str | None]:
+        row = self._row(provider, request_id)
+        return (None, None) if row is None else (row[1], row[2])
+
+    def lookup_detail(self, provider: object, request_id: object) -> dict[str, Any] | None:
+        """What the expanded ask adds (``tool_detail``), as a copy."""
+        row = self._row(provider, request_id)
+        return None if row is None or row[3] is None else dict(row[3])
+
+    def _row(
+        self, provider: object, request_id: object
+    ) -> tuple[float, str | None, str | None, dict[str, Any] | None] | None:
         if type(provider) is not str or type(request_id) is not str:
-            return None, None
+            return None
         with self._lock:
             row = self._rows.get((provider, request_id))
             if row is None:
-                return None, None
+                return None
             if self._clock() - row[0] > ASK_PREVIEW_TTL_SECONDS:
                 del self._rows[(provider, request_id)]
-                return None, None
-            return row[1], row[2]
+                return None
+            return row
 
 
 _DEFAULT_BROKER: DecisionBroker | None = None
@@ -1333,6 +1461,14 @@ def ask_preview_for_request(request: object, previews: AskPreviews | None = None
     if parts is None:
         return None, None
     return (previews or default_ask_previews()).lookup(*parts)
+
+
+def ask_detail_for_request(request: object, previews: AskPreviews | None = None) -> dict[str, Any] | None:
+    """The expanded ask's extra facts for one operator-state request."""
+    parts = _request_key_parts(request)
+    if parts is None:
+        return None
+    return (previews or default_ask_previews()).lookup_detail(*parts)
 
 
 def default_decision_broker() -> DecisionBroker:
@@ -1573,6 +1709,7 @@ __all__ = [
     "DECIDE_PROVIDERS",
     "DECISION_HOLD_SECONDS",
     "DENY_MESSAGE",
+    "DETAIL_TEXT_LIMIT",
     "MAX_CHOICE_INPUT_BYTES",
     "MAX_CHOICE_OPTIONS",
     "MAX_CHOICE_QUESTIONS",
@@ -1588,6 +1725,7 @@ __all__ = [
     "PermissionFacts",
     "always_allow_rules",
     "answer_through_decision_lane",
+    "ask_detail_for_request",
     "ask_preview_for_request",
     "choice_answers",
     "choice_questions",
@@ -1597,6 +1735,7 @@ __all__ = [
     "parked_decision_for_request",
     "permission_facts",
     "release_for_open",
+    "tool_detail",
     "tool_preview",
     "tool_risk",
 ]

@@ -540,13 +540,6 @@ import JRBarCore
             tone: .good, facts: [])
         #expect(OverviewView.chipLabel(link) == "Core: Core 0.9.8, connected, good")
     }
-
-    // MARK: Archive search term
-
-    @Test func archiveSearchTermUsesSessionUuidTail() {
-        let entry = Self.entry("claude:session:9f3a-uuid")
-        #expect(OverviewStore.archiveSearchTerm(for: entry) == "9f3a-uuid")
-    }
 }
 
 /// The export preview/write path: the previewed bytes are the saved ones.

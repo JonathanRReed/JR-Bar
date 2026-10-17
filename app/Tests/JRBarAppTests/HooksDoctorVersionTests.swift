@@ -3,7 +3,7 @@ import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-/// Settings › Agents names each CLI's version beside its hooks line, and a
+/// Settings › Agents & Usage names each CLI's version beside its hooks line, and a
 /// version newer than JR-Bar verified reads as a note, not a problem.
 @Suite("Hooks doctor versions")
 struct HooksDoctorVersionTests {
@@ -29,5 +29,21 @@ struct HooksDoctorVersionTests {
     @Test func aReportWithoutVersionsReadsAsBefore() {
         let entry = HooksDoctorEntry(provider: "grok", installed: true, hookEvents: 2)
         #expect(HooksDoctor.versionWords(entry) == nil)
+    }
+
+    @Test func hooksTheAgentTurnedOffAreNotReportedAsWorking() throws {
+        let report: JSONValue = .object(["providers": .array([
+            .object(["provider": .string("claude"), "installed": .bool(true), "hook_events": .number(12),
+                     "hooks_enabled": .bool(false)]),
+            .object(["provider": .string("codex"), "installed": .bool(true), "hook_events": .number(3),
+                     "hooks_enabled": .bool(true)]),
+            .object(["provider": .string("pi"), "installed": .bool(true), "hook_events": .number(2)]),
+        ])])
+        let entries = HooksDoctor.entries(from: report)
+        let claude = try #require(entries["claude"])
+        #expect(HooksDoctor.line(claude) == "12 events hooked, but turned off in the agent's own settings")
+        #expect(HooksDoctor.repairReason(claude)?.hasPrefix("Hooks are turned off") == true)
+        #expect(HooksDoctor.repairReason(try #require(entries["codex"])) == nil)
+        #expect(HooksDoctor.repairReason(try #require(entries["pi"])) == nil, "a monitor that does not say is not blamed")
     }
 }

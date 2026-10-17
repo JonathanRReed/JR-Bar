@@ -114,7 +114,7 @@ def test_zero_retention_delete_wins_a_concurrent_store_flush(tmp_path: Path) -> 
     from jrbar import operator_history_store as history_store_module
 
     real_write = history_store_module.atomic_private_write
-    real_unlink = history_store_module._secure_unlink
+    real_unlink = history_store_module.unlink_private_file_if_unchanged
 
     def pausing_write(path: Path, data: str | bytes) -> Path:
         write_entered.set()
@@ -127,7 +127,7 @@ def test_zero_retention_delete_wins_a_concurrent_store_flush(tmp_path: Path) -> 
 
     with (
         patch("jrbar.operator_history_store.atomic_private_write", side_effect=pausing_write),
-        patch("jrbar.operator_history_store._secure_unlink", side_effect=observed_unlink),
+        patch("jrbar.operator_history_store.unlink_private_file_if_unchanged", side_effect=observed_unlink),
     ):
         with ThreadPoolExecutor(max_workers=2) as executor:
             flush_future = executor.submit(store.flush, now=NOW)
@@ -571,7 +571,7 @@ def test_exact_clear_removes_only_operator_history_and_clears_memory__and_2_more
     store.flush(now=NOW)
 
     with patch(
-        "jrbar.operator_history_store._secure_unlink",
+        "jrbar.operator_history_store.unlink_private_file_if_unchanged",
         side_effect=OSError("injected clear failure"),
     ):
         with pytest.raises(OSError):
@@ -593,7 +593,7 @@ def test_exact_clear_removes_only_operator_history_and_clears_memory__and_2_more
 
     from jrbar import operator_history_store as history_store_module
 
-    real_unlink = history_store_module._secure_unlink
+    real_unlink = history_store_module.unlink_private_file_if_unchanged
 
     def pausing_unlink(path: Path) -> bool:
         clear_holds_lock.set()
@@ -605,7 +605,7 @@ def test_exact_clear_removes_only_operator_history_and_clears_memory__and_2_more
         return value == NOW
 
     with (
-        patch("jrbar.operator_history_store._secure_unlink", side_effect=pausing_unlink),
+        patch("jrbar.operator_history_store.unlink_private_file_if_unchanged", side_effect=pausing_unlink),
         patch("jrbar.operator_history_store._valid_now", side_effect=observed_valid_now),
     ):
         with ThreadPoolExecutor(max_workers=2) as executor:

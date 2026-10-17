@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any
@@ -47,7 +46,6 @@ from .led_status import (
     srgb_to_linear,
 )
 from .models import MODE_PRIORITY, AgentMode, AgentStatus
-from .product_identity import PRODUCT_DISPLAY_NAME
 from .providers import PROVIDER_SPECS
 
 # --- Mode color keys -------------------------------------------------------
@@ -316,7 +314,7 @@ STATE_MOTION: dict[LedDisplayState, str] = {
     LedDisplayState.WORKING: MOTION_CHASE,
     LedDisplayState.ASK: MOTION_BEAT,
     LedDisplayState.DONE: MOTION_STEADY,
-    LedDisplayState.FAILED: MOTION_BLINK,
+    LedDisplayState.FAILED: MOTION_STEADY,
 }
 
 # "Nothing above 2Hz." A beat is a third of a cycle and a blink is a hard
@@ -387,71 +385,6 @@ def readable_identity_hex(hex_color: str) -> str:
     if relative_luminance(hex_color) >= IDENTITY_LUMINANCE_FLOOR:
         return normalize_hex(hex_color, "#000000")
     return luminance_matched_hex(hex_color, IDENTITY_LUMINANCE_FLOOR)
-
-
-# --- The linked Screen Bar's legibility lift ---------------------------------
-#
-# When the bar follows a strip it presents the strip's own program (see
-# ``core_runtime._core_build_lights``), but the palette that program carries
-# is tuned for a light sitting IN a dark bezel: codes down near black are
-# real, readable light on a die, and the strip's write boundary even lifts
-# chroma-intent colours that PWM quantization would lose. On a display, next
-# to full-bright UI, the same codes read as "off". So the mirror lifts
-# sub-floor colour tokens, hue and saturation intact.
-#
-# The lift is a continuous power curve, not a clamp to the floor: below the
-# knee a token keeps a PROPORTION of the distance, so the ordering a fade's
-# tail encodes survives -- near-black stays near-black, mid-dark gets a
-# partial lift, and the curve meets the pass-through region without a seam.
-# The earlier flat floor landed every sub-floor code ON the floor, so the
-# embers a resting strip shows as faint pulses (or quantization-crushed
-# blacks) read as one constant glow on the display -- a resting glow the
-# hardware does not have.
-#
-# The knee is IDENTITY_LUMINANCE_FLOOR -- this module's existing calibrated
-# answer to "dim enough to read as unlit". Going higher would compress the
-# contrast of every fade and roll the program carries: a tail code at
-# Y ~= 0.02 lifted to 0.15 sits nearly as bright as a head code at 0.2, and
-# the wave the strip is playing flattens into a wash on screen.
-_PROGRAM_HEX_RE = re.compile(r"#[0-9A-Fa-f]{6}(?![0-9A-Fa-f])")
-
-#: Shape of the mirror's lift below ``floor``: ``floor * (Y / floor) ** 0.5``.
-#: Square root lifts small values by a large fraction and large ones by a
-#: small one, fading smoothly to nothing at black -- a code at a twentieth
-#: of the floor gets about a fifth of the lift, not the whole floor.
-MIRROR_LIFT_EXPONENT = 0.5
-
-
-def lift_program_luminance(
-    program: str, floor: float = IDENTITY_LUMINANCE_FLOOR
-) -> str:
-    """Every ``#rrggbb`` in a program lifted toward ``floor`` luminance.
-
-    Only the colour literals move: timing, easing, ``roll``/``pulse``
-    directives, ``brightness N`` and ``off`` beats pass through
-    byte-for-byte. A code already at or above the floor keeps its exact
-    text. Below the floor the target is the continuous power lift
-    ``floor * (Y / floor) ** MIRROR_LIFT_EXPONENT`` -- monotone, and
-    continuous through the knee -- so a dark beat stays a dark beat and a
-    mid-dark tail gets only a partial lift. ``#000000`` stays black: it
-    has no hue to preserve, and a dark beat in the animation is meant to
-    be dark.
-    """
-    if not isinstance(program, str) or not program:
-        return program
-    floor = max(0.0, float(floor))
-
-    def lift(match: re.Match[str]) -> str:
-        token = match.group(0)
-        if floor <= 0.0:
-            return token
-        luminance = relative_luminance(token)
-        if luminance <= 0.0 or luminance >= floor:
-            return token
-        target = floor * (luminance / floor) ** MIRROR_LIFT_EXPONENT
-        return luminance_matched_hex(token, target)
-
-    return _PROGRAM_HEX_RE.sub(lift, program)
 
 
 # --- Ask and Error must never be the same light -----------------------------
@@ -579,16 +512,6 @@ CURATED_PALETTE: tuple[str, ...] = (
 
 # Index-aligned with CURATED_PALETTE. A colour square with no name is not a
 # choice, it is a guess -- every swatch this app draws gets a word.
-CURATED_PALETTE_NAMES: tuple[str, ...] = (
-    "Red",
-    "Blue",
-    "Green",
-    "Purple",
-    "Yellow",
-    "Orange",
-    "Pink",
-    "Gray",
-)
 
 
 # --- Blend modes -------------------------------------------------------
@@ -615,20 +538,7 @@ BLEND_MODE_CHOICES: tuple[str, ...] = (
 # One mixed colour stays one calm light no matter how many agents report.
 DEFAULT_BLEND_MODE = BLEND_MODE_COLOR
 
-# Names describe what you SEE, not how it is built. The old set was
-# scheduler jargon ("Round-Robin"), a mechanism ("Color Blend"), or a
-# changelog entry ("Classic") -- a user hunting for a calm, seamless
-# light went looking for "Smooth" and could not find it. Persisted
-# values never change; these are labels only.
-BLEND_MODE_LABELS: dict[str, str] = {
-    BLEND_MODE_ROUND_ROBIN: "Everyone",
-    BLEND_MODE_RELAY: "Spotlight",
-    BLEND_MODE_SPATIAL: "Split",
-    BLEND_MODE_COLOR: "Smooth",
-    BLEND_MODE_CYCLE: "One at a Time",
-    BLEND_MODE_CLASSIC: "Status Only",
-}
-
+# What each blend mode looks like, in words. The app draws the mode names.
 BLEND_MODE_DESCRIPTIONS: dict[str, str] = {
     BLEND_MODE_ROUND_ROBIN: "Every agent is lit at once, each in its own colour.",
     BLEND_MODE_RELAY: "One agent flares bright at a time; the rest stay dim.",
@@ -636,40 +546,6 @@ BLEND_MODE_DESCRIPTIONS: dict[str, str] = {
     BLEND_MODE_COLOR: "One seamless light. Everyone's colours blend across the strip.",
     BLEND_MODE_CYCLE: "The whole strip shows one agent, then the next.",
     BLEND_MODE_CLASSIC: "One colour for whatever needs you most. Agents are not shown.",
-}
-
-# Longer versions for a tooltip, so the detail is available without
-# permanently taking up space in the window.
-BLEND_MODE_TOOLTIPS: dict[str, str] = {
-    BLEND_MODE_ROUND_ROBIN: (
-        "Agent colors repeat across the strip and breathe together, so every "
-        "active agent stays visible at a glance. Nothing waits its turn."
-    ),
-    BLEND_MODE_RELAY: (
-        "A single bright point travels the strip and stops on each agent in "
-        "turn while the others hold a soft resting glow. Easiest to follow "
-        "when several agents are busy at once."
-    ),
-    BLEND_MODE_SPATIAL: (
-        "The strip divides into blocks, one per agent. The more urgent an "
-        "agent is, the more LEDs it claims -- the shape tells you who needs "
-        "you before you have read the color."
-    ),
-    BLEND_MODE_COLOR: (
-        "No blocks, no blinking, no marching: one continuous light made from "
-        "your active agents' colors. The quietest way to keep everyone on "
-        "screen -- pick this when the light should be furniture, not an alarm."
-    ),
-    BLEND_MODE_CYCLE: (
-        "Each agent takes over the entire strip for a moment, breathes once "
-        "in its own color, then hands off. Reads correctly from across the "
-        "room."
-    ),
-    BLEND_MODE_CLASSIC: (
-        "Ignores who is who. One color for the most urgent thing happening "
-        "anywhere -- the calmest option, and the only one whose meaning "
-        "never changes as agents come and go."
-    ),
 }
 
 # NOTE on layout crossfades: every program swap already eases instead of
@@ -717,7 +593,6 @@ DEFAULT_URGENCY_ALERT_ENABLED = True
 ATTENTION_CREST_MS = 300
 ATTENTION_CREST_SETTLE_MS = 450
 ATTENTION_CREST_HOLD_FRACTION = 0.85
-ATTENTION_REST_MS = 900
 
 # A quick twinkle-then-bloom when an agent finishes, rather than an
 # instant snap to the solid Done color -- a small reward moment. Default
@@ -1045,16 +920,6 @@ IDENTITY_PALETTE: tuple[str, ...] = (
 # Index-aligned with IDENTITY_PALETTE. Distinct words from
 # CURATED_PALETTE_NAMES wherever the hues are close, so a name always
 # identifies exactly one swatch.
-IDENTITY_PALETTE_NAMES: tuple[str, ...] = (
-    "Azure",
-    "Rose",
-    "Sun",
-    "Amber",
-    "Lime",
-    "Teal",
-    "Magenta",
-    "Silver",
-)
 
 
 def identity_colors_for_agents(
@@ -1939,27 +1804,6 @@ def with_tool_tint(
     return settings.with_render_tool_family(family)
 
 
-# --- Urgency weighting -----------------------------------------------------
-
-
-PRESET_CUSTOM = "custom"
-PRESET_CALM = "calm"
-PRESET_INFORMATIVE = "informative"
-PRESET_EVERYTHING = "everything"
-PRESET_CHOICES: tuple[str, ...] = (PRESET_CALM, PRESET_INFORMATIVE, PRESET_EVERYTHING)
-PRESET_LABELS: dict[str, str] = {
-    PRESET_CUSTOM: "Custom",
-    PRESET_CALM: "Calm",
-    PRESET_INFORMATIVE: "Balanced",
-    PRESET_EVERYTHING: "Lively",
-}
-PRESET_DESCRIPTIONS: dict[str, str] = {
-    PRESET_CALM: "Slow, dim, no celebrations. Light you can work next to.",
-    PRESET_INFORMATIVE: "Clear motion at a normal brightness. The default.",
-    PRESET_EVERYTHING: "Fast, bright, and it celebrates. Full show.",
-}
-
-
 def _palette_written_agent_colors() -> dict[str, frozenset[str]]:
     """Every hex a palette click could ever have written per provider."""
     written: dict[str, set[str]] = {}
@@ -2066,104 +1910,10 @@ def _retired_default_agent_colors_dropped(agent_colors: dict[str, str]) -> dict[
     return repaired
 
 
-def apply_palette(colors: ColorSettings, palette: dict) -> ColorSettings:
-    """Dress every STATE in one look, without touching brand identity.
-
-    A palette owns the four mode colours and any provider that has no
-    declared brand hue. It does NOT own the brands: applying the "OpenAI"
-    look used to write ``claude = #10A37F`` -- OpenAI's own green -- into
-    the live settings, and from then on nothing anywhere could render
-    Claude as Claude, because every surface resolves through
-    ``agent_color`` and ``agent_color`` reads settings first. Per-provider
-    brand colour is changed one row at a time, deliberately, or not at
-    all.
-    """
-    for mode_key, hex_value in palette["modes"].items():
-        colors = colors.with_mode_color(mode_key, hex_value)
-    for provider, hex_value in palette["agents"].items():
-        if provider in PROVIDER_BRAND_COLORS:
-            continue
-        colors = colors.with_agent_color(provider, hex_value)
-    return colors
-
-
-def apply_preset(colors: ColorSettings, preset: str) -> ColorSettings:
-    """One-click personalities for how loud the light is.
-
-    Three independent axes: LAYOUT (which agent gets which LEDs -- the
-    blend mode), COLORS (whose color is whose), and FEEL (animation
-    styles, speed, fade range, celebration toggles). A preset owns FEEL
-    and nothing else.
-
-    Layout and colors are the two things a user picks deliberately, and
-    a preset used to silently overwrite the layout: choosing "Everything"
-    forced Spotlight, so an explicitly chosen mode kept reverting with no
-    warning and no undo. Feel is a dozen fiddly numbers nobody wants to
-    tune by hand -- that asymmetry is the entire reason presets exist,
-    and the reason they must keep their hands off the other two axes.
-    """
-    if preset == PRESET_CALM:
-        result = colors.with_cycle_speed(2.4)
-        for key in ANIMATION_MODE_KEYS:
-            result = result.with_mode_animation(key, ANIMATION_STYLE_PULSE)
-        for key in FADE_MODE_KEYS:
-            result = result.with_fade_floor(key, 0.01).with_fade_ceiling(key, 0.35)
-        return result.with_round_robin_urgency_alert(True).with_done_celebration_enabled(False)
-    if preset == PRESET_INFORMATIVE:
-        result = colors.with_cycle_speed(1.6)
-        result = (
-            result.with_mode_animation(MODE_IDLE, ANIMATION_STYLE_PULSE)
-            .with_mode_animation(MODE_WORKING, ANIMATION_STYLE_PULSE)
-            .with_mode_animation(MODE_ASK, ANIMATION_STYLE_BLINK)
-        )
-        for key in FADE_MODE_KEYS:
-            result = result.with_fade_floor(key, 0.01).with_fade_ceiling(key, 0.5)
-        return result.with_round_robin_urgency_alert(True).with_done_celebration_enabled(True)
-    if preset == PRESET_EVERYTHING:
-        result = colors.with_cycle_speed(1.2)
-        result = (
-            result.with_mode_animation(MODE_IDLE, ANIMATION_STYLE_PULSE)
-            .with_mode_animation(MODE_WORKING, ANIMATION_STYLE_ROLL)
-            .with_mode_animation(MODE_ASK, ANIMATION_STYLE_BLINK)
-        )
-        for key in FADE_MODE_KEYS:
-            result = result.with_fade_floor(key, 0.02).with_fade_ceiling(key, 0.7)
-        return result.with_round_robin_urgency_alert(True).with_done_celebration_enabled(True)
-    raise ValueError(f"Unknown preset: {preset}")
-
-
 # The FEEL axis: exactly the fields a preset owns. Everything else --
 # blend mode, per-device overrides, agent and mode colors -- belongs to
 # the user, so a preset chip must not go dark just because they chose a
 # layout or recolored an agent.
-PRESET_FEEL_FIELDS: tuple[str, ...] = (
-    "cycle_speed_seconds",
-    "mode_animation",
-    "fade_floor",
-    "fade_ceiling",
-    "round_robin_urgency_alert",
-    "done_celebration_enabled",
-)
-
-
-def _feel_projection(colors: ColorSettings) -> tuple:
-    return tuple(getattr(colors, field) for field in PRESET_FEEL_FIELDS)
-
-
-def matching_preset(colors: ColorSettings) -> str:
-    """Which preset the current FEEL corresponds to, or PRESET_CUSTOM.
-
-    Compares the feel projection rather than whole-object equality: a
-    preset no longer writes layout or colors, so comparing everything
-    would report "Custom" for any user who picked a mode or recolored
-    an agent -- which is every user. The chip now means something true
-    and stable: "the light is currently tuned Calm."
-    """
-    current = _feel_projection(colors)
-    for preset in PRESET_CHOICES:
-        if _feel_projection(apply_preset(colors, preset)) == current:
-            return preset
-    return PRESET_CUSTOM
 
 
 def urgency_weight(mode: AgentMode) -> int:
@@ -2666,8 +2416,9 @@ def agent_motion(
     """The rhythm ONE agent's LEDs carry -- the provider's chosen animation
     when it has one, otherwise the state's own.
 
-    Urgency is not negotiable: ASK and FAILED keep the state vocabulary no
-    matter what the provider was set to. The per-provider choice exists so a
+    ASK keeps its attention beat; a standing FAILED row stays steady.
+    Fresh failures have a separate finite cue. Both retain their state
+    vocabulary regardless of the provider animation. The per-provider choice exists so a
     person can say "Claude breathes, Codex chases" and tell two working
     agents apart by rhythm; it is not a switch for turning "a human is
     needed" into something calmer.
@@ -3646,7 +3397,48 @@ def plan_fleet_projection(
     )
 
 
+def _calms_stale_asks(render):
+    """An ask that may be stale keeps its colour and its shape but pulses
+    more slowly (``ask_lifetime.STALE_ASK_PULSE_STRETCH``).
+
+    Only when every light that is doing anything is such an ask: a fresh ask,
+    or other work moving on the strip, keeps the strip's normal tempo. The
+    slower program is used only if the device would still take it.
+    """
+    import functools
+
+    @functools.wraps(render)
+    def calmed_render(projection, *args, **kwargs):
+        state, program = render(projection, *args, **kwargs)
+        if state is not LedDisplayState.ASK or not _only_stale_asks_are_lit(projection):
+            return state, program
+        from .ask_lifetime import stretch_program_durations
+
+        calmer = stretch_program_durations(program)
+        if len(calmer.encode("utf-8")) > MAX_LED_BYTES or calmer.count("\n") + 1 > MAX_LED_LINES:
+            return state, program
+        return state, calmer
+
+    return calmed_render
+
+
+def _only_stale_asks_are_lit(projection) -> bool:
+    from .attention import LifecycleMode
+
+    lit = [
+        row
+        for row in tuple(getattr(projection, "light_rows", ()) or ())
+        if row.lifecycle_mode not in (LifecycleMode.IDLE, LifecycleMode.UNKNOWN)
+    ]
+    return bool(lit) and all(
+        row.lifecycle_mode is LifecycleMode.WAITING
+        and getattr(row, "ask_may_be_stale", False)
+        for row in lit
+    )
+
+
 @_honours_strip_direction
+@_calms_stale_asks
 def program_for_projection(
     projection,
     *,
@@ -4444,7 +4236,7 @@ def derive_palette(accent_hex: str) -> dict[str, dict[str, str]]:
         },
         "agents": {
             # A palette owns exactly the providers with no declared brand
-            # hue (apply_palette skips the branded ones anyway); fanning
+            # hue (the damage repair skips the branded ones anyway); fanning
             # branded names -- or a "gemini" that is not a provider at
             # all -- wrote junk entries and recolored nothing. Sorted so
             # the assignment never depends on registry order.
@@ -4532,311 +4324,11 @@ PROVIDER_PALETTES: dict[str, dict[str, dict[str, str]]] = {
 }
 
 
-# --- Colour / Animation Studio model ---------------------------------------
-#
-# Everything a Studio surface draws is decided HERE, in plain data, and the
-# view is only a renderer over it. That split exists because the bug this
-# replaced was a MODEL bug wearing a view costume: the
-# Agent Colors card told the user "the first four swatches are the brand
-# colours" while the strip it actually drew was CURATED_PALETTE, whose first
-# four are red/blue/green/purple. A sentence of body copy and a hover tooltip
-# were carrying the entire mapping between a colour square and its meaning,
-# and neither was testable. Now the mapping is a value: every swatch arrives
-# with a name, a group, and whether it is a brand colour, and a test can
-# assert all three without instantiating a single NSView.
-
-SWATCH_GROUP_BRAND = "brand"
-SWATCH_GROUP_PALETTE = "palette"
-SWATCH_GROUP_CUSTOM = "custom"
-# What JR-Bar itself ships for this row -- a state's signal colour. Not a
-# brand (nobody outside this app owns it) and not a palette hue, but it is
-# the colour the row wears out of the box, so it needs its own named group
-# or the row starts life with nothing selected.
-SWATCH_GROUP_DEFAULT = "default"
-SWATCH_GROUP_CHOICES: tuple[str, ...] = (
-    SWATCH_GROUP_DEFAULT,
-    SWATCH_GROUP_BRAND,
-    SWATCH_GROUP_PALETTE,
-    SWATCH_GROUP_CUSTOM,
-)
-SWATCH_GROUP_LABELS: dict[str, str] = {
-    SWATCH_GROUP_DEFAULT: "Default",
-    SWATCH_GROUP_BRAND: "Brand",
-    SWATCH_GROUP_PALETTE: "Palette",
-    SWATCH_GROUP_CUSTOM: "Custom",
-}
-SWATCH_GROUP_HINTS: dict[str, str] = {
-    SWATCH_GROUP_DEFAULT: f"What {PRODUCT_DISPLAY_NAME} ships for this one.",
-    SWATCH_GROUP_BRAND: "Official colors, straight from the makers.",
-    SWATCH_GROUP_PALETTE: "System hues, chosen to stay far apart from each other.",
-    SWATCH_GROUP_CUSTOM: "Anything else you pick.",
-}
-
-# The name shown when a hex belongs to no named set. Kept as a constant so
-# the "is this swatch anonymous?" test has something to compare against.
-CUSTOM_SWATCH_NAME = "Custom"
-
-_BRAND_NAME_BY_HEX: dict[str, str] = {
-    hex_value.upper(): name for name, hex_value in BRAND_SEED_COLORS
-}
-_CURATED_NAME_BY_HEX: dict[str, str] = {
-    hex_value.upper(): name
-    for hex_value, name in zip(CURATED_PALETTE, CURATED_PALETTE_NAMES)
-}
-_IDENTITY_NAME_BY_HEX: dict[str, str] = {
-    hex_value.upper(): name
-    for hex_value, name in zip(IDENTITY_PALETTE, IDENTITY_PALETTE_NAMES)
-}
-_STATE_NAME_BY_HEX: dict[str, str] = {
-    hex_value.upper(): name for name, hex_value in STATE_SEED_COLORS
-}
-
-
-def swatch_name(hex_value: str) -> str:
-    """The human name for a colour: its brand name if it is one, then its
-    palette name, then its identity name, then this app's own signal name,
-    then "Custom".
-
-    Brand wins ties on purpose -- if a system hue ever collided with a brand
-    hex, the brand meaning is the one a person is actually choosing. The
-    signal names come last for the same reason they exist at all: they are a
-    fallback so that this app's own shipped colours are never anonymous, not
-    a claim on a hex anyone else has a better name for.
-    """
-    key = normalize_hex(hex_value, "#000000").upper()
-    return (
-        _BRAND_NAME_BY_HEX.get(key)
-        or _CURATED_NAME_BY_HEX.get(key)
-        or _IDENTITY_NAME_BY_HEX.get(key)
-        or _STATE_NAME_BY_HEX.get(key)
-        or CUSTOM_SWATCH_NAME
-    )
-
-
-@dataclass(frozen=True)
-class Swatch:
-    """One pickable colour, and everything the view needs to draw it."""
-
-    name: str
-    hex: str
-    group: str
-    selected: bool = False
-    # True for the "Custom..." opener, which has no colour of its own until
-    # the picker returns one.
-    opens_picker: bool = False
-
-    @property
-    def is_brand(self) -> bool:
-        return self.group == SWATCH_GROUP_BRAND
-
-    @property
-    def is_control(self) -> bool:
-        """True when this chip is a BUTTON rather than a colour on offer.
-
-        The picker wears the row's current colour only while that colour is
-        its own; the rest of the time it must render neutral, or the row
-        shows the same colour twice and reads as a duplicate.
-        """
-        return self.opens_picker and not self.selected
-
-    @property
-    def tooltip(self) -> str:
-        if self.opens_picker:
-            if self.selected:
-                return f"{self.name} · {self.hex} — click to pick another"
-            return "Pick any color…"
-        if self.is_brand:
-            return f"{self.name} brand color · {self.hex}"
-        return f"{self.name} · {self.hex}"
-
-
-@dataclass(frozen=True)
-class SwatchGroup:
-    """A LABELLED run of swatches. The label is not decoration: it is the
-    only thing that tells a person the four colours in front of them are
-    brands rather than an arbitrary strip."""
-
-    key: str
-    label: str
-    hint: str
-    swatches: tuple[Swatch, ...]
-
-
-@dataclass(frozen=True)
-class SwatchRow:
-    """The shared shape of every row the Studio draws: what it is called,
-    what colour it is wearing, what that colour is NAMED, and the labelled
-    groups of chips on offer.
-
-    Provider rows and state rows are the same object with different group
-    lists on purpose -- the view is one renderer, and every string it can
-    show is decided here where a test can read it without an NSView.
-    """
-
-    key: str
-    label: str
-    current_hex: str
-    current_name: str
-    groups: tuple[SwatchGroup, ...]
-
-    @property
-    def all_swatches(self) -> tuple[Swatch, ...]:
-        return tuple(swatch for group in self.groups for swatch in group.swatches)
-
-    def group(self, key: str) -> SwatchGroup | None:
-        for group in self.groups:
-            if group.key == key:
-                return group
-        return None
-
-    @property
-    def picker_swatch(self) -> Swatch:
-        """The one chip that opens the colour panel. Always present."""
-        group = self.group(SWATCH_GROUP_CUSTOM)
-        return group.swatches[0]
-
-
-@dataclass(frozen=True)
-class ProviderColorRow(SwatchRow):
-    """One provider's whole row: identity first, palette second."""
-
-    provider: str = ""
-    animation: str = PROVIDER_ANIMATION_AUTO
-    animation_label: str = ""
-    animation_description: str = ""
-
-
 def _provider_label(provider: str) -> str:
     for spec in PROVIDER_SPECS:
         if spec.provider == provider:
             return spec.label
     return provider.title() or provider
-
-
-def brand_swatches_for_provider(provider: str, current_hex: str) -> tuple[Swatch, ...]:
-    """The named Brand group for one provider.
-
-    Leads with that provider's OWN shipped colour when it is not already one
-    of the four brand seeds and not in the system palette either (Devin's
-    navy, say) -- identity first. Named "Default", never a second swatch
-    confusingly wearing the provider's own name next to a different hex.
-    """
-    swatches: list[Swatch] = []
-    own = normalize_hex(default_agent_color(provider), CURATED_PALETTE[0])
-    known = set(_BRAND_NAME_BY_HEX) | set(_CURATED_NAME_BY_HEX)
-    if own.upper() not in known:
-        swatches.append(
-            Swatch(
-                name="Default",
-                hex=own,
-                group=SWATCH_GROUP_BRAND,
-                selected=own.upper() == current_hex.upper(),
-            )
-        )
-    for name, hex_value in BRAND_SEED_COLORS:
-        swatches.append(
-            Swatch(
-                name=name,
-                hex=hex_value,
-                group=SWATCH_GROUP_BRAND,
-                selected=hex_value.upper() == current_hex.upper(),
-            )
-        )
-    return tuple(swatches)
-
-
-def palette_swatches(current_hex: str) -> tuple[Swatch, ...]:
-    return tuple(
-        Swatch(
-            name=name,
-            hex=hex_value,
-            group=SWATCH_GROUP_PALETTE,
-            selected=hex_value.upper() == current_hex.upper(),
-        )
-        for hex_value, name in zip(CURATED_PALETTE, CURATED_PALETTE_NAMES)
-    )
-
-
-def custom_swatches(
-    current_hex: str, already_shown: tuple[str, ...] = ()
-) -> tuple[Swatch, ...]:
-    """The row's own-colour slot: ONE chip that opens the picker, wearing
-    whatever colour the row currently has and named for it.
-
-    When the current colour belongs to no named group this chip *is* the
-    selection, so it is named "Custom" and rings -- a hand-picked hex stays
-    a visible, named, re-selectable swatch instead of vanishing from the
-    row. Otherwise it is the neutral "Pick…" opener.
-
-    ``already_shown`` are hexes the earlier groups drew: a colour that is
-    already named on the row (a provider's own "Default", say) is not
-    custom, whatever the global name table says about it.
-    """
-    current = normalize_hex(current_hex, CURATED_PALETTE[0])
-    shown = {normalize_hex(value, "#000000").upper() for value in already_shown}
-    unnamed = swatch_name(current) == CUSTOM_SWATCH_NAME and current.upper() not in shown
-    return (
-        Swatch(
-            name=CUSTOM_SWATCH_NAME if unnamed else "Pick…",
-            hex=current,
-            group=SWATCH_GROUP_CUSTOM,
-            selected=unnamed,
-            opens_picker=True,
-        ),
-    )
-
-
-def _make_group(key: str, swatches: tuple[Swatch, ...]) -> SwatchGroup:
-    return SwatchGroup(
-        key=key,
-        label=SWATCH_GROUP_LABELS[key],
-        hint=SWATCH_GROUP_HINTS[key],
-        swatches=swatches,
-    )
-
-
-def _selected_name(groups: tuple[SwatchGroup, ...], current: str) -> str:
-    """The name of the chip that is actually ringed.
-
-    A row sitting on its own shipped colour reads "Default", not the global
-    fallback name for an unrecognized hex -- the caption has to agree with
-    the ring, or the row is telling you two different things at once.
-    """
-    return next(
-        (
-            swatch.name
-            for group in groups
-            for swatch in group.swatches
-            if swatch.selected and not swatch.opens_picker
-        ),
-        None,
-    ) or swatch_name(current)
-
-
-def provider_color_row(provider: str, colors: ColorSettings) -> ProviderColorRow:
-    current = colors.agent_color(provider)
-    animation = colors.agent_animation(provider)
-    brand = brand_swatches_for_provider(provider, current)
-    palette = palette_swatches(current)
-    custom = custom_swatches(
-        current, tuple(swatch.hex for swatch in brand + palette)
-    )
-    groups = (
-        _make_group(SWATCH_GROUP_BRAND, brand),
-        _make_group(SWATCH_GROUP_PALETTE, palette),
-        _make_group(SWATCH_GROUP_CUSTOM, custom),
-    )
-    return ProviderColorRow(
-        key=provider,
-        provider=provider,
-        label=_provider_label(provider),
-        current_hex=current,
-        current_name=_selected_name(groups, current),
-        animation=animation,
-        animation_label=PROVIDER_ANIMATION_LABELS.get(animation, animation.title()),
-        animation_description=PROVIDER_ANIMATION_DESCRIPTIONS.get(animation, ""),
-        groups=groups,
-    )
 
 
 # The words the State Colors rows lead with. Kept here beside the model
@@ -4849,111 +4341,6 @@ MODE_ROW_LABELS: dict[str, str] = {
     MODE_ASK: "Ask (waiting on you)",
     MODE_ERROR: "Error (something broke)",
 }
-
-
-def default_mode_color(key: str) -> str:
-    return _default_mode_colors().get(key, WORKING_CYAN)
-
-
-def mode_color_row(key: str, colors: ColorSettings) -> SwatchRow:
-    """One state's colour row, built exactly like a provider's.
-
-    The shipped signal colour leads the row as a named "Default" chip. Before
-    that existed the State Colors rows drew CURATED_PALETTE[:6] and nothing
-    else -- and not one of the four shipped state colours is in that strip,
-    so on a fresh install every state row rendered with ZERO chips ringed and
-    the row's only truth was the hex printed at its end. The picker chip was
-    hardcoded "Pick…" with ``selected`` never set, so unlike a provider row a
-    hand-picked colour could not become a named, ringed "Custom" either.
-    """
-    current = normalize_hex(colors.mode_color(key), CURATED_PALETTE[0])
-    shipped = normalize_hex(default_mode_color(key), CURATED_PALETTE[0])
-    default = (
-        Swatch(
-            name=swatch_name(shipped),
-            hex=shipped,
-            group=SWATCH_GROUP_DEFAULT,
-            selected=shipped.upper() == current.upper(),
-        ),
-    )
-    palette = palette_swatches(current)
-    custom = custom_swatches(
-        current, tuple(swatch.hex for swatch in default + palette)
-    )
-    groups = (
-        _make_group(SWATCH_GROUP_DEFAULT, default),
-        _make_group(SWATCH_GROUP_PALETTE, palette),
-        _make_group(SWATCH_GROUP_CUSTOM, custom),
-    )
-    return SwatchRow(
-        key=key,
-        label=MODE_ROW_LABELS.get(key, key.title()),
-        current_hex=current,
-        current_name=_selected_name(groups, current),
-        groups=groups,
-    )
-
-
-def mode_color_rows(colors: ColorSettings) -> tuple[SwatchRow, ...]:
-    return tuple(mode_color_row(key, colors) for key in MODE_COLOR_KEYS)
-
-
-def provider_preview_statuses(
-    provider: str, mode: AgentMode = AgentMode.WORKING
-) -> tuple[AgentStatus, ...]:
-    """One synthetic session for one provider.
-
-    What a person hovering Claude's swatch is asking is "what does THIS
-    colour look like", and the honest answer needs Claude alone on the strip:
-    with two or more sessions active the renderer switches to session
-    identity colours, so a provider colour change would preview as no change
-    at all. Editing a colour is the one moment the strip should be about the
-    provider rather than about the crowd.
-    """
-    return (
-        AgentStatus(
-            provider=provider,
-            agent_id=f"{provider}:studio-preview",
-            display_name=_provider_label(provider),
-            mode=mode,
-            updated_at=datetime.now(timezone.utc),
-            event_name="Studio preview",
-        ),
-    )
-
-
-def provider_color_rows(colors: ColorSettings) -> tuple[ProviderColorRow, ...]:
-    """One row per registered provider, in PROVIDER_SPECS order -- the same
-    order the renderer assigns LEDs in, so the window and the strip agree
-    about who comes first."""
-    return tuple(provider_color_row(spec.provider, colors) for spec in PROVIDER_SPECS)
-
-
-# --- Studio sections -------------------------------------------------------
-
-STUDIO_SECTION_COLORS = "colors"
-STUDIO_SECTION_ANIMATIONS = "animations"
-STUDIO_SECTION_PREVIEW = "preview"
-STUDIO_SECTION_CHOICES: tuple[str, ...] = (
-    STUDIO_SECTION_COLORS,
-    STUDIO_SECTION_ANIMATIONS,
-    STUDIO_SECTION_PREVIEW,
-)
-STUDIO_SECTION_LABELS: dict[str, str] = {
-    STUDIO_SECTION_COLORS: "Colors",
-    STUDIO_SECTION_ANIMATIONS: "Animations",
-    STUDIO_SECTION_PREVIEW: "Preview",
-}
-STUDIO_SECTION_SUBTITLES: dict[str, str] = {
-    STUDIO_SECTION_COLORS: "Which color each agent and each state gets.",
-    STUDIO_SECTION_ANIMATIONS: "How each agent and each state moves.",
-    STUDIO_SECTION_PREVIEW: "See it before you keep it.",
-}
-DEFAULT_STUDIO_SECTION = STUDIO_SECTION_COLORS
-
-
-def normalize_studio_section(value: object) -> str:
-    return value if value in STUDIO_SECTION_CHOICES else DEFAULT_STUDIO_SECTION
 
 
 # --- Uncommitted preview ---------------------------------------------------

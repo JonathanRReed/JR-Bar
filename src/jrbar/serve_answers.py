@@ -18,13 +18,14 @@ are different grants. Nothing here types, raises a window or leaves the Mac.
 
 from __future__ import annotations
 
-import json
 import math
 import threading
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Final
+
+from .private_io import decode_strict_json
 
 ANSWER_DECISIONS: Final = ("approve", "deny", "always", "answer")
 #: The Creator Micro's session keys (``deck_session_board.SLOTS_PER_BANK``),
@@ -76,6 +77,10 @@ _REFUSAL_STATUS: Final = {
     "invalid_args": 400,
     "not_found": 404,
     "answering_off": 403,
+    # A standalone serve reaches the daemon over core.sock as an
+    # unauthenticated connection, and the socket takes answers from the app
+    # alone. The daemon's own serve server does not pass through the socket.
+    "unauthenticated": 403,
     "unavailable": 503,
 }
 
@@ -112,6 +117,8 @@ def parse_answer_target(query: Mapping[str, str], body: object) -> dict[str, Any
     if body is not None and not isinstance(body, dict):
         raise _refuse("the body must be a JSON object")
     fields: dict[str, Any] = {**dict(query), **(body or {})}
+    if not fields.keys() <= {"session", "slot", "decision", "answers", "request"}:
+        raise _refuse("unknown answer field")
     decision = fields.get("decision")
     if not isinstance(decision, str) or decision.strip().lower() not in ANSWER_DECISIONS:
         raise _refuse("decision must be approve, deny, always or answer")
@@ -152,16 +159,17 @@ def parse_answer_target(query: Mapping[str, str], body: object) -> dict[str, Any
 
 def decode_answer_body(raw: bytes) -> object:
     """The POST body: empty (everything in the query) or one JSON object."""
+    if type(raw) is not bytes or len(raw) > MAX_ANSWER_BODY_BYTES:
+        raise _refuse("the body must be a bounded JSON object")
     if not raw.strip():
         return None
     try:
-        return json.loads(raw.decode("utf-8"), parse_constant=_reject_constant)
-    except (UnicodeDecodeError, ValueError):
+        document = decode_strict_json(raw.decode("utf-8"), ValueError)
+    except (UnicodeDecodeError, ValueError, RecursionError):
         raise _refuse("the body must be a JSON object") from None
-
-
-def _reject_constant(_value: str) -> None:
-    raise ValueError("non-finite number")
+    if type(document) is not dict:
+        raise _refuse("the body must be a JSON object")
+    return document
 
 
 def receipt_document(result: Mapping[str, Any]) -> dict[str, Any]:

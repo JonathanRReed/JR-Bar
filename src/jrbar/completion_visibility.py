@@ -48,7 +48,7 @@ LIVE_VISIBLE_SECONDS: Final = 10 * 60.0
 END_EVENT_NAMES: Final = frozenset({"Stop", "SessionEnd", "SubagentStop"})
 
 #: The ``lifecycle`` words that mean "this run is over".
-FINISHED_LIFECYCLES: Final = frozenset({"completed", "ended"})
+FINISHED_LIFECYCLES: Final = frozenset({"completed", "ended", "failed"})
 
 #: Acknowledgement epochs and row clocks come from the same datetime, but
 #: they travel through JSON; compare them with a millisecond of slack.
@@ -115,7 +115,7 @@ def session_visibility(
 
     * live -- working, tool running, waiting, blocked, or idle-ready, and
       either still delivering or quiet for less than ``live_visible_seconds``;
-    * completion -- finished (``completed`` or ``ended``), not acknowledged,
+    * completion -- finished (``completed``, ``ended`` or ``failed``), not acknowledged,
       and younger than ``completed_visible_seconds``;
     * hidden -- everything else. ``list_history`` has it.
 
@@ -130,6 +130,8 @@ def session_visibility(
     acknowledged_at_by_id = acknowledged_at_by_id or {}
     if str(row.get("id") or "") in set(pinned_ids):
         return VISIBLE_LIVE
+    if row.get("terminal_cause") in {"claude_rate_limit", "codex_usage_limit"}:
+        return HIDDEN
     updated_at = row.get("updated_at")
     age = (
         float(now) - float(updated_at)

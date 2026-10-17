@@ -469,3 +469,31 @@ def test_a_long_session_still_counts_a_repeated_message_once(tmp_path, monkeypat
     assert gap is None
     assert doc["turns"] == 8
     assert doc["tokens"]["output"] == 8 * 100
+
+
+def test_claude_one_hour_cache_writes_cost_twice_the_input_rate(tmp_path):
+    path = _claude_path(tmp_path)
+    row = _assistant("msg_1", model="claude-sonnet-5", inp=0, cache_read=0, cache_create=1_000_000, out=0)
+    row["message"]["usage"]["cache_creation"] = {
+        "ephemeral_5m_input_tokens": 400_000,
+        "ephemeral_1h_input_tokens": 600_000,
+    }
+    _write(path, [row])
+
+    doc, gap = session_usage.session_usage("claude", SID, cwd="/tmp/work", home=tmp_path)
+
+    assert gap is None
+    # The tokens stay one count and one model; only the price splits.
+    assert doc["tokens"]["cache_creation"] == 1_000_000
+    assert doc["models"] == {"claude-sonnet-5": 1_000_000}
+    # Sonnet 5 input is $2/MTok: 400k at 1.25x, 600k at 2x.
+    assert doc["estimated_cost_usd"] == pytest.approx(0.4 * 2.5 + 0.6 * 4.0, abs=1e-4)
+
+
+def test_a_session_without_the_breakdown_still_prices_writes_as_five_minute(tmp_path):
+    path = _claude_path(tmp_path)
+    _write(path, [_assistant("msg_1", model="claude-sonnet-5", inp=0, cache_read=0, cache_create=1_000_000, out=0)])
+
+    doc, _gap = session_usage.session_usage("claude", SID, cwd="/tmp/work", home=tmp_path)
+
+    assert doc["estimated_cost_usd"] == pytest.approx(2.5, abs=1e-4)

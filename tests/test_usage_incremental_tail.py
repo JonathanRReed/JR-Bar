@@ -106,10 +106,11 @@ def test_a_mid_line_snapshot_never_splits_the_line(tmp_path, counting_full_parse
     transcript = root / "proj" / "session.jsonl"
     cache = tmp_path / "cache.json"
     _write_lines(transcript, [_assistant_row("msg_a")])
-    # Strip the trailing newline: the snapshot ends mid-line. The
-    # prefix-bounded read trims back to the last newline, so the
-    # partial line is simply not consumed yet.
-    transcript.write_text(transcript.read_text().rstrip("\n"))
+    # Cut the line short: the snapshot ends mid-line. The prefix-bounded read
+    # trims back to the last newline, so the partial line is simply not
+    # consumed yet.
+    whole = transcript.read_text().rstrip("\n")
+    transcript.write_text(whole[:-10])
     first = usage_stats.scan_usage(root, cache)
     assert first.input_tokens == 0  # the only line is still unfinished
     assert len(counting_full_parse) == 1
@@ -117,7 +118,7 @@ def test_a_mid_line_snapshot_never_splits_the_line(tmp_path, counting_full_parse
     # The writer completes the line and appends another: BOTH arrive via
     # the incremental tail, never split, with no second full reparse.
     with transcript.open("a") as handle:
-        handle.write("\n" + json.dumps(_assistant_row("msg_b")) + "\n")
+        handle.write(whole[-10:] + "\n" + json.dumps(_assistant_row("msg_b")) + "\n")
     result = usage_stats.scan_usage(root, cache)
     assert result.input_tokens == 2000
     assert len(counting_full_parse) == 1

@@ -5,8 +5,7 @@ import JRBarCore
 /// the curated one. The persisted `sections` and `concealedApps` are the
 /// person's choices and only ever change when the person changes them;
 /// everything transient (Hide all, Show all) is a layer applied on read.
-/// The engines — the concealer's target, the concealed plan, the hider,
-/// the ear limits — read the layered copy; every write still lands on
+/// The engines — the hider, the ear limits — read the layered copy; every write still lands on
 /// the curated one. Pure so a test pins each layer.
 enum MenuBarLayers {
     /// The maps with an overlay laid over them.

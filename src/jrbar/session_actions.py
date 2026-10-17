@@ -191,6 +191,9 @@ def _valid_session_id(value: object) -> bool:
         type(value) is str
         and 1 <= len(value) <= MAX_SESSION_ID_LENGTH
         and value.isprintable()
+        # A session id is data from a hook payload and ends up as an argument
+        # of the agent's own CLI: one that opens with a dash would be a flag.
+        and not value.startswith("-")
         and "/" not in value
         and "\\" not in value
     )
@@ -454,25 +457,6 @@ def session_open_target(status: AgentStatus, action: str) -> tuple[str, str] | N
         command = session_resume_command(status)
         return ("terminal", command) if command else None
     return None
-
-
-def available_session_open_actions(status: AgentStatus) -> tuple[str, ...]:
-    return tuple(action for action in SESSION_OPEN_CHOICES if session_open_target(status, action))
-
-
-def session_open_action_label(status: AgentStatus, action: str) -> str:
-    provider = status.provider.lower()
-    if action == SESSION_OPEN_APP:
-        if provider == "codex":
-            return "Open in Codex"
-        if provider == "claude":
-            return "Open Claude App"
-        return "Open App"
-    if action == SESSION_OPEN_VSCODE:
-        return "Open in VS Code"
-    if action == SESSION_OPEN_TERMINAL:
-        return "Resume in Terminal"
-    return action
 
 
 def activate_navigation_resolution(

@@ -130,4 +130,133 @@ struct AppStateTests {
                 == CoreSocketPath.resolve(environment: [:]).replacingOccurrences(of: "/core.sock", with: ""),
                 "the same directory as core.sock")
     }
+
+    @Test("a set of providers saved in another order is not a damaged file")
+    func setOrderDoesNotMakeARecoveryCopy() throws {
+        let file = temporaryFile()
+        let directory = file.url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var state = AppState()
+        state.toys.confetti.triggers.perProviderReset = ["claude", "codex", "gemini", "grok"]
+        try file.save(state)
+        // The file as an earlier launch, hashing the set in another
+        // order, would have written it: both directions, so one of them
+        // differs from this process's own order whatever that is.
+        for reversed in [false, true] {
+            var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file.url)) as? [String: Any])
+            var toys = try #require(object["toys"] as? [String: Any])
+            var confetti = try #require(toys["confetti"] as? [String: Any])
+            var triggers = try #require(confetti["triggers"] as? [String: Any])
+            let words = try #require(triggers["perProviderReset"] as? [String]).sorted()
+            triggers["perProviderReset"] = reversed ? Array(words.reversed()) : words
+            confetti["triggers"] = triggers
+            toys["confetti"] = confetti
+            object["toys"] = toys
+            try JSONSerialization.data(withJSONObject: object).write(to: file.url)
+            try file.save(state)
+        }
+        let backups = try FileManager.default.contentsOfDirectory(at: directory,
+            includingPropertiesForKeys: nil).filter { $0.lastPathComponent.hasPrefix("app-state.recovery-") }
+        #expect(backups.isEmpty, "the same providers in another order lose nothing")
+    }
+
+    private func recoveryCopies(in directory: URL) throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("app-state.recovery-") }
+    }
+
+    @Test("a key this app has retired is not damage, so a plain upgrade cuts no recovery copy")
+    func retiredKeysCutNoRecoveryCopy() throws {
+        let file = temporaryFile()
+        let directory = file.url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try file.save(AppState())
+        var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file.url)) as? [String: Any])
+        var utilities = try #require(object["utilities"] as? [String: Any])
+        var menuBar = try #require(utilities["menuBar"] as? [String: Any])
+        menuBar["agentStatusItem"] = true
+        menuBar["spacers"] = ["old"]
+        utilities["menuBar"] = menuBar
+        // The Data Hoarder's switch and capture dials, cut with the utility.
+        utilities["dataHoarderEnabled"] = true
+        utilities["dataHoarder"] = ["captureSources": ["claude-projects": true], "fullContent": false]
+        // The notch card's Weather row, cut the same way.
+        var toys = try #require(object["toys"] as? [String: Any])
+        var notch = try #require(toys["notch"] as? [String: Any])
+        notch["weather"] = true
+        notch["weatherCity"] = "London"
+        notch["weatherUseIPLocation"] = false
+        toys["notch"] = notch
+        object["toys"] = toys
+        object["utilities"] = utilities
+        try JSONSerialization.data(withJSONObject: object).write(to: file.url)
+
+        try file.save(AppState())
+        #expect(try recoveryCopies(in: directory).isEmpty, "retired keys are gone on purpose")
+        let after = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file.url)) as? [String: Any])
+        let menuAfter = try #require((after["utilities"] as? [String: Any])?["menuBar"] as? [String: Any])
+        #expect(menuAfter["agentStatusItem"] == nil)
+        let utilitiesAfter = try #require(after["utilities"] as? [String: Any])
+        #expect(utilitiesAfter["dataHoarderEnabled"] == nil)
+        #expect(utilitiesAfter["dataHoarder"] == nil)
+        let notchAfter = try #require((after["toys"] as? [String: Any])?["notch"] as? [String: Any])
+        #expect(notchAfter["weather"] == nil)
+        #expect(notchAfter["weatherCity"] == nil)
+    }
+
+    @Test("a key nobody has retired is still kept as a recovery copy when it is dropped")
+    func unknownKeysStillCutOne() throws {
+        let file = temporaryFile()
+        let directory = file.url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try file.save(AppState())
+        var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file.url)) as? [String: Any])
+        object["aNewerAppsKey"] = ["keep": "me"]
+        try JSONSerialization.data(withJSONObject: object).write(to: file.url)
+
+        try file.save(AppState())
+        #expect(try recoveryCopies(in: directory).count == 1)
+    }
+
+    @Test("no retired path is one this app still writes")
+    func retiredPathsAreNotLive() throws {
+        let data = try JSONEncoder().encode(AppState())
+        let live = try JSONDecoder().decode(JSONValue.self, from: data)
+        func paths(_ value: JSONValue, _ prefix: String) -> Set<String> {
+            guard case .object(let members) = value else { return [] }
+            var found: Set<String> = []
+            for (key, inner) in members {
+                let here = prefix.isEmpty ? key : prefix + "." + key
+                found.insert(here)
+                found.formUnion(paths(inner, here))
+            }
+            return found
+        }
+        #expect(paths(live, "").isDisjoint(with: AppStateFile.retiredKeyPaths))
+    }
+
+    @Test("an unreadable file loads as the defaults and says so; a missing or good one does not")
+    func loadOutcomes() throws {
+        let file = temporaryFile()
+        let directory = file.url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(file.loadChecked().outcome == .missing)
+
+        try file.save(AppState(showScreenBar: false))
+        #expect(file.loadChecked().outcome == .loaded)
+        #expect(file.loadChecked().state.showScreenBar == false)
+
+        try Data("{ this is not json".utf8).write(to: file.url)
+        let broken = file.loadChecked()
+        #expect(broken.state == AppState())
+        guard case .unreadable = broken.outcome else {
+            Issue.record("expected unreadable, got \(broken.outcome)")
+            return
+        }
+
+        // The next save keeps the broken bytes before replacing them.
+        try file.save(AppState())
+        #expect(try recoveryCopies(in: directory).count == 1)
+        #expect(file.loadChecked().outcome == .loaded, "after that the file reads fine, so the notice is not repeated")
+    }
 }

@@ -75,6 +75,21 @@ import Testing
         #expect(KeepAwakeMenu.seconds(for: .untilAgentsFinish, now: Date()) == .none)
     }
 
+    @Test func untilMorningFitsTheDaemonsDayLongLeaseBetweenSevenAndEight() throws {
+        // The panel's rule skips an 08:00 less than an hour away, which
+        // is a 24 to 25 hour wait here: more than a lease may last, so
+        // the daemon refused the hold. The menu waits for the 08:00 in
+        // front of it instead.
+        for (hour, minute) in [(7, 0), (7, 30), (7, 59)] {
+            let now = try today(hour, minute)
+            let asked = try #require(KeepAwakeMenu.seconds(for: .untilMorning, now: now) ?? nil)
+            #expect(asked <= 86_400)
+            #expect(asked == (8 - hour) * 3600 - minute * 60)
+            let end = KeepAwakeMenu.morning(from: now)
+            #expect(Calendar.current.component(.hour, from: end) == 8)
+        }
+    }
+
     @Test func untilMorningIsThePanelsNextMorningAtAnyHour() async throws {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -115,7 +130,7 @@ import Testing
         let state = SystemTogglesStore.State(dockDriver: FakeDock(), defaults: defaults)
         let taken = Counter()
         state.takeAssertion = { _ in taken.count += 1; return 42 }
-        state.releaseAssertion = { _ in }
+        state.releaseAssertion = { _ in kIOReturnSuccess }
         let store = SystemTogglesStore(state: state)
         let items = KeepAwakeMenu.items(for: store)
         #expect(items.first { $0.choice == .untilAgentsFinish }?.enabled == false)
@@ -187,6 +202,63 @@ import Testing
         #expect(utility.status == .paused("Paused · Low Power Mode is on"))
     }
 
+    @Test func oversizedSavedDurationsAreIgnored() throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set([Double.greatestFiniteMagnitude, -Double.greatestFiniteMagnitude, 1200.0],
+                     forKey: KeepAwakeMenu.durationsDefaultsKey)
+        #expect(KeepAwakeMenu.durations(defaults) == [1200])
+        defaults.set([Double.greatestFiniteMagnitude], forKey: KeepAwakeMenu.durationsDefaultsKey)
+        #expect(KeepAwakeMenu.durations(defaults) == KeepAwakeMenu.defaultDurations)
+    }
+
+    @Test func customDurationStartsWithoutChangingFullPresets() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let presets = Array(stride(from: 600, through: 4800, by: 600))
+        KeepAwakeMenu.setDurations(presets, defaults)
+        let (store, state, fake) = leased(defaults)
+        state.setAwakeKeepsDisplay(true)
+        KeepAwakeMenu.startCustomDuration(minutes: 47, on: store)
+        await settle(state)
+        #expect(fake.sent == [CoreAwakeRequest(.seconds(2820), display: true)])
+        #expect(KeepAwakeMenu.durations(defaults) == presets)
+    }
+
+    @Test func customDurationRejectsInvalidMinutesAndPendingRequests() throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (store, state, fake) = leased(defaults)
+        for minutes in [Int.min, -1, 0, 1441, Int.max] {
+            #expect(KeepAwakeMenu.customSeconds(minutes: minutes) == nil)
+            KeepAwakeMenu.startCustomDuration(minutes: minutes, on: store)
+        }
+        #expect(fake.sent.isEmpty)
+        #expect(KeepAwakeMenu.customSeconds(minutes: 1) == 60)
+        #expect(KeepAwakeMenu.customSeconds(minutes: 1440) == 86_400)
+        for text in ["", "abc", "1.5", "0", "1441", String(Int.max)] {
+            #expect(KeepAwakeMenu.customMinutes(text) == nil)
+        }
+        #expect(KeepAwakeMenu.customMinutes(" 47 ") == 47)
+        state.applying.insert(.keepAwake)
+        KeepAwakeMenu.startCustomDuration(minutes: 47, on: store)
+        #expect(fake.sent.isEmpty)
+    }
+
+    @Test func failedHoldBadgeDoesNotClaimTheMacIsAwake() throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (store, state, _) = leased(defaults)
+        let utility = KeepAwakeUtility(toggles: store)
+        for lease in [#"{"kind":"indefinite"}"#, #"{"kind":"duration","until":2000000000}"#,
+                      #"{"kind":"agents"}"#] {
+            let json = "{\"state\":\"manual\",\"active\":false,\"lease\":" + lease + "}"
+            state.noteDaemonHold(try JSONDecoder().decode(CoreAwakeHold.self, from: Data(json.utf8)), live: true)
+            #expect(utility.isOn, "the manual request is still in force")
+            #expect(utility.status == .paused("Not held"))
+        }
+    }
+
     @Test func otherHoldersAreAppsHoldingSleepOnly() {
         let assertions: [Int32: [[String: Any]]] = [
             100: [["AssertType": "PreventUserIdleSystemSleep", "AssertLevel": 255]],
@@ -223,5 +295,19 @@ import Testing
         #expect(notInstalled.contains("not installed"))
         let honoured = ClosedLidNote.text(holding)
         #expect(honoured == "The sleep helper is installed; closed-lid holds are honoured. Holding now.")
+    }
+
+    @Test(arguments: [false, true])
+    func theLidRowShowsControllerFailures(holding: Bool) throws {
+        let payload = """
+        {"helper_installed":true,"holding":\(holding),"error":"synthetic release refused"}
+        """
+        var lid = try JSONDecoder().decode(CoreClosedLid.self, from: Data(payload.utf8))
+        let note = ClosedLidNote.text(lid)
+        #expect(note.contains("synthetic release refused"))
+        #expect(!note.contains("honoured"))
+        #expect(note.contains("still held awake") == holding)
+        lid.error = nil
+        #expect(ClosedLidNote.text(lid).contains("honoured"))
     }
 }

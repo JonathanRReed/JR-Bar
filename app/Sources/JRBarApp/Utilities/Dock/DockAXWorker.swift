@@ -10,9 +10,7 @@ import ApplicationServices
 /// timeout, a SwiftUI layout, a burst of daemon documents. A long enough
 /// stall got the tap disabled outright. On a thread of its own the
 /// callback reads its lock-guarded copies and answers in microseconds,
-/// and everything else it does is an async hop to the main actor. The
-/// concealer's click bridge (`MenuBarSystemClickBridge`) has the same
-/// shape.
+/// and everything else it does is an async hop to the main actor.
 final class DockTapThread: @unchecked Sendable {
     /// What the thread and `stop` share: the source to take off, the
     /// loop to stop, and a signal that the thread has returned. The
@@ -236,6 +234,9 @@ struct DockPreviewAX {
     var frame: @Sendable (DockPreviewWindow) -> CGRect? = { window in
         window.frame ?? window.element.flatMap { AppleDockReader.frame(of: $0) }
     }
+    /// The Dock's list and tiles, walked for `pid` — a gesture's tile hit
+    /// and ⌥`'s front-app lookup. nil when the Dock does not answer.
+    var dockTiles: @Sendable (_ pid: pid_t) -> DockTileReading? = { AppleDockReader.readTiles(pid: $0) }
     /// The header's "New": the menu walk and press for `pid`.
     var newWindow: @Sendable (pid_t) -> Void = { AppleDockReader.pressNewWindow(pid: $0) }
 }

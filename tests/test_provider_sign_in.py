@@ -94,10 +94,19 @@ class Reread:
 
     def __init__(self, result: ResignInResult | None = None) -> None:
         self.result = result
+        self.renewal_result = ResignInResult(
+            "claude", "Fresh token copied.", changed=True, outcome=RepairOutcome.REPAIRED
+        )
+        self.renewal_pending = False
         self.calls: list[tuple[str, str, str | None]] = []
 
     def __call__(self, provider, instance="default", *, reason_code=None):
         self.calls.append((provider, instance, reason_code))
+        if provider == "claude" and self.renewal_pending:
+            self.renewal_pending = False
+            if isinstance(self.renewal_result, Exception):
+                raise self.renewal_result
+            return self.renewal_result
         if self.result is not None:
             return self.result
         return ResignInResult(provider, "re-read")
@@ -175,9 +184,16 @@ def bench(tmp_path: Path, *, result: ResignInResult | None = None, auth: str = '
         text = fingerprint_file.read_text(encoding="utf-8").strip()
         return ("keychain", text) if text else None
 
+    def run_for_fix(argv, **options):
+        before = fingerprint()
+        answer = run(argv, **options)
+        if len(argv) > 1 and argv[1] == "-p" and fingerprint() != before:
+            reread.renewal_pending = True
+        return answer
+
     fixer = ProviderSignIn(
         locate=lambda binary: None if binary in missing else tools[binary],
-        run=run,
+        run=run_for_fix,
         open_terminal=terminal,
         clock=clock,
         fingerprint=fingerprint,
@@ -245,6 +261,39 @@ def test_an_expired_claude_copy_is_renewed_by_one_quiet_call_in_a_private_folder
     assert b.terminal.calls == []
     # The re-read ran once for the click and once to copy the renewed token.
     assert [call[0] for call in b.reread.calls] == ["claude", "claude"]
+    assert [call[2] for call in b.reread.calls] == ["authentication_required"] * 2
+
+
+@pytest.mark.parametrize("outcome", [
+    RepairOutcome.BLOCKED, RepairOutcome.UNAVAILABLE,
+    RepairOutcome.NEEDS_PROVIDER_REFRESH, RepairOutcome.NEEDS_SIGN_IN,
+])
+def test_claude_renewal_does_not_claim_success_when_copy_fails(tmp_path: Path, outcome) -> None:
+    b = bench(tmp_path, result=expired_claude())
+    b.reread.renewal_result = ResignInResult("claude", "Copy unavailable.", outcome=outcome)
+    result = b.fixer.sign_in("claude", reason_code="authentication_required")
+    assert result.outcome == "unavailable"
+    assert result.message == "Copy unavailable."
+    assert b.reread.calls[-1][2] == "authentication_required"
+    assert b.terminal.calls == []
+
+
+def test_claude_renewal_copy_exception_is_a_safe_failure(tmp_path: Path) -> None:
+    b = bench(tmp_path, result=expired_claude())
+    b.reread.renewal_result = OSError(SECRET_OUTPUT)
+    result = b.fixer.sign_in("claude", reason_code="authentication_required")
+    assert result.outcome == "failed"
+    assert "could not copy" in result.message
+    assert SECRET_OUTPUT not in result.message
+    assert SECRET_OUTPUT not in " ".join(b.log)
+
+
+def test_claude_renewal_accepts_a_healthy_copied_token(tmp_path: Path) -> None:
+    b = bench(tmp_path, result=expired_claude())
+    b.reread.renewal_result = ResignInResult(
+        "claude", "Current token.", outcome=RepairOutcome.ALREADY_HEALTHY
+    )
+    assert b.fixer.sign_in("claude").outcome == "renewed"
 
 
 def test_the_renewal_never_carries_the_live_daemons_state_or_settings(tmp_path: Path) -> None:
@@ -877,3 +926,64 @@ def test_the_command_waits_on_the_slow_lane_off_the_main_thread() -> None:
     # Its own lane: a held renewal must not make History, a doctor run or a scan wait.
     assert "provider_sign_in" in core_server.ACTION_LANE_COMMANDS
     assert "provider_sign_in" not in core_server.READ_LANE_COMMANDS | core_server.SCAN_LANE_COMMANDS
+
+
+@pytest.mark.parametrize("instance,signed_out,opens", [("default", True, True),
+    ("default", False, False), ("work", True, False)])
+def test_kiro_login_is_click_only_default_account_and_tells_person_to_refresh(
+    tmp_path: Path, instance: str, signed_out: bool, opens: bool,
+) -> None:
+    executable = write_cli(tmp_path, "kiro-cli", "exit 99\n")
+    terminal = Terminal()
+    reread = Reread(ResignInResult("kiro", "Refresh Kiro", outcome=RepairOutcome.NEEDS_SIGN_IN))
+    def locate(binary):
+        assert binary == "kiro-cli"
+        return executable
+    def forbidden_run(*args, **kwargs):
+        pytest.fail("Kiro sign-in ran a background CLI command")
+    fixer = ProviderSignIn(locate=locate, run=forbidden_run, open_terminal=terminal,
+                          reconnect=reread, home=lambda: tmp_path)
+    assert terminal.calls == []
+    result = fixer.sign_in("kiro", instance=instance, signed_out=signed_out)
+    assert reread.calls == [("kiro", instance, None)]
+    if opens:
+        assert result.outcome == "opened_terminal"
+        assert result.command == "kiro-cli login"
+        assert terminal.calls == [(str(tmp_path), shlex.quote(executable) + " login", None)]
+        assert "then refresh this card" in result.message
+        assert "notices on its own" not in result.message
+    else:
+        assert result.outcome == "unavailable"
+        assert terminal.calls == []
+
+
+def test_kiro_missing_cli_never_opens_a_terminal_or_claims_login(tmp_path: Path) -> None:
+    terminal = Terminal()
+    reread = Reread(ResignInResult("kiro", "Refresh Kiro"))
+    fixer = ProviderSignIn(locate=lambda _: None, open_terminal=terminal,
+                          reconnect=reread, home=lambda: tmp_path)
+    result = fixer.sign_in("kiro", signed_out=True)
+    assert result.outcome == "unavailable"
+    assert "no `kiro-cli` command" in result.message
+    assert result.command is None
+    assert terminal.calls == []
+
+
+
+def test_kiro_generic_reconnect_falls_through_to_fixed_login_without_credential_reads(tmp_path: Path) -> None:
+    from jrbar.provider_reconnect import reconnect_provider
+
+    executable = write_cli(tmp_path, "kiro-cli", "exit 99\n")
+    terminal = Terminal()
+    class Credentials:
+        def get(self, *_):
+            pytest.fail("Kiro reconnect read a Keychain credential")
+    def reconnect(provider, instance="default", *, reason_code=None):
+        return reconnect_provider(provider, instance, reason_code=reason_code,
+                                  credential_store=Credentials(), home=tmp_path, now=100)
+    fixer = ProviderSignIn(locate=lambda binary: executable if binary == "kiro-cli" else None,
+                          open_terminal=terminal, reconnect=reconnect, home=lambda: tmp_path)
+    result = fixer.sign_in("kiro", signed_out=True)
+    assert result.outcome == "opened_terminal"
+    assert result.command == "kiro-cli login"
+    assert terminal.calls == [(str(tmp_path), shlex.quote(executable) + " login", None)]

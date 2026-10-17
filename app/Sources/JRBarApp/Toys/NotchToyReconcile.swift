@@ -12,6 +12,8 @@ struct NotchReconcileInputs: Equatable {
         var focus: ScreenBarFocus?
         /// Where each live session works, for the shelf.
         var homes: [ShelfTrayModel.SessionHome]
+        /// The Try it ask, while it is up: it joins the card's rows.
+        var demo: CoreAsk?
     }
 
     var notch: NotchSettings

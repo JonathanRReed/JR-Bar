@@ -55,6 +55,22 @@ struct RunningAppsTests {
         #expect(index.version == version + 2, "a quit the index never knew changes nothing")
     }
 
+    @Test("a bundle path is a set lookup on the index, and follows launches and quits")
+    func bundleURLs() {
+        let url = URL(fileURLWithPath: "/Applications/Ice.app")
+        var ice = Self.app(301, nil, "Ice")
+        ice.bundleURL = url
+        let feed = FakeFeed([ice, Self.app(302, "io.example.other", "Other")])
+        let index = RunningApps(feed: feed)
+        #expect(index.isRunning(bundleURL: url))
+        #expect(index.isRunning(bundleURL: URL(fileURLWithPath: "/Applications/./Ice.app")), "paths compare standardized")
+        #expect(!index.isRunning(bundleURL: URL(fileURLWithPath: "/Applications/Bartender 7.app")))
+        feed.quit(301)
+        #expect(!index.isRunning(bundleURL: url), "the cache drops with the quit")
+        feed.launch(ice)
+        #expect(index.isRunning(bundleURL: url))
+    }
+
     @Test("names match ignoring case, as the rivals' rule does")
     func namesIgnoreCase() {
         let feed = FakeFeed([Self.app(201, nil, "notchnook")])

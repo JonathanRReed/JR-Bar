@@ -188,7 +188,9 @@ def classify(record: CompatibilityRecord | None, version_text: str | None) -> Co
 
 def _search_path(env: dict[str, str] | None = None) -> str:
     environment = os.environ if env is None else env
-    parts = [part for part in environment.get("PATH", "").split(os.pathsep) if part]
+    # A relative entry (``.``, ``bin``) means whatever folder the daemon is in,
+    # and the CLI found there would be run for its version.
+    parts = [part for part in environment.get("PATH", "").split(os.pathsep) if os.path.isabs(part)]
     for extra in _EXTRA_BIN_DIRS:
         expanded = os.path.expanduser(extra)
         if expanded not in parts:

@@ -136,7 +136,7 @@ def test_pi_and_openclaw_records_are_priced_by_the_model_that_ran_them() -> None
 
 def test_the_usage_center_history_reads_them(monkeypatch) -> None:
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(FIXTURES / "pi"))
-    records = history.scan_provider_records("pi", days=3650)
+    records = history.scan_provider_records("pi", days=36_500)
     assert len(records) == 2
 
 
@@ -151,7 +151,9 @@ def test_the_usage_center_asks_for_their_history_and_gets_it(provider: str) -> N
         scanned.append((name, days))
         return [(name, "s1", "claude-sonnet-5", 1_789_900_000.0, 100, 0, 0, 50, f"{name}:1")]
 
-    service = history.UsageHistoryService(scan)
+    # "Today" is a day after the records, so the 30-day window holds them
+    # whenever the test runs.
+    service = history.UsageHistoryService(scan, wall_clock=lambda: 1_789_900_000.0 + 86_400.0)
     # A bounded wait on the scan's own completion event, not the clock.
     document = service.document(provider, "30d", budget=30.0)
 
@@ -238,3 +240,103 @@ def test_a_crowded_history_keeps_the_newest_files_not_the_first_by_name(
     kept = [path.name for path in local_token_history._files(tmp_path, "*.jsonl", 500_000.0)]
 
     assert kept == ["c.jsonl", "d.jsonl", "e.jsonl"]
+
+
+def _pi_session(tmp_path: Path, usage: dict, model: str = "claude-sonnet-5") -> Path:
+    root = tmp_path / "pi" / "sessions"
+    root.mkdir(parents=True)
+    line = {
+        "type": "message",
+        "id": "pi-1",
+        "message": {
+            "role": "assistant",
+            "model": model,
+            "timestamp": "2026-10-06T12:00:00.000Z",
+            "usage": usage,
+        },
+    }
+    (root / "session.jsonl").write_text(json.dumps(line) + "\n", encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize(
+    "split",
+    (
+        {"cacheWrite1h": 600},
+        {"cache_write_1h": 600},
+        {"cttl": {"ephemeral1h": 600}},
+        {"cttl": {"ephemeral_1h": 600}},
+    ),
+)
+def test_pi_one_hour_cache_writes_are_a_subset_priced_at_the_one_hour_rate(tmp_path: Path, split: dict) -> None:
+    from jrbar import usage_stats
+
+    root = _pi_session(tmp_path, {"input": 100, "output": 10, "cacheRead": 0, "cacheWrite": 1000, **split})
+
+    records = scan_pi_records(root, 0.0)
+
+    # One message: the same tokens in total, 600 of the 1000 writes on the 1h row.
+    assert _sums(records) == (100, 0, 1000, 10)
+    assert sorted((usage_stats.base_model_key(r[2]), r[2].endswith(usage_stats.ONE_HOUR_WRITE_SUFFIX), r[6]) for r in records) == [
+        ("claude-sonnet-5", False, 400),
+        ("claude-sonnet-5", True, 600),
+    ]
+    assert len({record[8] for record in records}) == 2
+
+
+def test_pi_without_a_one_hour_figure_stays_a_single_record(tmp_path: Path) -> None:
+    root = _pi_session(tmp_path, {"input": 100, "output": 10, "cacheRead": 0, "cacheWrite": 1000})
+
+    assert len(scan_pi_records(root, 0.0)) == 1
+
+
+@pytest.mark.parametrize("bad", (-3, "x", None, True, 5000))
+def test_a_bad_pi_one_hour_figure_cannot_exceed_the_writes(tmp_path: Path, bad) -> None:
+    root = _pi_session(tmp_path, {"input": 1, "output": 1, "cacheRead": 0, "cacheWrite": 1000, "cacheWrite1h": bad})
+
+    assert _sums(scan_pi_records(root, 0.0))[2] == 1000
+
+
+def test_a_line_over_the_cap_is_skipped_alone_and_never_held(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jrbar import local_token_history as subject
+
+    monkeypatch.setattr(subject, "MAX_LINE_BYTES", 4096)
+    path = tmp_path / "session.jsonl"
+    good = json.dumps({"type": "message", "n": 1}).encode()
+    huge = b'{"type":"message","pad":"' + b"p" * (3 * 1024 * 1024) + b'"}'
+    path.write_bytes(good + b"\n" + huge + b"\n" + good.replace(b"1", b"2") + b"\n" + huge)
+
+    assert [row["n"] for row in subject._json_lines(path)] == [1, 2]
+
+
+def test_a_streamed_session_file_past_64_mib_is_read_but_a_whole_document_is_not(tmp_path: Path) -> None:
+    from jrbar import local_token_history as subject
+
+    big = tmp_path / "updates.jsonl"
+    with big.open("wb") as handle:
+        handle.truncate(65 * 1024 * 1024)
+    chat = tmp_path / "chat.json"
+    with chat.open("wb") as handle:
+        handle.truncate(65 * 1024 * 1024)
+
+    assert list(subject._files(tmp_path, "*.jsonl", 0, subject.MAX_STREAMED_FILE_BYTES)) == [big]
+    assert list(subject._files(tmp_path, "*.json", 0)) == []
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_counts_do_not_abort_the_history_scan(tmp_path: Path, bad: float) -> None:
+    root = tmp_path / "sessions"
+    root.mkdir()
+    rows = [
+        {"type": "message", "id": "bad-time", "message": {"role": "assistant", "timestamp": bad,
+            "model": "fixture-model", "usage": {"input": 100}}},
+        {"type": "message", "id": "bad-count", "message": {"role": "assistant", "timestamp": 1800000000,
+            "model": "fixture-model", "usage": {"input": bad, "output": 20, "cacheWrite": 30, "cacheWrite1h": bad}}},
+        {"type": "message", "id": "valid", "message": {"role": "assistant", "timestamp": 1800000001,
+            "model": "fixture-model", "usage": {"input": 100, "output": 10}}},
+    ]
+    (root / "session.jsonl").write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    records = scan_pi_records(root, 0)
+    assert len(records) == 2
+    assert _sums(records) == (100, 0, 30, 30)
+    assert all(record[3] in (1800000000, 1800000001) for record in records)

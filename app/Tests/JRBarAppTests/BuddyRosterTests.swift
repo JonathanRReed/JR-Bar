@@ -45,4 +45,37 @@ struct BuddyRosterTests {
             .frame(width: 300))
         #expect(abs(narrow.fittingSize.height - (60 * 2 + 8)) < 0.5, "\(narrow.fittingSize)")
     }
+
+    // MARK: VoiceOver and the panels
+
+    @Test("a roster tile is named for the character, hinted with its blurb, and not 'selected' in its name")
+    func tileWords() {
+        for character in BuddyCharacter.allCases {
+            #expect(BuddyRosterTile.label(for: character) == character.displayName)
+            #expect(BuddyRosterTile.hint(for: character).contains(character.blurb))
+            #expect(!BuddyRosterTile.label(for: character).contains("selected"))
+        }
+    }
+
+    @Test("turning the buddy off, or tucking it, closes its rename field and pal card")
+    func offClosesThePanels() {
+        let core = CoreModel()
+        var state = ToysState()
+        state.notchBuddy.enabled = true
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: state,
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        let buddy = store.notchBuddy
+        buddy.isOn = true
+        #expect(buddy.panelDismissals == 0, "on closes nothing")
+        buddy.isOn = false
+        #expect(buddy.panelDismissals == 1)
+        buddy.reduceMotion = { true }
+        buddy.isOn = true
+        buddy.tuckAway()
+        #expect(buddy.panelDismissals == 2)
+        var imported = store.state
+        imported.notchBuddy.enabled = false
+        store.replaceState(imported)
+        #expect(buddy.panelDismissals == 3, "an imported off closes them too")
+    }
 }

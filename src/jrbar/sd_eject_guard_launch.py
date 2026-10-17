@@ -18,13 +18,15 @@ SD_EJECT_GUARD_LABEL = "com.jonathanreed.jrbar.sdejectguard"
 LEGACY_SD_EJECT_GUARD_LABEL = "io.sidepulse.sdejectguard"
 LEGACY_SD_EJECT_GUARD_FILENAME = f"{LEGACY_SD_EJECT_GUARD_LABEL}.plist"
 SD_EJECT_GUARD_FILENAME = f"{SD_EJECT_GUARD_LABEL}.plist"
-SD_EJECT_GUARD_DISPLAY_NAME = "SidePulse Pro Eject Prevention"
+SD_EJECT_GUARD_DISPLAY_NAME = "JR-Bar SD Eject Guard"
 SD_EJECT_GUARD_BINARY_NAME = SD_EJECT_GUARD_DISPLAY_NAME
-SD_EJECT_GUARD_LEGACY_BINARY_NAMES = ("sd_eject_guard",)
+# The name the binary carried before the guard took JR-Bar's own name. It is
+# what Login Items and Activity Monitor showed, so an upgrade replaces it.
+LEGACY_SD_EJECT_GUARD_DISPLAY_NAME = "SidePulse Pro Eject Prevention"
+SD_EJECT_GUARD_LEGACY_BINARY_NAMES = (LEGACY_SD_EJECT_GUARD_DISPLAY_NAME, "sd_eject_guard")
 # Data directories the guard binary lived in before the rename, keyed by the
 # current directory name they were renamed to.
 _LEGACY_DATA_DIR_NAMES = {"jrbar": "sidepulse", "JR-Bar": "SidePulse"}
-SD_EJECT_GUARD_SCOPES = ("auto", "system", "user")
 _VOLUME_UUID = re.compile(r"(?=.{4,64}\Z)[A-Fa-f0-9]+(?:-[A-Fa-f0-9]+)*\Z")
 
 SdEjectGuardScope = Literal["auto", "system", "user"]
@@ -142,6 +144,9 @@ def install_sd_eject_guard(
 
             if start:
                 restart_sd_eject_guard(paths.plist_path, resolved_scope)
+            elif any(path.exists() for path in legacy_binary_paths(paths)):
+                # Never leave a loaded job pointing at a binary about to go.
+                bootout_sd_eject_guard(paths.plist_path, resolved_scope)
             legacy_removed = (
                 *cleanup_legacy_plists(paths, resolved_scope),
                 *cleanup_legacy_binaries(paths),
@@ -379,28 +384,6 @@ def paths_for_scope(
     if scope == "system":
         return system_paths or system_sd_eject_guard_paths()
     return user_paths or user_sd_eject_guard_paths()
-
-
-def sd_eject_guard_installed(
-    scope: SdEjectGuardScope = "auto",
-    *,
-    user_paths: SdEjectGuardPaths | None = None,
-    system_paths: SdEjectGuardPaths | None = None,
-) -> bool:
-    if scope == "auto":
-        return any(
-            paths_for_scope(resolved_scope, user_paths=user_paths, system_paths=system_paths)
-            .plist_path
-            .exists()
-            for resolved_scope in ("user", "system")
-        )
-    if scope in ("user", "system"):
-        return paths_for_scope(
-            scope,
-            user_paths=user_paths,
-            system_paths=system_paths,
-        ).plist_path.exists()
-    raise SdEjectGuardInstallError(f"unknown SD eject guard scope: {scope}")
 
 
 def user_sd_eject_guard_paths(home: Path | None = None) -> SdEjectGuardPaths:

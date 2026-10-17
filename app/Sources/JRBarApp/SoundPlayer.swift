@@ -6,7 +6,7 @@ import JRBarCore
 /// Which kind of moment a sound marks. The event policy names its sounds
 /// by these defaults (`EventPolicy.completionSound`, …), so a played name
 /// that is a role's default is that role — and plays whatever the person
-/// chose for it on Settings › Sounds.
+/// chose for it on Settings › Alerts & Sounds.
 enum SoundRole: String, CaseIterable, Sendable {
     case completion, ask, failure, quota, chime
 
@@ -49,7 +49,7 @@ enum SoundRole: String, CaseIterable, Sendable {
     }
 }
 
-/// Settings › Sounds, app-local: the sound per role (absent = the
+/// Settings › Alerts & Sounds, app-local: the sound per role (absent = the
 /// shipped one, `none` = silent), one volume for every JR-Bar sound, and
 /// whether sounds follow macOS's alert device instead of the current
 /// output.
@@ -119,13 +119,18 @@ struct SoundPreferences: Equatable, Sendable {
 /// Plays the system alert sounds through AVAudioPlayer rather than
 /// NSSound, so a muted alert channel (System Settings → Sound → alert
 /// volume) does not silence a completion the way it would codenotch's.
-/// Settings › Sounds picks the sound per moment (or none), the volume,
+/// Settings › Alerts & Sounds picks the sound per moment (or none), the volume,
 /// and whether sounds follow macOS's alert device — so a chime can stay
 /// on the speakers while a call runs in AirPods.
 @MainActor
 final class SoundPlayer {
     private var players: [String: AVAudioPlayer] = [:]
     private var burst: DispatchWorkItem?
+    private var burstGeneration = 0
+    var scheduleBurst: (DispatchWorkItem) -> Void = {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: $0)
+    }
+    var playbackOverride: ((String, SoundPreferences) -> (() -> Void)?)?
     private var chimeTimer: Timer?
     /// Set to route the daemon's log a line when a sound is missing.
     var onMissing: ((String) -> Void)?
@@ -189,30 +194,44 @@ final class SoundPlayer {
     /// Plays `name` `repeats` times, 0.45 s apart — or the person's
     /// choice for that moment, or nothing when they chose silence.
     func play(_ name: String, repeats: Int = 1) {
+        guard let once = eventPlayback(for: name) else { return }
+        burstGeneration &+= 1
+        let generation = burstGeneration
         burst?.cancel()
-        let preferences = preferences()
-        guard let chosen = preferences.resolve(name) else { return }
-        guard let resolved = preferences.resolve(name, micLive: microphoneLive) else {
-            onHeldForCall?(chosen)
-            return
-        }
-        guard let once = playback(for: resolved, preferences: preferences) else {
-            onMissing?(resolved)
-            return
-        }
+        burst = nil
         once()
-        guard repeats > 1 else { return }
+        guard repeats > 1, generation == burstGeneration else { return }
         var remaining = repeats - 1
         let work = DispatchWorkItem { [weak self] in
-            guard let self, remaining > 0 else { return }
+            guard let self, self.burstGeneration == generation, remaining > 0 else { return }
             remaining -= 1
-            once()
+            if !self.isHeld(), let next = self.eventPlayback(for: name), self.burstGeneration == generation {
+                next()
+            }
+            guard self.burstGeneration == generation else { return }
             if remaining > 0, let again = self.burst {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: again)
+                self.scheduleBurst(again)
+            } else {
+                self.burst = nil
             }
         }
         burst = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
+        scheduleBurst(work)
+    }
+
+    private func eventPlayback(for name: String) -> (() -> Void)? {
+        let preferences = preferences()
+        // Only a sound that can play takes over an existing burst.
+        guard let chosen = preferences.resolve(name), preferences.volume > 0 else { return nil }
+        guard let resolved = preferences.resolve(name, micLive: microphoneLive) else {
+            onHeldForCall?(chosen)
+            return nil
+        }
+        guard let once = playback(for: resolved, preferences: preferences) else {
+            onMissing?(resolved)
+            return nil
+        }
+        return once
     }
 
     /// Settings' preview button: `name` once, at the chosen volume and
@@ -231,10 +250,24 @@ final class SoundPlayer {
         guard chimeTimer == nil else { return }
         play(name)
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.play(name) }
+            Task { @MainActor [weak self] in self?.ringChime(name) }
         }
         RunLoop.main.add(timer, forMode: .common)
         chimeTimer = timer
+    }
+
+    /// Whether quiet holds every sound right now. The chime keeps ringing
+    /// on its own timer, so a Mute or Dark that begins mid-escalation has
+    /// to be noticed here, not only when the next event arrives.
+    var isHeld: () -> Bool = { false }
+
+    /// One repeat of the chime: nothing, and no more, once quiet holds sounds.
+    func ringChime(_ name: String) {
+        if isHeld() {
+            stopChime()
+        } else {
+            play(name)
+        }
     }
 
     func stopChime() {
@@ -247,6 +280,7 @@ final class SoundPlayer {
     /// One ring of `name`: on the alert device when that is asked for
     /// and reachable, else the cached AVAudioPlayer on the current output.
     private func playback(for name: String, preferences: SoundPreferences) -> (() -> Void)? {
+        if let playbackOverride { return playbackOverride(name, preferences) }
         let volume = Float(preferences.volume)
         if preferences.useAlertDevice, let url = Self.url(for: name) {
             let device = alertDevice
@@ -278,7 +312,7 @@ final class SoundPlayer {
 
 extension SoundPlayer {
     /// One play of a synthesized sound as it went out: the cached file,
-    /// the volume after Settings › Sounds, the pitch step, the pan and
+    /// the volume after Settings › Alerts & Sounds, the pitch step, the pan and
     /// whether it took the alert device.
     struct SynthesizedPlay: Equatable, Sendable {
         var file: URL
@@ -306,7 +340,7 @@ extension SoundPlayer {
     }
 
     /// A sound JR-Bar makes itself (the confetti's pop), played by the
-    /// same rules as every other: Settings › Sounds' volume times `gain`,
+    /// same rules as every other: Settings › Alerts & Sounds' volume times `gain`,
     /// the alert device when that is picked, and held while another app
     /// has the microphone and sounds keep quiet on calls. `wav` is
     /// written to the caches folder once per pitch step — `rate` moves

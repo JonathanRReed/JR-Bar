@@ -288,8 +288,11 @@ class DeviceClockEstimator:
             return self.estimate
         if self.samples:
             last_host, last_clock = self.samples[-1]
+            if host_at <= last_host:
+                return self.estimate
             if clock_ms < last_clock:
                 self.samples.clear()
+                self.estimate = ClockEstimate(rate=self.estimate.rate)
             elif clock_ms == last_clock and host_at - last_host > 1.0:
                 self.frozen_reads += 1
                 if self.frozen_reads >= 3:

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import threading
 import time
+import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
@@ -30,11 +32,14 @@ from .focus_status import (
     FocusStatusObservation,
     MacOSFocusStatusClient,
 )
+from .focus_sync import MAX_ACTIVE_IDENTIFIERS, MAX_IDENTIFIER_UTF8_BYTES
 from .local_time_boundary import system_local_timezone
 from .settings import SettingsConcurrentWriteError, SettingsWriteRefusedError
 
-MAX_NAMED_FOCUS_IDENTIFIERS = 16
-MAX_NAMED_FOCUS_IDENTIFIER_LENGTH = 256
+_log = logging.getLogger(__name__)
+
+MAX_NAMED_FOCUS_IDENTIFIERS = MAX_ACTIVE_IDENTIFIERS
+MAX_NAMED_FOCUS_IDENTIFIER_LENGTH = MAX_IDENTIFIER_UTF8_BYTES
 
 
 class _TimerLike(Protocol):
@@ -90,6 +95,14 @@ def _default_timer_factory(
     return timer
 
 
+class QuietLeaseConflict(ValueError):
+    """The requested lease no longer owns the override slot."""
+
+
+class QuietLeaseRefused(RuntimeError):
+    """The override could not be saved."""
+
+
 class DndController:
     """Own one durable projection, one deadline, and all callback fences."""
 
@@ -136,6 +149,9 @@ class DndController:
         ):
             raise ValueError("invalid public Focus client")
 
+        self._override_revision = uuid.uuid4().hex
+        self._override_snapshot = settings_getter().dnd_settings().override
+        self._quiet_lease: tuple[str, str, DndOverride | None] | None = None
         self._settings_getter = settings_getter
         self._settings_setter = settings_setter
         self._settings_saver = settings_saver
@@ -168,6 +184,18 @@ class DndController:
         # The app's presence report (jrbar.presence.PresenceFacts): a call,
         # a meeting, and its own Focus reading. None until one arrives.
         self._presence: object | None = None
+
+    def _sync_override(self) -> None:
+        current = self._settings_getter().dnd_settings().override
+        if current != self._override_snapshot:
+            self._override_snapshot = current
+            self._override_revision = uuid.uuid4().hex
+            self._quiet_lease = None
+
+    @property
+    def override_revision(self) -> str:
+        self._sync_override()
+        return self._override_revision
 
     @property
     def projection(self) -> DndProjection:
@@ -219,6 +247,8 @@ class DndController:
         settings: object,
         now: float,
         dim_fraction: float,
+        *,
+        focus_from_presence: bool = False,
     ) -> tuple[
         DndContribution | None,
         DndContribution | None,
@@ -269,6 +299,14 @@ class DndController:
                 until = getattr(facts, "meeting_until", None)
                 if meeting is not None and until is not None:
                     transitions = (float(until),)
+            if call is not None or away is not None or focus_from_presence:
+                # Calls, away status and the app's Focus hint expire with
+                # their reporter. A meeting keeps its separate end time.
+                expires_at = facts.expires_at()  # type: ignore[attr-defined]
+                if isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool):
+                    expiry = float(expires_at)
+                    if math.isfinite(expiry) and expiry > now:
+                        transitions = (*transitions, expiry)
         except (AttributeError, TypeError, ValueError):
             return None, None, None, ()
         return call, meeting, away, transitions
@@ -337,6 +375,7 @@ class DndController:
                 FocusAuthorization.UNAVAILABLE,
                 FocusActivity.UNAVAILABLE,
             )
+        self._sync_override()
         settings = self._settings_getter()
         named = ()
         if self._public_focus_active(settings, observation, self._finite_now()):
@@ -350,22 +389,9 @@ class DndController:
         if reader is None:
             return ()
         try:
-            raw = reader()
-            if isinstance(raw, (str, bytes)):
-                return ()
-            values = tuple(islice(iter(raw), MAX_NAMED_FOCUS_IDENTIFIERS + 1))
+            return self._normalize_injected_identifiers(reader())
         except Exception:
             return ()
-        if len(values) > MAX_NAMED_FOCUS_IDENTIFIERS:
-            return ()
-        identifiers = {
-            value.strip()
-            for value in values
-            if type(value) is str
-            and value.strip()
-            and len(value.strip()) <= MAX_NAMED_FOCUS_IDENTIFIER_LENGTH
-        }
-        return tuple(sorted(identifiers))
 
     def _accept_focus_observation(
         self,
@@ -396,7 +422,8 @@ class DndController:
         )
         parsed = settings.dnd_settings()
         call, meeting, away, presence_transitions = self._presence_contributions(
-            settings, now, parsed.dim_fraction
+            settings, now, parsed.dim_fraction,
+            focus_from_presence=public_active and observation.authorization is not FocusAuthorization.AUTHORIZED,
         )
         projection = evaluate_dnd_policy(
             schedule=parsed.schedule,
@@ -442,21 +469,22 @@ class DndController:
             if isinstance(values, (str, bytes)):
                 return ()
             sampled = tuple(islice(iter(values), MAX_NAMED_FOCUS_IDENTIFIERS + 1))
+            if len(sampled) > MAX_NAMED_FOCUS_IDENTIFIERS:
+                return ()
+            identifiers: set[str] = set()
+            for value in sampled:
+                if (
+                    type(value) is not str
+                    or not value
+                    or len(value) > MAX_NAMED_FOCUS_IDENTIFIER_LENGTH
+                    or not value.strip()
+                    or len(value.encode("utf-8")) > MAX_NAMED_FOCUS_IDENTIFIER_LENGTH
+                ):
+                    return ()
+                identifiers.add(value)
         except Exception:
             return ()
-        if len(sampled) > MAX_NAMED_FOCUS_IDENTIFIERS:
-            return ()
-        return tuple(
-            sorted(
-                {
-                    value.strip()
-                    for value in sampled
-                    if type(value) is str
-                    and value.strip()
-                    and len(value.strip()) <= MAX_NAMED_FOCUS_IDENTIFIER_LENGTH
-                }
-            )
-        )
+        return tuple(sorted(identifiers))
 
     @staticmethod
     def _named_focus_contribution(
@@ -605,7 +633,10 @@ class DndController:
             except Exception:
                 pass
 
-    def _persist_candidate(self, candidate: object) -> DndChangeResult:
+    def _persist_candidate(
+        self, candidate: object, *, override_revision: str | None = None,
+        quiet_lease: tuple[str, str, DndOverride | None] | None = None,
+    ) -> DndChangeResult:
         if self._closed:
             return self._result(False, DndChangeFailure.CLOSED)
         if not self._started:
@@ -630,6 +661,10 @@ class DndController:
             self._refresh_deferred = False
             return self._result(False, DndChangeFailure.STALE_SAVE)
         self._settings_setter(candidate)
+        if override_revision is not None:
+            self._override_snapshot = candidate.dnd_settings().override
+            self._override_revision = override_revision
+            self._quiet_lease = quiet_lease
         self._save_in_progress = False
         self._refresh_deferred = False
         return self.refresh()
@@ -679,7 +714,8 @@ class DndController:
             )
             parsed = settings.dnd_settings()
             call, meeting, away, presence_transitions = self._presence_contributions(
-                settings, now, parsed.dim_fraction
+                settings, now, parsed.dim_fraction,
+                focus_from_presence=public_active and observation.authorization is not FocusAuthorization.AUTHORIZED,
             )
             projection = evaluate_dnd_policy(
                 schedule=parsed.schedule,
@@ -732,7 +768,7 @@ class DndController:
         try:
             self._on_projection(projection)
         except Exception:
-            pass
+            _log.warning("quiet-hours projection listener failed", exc_info=True)
 
     def set_schedule(self, schedule: DndSchedule) -> DndChangeResult:
         if type(schedule) is not DndSchedule:
@@ -770,7 +806,47 @@ class DndController:
             raise ValueError("DND override edit must be canonical")
         settings = self._settings_getter()
         candidate = settings.with_dnd_override(override)
-        return self._persist_candidate(candidate)
+        return self._persist_candidate(candidate, override_revision=uuid.uuid4().hex)
+
+    def _lease_write(
+        self, override: DndOverride | None, *, lease_id: str | None = None,
+        before: DndOverride | None = None,
+    ) -> str:
+        revision = uuid.uuid4().hex
+        candidate = self._settings_getter().with_dnd_override(override)
+        owned = (lease_id, revision, before) if lease_id is not None else None
+        result = self._persist_candidate(
+            candidate, override_revision=revision, quiet_lease=owned,
+        )
+        if not result.applied:
+            raise QuietLeaseRefused("Quiet override was not saved")
+        return revision
+
+    def acquire_quiet_lease(self, lease_id: str, expected_revision: str) -> dict:
+        revision = self.override_revision
+        if self._save_in_progress or revision != expected_revision:
+            raise QuietLeaseConflict("Quiet override changed")
+        owned = self._quiet_lease
+        if owned is not None and (owned[0] != lease_id or owned[1] != revision):
+            raise QuietLeaseConflict("Another quiet lease owns the override")
+        now = self._finite_now()
+        before = self._override_snapshot if owned is None else owned[2]
+        if owned is None and before is not None and before.until_epoch > now + 900:
+            return {"status": "deferred", "revision": revision, "until": before.until_epoch}
+        override = DndOverride.for_mode(DndMode.PAUSE, created_epoch=now, until_epoch=now + 900)
+        committed_revision = self._lease_write(override, lease_id=lease_id, before=before)
+        return {"status": "acquired", "revision": committed_revision, "until": override.until_epoch}
+
+    def release_quiet_lease(self, lease_id: str) -> dict:
+        revision = self.override_revision
+        owned = self._quiet_lease
+        if self._save_in_progress or owned is None or owned[:2] != (lease_id, revision):
+            raise QuietLeaseConflict("Quiet lease no longer owns the override")
+        before = owned[2]
+        restore = before if before is not None and before.until_epoch > self._finite_now() else None
+        committed_revision = self._lease_write(restore)
+        return {"status": "released", "revision": committed_revision,
+                "until": restore.until_epoch if restore is not None else None}
 
     def request_focus_authorization(self) -> bool:
         """Reach the system prompt only from an explicit Settings action."""
@@ -818,7 +894,7 @@ class DndController:
             try:
                 invalidate()
             except Exception:
-                pass
+                _log.warning("focus read invalidation failed", exc_info=True)
 
     def handle_wake(self) -> DndChangeResult:
         self._invalidate_focus_reads()

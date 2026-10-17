@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import Observation
 import SwiftUI
 
@@ -434,7 +435,8 @@ final class BuddyPanel: NSPanel {
         guard BuddyStroll.shouldStroll(
             working: digest.working, waiting: digest.waiting, failed: digest.failed,
             dragging: toy.isDragged || buddyDrag?.inProgress == true,
-            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                || PowerConditions.shared.policy.pauses(occluded: false),
             sinceLast: now - lastStrollAt, roll: Double.random(in: 0..<1),
             every: toy.walkEvery),
               let plan = BuddyStroll.plan(home: home, size: frame.size, visible: homeVisible,
@@ -472,11 +474,13 @@ final class BuddyPanel: NSPanel {
         } else {
             walk.release(at: now)
         }
-        // Once a second: Reduce Motion still off (turned on mid-walk, the
+        // Once a second: Reduce Motion and critical heat still off (changed mid-walk, the
         // buddy is simply home — a plain reposition), walks still allowed
         // ("Take walks" turned off mid-walk heads home), nothing asking,
         // and the edge still there.
-        if now - lastLedgeLook >= 1, NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if now - lastLedgeLook >= 1,
+           NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            || PowerConditions.shared.policy.pauses(occluded: false) {
             endStroll()
             return
         }

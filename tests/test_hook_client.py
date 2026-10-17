@@ -462,3 +462,20 @@ def test_main_rejects_invalid_utf8_before_admission(
     )
 
     assert hook_client.hook_client_main("claude", Path("/tmp/claude.jsonl")) == 0
+
+
+def test_busy_spool_lock_uses_the_existing_synchronous_fallback(tmp_path, monkeypatch) -> None:
+    from jrbar import hook_client, hook_pending
+
+    monkeypatch.setattr(hook_pending, "default_state_dir", lambda: tmp_path)
+    monkeypatch.setattr(hook_pending, "_lock", lambda *_args: False)
+    delivered = []
+    monkeypatch.setattr(
+        hook_client,
+        "_synchronous_fallback",
+        lambda provider, log_path, payload: delivered.append((provider, log_path, payload)),
+    )
+    log_path = tmp_path / "claude.jsonl"
+    payload = '{"hook_event_name":"Stop","session_id":"synthetic"}'
+    hook_client._spool("claude", log_path, payload)
+    assert delivered == [("claude", log_path, payload)]

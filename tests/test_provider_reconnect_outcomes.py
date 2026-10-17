@@ -12,7 +12,10 @@ import json
 import subprocess
 from types import SimpleNamespace
 
+import pytest
+
 from jrbar import provider_reconnect
+from jrbar.provider_instances import ProviderInstanceKey
 from jrbar.provider_reconnect import RepairOutcome, reconnect_provider
 
 
@@ -139,3 +142,76 @@ def test_the_credential_fingerprint_passes_a_fresh_look_through(tmp_path, monkey
     provider_reconnect.credential_fingerprint(tmp_path, "claude", fresh=True)
 
     assert seen == [False, True]
+
+
+@pytest.mark.parametrize("entrypoint", ["reconnect", "repair"])
+@pytest.mark.parametrize("token,expiry,rejected,healthy", [
+    ("profile-access", "2000", False, True),
+    ("profile-access", None, False, True),
+    ("profile-access", "900", False, False),
+    ("profile-access", "NaN", False, False),
+    ("profile-access", "2000", True, False),
+    (None, None, False, False),
+])
+def test_named_claude_repair_keeps_its_own_credential(
+    monkeypatch, entrypoint, token, expiry, rejected, healthy
+) -> None:
+    key = ProviderInstanceKey("claude", "work")
+    secrets = {"oauth-token": token, "oauth-expires-at": expiry}
+    before = dict(secrets)
+
+    def own_read(instance, account):
+        assert instance == key
+        secret = secrets.get(account)
+        return SimpleNamespace(available=secret is not None, secret=secret)
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("named profile accessed the global credential or wrote a credential")
+
+    store = SimpleNamespace(get_for_instance=own_read, set_for_instance=forbidden, get=forbidden, set=forbidden)
+    monkeypatch.setattr("jrbar.credentials.read_keychain_secret", forbidden)
+    if entrypoint == "reconnect":
+        # No injected reader: the guard must precede the real Keychain read.
+        result = reconnect_provider(
+            "claude", "work", credential_store=store, now=1000,
+            reason_code="authentication_required" if rejected else None,
+        )
+    else:
+        result = provider_reconnect.repair_claude_credential(
+            store, now=1000, source_instance_id="work", server_rejected=rejected,
+            keychain_payload_reader=forbidden,
+        )
+    assert secrets == before
+    assert not result.changed
+    assert result.outcome is (RepairOutcome.ALREADY_HEALTHY if healthy else RepairOutcome.NEEDS_SIGN_IN)
+    assert "profile" in result.message
+    if not healthy:
+        assert "Update this profile's credential" in result.message
+
+
+def test_named_claude_sign_in_does_not_import_the_default_account(monkeypatch) -> None:
+    from jrbar.provider_sign_in import ProviderSignIn
+
+    key = ProviderInstanceKey("claude", "work")
+    secrets = {"oauth-token": "profile-access", "oauth-expires-at": "2000"}
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("named sign-in used the default credential or provider CLI")
+
+    def own_read(instance, account):
+        assert instance == key
+        secret = secrets.get(account)
+        return SimpleNamespace(available=secret is not None, secret=secret)
+
+    store = SimpleNamespace(get_for_instance=own_read, set_for_instance=forbidden)
+    monkeypatch.setattr("jrbar.credentials.read_keychain_secret", forbidden)
+    fixer = ProviderSignIn(
+        reconnect=lambda provider, instance, **options: reconnect_provider(
+            provider, instance, credential_store=store, now=1000, **options
+        ),
+        locate=forbidden, run=forbidden, open_terminal=forbidden,
+    )
+    result = fixer.sign_in("claude", "work", reason_code="authentication_required", signed_out=True)
+    assert result.outcome == "unavailable"
+    assert "Update this profile's credential" in result.message
+    assert secrets == {"oauth-token": "profile-access", "oauth-expires-at": "2000"}

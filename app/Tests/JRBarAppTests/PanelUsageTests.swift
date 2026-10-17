@@ -129,6 +129,26 @@ struct PanelUsageTests {
         #expect(PanelStore.paceHint("ahead") == "runs out early")
     }
 
+    @Test("a reset or a pause far out of range still reads as words, and the last seconds say 1m")
+    func countdownsNeverTrap() {
+        #expect(PanelStore.countdown(to: 1e300, now: now) != nil)
+        #expect(PanelStore.countdown(to: .infinity, now: now) != nil)
+        #expect(PanelStore.elapsed(since: Date(timeIntervalSince1970: -1e300), now: now) != nil)
+        #expect(PanelStore.quietLabel(word: "Paused", secondsLeft: 20) == "Paused 1m")
+        #expect(PanelStore.quietLabel(word: "Paused", secondsLeft: 52 * 60) == "Paused 52m")
+        #expect(PanelStore.quietLabel(word: "Paused", secondsLeft: 0) == "Paused")
+        #expect(PanelStore.quietLabel(word: "Paused", secondsLeft: 1e300).hasPrefix("Paused"))
+    }
+
+    @Test("a month's sparkline is a month of bars, and it says how many days")
+    func sparklineFollowsItsRange() {
+        let history = UsageHistory(provider: "claude", range: "30d", days: [UsageHistoryDay(date: "2026-09-01", tokensIn: 10)])
+        #expect(PanelStore.sparklineValues(history, range: .week).count == 7)
+        #expect(PanelStore.sparklineValues(history, range: .month).count == 30)
+        #expect(UsageSparklineView.summary(Array(repeating: 1, count: 30)).hasPrefix("Last 30 days"))
+        #expect(UsageSparklineView.summary(Array(repeating: 1, count: 7)).hasPrefix("Last 7 days"))
+    }
+
     @Test("a stale source leads with its fix and never says it is waiting for a reading")
     func staleLeadsWithTheFix() {
         let broken = BrokenUsageSources.claude
@@ -173,6 +193,31 @@ struct PanelUsageTests {
         #expect(PanelStore.quietSummary(quiet) == "2 at 0% · 1 not found · 1 off")
         #expect(PanelStore.quietSummary([CoreProviderUsage(id: "grok", state: "needs_sign_in")]) == "signed out")
         #expect(PanelStore.quietSummary([]) == "")
+    }
+
+    @Test("a stale or troubled provider at 0 % keeps its own row, and a no-quota source says so")
+    func quietRowNeverBuriesNews() {
+        #expect(!PanelStore.foldsIntoQuietRow(provider("claude", 0, state: "stale", action: "Reconnect Claude")),
+                "an old reading must wear its Stale tag")
+        #expect(!PanelStore.foldsIntoQuietRow(provider("gemini", 0, fidelity: "stale")))
+        #expect(!PanelStore.foldsIntoQuietRow(provider("codex", 0.2, incident: "Elevated errors")),
+                "an outage is not 'at 0%'")
+        #expect(PanelStore.foldsIntoQuietRow(provider("gemini", 0)))
+
+        let noQuota = CoreProviderUsage(id: "opencode", windows: [], quotaSource: false)
+        #expect(PanelStore.foldsIntoQuietRow(noQuota))
+        #expect(PanelStore.quietWord(noQuota) == "no quota source")
+        #expect(PanelStore.quietWord(CoreProviderUsage(id: "kiro", windows: [])) == "no windows")
+    }
+
+    @Test("a window past its reset is waiting for a reading, not 'Used up'")
+    func usedUpEndsAtTheReset() {
+        let spent = provider("claude", 100, resetsIn: 3600)
+        #expect(tag(spent) == .usedUp)
+        let past = provider("claude", 100, resetsIn: -60)
+        #expect(tag(past) == nil, "the reset line already says it is waiting for a new reading")
+        let exhaustedPast = provider("claude", 60, resetsIn: -60, forecast: CoreUsageForecast(pace: "exhausted"))
+        #expect(tag(exhaustedPast) == nil)
     }
 
     @Test("the quiet providers take one row between them in the panel's layout")

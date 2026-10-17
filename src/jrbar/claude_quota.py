@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import json
 import math
+import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -58,7 +60,12 @@ CLAUDE_REMOTE_QUOTA_NEEDS_SIGN_IN = "claude_remote_quota_needs_sign_in"
 #: refused, which says nothing about whether the sign-in still works.
 CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 CLAUDE_OAUTH_BETA_HEADER = "oauth-2025-04-20"
-CLAUDE_CODE_VERSION_FALLBACK = "2.1.0"
+#: Used when no installed Claude Code version can be read. Re-pinned
+#: 2026-10-07 to the version on the owner's Mac (2.1.292).
+CLAUDE_CODE_VERSION_FALLBACK = "2.1.292"
+_VERSION_SHAPE = re.compile(r"\d{1,3}\.\d{1,3}\.\d{1,5}\Z")
+_VERSION_REREAD_SECONDS = 300.0
+_installed_version_memo: tuple[float, str | None] | None = None
 # 10, not 30: this endpoint answers in well under a second when it
 # answers at all, and the one time it hung for the full window the user
 # was staring at "Last known value" for half a minute AFTER a reconnect
@@ -310,9 +317,51 @@ def request_via_apple_stack(
             pass
 
 
+def forget_installed_claude_version() -> None:
+    global _installed_version_memo
+    _installed_version_memo = None
+
+
+def _installed_claude_version(*, now: float | None = None) -> str | None:
+    """The Claude Code version the newest ``sessions/<pid>.json`` names.
+
+    Read from Claude's own files with no process started, remembered for five
+    minutes, and accepted only in the shape ``N.N.N``.
+    """
+    global _installed_version_memo
+    moment = time.monotonic() if now is None else now
+    memo = _installed_version_memo
+    if memo is not None and moment - memo[0] < _VERSION_REREAD_SECONDS:
+        return memo[1]
+    version = None
+    try:
+        from .process_registry import _claude_sessions_dir
+
+        newest = sorted(
+            _claude_sessions_dir().glob("*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )[:8]
+        for path in newest:
+            try:
+                if path.stat().st_size > 8 * 1024:
+                    continue
+                candidate = json.loads(path.read_text(encoding="utf-8")).get("version")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if isinstance(candidate, str) and _VERSION_SHAPE.match(candidate):
+                version = candidate
+                break
+    except OSError:
+        version = None
+    _installed_version_memo = (moment, version)
+    return version
+
+
 def _claude_code_user_agent() -> str:
-    """Identify honestly as the client whose credential we are presenting."""
-    return f"claude-code/{CLAUDE_CODE_VERSION_FALLBACK}"
+    """Identify as the Claude Code whose credential we are presenting: its
+    installed version when it can be read, else the packaged one."""
+    return f"claude-code/{_installed_claude_version() or CLAUDE_CODE_VERSION_FALLBACK}"
 
 
 def _is_json_error(body: bytes) -> bool:

@@ -49,6 +49,8 @@ enum AppCommand: Equatable, Sendable {
     case revealAsk
     /// The notch's shelf: open it, or fold it when it is open.
     case shelf
+    /// Open the Shelf and explicitly give its files the keyboard.
+    case shelfKeyboard
 
     /// A window by the name a link uses: `jrbar://open/<name>`,
     /// `jrbar://window/<name>`, or the bare `jrbar://<name>`.
@@ -241,9 +243,42 @@ enum AppCommand: Equatable, Sendable {
         case "ask":
             return object == nil ? .revealAsk : nil
         case "shelf":
+            if object?.lowercased() == "keyboard", path.count == 2 { return .shelfKeyboard }
             return object == nil ? .shelf : nil
         case "aquarium":
             return object == nil ? .aquarium : nil
+        default:
+            return nil
+        }
+    }
+
+    /// What a link from outside must ask about before it runs this
+    /// command, said as the end of "A link asks JR-Bar to …"; nil for the
+    /// commands that are easy to undo. A web page or a chat message can
+    /// open a `jrbar://` link, so the ones that eject disks, sleep or lock
+    /// the Mac, restart the Finder or Dock, unmute the microphone, hold
+    /// the Mac awake with no end or end the person's quiet wait for a yes.
+    /// A shortcut the person recorded runs without asking.
+    nonisolated var linkConfirmation: (trustKey: String, sentence: String)? {
+        switch self {
+        case .toggle(let toggle, let on):
+            switch toggle {
+            case .eject: return ("toggle.eject", "eject every removable disk")
+            case .sleep: return ("toggle.sleep", "put the Mac to sleep")
+            case .lock: return ("toggle.lock", "lock the screen")
+            case .screenSaver: return ("toggle.screenSaver", "start the screen saver")
+            case .desktopIcons: return ("toggle.desktopIcons", "restart the Finder to show or hide the desktop icons")
+            case .hiddenFiles: return ("toggle.hiddenFiles", "restart the Finder to show or hide hidden files")
+            case .dockAutoHide: return ("toggle.dockAutoHide", "change whether the Dock hides itself")
+            case .micMute:
+                // On is muted: a link that does not say "on" may unmute it.
+                return on == true ? nil : ("toggle.micMute", "unmute the microphone")
+            case .keepAwake, .darkMode, .mute: return nil
+            }
+        case .keepAwake(let seconds):
+            return seconds == nil ? ("keepAwake.open", "keep the Mac awake until you turn it off") : nil
+        case .endQuiet:
+            return ("endQuiet", "end your quiet")
         default:
             return nil
         }
@@ -301,6 +336,8 @@ enum AppCommand: Equatable, Sendable {
             path = ["ask"]
         case .shelf:
             path = ["shelf"]
+        case .shelfKeyboard:
+            path = ["shelf", "keyboard"]
         }
         var parts = URLComponents()
         parts.scheme = Self.scheme
@@ -399,12 +436,14 @@ enum AppCommand: Equatable, Sendable {
     }
 }
 
-/// The Settings pages a link may name — `SettingsStore.Page`'s raw
-/// values, listed here so the pure parser needs no main-actor type.
+/// The Settings pages and chapters a link may name — `SettingsStore.Page`'s
+/// and `SettingsStore.Chapter`'s raw values, listed here so the pure parser
+/// needs no main-actor type. The chapters are the names Settings had before
+/// its pages were merged; they keep working and land on the chapter.
 enum SettingsPageName {
     nonisolated static let known: Set<String> = [
-        "general", "agents", "usage", "devices", "utilities", "lighting", "toys",
-        "notifications", "sounds", "shortcuts", "remote", "advanced",
+        "general", "agents", "alerts", "devices", "utilities", "shortcuts", "remote",
+        "usage", "lighting", "toys", "notifications", "sounds", "advanced",
     ]
 }
 

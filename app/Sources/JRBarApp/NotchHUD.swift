@@ -107,8 +107,9 @@ final class NotchHUD {
     /// the Focus, Bluetooth, Caps Lock and display watchers — starts
     /// here, never in init: the delegate calls it once the real notch
     /// gates are wired, and a HUD built anywhere else touches nothing.
-    /// IOBluetooth's connect registration is a TCC ask that kills a
-    /// process with no Bluetooth usage string — `swift test`'s helper
+    /// IOBluetooth's connect registration is a TCC ask, so it is held
+    /// back until the announcements are allowed (`syncBluetooth`); it
+    /// kills a process with no Bluetooth usage string — `swift test`'s helper
     /// is one, and a coordinator built in a test took the suite down.
     func startSystemWatchers() {
         syncMediaTap()
@@ -126,6 +127,9 @@ final class NotchHUD {
     /// reconcile so a flip takes without waiting for the next press.
     func syncMediaTap() {
         if mediaHUDAllowed() { mediaKeys.start() } else { mediaKeys.stop() }
+        // Bluetooth's registration is a permission ask: it waits for the
+        // announcements to be on, and is made when they first are.
+        announcements.syncBluetooth()
     }
 
     private func tick() {
@@ -349,7 +353,8 @@ final class NotchHUDPanel: NSPanel {
         let origin = NSPoint(x: (band.midX - width / 2).rounded(), y: (band.minY - 10 - height).rounded())
         let wasVisible = isVisible && alphaValue > 0.01
         setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
-        NotchSurfaceMotion.present(self, settle: wasVisible ? 0 : 6, duration: 0.22, reducedDuration: 0.1)
+        NotchSurfaceMotion.present(self, settle: wasVisible ? 0 : NotchMotion.panelSettle,
+                                   duration: NotchMotion.panelIn, reducedDuration: NotchMotion.panelReducedIn)
     }
 
     /// The fallback level capsule — a media key's answer where the
@@ -371,8 +376,9 @@ final class NotchHUDPanel: NSPanel {
         let origin = NSPoint(x: (band.midX - width / 2).rounded(), y: (band.minY - 10 - height).rounded())
         let wasVisible = isVisible && alphaValue > 0.01
         setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
-        NotchSurfaceMotion.present(self, settle: wasVisible ? 0 : 6,
-                                   duration: wasVisible ? 0.12 : 0.22, reducedDuration: 0.1)
+        NotchSurfaceMotion.present(self, settle: wasVisible ? 0 : NotchMotion.panelSettle,
+                                   duration: wasVisible ? NotchMotion.panelRetarget : NotchMotion.panelIn,
+                                   reducedDuration: NotchMotion.panelReducedIn)
     }
 
     /// The buddy's own slot: the pet bare under the notch, sized to the
@@ -419,7 +425,8 @@ final class NotchHUDPanel: NSPanel {
             return
         }
         model.toastActive = false
-        NotchSurfaceMotion.dismiss(self, duration: 0.2, reducedDuration: 0.08)
+        NotchSurfaceMotion.dismiss(self, duration: NotchMotion.panelOut,
+                                   reducedDuration: NotchMotion.panelReducedOut)
     }
 }
 
@@ -467,7 +474,7 @@ struct NotchHUDView: View {
                               tint: meter.muted ? .red : .primary,
                               track: .primary.opacity(0.14), dimmed: meter.muted, glows: false)
                     .frame(width: 112)
-                    .animation(.smooth(duration: 0.16), value: meter.fraction)
+                    .animation(.smooth(duration: NotchMotion.levelFollow), value: meter.fraction)
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 9)

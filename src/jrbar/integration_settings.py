@@ -8,6 +8,7 @@ import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .companion_seal import INTEGRATIONS, guard_companion, record_companion
 from .private_io import atomic_private_write, read_private_text
 from .product_identity import PRODUCT_DISPLAY_NAME
 
@@ -268,6 +269,7 @@ def _load_integration_document(
             None,
         )
 
+    document = guard_companion(INTEGRATIONS, target, document)
     try:
         version = _schema_version(document)
     except IntegrationSettingsError:
@@ -317,8 +319,13 @@ def _write_integration_settings(
 ) -> Path:
     target = (path or default_integration_settings_path()).expanduser().absolute()
     if loaded is not None and loaded.compatibility.read_only:
+        if loaded.compatibility.source_version > INTEGRATION_SETTINGS_SCHEMA_VERSION:
+            raise IntegrationSettingsWriteRefusedError(
+                f"integration settings were written by a newer {PRODUCT_DISPLAY_NAME} version"
+            )
         raise IntegrationSettingsWriteRefusedError(
-            f"integration settings were written by a newer {PRODUCT_DISPLAY_NAME} version"
+            f"integration settings at {target} could not be read; fix or delete the file, "
+            "then run this again (it was left as it is)"
         )
 
     current: dict[str, object] = {}
@@ -343,6 +350,7 @@ def _write_integration_settings(
     payload = json.dumps(document, indent=2, sort_keys=True, allow_nan=False) + "\n"
     written = atomic_private_write(target, payload)
     _LOAD_CACHE.pop(target, None)
+    record_companion(INTEGRATIONS, target, document)
     return written
 
 

@@ -24,9 +24,10 @@ final class AppCommandRouter {
     var openWindow: ((AppCommand.AppWindow) -> Void)?
     /// The Overview, open or not, brought forward on its Graph pane.
     var openOverviewGraph: (() -> Void)?
-    /// Each answers nil when done, or the sentence saying why not.
-    var quiet: ((_ mode: String?, _ seconds: Int) -> String?)?
-    var endQuiet: (() -> String?)?
+    /// Accepted callbacks run before another Quiet request can enter.
+    /// Each handler returns nil on success or the refusal to show.
+    var quiet: ((_ mode: String?, _ seconds: Int, _ onApplied: @escaping @MainActor (Date?) -> Void) async -> String?)?
+    var endQuiet: ((_ onApplied: @escaping @MainActor (Date?) -> Void) async -> String?)?
     var setScreenBar: ((Bool?) -> Void)?
     /// A burst in the colours the tint names (`AppCommand.confettiProvider`).
     var fireConfetti: ((AppCommand.ConfettiTint) -> Void)?
@@ -34,6 +35,7 @@ final class AppCommandRouter {
     var openSession: ((String) -> String?)?
     var revealAsk: (() -> String?)?
     var toggleShelf: (() -> String?)?
+    var useShelfKeyboard: (() -> String?)?
     /// The tank opens, or comes forward when it already is; it never
     /// closes, so a second link does what the first did.
     var openAquarium: (() -> String?)?
@@ -68,8 +70,8 @@ final class AppCommandRouter {
 
     /// Run one command.
     @discardableResult
-    func perform(_ command: AppCommand) -> Outcome {
-        let refusal = run(command)
+    func perform(_ command: AppCommand) async -> Outcome {
+        let refusal = await run(command)
         if let refusal {
             onRefused?(refusal)
             return .refused(refusal)
@@ -77,20 +79,78 @@ final class AppCommandRouter {
         return .done
     }
 
-    /// A `jrbar://` link: parsed whole or refused whole.
+    /// What the person said to a link's question.
+    enum LinkAnswer: Equatable, Sendable {
+        case allow
+        /// Allow, and stop asking about links of this kind.
+        case allowAlways
+        case cancel
+    }
+
+    /// Asks about one risky link; the delegate's default is an alert with
+    /// Cancel as its default button, and tests answer for it.
+    lazy var confirmLink: (_ sentence: String) -> LinkAnswer = { Self.alertAnswer($0) }
+    /// Where "don't ask again" is kept, one key per kind of link.
+    var linkTrust: UserDefaults = .standard
+    nonisolated static let linkTrustPrefix = "linkTrust."
+
+    private func trusted(_ key: String) -> Bool { linkTrust.bool(forKey: Self.linkTrustPrefix + key) }
+
+    /// Forgets every "don't ask again", so risky links ask once more.
+    func forgetTrustedLinks() {
+        for key in linkTrust.dictionaryRepresentation().keys where key.hasPrefix(Self.linkTrustPrefix) {
+            linkTrust.removeObject(forKey: key)
+        }
+    }
+
+    var hasTrustedLinks: Bool {
+        linkTrust.dictionaryRepresentation().keys.contains { $0.hasPrefix(Self.linkTrustPrefix) }
+    }
+
+    /// A `jrbar://` link: parsed whole or refused whole. A link comes
+    /// from outside the app, so the few commands that are hard to undo
+    /// ask first (`AppCommand.linkConfirmation`).
     @discardableResult
-    func open(_ url: URL) -> Outcome {
+    func open(_ url: URL) async -> Outcome {
         guard let command = AppCommand.parse(url) else {
             let text = "JR-Bar has no link \(String(url.absoluteString.prefix(80)))"
             onRefused?(text)
             return .refused(text)
         }
-        return perform(command)
+        if let ask = command.linkConfirmation, !trusted(ask.trustKey) {
+            switch confirmLink(ask.sentence) {
+            case .cancel:
+                let text = "Link cancelled"
+                onRefused?(text)
+                return .refused(text)
+            case .allowAlways:
+                linkTrust.set(true, forKey: Self.linkTrustPrefix + ask.trustKey)
+            case .allow:
+                break
+            }
+        }
+        return await perform(command)
+    }
+
+    private static func alertAnswer(_ sentence: String) -> LinkAnswer {
+        let alert = NSAlert()
+        alert.messageText = "A link asks JR-Bar to \(sentence)"
+        alert.informativeText = "It came from outside JR-Bar, such as a web page or another app. Only go on if you asked for it."
+        alert.alertStyle = .warning
+        let cancel = alert.addButton(withTitle: "Cancel")
+        cancel.keyEquivalent = "\r"
+        let allow = alert.addButton(withTitle: "Allow")
+        allow.keyEquivalent = ""
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "Don't ask again for links like this"
+        NSApp.activate()
+        guard alert.runModal() == .alertSecondButtonReturn else { return .cancel }
+        return alert.suppressionButton?.state == .on ? .allowAlways : .allow
     }
 
     private static let notReady = "JR-Bar is still starting."
 
-    private func run(_ command: AppCommand) -> String? {
+    private func run(_ command: AppCommand) async -> String? {
         switch command {
         case .panel(let toggle):
             guard let showPanel else { return Self.notReady }
@@ -117,17 +177,15 @@ final class AppCommandRouter {
             toggles.holdAwake(seconds: seconds)
         case .quiet(let mode, let seconds):
             guard let quiet else { return Self.notReady }
-            // A quiet asked for by hand replaces the stretch's.
-            if let refusal = quiet(mode, seconds) { return refusal }
-            abandonDeepWork()
+            return await quiet(mode, seconds) { [weak self] _ in self?.abandonDeepWork() }
         case .endQuiet:
             guard let endQuiet else { return Self.notReady }
-            if let refusal = endQuiet() { return refusal }
-            finishDeepWork(early: true)
+            return await endQuiet { [weak self] _ in self?.finishDeepWork(early: true) }
         case .deepWork(let seconds):
             guard let quiet else { return Self.notReady }
-            if let refusal = quiet("asks_only", seconds) { return refusal }
-            beginDeepWork(seconds: seconds)
+            return await quiet("asks_only", seconds) { [weak self] until in
+                self?.beginDeepWork(seconds: seconds, until: until)
+            }
         case .screenBar(let on):
             guard let setScreenBar else { return Self.notReady }
             setScreenBar(on)
@@ -146,6 +204,9 @@ final class AppCommandRouter {
         case .shelf:
             guard let toggleShelf else { return Self.notReady }
             return toggleShelf()
+        case .shelfKeyboard:
+            guard let useShelfKeyboard else { return Self.notReady }
+            return useShelfKeyboard()
         }
         return nil
     }
@@ -154,13 +215,22 @@ final class AppCommandRouter {
 
     var isInDeepWork: Bool { deepWork != nil }
 
-    private func beginDeepWork(seconds: Int) {
+    func manualQuietApplied(seconds: Int) {
+        if seconds <= 0 { finishDeepWork(early: true) }
+        else { abandonDeepWork() }
+    }
+
+    private func beginDeepWork(seconds: Int, until: Date?) {
+        guard let until else { return }
+        let started = now()
+        let remaining = max(0, until.timeIntervalSince(started))
         deepWork?.end.cancel()
         let end = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.finishDeepWork(early: false) }
         }
-        deepWork = (now(), seconds, DeepWork.snapshot(sessionsNow?() ?? []), end)
-        schedule(TimeInterval(seconds), end)
+        let planned = min(seconds, Int(saturating: remaining.rounded(.up)))
+        deepWork = (started, planned, DeepWork.snapshot(sessionsNow?() ?? []), end)
+        schedule(remaining, end)
     }
 
     /// The stretch's closing line — at its end, or early when quiet is
@@ -203,6 +273,7 @@ enum AppShortcutCatalog {
 
     nonisolated static let actions: [AppShortcutAction] = [
         AppShortcutAction(id: revealAskID, title: "Show the waiting ask", command: .revealAsk),
+        AppShortcutAction(id: "action.shelfKeyboard", title: "Use Shelf with keyboard", command: .shelfKeyboard),
         AppShortcutAction(id: "action.quietHour", title: "Quiet for an hour",
                           command: .quiet(mode: nil, seconds: 3600)),
         AppShortcutAction(id: "action.endQuiet", title: "End quiet", command: .endQuiet),
@@ -290,7 +361,7 @@ final class AppHotkeys {
         }
         let command = action.command
         center.register(action.id, title: action.title, chord: chord) { [weak self] in
-            self?.router.perform(command)
+            _ = Task { await self?.router.perform(command) }
         }
     }
 

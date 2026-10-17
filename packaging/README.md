@@ -12,7 +12,8 @@ JR-Bar.app/
   Contents/Helpers/jrbar-hook                  the compiled hook shim (hook/jrbar-hook.c)
   Contents/Frameworks/Sparkle.framework        pinned Sparkle 2.9.6
   Contents/Resources/AppIcon.icns, ThirdPartyLicenses/Sparkle.txt
-  Contents/Info.plist                          version from pyproject, SUFeedURL, SUPublicEDKey,
+  Contents/Info.plist                          version from pyproject, build number from the
+                                               commit count, SUFeedURL, SUPublicEDKey,
                                                LSMinimumSystemVersion 26.0, JRBarCommit
 
 dist/JR-Bar-<version>.pkg                      the installer (component PKG in a product archive)
@@ -29,7 +30,7 @@ directory of Python files cannot be sealed, PyInstaller's bundle layout
 supervised child with `JRBAR_SUPERVISED=1`, `JRBAR_HOOK_EXEC` pointing at the
 bundled shim and `JRBAR_COMMIT` from `JRBarCommit`. On the first launch it
 registers itself as a login item (`SMAppService`); provider hooks are
-installed from Settings > Agents, and an upgrade refreshes only the hooks it
+installed from Settings > Agents & Usage, and an upgrade refreshes only the hooks it
 already owns.
 
 ## What the builder does
@@ -48,7 +49,8 @@ already owns.
    Info.plist keys.
 5. Signs inside out (`packaging/sign_macos_app.py`): every Mach-O, then the
    nested bundles (the daemon bundle with `packaging/entitlements.plist`, it
-   sends the Apple events), then the app with the entitlements.
+   sends the Apple events), then the app with the entitlements (Apple events,
+   and Location for the Wi-Fi network name Menu Bar rules read).
 6. Verifies: `verify_macos_app.py` (identity, layout, every Mach-O links
    only Apple libraries or code inside the bundle, the Python runtime lives
    in the daemon bundle, no hard links or escaping symlinks),
@@ -83,7 +85,8 @@ feed): the local-only mode the contract tests use.
 
 Requirements on the build Mac: Command Line Tools (Swift 6.2+, clang),
 Python 3.12 (`/opt/homebrew/bin/python3.12`, `python3.12` on `PATH`, or
-`BUILD_PYTHON`), network access for the pinned Sparkle download (or
+`BUILD_PYTHON`), the full git history (the build number is the commit count;
+a shallow clone needs `JRBAR_BUILD_NUMBER`), network access for the pinned Sparkle download (or
 `SPARKLE_ARCHIVE=/path/Sparkle-2.9.6.tar.xz`).
 
 To turn notarization on:

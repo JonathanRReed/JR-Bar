@@ -1180,10 +1180,13 @@ def detect_json_hook_config(
         data = json.loads(config_path.read_text())
     except Exception:
         return ProviderConfig(provider, config_path, True, False, (), ())
+    if not isinstance(data, dict):
+        return ProviderConfig(provider, config_path, True, False, (), ())
 
     hooks = data.get("hooks") or {}
     hook_events: list[str] = []
     paths: list[Path] = []
+    active = False
 
     if isinstance(hooks, dict):
         for event_name, entries in hooks.items():
@@ -1198,15 +1201,38 @@ def detect_json_hook_config(
                 continue
             hook_events.append(canonical)
             paths.extend(event_paths)
+            active = active or (
+                provider != "gemini"
+                or _gemini_hook_entries_enabled(data, entries, command_filter)
+            )
 
     return ProviderConfig(
         provider,
         config_path,
         True,
-        bool(hook_events) and not (provider == "claude" and data.get("disableAllHooks") is True),
+        active and not (provider == "claude" and data.get("disableAllHooks") is True),
         tuple(sorted(set(hook_events))),
         _dedupe_paths(paths),
         bool(hook_events),
+    )
+
+
+def _gemini_hook_entries_enabled(
+    data: dict[str, Any],
+    entries: list[Any],
+    command_filter: Callable[[str], bool] | None,
+) -> bool:
+    settings = data.get("hooksConfig", {})
+    if not isinstance(settings, dict) or settings.get("enabled", True) is not True:
+        return False
+    disabled = settings.get("disabled", [])
+    if not isinstance(disabled, list) or not all(isinstance(name, str) for name in disabled):
+        return False
+    return any(
+        isinstance(hook.get("command"), str)
+        and (command_filter is None or command_filter(hook["command"]))
+        and (hook.get("name") or hook["command"]) not in disabled
+        for hook in _command_hook_handlers(entries)
     )
 
 
@@ -2112,6 +2138,15 @@ def parse_log_line(provider: str, line: str) -> HookEvent | None:
 
     if not isinstance(obj, dict):
         return None
+    if "record_kind" in obj:
+        from .provider_adapters import normalized_provider_record_from_payload
+
+        normalized = normalized_provider_record_from_payload(obj)
+        if normalized is None:
+            return None
+        if provider in PROVIDER_REGISTRY and normalized.source_key.provider_id != provider:
+            return None
+
 
     if provider == "codex" and isinstance(obj.get("event"), dict):
         raw = obj["event"]
@@ -2303,15 +2338,10 @@ def _paths_from_hook_entries(
     command_filter: Callable[[str], bool] | None = None,
 ) -> list[Path]:
     paths: list[Path] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        for hook in entry.get("hooks") or []:
-            if not isinstance(hook, dict):
-                continue
-            command = hook.get("command")
-            if isinstance(command, str) and (command_filter is None or command_filter(command)):
-                paths.extend(extract_log_paths_from_command(command))
+    for hook in _command_hook_handlers(entries):
+        command = hook.get("command")
+        if isinstance(command, str) and (command_filter is None or command_filter(command)):
+            paths.extend(extract_log_paths_from_command(command))
     return paths
 
 
@@ -2319,13 +2349,19 @@ def _hook_entries_contain_command(
     entries: list[Any], command_filter: Callable[[str], bool]
 ) -> bool:
     return any(
-        isinstance(hook, dict)
-        and isinstance(hook.get("command"), str)
+        isinstance(hook.get("command"), str)
         and command_filter(hook["command"])
-        for entry in entries
-        if isinstance(entry, dict)
-        for hook in (entry.get("hooks") or [])
+        for hook in _command_hook_handlers(entries)
     )
+
+
+def _command_hook_handlers(entries: list[Any]):
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+            continue
+        for hook in entry["hooks"]:
+            if isinstance(hook, dict) and hook.get("type", "command") == "command":
+                yield hook
 
 
 def is_jrbar_devin_command(command: str) -> bool:
@@ -2389,13 +2425,6 @@ def _first_string(data: dict[str, Any], *keys: str) -> str | None:
         if value:
             return value
     return None
-
-
-# Names kept for one release so external callers written before the rename
-# keep importing. New code uses the jrbar-prefixed names above.
-_is_sidepulse_hook_invocation = _is_jrbar_hook_invocation
-is_sidepulse_hook_command = is_jrbar_hook_command
-is_sidepulse_devin_command = is_jrbar_devin_command
 
 
 def legacy_opencode_plugin_is_ours(text: str) -> bool:

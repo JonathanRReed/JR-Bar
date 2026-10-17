@@ -3,6 +3,11 @@ import Foundation
 import Testing
 @testable import JRBarApp
 
+// These suites deliberately block the shared queues, so they must not overlap.
+@Suite("Dock shared worker queues", .serialized)
+struct DockSharedWorkerTests {}
+
+extension DockSharedWorkerTests {
 /// The Dock's work off the main thread: the switcher's key tap on a
 /// thread of its own, and the commits' Accessibility calls on one serial
 /// worker. Nothing here creates a real event tap — a live session tap in
@@ -151,7 +156,13 @@ struct DockAXWorkerTests {
     /// Wait for a signal off the main actor, with a bound: a lane that
     /// never runs the job ends the wait as a failure, not a hang.
     private func signalled(_ semaphore: DispatchSemaphore, within seconds: Double = 10) async -> Bool {
-        await Task.detached { Self.waitForSignal(semaphore, seconds: seconds) }.value
+        // A dispatch thread, not a cooperative one: a blocked wait on the
+        // concurrency pool starves the other suites running beside this one.
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: Self.waitForSignal(semaphore, seconds: seconds))
+            }
+        }
     }
 
     /// The blocking half, in a synchronous function: an async context may
@@ -175,7 +186,10 @@ struct DockAXWorkerTests {
         }
         #expect(await signalled(commitHeld.started), "the commit lane is now occupied")
         DockAXWorker.run(on: .preview) { commitHeld.otherRan.signal() }
-        let previewRan = await signalled(commitHeld.otherRan, within: 5)
+        // The held job lets go on its own at 20 s, so an answer inside 15 s
+        // still proves the lanes are independent, and a full parallel run,
+        // which failed a 5 s bound twice in six, has room to schedule it.
+        let previewRan = await signalled(commitHeld.otherRan, within: 15)
         commitHeld.release.signal()
         #expect(await signalled(commitHeld.finished))
         #expect(previewRan, "the preview lane is its own queue: it never waits behind a commit's AX wait")
@@ -189,7 +203,7 @@ struct DockAXWorkerTests {
         }
         #expect(await signalled(previewHeld.started), "the preview lane is now occupied")
         DockAXWorker.run { previewHeld.otherRan.signal() }
-        let commitRan = await signalled(previewHeld.otherRan, within: 5)
+        let commitRan = await signalled(previewHeld.otherRan, within: 15)
         previewHeld.release.signal()
         #expect(await signalled(previewHeld.finished))
         #expect(commitRan, "a hung app's hover read never delays a commit")
@@ -266,4 +280,6 @@ struct DockAXWorkerTests {
         #expect(window.minimized, "a minimized pick stands up before the raise")
         #expect(window.title == "Notes")
     }
+}
+
 }

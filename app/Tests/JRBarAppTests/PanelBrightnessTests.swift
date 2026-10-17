@@ -50,4 +50,14 @@ struct PanelBrightnessTests {
         #expect(!panel.brightnessIsMixed)
         #expect(panel.brightness == 0.5)
     }
+
+    @Test("a drag that starts right after a release is not handed back to the daemon's value mid-drag")
+    func newDragCancelsTheHandBack() {
+        let panel = store([CoreDevice(id: "bar", kind: "screen_bar", enabled: true, brightness: 0.8)])
+        panel.setBrightness(0.3, final: true)
+        #expect(panel.brightnessHandBack != nil, "a release schedules the hand-back")
+        panel.setBrightness(0.5, final: false)
+        #expect(panel.brightnessHandBack == nil, "the next drag cancels it")
+        #expect(panel.localBrightness == 0.5)
+    }
 }

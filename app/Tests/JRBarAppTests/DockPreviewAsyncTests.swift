@@ -11,19 +11,21 @@ import Testing
 /// no timer, no sleep.
 @MainActor
 private final class HandLane: DockPreviewLane {
-    private var jobs: [() -> Void] = []
+    private var jobs: [() -> (@MainActor () -> Void)] = []
     var waiting: Int { jobs.count }
 
     func run<Answer: Sendable>(_ work: @escaping @Sendable () -> Answer,
                                then: @escaping @MainActor @Sendable (Answer) -> Void) {
         jobs.append {
             let answer = work()
-            then(answer)
+            return { then(answer) }
         }
     }
 
+    func startNext() -> (@MainActor () -> Void) { jobs.removeFirst()() }
+
     /// Run the oldest job and land its answer on main.
-    func runNext() { jobs.removeFirst()() }
+    func runNext() { startNext()() }
     func runAll() { while !jobs.isEmpty { runNext() } }
 }
 
@@ -41,6 +43,9 @@ private final class FakeAX: @unchecked Sendable {
     private var failingCloses: Set<Int> = []
     private var refusingMinimize: Set<Int> = []
     private var fullScreenStates: [Int: Bool] = [:]
+    private var frameCalls: [Int] = []
+    private var frames: [Int: CGRect] = [:]
+    private var refusingFrames: Set<Int> = []
 
     func answer(pid: pid_t, _ windows: [DockPreviewWindow]) { lock.withLock { windowsByPID[pid] = windows } }
     func hang(_ pid: pid_t, _ hung: Bool = true) {
@@ -49,6 +54,22 @@ private final class FakeAX: @unchecked Sendable {
     func failClose(of id: Int) { lock.withLock { _ = failingCloses.insert(id) } }
     func refuseMinimize(of id: Int) { lock.withLock { _ = refusingMinimize.insert(id) } }
     func setFullScreenState(of id: Int, _ on: Bool) { lock.withLock { fullScreenStates[id] = on } }
+    func refuseFrame(of id: Int) { lock.withLock { _ = refusingFrames.insert(id) } }
+    var positioned: [Int] { lock.withLock { frameCalls } }
+
+    func setFrame(_ window: DockPreviewWindow, _ frame: CGRect) -> Bool {
+        lock.withLock {
+            frameCalls.append(window.id)
+            guard !refusingFrames.contains(window.id) else { return false }
+            // The fake app accepts the request but constrains the width.
+            frames[window.id] = CGRect(origin: frame.origin, size: CGSize(width: frame.width - 8, height: frame.height))
+            return true
+        }
+    }
+
+    func frame(_ window: DockPreviewWindow) -> CGRect? {
+        lock.withLock { window.frame ?? frames[window.id] }
+    }
 
     var reads: [pid_t] { lock.withLock { readPIDs } }
     var closed: [Int] { lock.withLock { closedIDs } }
@@ -82,6 +103,19 @@ private final class FakeAX: @unchecked Sendable {
 
     func fullScreen(_ window: DockPreviewWindow) -> Bool? {
         lock.withLock { fullScreenStates[window.id] }
+    }
+
+    /// The Dock's tiles, as the lane would walk them; nil is a Dock that
+    /// does not answer.
+    private var tiles: DockTileReading?
+    private var tileWalks: [pid_t] = []
+    func setTiles(_ reading: DockTileReading?) { lock.withLock { tiles = reading } }
+    var walks: [pid_t] { lock.withLock { tileWalks } }
+    func dockTiles(_ pid: pid_t) -> DockTileReading? {
+        lock.withLock {
+            tileWalks.append(pid)
+            return tiles
+        }
     }
 
     func setFullScreen(_ window: DockPreviewWindow, _ on: Bool) -> Bool {
@@ -124,9 +158,14 @@ private final class Bench {
             setMinimized: { ax.setMinimized($0, $1) },
             fullScreen: { ax.fullScreen($0) },
             setFullScreen: { ax.setFullScreen($0, $1) },
-            setFrame: { _, _ in true },
-            frame: { $0.frame },
+            setFrame: { ax.setFrame($0, $1) },
+            frame: { ax.frame($0) },
+            dockTiles: { ax.dockTiles($0) },
             newWindow: { _ in })
+        controller.dockPID = { 777 }
+        controller.mediaNow = { [unowned self] in self.clock }
+        controller.accessibilityTrusted = true
+        controller.running = true
         controller.uptime = { [unowned self] in self.clock }
         controller.apps = DockTileApps(
             forTile: { item, _ in
@@ -169,6 +208,7 @@ private func card(_ id: Int, _ title: String, minimized: Bool = false) -> DockPr
 
 // MARK: - The show, split in two
 
+extension DockSharedWorkerTests {
 /// A hover preview's window read runs on the preview lane; the card lands
 /// on main when it answers, or is dropped when the pointer has moved on.
 @MainActor
@@ -232,13 +272,114 @@ struct DockPreviewAsyncTests {
         bench.ax.answer(pid: Bench.betaPID, [card(11, "Beta one")])
         bench.controller.showPreview(for: bench.tile("Alpha"))
         bench.controller.showPreview(for: bench.tile("Beta"))
-        #expect(bench.lane.waiting == 2, "both reads are asked, in order")
+        #expect(bench.lane.waiting == 2, "both jobs are queued, in order")
         bench.lane.runNext()
-        #expect(bench.presented.isEmpty, "Alpha's answer arrives after Beta's show: dropped")
+        #expect(bench.presented.isEmpty, "Alpha's retired job cannot populate the preview")
         #expect(bench.controller.preview.windows.isEmpty)
         bench.lane.runNext()
         #expect(bench.presented == ["Beta"])
         #expect(bench.controller.preview.windows.map(\.title) == ["Beta one"])
+    }
+
+    @Test("a burst of retargets reads only the latest app")
+    func retiredQueuedReadsNeverReachAX() {
+        let bench = Bench()
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "Alpha one")])
+        bench.ax.answer(pid: Bench.betaPID, [card(11, "Beta one")])
+        for index in 0..<20 {
+            bench.controller.showPreview(for: bench.tile(index.isMultiple(of: 2) ? "Alpha" : "Beta"))
+        }
+        #expect(bench.ax.reads.isEmpty)
+        bench.lane.runAll()
+        #expect(bench.ax.reads == [Bench.betaPID])
+        #expect(bench.presented == ["Beta"])
+        #expect(bench.controller.preview.windows.map(\.title) == ["Beta one"])
+    }
+
+    @Test("hiding cancels a queued read before Accessibility is called")
+    func hiddenQueuedReadNeverReachesAX() {
+        let bench = Bench()
+        bench.controller.showPreview(for: bench.tile("Alpha"))
+        bench.controller.hidePreview()
+        bench.lane.runAll()
+        #expect(bench.ax.reads.isEmpty)
+        #expect(bench.presented.isEmpty)
+    }
+
+    @Test("releasing the controller retires its queued read")
+    func releasedQueuedReadNeverReachesAX() {
+        var bench: Bench? = Bench()
+        let lane = bench!.lane
+        let ax = bench!.ax
+        bench!.controller.showPreview(for: bench!.tile("Alpha"))
+        bench = nil
+        lane.runAll()
+        #expect(ax.reads.isEmpty)
+    }
+
+    @Test("an already started read records real backoff while the newest preview still lands")
+    func startedReadKeepsItsRealResult() {
+        let bench = Bench()
+        bench.ax.hang(Bench.alphaPID)
+        bench.ax.answer(pid: Bench.betaPID, [card(11, "Beta one")])
+        bench.controller.showPreview(for: bench.tile("Alpha"))
+        let deliver = bench.lane.startNext()
+        #expect(bench.ax.reads == [Bench.alphaPID])
+        bench.controller.showPreview(for: bench.tile("Beta"))
+        deliver()
+        #expect(bench.controller.switcher.axSkips(Bench.alphaPID, now: bench.clock))
+        #expect(bench.presented.isEmpty)
+        bench.lane.runAll()
+        #expect(bench.ax.reads == [Bench.alphaPID, Bench.betaPID])
+        #expect(bench.presented == ["Beta"])
+    }
+
+    @Test("retiring a queued minimized-window lookup skips its owner reads")
+    func retiredMinimizedLookupNeverReachesAX() {
+        for retarget in [false, true] {
+            let bench = Bench()
+            bench.ax.answer(pid: Bench.alphaPID, [card(1, "Hidden", minimized: true)])
+            bench.ax.answer(pid: Bench.betaPID, [card(11, "Beta one")])
+            bench.controller.minimizedRows = {
+                [SwitcherWindowRow(pid: Bench.alphaPID, windowID: 1, title: "Hidden",
+                                   bounds: CGRect(x: 0, y: 0, width: 400, height: 300), onScreen: false)]
+            }
+            let tile = DockAXItem(element: AXUIElementCreateSystemWide(),
+                                  frame: CGRect(x: 100, y: 900, width: 60, height: 60),
+                                  title: "Hidden", url: nil, kind: .minimizedWindow)
+            bench.controller.showPreview(for: tile)
+            if retarget {
+                bench.controller.showPreview(for: bench.tile("Beta"))
+            } else {
+                bench.controller.hidePreview()
+            }
+            bench.lane.runAll()
+            #expect(bench.ax.reads == (retarget ? [Bench.betaPID] : []))
+            #expect(bench.presented == (retarget ? ["Beta"] : []))
+        }
+    }
+
+    @Test("a current minimized-window lookup reads its owner and lands its card")
+    func currentMinimizedLookupStillReads() {
+        let bench = Bench()
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "Hidden", minimized: true)])
+        bench.controller.minimizedRows = {
+            [SwitcherWindowRow(pid: Bench.alphaPID, windowID: 1, title: "Hidden",
+                               bounds: CGRect(x: 0, y: 0, width: 400, height: 300), onScreen: false)]
+        }
+        bench.controller.apps.forPID = { pid in
+            DockTileApp(pid: pid, name: "Alpha", bundleID: "test.alpha",
+                        bundleURL: nil, icon: nil, isTerminated: false)
+        }
+        let tile = DockAXItem(element: AXUIElementCreateSystemWide(),
+                              frame: CGRect(x: 100, y: 900, width: 60, height: 60),
+                              title: "Hidden", url: nil, kind: .minimizedWindow)
+        bench.controller.showPreview(for: tile)
+        bench.lane.runAll()
+        #expect(bench.ax.reads == [Bench.alphaPID])
+        #expect(bench.presented == ["Hidden"])
+        #expect(bench.controller.preview.windows.map(\.title) == ["Hidden"])
+        #expect(bench.controller.preview.processIdentifier == Bench.alphaPID)
     }
 
     @Test("an app with no windows presents nothing, and never a header-only card")
@@ -378,6 +519,8 @@ struct DockPreviewAsyncTests {
     private nonisolated static func waitForSignal(_ semaphore: DispatchSemaphore, seconds: Double) -> Bool {
         semaphore.wait(timeout: .now() + seconds) == .success
     }
+}
+
 }
 
 // MARK: - The live refresh
@@ -549,6 +692,7 @@ struct DockPreviewVerbAsyncTests {
         actions.onMinimize?(window(bench, 2))
         bench.lane.runNext()
         #expect(bench.controller.preview.windows.first { $0.id == 2 }?.minimized == false)
+        #expect(bench.controller.preview.actionFailure == "Could not minimize this window. Try again.")
     }
 
     @Test("fullscreen reads the window's state and writes the opposite, both off main")
@@ -569,6 +713,90 @@ struct DockPreviewVerbAsyncTests {
         bench.lane.runNext()
         #expect(bench.ax.fullScreened.isEmpty)
         #expect(bench.controller.preview.windows.first { $0.id == 1 }?.fullScreen == nil)
+        #expect(bench.controller.preview.actionFailure == "Could not change full screen. Try again.")
+    }
+
+    @Test("a successful action clears the last failure without changing an agent warning")
+    func successfulRetryClearsFailure() {
+        let (bench, actions) = landed()
+        bench.ax.failClose(of: 1)
+        bench.controller.preview.headerNote = "Kept the window an agent is running in"
+        actions.onClose?(window(bench, 1))
+        bench.lane.runNext()
+        #expect(bench.controller.preview.actionFailure == "Could not close this window. Try again.")
+        actions.onMinimize?(window(bench, 1))
+        bench.lane.runNext()
+        #expect(bench.controller.preview.actionFailure == nil)
+        #expect(bench.controller.preview.headerNote == "Kept the window an agent is running in")
+    }
+
+    @Test("a refused restore stops positioning and leaves the card minimized")
+    func positionStopsAtRefusedRestore() {
+        let (bench, _) = landed()
+        bench.controller.preview.windows[0].minimized = true
+        bench.ax.refuseMinimize(of: 1)
+        bench.controller.position(window(bench, 1), failure: "Could not tile this window. Try again.") {
+            _ in CGRect(x: 100, y: 200, width: 300, height: 400)
+        }
+        bench.lane.runNext()
+        #expect(bench.ax.positioned.isEmpty)
+        #expect(bench.controller.preview.windows[0].minimized)
+        #expect(bench.controller.preview.actionFailure == "Could not tile this window. Try again.")
+    }
+
+    @Test("a refused move records the restore it accepted but keeps the original frame")
+    func partialPositionRecordsOnlyAcceptedWrites() {
+        let (bench, _) = landed()
+        let original = bench.controller.preview.windows[0].frame
+        bench.controller.preview.windows[0].minimized = true
+        bench.ax.refuseFrame(of: 1)
+        bench.controller.position(window(bench, 1), failure: "Could not move this window. Try again.") {
+            _ in CGRect(x: 100, y: 200, width: 300, height: 400)
+        }
+        bench.lane.runNext()
+        #expect(!bench.controller.preview.windows[0].minimized)
+        #expect(bench.controller.preview.windows[0].frame == original)
+        #expect(bench.controller.preview.actionFailure == "Could not move this window. Try again.")
+    }
+
+    @Test("positioning reads the app's resulting frame rather than assuming the requested size")
+    func positionUsesReportedFrame() {
+        let (bench, _) = landed()
+        bench.controller.preview.windows[0].minimized = true
+        bench.controller.preview.actionFailure = "Earlier failure"
+        bench.controller.position(window(bench, 1), failure: "Could not tile this window. Try again.") {
+            _ in CGRect(x: 100, y: 200, width: 300, height: 400)
+        }
+        #expect(bench.controller.preview.windows[0].minimized)
+        bench.lane.runNext()
+        #expect(bench.controller.preview.windows[0].frame == CGRect(x: 100, y: 200, width: 292, height: 400))
+        #expect(!bench.controller.preview.windows[0].minimized)
+        #expect(bench.controller.preview.actionFailure == nil)
+    }
+
+    @Test("a stale positioning failure cannot change a hidden preview")
+    func stalePositionFailureIsDropped() {
+        let (bench, _) = landed()
+        bench.ax.refuseFrame(of: 1)
+        bench.controller.position(window(bench, 1), failure: "Could not tile this window. Try again.") {
+            _ in CGRect(x: 100, y: 200, width: 300, height: 400)
+        }
+        bench.controller.hidePreview()
+        bench.lane.runNext()
+        #expect(bench.controller.preview.actionFailure == nil)
+    }
+
+    @Test("a refused action is dropped after retargeting and failures clear on the new tile")
+    func retargetDropsFailures() {
+        let (bench, actions) = landed()
+        bench.controller.preview.actionFailure = "Earlier failure"
+        bench.ax.failClose(of: 1)
+        bench.ax.answer(pid: Bench.betaPID, [card(11, "Beta one")])
+        actions.onClose?(window(bench, 1))
+        bench.controller.showPreview(for: bench.tile("Beta"))
+        bench.lane.runAll()
+        #expect(bench.controller.preview.actionFailure == nil)
+        #expect(bench.controller.preview.appName == "Beta")
     }
 
     @Test("a click raises off main and closes the panel at once; ⌥-click keeps it and walks the card")
@@ -664,6 +892,7 @@ struct DockPreviewBulkVerbTests {
         bench.lane.runNext()
         #expect(Set(bench.ax.minimized.map(\.id)) == [1, 2, 3])
         #expect(bench.controller.preview.windows.map(\.minimized) == [true, true, false])
+        #expect(bench.controller.preview.actionFailure == "Could not minimize 1 window. Try again.")
     }
 
     @Test("minimize all with nothing open asks for no job")
@@ -754,6 +983,29 @@ struct DockPreviewBulkVerbTests {
         actions.onCloseAll?()
         bench.lane.runNext()
         #expect(bench.controller.preview.windows.map(\.id) == [2, 3])
+        #expect(bench.controller.preview.actionFailure == "Could not close 1 window. Try again.")
+        #expect(bench.controller.preview.headerNote == "Kept the window an agent is running in")
+    }
+
+    @Test("bulk failures ignore cards that left the live list before the answer")
+    func bulkFailureForGoneCardIsDropped() {
+        let (bench, actions) = landed(titles: ["One", "Two"])
+        bench.ax.refuseMinimize(of: 2)
+        actions.onMinimizeAll?()
+        bench.controller.preview.windows.removeAll { $0.id == 2 }
+        bench.lane.runNext()
+        #expect(bench.controller.preview.actionFailure == nil)
+        #expect(bench.controller.preview.windows.map(\.minimized) == [true])
+    }
+
+    @Test("a refused swipe keeps the card's state and reports the action")
+    func refusedSwipeReportsFailure() {
+        let (bench, actions) = landed(titles: ["One", "Two"])
+        bench.ax.refuseMinimize(of: 1)
+        actions.onSwipeMinimize?(bench.controller.preview.windows[0], true)
+        bench.lane.runNext()
+        #expect(!bench.controller.preview.windows[0].minimized)
+        #expect(bench.controller.preview.actionFailure == "Could not minimize this window. Try again.")
     }
 
     @Test("close all removes what closed by id even when the list changed under it")
@@ -775,5 +1027,227 @@ struct DockPreviewBulkVerbTests {
         #expect(bench.controller.preview.windows.isEmpty)
         #expect(!bench.controller.previewUp)
         #expect(bench.controller.preview.headerNote == nil)
+    }
+}
+
+
+// MARK: - The Dock's own tiles
+
+@MainActor
+@Suite("Dock tile reads, off the main thread")
+struct DockTileReadTests {
+    /// A Dock list of two tiles at the screen's AX top-left, wide enough
+    /// that a point on either is inside the list's reach.
+    private func reading(_ bench: Bench) -> DockTileReading {
+        let alpha = bench.tile("Alpha")
+        let beta = DockAXItem(element: AXUIElementCreateSystemWide(),
+                              frame: CGRect(x: 170, y: 900, width: 60, height: 60),
+                              title: "Beta", url: nil, kind: .app)
+        return DockTileReading(
+            list: DockAXElement(element: AXUIElementCreateSystemWide()),
+            frame: CGRect(x: 90, y: 890, width: 160, height: 80),
+            items: [alpha, beta])
+    }
+
+    /// An AppKit point whose AX flip lands inside the Alpha tile
+    /// (x 100…160, y 900…960 in AX space).
+    private func appKitPoint(over tile: CGRect) -> NSPoint {
+        let height = DockDisplays.primaryHeight()
+        return NSPoint(x: tile.midX, y: height - tile.midY)
+    }
+
+    @Test("a gesture's tile read is queued on the lane, never walked on the main thread")
+    func gestureReadIsOffMain() {
+        let bench = Bench()
+        bench.ax.setTiles(reading(bench))
+        var hit: String?
+        bench.controller.withTile(at: appKitPoint(over: CGRect(x: 100, y: 900, width: 60, height: 60))) {
+            hit = $0.title
+        }
+        #expect(bench.lane.waiting == 1, "the walk is queued")
+        #expect(bench.ax.walks.isEmpty, "nothing asked the Dock on main")
+        #expect(hit == nil)
+        bench.lane.runNext()
+        #expect(bench.ax.walks == [777])
+        #expect(hit == "Alpha")
+    }
+
+    @Test("a point on no tile, or a Dock that does not answer, is a miss")
+    func missesAreMisses() {
+        let bench = Bench()
+        bench.ax.setTiles(reading(bench))
+        var misses = 0
+        var hits = 0
+        let between = appKitPoint(over: CGRect(x: 100, y: 970, width: 10, height: 5))
+        bench.controller.withTile(at: between, miss: { misses += 1 }, then: { _ in hits += 1 })
+        bench.lane.runAll()
+        #expect(hits == 0)
+
+        let silent = Bench()
+        silent.ax.setTiles(nil)
+        silent.controller.withTile(at: appKitPoint(over: CGRect(x: 100, y: 900, width: 60, height: 60)),
+                                   miss: { misses += 1 }, then: { _ in hits += 1 })
+        silent.lane.runAll()
+        #expect(hits == 0)
+        #expect(misses == 2)
+    }
+
+    @Test("a toy switched off while the walk is out gets no gesture")
+    func answerAfterStopIsDropped() {
+        let bench = Bench()
+        bench.ax.setTiles(reading(bench))
+        var hits = 0
+        bench.controller.withTile(at: appKitPoint(over: CGRect(x: 100, y: 900, width: 60, height: 60))) { _ in hits += 1 }
+        bench.controller.running = false
+        bench.lane.runAll()
+        #expect(hits == 0)
+    }
+
+    @Test("a second gesture inside the tile cache's life reuses the read and queues nothing")
+    func freshReadAnswersFromMemory() {
+        let bench = Bench()
+        bench.ax.setTiles(reading(bench))
+        let point = appKitPoint(over: CGRect(x: 100, y: 900, width: 60, height: 60))
+        var hits: [String] = []
+        bench.controller.withTile(at: point) { hits.append($0.title ?? "") }
+        bench.lane.runAll()
+        bench.clock += DockEnhanceController.itemsTTL / 2
+        bench.controller.withTile(at: point) { hits.append($0.title ?? "") }
+        #expect(bench.lane.waiting == 0, "the cache is fresh: no second walk")
+        #expect(hits == ["Alpha", "Alpha"])
+        #expect(bench.ax.walks.count == 1)
+        // Past the cache's life the Dock is asked again, on the lane.
+        bench.clock += DockEnhanceController.itemsTTL
+        bench.controller.withTile(at: point) { hits.append($0.title ?? "") }
+        #expect(bench.lane.waiting == 1)
+        bench.lane.runAll()
+        #expect(bench.ax.walks.count == 2)
+        #expect(hits == ["Alpha", "Alpha", "Alpha"])
+    }
+
+    @Test("⌥` asks the Dock on the lane, and the card lands when the read does")
+    func frontAppPreviewIsOffMain() {
+        let bench = Bench()
+        bench.ax.setTiles(reading(bench))
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One")])
+        bench.controller.frontApp = { (pid: Bench.alphaPID, bundleURL: nil, name: "Alpha") }
+        bench.controller.previewFrontApp()
+        #expect(bench.lane.waiting == 1)
+        #expect(bench.ax.walks.isEmpty, "the keystroke did not wait on the Dock")
+        #expect(bench.presented.isEmpty)
+        bench.lane.runNext()
+        #expect(bench.ax.walks == [777])
+        // The tile's own window read is the next job on the lane.
+        bench.lane.runAll()
+        #expect(bench.presented == ["Alpha"])
+    }
+
+    @Test("a delayed front-app tile read cannot reopen a dismissed preview")
+    func frontAppReadAfterDismissal() {
+        let bench = Bench()
+        bench.ax.setTiles(reading(bench))
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One")])
+        bench.controller.frontApp = { (pid: Bench.alphaPID, bundleURL: nil, name: "Alpha") }
+        bench.controller.previewFrontApp()
+        bench.controller.hidePreview()
+        bench.lane.runAll()
+        #expect(bench.presented.isEmpty)
+        #expect(bench.controller.preview.windows.isEmpty)
+    }
+
+    @Test("pressing the front-app preview hotkey twice cancels its pending read")
+    func pendingFrontAppPreviewTogglesOff() {
+        let bench = Bench()
+        bench.ax.setTiles(reading(bench))
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One")])
+        bench.controller.frontApp = { (pid: Bench.alphaPID, bundleURL: nil, name: "Alpha") }
+        bench.controller.previewFrontApp()
+        bench.controller.previewFrontApp()
+        #expect(bench.lane.waiting == 1)
+        bench.lane.runAll()
+        #expect(bench.presented.isEmpty)
+        #expect(!bench.controller.previewUp)
+    }
+
+    @Test("a fresh front-app request survives the canceled request's late callback")
+    func pendingFrontAppPreviewCanRestart() {
+        let bench = Bench()
+        bench.ax.setTiles(reading(bench))
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One")])
+        bench.controller.frontApp = { (pid: Bench.alphaPID, bundleURL: nil, name: "Alpha") }
+        bench.controller.previewFrontApp()
+        bench.controller.previewFrontApp()
+        bench.controller.previewFrontApp()
+        #expect(bench.lane.waiting == 2)
+        bench.lane.runAll()
+        #expect(bench.presented == ["Alpha"])
+        #expect(bench.controller.previewUp)
+    }
+
+    @Test("permission loss retires a pending hotkey request even if access returns before its reply")
+    func pendingFrontAppPreviewAfterPermissionLoss() {
+        let bench = Bench()
+        bench.ax.setTiles(reading(bench))
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One")])
+        bench.controller.frontApp = { (pid: Bench.alphaPID, bundleURL: nil, name: "Alpha") }
+        bench.controller.previewFrontApp()
+        bench.controller.accessibilityTrusted = false
+        bench.controller.accessibilityTrusted = true
+        bench.lane.runAll()
+        #expect(bench.presented.isEmpty)
+        bench.controller.previewFrontApp()
+        bench.lane.runAll()
+        #expect(bench.presented == ["Alpha"])
+    }
+
+    @Test("a delayed front-app tile read cannot replace a newer preview")
+    func frontAppReadAfterRetarget() {
+        let bench = Bench()
+        bench.ax.setTiles(reading(bench))
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One")])
+        bench.ax.answer(pid: Bench.betaPID, [card(2, "Two")])
+        bench.controller.frontApp = { (pid: Bench.alphaPID, bundleURL: nil, name: "Alpha") }
+        bench.controller.previewFrontApp()
+        bench.controller.showPreview(for: bench.tile("Beta"))
+        bench.lane.runAll()
+        #expect(bench.presented == ["Beta"])
+        #expect(bench.controller.preview.appName == "Beta")
+    }
+
+    @Test("⌥` with JR-Bar in front, or with the toy off, reads nothing")
+    func frontAppGuards() {
+        let bench = Bench()
+        bench.ax.setTiles(reading(bench))
+        bench.controller.frontApp = { (pid: ProcessInfo.processInfo.processIdentifier, bundleURL: nil, name: "JR-Bar") }
+        bench.controller.previewFrontApp()
+        #expect(bench.lane.waiting == 0)
+        bench.controller.frontApp = { (pid: Bench.alphaPID, bundleURL: nil, name: "Alpha") }
+        bench.controller.running = false
+        bench.controller.previewFrontApp()
+        #expect(bench.lane.waiting == 0)
+    }
+
+    @Test("a failed folder can retry in place and a pending retry cannot start twice")
+    func folderRetryRecoversInPlace() async throws {
+        let bench = Bench()
+        bench.ax.answer(pid: Bench.alphaPID, [card(1, "One")])
+        bench.showAndLand("Alpha")
+        bench.controller.preview.folderURL = URL(fileURLWithPath: "/synthetic/folder")
+        bench.controller.preview.folderState = .failed
+        bench.controller.folderReader = { _, _ in DockFolderListing(denied: true) }
+        let denied = try #require(bench.controller.retryFolderListing())
+        #expect(bench.controller.preview.folderState == .loading)
+        #expect(bench.controller.retryFolderListing() == nil)
+        await denied.value
+        #expect(bench.controller.preview.folderState == .denied)
+
+        bench.controller.folderReader = { _, _ in DockFolderListing() }
+        let recovered = try #require(bench.controller.retryFolderListing())
+        await recovered.value
+        #expect(bench.controller.preview.folderState == .ready)
+        #expect(bench.controller.preview.folderEntries.isEmpty)
+        #expect(bench.controller.previewUp)
+        bench.controller.hidePreview()
+        #expect(bench.controller.retryFolderListing() == nil)
     }
 }

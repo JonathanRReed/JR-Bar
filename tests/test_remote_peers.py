@@ -1050,9 +1050,8 @@ def test_every_reported_failure_is_from_the_closed_vocabulary__and_2_more() -> N
     remote_row = merged.remote_rows[0]
     assert remote_row.is_remote is True
     assert remote_row.machine == "mac-b"
-    assert remote_row.remote_marker == "Remote"
     assert "mac-b" in remote_row.ledger_label
-    assert merged.local_rows[0].remote_marker is None
+    assert merged.local_rows[0].is_remote is False
     assert merged.local_rows[0].ledger_label == "jr-bar"
 
     # --- scenario: a_remote_row_is_not_locally_actionable
@@ -1060,7 +1059,7 @@ def test_every_reported_failure_is_from_the_closed_vocabulary__and_2_more() -> N
     local open-action can claim this row."""
     ledger = remote_peers.parse_remote_ledger_document(document())
     row = ledger.rows[0]
-    assert row.is_actionable_locally is False
+    assert row.is_remote is True
     assert row.status.origin is None
     assert row.status.session_id is None
     assert row.status.cwd is None
@@ -1434,3 +1433,81 @@ def test_merge_rejects_an_unsafe_local_machine_name__and_1_more() -> None:
     assert marked.is_remote is True
     assert marked.machine == "mac-b"
 
+
+
+@pytest.mark.parametrize(
+    ("budget", "discovery_seconds", "discovery_timeout", "fetch_timeout"),
+    [(1.0, 1.0, 1.0, None), (1.0, 0.25, 1.0, 0.75), (8.0, 2.0, 3.0, 6.0)],
+    ids=["discovery-exhausts-budget", "short-budget-remainder", "normal-discovery-cap"],
+)
+def test_collection_deadline_includes_discovery(
+    budget, discovery_seconds, discovery_timeout, fetch_timeout
+):
+    clock = Clock()
+    discovery_timeouts = []
+    fetch_timeouts = []
+
+    def discover(arguments, timeout):
+        assert arguments == ("status", "--json")
+        discovery_timeouts.append(timeout)
+        clock.advance(discovery_seconds)
+        return _status_json(Peer={"synthetic-peer": {
+            "HostName": "mac-b", "DNSName": "mac-b.example.test.",
+            "OS": "macOS", "Online": True,
+        }})
+
+    def read(host, remote_path, *, timeout, max_bytes):
+        assert host == "mac-b"
+        fetch_timeouts.append(timeout)
+        clock.advance(timeout)
+        return document()
+
+    active = remote_peers.RemotePeerSettings(
+        enabled=True, refresh_deadline_seconds=budget, per_peer_timeout_seconds=16.0,
+    )
+    result = remote_peers.collect_remote_ledgers(
+        reader=read, runner=discover, settings=active, now_monotonic=clock,
+    )
+    assert discovery_timeouts == [discovery_timeout]
+    assert result.request_settings == active.normalized()
+    if fetch_timeout is None:
+        assert fetch_timeouts == []
+        assert result.attempted == 0
+        assert result.ledgers == ()
+        assert result.health[0].failure == remote_peers.FAILURE_DEADLINE_EXCEEDED
+    else:
+        assert fetch_timeouts == [fetch_timeout]
+        assert result.attempted == 1
+        assert result.health[0].reachable is True
+    assert clock.value - 100.0 <= budget
+
+
+def test_collection_deadline_includes_fetch_setup():
+    clock = Clock()
+    fetch_timeouts = []
+
+    class Breakers:
+        def __iter__(self):
+            clock.advance(0.25)
+            return iter(())
+
+    def discover(arguments, timeout):
+        clock.advance(0.25)
+        return _status_json(Peer={"synthetic-peer": {
+            "HostName": "mac-b", "DNSName": "mac-b.example.test.",
+            "OS": "macOS", "Online": True,
+        }})
+
+    def read(host, remote_path, *, timeout, max_bytes):
+        fetch_timeouts.append(timeout)
+        clock.advance(timeout)
+        return document()
+
+    result = remote_peers.collect_remote_ledgers(
+        reader=read, runner=discover, breakers=Breakers(), now_monotonic=clock,
+        settings=remote_peers.RemotePeerSettings(enabled=True, refresh_deadline_seconds=1.0),
+    )
+    assert fetch_timeouts == [0.5]
+    assert result.attempted == 1
+    assert result.health[0].reachable is True
+    assert clock.value - 100.0 == 1.0

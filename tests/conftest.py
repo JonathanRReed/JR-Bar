@@ -114,6 +114,17 @@ def cheap_flush_in_tests():
 
 
 @pytest.fixture(autouse=True)
+def led_count_refresh_runs_inline():
+    """An expired STATUS.TXT count is re-read on a worker thread in the
+    daemon. The suite runs that job inline, so a test sees the re-read the
+    moment the call returns and never races a thread; a test about the
+    hand-off swaps in its own runner."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("jrbar.led_status._count_refresh_runner", lambda job: job())
+        yield
+
+
+@pytest.fixture(autouse=True)
 def isolate_integration_settings_file(tmp_path_factory):
     """One per-test integrations.json (and its deck sidecar files).
 

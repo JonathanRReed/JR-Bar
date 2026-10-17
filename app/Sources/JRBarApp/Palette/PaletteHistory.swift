@@ -75,7 +75,7 @@ enum HistoryPaletteRows {
     static func tone(for kind: String) -> PaletteTag.Tone {
         switch kind {
         case "failed": return .alert
-        case "asked": return .attention
+        case "asked", "ask_expired": return .attention
         case "completed", "answered": return .positive
         default: return .neutral
         }

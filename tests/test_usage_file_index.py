@@ -355,6 +355,82 @@ def test_get_rejects_payload_larger_than_document_cap(tmp_path: Path, monkeypatc
     reopened.close()
 
 
+
+@pytest.mark.parametrize("document", [_document(), {"records": [["synthetic", 10, 5]] * 400}])
+def test_get_reads_a_valid_document_with_one_select(tmp_path: Path, document: dict) -> None:
+    index = _open(tmp_path / "usage.sqlite")
+    assert index is not None
+    assert index.put("valid", document)
+    statements: list[str] = []
+    index._connection.set_trace_callback(statements.append)
+    try:
+        assert index.get("valid") == document
+        selects = [statement for statement in statements if statement.lstrip().upper().startswith("SELECT")]
+        assert len(selects) == 1
+    finally:
+        index._connection.set_trace_callback(None)
+        index.close()
+
+
+def test_get_caps_text_by_encoded_bytes_without_materializing_it(tmp_path, monkeypatch):
+    from jrbar import usage_file_index
+
+    index = _open(tmp_path / "usage.sqlite")
+    assert index is not None
+    oversized = json.dumps({"value": "é" * 80}, ensure_ascii=False)
+    assert len(oversized) < 100 < len(oversized.encode("utf-8"))
+    index._connection.execute(
+        "INSERT INTO files(file_key, document, sequence) VALUES (?, ?, ?)",
+        ("oversized", oversized, 1),
+    )
+    monkeypatch.setattr(usage_file_index, "MAX_DOCUMENT_BYTES", 100)
+
+    def reject_materialized_text(_encoded):
+        pytest.fail("oversized text crossed the SQLite result boundary")
+
+    index._connection.text_factory = reject_materialized_text
+    try:
+        assert index.get("oversized") is None
+        assert not index._failed
+    finally:
+        index._connection.text_factory = str
+        index.close()
+
+
+def test_get_sqlite_read_error_aborts_the_index(tmp_path: Path) -> None:
+    index = _open(tmp_path / "usage.sqlite")
+    assert index is not None
+    assert index.put("valid", _document())
+    index._connection.set_authorizer(
+        lambda action, _a, _b, _database, _trigger: sqlite3.SQLITE_DENY
+        if action == sqlite3.SQLITE_SELECT else sqlite3.SQLITE_OK
+    )
+    try:
+        assert index.get("valid") is None
+        assert index._failed
+        assert index.get("valid") is None
+        assert not index.put("later", _document())
+    finally:
+        index._connection.set_authorizer(None)
+        index.close()
+
+
+@pytest.mark.parametrize("payload", ["null", "[]", "17", b"{}", b"JRZ1junk"])
+def test_get_rejected_payload_remains_a_per_row_miss(tmp_path: Path, payload) -> None:
+    index = _open(tmp_path / "usage.sqlite")
+    assert index is not None
+    assert index.put("valid", _document())
+    index._connection.execute(
+        "INSERT INTO files(file_key, document, sequence) VALUES (?, ?, ?)",
+        ("rejected", payload, 2),
+    )
+    try:
+        assert index.get("rejected") is None
+        assert not index._failed
+        assert index.get("valid") == _document()
+    finally:
+        index.close()
+
 def test_invalid_json_is_a_repairable_per_row_miss(tmp_path: Path) -> None:
     path = tmp_path / "usage.sqlite"
     index = _open(path)
@@ -468,4 +544,35 @@ def test_invalid_seed_secret_is_rejected_without_creating_database__and_1_more(t
     finally:
         connection.close()
     assert json.loads(payload) == _document()
+
+
+def test_a_prune_that_empties_most_of_the_file_gives_the_disk_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import jrbar.usage_file_index as module
+
+    monkeypatch.setattr(module, "_VACUUM_MIN_FREE_BYTES", 1024)
+    path = tmp_path / "usage.sqlite"
+    rng = random.Random(7)
+    index = _open(path)
+    assert index is not None
+    for n in range(40):
+        document = _document(n)
+        document["sessions"] = [rng.randbytes(16_000).hex()]
+        assert index.put(f"file-{n}", document)
+    index.close()
+    full_size = path.stat().st_size
+
+    index = _open(path)
+    assert index is not None
+    index.prune({"file-0"})
+    index.close()
+
+    assert path.stat().st_size < full_size // 2
+    reopened = _open(path)
+    assert reopened is not None
+    assert reopened.get("file-0") is not None
+    assert reopened.get("file-1") is None
+    reopened.close()
+    assert not list(tmp_path.glob("usage.sqlite-*"))
 

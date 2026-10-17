@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from jrbar.provider_feature_settings import project_presentation_settings
 from jrbar.provider_instances import ProviderInstanceKey, ProviderInstanceProfile
 from jrbar.provider_usage_settings import (
     PROVIDER_USAGE_SETTINGS_SCHEMA_VERSION,
@@ -114,7 +115,7 @@ def test_menu_display_and_visibility_round_trip__and_1_more(tmp_path) -> None:
     assert loaded.menu_display.show_meters is True
     assert loaded.preference("devin").menu_visible is False
     assert loaded.preference("claude").menu_visible is True
-    assert loaded.hidden_menu_providers() == frozenset({"devin"})
+    assert project_presentation_settings(loaded).hidden_menu_providers() == frozenset({"devin"})
 
     # --- scenario: menu_display_tolerates_old_documents_and_junk
     path = tmp_path / "provider-usage.json"
@@ -137,7 +138,7 @@ def test_menu_display_and_visibility_round_trip__and_1_more(tmp_path) -> None:
     assert loaded.menu_display.show_meters is True
     assert loaded.menu_display.privacy_mode is False
     assert loaded.preference("claude").menu_visible is True
-    assert loaded.hidden_menu_providers() == frozenset()
+    assert project_presentation_settings(loaded).hidden_menu_providers() == frozenset()
 
 
 

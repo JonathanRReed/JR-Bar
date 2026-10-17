@@ -29,11 +29,52 @@ struct ShelfReminderQuickAddTests {
         #expect(parsed.due?.day != nil)
     }
 
+    @Test("numeric dates do not imply a clock time", arguments: ["October 15", "10/15/2026", "2026-10-15"])
+    func numericDateIsNotTime(phrase: String) {
+        #expect(!ShelfRemindersModel.hasTime(phrase))
+    }
+
+    @Test("a numeric due date stays a date without an alarm time", arguments: ["October 15", "10/15/2026"])
+    func numericDueDate(phrase: String) throws {
+        let parsed = try #require(ShelfRemindersModel.quickAdd("Pay rent on " + phrase))
+        let due = try #require(parsed.due)
+        #expect(parsed.title == "Pay rent")
+        #expect(due.day == 15)
+        #expect(due.hour == nil && due.minute == nil)
+    }
+
+    @Test("clock expressions and relative times retain a time",
+          arguments: ["3pm", "3 p.m.", "15:30", "at 9", "in 2 hours", "in 30 minutes", "tomorrow morning", "noon"])
+    func explicitTime(phrase: String) {
+        #expect(ShelfRemindersModel.hasTime(phrase))
+    }
+
     @Test("a line without a date is a dateless reminder")
     func noDate() throws {
         let parsed = try #require(ShelfRemindersModel.quickAdd("  buy oat milk  "))
         #expect(parsed.title == "Buy oat milk", "trimmed, first letter up")
         #expect(parsed.due == nil)
+    }
+
+    @Test("dateless reminder titles keep their final words",
+          arguments: ["Turn the lights on", "Stand by", "Check what is due", "Look at"])
+    func datelessTitleKeepsFinalWords(text: String) throws {
+        let parsed = try #require(ShelfRemindersModel.quickAdd(text))
+        #expect(parsed.due == nil)
+        #expect(parsed.title == text)
+    }
+
+    @Test("date cleanup preserves words at the end of a reminder title")
+    func dateCleanupKeepsTitleEnding() throws {
+        for (text, expected) in [
+            ("Tomorrow turn the lights on", "Turn the lights on"),
+            ("Tomorrow stand by", "Stand by"),
+            ("Turn the lights on by tomorrow", "Turn the lights on"),
+        ] {
+            let parsed = try #require(ShelfRemindersModel.quickAdd(text))
+            #expect(parsed.due != nil)
+            #expect(parsed.title == expected)
+        }
     }
 
     @Test("\"remind me to\" and a dangling connector leave the title")

@@ -27,8 +27,6 @@ final class LidAngleSensor {
         let clamshell: Bool?
     }
 
-    /// The latest degrees reading; nil until the first good report.
-    private(set) var angle: Double?
     /// A matching HID device answered when we last looked. Internal
     /// hardware never hot-plugs, so this is checked at open and whenever
     /// polling starts rather than watched.
@@ -59,7 +57,6 @@ final class LidAngleSensor {
 
     init() {
         pump.publish = { [weak self] sample in
-            self?.angle = sample.angle
             self?.onSample?(sample)
         }
         pump.publishAvailability = { [weak self] value in
@@ -127,6 +124,54 @@ final class SensorReadMeter: @unchecked Sendable {
     }
 }
 
+/// When the pump gives up polling. A desktop Mac has no lid sensor, and a
+/// poll that reads nothing ten times a second forever is a wake-up for
+/// no reason: after `failureLimit` failed reads in a row the pump rests,
+/// and looks for the device again every `probeInterval`. A probe that
+/// finds nothing rests again on its first failed read. Pure, so the rule
+/// is tested with no HID.
+struct SensorProbePolicy: Equatable {
+    enum Verdict: Equatable { case keepPolling, rest }
+
+    /// Failed reads in a row before the pump rests: five seconds at the
+    /// parked 10 Hz.
+    static let failureLimit = 50
+    /// How long a resting pump waits before it looks for the device again.
+    static let probeInterval: TimeInterval = 60
+
+    private var failures = 0
+
+    mutating func note(read succeeded: Bool) -> Verdict {
+        if succeeded {
+            failures = 0
+            return .keepPolling
+        }
+        failures += 1
+        return failures >= Self.failureLimit ? .rest : .keepPolling
+    }
+
+    /// A probe is about to poll again: it gets one failed read to prove
+    /// itself, not a whole new run.
+    mutating func resumeProbing() {
+        failures = Self.failureLimit - 1
+    }
+}
+
+/// Whether the sensor has gone quiet while the fold believes it. A polling
+/// pump always delivers something at least once a second — even a lid at
+/// rest sends its clamshell beat — so a stretch with nothing at all means
+/// the pump is stuck or resting, and the last angle it reported is no
+/// longer a fact the fold may stay up on.
+enum FoldSensorSilence {
+    /// Seconds without a sample before the last reading is let go.
+    static let limit: TimeInterval = 3
+
+    static func isSilent(lastSampleAt: TimeInterval?, now: TimeInterval) -> Bool {
+        guard let lastSampleAt else { return false }
+        return now - lastSampleAt > limit
+    }
+}
+
 /// The queue-side half of the sensor: every HID read, the poll timer,
 /// and the once-a-second clamshell beat live here, confined to a serial
 /// queue. Not actor-isolated, not observed — just a pump that publishes
@@ -137,7 +182,7 @@ final class SensorReadMeter: @unchecked Sendable {
 /// ~100 ms), so above the arming band polling at its own 10 Hz loses
 /// nothing. Inside the band the poll runs 120 Hz — a read costs ~0.5 ms
 /// and dense polls timestamp each sensor edge to ±8 ms, which is what
-/// the tracker's dead reckoning needs. A shut lid sits under the band
+/// the motion's edge timing needs. A shut lid sits under the band
 /// but never arms it: see `rateClassFor`.
 ///
 /// The parked class is a background chore and is timed like one:
@@ -146,7 +191,7 @@ final class SensorReadMeter: @unchecked Sendable {
 /// still, shut or not. Only the armed class earns user-interactive QoS
 /// and a 2 ms leeway. Every sample is still published: the movement
 /// anchor's settle clock needs each one, and the jitter filter is what
-/// keeps a parked wobble off the tracker.
+/// keeps a parked wobble off the picture.
 final class SensorPump: @unchecked Sendable {
     /// Publishes a sample on the main runloop; set by the shell.
     var publish: (@MainActor @Sendable (LidAngleSensor.Sample) -> Void)?
@@ -168,6 +213,13 @@ final class SensorPump: @unchecked Sendable {
     /// Everything below is queue-side state — only ever touched on `io`.
     private var devices: [IOHIDDevice] = []
     private var timer: DispatchSourceTimer?
+    /// Looks for the device again while the poll rests (no sensor, or one
+    /// that never answers); exists only then.
+    private var probeTimer: DispatchSourceTimer?
+    private var probe = SensorProbePolicy()
+    /// Whether the toy wants polling at all — a probe only resumes the
+    /// poll while it does.
+    private var wantsPolling = false
     /// 0 is the parked 10 Hz, 1 is the armed 120 Hz.
     private var rateClass = 0 {
         didSet {
@@ -180,8 +232,8 @@ final class SensorPump: @unchecked Sendable {
     }
     /// The last angle read; the arming-band rate decision rides on it.
     private var lastRaw: Double?
-    /// Counts poll fires; the clamshell read lands once a second.
-    private var beats = 0
+    /// Clamshell reads follow elapsed time across sensor-rate changes.
+    private var clamshellCadence = SensorClamshellCadence()
     private var clamshell: Bool?
 
     private static let intervals = [1.0 / 10.0, 1.0 / 120.0]
@@ -224,8 +276,13 @@ final class SensorPump: @unchecked Sendable {
 
     func setPolling(_ on: Bool) {
         io.async {
+            self.wantsPolling = on
             if on {
                 guard self.timer == nil else { return }
+                // Switching on is a fresh look: it ends any rest.
+                self.cancelProbe()
+                self.probe = SensorProbePolicy()
+                self.clamshellCadence = SensorClamshellCadence()
                 self.refreshDevices()
                 self.rateClass = self.wantedRateClass
                 // No direct beat() here: the fresh timer's deadline is
@@ -234,13 +291,14 @@ final class SensorPump: @unchecked Sendable {
             } else {
                 self.timer?.cancel()
                 self.timer = nil
+                self.cancelProbe()
                 self.quietCenter = nil
             }
         }
     }
 
     /// 10 Hz above the arming band — the sensor's own cadence — and
-    /// 120 Hz inside it, where an edge's poll timestamp is the tracker's
+    /// 120 Hz inside it, where an edge's poll timestamp is the motion's
     /// edge time. A shut lid stays parked however low it reads: at or
     /// under `FoldPause.closedAngle`, or with the clamshell flag set,
     /// the fold is paused and cannot draw, and a lid shut on an awake
@@ -302,15 +360,13 @@ final class SensorPump: @unchecked Sendable {
         let raw = readAngle()
         reads.tick(at: ProcessInfo.processInfo.systemUptime)
         if raw != nil { lastRaw = raw }
-        beats += 1
-        // Once a second in wall time, not in beats — at 120 Hz that is
-        // every 120 fires, at 10 Hz every 10.
-        var clamshellBeat = false
-        if Double(beats) * Self.intervals[rateClass] >= 1 {
-            beats = 0
-            clamshell = ClamshellState.read()
-            clamshellBeat = true
+        if probe.note(read: raw != nil) == .rest {
+            restPolling()
+            // The failed read still goes out below, so the toy sees nil
+            // and the card says the sensor is not answering.
         }
+        let clamshellBeat = clamshellCadence.shouldRead(at: now)
+        if clamshellBeat { clamshell = ClamshellState.read() }
         let next = wantedRateClass
         if next != rateClass { rateClass = next }
         if Self.staysQuiet(raw: raw, center: quietCenter, armingAngle: armingAngle, clamshellBeat: clamshellBeat) {
@@ -325,6 +381,41 @@ final class SensorPump: @unchecked Sendable {
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.publish?(sample) }
         }
+    }
+
+    /// Stops the poll and schedules the rare look for the device.
+    private func restPolling() {
+        timer?.cancel()
+        timer = nil
+        quietCenter = nil
+        cancelProbe()
+        let probeTimer = DispatchSource.makeTimerSource(queue: io)
+        probeTimer.schedule(deadline: .now() + SensorProbePolicy.probeInterval,
+                            leeway: .seconds(5))
+        probeTimer.setEventHandler { [weak self] in self?.probeForDevice() }
+        probeTimer.resume()
+        self.probeTimer = probeTimer
+    }
+
+    private func cancelProbe() {
+        probeTimer?.cancel()
+        probeTimer = nil
+    }
+
+    /// The rare look: refresh the device list, and poll again once there
+    /// is something to read. A probe that finds a device but still reads
+    /// nothing rests again after one failed read.
+    private func probeForDevice() {
+        cancelProbe()
+        guard wantsPolling, timer == nil else { return }
+        refreshDevices()
+        if devices.isEmpty {
+            restPolling()
+            return
+        }
+        probe.resumeProbing()
+        rateClass = wantedRateClass
+        scheduleTimer()
     }
 
     private func refreshDevices() {
@@ -386,5 +477,18 @@ enum ClamshellState {
             service, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0
         )?.takeRetainedValue() else { return nil }
         return (property as? Bool) ?? (property as? NSNumber)?.boolValue
+    }
+}
+
+/// Reads clamshell state immediately on startup, then once per host second.
+/// Changing the sensor's polling rate never changes this deadline.
+struct SensorClamshellCadence {
+    private var lastReadAt: TimeInterval?
+
+    mutating func shouldRead(at now: TimeInterval) -> Bool {
+        guard now.isFinite else { return false }
+        if let lastReadAt, now >= lastReadAt, now - lastReadAt < 1 { return false }
+        lastReadAt = now
+        return true
     }
 }

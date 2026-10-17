@@ -30,8 +30,8 @@ struct DockPreviewWindow: Identifiable {
 }
 
 /// One entry in a folder pop (DockDoor's Folder Pop): the name, the
-/// type icon and the URL a click opens. Ids are indices — a folder
-/// fill is synchronous, there is no in-flight write to mis-land.
+/// type icon and the URL a click opens. The grid uses the URL as its
+/// identity so sorting keeps each file's thumbnail on its own chip.
 struct DockFolderEntry: Identifiable {
     let id: Int
     let name: String
@@ -138,6 +138,9 @@ struct DockFolderListing {
     var entries: [DockFolderEntry] = []
     var folderIcon: NSImage?
     var denied = false
+    var failed = false
+
+    var state: DockFolderState { denied ? .denied : failed ? .failed : .ready }
 }
 
 /// Everything the panel renders for one hovered dock icon — an
@@ -213,6 +216,34 @@ final class DockPreviewContent {
     /// The header's one-line note: a guarded Quit's first press, or the
     /// windows Close all kept because an agent runs in them.
     var headerNote: String?
+    private var guardedHeaderNote: String?
+
+    func confirmGuard(_ key: String, guarded: Bool, now: TimeInterval,
+                      guardState: inout DockAgentGuard) -> Bool {
+        let previous = guardState.armedKey
+        let confirmed = guardState.confirm(key, guarded: guarded, now: now)
+        if let previous, previous != guardState.armedKey { clearGuardNote(previous) }
+        return confirmed
+    }
+
+    func armQuitNote(_ note: String) {
+        guardedHeaderNote = note
+        headerNote = note
+    }
+
+    func clearGuardNote(_ key: String) {
+        if key == armedWindowID.map({ "close:\($0)" }) {
+            armedWindowID = nil
+            armedNote = nil
+        } else if key.hasPrefix("quit:") {
+            if headerNote == guardedHeaderNote { headerNote = nil }
+            guardedHeaderNote = nil
+        }
+    }
+
+    /// The latest refused window action. Separate from agent warnings,
+    /// so a partial close-all can explain both the guard and the failure.
+    var actionFailure: String?
     /// Quit was asked and the app is still here a beat later — the
     /// header's power disc becomes Force Quit.
     var stillRunning = false

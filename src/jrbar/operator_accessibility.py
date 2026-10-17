@@ -25,7 +25,7 @@ from .presentation_policy import (
     ResolvedGlance,
 )
 from .product_identity import PRODUCT_DISPLAY_NAME
-from .provider_facts import SourceFreshness, WorkKey, WorkLifecycle
+from .provider_facts import NextActor, SourceFreshness, WorkKey, WorkLifecycle
 
 
 def _present_primary_works(state: CanonicalOperatorState) -> tuple:
@@ -40,19 +40,27 @@ def _present_primary_works(state: CanonicalOperatorState) -> tuple:
     if clock is None:
         return tuple(work for work in state.works if work.parent_key is None)
     horizon = clock.wall_epoch - PRESENCE_HORIZON_SECONDS
+    # A session still waiting on the person is present however long it has
+    # been quiet: the count must not say "nothing needs you" while an ask
+    # stands (``ask_lifetime``).
+    asking = frozenset(
+        request.key.work_key
+        for request in state.requests
+        if request.phase
+        in {RequestPhase.LIVE_UNACKNOWLEDGED, RequestPhase.LIVE_ACKNOWLEDGED}
+        and request.next_actor is NextActor.USER
+    )
     return tuple(
         work
         for work in state.works
         if work.parent_key is None
-        and work.watermark.occurred_at_epoch >= horizon
+        and (work.watermark.occurred_at_epoch >= horizon or work.key in asking)
     )
 
 
 MAX_ACCESSIBILITY_LABEL_LENGTH: Final = 256
 MAX_ACCESSIBILITY_VALUE_LENGTH: Final = 512
 MAX_ACCESSIBILITY_HELP_LENGTH: Final = 256
-MAX_FOCUS_KEY_LENGTH: Final = 128
-MAX_TEXT_SELECTION_COMPONENT: Final = (1 << 63) - 1
 
 _PRODUCT_PROVIDER_LABELS: Final = {
     "antigravity": "Antigravity",
@@ -85,14 +93,6 @@ _GLANCE_HEADLINES: Final = {
     GlanceSemantic.CAPACITY: "Capacity status available",
     GlanceSemantic.REST: "No agents need attention",
 }
-_TEXT_SCALE_BY_PERCENT: Final = {
-    100: 1.0,
-    125: 1.25,
-    150: 1.5,
-    175: 1.75,
-    200: 2.0,
-}
-_FOCUS_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~:-]*\Z")
 _EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
 _UUID = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
@@ -138,15 +138,6 @@ def _valid_public_text(value: object, *, maximum: int) -> bool:
     )
 
 
-def _valid_focus_key(value: object, *, required: bool) -> bool:
-    if value is None:
-        return not required
-    return (
-        type(value) is str
-        and 1 <= len(value) <= MAX_FOCUS_KEY_LENGTH
-        and _FOCUS_KEY.fullmatch(value) is not None
-        and not _private_shaped_text(value)
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,31 +155,6 @@ class AccessibilityText:
             raise ValueError("invalid accessibility text")
 
 
-@dataclass(frozen=True, slots=True)
-class FocusSnapshot:
-    window_key: str
-    control_key: str | None
-    selected_work_key: WorkKey | None
-    text_selection: tuple[int, int] | None
-    sidebar_key: str | None
-
-    def __post_init__(self) -> None:
-        selection_valid = self.text_selection is None or (
-            type(self.text_selection) is tuple
-            and len(self.text_selection) == 2
-            and all(
-                type(component) is int and 0 <= component <= MAX_TEXT_SELECTION_COMPONENT
-                for component in self.text_selection
-            )
-        )
-        if not (
-            _valid_focus_key(self.window_key, required=True)
-            and _valid_focus_key(self.control_key, required=False)
-            and (self.selected_work_key is None or type(self.selected_work_key) is WorkKey)
-            and selection_valid
-            and _valid_focus_key(self.sidebar_key, required=False)
-        ):
-            raise ValueError("invalid focus snapshot")
 
 
 def status_item_accessibility(
@@ -320,11 +286,6 @@ def status_item_title(
     return headline
 
 
-def normalize_semantic_text_scale(value: object) -> float:
-    """Normalize exact percentage choices to a system-font scale multiplier."""
-    if type(value) is not int:
-        return 1.0
-    return _TEXT_SCALE_BY_PERCENT.get(value, 1.0)
 
 
 def _status_fallback() -> AccessibilityText:

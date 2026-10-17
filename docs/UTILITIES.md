@@ -7,8 +7,9 @@ feature lives:
 
 - **Toy**: a thing you turn on for fun or focus (Fold, Aquarium, Notch Buddy,
   Confetti). Lives on the Toys page.
-- **Utility**: a thing you turn on to replace another app (Notch island,
-  Dock, Menu Bar, agent Overview). Lives on the Utilities page.
+- **Utility**: a thing you turn on to replace another app (Menu Bar, Dock,
+  Keep Awake, agent Overview, Notch island). Lives on the
+  Utilities page, in that order.
 
 Notch stays callable a "toy" internally only for history — the card code is
 the same shape; the page it sits on is Utilities.
@@ -17,8 +18,8 @@ the same shape; the page it sits on is Utilities.
 
 `SettingsStore.Page` gains `utilities`, placed **after `devices`** and before
 `lighting`. The sidebar stays flat (sections are a separate cohesion pass).
-Toys page keeps Fold, Aquarium, Notch Buddy, Confetti — in that order — and
-loses the Notch card and the future Dock card to Utilities.
+The Toys page keeps Fold, Aquarium, Notch Buddy and Confetti; the Notch card
+and the Dock card live on Utilities.
 
 Utility cards reuse `ToyCard`'s shape (DisclosureGroup: tinted symbol tile,
 name + blurb, status chip, on/off toggle, controls in the body) via a shared
@@ -35,69 +36,103 @@ Replaces Ice and Bartender 7. Both are reference apps only: Ice is GPL-3,
 Bartender is closed — **clean-room**, no code, no verbatim assets.
 
 > **Status — what is built.** The positional section model, the
-> spacers, the override covers, the reveal gestures, the Item Bar (live
+> override covers, the reveal gestures, the Item Bar (live
 > tiles + `AXPress` click-through), the per-item override pickers, the
-> arrange editor, the ⌘⇧K command bar, hotkeys, triggers, profiles,
-> cover appearance, the combined control, and the provider picker —
+> ⌘⇧K command bar, hotkeys, triggers, profiles, cover appearance, and
+> the provider picker —
 > the card's "Render with" hands the whole surface to an installed
 > counterpart (Bartender, Ice, Hidden Bar; `MenuBarSettings.provider`)
 > and parks our engine while the pick stands, with a live
 > installed/running note that flips on workspace launch and quit.
 >
-> **The boundary affordance stands under the spacer engine.** While the
-> utility is on and the spacer engine runs, the JR-Bar item keeps a
-> 30 pt drop zone with a ‹ mark inside it
+> **Position is the setting (2026-10-07).** The Menu Bar model is Ice's:
+> JR-Bar's own status item is the divider. Everything left of it is hidden,
+> everything right of it stays, and you hold ⌘ and drag an item across the
+> icon to change it. Moving it left makes it disappear; moving it right
+> makes it come back. There is no list to keep in step: the card's rows
+> are a read-out of where things sit (`MenuBarPositionPanel.swift`), and
+> JR-Bar never moves another app's item for you — a pick made on a tile, in
+> the icon's menu or in the palette is answered with the one gesture that
+> does it (`MenuBarPositionCopy.guide`), and a pick to bring one back opens
+> the reveal first so the item is drawn and can be dragged. Revealing
+> (the ‹ and the blank bar left of the icon, a hover, a scroll, the
+> hotkey) draws the hidden items on the bar for the rehide delay; what the
+> run right of the notch cannot hold at once waits in the Item Bar, which
+> opens by itself when a reveal leaves items parked. Research and sources:
+> [archive/research/2026-10-07-menu-bar-ice-model.md](archive/research/2026-10-07-menu-bar-ice-model.md).
+>
+> **One engine, the divider.** The **divider** is the only engine: the
+> JR-Bar icon grows a blank spacer left of itself, capped under half the
+> screen's width (the system drops a longer item instead of clamping it),
+> and macOS parks what no longer fits in its own overflow. The real icon is
+> always drawn, so there is always something to drag across. A saved list of
+> hidden apps never decides what hides, and neither does a crowded bar. A
+> settings file that still names another engine reads as the divider.
+>
+> A newcomer is where macOS puts it (left of the icon it is hidden, right
+> of it shown). The real icon's ‹ and the blank bar left of it reveal, while
+> a click on the glyph itself still opens the panel. The log
+> (`devin.jrbar:menubar`) names the engine start (`engine:`), every drag
+> (`drag:`) and the positional record it wrote (`record:`).
+>
+> **A saved list is only a suggestion.** A file from before this model
+> keeps every pick, and nothing is cleared. The apps its list hid are kept
+> once, in `dividerSuggestions`, and the card offers them under "Your bar"
+> with where each sits: the divider does not hide an app because the list
+> says so, only because it stands left of the icon. A one-line hint, "Hold ⌘
+> and drag an app left of the JR-Bar icon to hide it", stays until the
+> person closes it. After that the list (`concealedApps` in the settings
+> file) is only a record, kept up to date from the bar's positions; nothing
+> hides on its say-so. **Show everything** folds the divider away, and
+> turning the utility off returns every item.
+>
+> **A bar too full for the icon.** When macOS parks JR-Bar's own item for
+> want of room (`MenuBarDividerRoomWatch`: off the row for eight seconds with
+> no spacer to blame, or three parked-boundary lessons inside a minute) the
+> card and the icon's menu say so, count the items macOS holds in its «
+> overflow, and say how few items would have to leave the bar to seat the
+> icon (`MenuBarRoomHelp`: the widest first). The person quits or switches
+> off those items; JR-Bar does not move them.
+>
+> **A ⌘-drag holds the bar still.** macOS reflows the whole row while a
+> status item is dragged, and anything JR-Bar wrote in that time reflowed it
+> again. While a ⌘-press is on the bar and for 0.9 s after the drop
+> (`MenuBarPointerGate`), the hider reads and writes nothing, the hover
+> reveal and the rehide clock stand down, and nothing is recorded. One
+> reconcile follows the drop, and the log says what moved
+> (`MenuBarPositionDiff`). The drag handler under the divider only
+> observes. "What JR-Bar sees" on the card lists the engine, the icon's
+> place, the spacer and why, the two sides, and the last change.
+>
+> **The bar re-forming.** When the Mac, its displays or the session wake,
+> a display is attached or removed, or a Space changes, macOS rebuilds the
+> row and apps put their items back one at a time. The divider then leaves
+> the spacer alone for about 2.5 s, forgets what it learned about the bar's
+> room, and checks the icon on two fresh listings: on the row, the width
+> JR-Bar wrote, and clear of other apps' items. A clear icon costs no write.
+> A wrong one is re-seated once (the spacer folded and written again) and,
+> if it is still wrong, "What JR-Bar sees" says so and JR-Bar stops; macOS
+> keeps the order of the row. A spacer held short of the fit edge covers the
+> items it cannot push off, in place, and says how far short it is. The
+> per-event table is in [TOP-OF-SCREEN.md](TOP-OF-SCREEN.md).
+>
+> **The boundary affordance.** While the utility is on, the JR-Bar item
+> keeps a 30 pt drop zone with a ‹ mark inside it
 > (`MenuBarUtility.boundaryAffordance` → `StatusItemController`'s
 > folded face) — the separator the person ⌘-drags items across, visible
-> whether or not anything is hidden yet. The concealer claims none: the
-> width pushed the item's slot into the notch dead zone and parked it.
-> There the mirror's ‹ is the mark (below).
+> whether or not anything is hidden yet.
 >
-> **How hiding works on macOS 26 — verified live (2026-09-15).** macOS 26
+> **How hiding works — verified live on macOS 26 (2026-09-15).** macOS
 > packs the status region right-to-left and *parks* whatever no longer
 > fits in its own overflow (the "Show Hidden Menu Bar Items" control
 > MenuBarAgent draws). A 3 000-point item is parked itself; a 250-point
 > item inserted mid-row stays and pushes everything left of it into that
 > overflow, with no holes. So **JR-Bar's own status item is Bartender's
 > separator**: items left of it are hidden, and hiding is the item's own
-> `length` growing a blank spacer — the spacer engine, below.
+> `length` growing a blank spacer, below.
 >
-> **macOS 27 (this Mac): the concealer.** The menu bar is one surface
-> `MenuBarAgent` draws, and the utility drives the agent's own
-> assessment mode through the private `MenuBarClientCore` framework
-> (`MenuBarConcealer.swift`, facts in docs/PRIOR-ART.md): an allowlist
-> of running apps stays, the agent conceals the rest and repacks the
-> row. No spacer; the native « appears only on a bar too crowded for
-> what stays. Sections are per app (`concealedApps`) and explicit: an
-> app is hidden only when the person picks it — with a ⌘-drag across
-> the icon (below), in the card's overrides, on an Item Bar tile, in the
-> icon's menu or in the ⌘⇧K palette — and nothing is ever learned from
-> where an item happens to sit. Apple's own extras and bare helpers have
-> no path through the agent and take a cover where they sit, unless
-> `curation.concealAppleExtras` lets Weather, Passwords and Time Machine
-> hide like any app (off until a live probe shows they conceal
-> cleanly). Reveal = invalidate, rehide = re-activate, a new
-> assertion goes up before the old comes down; clicks on the agent's own
-> clock/battery/Wi-Fi are held at an event tap, lifted for and replayed.
->
-> Under the concealer macOS never draws JR-Bar's own item: the agent
-> exempts by signing identity, and the helper that holds the assertion
-> shares ours (measured 2026-09-22). The real item goes slim and blank,
-> and `MenuBarIconMirror`, a panel at `statusBar + 1` wearing the face
-> the item would wear, is the icon. It stands flush left of the first
-> drawn item with room for it, clear of the notch, the Screen Bar and
-> the front app's menus: the right end of the empty bar left of what
-> stays drawn, where Bartender keeps its icon. It answers clicks the way
-> the real button does: a left click opens the panel, a right, ⌥ or
-> Control click pops the full menu, and its ‹ toggles the Item Bar. The
-> empty bar left of it is the hover and click reveal zone. When no
-> mirror stands — the Hidden icon style, or a target with nothing
-> running to conceal, where macOS draws the real item again — the ‹
-> moves to the Screen Bar's right ear. Everything below describes the
-> **spacer engine**, the fallback where the framework does not resolve.
->
-> The spacer engine: JR-Bar's
-> own `length` growing a blank spacer left of its icon
+> **The spacer.** JR-Bar's
+> own `length` grows a blank spacer left of its icon
 > (`StatusItemController.boundarySpacer`) that reaches the **fit edge**
 > — the screen x where a spacer's left edge may land and still be
 > drawn (macOS draws a status item only when it fits in the visible
@@ -112,7 +147,10 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > true) and the Screen Bar's right ear narrows to stop short of it.
 > Revealing collapses the spacer and the run packs back where it was;
 > a click on the blank stretch, a hover on it, or a scroll over the
-> bar is the reveal, and the icon's right-click menu carries a "Hidden
+> bar can reveal items. Hover has separate entry and exit delays,
+> defaulting to 180 ms and 250 ms. Under "After a delay", clicks and
+> scrolls keep their own timer; open menus keep the items visible.
+> The icon's right-click menu carries a "Hidden
 > Menu Bar Items" submenu. The click answers in the Item Bar, not the
 > row: macOS only un-parks what fits, so a ‹ or › click toggles the
 > Item Bar open or closed (the run follows), and an empty run pops
@@ -147,97 +185,84 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > moves the person's real cursor. The person's own ⌘-drag is the only
 > thing that reorders the bar.
 
-### ⌘-drag across the icon (macOS 27)
+### The model, and what the card says about it
 
-Bartender's, Ice's and Hidden Bar's habit, under the concealer
-(`MenuBarDragLearn`, `MenuBarUtilityDrag.swift`; on by default,
-`curation.dragToHide`, card row "⌘-drag across the icon hides or
-shows"). ⌘-drag an item and drop it left of the JR-Bar icon: its app
-hides. Drop it right of the icon: it shows. Hold ⌥ at the drop for
-Always Hidden; a hide keeps an existing Always, and a drop that lands
-the app where it already is writes nothing (a reorder is only a
-reorder). A drop on the icon itself does nothing.
+Each app with a menu bar item is **Shown** (right of the icon),
+**Hidden** (left of it) or **Always hidden** (a cover where it sits, the one
+section that is an override, since a second status item of ours swaps sides
+on every reflow). The card opens with "Your bar": the model in one
+sentence, a live diagram of the bar (Hidden, the icon, Shown), the
+engine, the old list as suggestions while any are left, and what JR-Bar
+sees. Hidden apps wait in the Item Bar, which opens from the
+icon's ‹, a hover or click on the blank bar, or the ⌘⌥B hotkey, and by
+itself when a reveal leaves items parked; Always-hidden ones open only from
+the Item Bar's tiles or the reveal-always-hidden hotkey. Nothing is hidden
+until the person drags it, and an app that launches later is shown where
+macOS puts it.
 
-- **Where it is heard.** The click bridge's event tap (the one that
-  already lifts the clock, battery and Wi-Fi for a click) passes every
-  ⌘-press straight through — it used to turn a ⌘-drag of Wi-Fi into a
-  plain click — and reports the press and the release that ends it.
-  With the tap down, the reveal's own discrete monitor (mouse-downs and
-  mouse-ups) stands in. Nothing is posted; the pointer is the person's.
-- **One drag, one write.** The press notes the drawn item under it —
-  never ours, never the «, never a concealed app's Accessibility ghost —
-  and the icon's span as the person saw it. The release reads the drop's
-  side, waits 0.6 s for MenuBarAgent to persist the move, reads a fresh
-  listing, and writes one section through the same path the pickers take
-  (the active profile's delta when that profile already speaks for the
-  app, else the base). A listing that changes on its own never writes:
-  no press, no write — the lesson of `424c08ad`, pinned by a test.
-- **A whole-bar shift is not a move.** Every ScreenCaptureKit capture
-  lights the recording indicator and shifts the bar about 56 pt. The
-  confirm measures the item against the clock (or Control Center) read
-  in the same pass and needs a real reorder; when the anchor itself
-  moved, or Accessibility did not answer, only a drop that crossed the
-  icon is believed (or, when granted, the layout table read after it).
-- **Frozen while it lasts.** From the press until 1.2 s after the write
-  (through `shrinkHold` when the bar shifted), the icon keeps its right
-  edge, the hover reveal stands down (so the drop no longer pops the
-  Item Bar), and an inline reveal's rehide clock re-arms. A held mouse
-  button suppresses the hover reveal too.
-- **Never silent.** A drop that asked for something says what happened
-  for four seconds under the icon, in the Item Bar's own glass: macOS's
-  own item ("macOS keeps Wi-Fi, the clock and Control Center — hide them
-  in System Settings › Menu Bar"), an Apple extra that took a
-  cover, another display's bar, an app with several items ("Hid all of
-  iStat Menus's items"), or a drop macOS did not take.
-- **A cover is blank bar to the icon.** An Apple extra ⌘-dragged left
-  lands just left of JR-Bar's slim slot and takes a cover there. The
-  icon's seat reads a covered item as blank, so the icon stays beside
-  the first shown item and stands over the cover rather than hopping
-  left of it. The icon stands a level above the covers, and a cover
-  under it stays whole so the item never shows through. While its run
-  is revealed the item draws again and the icon stands clear of it.
-- **Limits.** Apps hide as a whole (a platform limit Bartender, Thaw and
-  Ice share). Only the main display's bar carries the icon. The start
-  of a run (the 2.5 s adoption grace) learns nothing.
-- **Show hidden items while ⌘-dragging** (`revealWhileDragging`, off):
-  Ice's reveal — the hidden run comes in beside the icon for the drag
-  and the ‹ becomes a thin divider. Off by default: MenuBarAgent may
-  drop a drag when the assertion changes under it.
-- **Drag a tile out of the Item Bar** onto the bar right of the icon to
-  show its app — the bar's own drag session, read where it ends.
-- **The icon's seat** (`mirrorSeat`, Advanced › Icon seat): beside the
-  first shown item (today) or on JR-Bar's own slot, with the real item
-  sized to the icon (rounded up to 8 pt, grown at once, shrunk only after
-  5 s) so "left of the icon" is the agent's own order.
-- **The layout table** (Advanced › Menu bar layout table): pick
-  `~/Library/Group Containers/com.apple.MenuBar/Library/Preferences/
-  com.apple.MenuBar.plist` once in an open panel (with Full Disk Access
-  already granted, the click reads it with no panel) and JR-Bar reads
-  `TrailingItemPreferredPositions` — read-only, watched, never written.
-  It orders the Item Bar and the layout editor, backs a drag's confirm
-  when Accessibility is slow to answer, and — on the slot seat, where
-  the icon's sides are macOS's order — flags an app whose section and
-  place disagree with a one-click section fix (a pick, never a move).
-  The file's shape is unverified until a real grant; the parser takes
-  the likely forms.
-- **The clock and Control Center** (`concealSystemItems`, off,
-  experimental, no card row): only the plan table is built. With the
-  flag on, a clock or Control Center key already in `concealedApps`
-  (the live probe writes it by hand) leaves the assertion's system item
-  list. No pick writes one yet, so a ⌘-drag of either still gets the
-  note: the icon's seat, the Item Bar and the drag would each have to
-  read a hidden clock as concealed first. Wi-Fi, the battery and sound
-  always stay. It stays off, and out of the card, unless a live probe
-  shows they conceal and come back cleanly.
-- **Apple's extras** (`concealAppleExtras`, the card's "Hide Apple's
-  extras like apps"): a file that never chose follows the code default,
-  and only a choice made on the card is written — so the default can
-  flip once the live probe passes and reach every file that never chose.
+The card's first line is `MenuBarHidingBanner`, the one answer to "is
+hiding working": `MenuBarHidingStatus.assess` over the engine's health,
+the standing overlay, rivals, Accessibility and the icon's room. Each
+state names itself and carries its fix, in this order:
 
-Also in this pass: **New menu bar items** (`newItems`: where macOS
-puts them and the ear asks, straight to Shown, or straight to Hidden),
-**Item Bar opens at** the icon or the pointer (`itemBarAt`), **Tuck
-away when you switch apps** (`RehideMode.focusChange`, Ice's smart
+| State | Says | One click |
+| --- | --- | --- |
+| Menu Bar off | every item shows as macOS draws it | |
+| Another manager renders | whose, and whether it runs | Open it |
+| Show everything / Hide all standing | what stands, until when | Hide my picks again / Show everything |
+| Start grace | starting up | |
+| A rival manager runs | two managers fight | Quit it |
+| No Accessibility | the Item Bar cannot press items | Open Settings |
+| The bar is too full for the icon | macOS holds N items in its « overflow; at least K must leave the bar | |
+| Nothing left of the icon | hold ⌘ and drag an item left of the icon (or the icon itself right, when it is at the bar's left end) | |
+| Healthy | Hiding N items left of the icon, and how to reach them | |
+
+The way out is always on the banner: **Show everything** while anything is
+hidden (the card's own Show everything button also offers 5 minutes or an
+hour), and **Turn Menu Bar off** beside every warning. Show everything
+(`MenuBarUtility.showEverythingNow`) always shows everything, even over a
+Hide all — the older Show all restores over a quiet bar so a lock/unlock
+rule pair ends where it began, and stays that for hotkeys and rules. No
+rule outvotes a standing Show everything. Picks are kept; turning the
+utility off gives every item back and leaves the picks in the file for
+the next time.
+
+### A relaunch finds an icon
+
+Opening JR-Bar right after quitting it waits up to 10 s for the old
+instance to let go of `~/.local/state/jrbar/app.lock` instead of giving up.
+JR-Bar clears any saved "hidden" placement for its own item at launch and
+recreates the item when it cannot find it (`status-item` in the log).
+Opening JR-Bar.app while it runs brings up Settings, so the way in never
+depends on the icon.
+
+### ⌘-drag across the icon
+
+Bartender's, Ice's and Hidden Bar's habit. Hold ⌘ and drag an item left of
+the JR-Bar icon and it is hidden; drop it right of the icon and it is
+shown. macOS moves the item itself. JR-Bar only watches
+(`MenuBarUtilityDrag.swift`): it posts nothing, writes nothing to the bar,
+and the pointer is the person's.
+
+- **The bar holds still.** From the ⌘-press until 0.9 s after the drop
+  (`MenuBarPointerGate`) the hider reads and writes nothing, the hover
+  reveal and the rehide clock stand down, and nothing is recorded. A held
+  mouse button suppresses the hover reveal too.
+- **One drop, one read.** After the drop JR-Bar reads the bar once and
+  compares it with what it saw before (`MenuBarPositionDiff`). The log
+  says what moved (`drag:`) and what the positional record now holds
+  (`record:`). A listing that changes on its own is never taken for a
+  drag: no press, no record.
+- **Never silent.** A drop says what happened for four seconds under the
+  icon, in the Item Bar's own glass, including the cases where nothing
+  changed sides.
+- **Drag a tile out of the Item Bar** onto the bar to move its app: the
+  drag is the Item Bar's own session, the pointer is the person's, and a
+  drop on either side of the icon is answered with the ⌘-drag that does the
+  move. JR-Bar never moves another app's item itself.
+Also in this pass: **Item Bar opens at** the icon or the pointer
+(`itemBarAt`), **Tuck
+away: When you switch apps** (`RehideMode.focusChange`, Ice's smart
 rehide), keep-awake rule actions (keep awake for N minutes, until
 released, or let the Mac sleep — the Keep Awake card's own hold), and
 **Relaunch menu bar apps** under the spacing dial: items take a new
@@ -251,84 +276,137 @@ quit and reopen. It never runs on its own and never touches Apple's.
   or a gesture), **always-hidden** (an override only: a cover where the
   item sits, hidden even while the run is revealed, reachable through
   the Item Bar). **Built.**
-- Reveal triggers: hover over the menu bar's empty space, click empty space,
-  scroll/swipe on the menu bar, hotkey per section. Auto-rehide after N s
-  (default 4, off when the Item Bar panel is pinned). **Built** except the
-  per-section hotkeys (phase 2).
+- Reveal triggers, all on by default: **Hover the blank stretch**, **Click
+  the blank stretch**, **Scroll over the bar**, and two hotkeys (Item Bar
+  toggle ⌘⌥B, reveal Always hidden ⌘⌥⇧B; both off until you turn them on).
+  **Tuck away** picks how a reveal ends: After a delay (1 to 15 s, default
+  4), When you click elsewhere, or When you switch apps. The delay re-arms
+  while the pointer is on the bar or the open Item Bar. **Built.**
 - **Item Bar**: a floating panel under the menu bar (Liquid Glass — it floats)
   listing hidden items as tiles. **Built**: owner-icon tiles, `AXPress`
   click-through (reaches covered and system-parked items), ⌘-click pulls a
-  tile up a section, a reposted-click fallback when the element cannot be
-  re-resolved, `SCScreenshotManager` live tiles at 2 Hz with icon fallback —
-  never a stream, so no capture indicator (see docs/TOY-PARITY.md).
-- Items that would land under the notch auto-move to hidden ("beat the
-  notch") using `ScreenBarGeometry.slotWidth`. **Built** (see docs/TOY-PARITY.md).
-- **Layout editor**: three rows (Shown, Hidden, Always) of the items' own
-  glyphs; dragging a tile to another row is a pick through the same write
-  the pickers make — never a move on the bar. With the layout table
-  granted, the rows follow macOS's own order. **Built.**
-- **Item search / Command bar**: ⌘⇧K or click on the JR-Bar item's menu —
-  fuzzy search over every menu bar item (shown + hidden), Return triggers it.
-- **Spacing**: per-item padding adjustments via spacer status items where
-  Apple's item allows, plus a global "compact / default / roomy" that also
-  tightens our own items. Marked *best-effort* — macOS may ignore it for
-  items that fix their own width.
-- **Profiles**: named layouts (shown/hidden sets + spacing + appearance);
-  hotkey or trigger to switch; per-display override.
+  tile up a section. Without Accessibility, or when the item can no longer
+  be found, a click raises the owning app instead; JR-Bar never posts a click
+  at the item. Live tiles are one `SCScreenshotManager` capture per tile
+  when the bar opens (at most one per half second per item), never a loop
+  or a stream, because a capture lights the recording indicator and shifts
+  the bar; without Screen Recording a tile shows the glyph photographed
+  while it was drawn, or the app's icon (see docs/TOY-PARITY.md).
+- An item that sits under the notch or under the front app's menus is
+  planned as hidden, because macOS leaves it behind the glass; the Item Bar
+  lists it. The switches are **Keep items out of the notch** and **Hide items
+  under app menus** under More, on by default.
+  **Built** (see docs/TOY-PARITY.md).
+- **Item search / Command bar**: ⌘⇧K, the icon's menu, or the Command bar
+  button under Advanced › Automate. It is JR-Bar's one palette, so the
+  menu bar items (shown and hidden) sit beside asks and sessions, the front
+  app's menus, quiet, lights and windows; Return runs the pick. It also
+  carries the bar's verbs: set an app's section, reveal, Hide all, Show all,
+  switch, save or rename a profile, and run a rule or turn it on or off. While the
+  Menu Bar utility is off the key still opens the palette, without those verbs.
+- **Spacing**: one system-wide gap between every app's items, under
+  Advanced: **Item spacing** (System, Tight 4 pt, Compact 8 pt, Roomy 14 pt)
+  and **Custom spacing** (0 to 24 pt). It writes `NSStatusItemSpacing` and
+  `NSStatusItemSelectionPadding` for the current host, so items take it only
+  as their apps relaunch (the Relaunch row above). macOS may ignore it for
+  items that fix their own width. JR-Bar draws no spacer
+  items of its own: it has one status item, and the divider is that item's own width.
+- **Profiles**: named layouts (the section picks, the cover look, the reveal
+  style and clock, the item spacing and the spacer items); switch from the
+  Profiles row, the icon's menu, the palette, the next and previous profile
+  hotkeys or a rule. A profile is a delta over your own picks, so switching
+  never rewrites them. **Profile at this desk** and **Profile per display**
+  pick one automatically. Rules and hotkeys are not part of a profile.
 
 ### Appearance
 
-- Menu bar background: none / solid / gradient / glass, opacity + tint;
-  shadow and bottom border toggles; rounded corner option; light/dark
-  independent overrides. Drawn as an underlay panel at `statusBar - 1` level,
-  click-through, sized to the menu bar rect, `sharingType = .none` so Fold's
-  capture doesn't double-draw it.
+- The look of a cover, under Overrides: **Cover material** (Blend In, Menu,
+  HUD, Popover or Sheet), **Tint the cover** with a **Tint color** and
+  **Tint strength**, **Rounded ends** (0 to 14 pt) and **Edge separators**.
+  There is one look; no separate light and dark settings, and no
+  gradient, shadow or border.
+- **Tint the whole bar** (Extras, off by default) draws the same material and
+  tint as an underlay panel under the full menu bar row on every display,
+  one level under the status items (`statusBar - 1`), click-through, sized to
+  the bar (the notch depth where there is one). It ignores the rounded ends
+  and separators, and it is kept out of screen captures (`sharingType =
+  .none`). On macOS builds where the bar's backdrop is opaque it reads as
+  nothing.
 
 ### Triggers
 
-Rule list: *when* (battery unplugged / on <N>% / charging; Wi-Fi network name
-match / public vs known; Bluetooth device connects; audio output changes;
-Focus mode starts; app launches/quits; time of day; display attach) *then*
-(show item / hide item / apply profile / open Item Bar). Evaluated off the same
-monitors we already run (`AlcovePowerMonitor`, CoreWLAN, audio route
-listener, `CoreState.focus`, `NSWorkspace` notifications). Off by default,
-each rule individually removable.
+Under Advanced › Automate there are two lists, both empty until you add a
+rule. Each rule has its own switch and a remove button.
+
+- **Rules** fire once on an event: *When* the screen locks or unlocks; an app
+  activates, launches or quits (by bundle id); a time of day; the charger
+  goes in or out; the battery falls to or rises past N%; Wi-Fi joins a named
+  network, changes or drops; the microphone goes live or quiet; a Focus turns
+  on or off; a display connects or disconnects; the lid closes or opens
+  (clamshell, Mac still awake); agents start working, an agent needs you or
+  the agents finish; usage headroom falls to N%; a SidePulse device connects
+  or disconnects. *Then* apply a profile, Hide all, Show all, reveal for N
+  seconds, run a script (a shell command run with `/bin/sh -c`),
+  keep the Mac awake for N minutes (up to a day) or until released, or let it
+  sleep. The first battery reading is a baseline, so a rule never fires for a
+  level the Mac was already in.
+  Scripts allow one running job per rule and four across the utility.
+  Another trigger is refused while that rule runs. Run Now reports whether
+  its script was queued or refused. Stopping Menu Bar, editing or removing
+  the rule, or switching it off cancels its job. An unchanged script has no
+  execution deadline. When a job ends, JR-Bar stops children in its process
+  group; a child that starts another group is outside that cleanup. Only the
+  last 8 KiB of combined output is retained, in private diagnostics.
+- **While…** rules hold a state for as long as a condition lasts and put
+  everything back when it ends: the microphone is live, a Focus is on, the
+  screen is locked, on battery, battery at or below N%, on a named Wi-Fi, an
+  app is in front or running, between two hours, the lid is closed, an
+  external display is attached, agents are working, an agent needs you,
+  agents are idle, usage headroom at or below N%, or SidePulse is connected
+  (each with a Not box). They hold the quiet bar or Show everything, a
+  profile, an LED scene and quiet agents, as an overlay that never rewrites
+  your own picks.
+
+Rules read the sources the app already runs: distributed lock
+notifications, `NSWorkspace` notifications, the power source (the same read as
+`AlcovePowerMonitor`), CoreWLAN, the microphone capture read, the daemon's
+agent and usage facts. They start only while an enabled rule can fire. A
+named Wi-Fi match needs Location; a Focus rule needs the Focus Status
+permission, which the card asks for when you add the rule.
 
 ### Hotkeys
 
-Carbon `RegisterEventHotKey` like `PanelHotkey`: toggle each section, open JR
-Bar, open search, toggle app menus. Recorded in Settings as a key field.
+Carbon `RegisterEventHotKey` like `PanelHotkey`. Settings › Shortcuts has a
+"Menu bar" group with a switch and a key recorder per action; the Menu Bar
+card (Advanced › Automate) shows the same switches and keys but does not
+record. The hotkeys are held only while the utility runs (the ⌘⇧K palette key
+is parked and still opens the palette when it is off). While one recorder is
+listening, another no longer hands the keys back to the system. Seven actions,
+with these defaults: the ⌘⇧K command bar
+(on); Item Bar toggle ⌘⌥B, reveal Always hidden ⌘⌥⇧B, Hide all ⌘⌥⇧H, Show
+all ⌘⌥H, next profile ⌃⌥⌘→ and previous profile ⌃⌥⌘← (all off until you turn
+them on). A key another app already owns is named, not taken.
 
-### The combined system item ("Status")
+### One status item
 
-A second `NSStatusItem` JR-Bar owns that can absorb Apple's items. Each
-absorption is individually opt-in; absorbing one writes the matching
-`com.apple.controlcenter "NSStatusItem Visible …" 0` default (the same key
-System Settings writes) and restores the prior value on un-absorb/disable/
-quit — the Dock Replace save-and-restore pattern.
+JR-Bar has exactly one status item, the icon, and writes no Control Center
+preference. An older build drew a second "one system item" (and an agent item
+and spacer items) and hid Control Center's own Battery, Wi-Fi, Bluetooth,
+Sound, Now Playing and Focus items while it showed. All three are gone. The
+icon's own Agents and Orbit styles carry the state and the counts; there is
+no separate agent item.
 
-- Absorbable: **Battery**, **Wi-Fi**, **Bluetooth**, **Sound**, **Focus**.
-  Clock and Siri are never absorbed (can't be; they're drawn inline).
-- **Variants** (`StatusIconStyle`-style picker, lives on the Utilities card
-  not the General page):
-  - **Fold** — the Orbit form: outer ring = battery, centre glyph = Wi-Fi
-    strength, the gap-dots = working sessions (amber if any ask). The dots
-    replace "cellular signal" with the thing you actually check.
-  - **Strip** — tiny monochrome inline glyphs, tighter than Apple's set.
-  - **Agent** — JR mark tinted by agent state, battery as ring, tightest
-    usage window as an arc segment.
-  - **Text** — "87% · 2 working · Claude 56%".
-- Click opens one popover: battery detail (cycle count, time-remaining),
-  Wi-Fi (network name, deep-link into Control Center's Wi-Fi panel for
-  switching), Bluetooth devices (deep-link), volume slider (via the audio
-  HAL, output device only — the existing "no certified volume read" caveat
-  applies: show it as a slider that writes, never a level that reads back
-  live), Focus picker (reads `CoreState.focus`), and the agent rows the
-  notch card already shows.
-- Feeds reuse existing monitors: `AlcovePowerMonitor` (battery), CoreWLAN
-  (Wi-Fi — SSID needs Location permission; degrade to signal-strength-only
-  without it), `ScreenBarAudioMonitor` (route), `CoreState.focus`
-  (daemon-side, needs the Focus toggle + FDA), `core.sessions` (agents).
+**Upgrading.** A settings file that had `combinedSystemItem`,
+`agentStatusItem` or `spacers` on has them read once, named in a one-time
+launch notice (`retiredExtras`), and never written back. At launch
+`ControlCenterRestore` undoes what the old build did, once: if the saved
+record `jrbar.menubar.ccOriginals` exists, each of the six Control Center keys
+that still holds the `false` JR-Bar wrote gets its saved original back (a key
+that was never set is removed again), a key the person has changed since is
+left alone, the record is removed, Control Center is relaunched so it reads the
+values, and one log line says which items came back. With no record it does
+nothing. `OneItemMigration` runs it and posts the notice; a test pins that the
+app creates an `NSStatusItem` nowhere but `StatusItemController`.
 
 ## Dock (vs DockDoor, AltTab)
 
@@ -396,10 +474,24 @@ section covers the preview's air and where it sits.
   centred in it, so a portrait window's title still reads. The still's
   box is pinned, so pointing at a card never widens it; a still too
   narrow for the row of hover verbs stacks them down its edge.
-- The switcher's own knobs: **Window order** (most recent first, or
-  grouped by app), **Apps with no windows** (off: a card per running app
-  with none, at the strip's end) and **Card faces** (stills, or icons that
-  never capture).
+- The switcher's own knobs, under the card's Switching header: **Switcher**
+  (who answers ⌥⇥ and ⌘⇥: JR-Bar, AltTab, DockDoor, Witch, Contexts or Off,
+  separate from the previews' **Render with**), **⌥⇥ window switcher** (on),
+  **⌘⇥ app switcher** (off), **⌥⇥ lists this display only** (off),
+  **Window order** (most recent first, or grouped by app), **Apps with no
+  windows** (off: a card per running app with none, at the strip's end) and
+  **Card faces** (stills, or icons that never capture). The Dock utility
+  itself is off until you turn it on; hover previews are on once it is.
+- The ⌥⇥ strip takes its keys in the order they were typed, and when macOS
+  switches its key tap off for a moment it reads the held modifiers again, so
+  a release that happened meanwhile still commits and the open strip does not
+  keep swallowing keys.
+- **Hold the Dock out** keeps an auto-hiding Dock showing while a preview is
+  up. If a quit left that hold behind, or an older build's Replace bar left
+  Apple's Dock auto-hide on, the next launch hands it back and the card says
+  so in one line ("Put your Dock's auto-hide back after an unclean quit" or
+  "… after an older JR-Bar hid it") until you dismiss it. Handing back the
+  older build's auto-hide restarts the Dock.
 
 ## Agent Overview
 
@@ -411,10 +503,13 @@ notch card, the utility card, or ⌘O. The utility's own card on the Utilities
 page keeps no list and no session verbs: it sets how loud each agent may
 be, holds the "Quiet while you watch" switch, and has an **Open the
 Overview** button into that window.
-The Obsidian-style force-directed session graph was removed: the Aquarium
-and the agent Overview are the ambient surfaces now, not a separate
-constellation map. The After Dark / flying-toaster screensaver lineage is
-likewise gone — same reason.
+The Overview's sidebar has Views, Insights (**Graph** and **Usage**),
+Projects, Branches and Saved views. The Graph pane is a map of the fleet:
+providers as hubs, projects as clusters, each main session a capsule with
+its workers branching off, the state on its ring. It inspects and opens
+sessions and never answers an ask. The old Obsidian-style force-directed
+constellation and the After Dark / flying-toaster screensaver lineage are
+gone.
 
 - **Connections browser**: the Overview's idle inspector is a wiring
   diagram of everything the daemon already pushes — the core link and
@@ -432,7 +527,7 @@ likewise gone — same reason.
   re-tracked; both are a lens over the daemon's session feed.
 - **Alert rules**: one row per provider with hooks or a session on
   record — asks, finishes, failures, sounds, and how far its escalation may
-  climb. A blank rule follows Settings › Notifications, and a rule can
+  climb. A blank rule follows Settings › Alerts & Sounds, and a rule can
   only narrow or widen what the global policy already decided for that
   provider's events.
 - Settings: an **enabled** toggle that shows or parks the card, **Quiet
@@ -449,7 +544,7 @@ likewise gone — same reason.
   bundle on the frontmost app plus the frontmost pid on the session's
   process ancestry (`AskingPane`); a pane the daemon cannot prove keeps
   its noise.
-- **Incident badges**: while Settings › Usage › Provider status pages is
+- **Incident badges**: while Settings › Agents & Usage › Provider status pages is
   on (it is off until then), the daemon's status feeds stamp a live vendor
   incident on each usage snapshot; `CoreProviderUsage.incident` carries it. The Screen Bar's quota ear flips to the attention tone
   and names it in the peek, the panel's usage row tags "incident", and
@@ -463,29 +558,48 @@ likewise gone — same reason.
 
 ## Keep Awake (vs Amphetamine, KeepingYouAwake, Atoll)
 
-The person's own hold, as a card after Dock. The card's switch is that hold:
-on keeps the Mac awake until turned off, off lets it sleep and leaves no
-assertion and no clock running. It is the same hold as the notch card's
-Awake chip, the panel footer's cup and the Screen Bar's right ear
-(`SystemTogglesStore`): the daemon's `hold_awake` lease while the monitor is
-connected, the app's own power assertion otherwise.
+The person's own hold, as a card after Dock. The card's switch (**Manual
+session**) is that hold: on keeps the Mac awake until turned off; off ends
+only that manual session. The agents' own hold and other apps' holds are
+independent and may still keep the Mac awake, and the card says so under the
+switch. It is the same hold as the notch card's Awake chip, the panel
+footer's cup and the Screen Bar's right ear (`SystemTogglesStore`): the
+daemon's `hold_awake` lease while the monitor is connected, the app's own
+power assertion otherwise. A hold the daemon asked for but nothing is
+keeping reads "Not held" (the footer says "Awake hold didn't start"), never
+"Awake".
 
-- **Duration menu** (`KeepAwakeMenu`): the presets, Until 08:00 (the panel's
-  next-morning rule), Until the agents finish (the daemon's agents lease;
-  offered only while the monitor is live), Indefinitely, Keep the display
-  on, Turn off. A right-click or long press on the Awake chip, a
+- **Duration menu** (`KeepAwakeMenu`): the presets ("For 15 minutes", …),
+  Until 08:00 (the panel's next-morning rule: the next 08:00 at least an
+  hour away; between 07:00 and 08:00 it takes the 08:00 in front of it,
+  since a lease lasts at most a day), Until the agents finish (the daemon's
+  agents lease; offered only while the monitor is live), Indefinitely, Keep
+  the display on, and **End manual session** (enabled only while a manual
+  hold is in force). A right-click or long press on the Awake chip, a
   right-click on the footer cup and its line, and a right-click on the
-  Screen Bar's right ear all open the same list.
+  Screen Bar's right ear all open the same list. The card shows the same
+  choices as buttons, with the display switch as its own row.
 - **Presets** live in `jrbar.keepAwakeDurations` (seconds, app defaults;
-  Atoll's 15 m, 30 m, 1 h, 2 h, 4 h by default; up to eight), edited on the
-  card.
-- **While agents run**: the four daemon rows (Keep Mac awake, Keep display
-  awake, Lid closed, Keep awake on battery). Settings › Notifications ›
-  Power keeps them too.
+  Atoll's 15 m, 30 m, 1 h, 2 h, 4 h by default). Each is a minute to 24
+  hours, sorted, without repeats, at most eight; an empty or unusable list
+  reads as the default. Edited on the card under Presets (a stepper and
+  **Add**, a remove button on each, **Reset**; the last one cannot be
+  removed).
+- **While agents run**: the four daemon rows (**Keep Mac awake**, **Keep
+  display awake**, **Lid closed** with Let it sleep, Stay awake while agents
+  run or Always stay awake, and **Keep awake on battery**; all on except Lid
+  closed, which defaults to Let it sleep). Settings › General › Power
+  keeps them too. A finished agent's quota lease no longer keeps a
+  quota-exhausted Mac awake for the agent still working. The closed-lid hold
+  rides the privileged sleep helper (`pmset disablesleep`) and the daemon
+  turns sleep off only once its fail-safe (a renewal file and a watchdog
+  that put sleep back within about four minutes if the daemon dies) is
+  running; a renewal dated in the future counts as dead; if the helper refuses
+  to release, the fail-safe stays until sleep is back on.
 - **Other apps holding this Mac awake**: read-only from
   `IOPMCopyAssertionsByProcess`, apps only, JR-Bar itself left out.
-- A Low Power Mode pause (`suspended: "low_power"`) reads "Low Power Mode is
-  on".
+- A pause reads in words: "Low Power Mode is on", "too warm" or "battery
+  low" (`suspended`), and the hold comes back on its own.
 
 ## Coexistence
 
@@ -503,15 +617,15 @@ runs depends on the role:
 | Dock previews | DockDoor, ActiveDock, DockView | Ask | Dock card, under Render with |
 | Switcher | AltTab, DockDoor, Witch, Contexts | Ask (the card's existing chord note) | Dock card, Switching |
 | Notch island | Alcove, Boring Notch, Atoll, MewNotch, DynamicLake, Notchy, NotchNook | Ask: Hand over to Alcove or Boring Notch | Notch card, under Render with |
-| HUD | MediaMate, SlimHUD (plus the notch apps above) | Ask | Notch card, under the level capsules |
+| HUD | MediaMate, SlimHUD (Alcove, Boring Notch, Atoll and MewNotch also count, but are named by the Notch island note) | Ask | Notch card, under Volume & brightness capsules |
 | Shelf gesture | Dropover, Yoink, Dropzone | **Step aside**: the shake summon's monitors stand down while one runs (`shelfYieldToRivals`, on), because one shake can't be shared; dropping on the notch still works. The note has no buttons | Notch card, Shelf rows, while JR-Bar draws the Notch |
 | Keep-awake | Amphetamine, KeepingYouAwake, Caffeine, Lungo, Theine | Inform only: holds stack harmlessly | Keep Awake card, Other apps |
 
 Nothing is ever quit or handed over without the person's click. A rival
 already picked under Render with is the choice, not a clash, so its note
 does not show. The yield reads "the app is running", not "its shake is on"
-(Dropover's own preferences are not readable); the Step aside switch is the
-way out.
+(Dropover's own preferences are not readable); the **Step aside for other
+shelf apps** switch is the way out.
 
 ## Cohesion contract
 
@@ -519,25 +633,27 @@ way out.
 
 - Glass only on what floats. Anything growing from the notch is black.
 - One surface per role: the notch card IS the island when the Notch utility
-  is on; the hidden-items panel IS the notch card's bottom row when both
-  Notch and Menu Bar are on (the glass Item Bar only when the island isn't
-  drawn).
+  is on. Hidden items list in the glass Item Bar under the menu bar, and the
+  Screen Bar's right ear hangs a black peek of the same tiles from the notch.
 - `ScreenBarGeometry` is the single source of notch truth for all of them.
-- Menu bar tint flows to the Screen Bar band accent when "match menu bar" is
-  on (default off — the LED band keeps its own colour unless asked).
+- The Screen Bar band keeps its own colour; nothing tints it from the menu
+  bar.
 
 ## Permissions
 
 | Feature | Needs | Without it |
 | --- | --- | --- |
-| Hide/show items, sections, Item Bar (icon tiles) | nothing extra | full |
-| Live tiles in Item Bar | Screen Recording | app icons instead |
-| ⌘-drag across the icon, click-through to real items, triggers on click | Accessibility | drags and clicks go unheard, the pickers still work, search still opens item's app |
-| Wi-Fi network name | Location | shows strength glyph only |
-| Focus readout | daemon Focus sync (FDA) | Focus row hidden |
-| Hide Apple's Battery/Wi-Fi/etc. | nothing (user defaults) | — |
+| Hiding the apps you picked, the Item Bar's app-icon tiles | nothing extra | full |
+| Seeing which items sit on the bar (tiles, search, the rows on the card) | Accessibility | the list and the tiles go blind; hiding itself still works |
+| Live tiles in Item Bar | Screen Recording | the photographed glyph or the app's icon instead |
+| ⌘-drag across the icon, read once after the drop | Accessibility | drags go unheard; the pickers still work |
+| Item Bar click-through to the real item, search opening an item | Accessibility | a click raises the owning app instead |
+| Wi-Fi network name (named Wi-Fi rules) | Location | named rules never fire |
+| Focus (Focus rules) | Focus Status, asked when you add a Focus rule | Focus rules never fire |
 | Other apps holding the Mac awake | nothing (public IOKit read) | — |
 | Shelf Copy Text on images | nothing (Vision runs on this Mac) | — |
+| Dock hover previews | Accessibility | previews cannot see which icon the pointer rests on |
+| Dock window thumbnails | Screen Recording | icon and title cards; raising, closing and minimizing still work |
 
-Every card row names the missing permission and deep-links to the Setup
-page's permission step.
+The Menu Bar and Dock cards show a note naming the missing permission with an
+**Open Settings** button that opens the matching System Settings pane.

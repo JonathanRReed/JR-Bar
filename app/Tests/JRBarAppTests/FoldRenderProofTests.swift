@@ -432,10 +432,10 @@ struct FoldRenderProofTests {
         }
     }
 
-    /// The Duo's reopen from the black hold, at its worst: the lid is
-    /// already back at rest when the first frame lands, so the whole
-    /// unfold plays on the chase. Frames every 50 ms from the release;
-    /// the first is still black and the picture comes up out of it.
+    /// The Duo's reopen from the black hold: the picture held across the
+    /// closed lid, the lid coming back up from 15° to 110° over a second,
+    /// the fold following it from black to flat. Frames at equal steps of
+    /// time; no clock drives anything but the lid.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write the reopen strip"))
     func reopenStrip() throws {
@@ -443,22 +443,159 @@ struct FoldRenderProofTests {
                       ?? "/tmp/jrbar-audit", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let rig = try Self.makeRig(.duo)
-        var chase = DeltaChase()
-        chase.reset(to: FoldDuoModel.reopenDelta(reference: Self.rest, perspective: 0.6))
+        var motion = FoldMotion()
+        var ease = FoldGateEase()
+        let dt = 1.0 / 60
         var cells: [(Double, CGImage, CGImage)] = []
-        let picks: Set<Int> = [0, 4, 8, 12, 18, 24, 30]
-        for frame in 0...30 {
-            let drawn = Self.rest - chase.tick(target: 0, dt: 1.0 / 60) * 180 / .pi
+        var captions: [(glass: String, eye: String)] = []
+        let picks: Set<Int> = [0, 14, 24, 30, 36, 44, 52, 60]
+        motion.feedDirect(FoldBlackout.releaseAngle)
+        var now = 0.0
+        motion.tick(at: now, dt: dt)
+        for frame in 0...90 {
+            now = Double(frame) * dt
+            let u = min(1, Double(frame) / 60)
+            let lid = FoldBlackout.releaseAngle + (Self.rest - FoldBlackout.releaseAngle) * (u * u * (3 - 2 * u))
+            motion.feedDirect(lid)
+            let drawn = motion.tick(at: now, dt: dt) ?? lid
+            let delta = ease.tick(target: max(0, Self.rest - drawn) * .pi / 180, dt: dt)
             guard picks.contains(frame) else { continue }
-            let panel = try Self.renderPanel(rig, angle: drawn)
-            // The lid itself is at rest: the eye sees the glass flat.
-            let seen = try Self.renderObserver(rig, panel: panel, angle: Self.rest)
-            cells.append((drawn, try Self.image(panel), try Self.image(seen)))
+            let glassAngle = Self.rest - delta * 180 / .pi
+            let panel = try Self.renderPanel(rig, angle: glassAngle)
+            let seen = try Self.renderObserver(rig, panel: panel, angle: lid)
+            cells.append((glassAngle, try Self.image(panel), try Self.image(seen)))
+            captions.append((glass: String(format: "%.2f s · glass %.0f°", now, glassAngle),
+                             eye: String(format: "seated eye, lid at %.0f°", lid)))
         }
-        #expect(chase.atRest)
-        let title = "Duo reopen: back at 110°, unfolding from black to flat over half a second"
+        #expect(abs((motion.angle ?? 0) - Self.rest) < 1.0)
+        let title = "Duo reopen from the black hold: the lid comes back up from 15° to 110°, "
+            + "and the fold follows it out of black to flat — no clock, only the lid"
         let url = dir.appendingPathComponent("fold-duo-reopen-strip.png")
-        try Self.writePNG(try Self.makeStrip(cells, title: title), to: url)
+        try Self.writePNG(try Self.makeStrip(cells, title: title, captions: captions), to: url)
+    }
+
+    /// A slow close, the case that used to stall in plateaus and lurch: the
+    /// lid goes down at 6°/s, the sensor reports whole degrees, and the
+    /// motion draws it. Five frames at equal steps of time; the glass angle
+    /// is the motion's own, and each gap between frames is the same travel.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the slow-close strip"))
+    func slowCloseStrip() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let rig = try Self.makeRig(.duo)
+        let speed = 6.0
+        func lid(_ t: Double) -> Double { Self.rest - speed * max(0, t - 0.3) }
+        let dt = 1.0 / 120
+        var motion = FoldMotion()
+        var nextPoll = 0.0
+        var shown: [(t: Double, angle: Double)] = []
+        let picks: [Double] = [2, 4, 6, 8, 10]
+        var t = 0.0
+        while t <= 10.01 {
+            while nextPoll <= t + 1e-12 {
+                motion.feed(FoldMotionTests.reading(lid, at: nextPoll), at: nextPoll)
+                nextPoll += dt
+            }
+            let drawn = motion.tick(at: t, dt: dt) ?? Self.rest
+            if picks.contains(where: { abs($0 - t) < dt / 2 }) { shown.append((t, drawn)) }
+            t += dt
+        }
+        #expect(shown.count == picks.count)
+        // Equal steps of time are equal steps of travel: within a degree.
+        let steps = zip(shown, shown.dropFirst()).map { $0.0.angle - $0.1.angle }
+        for step in steps { #expect(abs(step - 2 * speed) < 1.0, "a step of \(step)° in 2 s at \(speed)°/s") }
+        var cells: [(Double, CGImage, CGImage)] = []
+        var captions: [(glass: String, eye: String)] = []
+        for frame in shown {
+            let panel = try Self.renderPanel(rig, angle: frame.angle)
+            let seen = try Self.renderObserver(rig, panel: panel, angle: lid(frame.t))
+            cells.append((frame.angle, try Self.image(panel), try Self.image(seen)))
+            captions.append((glass: String(format: "%.0f s · glass %.1f°", frame.t, frame.angle),
+                             eye: String(format: "seated eye, lid %.0f°", lid(frame.t))))
+        }
+        let title = "Duo, a slow close (6°/s, whole-degree sensor): five frames two seconds apart, "
+            + "each a twelve-degree step of the glass, no plateau"
+        let url = dir.appendingPathComponent("fold-duo-slow-close-strip.png")
+        try Self.writePNG(try Self.makeStrip(cells, title: title, captions: captions), to: url)
+    }
+
+    /// The overlay as the window server composites it: the panel at
+    /// `alpha` over the live desktop. The toy sets that alpha on the window.
+    static func composite(_ rig: Rig, panel: MTLTexture, alpha: Double) throws -> MTLTexture {
+        let under = pixels(rig.desktop).bytes
+        let over = pixels(panel).bytes
+        var mixed = [UInt8](repeating: 255, count: under.count)
+        for i in stride(from: 0, to: under.count, by: 4) {
+            for c in 0..<3 {
+                mixed[i + c] = UInt8(max(0, min(255, (Double(under[i + c]) * (1 - alpha) + Double(over[i + c]) * alpha).rounded())))
+            }
+        }
+        let out = try makeTarget(rig.renderer.device)
+        out.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,
+                    withBytes: mixed, bytesPerRow: width * 4)
+        return out
+    }
+
+    /// A fold that comes into view late: the lid closes at 40°/s from 110°
+    /// and the first captured frame lands when it is 28° down (0.7 s in).
+    /// The fold fades in on the lid's next degrees of travel, at the lid's
+    /// real angle, rather than rushing to it. Frames every 80 ms from the
+    /// landing; the opacity is the toy's own (the Duo's two-degree ramp
+    /// times the entry fade).
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write the entry strip"))
+    func entryStrip() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let rig = try Self.makeRig(.duo)
+        let dt = 1.0 / 120
+        let speed = 40.0
+        let landed = 0.7
+        func lid(_ t: Double) -> Double { Self.rest - speed * t }
+        var motion = FoldMotion()
+        var fade = FoldEntryFade()
+        var cells: [(Double, CGImage, CGImage)] = []
+        var captions: [(glass: String, eye: String)] = []
+        var opacities: [Double] = []
+        var t = 0.0
+        var nextPoll = 0.0
+        var shot = 0
+        while t <= landed + 0.55 {
+            while nextPoll <= t + 1e-12 {
+                motion.feed(FoldMotionTests.reading(lid, at: nextPoll), at: nextPoll)
+                nextPoll += dt
+            }
+            let drawn = motion.tick(at: t, dt: dt) ?? Self.rest
+            if t >= landed {
+                let delta = max(0, Self.rest - drawn) * .pi / 180
+                if !fade.active, shot == 0 { fade.begin(delta: delta, at: t) }
+                let entry = fade.opacity(delta: delta, at: t)
+                let opacity = FoldDuoModel.alpha(delta: Self.rest - drawn) * entry
+                if Int(((t - landed) / dt).rounded()) % 10 == 0 {
+                    let panel = try Self.renderPanel(rig, angle: drawn)
+                    let shown = try Self.composite(rig, panel: panel, alpha: opacity)
+                    let seen = try Self.renderObserver(rig, panel: shown, angle: lid(t))
+                    cells.append((drawn, try Self.image(shown), try Self.image(seen)))
+                    captions.append((glass: String(format: "%.2f s · lid %.0f° · overlay %.0f%%", t, lid(t), opacity * 100),
+                                     eye: "seated eye"))
+                    opacities.append(opacity)
+                    shot += 1
+                }
+            }
+            t += dt
+        }
+        #expect(opacities.first == 0, "the landing frame is the live desktop")
+        #expect(opacities.last == 1)
+        for pair in zip(opacities, opacities.dropFirst()) {
+            #expect(pair.1 >= pair.0, "the fold only ever comes in")
+        }
+        let title = "Duo, first frame lands late (lid already 28° down): the fold comes into view "
+            + "on the lid's travel, at the lid's real angle, with no rush"
+        let url = dir.appendingPathComponent("fold-duo-entry-strip.png")
+        try Self.writePNG(try Self.makeStrip(cells, title: title, captions: captions), to: url)
     }
 
     /// A reopen that stops short of where the lid rested: 110°, down to
@@ -466,7 +603,7 @@ struct FoldRenderProofTests {
     /// stillness, then 104° becomes the rest and the fold unwinds from
     /// the reference it was drawing, so the screen ends clean at the lid's
     /// own angle instead of holding a soft, dark, shifted top. Driven by
-    /// the real `MoveAnchor` and `DeltaChase` at 60 Hz.
+    /// the real `MoveAnchor` and `FoldGateEase` at 60 Hz.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
                    "set JRBAR_RENDER_PROOF=1 to write the reopen-settle strip"))
     func reopenSettleStrip() throws {
@@ -482,7 +619,7 @@ struct FoldRenderProofTests {
         }
         let lid = 104.0
         let parkedAt = 0.5
-        var chase = DeltaChase()
+        var chase = FoldGateEase()
         var cells: [(Double, CGImage, CGImage)] = []
         var captions: [(glass: String, eye: String)] = []
         let picks: Set<Int> = [0, 30, 59, 60, 66, 72, 90]

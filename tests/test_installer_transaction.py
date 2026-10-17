@@ -448,3 +448,25 @@ def test_each_provider_post_verify_failure_rolls_back_only_its_owned_files(
     if provider == "openclaw":
         assert not (target.parent / "hooks" / "sidepulse-status").exists()
     assert log.read_text() == ""
+
+
+def test_retention_trims_only_the_backups_the_installer_made(tmp_path: Path) -> None:
+    from jrbar.install import BACKUP_MAX_FILES, backup_file
+
+    config = tmp_path / "settings.json"
+    _private_file(config, "{}")
+    # Copies a person made by hand sit beside the config and share its prefix.
+    own = []
+    for index in range(1, BACKUP_MAX_FILES + 2):
+        mine = tmp_path / f"settings.json.bak.before-experiment-{index}"
+        mine.write_text(f"hand-made {index}")
+        own.append(mine)
+
+    for index in range(BACKUP_MAX_FILES + 3):
+        config.write_text(str(index))
+        backup_file(config)
+
+    assert all(path.read_text().startswith("hand-made") for path in own if path.exists())
+    assert all(path.exists() for path in own), "a person's own copies are never trimmed"
+    made = [path for path in tmp_path.glob("settings.json.bak.*") if path not in own]
+    assert len(made) == BACKUP_MAX_FILES

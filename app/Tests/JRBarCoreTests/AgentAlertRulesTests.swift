@@ -233,6 +233,13 @@ struct AgentAlertRulesTests {
                                                       state: Self.state)
         #expect(finished.notification?.title == "core finished")
         #expect(finished.notification?.session == "codex:2")
+        // The watch's banner says what the ordinary one says.
+        let described = AgentAlertRules.notifyWhenDone(
+            .nothing,
+            event: CoreEvent(id: "d", kind: "completed", session: "codex:2", duration: 252, summary: "Fixed the redirect."),
+            state: Self.state)
+        #expect(described.notification?.title == "core finished in 4m 12s")
+        #expect(described.notification?.body == "Fixed the redirect.")
         let ended = AgentAlertRules.notifyWhenDone(.nothing, event: CoreEvent(id: "e", kind: "ended", session: "grok:1"),
                                                    state: Self.state)
         #expect(ended.notification?.title == "grok run ended")

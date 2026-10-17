@@ -18,7 +18,7 @@ final class PaletteModel {
     /// load or reload, so a keystroke folds only the query.
     @ObservationIgnored private var foldedItems: [PaletteRanking.FoldedItem] = []
     /// Rows a slower source found for the current query — the front
-    /// app's menu items, the archive's full-text hits. Listed after the
+    /// app's menu items, History's matches. Listed after the
     /// ranked results, each source under its own heading.
     private(set) var searchResults: [PaletteItem] = []
     /// The query the search results belong to; a late answer for an
@@ -101,16 +101,14 @@ final class PaletteModel {
 
     /// Fresh rows from the same sources while the palette stays up — an
     /// ask that lands mid-search appears under Needs You, a toggle's
-    /// read-back settles its tag. The query, the archive's hits, the
+    /// read-back settles its tag. The query, History's hits, the
     /// selection and an open action panel all stay where they were; the
     /// panel folds only if its row went away, and so does a verb's
     /// field — an ask answered in its own window takes its Reply with it.
     func reload(items: [PaletteItem]) {
         self.items = items
         foldedItems = items.map(PaletteRanking.FoldedItem.init)
-        let previous = selectedID
         refilter(keepSelection: true)
-        if actionsOpen, selectedID != previous { closeActions() }
         if inputActive, inputAction == nil { endInput() }
     }
 
@@ -135,13 +133,14 @@ final class PaletteModel {
 
     func refilter(keepSelection: Bool) {
         let previous = selectedID
+        let previousActionID = actionsOpen ? selectedAction?.id : nil
         let trimmedQuery = Self.trimmed(query)
         let typed = trimmedQuery.isEmpty ? [] : typedRows(trimmedQuery)
         var arranged = PaletteRanking.arrange(items, folded: foldedItems, typed: typed, query: query,
                                               usage: usage, now: now)
         if !Self.trimmed(query).isEmpty, !searchResults.isEmpty {
             // Each slower source's hits under its own heading — the
-            // frontmost app's menus, then the archive — in source order.
+            // frontmost app's menus, then History — in source order.
             var order: [PaletteSection] = []
             var groups: [PaletteSection: [PaletteItem]] = [:]
             for item in searchResults {
@@ -156,6 +155,18 @@ final class PaletteModel {
             selectedID = previous
         } else {
             selectedID = rows.first?.id
+        }
+        if actionsOpen {
+            guard selectedID == previous, let selected, !selected.actions.isEmpty else {
+                closeActions()
+                return
+            }
+            // A refresh may remove or reorder verbs while their panel is
+            // open. Keep the same verb when it survives, otherwise keep
+            // the highlight within the remaining filtered actions.
+            let actions = visibleActions
+            actionSelection = actions.firstIndex { $0.id == previousActionID }
+                ?? min(actionSelection, max(0, actions.count - 1))
         }
     }
 

@@ -4,22 +4,12 @@ import Testing
 import JRBarCore
 @testable import JRBarApp
 
-/// The confetti trigger: a `quota_reset` on the weekly lane only. A
-/// five-hour refill or a lane-less reset must stay silent, and no other
-/// event kind may borrow the lane. The policy in JRBarCore owns the test.
+/// Confirmed quota resets use the core policy on every provider lane.
 @Suite struct ConfettiToyTests {
-    @Test func weeklyLaneFires() {
-        #expect(ConfettiTriggerPolicy.isWeeklyLane("weekly"))
-    }
-
-    @Test func scopedWeeklyLaneFires() {
-        // Provider-specific weekly ids end in `-weekly` (e.g. Antigravity).
-        #expect(ConfettiTriggerPolicy.isWeeklyLane("antigravity-weekly"))
-    }
-
-    @Test func fiveHourAndOtherLanesDoNotFire() {
-        #expect(!ConfettiTriggerPolicy.isWeeklyLane("five-hour"))
-        #expect(!ConfettiTriggerPolicy.isWeeklyLane("monthly"))
+    @Test(arguments: ["weekly", "antigravity-weekly", "five-hour", "daily", "monthly"])
+    func quotaLaneFires(lane: String) {
+        let event = CoreEvent(id: "reset", kind: "quota_reset", provider: "codex", lane: lane)
+        #expect(ConfettiTriggerPolicy.eventFire(event, settings: ConfettiSettings())?.reason == .quotaReset)
     }
 
     @Test func missingLaneDoesNotFire() {

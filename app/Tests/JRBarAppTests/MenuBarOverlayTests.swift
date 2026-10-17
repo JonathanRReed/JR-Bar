@@ -97,6 +97,7 @@ struct MenuBarOverlayTests {
         var state = settings
         utility.settings = { state }
         utility.onSettingsChange = { state = $0 }
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [] }
         utility.hider.onPlan = nil
         return (utility, { state })

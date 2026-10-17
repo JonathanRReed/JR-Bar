@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import importlib.util
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from packaging.sign_macos_app import build_sign_plan, sign_macos_app
+ROOT = Path(__file__).resolve().parents[1]
+MODULE_PATH = ROOT / "packaging" / "sign_macos_app.py"
+spec = importlib.util.spec_from_file_location("jrbar_macos_app_signer", MODULE_PATH)
+if spec is None or spec.loader is None:
+    raise ImportError(f"cannot load signer from {MODULE_PATH}")
+signer = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = signer
+spec.loader.exec_module(signer)
+build_sign_plan = signer.build_sign_plan
+sign_macos_app = signer.sign_macos_app
 
 
 def _candidate(tmp_path: Path) -> tuple[Path, Path, tuple[Path, ...]]:

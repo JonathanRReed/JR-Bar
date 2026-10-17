@@ -135,6 +135,37 @@ def test_a_frozen_clock_is_a_cached_read_not_a_sample() -> None:
     assert len(estimator.samples) == 1
 
 
+def test_late_or_duplicate_read_does_not_reset_the_clock_window() -> None:
+    estimator = DeviceClockEstimator()
+    estimator.add(100.0, 5000.0)
+    estimator.add(120.0, 24400.0)
+    previous = list(estimator.samples)
+    estimate = estimator.estimate
+
+    assert estimator.add(110.0, 14700.0) is estimate
+    assert estimator.add(120.0, 10.0) is estimate
+    assert list(estimator.samples) == previous
+    assert estimator.estimate.source == "measured"
+
+
+def test_reboot_keeps_the_rate_but_requires_fresh_measurement() -> None:
+    estimator = DeviceClockEstimator()
+    estimator.add(100.0, 5000.0)
+    estimator.add(120.0, 24400.0)
+    for step in range(1, 4):
+        estimator.add(120.0 + step * 20, 24400.0)
+    assert estimator.estimate.source == "frozen"
+
+    reboot = estimator.add(200.0, 10.0)
+    assert reboot.rate == 0.97
+    assert reboot.source == "warm"
+    assert reboot.samples == 0
+    assert reboot.span_seconds == 0
+    assert estimator.frozen_reads == 0
+    assert list(estimator.samples) == [(200.0, 10.0)]
+    assert estimator.add(220.0, 19410.0).source == "measured"
+
+
 def test_rates_persist_per_device_and_warm_start__and_1_more(tmp_path: Path) -> None:
     # --- scenario: measured_rates_round_trip_and_a_dot_warm_starts
     path = tmp_path / "device-clocks.json"

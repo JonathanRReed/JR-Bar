@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
@@ -22,10 +23,16 @@ def _number(value: object) -> float | None:
     return number if math.isfinite(number) else None
 
 
+_MILLISECONDS_EPOCH_THRESHOLD = 100_000_000_000.0
+
+
 def _reset_epoch(value: object) -> float | None:
     number = _number(value)
     if number is not None:
-        return number if number >= 0.0 else None
+        if number < 0.0:
+            return None
+        # Milliseconds when it could not be seconds (year 5138 and later).
+        return number / 1000.0 if number >= _MILLISECONDS_EPOCH_THRESHOLD else number
     if not isinstance(value, str) or len(value) > 128:
         return None
     try:
@@ -570,6 +577,18 @@ def _grok_snapshot(payload: dict, lane: UsageLane, raw_plan: object, observed_at
     )
 
 
+def _antigravity_stated_cadence(value: object) -> str | None:
+    """``weekly`` or ``five-hour`` when a bucket's ``window`` field says so."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower().replace("_", "-")
+    if text in {"weekly", "week", "7d", "7-day", "seven-day"}:
+        return "weekly"
+    if text in {"5h", "5-hour", "five-hour", "five-hours"}:
+        return "five-hour"
+    return None
+
+
 def parse_antigravity_usage(
     payload: object,
     *,
@@ -589,12 +608,6 @@ def parse_antigravity_usage(
         if not isinstance(group, dict):
             continue
         group_name = str(group.get("displayName") or "").lower()
-        if "gemini" in group_name:
-            prefix, scope = "Gemini", "gemini"
-        elif "claude" in group_name or "gpt" in group_name:
-            prefix, scope = "Claude + GPT", "claude-gpt"
-        else:
-            continue
         buckets = group.get("buckets")
         if not isinstance(buckets, list):
             continue
@@ -603,12 +616,33 @@ def parse_antigravity_usage(
                 continue
             bucket_id = str(bucket.get("bucketId") or bucket.get("displayName") or "")
             bucket_text = f"{bucket_id} {bucket.get('displayName') or ''}".lower()
-            if "week" in bucket_text:
+            pool_text = f"{group_name} {bucket_text}"
+            if re.search(r"(?<![a-z0-9])argon(?![a-z0-9])", pool_text):
+                prefix, scope, model = "Gemini 4 Argon", "gemini-argon", "gemini-4-argon"
+            elif "gemini" in group_name:
+                prefix, scope, model = "Gemini", "gemini", None
+            elif "claude" in group_name or "gpt" in group_name:
+                prefix, scope, model = "Claude + GPT", "claude-gpt", None
+            else:
+                continue
+            # The bucket's own `window` field is the cadence when it states one;
+            # a name like "Limit Remaining" says nothing about length.
+            stated = _antigravity_stated_cadence(bucket.get("window"))
+            if scope == "gemini-argon" and bucket.get("window") and stated is None:
+                continue
+            if stated == "weekly" or (stated is None and "week" in bucket_text):
                 window = "weekly"
                 window_label = "Weekly"
-            elif "session" in str(bucket.get("displayName") or "").lower():
+            elif stated == "five-hour":
+                window = "five-hour"
+                window_label = "5-Hour"
+            elif stated is None and "session" in str(bucket.get("displayName") or "").lower():
                 window = "session"
                 window_label = "Session"
+            elif scope == "gemini-argon" and not re.search(
+                r"(?<![a-z0-9])(?:5|five)[\s_-]*h(?:ours?)?(?![a-z0-9])", bucket_text
+            ):
+                continue
             else:
                 window = "five-hour"
                 window_label = "5-Hour"
@@ -632,7 +666,7 @@ def parse_antigravity_usage(
                         bucket.get("resetTime", bucket.get("reset_at"))
                     ),
                     scope=scope,
-                    model=None,
+                    model=model,
                     feature=None,
                     bindable=True,
                     source_id="antigravity-app",
@@ -662,6 +696,28 @@ def parse_antigravity_usage(
     )
 
 
+def _openai_usage_rows(document: object) -> list[dict]:
+    if not isinstance(document, dict) or not isinstance(document.get("data"), list):
+        raise ValueError("invalid OpenAI API usage page")
+    if document.get("has_more", False) is not False or len(document["data"]) > 366:
+        raise ValueError("incomplete OpenAI API usage page")
+    rows: list[dict] = []
+    for bucket in document["data"]:
+        if not isinstance(bucket, dict) or not isinstance(bucket.get("results"), list):
+            raise ValueError("invalid OpenAI API usage bucket")
+        if len(bucket["results"]) > 1024 or not all(isinstance(row, dict) for row in bucket["results"]):
+            raise ValueError("invalid OpenAI API usage results")
+        rows.extend(bucket["results"])
+    return rows
+
+
+def _openai_token_count(value: object) -> int:
+    number = _number(value)
+    if number is None or number < 0 or not number.is_integer():
+        raise ValueError("invalid OpenAI API token count")
+    return int(number)
+
+
 def parse_openai_api_usage(
     payload: object,
     *,
@@ -669,40 +725,36 @@ def parse_openai_api_usage(
 ) -> ProviderUsageSnapshot:
     if not isinstance(payload, dict):
         raise ValueError("invalid OpenAI API usage payload")
-    usage = payload.get("usage")
-    costs = payload.get("costs")
     input_tokens = 0
+    cached_input_tokens = 0
     output_tokens = 0
     models: set[str] = set()
-    if isinstance(usage, dict) and isinstance(usage.get("data"), list):
-        for bucket in usage["data"][:366]:
-            if not isinstance(bucket, dict) or not isinstance(bucket.get("results"), list):
-                continue
-            for row in bucket["results"][:1024]:
-                if not isinstance(row, dict):
-                    continue
-                input_tokens += int(max(0.0, _number(row.get("input_tokens")) or 0.0))
-                output_tokens += int(max(0.0, _number(row.get("output_tokens")) or 0.0))
-                if isinstance(row.get("model"), str) and row["model"].strip():
-                    models.add(row["model"].strip())
+    for row in _openai_usage_rows(payload.get("usage")):
+        total_input = _openai_token_count(row.get("input_tokens"))
+        cached_input = _openai_token_count(row.get("input_cached_tokens", 0))
+        if cached_input > total_input:
+            raise ValueError("invalid OpenAI API cached token count")
+        # OpenAI's input total includes cached reads. JR-Bar adds these
+        # fields for its total, so separate them without counting twice.
+        input_tokens += total_input - cached_input
+        cached_input_tokens += cached_input
+        output_tokens += _openai_token_count(row.get("output_tokens"))
+        if isinstance(row.get("model"), str) and row["model"].strip():
+            models.add(row["model"].strip())
     cost = 0.0
     cost_seen = False
-    if isinstance(costs, dict) and isinstance(costs.get("data"), list):
-        for bucket in costs["data"][:366]:
-            if not isinstance(bucket, dict) or not isinstance(bucket.get("results"), list):
-                continue
-            for row in bucket["results"][:1024]:
-                if not isinstance(row, dict):
-                    continue
-                amount = row.get("amount")
-                value = _number(amount.get("value")) if isinstance(amount, dict) else None
-                if value is not None:
-                    cost += max(0.0, value)
-                    cost_seen = True
+    for row in _openai_usage_rows(payload.get("costs")):
+        amount = row.get("amount")
+        value = _number(amount.get("value")) if isinstance(amount, dict) else None
+        if value is None or value < 0 or amount.get("currency", "usd") != "usd":
+            raise ValueError("invalid OpenAI API cost amount")
+        cost += value
+        cost_seen = True
     return _snapshot(
         "openai-api",
         observed_at=observed_at,
         input_tokens=input_tokens,
+        cached_input_tokens=cached_input_tokens,
         output_tokens=output_tokens,
         model_count=len(models),
         estimated_cost_usd=cost if cost_seen else None,

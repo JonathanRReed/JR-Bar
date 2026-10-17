@@ -7,6 +7,7 @@ import json
 import threading
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -484,7 +485,7 @@ def test_answering_from_serve_is_off_by_default_and_round_trips(tmp_path: Path) 
     from jrbar.settings import AgentMonitorSettings
 
     assert AgentMonitorSettings().serve_answer_enabled is False
-    document = AgentMonitorSettings().with_serve_answer_enabled(True).to_dict()
+    document = replace(AgentMonitorSettings(), serve_answer_enabled=True).to_dict()
     assert document["serve_answer_enabled"] is True
     assert settings_from_document(document, scratch_dir=tmp_path).serve_answer_enabled is True
     mistyped = {**document, "serve_answer_enabled": "yes"}

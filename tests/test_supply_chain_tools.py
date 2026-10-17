@@ -217,6 +217,39 @@ def test_release_evidence_preserves_dist_relative_paths_for_same_named_artifacts
     assert generate_release_manifest._artifact_record(second, root=tmp_path)["path"] == ("dist/secondary/candidate.pkg")
 
 
+def test_sbom_identity_changes_when_an_artifact_changes(tmp_path: Path, monkeypatch) -> None:
+    artifact = tmp_path / "candidate.pkg"
+    monkeypatch.setattr(generate_sbom.importlib.metadata, "distributions", lambda: ())
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "0")
+    artifact.write_bytes(b"first")
+    before = generate_sbom.build_sbom(application_version="0.5.0", artifacts=(artifact,), root=tmp_path)
+    artifact.write_bytes(b"other")
+    after = generate_sbom.build_sbom(application_version="0.5.0", artifacts=(artifact,), root=tmp_path)
+    assert before["serialNumber"] != after["serialNumber"]
+
+
+def test_sbom_identity_and_output_ignore_artifact_argument_order(tmp_path: Path, monkeypatch) -> None:
+    first = tmp_path / "a" / "candidate.pkg"
+    second = tmp_path / "b" / "candidate.pkg"
+    for artifact in (first, second):
+        artifact.parent.mkdir()
+        artifact.write_bytes(artifact.parent.name.encode())
+    monkeypatch.setattr(generate_sbom.importlib.metadata, "distributions", lambda: ())
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "0")
+    forward = generate_sbom.build_sbom(application_version="0.5.0", artifacts=(first, second), root=tmp_path)
+    reverse = generate_sbom.build_sbom(application_version="0.5.0", artifacts=(second, first), root=tmp_path)
+    assert forward == reverse
+
+
+def test_sbom_identifies_build_environment_and_incomplete_coverage(monkeypatch) -> None:
+    monkeypatch.setattr(generate_sbom.importlib.metadata, "distributions", lambda: ())
+    document = generate_sbom.build_sbom(application_version="0.5.0")
+    assert document["metadata"]["lifecycles"] == [{"phase": "build"}]
+    assert document["compositions"] == [
+        {"aggregate": "incomplete", "assemblies": [document["metadata"]["component"]["bom-ref"]]}
+    ]
+
+
 def test_release_gate_generates_and_publisher_requires_evidence_artifacts() -> None:
     root = Path(__file__).resolve().parents[1]
     gate = (root / "scripts" / "verify_macos_release.sh").read_text()

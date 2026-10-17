@@ -32,12 +32,6 @@ struct StatusItemPlan: Equatable {
 /// small chevron beside it while anything is tucked away; a click on
 /// the blank part is the reveal, a click on the icon is the panel as
 /// ever.
-///
-/// Under the macOS 27 concealer macOS draws none of this — it will not
-/// draw the asserting identity's own item — so the utility's
-/// `MenuBarIconMirror` carries the icon instead: this item goes slim
-/// and blank (`setFaceMirrored`), pushes its face to the mirror, and
-/// anchors the panel on the mirror's frame.
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost {
     /// The `AXIdentifier` JR-Bar's own status item carries.
@@ -47,7 +41,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     nonisolated static let autosaveName = "com.jonathanreed.jrbar.status-item"
     private static let log = Logger(subsystem: "devin.jrbar", category: "status-item")
 
-    private let statusItem: NSStatusItem
+    private var statusItem: NSStatusItem
     private let menu = NSMenu()
     private let headerItem = NSMenuItem()
     private let detailItem = NSMenuItem()
@@ -69,15 +63,12 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// the folded composite with a spacer out. `dressButton` decides
     /// whether it actually goes on.
     private var wornImage: NSImage?
-    /// Whether the panel is open — the button's highlight, and the
-    /// mirror's.
+    /// Whether the panel is open — the button's highlight.
     private var panelOpen = false
-    /// Whether the mirror's menu is up: a status item highlights while
-    /// its menu is open, and the button does that for itself.
-    private var mirrorMenuOpen = false
     /// Points of blank bar the item claims left of its icon — the Menu
     /// Bar utility's spacer. 0 is the plain icon.
     private(set) var boundarySpacer: CGFloat = 0
+    private var lastBoundaryGeometryDiagnostic: String?
     /// The composite face for the current spacer, memoised on the
     /// natural image's identity: the breathing dot redraws twice a
     /// second and must not re-rasterise a 200-point image each time.
@@ -107,7 +98,9 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// The ⇧⌘K palette.
     var onOpenPalette: (@MainActor () -> Void)?
     /// What's New, through the same route `jrbar://window/whats-new` takes.
-    var onOpenWhatsNew: (@MainActor () -> Void)? = { AppCommandRouter.shared.perform(.window(.whatsNew)) }
+    var onOpenWhatsNew: (@MainActor () -> Void)? = {
+        _ = Task { await AppCommandRouter.shared.perform(.window(.whatsNew)) }
+    }
     /// Sparkle's check, through the delegate.
     var onCheckForUpdates: (@MainActor () -> Void)?
     /// Whether a Creator Micro has been seen, read as the menu opens:
@@ -163,11 +156,15 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     private var currentWidth: CGFloat = 0
 
     override init() {
+        Self.healPersistedPlacement()
         Self.seedPreferredPosition()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         showBarItem = NSMenuItem(title: "Show Screen Bar", action: #selector(toggleScreenBar(_:)), keyEquivalent: "")
         super.init()
         wireStatusItem()
+        // Created visible, always: a saved "not visible" (a ⌘-drag off the
+        // bar, an old build's write) must not outlive the launch.
+        statusItem.isVisible = true
         wornImage = renderer.image(for: StatusIconSpec(style: .agents))
         dressButton()
 
@@ -234,16 +231,64 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// The `NSStatusItem Preferred Position` record macOS files the
     /// item's slot under. It is a sort key, not a measure — larger sorts
     /// further left (measured 2026-09-22: 300 → x 1062, 420 → 916, 440
-    /// and up → the leftmost slot under the notch). It only decides
-    /// anything while the item itself is the icon: the concealer off,
-    /// another provider, the spacer engine. Under the concealer the
-    /// mirror carries the face wherever macOS puts the item.
+    /// and up → the leftmost slot under the notch).
     nonisolated static let preferredPositionKey = "NSStatusItem Preferred Position \(autosaveName)"
     /// Marks the one-time sweep of the records the retired seat walk
     /// left: it overwrote the primary record at every step and
     /// registered `-rN` generations, none of them a placement the person
     /// chose.
     nonisolated static let seatMigrationKey = "jrbar.statusItemSeat.v2"
+
+    /// The autosave record's other half: `NSStatusItem Visible <name>`
+    /// (macOS writes `false` when the item is ⌘-dragged off the bar or
+    /// `isVisible` is set false, and files it under the autosave name, so
+    /// the next launch registers the item hidden). Nothing in JR-Bar ever
+    /// wants the app's one status item gone, so a launch clears any such
+    /// record — and a placement key that is not a sane sort key (not a
+    /// number, negative, or far beyond any bar's width) — before the item
+    /// registers, so the item is created visible and where macOS puts a
+    /// fresh one. Returns what it removed, for the log. Pure over
+    /// `defaults` so a test hands it a scratch suite.
+    @discardableResult
+    static func healPersistedPlacement(defaults: UserDefaults = .standard) -> [String] {
+        var removed: [String] = []
+        let visiblePrefix = "NSStatusItem Visible \(autosaveName)"
+        for key in defaults.dictionaryRepresentation().keys {
+            if key.hasPrefix(visiblePrefix) {
+                if !Self.isTrue(defaults.object(forKey: key)) {
+                    defaults.removeObject(forKey: key)
+                    removed.append(key)
+                }
+            } else if key == preferredPositionKey || key.hasPrefix(preferredPositionKey + "-r") {
+                if !Self.isSanePlacement(defaults.object(forKey: key)) {
+                    defaults.removeObject(forKey: key)
+                    removed.append(key)
+                }
+            }
+        }
+        if !removed.isEmpty {
+            defaults.synchronize()
+            Self.log.error("status item: cleared saved placement that could hide it: \(removed.joined(separator: ", "), privacy: .public)")
+        }
+        return removed
+    }
+
+    /// The beyond-the-bar bound: the widest bar macOS lays out is a few
+    /// thousand points, and a key past it sorts the item under the
+    /// notch's overflow.
+    nonisolated static let sanePlacementLimit: Double = 3000
+
+    nonisolated static func isSanePlacement(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber else { return false }
+        let key = number.doubleValue
+        return key.isFinite && key >= 0 && key <= sanePlacementLimit
+    }
+
+    nonisolated private static func isTrue(_ value: Any?) -> Bool {
+        if let number = value as? NSNumber { return number.boolValue }
+        if let text = value as? String { return ["1", "yes", "true"].contains(text.lowercased()) }
+        return false
+    }
 
     /// Seeds the record before the item registers — best effort, since
     /// macOS offers no placement API. Once, the walk's records go; then,
@@ -309,21 +354,111 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             button.target = self
             button.action = #selector(clicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            // The bar's appearance follows the wallpaper under it; the
-            // mirror resolves its template glyph against the same one.
-            appearanceWatch = button.observe(\.effectiveAppearance) { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.onFaceChange?() }
-            }
+        }
+        if let accessibilityWatch {
+            NSWorkspace.shared.notificationCenter.removeObserver(accessibilityWatch)
+        }
+        accessibilityWatch = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.accessibilityOptionsChanged() }
+        }
+    }
+    private var accessibilityWatch: NSObjectProtocol?
+
+    // MARK: Staying on the bar
+
+    /// Put the item back on the bar by making it visible again — the
+    /// cheap repair, safe to call any time. Returns whether it had to.
+    @discardableResult
+    func ensureVisible() -> Bool {
+        guard !statusItem.isVisible else { return false }
+        Self.log.error("status item: it was hidden; showing it again")
+        statusItem.isVisible = true
+        return true
+    }
+
+    /// The item's own `isVisible` flag — false only if something (a
+    /// ⌘-drag off the bar, a stray write) hid it.
+    var isFlaggedVisible: Bool { statusItem.isVisible }
+
+    /// Whether the real item's window stands on a screen's top row — the
+    /// strongest evidence short of a capture that macOS has drawn and
+    /// adopted it: a pending or parked item has no window, or one far off
+    /// every screen (y = -33 for an overflowed item).
+    var isOnBarRow: Bool {
+        let frame = statusItem.button?.window.flatMap { $0.isVisible ? $0.frame : nil }
+        return Self.looksOnBarRow(windowFrame: frame, screens: NSScreen.screens.map(\.frame))
+    }
+
+    /// Pure: a window frame is on a bar row when it has a width and its
+    /// top edge is within a menu bar's depth of some screen's top, inside
+    /// that screen's width. Frames are AppKit's (origin at the bottom). An
+    /// auto-hidden bar slides its windows up past the screen's top, which
+    /// is still the bar's row: only a window far below, or on no screen,
+    /// is parked.
+    nonisolated static func looksOnBarRow(windowFrame: CGRect?, screens: [CGRect]) -> Bool {
+        guard let frame = windowFrame, frame.width > 1, frame.height > 1 else { return false }
+        return screens.contains { screen in
+            // Hiding grows a spacer to the left. The visible icon stays
+            // at the right edge even when the window's midpoint is offscreen.
+            frame.maxX > screen.minX && frame.maxX <= screen.maxX
+                && frame.maxY <= screen.maxY + 60 && frame.maxY >= screen.maxY - 60
         }
     }
 
-    /// Where the icon is on screen, for anchoring the panel: the
-    /// mirror's face while it carries the icon, else the button. The
-    /// panel's click-through test reads the same rect, so a second click
-    /// on the visible icon closes the panel rather than closing and
-    /// reopening it.
+    /// The last resort: give the bar a fresh item. A status item macOS
+    /// filed hidden or parked stays so; removing it and registering a new one starts the
+    /// adoption again with nothing in the way. `resetPlacement` also drops
+    /// the saved slot first, so the new item lands where a fresh one does.
+    /// Never two items: the old one is removed before the new registers.
+    func recreate(resetPlacement: Bool, reason: String) {
+        Self.log.error("status item: recreating (\(reason, privacy: .public)), placement reset \(resetPlacement, privacy: .public)")
+        statusItem.button?.target = nil
+        statusItem.button?.action = nil
+        NSStatusBar.system.removeStatusItem(statusItem)
+        if resetPlacement {
+            let defaults = UserDefaults.standard
+            for key in defaults.dictionaryRepresentation().keys
+                where key == Self.preferredPositionKey || key.hasPrefix(Self.preferredPositionKey + "-r")
+                    || key.hasPrefix("NSStatusItem Visible \(Self.autosaveName)") {
+                defaults.removeObject(forKey: key)
+            }
+            defaults.synchronize()
+        }
+        Self.healPersistedPlacement()
+        Self.seedPreferredPosition()
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        wireStatusItem()
+        statusItem.isVisible = true
+        // Everything the old button wore, on the new one.
+        currentSpec = nil
+        dressButton()
+        syncLength()
+        redraw()
+        syncTooltip()
+        statusItem.button?.highlight(panelOpen)
+    }
+
+    /// The quit: the item leaves the bar with the app, so the bar
+    /// reflows now rather than when the process finally exits behind the
+    /// daemon's grace.
+    private var tornDown = false
+
+    func tearDown() {
+        guard !tornDown else { return }
+        tornDown = true
+        if let accessibilityWatch {
+            NSWorkspace.shared.notificationCenter.removeObserver(accessibilityWatch)
+        }
+        accessibilityWatch = nil
+        NSStatusBar.system.removeStatusItem(statusItem)
+    }
+
+    /// Where the icon is on screen, for anchoring the panel. The panel's
+    /// click-through test reads the same rect, so a second click on the
+    /// visible icon closes the panel rather than closing and reopening it.
     var anchorRect: NSRect? {
-        if faceMirrored, let mirroredFaceFrame { return mirroredFaceFrame }
         guard let button = statusItem.button, let window = button.window else { return nil }
         return window.convertToScreen(button.convert(button.bounds, to: nil))
     }
@@ -331,12 +466,84 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     // MARK: MenuBarBoundaryHost
 
     /// The icon's frame in Quartz coordinates (top-left origin), the
-    /// space the Menu Bar utility measures in — the mirror's face while
-    /// it carries the icon.
+    /// space the Menu Bar utility measures in.
     var boundaryFrame: CGRect? {
         guard let rect = anchorRect else { return nil }
         let height = CGDisplayBounds(CGMainDisplayID()).height
         return CGRect(x: rect.minX, y: height - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    /// The blank seat left of the icon, in AppKit screen coordinates.
+    var boundaryHoverFrame: NSRect? {
+        guard let button = statusItem.button, let window = button.window else { return nil }
+        let blank = boundaryBlankBounds(for: button)
+        return window.convertToScreen(button.convert(blank, to: nil))
+    }
+
+    private func boundaryBlankBounds(for button: NSStatusBarButton) -> NSRect {
+        let glyphWidth = naturalImage?.size.width ?? boundaryGlyphLength
+        let blank = Self.boundaryRevealBounds(for: button, spacer: boundarySpacer, glyphWidth: glyphWidth)
+        let nativeFrame = button.cell?.imageRect(forBounds: button.bounds)
+        let titleWidth = button.attributedTitle.string.isEmpty ? 0 : button.attributedTitle.size().width + 8
+        let measuredBlankWidth = min(boundarySpacer, button.bounds.width - glyphWidth - titleWidth) - 20
+        let missingNativeFrame = nativeFrame.map { $0.width <= 0 } ?? true
+        let unexpectedlyEmpty = blank.isEmpty && measuredBlankWidth > 1
+        guard boundarySpacer > 20, missingNativeFrame || unexpectedlyEmpty else {
+            lastBoundaryGeometryDiagnostic = nil
+            return blank
+        }
+        let reason = missingNativeFrame ? "native-image-unavailable" : "empty-with-measured-room"
+        let nativeDescription = nativeFrame.map { NSStringFromRect($0) } ?? "nil"
+        let boundsDescription = NSStringFromRect(button.bounds)
+        let blankDescription = NSStringFromRect(blank)
+        let imageWidth = button.image?.size.width ?? 0
+        let geometry = "bounds=\(boundsDescription) nativeImageRect=\(nativeDescription) foldedWidth=\(imageWidth) sourceWidth=\(glyphWidth)"
+        let result = "spacer=\(boundarySpacer) titleWidth=\(titleWidth) blank=\(blankDescription) reason=\(reason)"
+        let diagnostic = geometry + " " + result
+        if diagnostic != lastBoundaryGeometryDiagnostic {
+            lastBoundaryGeometryDiagnostic = diagnostic
+            Self.log.notice("boundary reveal geometry: \(diagnostic, privacy: .public)")
+        }
+        return blank
+    }
+
+    static func boundaryRevealBounds(for button: NSButton, spacer: CGFloat, glyphWidth: CGFloat) -> NSRect {
+        // A pending image write must not lend the old icon a new blank seat.
+        guard let image = button.image, spacer > 0,
+              abs(image.size.width - (spacer + glyphWidth)) < 0.5 else { return .zero }
+        let titleWidth = button.attributedTitle.string.isEmpty ? 0 : button.attributedTitle.size().width + 8
+        return boundaryRevealBounds(button.bounds, spacer: spacer, glyphWidth: glyphWidth,
+                                    trailingWidth: titleWidth)
+    }
+
+    /// Native bounds reserve the source image, title and chevron before admitting blank space.
+    nonisolated static func boundaryRevealBounds(_ bounds: NSRect, spacer: CGFloat,
+                                                 glyphWidth: CGFloat = 24,
+                                                 trailingWidth: CGFloat = 0) -> NSRect {
+        let iconWidth = min(bounds.width, max(0, glyphWidth))
+        let contentLimit = bounds.maxX - iconWidth - max(0, trailingWidth)
+        // The composite owns its blank prefix. Reserve all measured trailing
+        // content even while native bounds are narrower than the requested seat.
+        let spacerEnd = min(contentLimit, bounds.minX + max(0, spacer))
+        // The chevron occupies the spacer's final 20 points and never reveals.
+        let blankEnd = spacerEnd - 20
+        return NSRect(x: bounds.minX, y: bounds.minY,
+                      width: max(0, blankEnd - bounds.minX), height: bounds.height)
+    }
+
+    /// Blank reservation can cross the notch during native reflow.
+    /// The remaining width includes the icon, any title and native padding.
+    /// The chevron occupies the spacer's last 20-point seat.
+    nonisolated static func boundaryInkFrame(_ frame: CGRect, glyphWidth: CGFloat, spacer: CGFloat) -> CGRect {
+        guard spacer > 0 else { return frame }
+        let hint = spacer >= 20 ? CGFloat(20) : 0
+        let contentWidth = max(max(0, glyphWidth), frame.width - spacer)
+        let width = min(frame.width, contentWidth + hint)
+        return CGRect(x: frame.maxX - width, y: frame.minY, width: width, height: frame.height)
+    }
+
+    var boundaryOccupiedFrame: CGRect? {
+        boundaryFrame.map { Self.boundaryInkFrame($0, glyphWidth: boundaryGlyphLength, spacer: boundarySpacer) }
     }
 
     /// The icon's own width — the part of the item that is not spacer.
@@ -353,96 +560,19 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         refold()
     }
 
-    /// Every style but `.hidden` draws an icon — only a drawn icon is
-    /// worth a mirror under the concealer.
+    /// Every style but `.hidden` draws an icon.
     var anchorWantsVisibleSeat: Bool { iconStyle != .hidden }
-    /// The slot the item keeps while the mirror carries its face.
-    nonisolated static let anchorSlimLength: CGFloat = 28
 
-    /// Whether the concealer's mirror carries the icon. While it does
-    /// the button wears nothing and keeps the slim slot: under the
-    /// assertion macOS draws no pixels of ours anyway, and a lift of it
-    /// (a bridged clock or Wi-Fi click, 0.45 s) would otherwise flash a
-    /// second icon wherever macOS keeps the real item.
-    private(set) var faceMirrored = false
-    /// The mirror's face frame in AppKit screen coordinates — written by
-    /// the utility on every move, nil while the mirror is down.
-    var mirroredFaceFrame: NSRect?
-    /// The slot the item keeps while mirrored under the `.slot` seat —
-    /// the mirror's width, damped by the utility; nil is the slim slot.
-    private(set) var mirrorSlotLength: CGFloat?
+    /// The menu bar's appearance, read off the real button: a template
+    /// glyph resolves to the bar's label colour, not the app's.
+    var barAppearance: NSAppearance? { statusItem.button?.effectiveAppearance }
 
-    /// The utility's `.slot` seat sizes the real item to the mirror, so
-    /// the visible icon covers exactly the space macOS reserves.
-    func setMirrorSlotLength(_ length: CGFloat?) {
-        guard length != mirrorSlotLength else { return }
-        mirrorSlotLength = length
-        syncLength()
-    }
-    /// Fires whenever `face` changes — the mirror's feed.
-    var onFaceChange: (@MainActor () -> Void)?
-    private var appearanceWatch: NSKeyValueObservation?
-
-    /// Hand the icon to the mirror or take it back — the one owner of
-    /// the slim clamp and of the blank face.
-    func setFaceMirrored(_ mirrored: Bool) {
-        guard mirrored != faceMirrored else { return }
-        faceMirrored = mirrored
-        if !mirrored { mirroredFaceFrame = nil }
-        dressButton()
-        syncLength()
-    }
-
-    /// What the icon wears, for the mirror — built from the model, never
-    /// read off the button's pixels, which are blank while mirrored.
-    var face: MenuBarIconFace {
-        let button = statusItem.button
-        return MenuBarIconFace(
-            image: naturalImage ?? wornImage,
-            tint: button?.contentTintColor,
-            title: currentLabel.map(Self.labelTitle),
-            length: currentWidth > 0 ? currentWidth
-                : (currentLabel == nil ? NSStatusBar.system.thickness : 0),
-            highlighted: panelOpen || mirrorMenuOpen,
-            pulsing: pulseDrawsOnLayer,
-            toolTip: button?.toolTip,
-            accessibilityLabel: button?.accessibilityLabel(),
-            appearance: button?.effectiveAppearance,
-            hiddenCount: hiddenCount,
-            hiddenRevealed: hiddenRevealed)
-    }
-
-    /// The mirror's ordinary click — the button's left click.
-    func faceClicked() {
-        Self.log.debug("status click: mirrored face toggle")
-        onTogglePanel?()
-    }
-
-    /// The mirror's right/Option click: the item's full menu, Hidden
-    /// Items prepared as the button's own secondary click prepares it,
-    /// dropped from the bar's bottom edge at the face's left — where a
-    /// status item's menu opens.
-    func popUpMenu(in view: NSView) {
-        guard let window = view.window else { return }
-        prepareMenu()
-        let face = window.convertToScreen(view.convert(view.bounds, to: nil))
-        let barBottom = (window.screen ?? NSScreen.screens.first)?.visibleFrame.maxY ?? face.minY
-        // `popUp` tracks the menu until it closes — the face highlights
-        // for exactly that long.
-        mirrorMenuOpen = true
-        onFaceChange?()
-        menu.popUp(positioning: nil, at: NSPoint(x: face.minX, y: min(face.minY, barBottom)), in: nil)
-        mirrorMenuOpen = false
-        onFaceChange?()
-    }
-
-    /// The one place the button's pixels are written — image and label
-    /// alike — so the blank face while mirrored cannot be bypassed.
+    /// The one place the button's pixels are written    /// The one place the button's pixels are written — image and label
+    /// alike.
     private func dressButton() {
         guard let button = statusItem.button else { return }
-        let worn = Self.worn(image: wornImage, label: currentLabel, mirrored: faceMirrored)
-        if button.image !== worn.image { button.image = worn.image }
-        if let label = worn.label {
+        if button.image !== wornImage { button.image = wornImage }
+        if let label = currentLabel {
             if button.attributedTitle.string != label || button.imagePosition != .imageLeading {
                 button.attributedTitle = Self.labelTitle(label)
                 button.imagePosition = .imageLeading
@@ -454,39 +584,27 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         }
     }
 
-    /// What the button wears: nothing while the mirror carries the
-    /// face, its own image and label otherwise. Pure so a test pins the
-    /// blank.
-    nonisolated static func worn(image: NSImage?, label: String?,
-                                 mirrored: Bool) -> (image: NSImage?, label: String?) {
-        mirrored ? (nil, nil) : (image, label)
-    }
-
-    /// Every slot-width write goes through here, so the slim clamp is
-    /// impossible to bypass and every path back from it lands on the
-    /// same natural width.
+    /// Every slot-width write goes through here, so every path lands on
+    /// the same natural width.
     private func syncLength() {
-        let length = Self.itemLength(mirrored: faceMirrored, hasLabel: currentLabel != nil,
+        let length = Self.itemLength(hasLabel: currentLabel != nil,
                                      spacer: boundarySpacer, stripWidth: currentWidth,
-                                     glyphWidth: naturalWidth, slotLength: mirrorSlotLength)
+                                     glyphWidth: naturalWidth)
         if statusItem.length != length { statusItem.length = length }
     }
 
-    /// The item's length: the slim slot while mirrored — or the
-    /// mirror's own width under the `.slot` seat; otherwise a label's
-    /// variable length, the folded width with a spacer out, a strip's
-    /// own width, or the square.
-    static func itemLength(mirrored: Bool, hasLabel: Bool, spacer: CGFloat,
-                           stripWidth: CGFloat, glyphWidth: CGFloat,
-                           slotLength: CGFloat? = nil) -> CGFloat {
-        if mirrored { return max(anchorSlimLength, slotLength ?? 0) }
+    /// Labels size themselves. Other styles keep their natural image width
+    /// as the spacer folds, so native centering cannot shift the icon.
+    static func itemLength(hasLabel: Bool, spacer: CGFloat,
+                           stripWidth: CGFloat, glyphWidth: CGFloat) -> CGFloat {
         if hasLabel { return NSStatusItem.variableLength }
         if spacer > 0 { return (stripWidth > 0 ? stripWidth : glyphWidth) + spacer }
         if stripWidth > 0 { return stripWidth }
+        if glyphWidth > 0 { return glyphWidth }
         return NSStatusItem.squareLength
     }
 
-    /// The label style's title, as the button and the mirror draw it.
+    /// The label style's title, as the button draws it.
     static func labelTitle(_ label: String) -> NSAttributedString {
         NSAttributedString(string: label, attributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium),
@@ -495,11 +613,9 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     }
 
     /// The face the button wears: the natural image, or — with a spacer
-    /// out — a wider template composite with the icon at its right end
-    /// and a ‹ mark in the spacer's last points. The spacer is always
-    /// at least the affordance floor while the Menu Bar utility is on,
-    /// so the mark is the standing "drag items behind here" sign —
-    /// a blank stretch nobody can see was no affordance.
+    /// out, a wider composite with the icon at its right end and a ‹ mark
+    /// in the spacer's last points. Hidden items retain the affordance
+    /// floor; native reveal folds the blank space completely.
     private func refold() {
         guard let button = statusItem.button, let source = naturalImage else { return }
         let chevron = boundarySpacer > 0
@@ -530,7 +646,6 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         }
         dressButton()
         syncLength()
-        onFaceChange?()
     }
 
     /// The composite: `spacer` points of nothing, then the icon, drawn
@@ -566,12 +681,6 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         return image
     }
 
-    /// Whether a click's location falls in the blank part of the item —
-    /// the Menu Bar utility's reveal — rather than on the icon.
-    nonisolated static func clickIsOnSpacer(x: CGFloat, spacer: CGFloat) -> Bool {
-        spacer > 0 && x < spacer
-    }
-
     private func syncTooltip() {
         guard let button = statusItem.button else { return }
         var tip = stateSummary
@@ -579,13 +688,11 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             tip += " · \(hiddenCount) menu bar item\(hiddenCount == 1 ? "" : "s") tucked away to the left — hover or click the blank stretch to reveal"
         }
         button.toolTip = tip
-        onFaceChange?()
     }
 
     func setPanelOpen(_ open: Bool) {
         panelOpen = open
         statusItem.button?.highlight(open)
-        onFaceChange?()
     }
 
     func update(state: AgentAggregateState, detail: String) {
@@ -614,7 +721,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     nonisolated static func plan(style: StatusIconStyle, ringFraction: Double? = nil, tint: NSColor? = nil,
                      isPulsing: Bool = false, meters: [StatusMeter] = [], meterOverflow: Int = 0,
                      dotState: StatusDotState = .idle, sessionDots: [SessionDot] = [],
-                     labelText: String? = nil, phase: Double = 0) -> StatusItemPlan {
+                     labelText: String? = nil, phase: Double = 0, shapes: Bool = false) -> StatusItemPlan {
         // The ring tracks the leading provider — the same provider the
         // first meter meters whenever it reports a window — and that
         // provider's meter now leads with its MOST-EXHAUSTED window, not
@@ -642,7 +749,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
                                   // as a live ask.
                                   dot: style.isMeters ? (dotState == .error ? .error : (isPulsing ? .ask : dotState)) : .idle,
                                   sessions: style == .agents || style == .orbit ? sessionDots : [],
-                                  phase: phase)
+                                  phase: phase,
+                                  shapes: shapes)
         // `hidden` is a strip too: the spec's own width owns the item,
         // which is how the invisible slot stays a thin 8 pt instead of
         // the square styles' 22.
@@ -665,7 +773,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         let tint: NSColor? = isPulsing ? .systemOrange : aggregateTint
         let plan = Self.plan(style: iconStyle, ringFraction: ringFraction, tint: tint, isPulsing: isPulsing,
                              meters: meters, meterOverflow: meterOverflow, dotState: dotState,
-                             sessionDots: sessionDots, labelText: labelText, phase: phase)
+                             sessionDots: sessionDots, labelText: labelText, phase: phase,
+                             shapes: Self.dotsNeedShapes)
         let spec = plan.spec
         let strip = plan.isStrip
         let label = plan.label
@@ -713,6 +822,23 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
                           iconStyle.rawValue, meters.count, meterOverflow, sessionDots.count, dotState.rawValue,
                           rect.minX, rect.minY, width, rect.height, top, rect.minX, top, width, rect.height)
         Self.log.debug("\(line, privacy: .public)")
+    }
+
+    /// Whether the dots are told apart by shape: with Reduce Motion the
+    /// rhythm that separated an ask from a failure is gone, and with
+    /// Differentiate Without Color the colour is not enough.
+    static var dotsNeedShapes: Bool {
+        let workspace = NSWorkspace.shared
+        return workspace.accessibilityDisplayShouldReduceMotion
+            || workspace.accessibilityDisplayShouldDifferentiateWithoutColor
+    }
+
+    /// The display options changed in System Settings: the breathing clock
+    /// and the dot shapes follow at once instead of at the next relaunch.
+    private func accessibilityOptionsChanged() {
+        syncBreathing()
+        applyPulseAnimation()
+        redraw()
     }
 
     /// The 2 Hz clock behind the breathing dots: it runs only while a dot
@@ -774,12 +900,25 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     private func applyPulseAnimation() {
         guard let button = statusItem.button else { return }
         button.wantsLayer = true
-        button.layer?.removeAnimation(forKey: MenuBarIconFace.pulseKey)
+        button.layer?.removeAnimation(forKey: Self.pulseKey)
         if pulseDrawsOnLayer {
-            button.layer?.add(MenuBarIconFace.pulseAnimation(), forKey: MenuBarIconFace.pulseKey)
+            button.layer?.add(Self.pulseAnimation(), forKey: Self.pulseKey)
         }
         button.layer?.opacity = 1
-        onFaceChange?()
+    }
+
+    private static let pulseKey = "jrbar.escalationPulse"
+
+    /// The escalation fade.
+    private static func pulseAnimation() -> CABasicAnimation {
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1.0
+        pulse.toValue = 0.3
+        pulse.duration = 0.7
+        pulse.autoreverses = true
+        pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        return pulse
     }
 
     /// Whether the escalation fades the whole icon — the glyph styles
@@ -822,13 +961,21 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     @objc private func clicked(_ sender: Any?) {
         let event = NSApp.currentEvent
         Self.log.debug("status click: native button action")
+        // ⌘ on a status item is macOS's own rearranging gesture, the one
+        // that drags the icon across the apps it hides or shows. The
+        // release that ends the drag must never read as a click on the
+        // spacer (a reveal) or the icon (the panel) under the person's hand.
+        if event?.modifierFlags.contains(.command) == true {
+            Self.log.debug("status click: ⌘ — a rearranging drag, not a click")
+            return
+        }
         let secondary = event?.type == .rightMouseUp || event?.modifierFlags.contains(.option) == true
-        // A click on the blank stretch left of the icon is the Menu Bar
-        // utility's reveal, whichever button.
+        // Only blank space strictly left of the chevron reveals, whichever button.
         if let event, let button = statusItem.button, boundarySpacer > 0 {
-            let x = button.convert(event.locationInWindow, from: nil).x
+            let point = button.convert(event.locationInWindow, from: nil)
+            let x = point.x
             Self.log.debug("status click: x=\(x, privacy: .public) spacer=\(self.boundarySpacer, privacy: .public) win=\(event.locationInWindow.x, privacy: .public) type=\(event.type.rawValue, privacy: .public)")
-            if Self.clickIsOnSpacer(x: x, spacer: boundarySpacer) {
+            if boundaryBlankBounds(for: button).contains(point) {
                 onBoundaryClick?()
                 return
             }
@@ -851,8 +998,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     }
 
     /// The menu's "Hidden Menu Bar Items" row: the utility's submenu
-    /// while it runs, gone while it is parked. Both secondary clicks —
-    /// the button's and the mirror's — prepare it, through prepareMenu.
+    /// while it runs, gone while it is parked. The button's secondary
+    /// click prepares it, through prepareMenu.
     private func prepareHiddenItemsRow() {
         if let submenu = hiddenItemsMenu?() {
             hiddenItemsMenuItem.submenu = submenu

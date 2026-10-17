@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
+import math
 import re
 import socket
 import ssl
 import threading
+import time
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import SplitResult, quote, urlsplit
 
 from . import __version__
+
+_log = logging.getLogger(__name__)
 
 MAX_WEBHOOK_PAYLOAD_BYTES = 8 * 1024
 MAX_WEBHOOK_RESPONSE_BYTES = 4 * 1024
@@ -52,6 +57,7 @@ class WebhookReason(str, Enum):
     MALFORMED_RESPONSE = "malformed_response"
     QUEUE_FULL = "queue_full"
     CLOSED = "closed"
+    CONSENT_REVOKED = "consent_revoked"
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +111,8 @@ def _public_address(value: str) -> bool:
 
 
 def _parse_endpoint(url: str) -> SplitResult:
+    if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in url):
+        raise WebhookValidationError(WebhookReason.INVALID_URL)
     try:
         parsed = urlsplit(url)
     except ValueError as exc:
@@ -119,7 +127,7 @@ def _parse_endpoint(url: str) -> SplitResult:
     ):
         raise WebhookValidationError(WebhookReason.INVALID_URL)
     try:
-        port = parsed.port or 443
+        port = parsed.port if parsed.port is not None else 443
     except ValueError as exc:
         raise WebhookValidationError(WebhookReason.INVALID_URL) from exc
     if port not in ALLOWED_WEBHOOK_PORTS:
@@ -134,8 +142,11 @@ def validate_webhook_url(
 ) -> WebhookEndpoint:
     text = str(url).strip()
     parsed = _parse_endpoint(text)
-    host = parsed.hostname or ""
-    port = parsed.port or 443
+    try:
+        host = (parsed.hostname or "").encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise WebhookValidationError(WebhookReason.INVALID_URL) from exc
+    port = parsed.port if parsed.port is not None else 443
     try:
         records = resolver(
             host,
@@ -157,9 +168,9 @@ def validate_webhook_url(
         raise WebhookValidationError(WebhookReason.RESOLUTION_FAILED)
     if not all(_public_address(address) for address in addresses):
         raise WebhookValidationError(WebhookReason.FORBIDDEN_DESTINATION)
-    target = parsed.path or "/"
+    target = quote(parsed.path or "/", safe="/%:@!$&'()*+,;=-._~")
     if parsed.query:
-        target += "?" + parsed.query
+        target += "?" + quote(parsed.query, safe="/%?:@!$&'()*+,;=-._~")
     return WebhookEndpoint(text, host, port, target, tuple(addresses))
 
 
@@ -170,7 +181,7 @@ def sanitize_webhook_payload(payload: Mapping[str, object]) -> dict[str, object]
         if key in _SAFE_NUMBER_FIELDS:
             if isinstance(value, bool):
                 safe[key] = value
-            elif isinstance(value, (int, float)):
+            elif isinstance(value, int) or (isinstance(value, float) and math.isfinite(value)):
                 safe[key] = value
             continue
         if key not in _SAFE_STRING_FIELDS or not isinstance(value, str):
@@ -204,7 +215,8 @@ def encode_webhook_payload(payload: Mapping[str, object]) -> bytes:
 
 
 def _host_header(endpoint: WebhookEndpoint) -> str:
-    return endpoint.host if endpoint.port == 443 else f"{endpoint.host}:{endpoint.port}"
+    host = f"[{endpoint.host}]" if ":" in endpoint.host else endpoint.host
+    return host if endpoint.port == 443 else f"{host}:{endpoint.port}"
 
 
 def _request_bytes(endpoint: WebhookEndpoint, payload: bytes) -> bytes:
@@ -220,40 +232,79 @@ def _request_bytes(endpoint: WebhookEndpoint, payload: bytes) -> bytes:
     return header + payload
 
 
+class _ResponseReader:
+    """Read bounded header lines without resetting the delivery deadline."""
+
+    def __init__(self, stream, deadline: float, clock: Callable[[], float]):
+        self._stream = stream
+        self._deadline = deadline
+        self._clock = clock
+        self._buffer = bytearray()
+
+    def readline(self, limit: int) -> bytes:
+        while True:
+            newline = self._buffer.find(b"\n")
+            if newline >= 0 or len(self._buffer) >= limit:
+                length = min(limit, newline + 1 if newline >= 0 else len(self._buffer))
+                line = bytes(self._buffer[:length])
+                del self._buffer[:length]
+                return line
+            remaining = self._deadline - self._clock()
+            if remaining <= 0:
+                raise TimeoutError("webhook delivery deadline expired")
+            self._stream.settimeout(remaining)
+            chunk = self._stream.recv(min(4096, limit - len(self._buffer)))
+            if not chunk:
+                line = bytes(self._buffer)
+                self._buffer.clear()
+                return line
+            self._buffer.extend(chunk)
+
+
 def _read_response(stream) -> tuple[int, int | None]:
     consumed = 0
-    status_line = stream.readline(4097)
-    consumed += len(status_line)
-    if not status_line or len(status_line) > 4096:
-        raise WebhookValidationError(WebhookReason.MALFORMED_RESPONSE)
-    try:
-        protocol, status_text, _reason = status_line.decode("iso-8859-1").split(" ", 2)
-        status = int(status_text)
-    except (UnicodeError, ValueError) as exc:
-        raise WebhookValidationError(WebhookReason.MALFORMED_RESPONSE) from exc
-    if not protocol.startswith("HTTP/") or not 100 <= status <= 599:
-        raise WebhookValidationError(WebhookReason.MALFORMED_RESPONSE)
-
-    content_length = None
     while True:
-        line = stream.readline(4097)
-        consumed += len(line)
-        if consumed > MAX_WEBHOOK_HEADER_BYTES or len(line) > 4096:
+        status_line = stream.readline(4097)
+        consumed += len(status_line)
+        if consumed > MAX_WEBHOOK_HEADER_BYTES:
             raise WebhookValidationError(WebhookReason.RESPONSE_TOO_LARGE)
-        if line in {b"\r\n", b"\n", b""}:
-            break
+        if not status_line.endswith(b"\n") or len(status_line) > 4096:
+            raise WebhookValidationError(WebhookReason.MALFORMED_RESPONSE)
         try:
-            name, value = line.decode("iso-8859-1").split(":", 1)
+            protocol, status_text, _reason = status_line.decode("iso-8859-1").split(" ", 2)
+            status = int(status_text)
         except (UnicodeError, ValueError) as exc:
             raise WebhookValidationError(WebhookReason.MALFORMED_RESPONSE) from exc
-        if name.strip().casefold() == "content-length":
-            try:
-                content_length = int(value.strip())
-            except ValueError as exc:
-                raise WebhookValidationError(WebhookReason.MALFORMED_RESPONSE) from exc
-            if content_length < 0 or content_length > MAX_WEBHOOK_RESPONSE_BYTES:
+        if protocol not in {"HTTP/1.0", "HTTP/1.1"} or len(status_text) != 3 or not 100 <= status <= 599:
+            raise WebhookValidationError(WebhookReason.MALFORMED_RESPONSE)
+
+        content_length = None
+        while True:
+            line = stream.readline(4097)
+            consumed += len(line)
+            if consumed > MAX_WEBHOOK_HEADER_BYTES or len(line) > 4096:
                 raise WebhookValidationError(WebhookReason.RESPONSE_TOO_LARGE)
-    return status, content_length
+            if line in {b"\r\n", b"\n"}:
+                break
+            if not line.endswith(b"\n"):
+                raise WebhookValidationError(WebhookReason.MALFORMED_RESPONSE)
+            try:
+                name, value = line.decode("iso-8859-1").split(":", 1)
+            except (UnicodeError, ValueError) as exc:
+                raise WebhookValidationError(WebhookReason.MALFORMED_RESPONSE) from exc
+            if name.strip().casefold() == "content-length":
+                try:
+                    declared_length = int(value.strip())
+                except ValueError as exc:
+                    raise WebhookValidationError(WebhookReason.MALFORMED_RESPONSE) from exc
+                if content_length is not None and declared_length != content_length:
+                    raise WebhookValidationError(WebhookReason.MALFORMED_RESPONSE)
+                content_length = declared_length
+                if content_length < 0 or content_length > MAX_WEBHOOK_RESPONSE_BYTES:
+                    raise WebhookValidationError(WebhookReason.RESPONSE_TOO_LARGE)
+        if 100 <= status < 200 and status != 101:
+            continue
+        return status, content_length
 
 
 def deliver_webhook(
@@ -263,26 +314,34 @@ def deliver_webhook(
     timeout: float = WEBHOOK_TIMEOUT_SECONDS,
     socket_factory: Callable[..., socket.socket] = socket.create_connection,
     ssl_context: ssl.SSLContext | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> WebhookResult:
     try:
         encoded = encode_webhook_payload(payload)
     except WebhookValidationError as exc:
         return WebhookResult(exc.reason)
     context = ssl_context or ssl.create_default_context()
+    deadline = clock() + timeout
+
+    def remaining() -> float:
+        budget = deadline - clock()
+        if budget <= 0:
+            raise TimeoutError("webhook delivery deadline expired")
+        return budget
+
     last_reason = WebhookReason.CONNECTION_FAILED
     for address in endpoint.addresses:
         raw = None
         secure = None
+        sending_started = False
         try:
-            raw = socket_factory((address, endpoint.port), timeout=timeout)
-            raw.settimeout(timeout)
+            raw = socket_factory((address, endpoint.port), timeout=remaining())
+            raw.settimeout(remaining())
             secure = context.wrap_socket(raw, server_hostname=endpoint.host)
+            secure.settimeout(remaining())
+            sending_started = True
             secure.sendall(_request_bytes(endpoint, encoded))
-            stream = secure.makefile("rb")
-            try:
-                status, _content_length = _read_response(stream)
-            finally:
-                stream.close()
+            status, _content_length = _read_response(_ResponseReader(secure, deadline, clock))
             if 200 <= status < 300:
                 return WebhookResult(WebhookReason.DELIVERED, status)
             if 300 <= status < 400:
@@ -290,10 +349,14 @@ def deliver_webhook(
             return WebhookResult(WebhookReason.REMOTE_REJECTED, status)
         except ssl.SSLError:
             last_reason = WebhookReason.TLS_FAILED
+            if sending_started:
+                return WebhookResult(last_reason)
         except WebhookValidationError as exc:
             return WebhookResult(exc.reason)
         except (OSError, TimeoutError):
             last_reason = WebhookReason.CONNECTION_FAILED
+            if sending_started:
+                return WebhookResult(last_reason)
         finally:
             if secure is not None:
                 try:
@@ -328,6 +391,7 @@ class WebhookDeliveryService:
             tuple[
                 WebhookDeliveryRequest,
                 Callable[[WebhookDeliveryReceipt], None] | None,
+                Callable[[], bool] | None,
             ]
         ] = deque()
         self._generation = 0
@@ -340,6 +404,7 @@ class WebhookDeliveryService:
         payload: Mapping[str, object],
         *,
         callback: Callable[[WebhookDeliveryReceipt], None] | None = None,
+        authorize: Callable[[], bool] | None = None,
     ) -> WebhookReason | None:
         safe_payload = sanitize_webhook_payload(payload)
         try:
@@ -357,14 +422,19 @@ class WebhookDeliveryService:
                 str(url).strip(),
                 tuple(sorted(safe_payload.items())),
             )
-            self._queue.append((request, callback))
+            self._queue.append((request, callback, authorize))
             if self._worker is None or not self._worker.is_alive():
-                self._worker = threading.Thread(
-                    target=self._run,
-                    name="JRBarWebhookDelivery",
-                    daemon=True,
-                )
-                self._worker.start()
+                try:
+                    self._worker = threading.Thread(
+                        target=self._run,
+                        name="JRBarWebhookDelivery",
+                        daemon=True,
+                    )
+                    self._worker.start()
+                except Exception:
+                    self._worker = None
+                    self._queue.pop()
+                    return WebhookReason.CONNECTION_FAILED
             self._condition.notify()
         return None
 
@@ -387,10 +457,20 @@ class WebhookDeliveryService:
             queued = self._next()
             if queued is None:
                 return
-            request, callback = queued
+            request, callback, authorize = queued
             try:
-                endpoint = self._validator(request.url)
-                result = self._deliver(endpoint, dict(request.payload))
+                if authorize is not None and not authorize():
+                    result = WebhookResult(WebhookReason.CONSENT_REVOKED)
+                else:
+                    endpoint = self._validator(request.url)
+                    with self._condition:
+                        closed = self._closed
+                    if closed:
+                        result = WebhookResult(WebhookReason.CLOSED)
+                    elif authorize is not None and not authorize():
+                        result = WebhookResult(WebhookReason.CONSENT_REVOKED)
+                    else:
+                        result = self._deliver(endpoint, dict(request.payload))
             except WebhookValidationError as exc:
                 result = WebhookResult(exc.reason)
             except Exception:
@@ -399,4 +479,4 @@ class WebhookDeliveryService:
                 try:
                     callback(WebhookDeliveryReceipt(request, result))
                 except Exception:
-                    pass
+                    _log.warning("webhook delivery receipt listener failed")

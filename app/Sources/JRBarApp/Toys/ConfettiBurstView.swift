@@ -38,6 +38,10 @@ struct ConfettiView: View {
     /// The Reduce Motion glow's length.
     static let flashLife: TimeInterval = 0.9
 
+    nonisolated static func frameInterval(power: PowerPolicy = .normal) -> TimeInterval {
+        power.interval(1.0 / 60)
+    }
+
     /// When the burst started; set on appear so `t = 0` is the pop.
     @ViewState private var origin = Date()
 
@@ -45,9 +49,10 @@ struct ConfettiView: View {
         if let frozen {
             Canvas { canvas, size in draw(&canvas, size: size, time: frozen) }
         } else {
-            TimelineView(.animation(minimumInterval: 1.0 / 60)) { context in
+            let interval = Self.frameInterval(power: PowerConditions.shared.policy)
+            TimelineView(.animation(minimumInterval: interval)) { context in
+                let time = max(0, context.date.timeIntervalSince(origin))
                 Canvas { canvas, size in
-                    let time = context.date.timeIntervalSince(origin)
                     if let meter {
                         meter.measure { draw(&canvas, size: size, time: time) }
                     } else {

@@ -39,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var presence: PresenceReporter?
     private var utilitiesStore: UtilitiesStore?
     private var supervisor: CoreSupervisor?
+    /// Keeps the settings seal: the Keychain key, the daemon's word on it and
+    /// the Settings banner (SettingsSeal.swift).
+    private var sealCoordinator: SettingsSealCoordinator?
     private var socketWatcher: FileWatcher?
     private var updater: SparkleUpdater?
     private var hotkey: PanelHotkey?
@@ -47,6 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var shelfHotkey: PanelHotkey?
     private var checkForUpdatesItem: NSMenuItem?
     private var wasLive = false
+    /// Speaks each new ask once to VoiceOver.
+    private let askAnnouncer = AskAnnouncer()
     private var pendingHookRefreshStamp: String?
     private var lastFileProgram: (text: String, source: LEDFeed.Source, anchor: Double?)?
     private var lastLightsSource: String?
@@ -56,7 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var completionReset: Timer?
     /// The app's remembered facts (hooks stamp, login item, Screen Bar) in
     /// `~/.local/state/jrbar/app-state.json`; user defaults are Sparkle's.
-    private let appStateFile = AppStateFile()
+    private var appStateFile = AppStateFile()
+    private var isolatedPreview: IsolatedPreviewRuntime?
     private var appState = AppState()
     /// The user-defaults keys the same facts lived under before the JSON
     /// file; read once to seed the file on a Mac where they did persist.
@@ -70,12 +76,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var instanceLockFD: Int32 = -1
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        do {
+            isolatedPreview = try IsolatedPreviewRuntime.readCurrent()
+        } catch {
+            NSLog("JR-Bar: invalid isolated preview configuration")
+            exit(1)
+        }
+        if let isolatedPreview {
+            appStateFile = AppStateFile(url: isolatedPreview.file("app-state.json"))
+        }
         loadAppState()
 
         // `JRBAR_LOGIN_ITEM=on|off|status` only touches the login item and
         // exits: scripts/install-agents.sh uses it to hand the Mac between
         // the packaged app (login item) and the dev LaunchAgents.
-        if let request = ProcessInfo.processInfo.environment["JRBAR_LOGIN_ITEM"], !request.isEmpty {
+        if isolatedPreview == nil, let request = ProcessInfo.processInfo.environment["JRBAR_LOGIN_ITEM"], !request.isEmpty {
             let service = SMAppService.mainApp
             do {
                 switch request {
@@ -109,7 +124,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // app runs on, so it never quits silently as "already running".
         let instanceLog = Logger(subsystem: "devin.jrbar", category: "instance")
         var lockNotice: String?
-        guard let lock = SingleInstanceLock.acquire(onUnavailable: { code in
+        // A predecessor that is quitting still holds the lock for up to the
+        // daemon's three-second grace; the person who quits and reopens at
+        // once must get a running app and its icon, so the launch waits
+        // that out (bounded) instead of yielding to a process that is
+        // about to be gone.
+        guard let lock = SingleInstanceLock.acquire(wait: .launch, onUnavailable: { code in
             let notice = "single-instance lock unavailable (errno \(code): \(String(cString: strerror(code)))) - continuing without it"
             instanceLog.error("\(notice, privacy: .public)")
             NSLog("JR-Bar: %@", notice)
@@ -118,6 +138,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             let line = "JR-Bar is already running — this instance yields."
             instanceLog.notice("\(line, privacy: .public)")
             print(line)
+            // Whoever opened this copy wanted JR-Bar in front of them: ask
+            // the running one to show itself rather than leave them with
+            // nothing happening.
+            DistributedNotificationCenter.default().postNotificationName(
+                Self.showRequestName, object: nil, userInfo: nil, deliverImmediately: true)
             NSApp.terminate(nil)
             return
         }
@@ -127,7 +152,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // turn SIGTERM into an orderly quit so applicationWillTerminate runs.
         signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        source.setEventHandler { NSApp.terminate(nil) }
+        // Not `NSApp.terminate` here: this handler runs as a block on the
+        // main dispatch queue, and a quit that waits for the daemon
+        // (`.terminateLater`) spins a nested loop that cannot run the reply
+        // queued on that same serial queue. The run loop's own queue can.
+        source.setEventHandler {
+            Self.shutdownLog.notice("signal.received")
+            RunLoop.main.perform(inModes: Self.quitModes) { NSApp.terminate(nil) }
+        }
         source.resume()
         terminationSignal = source
 
@@ -142,11 +174,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // actor), so the wiring below is in place by then.
         let bundledCore = startCoreSupervision(core: core, store: store)
         let statusItem = StatusItemController()
-        let screenBar = ScreenBarController()
-        let feed = LEDFeed()
-        let monitor = AgentStateMonitor()
+        let screenBar = ScreenBarController(nativeNoticesEnabled: isolatedPreview == nil)
+        let feed = isolatedPreview == nil ? LEDFeed() : nil
+        let monitor = isolatedPreview == nil ? AgentStateMonitor() : nil
         let panel = PanelController(store: store)
         let settingsStore = SettingsStore(core: core)
+        settingsStore.seal = sealCoordinator
         let settingsWindow = SettingsWindowController(store: settingsStore)
         self.settingsStore = settingsStore
         self.settingsWindow = settingsWindow
@@ -167,30 +200,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // — the glass card and the island's grown card read the same
         // files, so twin models would fire a timer twice and clobber
         // each other's persist.
-        let cardTimers = ShelfTimerModel()
+        let cardTimers = ShelfTimerModel(storeURL: isolatedPreview?.file("shelf-timers.json"),
+                                         schedulingEnabled: isolatedPreview == nil)
         let cardTray = ShelfTrayModel()
         let toysStore = ToysStore(core: core, settings: settingsStore, state: appState.toys,
-                                  cardModel: NotchCardModel(timers: cardTimers, tray: cardTray),
-                                  aquariumSave: AquariumSaveFile())
+                                  cardModel: NotchCardModel(timers: cardTimers, tray: cardTray,
+                                      utility: isolatedPreview == nil ? nil : ShelfUtilityModel(power: AlcovePowerState(
+                                          hasBattery: false, onAC: true, charging: false, percent: nil, fullyCharged: false)),
+                                      runtimeEnabled: isolatedPreview == nil),
+                                  nativeSourcesEnabled: isolatedPreview == nil,
+                                  aquariumSave: isolatedPreview.map { AquariumSaveFile(url: $0.file("aquarium.json")) } ?? AquariumSaveFile())
         toysStore.onPersist = { [weak self] state in
             guard let self else { return }
             self.appState.toys = state
             self.persistAppState()
         }
         self.toysStore = toysStore
+        toysStore.notchBuddy.onOpenRefused = { [weak self] text in self?.showFeedback(text) }
         settingsStore.toys = toysStore
         // Confetti's colour and aim: the focused session's provider (the
         // same one `jrbar://confetti` resolves) and the icon's face.
         toysStore.focusedProvider = { [weak self] in self?.focusedConfettiProvider(.focused) }
         toysStore.iconFrame = { [weak statusItem] in statusItem?.anchorRect }
-        // The card's weather row: both card surfaces read the same
-        // notch settings — on, ours, and the city text.
-        let weatherSettings = { [weak toysStore] in
-            let notch = toysStore?.state.notch ?? NotchSettings()
-            return (on: notch.enabled && notch.provider == .jrbar && notch.weather,
-                    city: notch.weatherCity)
-        }
-        toysStore.notch.cardModel.utility.weather.settings = weatherSettings
         // Utilities: the serious half. Its state lives beside the toys'
         // in `app-state.json` under `utilities`, same single-writer rule
         // — the store hands back the blob and the delegate writes it.
@@ -208,7 +239,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         utilitiesStore.menuBar.host = statusItem
         // The Item Bar's photographed glyphs — the app's own; tests never
         // get a camera, so no test captures the screen or writes the cache.
-        utilitiesStore.menuBar.glyphCamera = MenuBarGlyphCamera()
+        if isolatedPreview == nil {
+            utilitiesStore.menuBar.glyphCamera = MenuBarGlyphCamera()
+        } else {
+            utilitiesStore.menuBar.spacingWrite = { _, _ in true }
+        }
         // …and its memory of the apps the bar has shown, for the right
         // ear's newcomer nudge — the app's, for the same reason.
         utilitiesStore.menuBar.newcomerMemory = MenuBarNewcomerMemory()
@@ -219,27 +254,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         store.askDesk.onAnswered = { [weak toysStore] session, request in
             toysStore?.notch.resolveAsk(session: session, request: request)
         }
+        // "Try it": the made-up ask comes up where the person's real ones do.
+        DemoAskStore.shared.presenter = { [weak self] in self?.presentAskSurface() }
         // One way to open a session: a live session the daemon cannot find
         // opens through the Dock's window locator, off main, instead of
         // stopping at "not found".
-        SessionOpener.wiring = SessionOpener.Wiring(core: core, utilities: utilitiesStore)
-        // The archive's Resume: the daemon's resume_session, as History's.
-        DataHoarderModel.resumeSender = { [weak core] id in
-            guard let core else { throw CoreClientError.notConnected }
-            return try await core.send("resume_session", args: ["session": .string(id)])
-        }
-        // Software update: the embedded Sparkle, or a stub that says why not.
-        let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
-        self.updater = updater
-        settingsStore.refreshUpdater()
-        NotificationCenter.default.addObserver(forName: SparkleUpdater.automaticChecksDidChange, object: nil, queue: .main) { [weak settingsStore] _ in
-            MainActor.assumeIsolated { settingsStore?.refreshUpdater() }
+        if isolatedPreview == nil {
+            SessionOpener.wiring = SessionOpener.Wiring(core: core, utilities: utilitiesStore)
+            // Software update: the embedded Sparkle, or a stub that says why not.
+            let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
+            self.updater = updater
+            settingsStore.refreshUpdater()
+            settingsStore.observeUpdaterChanges()
         }
         store.onCheckForUpdates = { [weak self] in self?.checkForUpdates(nil) }
         statusItem.onCheckForUpdates = { [weak self] in self?.checkForUpdates(nil) }
         statusItem.showsCreatorMicro = { [weak store] in store?.hasCreatorMicro == true }
         installMainMenu()
         self.statusItem = statusItem
+        startStatusIconWatchdog(statusItem)
         self.screenBar = screenBar
         self.feed = feed
         self.monitor = monitor
@@ -301,8 +334,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // gestures route to the toy instead, so the two can never both
         // be up. It hangs under the band, else the notch itself.
         let notchCard = NotchCardPresenter(
-            model: NotchCardModel(timers: cardTimers, tray: cardTray))
-        notchCard.model.utility.weather.settings = weatherSettings
+            model: NotchCardModel(timers: cardTimers, tray: cardTray,
+                                      utility: isolatedPreview == nil ? nil : ShelfUtilityModel(power: AlcovePowerState(
+                                          hasBattery: false, onAC: true, charging: false, percent: nil, fullyCharged: false)),
+                                      runtimeEnabled: isolatedPreview == nil))
         // The Dock's player row borrows the Shelf's synced line — one
         // LRCLIB cache for the notch and the Dock, never a second lookup.
         utilitiesStore.dock.enhance.lyrics = { [weak notchCard, weak toysStore] in
@@ -311,7 +346,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // …and its "Send to Shelf" lands in the one shared tray.
         utilitiesStore.dock.enhance.sendToShelf = { [weak cardTray] urls in cardTray?.add(urls) }
         // The Dock offers Send to Shelf only while the shelf takes files.
-        toysStore.notch.onShelfSwitch = { [weak utilitiesStore, weak cardTray] on in
+        toysStore.notch.onShelfSwitch = { [weak utilitiesStore, weak cardTray, weak notchCard] on in
+            if !on { notchCard?.releaseShelfKeyboard() }
             let send: @MainActor ([URL]) -> Void = { urls in cardTray?.add(urls) }
             utilitiesStore?.dock.enhance.sendToShelf = on ? send : nil
         }
@@ -337,10 +373,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // settings' switches, the same as the grown island's.
         notchCard.model.calendarEnabled = { [weak toysStore] in toysStore?.state.notch.calendar ?? true }
         notchCard.model.remindersEnabled = { [weak toysStore] in toysStore?.state.notch.reminders ?? true }
-        // The IP lookup for weather is the person's opt-in on both cards.
-        notchCard.model.utility.weather.allowIPLocation = { [weak toysStore] in
-            toysStore?.state.notch.weatherUseIPLocation ?? false
-        }
         // Lyrics ask LRCLIB only once the switch is on and agreed to.
         toysStore.notch.wireLyrics(notchCard.model.utility.lyrics)
         notchCard.model.heldAwake = { [weak self] in self?.core?.state?.power?.keepAwake == true }
@@ -361,6 +393,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         // The island's frame is part of the region — a click on the
         // island (or its grown card) must not read as outside.
+        interaction.extraHitTest = { [weak screenBar] in screenBar?.shoulderContains($0) ?? false }
         interaction.extraHitRects = { [weak self] in
             self?.toysStore?.notch.islandScreenRect.map { [$0] } ?? []
         }
@@ -395,6 +428,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         toysStore.notch.toggleGlassShelf = { [weak interaction] in
             interaction?.toggleShelfCard() ?? "JR-Bar is still starting."
         }
+        toysStore.notch.useGlassShelfKeyboard = { [weak notchCard] in
+            guard let notchCard else { return "JR-Bar is still starting." }
+            return notchCard.useShelfKeyboard()
+        }
+        toysStore.notch.releaseGlassShelfKeyboard = { [weak notchCard] in notchCard?.releaseShelfKeyboard() }
         // The grown island's card reads the same facts the glass one
         // does.
         toysStore.notch.cardFocus = { [weak self] in self?.store?.screenBarFocus }
@@ -411,28 +449,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // wings setting.
         // JR-Bar's own Mirror, on either card surface, is the camera in
         // use but not a call.
-        let presence = PresenceReporter(core: core, cards: { [weak toysStore, weak glassCard = notchCard.model] in
-            [toysStore?.notch.cardModel, glassCard].compactMap { $0 }
-        })
-        self.presence = presence
-        toysStore.notch.onSensorsChanged = { [weak presence] in presence?.noteSensors($0) }
-        toysStore.notch.sensorsWantedForPresence = { [weak presence] in presence?.wantsSensors ?? false }
-        toysStore.notch.sensorsWantedElsewhere = { [weak self] in self?.screenBar?.drawsSensorDots ?? false }
-        presence.onDemandChanged = { [weak toysStore] in toysStore?.notch.syncSensorMonitor() }
-        // The toys hush for a call: Confetti holds its burst and its
-        // pop, the tank its cards, the buddy its hop.
-        presence.onCallChanged = { [weak toysStore] in toysStore?.noteCallPresence($0) }
-        presence.coreChanged()
-        observeSensorDots()
+        if isolatedPreview == nil {
+            let presence = PresenceReporter(core: core, cards: { [weak toysStore, weak glassCard = notchCard.model] in
+                [toysStore?.notch.cardModel, glassCard].compactMap { $0 }
+            })
+            self.presence = presence
+            toysStore.notch.onSensorsChanged = { [weak presence] in presence?.noteSensors($0) }
+            toysStore.notch.sensorsWantedForPresence = { [weak presence] in presence?.wantsSensors ?? false }
+            toysStore.notch.sensorsWantedElsewhere = { [weak self] in self?.screenBar?.drawsSensorDots ?? false }
+            presence.onDemandChanged = { [weak toysStore] in toysStore?.notch.syncSensorMonitor() }
+            // The toys hush for a call: Confetti holds its burst and its
+            // pop, the tank its cards, the buddy its hop.
+            presence.onCallChanged = { [weak toysStore] in toysStore?.noteCallPresence($0) }
+            presence.coreChanged()
+            observeSensorDots()
+        }
         // Wing gestures: an outward flick dismisses a side, a horizontal
         // swipe on the band summons dismissed wings back. The pull wires
         // make the ear ride the finger until the flick commits.
         interaction.wingSideAt = { [weak screenBar] point in screenBar?.wingSide(atScreenPoint: point) }
+        toysStore.notch.wingOwnsGesture = { [weak screenBar] point in
+            screenBar?.wingSide(atScreenPoint: point) != nil
+        }
         // Nobody can see the band — asleep, or stepped aside for a video:
         // the hover poll parks with the band's own clocks.
-        screenBar.onLiveChange = { [weak interaction] live in interaction?.setParked(!live) }
+        screenBar.onLiveChange = { [weak self, weak interaction, weak screenBar, weak notch = toysStore.notch] live in
+            notch?.island?.setShoulderInput(live ? screenBar?.shoulderScreenPath : nil)
+            notch?.bandHandlesHover = live
+            interaction?.setParked(!live)
+            self?.rearmAskAgeTick()
+        }
         interaction.onWingDismiss = { [weak screenBar] side in screenBar?.dismissWing(side) }
         interaction.onWingRestore = { [weak screenBar] in screenBar?.restoreWings() }
+        let canRestoreIslandWings: @MainActor @Sendable (NSPoint) -> Bool = { [weak screenBar, weak notch = toysStore.notch] point in
+            guard let screenBar, let notch, let frame = notch.island?.presentedFrame else { return false }
+            let headerHeight = max(44, notch.notchDepth + ScreenBarGeometry.wingEarDrop)
+            return screenBar.wingRestorationContains(point, island: frame, headerHeight: headerHeight)
+        }
+        interaction.extraHitTest = { [weak screenBar] point in
+            screenBar?.shoulderContains(point) == true || canRestoreIslandWings(point)
+        }
+        interaction.canRestoreIslandWings = canRestoreIslandWings
+        toysStore.notch.canRestoreIslandWings = canRestoreIslandWings
         interaction.onWingPull = { [weak screenBar] side, dx in screenBar?.pullWing(side, to: dx) }
         interaction.onWingPullEnd = { [weak screenBar] side in screenBar?.releaseWingPull(side) }
         // The left ear's mark IS the focused session — a click opens it
@@ -453,22 +511,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             KeepAwakeMenu.popUp(at: point)
             return true
         }
-        // The hidden-run ‹ lives in the island's own surface — a status
-        // item kept parking under our own window, this one cannot. It is
-        // the fallback affordance while the concealer runs and no mirror
-        // carries the icon (the Hidden style, or an empty target); the
-        // provider answers nil otherwise.
-        screenBar.menuHandleProvider = { [weak self] in
-            self?.utilitiesStore?.menuBar.menuHandleRevealed
-        }
-        interaction.menuHandleAt = { [weak screenBar] point in
-            screenBar?.menuHandle(atScreenPoint: point) ?? false
-        }
         interaction.rightWingOpensPeek = { [weak screenBar] in
             screenBar?.peekAvailable ?? false
-        }
-        interaction.onMenuHandle = { [weak self] in
-            self?.utilitiesStore?.menuBar.toggleMenuHandle()
         }
         screenBar.onAccessibilityPress = { [weak interaction] in
             interaction?.accessibilityPress() ?? false
@@ -476,12 +520,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         screenBar.onAccessibilityWing = { [weak interaction] side in
             interaction?.accessibilityActivateWing(side) ?? false
         }
-        screenBar.onAccessibilityMenuHandle = { [weak interaction] in
-            interaction?.accessibilityToggleMenuHandle() ?? false
-        }
         // The right ear is the menu bar's reveal, update and newcomer
         // surface: its marks, and the black peek of hidden glyphs.
         screenBar.attachMenuBar(utilitiesStore.menuBar, interaction: interaction)
+        screenBar.peek.onVisibilityChange = { [weak notch = toysStore.notch] shown in
+            notch?.menuPopupShown = shown
+        }
         // The card's timers: a due timer is one banner, never an agent
         // launch. Both card surfaces share `cardTimers`, so one wiring
         // covers the glass card and the grown island alike.
@@ -494,17 +538,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         cardTimers.onFire = fireTimer
         screenBar.focusProvider = { [weak store] in store?.screenBarFocus }
-        screenBar.onGeometryChange = { [weak interaction] in interaction?.geometryChanged() }
-        // Alcove: the band follows the capsule while the setting is on and Alcove is up.
-        let alcove = AlcoveFollower()
-        alcove.onChange = { [weak self, weak screenBar] capsule in
-            screenBar?.capsule = capsule
-            self?.toysStore?.noteAlcoveCapsule(capsule)
-            self?.toysStore?.notch.syncSensorMonitor()
-            self?.lastLightsSource = nil
-            self?.refreshLights()
+        screenBar.onGeometryChange = { [weak self, weak interaction, weak screenBar, weak notch = toysStore.notch] in
+            notch?.island?.setShoulderInput(screenBar?.shoulderScreenPath)
+            interaction?.geometryChanged()
+            self?.rearmAskAgeTick()
         }
-        self.alcove = alcove
+        // Alcove: the band follows the capsule while the setting is on and Alcove is up.
+        if isolatedPreview == nil {
+            let alcove = AlcoveFollower()
+            alcove.onChange = { [weak self, weak screenBar] capsule in
+                screenBar?.capsule = capsule
+                self?.toysStore?.noteAlcoveCapsule(capsule)
+                self?.toysStore?.notch.syncSensorMonitor()
+                self?.lastLightsSource = nil
+                self?.refreshLights()
+            }
+            self.alcove = alcove
+        }
         store.onOpenSettings = { [weak settingsWindow] page in settingsWindow?.show(page: page) }
         statusItem.onOpenSettings = { [weak settingsWindow] in settingsWindow?.show() }
 
@@ -515,22 +565,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.historyWindow = historyWindow
         store.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
         store.onOpenEvents = { [weak historyWindow] in historyWindow?.showEvents() }
-        // Retained evidence is readable even when future capture is disabled.
-        ArchiveReadBindings.install(history: historyStore, model: utilitiesStore.dataHoarder.model)
-        // An empty search offers the Data Hoarder until it keeps agent
-        // transcripts; the offer's sheet turns it on only on its click.
-        historyStore.hoarderKeepsTranscripts = { [weak utilitiesStore] in
-            utilitiesStore?.dataHoarder.model.keepsAgentTranscripts ?? true
-        }
-        historyStore.hoarderFullContent = { [weak utilitiesStore] in
-            utilitiesStore?.dataHoarder.model.captureSettings.fullContent ?? false
-        }
-        historyStore.hoarderResumePoints = { [weak utilitiesStore] ids in
-            await utilitiesStore?.dataHoarder.model.capture.lastScans(sourceIDs: ids) ?? [:]
-        }
-        historyStore.keepTranscripts = { [weak utilitiesStore] sourceIDs, days in
-            utilitiesStore?.dataHoarder.keepTranscripts(sourceIDs: sourceIDs, backfillDays: days)
-        }
         statusItem.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
 
         // Overview window (⌘O): the scoped roster workspace.
@@ -539,28 +573,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         overviewStore.sessionUsage = store.sessionUsage
         // The Usage heatmap's day click, one window over.
         overviewStore.onOpenHistoryDay = { [weak historyWindow] day in historyWindow?.show(day: day) }
-        // Data Hoarder honesty for the inspector's Source line: the
-        // archive's own capture table answers "is this transcript
-        // kept", and a missing transcript seeds an archive search by
-        // session id.
-        overviewStore.archiveProbe = { [weak utilitiesStore] path in
-            guard let archive = utilitiesStore?.dataHoarder.model.archive else { return nil }
-            return try? await archive.captureState(path: path)
-        }
-        ArchiveReadBindings.install(overview: overviewStore, model: utilitiesStore.dataHoarder.model)
-        overviewStore.hoarderProbe = { [weak utilitiesStore] in
-            guard let model = utilitiesStore?.dataHoarder.model, model.enabled else { return nil }
-            let settings = model.captureSettings
-            return OverviewLinkage.HoarderHealth(
-                paused: settings.paused, sources: settings.enabledSources.count,
-                watching: await model.capture.activeSourceIDs.count, fullContent: settings.fullContent,
-                archive: (try? await model.archive.captureHealth()) ?? ArchiveCaptureHealth())
-        }
-        overviewStore.onOpenArchive = { [weak utilitiesStore] term in
-            guard let hoarder = utilitiesStore?.dataHoarder else { return }
-            hoarder.model.query = term
-            hoarder.openArchive()
-        }
         let overviewWindow = OverviewWindowController(store: overviewStore)
         self.overviewWindow = overviewWindow
         store.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
@@ -570,14 +582,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         notchCard.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
         toysStore.notch.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
         utilitiesStore.agents.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
-        // The Menu Bar utility's agent item reads the same merged feed
-        // the panel header does — daemon-live over the file fallback.
-        utilitiesStore.menuBar.agentState = { [weak store] in
-            guard let store else { return (.idle, "") }
-            return (store.aggregate, store.headerCounts)
+        utilitiesStore.agents.connectionDescription = { [weak store] in
+            store?.connectionDescription ?? "Monitor not connected"
         }
-        utilitiesStore.menuBar.onOpenOverview = { [weak overviewWindow] in
-            overviewWindow?.show()
+        utilitiesStore.agents.onOpenMonitorDetails = { [weak overviewWindow] in
+            overviewWindow?.show(link: "core")
         }
         utilitiesStore.menuBar.coreFacts = { [weak core, weak store] in
             guard let core, let store else { return MenuBarCoreFacts() }
@@ -609,23 +618,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         store.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         statusItem.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         settingsStore.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
-        // The menu bar's "while" rules reach the strip and the daemon: a
-        // scene held while the rule lasts, the agents' quiet leased.
         let menuBarRules = utilitiesStore.menuBar.stateRules
-        menuBarRules.currentScene = { [weak effectsStore, weak core] in
-            core?.isLive == true ? effectsStore?.activeScene : nil
-        }
-        menuBarRules.setScene = { [weak effectsStore] scene in effectsStore?.setActiveScene(scene) }
-        menuBarRules.quietAgents = { [weak core] seconds in core?.quiet(mode: "dnd", seconds: seconds) }
-        // The lease shares the daemon's one override slot with a quiet
-        // set by hand: the rule reads it to leave yours standing.
-        menuBarRules.currentQuiet = { [weak core] in
-            guard let focus = core?.state?.focus, focus.source == "override",
-                  let mode = focus.mode, mode != "off", let until = focus.until else { return nil }
-            return MenuBarQuiet(mode: mode, until: until)
-        }
-        menuBarRules.quietKnown = { [weak core] in core?.isLive == true }
-        menuBarRules.restoreQuiet = { [weak core] mode, seconds in core?.quiet(mode: mode, seconds: seconds) }
+        menuBarRules.sceneLease.connect(to: core)
+        menuBarRules.quietLease.connect(to: core)
 
         let deckStore = DeckStore(core: core)
         let controlCenterWindow = ControlCenterWindowController(store: deckStore)
@@ -649,7 +644,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             toggles: { [weak toysStore] in toysStore?.notch.cardModel.utility.toggles },
             aquarium: { [weak toysStore] in toysStore?.aquarium },
             confetti: { [weak toysStore] in toysStore?.confetti },
-            hoarder: utilitiesStore.dataHoarder,
             history: historyStore,
             windows: PaletteWiring.Windows(
                 overview: { [weak overviewWindow] in overviewWindow?.show() },
@@ -660,7 +654,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 replay: { [weak historyWindow] in historyWindow?.showEvents() },
                 panel: { [weak panel] in panel?.toggle() },
                 checkForUpdates: { [weak self] in self?.checkForUpdates(nil) },
-                settings: { [weak settingsWindow] page in settingsWindow?.show(page: page) }))
+                settings: { [weak settingsWindow] chapter in settingsWindow?.show(chapter: chapter) }))
         commandBar.palette.usage = { [weak utilitiesStore] in utilitiesStore?.state.commandUses ?? PaletteUsage() }
         commandBar.palette.recordUse = { [weak utilitiesStore] key in utilitiesStore?.state.commandUses.record(key) }
         commandBar.palette.toggleFavorite = { [weak utilitiesStore] key in
@@ -729,9 +723,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         // The tap and the announcement watchers start only now that the
         // real gates are in; the tap then re-syncs on every notch reconcile.
-        events.hud.startSystemWatchers()
-        toysStore.notch.onMediaGateChanged = { [weak events] in
-            events?.hud.syncMediaTap()
+        if isolatedPreview == nil { events.hud.startSystemWatchers() }
+        if isolatedPreview == nil {
+            toysStore.notch.onMediaGateChanged = { [weak events] in
+                events?.hud.syncMediaTap()
+            }
         }
         // An announcement the island queued, then gave up to newer news,
         // takes the pill instead of vanishing.
@@ -746,7 +742,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         events.askDesk = store.askDesk
 
         // File feeds: the fallback until the daemon is connected.
-        feed.onProgram = { [weak self] text, source, anchor in
+        feed?.onProgram = { [weak self] text, source, anchor in
             guard let self else { return }
             // A strip giving way to the idle breath fades rather than cuts.
             if case .device = self.lastFileProgram?.source, source == .builtInIdle {
@@ -756,13 +752,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self.store?.feedDescription = source.description
             if self.core?.isLive != true { self.applyFileProgram() }
         }
-        monitor.onChange = { [weak self] state, detail in
+        monitor?.onChange = { [weak self] state, detail in
             guard let self else { return }
             self.store?.fallbackState = state
             self.store?.fallbackDetail = detail
             self.refreshAggregate()
         }
 
+        // Durable reoffers revisit receipt-aware Confetti without replaying
+        // notifications, aquarium cues or the event history.
+        core.onResetReplay = { [weak self] event in
+            self?.toysStore?.confetti.noteEvent(event)
+        }
         // Daemon protocol: beats the files whenever it is live.
         core.onEvent = { [weak events, weak self] event in
             events?.handle(event)
@@ -772,7 +773,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             if event.kind == CoreEvent.usageHistoryReadyKind { self?.store?.refreshSparklines(force: true) }
             // A deck key asked for a window or the waiting ask: the same
             // router a jrbar:// link runs through.
-            if let command = AppCommand.requested(by: event) { AppCommandRouter.shared.perform(command) }
+            if let command = AppCommand.requested(by: event) {
+                _ = Task {
+                    guard AppCommand.requested(by: event) == command else { return }
+                    await AppCommandRouter.shared.perform(command)
+                }
+            }
         }
         observeCore()
         watchSocketDirectory(core.socketPath)
@@ -787,51 +793,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         store.screenBarShown = shown
         if shown { screenBar.show(); interaction.start() }
         refreshAlcoveFollowing()
-        feed.start()
-        monitor.start()
+        feed?.start()
+        monitor?.start()
         core.start()
         // Turn on whatever the Utilities page has on — a parked utility
         // owns nothing until this lands.
-        utilitiesStore.applySettings()
-        wireShell()
+        if isolatedPreview == nil {
+            utilitiesStore.applySettings()
+        } else {
+            utilitiesStore.menuBar.applySettings()
+        }
+        if isolatedPreview == nil { wireShell() }
 
         // The first-run walkthrough: agents, permissions, menu bar.
         // `shouldPresentOnLaunch` gates the auto-show, which asks to come
         // active but never forces it (`showOnLaunch`); Settings ›
         // General's "Run Setup Again" opens the same window.
-        let setup = SetupWindowController.shared
-        setup.store.model = .live(core: core)
-        setup.store.model.permissionPlan = { [weak self, weak core] in
-            guard let self else { return SetupPermissionPlan(active: []) }
-            let toys = self.toysStore?.state ?? self.appState.toys
-            let utilities = self.utilitiesStore?.state ?? self.appState.utilities
-            let document = SettingsDocument(core?.settings?.document ?? .object([:]))
-            let followsAlcove = self.appState.showScreenBar && toys.notch.enabled
-                && toys.notch.provider == .alcove && (self.alcove?.isAlcoveRunning ?? false)
-                && (document.bool("screen_bar_follow_alcove") ?? true)
-            return SetupPermissionPlan.features(toys: toys, utilities: utilities,
-                                                document: document, followsAlcove: followsAlcove)
-        }
-        setup.store.model.screenBarShown = { [weak self] in self?.appState.showScreenBar ?? true }
-        setup.store.model.setScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
-        setup.store.model.iconStyle = { [weak settingsStore] in
-            settingsStore?.menuBarIconStyle ?? StatusIconStyle.agents.rawValue
-        }
-        setup.store.model.setIconStyle = { [weak settingsStore] in settingsStore?.menuBarIconStyle = $0 }
-        setup.store.onOpenToys = { [weak settingsWindow] in settingsWindow?.show(page: .toys) }
-        let setupShown = setup.store.shouldPresentOnLaunch
-        if setupShown { setup.showOnLaunch() }
+        if isolatedPreview == nil {
+            let setup = SetupWindowController.shared
+            setup.store.model = .live(core: core)
+            setup.store.model.permissionPlan = { [weak self, weak core] in
+                guard let self else { return SetupPermissionPlan(active: []) }
+                let toys = self.toysStore?.state ?? self.appState.toys
+                let utilities = self.utilitiesStore?.state ?? self.appState.utilities
+                let document = SettingsDocument(core?.settings?.document ?? .object([:]))
+                let followsAlcove = self.appState.showScreenBar && toys.notch.enabled
+                    && toys.notch.provider == .alcove && (self.alcove?.isAlcoveRunning ?? false)
+                    && (document.bool("screen_bar_follow_alcove") ?? true)
+                return SetupPermissionPlan.features(toys: toys, utilities: utilities,
+                                                    document: document, followsAlcove: followsAlcove)
+            }
+            setup.store.model.screenBarShown = { [weak self] in self?.appState.showScreenBar ?? true }
+            setup.store.model.setScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
+            setup.store.model.iconStyle = { [weak settingsStore] in
+                settingsStore?.menuBarIconStyle ?? StatusIconStyle.agents.rawValue
+            }
+            setup.store.model.setIconStyle = { [weak settingsStore] in settingsStore?.menuBarIconStyle = $0 }
+            setup.store.onOpenToys = { [weak settingsWindow] in settingsWindow?.show(chapter: .toys) }
+            let setupShown = setup.store.shouldPresentOnLaunch
+            if setupShown { setup.showOnLaunch() }
 
-        // What's New: once per release, after Setup has run to its end
-        // and never in the launch that shows it, at the first moment the
-        // monitor is live, the session unlocked and nothing full screen
-        // in front. Closing it stamps the release in setup.json.
-        let whatsNew = WhatsNewWindowController()
-        whatsNew.markSeen = { [weak setup] release in setup?.store.markWhatsNewSeen(release) }
-        self.whatsNewWindow = whatsNew
-        if WhatsNewGate.isArmed(setupFinished: setup.store.hasFinished, setupShownThisLaunch: setupShown,
-                                seen: setup.store.whatsNewSeen) {
-            whatsNew.arm(core: core)
+            // What's New: once per release, after Setup has run to its end
+            // and never in the launch that shows it, at the first moment the
+            // monitor is live, the session unlocked and nothing full screen
+            // in front. Closing it stamps the release in setup.json.
+            let whatsNew = WhatsNewWindowController()
+            whatsNew.markSeen = { [weak setup] release in setup?.store.markWhatsNewSeen(release) }
+            self.whatsNewWindow = whatsNew
+            if WhatsNewGate.isArmed(setupFinished: setup.store.hasFinished, setupShownThisLaunch: setupShown,
+                                    seen: setup.store.whatsNewSeen) {
+                whatsNew.arm(core: core)
+            }
+
         }
 
         // Developer switches: `JRBAR_OPEN_PANEL=1` opens the panel shortly
@@ -883,8 +896,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // `JRBAR_OPEN_WHATS_NEW=1` opens What's New by hand (screenshots);
         // closing it stamps the release like any close.
         if environment["JRBAR_OPEN_WHATS_NEW"] != nil {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak whatsNew] in
-                MainActor.assumeIsolated { whatsNew?.show() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                MainActor.assumeIsolated { self?.whatsNewWindow?.show() }
             }
         }
         if environment["JRBAR_OPEN_HISTORY"] != nil {
@@ -936,7 +949,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak settingsWindow, weak effectsWindow] in
                 MainActor.assumeIsolated {
                     if pageName == "effects" { effectsWindow?.show(); return }
-                    settingsWindow?.show(page: SettingsStore.Page(rawValue: pageName) ?? .general)
+                    settingsWindow?.show(named: pageName)
                 }
             }
         }
@@ -955,27 +968,152 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
+    /// The note a second launch posts before it yields, and the running
+    /// instance answers: bring JR-Bar up for the person who just opened it.
+    nonisolated static let showRequestName = Notification.Name("com.jonathanreed.jrbar.show-request")
+
+    private var statusIconWatchdog: StatusIconWatchdog?
+    private var showRequestObserver: NSObjectProtocol?
+
+    /// The last resort behind the icon's other guards: if our own icon
+    /// cannot be proven on the bar some seconds after launch, the item is
+    /// recreated, with the reason logged. Also answers a second launch's request to show itself.
+    private func startStatusIconWatchdog(_ statusItem: StatusItemController) {
+        let log = Logger(subsystem: "devin.jrbar", category: "status-item")
+        let watchdog = StatusIconWatchdog(
+            proof: { [weak self, weak statusItem] in
+                guard let statusItem else { return StatusIconProof() }
+                let utility = self?.utilitiesStore?.menuBar
+                return StatusIconProof(
+                    itemVisibleFlag: statusItem.isFlaggedVisible,
+                    itemOnRow: statusItem.isOnBarRow,
+                    styleDrawsIcon: statusItem.anchorWantsVisibleSeat)
+            },
+            act: { [weak self, weak statusItem] action in
+                switch action {
+                case .none:
+                    break
+                case .showItem:
+                    statusItem?.ensureVisible()
+                case .recreateItem(let resetPlacement, let reason):
+                    statusItem?.recreate(resetPlacement: resetPlacement, reason: reason)
+                }
+            })
+        watchdog.start()
+        statusIconWatchdog = watchdog
+        showRequestObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Self.showRequestName, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.bringUp() }
+        }
+    }
+
+    /// Someone opened JR-Bar while it runs: Finder, Spotlight, the Dock,
+    /// `open`, or a second copy yielding. The menu bar item may be exactly
+    /// what they cannot find, so Settings opens (the one window that is
+    /// always available) and the icon is re-checked at once.
+    private func bringUp() {
+        statusIconWatchdog?.reopened()
+        settingsWindow?.show()
+    }
+
+    /// A launch of the running app lands here, as `applicationShouldHandleReopen`
+    /// — the Dock icon of a regular app, `open JR-Bar.app`, a double click.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // Our own Launch Services fallback (`WindowFront`) is no one looking
+        // for the icon: the window it was bringing forward is the answer.
+        if WindowFront.consumeOwnReopen() {
+            statusIconWatchdog?.reopened()
+            return false
+        }
+        bringUp()
+        return false
+    }
+
+    /// Set once a quit has begun, so nothing starts the daemon behind it.
+    private var isQuitting = false
+
+    /// The modes a quit's nested loop may be turning in while it waits for
+    /// the daemon.
+    private static let quitModes: [RunLoop.Mode] = [.default, .common, .modalPanel, .eventTracking]
+
+    /// A quit gives the daemon its SIGTERM and up to three seconds before
+    /// SIGKILL. That wait happens here, on a background queue, while the run
+    /// loop keeps turning, and not on the main thread inside
+    /// `applicationWillTerminate`, which stalled the whole app for as long as
+    /// the daemon took to leave.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Self.shutdownLog.notice("quit.requested")
+        isQuitting = true
+        SingleInstanceLock.markQuitting(instanceLockFD)
+        guard let supervisor, supervisor.state != .stopped, supervisor.state != .idle else {
+            Self.shutdownLog.notice("quit.immediate")
+            return .terminateNow
+        }
+        // The item leaves the bar now, not when the daemon is gone.
+        Self.shutdownLog.notice("status-item.remove.begin")
+        statusItem?.tearDown()
+        Self.shutdownLog.notice("status-item.remove.end")
+        DispatchQueue.global(qos: .userInitiated).async {
+            Self.shutdownLog.notice("core.stop.begin")
+            supervisor.stop(gracePeriod: 3.0)
+            Self.shutdownLog.notice("core.stop.end")
+            // The run loop's queue, not the main dispatch queue: a quit that
+            // began inside a block on that queue cannot drain it.
+            RunLoop.main.perform(inModes: Self.quitModes) {
+                Self.shutdownLog.notice("quit.reply")
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        Self.shutdownLog.notice("cleanup.begin")
+        // First word: this instance is on its way out. A relaunch inside
+        // the daemon's grace below waits for the lock rather than yielding
+        // to a process that is about to be gone, which left no icon at all.
+        SingleInstanceLock.markQuitting(instanceLockFD)
+        statusIconWatchdog?.stop()
+        if let showRequestObserver {
+            DistributedNotificationCenter.default().removeObserver(showRequestObserver)
+        }
         // Finish debounced edits before the main run loop stops.
         toysStore?.save()
+        toysStore?.shutdown()
         utilitiesStore?.save()
+        Self.shutdownLog.notice("cleanup.persistence.end")
         hotkey?.unregister()
         panel?.close()
         interaction?.stop()
         screenBar?.hide()
         events?.reset()
+        Self.shutdownLog.notice("cleanup.surfaces.end")
         // The palette folds and its parked ⌘⇧K lets go for good — the
         // utility's stop below would otherwise re-arm it.
         utilitiesStore?.menuBar.actions.shutDownPalette()
         // A clean quit puts the menu bar's hidden items back before the
-        // spacers vanish with the process. The "while" rules keep their
-        // LED scene: the write that would put yours back could never
-        // land, and the next launch restores it once the core is live.
+        // spacers vanish with the process. The "while" rules
+        // keep their LED scene: the write that would put yours back could
+        // never land, and the next launch restores it once the core is
+        // live.
         utilitiesStore?.menuBar.stop(forQuit: true)
-        utilitiesStore?.stop()
+        Self.shutdownLog.notice("cleanup.menu-bar.end")
+        if isolatedPreview == nil { utilitiesStore?.stop() }
+        Self.shutdownLog.notice("cleanup.utilities.end")
+        // The item leaves the bar now, not when the process ends behind
+        // the daemon's grace.
+        statusItem?.tearDown()
         // The child gets SIGTERM and three seconds before SIGKILL.
         supervisor?.stop(gracePeriod: 3.0)
+        Self.shutdownLog.notice("cleanup.supervisor.end")
         core?.stop()
+        Self.shutdownLog.notice("cleanup.transport.end")
+        // Everything this instance owned is down: hand the lock back so
+        // the next launch does not wait on our exit.
+        SingleInstanceLock.release(instanceLockFD)
+        instanceLockFD = -1
+        Self.shutdownLog.notice("cleanup.complete.end")
     }
 
     // MARK: Core supervision
@@ -985,6 +1123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// the refresh-timing flight recorder, the errors — as `<private>`,
     /// and the in-app log already shows the same text on this Mac.
     nonisolated private static let coreLog = Logger(subsystem: "devin.jrbar", category: "core")
+    nonisolated private static let shutdownLog = Logger(subsystem: "devin.jrbar", category: "shutdown")
 
     /// Core supervision: with JRBAR_CORE_EXEC set, the daemon is our
     /// child and we keep it alive. A packaged bundle carries its own
@@ -993,20 +1132,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Returns the bundled daemon when that is the one started, for the
     /// first run's hook install.
     private func startCoreSupervision(core: CoreModel, store: PanelStore) -> CoreSupervisor.BundledCore? {
+        guard isolatedPreview == nil else { return nil }
+        // The key the daemon seals its protected settings with, read from the
+        // Keychain once, when the supervisor first needs it, and never with a
+        // prompt (docs/CORE-PROTOCOL.md, "Protected settings").
+        let sealHolder = SettingsSealKeyHolder(store: KeychainSettingsSealKeyStore())
+        let sealKey: @Sendable () -> SettingsSealHandoff? = { sealHolder.handoff() }
+        let seal = SettingsSealCoordinator(holder: sealHolder, send: { [weak core] command in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.send(command, timeout: 15)
+        })
+        sealCoordinator = seal
+        core.onSettingsFrame = { [weak core, weak seal] settings in
+            seal?.settingsArrived(settings, authenticated: core?.authState == .authenticated)
+        }
         if let command = ProcessInfo.processInfo.environment["JRBAR_CORE_EXEC"], !command.isEmpty {
-            if let supervisor = CoreSupervisor(commandLine: command) {
-                attachSupervisor(supervisor, describedAs: "`\(command)`", core: core, store: store)
+            if let supervisor = CoreSupervisor(commandLine: command, authSecret: core.authSecret, sealKey: sealKey) {
+                attachSupervisor(supervisor, describedAs: "`\(command)`", sealHolder: sealHolder, core: core, store: store)
             }
             return nil
         }
         guard let bundled = CoreSupervisor.bundledCore(in: Bundle.main) else { return nil }
-        attachSupervisor(CoreSupervisor(bundled: bundled), describedAs: "the bundled daemon (\(bundled.buildStamp))",
-                         core: core, store: store)
+        attachSupervisor(CoreSupervisor(bundled: bundled, authSecret: core.authSecret, sealKey: sealKey), describedAs: "the bundled daemon (\(bundled.buildStamp))",
+                         sealHolder: sealHolder, core: core, store: store)
         return bundled
     }
 
     private func attachSupervisor(_ supervisor: CoreSupervisor, describedAs description: String,
-                                  core: CoreModel, store: PanelStore) {
+                                  sealHolder: SettingsSealKeyHolder, core: CoreModel, store: PanelStore) {
         self.supervisor = supervisor
         supervisor.onOutput = { [weak core] stream, line in
             Task { @MainActor [weak core] in
@@ -1022,9 +1175,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
         }
         store.onRestartCore = { [weak supervisor] in supervisor?.restart() }
+        watchAuthentication(of: core, supervisor: supervisor)
         store.supervisorState = .idle
         core.appendLocalLog(level: "supervisor", "supervising \(description)")
-        supervisor.start()
+        // The Keychain read for the seal key is a synchronous call; it is made
+        // off the main thread, and the daemon starts once the key is held.
+        sealHolder.warm { [weak self, weak supervisor] in
+            DispatchQueue.main.async {
+                guard let self, let supervisor, !self.isQuitting else { return }
+                supervisor.start()
+            }
+        }
+    }
+
+    /// The daemon this app starts holds the app's secret. When it will not
+    /// authenticate the connection, the app restarts it once (a fresh child, a
+    /// fresh secret) and otherwise leaves `core.authState` and the log to say
+    /// why; another daemon holding the socket is not ours to restart.
+    private func watchAuthentication(of core: CoreModel, supervisor: CoreSupervisor) {
+        var restarts = 0
+        core.onAuthenticated = { [weak self] in
+            restarts = 0
+            self?.sealCoordinator?.authenticationSucceeded()
+        }
+        sealCoordinator?.onNeedsDaemonRestart = { [weak supervisor] in supervisor?.restart() }
+        core.onAuthRefused = { [weak supervisor, weak core] reason in
+            switch reason {
+            case .proofRejected, .noReply, .daemonOffersNoChallenge:
+                guard let supervisor, restarts < 1 else { return }
+                restarts += 1
+                core?.appendLocalLog(level: "supervisor", "restarting the daemon once to give it a fresh secret")
+                supervisor.restart()
+            case .peerIsNotOurDaemon:
+                break
+            }
+        }
     }
 
     /// Fresh setup chooses its providers. An upgrade refreshes only the
@@ -1107,8 +1292,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// facts used to live under when the file does not exist yet, and logs
     /// what came back so a relaunch can be checked from the console.
     private func loadAppState() {
+        if let isolatedPreview {
+            _ = appStateFile.loadChecked()
+            appState = isolatedPreview.reviewState()
+            return
+        }
         let defaults = UserDefaults.standard
-        appState = appStateFile.load()
+        let loaded = appStateFile.loadChecked()
+        appState = loaded.state
+        if case .unreadable(let why) = loaded.outcome {
+            tellAppStateWasUnreadable(why)
+        }
         if !appStateFile.exists {
             var seeded = false
             if let stamp = defaults.string(forKey: Self.hooksInstalledForKey) {
@@ -1127,6 +1321,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
               appState.showScreenBar ? 1 : 0, appState.loginItemRegistered ? 1 : 0,
               SparkleUpdater.automaticChecksDefaultsKey,
               defaults.object(forKey: SparkleUpdater.automaticChecksDefaultsKey).map { "\($0)" } ?? "nil")
+    }
+
+    /// The saved choices could not be read, so this launch runs on the
+    /// defaults. Said once, on the panel's next opening: the next save keeps
+    /// the old file beside the new one as a recovery copy, so nothing is lost,
+    /// and a launch after that finds a readable file and says nothing.
+    private func tellAppStateWasUnreadable(_ why: String) {
+        NSLog("JR-Bar app state (%@) could not be used: %@", appStateFile.url.path, why)
+        let stateFile = appStateFile.url
+        LaunchNotices.shared.post(.init(
+            key: "app-state-unreadable",
+            text: "JR-Bar could not read its saved choices, so it started from the defaults. The old file is kept beside the new one.",
+            actionTitle: "Show") {
+                NSWorkspace.shared.activateFileViewerSelecting([stateFile])
+            })
     }
 
     private func persistAppState() {
@@ -1284,21 +1493,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// `set_setting virtual_status_device_enabled`.
     private func sendScreenBarSetting(_ shown: Bool) {
+        let generation = screenBarSync.writeGeneration
         _ = Task { @MainActor [weak self] in
-            guard let self, let core = self.core else { return }
+            guard let self, let core = self.core,
+                  self.screenBarSync.writeGeneration == generation else { return }
             do {
                 let reply = try await core.setSetting("virtual_status_device_enabled", value: .bool(shown))
                 if !reply.ok {
-                    self.screenBarSync.pushRefused()
+                    self.screenBarSync.pushRefused(forGeneration: generation)
                     core.appendLocalLog(level: "warn", "screen bar: virtual_status_device_enabled refused (\(reply.error?.code ?? "?"))")
                 }
             } catch {
                 // A daemon that went away under the write may never have
                 // heard it: keep it as an offline choice for the reconnect.
                 if core.isLive {
-                    self.screenBarSync.pushRefused()
+                    self.screenBarSync.pushRefused(forGeneration: generation)
                 } else {
-                    self.screenBarSync.pushLostOffline()
+                    self.screenBarSync.pushLostOffline(forGeneration: generation)
                 }
             }
         }
@@ -1308,7 +1519,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// settings document's `virtual_status_device_enabled` with what the
     /// band is doing, and this carries out its answer. A mismatch that is
     /// not our own write still landing is the daemon's newer choice (the
-    /// user's, from Settings › Devices or another client) and the band
+    /// user's, from Settings › Devices & Lighting or another client) and the band
     /// follows; a choice made while the daemon was down is pushed to it.
     private func reconcileScreenBarSetting() {
         guard let core else { return }
@@ -1365,6 +1576,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // only what the switch allows.
         let indicatorsOn = notch.sensorIndicatorsEnabled
         screenBar?.sensors = indicatorsOn ? notch.sensorState : NotchSensorState()
+        rearmAskAgeTick()
         // A reading exists while the monitor runs, for the island, the
         // ears or the presence report alike — not only under the island.
         let readable = ScreenBarCameraHold.readable(monitorReading: notch.sensorsReading,
@@ -1410,6 +1622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
         }
         let live = core.isLive
+        if live, let asks = core.state?.asks { askAnnouncer.note(asks) }
         if wasLive, !live { events?.reset() }
         if live != wasLive { syncFileFeeds(live: live, core: core) }
         wasLive = live
@@ -1427,28 +1640,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         toysStore?.notch.syncSensorMonitor()
     }
 
-    /// The left ear's ask-age ring steps with the clock, and the daemon
-    /// sends nothing while only the clock moves: one sleeping task re-pushes
-    /// the wings at the next step and re-arms. It exists only while the
-    /// focus has an open ask, and a frame that leaves the next step where
-    /// it was keeps the task it has.
+    /// One sleeping task refreshes the wings and open card at the next ask-age
+    /// or provider-turn boundary. Repeated daemon frames keep the same wake
+    /// when the boundary stays put; one working provider needs no wake.
     private var askAgeTick: Task<Void, Never>?
     private var askAgeTickAt: Double?
+    private var rearmingAskAgeTick = false
 
     private func rearmAskAgeTick() {
+        guard !rearmingAskAgeTick else { return }
+        rearmingAskAgeTick = true
+        defer { rearmingAskAgeTick = false }
+        store?.compactAwakeEligible = screenBar?.canCycleCompactAwake ?? false
         let next = store?.nextAskAgeTick()
+        screenBar?.earMarks = store?.screenBarEarMarks ?? ScreenBarEarMarks()
         guard next != askAgeTickAt || askAgeTick == nil || next == nil else { return }
         askAgeTick?.cancel()
         askAgeTick = nil
         askAgeTickAt = next
         guard let next else { return }
-        // A hair past the boundary, so the fill has certainly stepped.
+        // A hair past the boundary, so the ask age or provider turn has stepped.
         let delay = max(0, next - Date().timeIntervalSince1970) + 0.05
         askAgeTick = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, let self else { return }
             self.askAgeTick = nil
             self.screenBar?.wings = self.store?.screenBarWings ?? .empty
+            self.screenBar?.earMarks = self.store?.screenBarEarMarks ?? ScreenBarEarMarks()
+            self.interaction?.card.geometryChanged()
             self.rearmAskAgeTick()
         }
     }
@@ -1709,7 +1928,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func refreshLights() {
         guard let core, let screenBar else { return }
         if core.isLive, let surface = core.lights?.screenBar, !surface.program.isEmpty {
-            screenBar.apply(programText: surface.program, anchorEpoch: surface.anchor)
+            screenBar.apply(programText: surface.program, anchorEpoch: surface.anchor, stripTransfer: surface.stripTransfer)
             let why = surface.why.map { " · \($0.replacingOccurrences(of: "_", with: " "))" } ?? ""
             let description = "monitor" + why + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "") + lightsSuffix(screenBar)
             if description != lastLightsSource {
@@ -1753,6 +1972,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// once instead of waiting out the backoff. Only while it is not live —
     /// a live daemon writes that directory dozens of times a minute.
     private func watchSocketDirectory(_ socketPath: String) {
+        guard isolatedPreview == nil else { return }
         let directory = (socketPath as NSString).deletingLastPathComponent
         guard socketWatcher == nil, FileManager.default.fileExists(atPath: directory) else { return }
         socketWatcher = FileWatcher(path: directory, mask: [.write, .link, .attrib]) { [weak self] _ in
@@ -1766,6 +1986,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// directory watch stop when it goes live and start again — the
     /// monitor reading at once — when it goes away.
     private func syncFileFeeds(live: Bool, core: CoreModel) {
+        guard isolatedPreview == nil else { return }
         if live {
             monitor?.stop()
             feed?.stop()
@@ -1814,6 +2035,19 @@ extension AppDelegate {
             self?.events?.notifications.deliver(.init(identifier: id, title: title, body: body, category: .plain))
         }
         notices.withdrawBanner = { [weak self] id in self?.events?.notifications.withdraw(identifier: id) }
+        // The one-status-item decision: put back the Control Center items an
+        // older build hid, and say once what became of its extra items.
+        OneItemMigration.forgetRetiredItemPlacements(in: .standard)
+        if let utilitiesStore, let controlCenter = UserDefaults(suiteName: "com.apple.controlcenter") {
+            OneItemMigration.run(
+                retired: utilitiesStore.state.menuBar.retiredExtras,
+                clearRetired: { [weak utilitiesStore] in utilitiesStore?.state.menuBar.retiredExtras = [] },
+                controlCenter: controlCenter, ours: UserDefaults.standard,
+                relaunchControlCenter: OneItemMigration.relaunchControlCenter,
+                log: { [weak self] in self?.core?.appendLocalLog(level: "menubar", $0) },
+                notices: notices,
+                openSettings: { [weak self] in self?.settingsWindow?.show(page: nil) })
+        }
         // A scheduled update Sparkle leaves to us, never a window over
         // the work; once Sparkle's own window is seen, the notice goes.
         updater?.onUpdateReady = { [weak self] version in
@@ -1841,8 +2075,10 @@ extension AppDelegate {
     /// `jrbar://` links: every URL the scheme brings runs through the
     /// router, refused out loud when it names nothing JR-Bar does.
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where url.scheme?.lowercased() == AppCommand.scheme {
-            AppCommandRouter.shared.open(url)
+        _ = Task {
+            for url in urls where url.scheme?.lowercased() == AppCommand.scheme {
+                await AppCommandRouter.shared.open(url)
+            }
         }
     }
 
@@ -1870,7 +2106,7 @@ extension AppDelegate {
             if toggle { self?.panel?.toggle() } else { self?.panel?.open() }
         }
         router.openSettings = { [weak self] page in
-            self?.settingsWindow?.show(page: page.flatMap(SettingsStore.Page.init(rawValue:)))
+            self?.settingsWindow?.show(named: page)
         }
         router.openWindow = { [weak self] window in
             switch window {
@@ -1891,23 +2127,27 @@ extension AppDelegate {
             tank.isOn = true
             return nil
         }
-        router.quiet = { [weak self] mode, seconds in
+        store?.onManualQuietApplied = { [weak router] seconds in router?.manualQuietApplied(seconds: seconds) }
+        router.quiet = { [weak self] mode, seconds, onApplied in
             guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
-            guard core.isLive else { return "The monitor is not connected — quiet needs it." }
-            let mode = mode ?? store.quietMode
-            core.quiet(mode: mode, seconds: seconds)
-            let until = Date().addingTimeInterval(TimeInterval(seconds))
-            self.showFeedback("\(PanelStore.quietWord(mode)) until \(PanelStore.clockTime(until))", symbol: "moon.fill")
-            return nil
+            guard core.isLive else { return "The monitor is not connected. Quiet needs it." }
+            let result = await store.requestQuiet(mode: mode ?? store.quietMode, seconds: seconds,
+                                                  feedback: false, onApplied: onApplied).value
+            switch result {
+            case .applied(let message): self.showFeedback(message, symbol: "moon.fill"); return nil
+            case .refused(let message): return message
+            }
         }
-        // Deep work reads the live sessions at its start and its end.
         router.sessionsNow = { [weak self] in self?.core?.sessions ?? [] }
-        router.endQuiet = { [weak self] in
+        router.endQuiet = { [weak self] onApplied in
             guard let self, let core = self.core, let store = self.store else { return "JR-Bar is still starting." }
             guard core.isLive else { return "The monitor is not connected." }
-            core.quiet(mode: store.quietMode, seconds: 0)
-            self.showFeedback("Quiet ended", symbol: "checkmark.circle.fill")
-            return nil
+            let result = await store.requestQuiet(mode: store.quietMode, seconds: 0,
+                                                  feedback: false, onApplied: onApplied).value
+            switch result {
+            case .applied(let message): self.showFeedback(message, symbol: "checkmark.circle.fill"); return nil
+            case .refused(let message): return message
+            }
         }
         router.setScreenBar = { [weak self] on in
             guard let self else { return }
@@ -1944,8 +2184,9 @@ extension AppDelegate {
         router.revealAsk = { [weak self] in
             guard let core = self?.core, core.isLive else { return "The monitor is not connected." }
             guard !core.asks.isEmpty else { return "No agent is waiting on you." }
-            // The panel lists asks first, with Approve and Deny.
-            self?.panel?.open()
+            // The notch card or the panel, whichever the asks arrive on;
+            // both list the longest-waiting ask first, with Approve and Deny.
+            self?.presentAskSurface()
             return nil
         }
         // The ⌃⌥D key's own toggle, so the link lands on the Shelf page
@@ -1953,6 +2194,10 @@ extension AppDelegate {
         router.toggleShelf = { [weak self] in
             guard let notch = self?.toysStore?.notch else { return "JR-Bar is still starting." }
             return notch.toggleShelf()
+        }
+        router.useShelfKeyboard = { [weak self] in
+            guard let notch = self?.toysStore?.notch else { return "JR-Bar is still starting." }
+            return notch.useShelfKeyboard()
         }
     }
 
@@ -1967,6 +2212,24 @@ extension AppDelegate {
         }
         guard let document = core.settings?.document else { return }
         AppHotkeys.shared.adoptLegacy(shortcuts: document["global_action_shortcuts"])
+    }
+}
+
+extension AppDelegate {
+    /// Opens the surface the person's asks arrive on: the notch's card
+    /// while the island is the notch's face (it lists the longest-waiting
+    /// ask first, with its verbs), else the panel. Opening only: nothing
+    /// is answered, and a surface already open stays as it is.
+    func presentAskSurface() {
+        if let notch = toysStore?.notch, notch.isDrawingIsland, !notch.foldEngaged {
+            // An ask already on the island's face is reached where it is:
+            // the keyboard goes to its verbs (nothing focused, nothing
+            // answered until a person moves onto one and presses it).
+            if notch.engageAskKeyboard() { return }
+            if !notch.islandExpanded { notch.expandFromBand() }
+            return
+        }
+        panel?.open()
     }
 }
 

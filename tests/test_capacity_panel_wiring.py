@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from dataclasses import replace
 from unittest.mock import patch
 
 import pytest
@@ -96,7 +97,7 @@ def controller(request, tmp_path):
 
 
 def _enable_history(target, *, days: int = 7) -> None:
-    target.settings = target.settings.with_capacity_history_enabled(True)
+    target.settings = replace(target.settings, capacity_history_enabled=True)
     target.settings = target.settings.with_capacity_history_retention_days(days)
 
 
@@ -339,7 +340,7 @@ def test_turning_history_off_deletes_what_was_already_kept(controller) -> None:
     assert target._persistence_writer.wait_idle(timeout_seconds=1.0)
     assert history_path.exists()
 
-    target.settings = target.settings.with_capacity_history_enabled(False)
+    target.settings = replace(target.settings, capacity_history_enabled=False)
     assert _capacity_store(target) is None
 
     assert not history_path.exists()
@@ -364,7 +365,7 @@ def test_turning_history_off_invalidates_a_pending_flush(controller) -> None:
     assert running.wait(1.0)
     _run_codex_refresh(target, status_bar, _limits(86.0))
 
-    target.settings = target.settings.with_capacity_history_enabled(False)
+    target.settings = replace(target.settings, capacity_history_enabled=False)
     assert _capacity_store(target) is None
     release.set()
     assert target._persistence_writer.wait_idle(timeout_seconds=1.0)

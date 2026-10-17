@@ -145,7 +145,7 @@ struct NotchGestureTests {
         let home = CGRect(x: 651.5, y: 934, width: 209, height: 48)
         let grown = CGRect(x: 631.5, y: 634, width: 249, height: 348)
         var spring = NotchFrameSpring(at: home)
-        spring.retarget(grown, motion: NotchFrameSpring.expandMotion)
+        spring.retarget(grown, motion: NotchMotion.open)
         let steps = run(&spring)
         #expect(steps > 10, "a morph takes real time — it is not a snap")
         #expect(steps < 300, "and it lands inside roughly a second")
@@ -158,14 +158,14 @@ struct NotchGestureTests {
         let home = CGRect(x: 0, y: 0, width: 200, height: 40)
         let grown = CGRect(x: 0, y: -200, width: 200, height: 240)
         var spring = NotchFrameSpring(at: home)
-        spring.retarget(grown, motion: NotchFrameSpring.expandMotion)
+        spring.retarget(grown, motion: NotchMotion.open)
         for _ in 0..<6 { spring.integrate(dt: 1.0 / 120) }
         let mid = spring.frame
         #expect(mid.height > home.height && mid.height < grown.height)
         // Fold home from mid-flight: the spring answers the shrink
         // with the collapse motion, and its y keeps travelling down a
         // tick before it turns — continuation, not a restart.
-        spring.retarget(home, motion: NotchFrameSpring.collapseMotion)
+        spring.retarget(home, motion: NotchMotion.close)
         let before = spring.frame.minY
         spring.integrate(dt: 1.0 / 120)
         #expect(spring.frame.minY < before, "carried velocity keeps the drift first")
@@ -175,18 +175,20 @@ struct NotchGestureTests {
         #expect(spring.frame == home)
     }
 
-    @Test("the motion picker reads growth as swell, shrink as fold")
+    @Test("the motion picker reads a big growth as the grow, a hop as live, a shrink as the fold")
     func motionPicker() {
         let home = CGRect(x: 0, y: 0, width: 200, height: 40)
-        #expect(NotchFrameSpring.motion(from: home,
-                                        to: CGRect(x: 0, y: -100, width: 240, height: 140))
-                == NotchFrameSpring.expandMotion)
-        #expect(NotchFrameSpring.motion(from: CGRect(x: 0, y: -100, width: 240, height: 140),
-                                        to: home) == NotchFrameSpring.collapseMotion)
-        // A same-size slide — a content nudge — is the quiet morph.
+        let card = CGRect(x: 0, y: -300, width: 320, height: 340)
+        let notice = CGRect(x: 0, y: -26, width: 240, height: 66)
+        #expect(NotchFrameSpring.motion(from: home, to: card) == NotchMotion.open.widthScaled(NotchMotion.widthLead))
+        #expect(NotchFrameSpring.motion(from: home, to: notice) == NotchMotion.live,
+                "a line dropping under the notch is a hop, quicker than the full grow")
+        #expect(NotchFrameSpring.motion(from: card, to: home) == NotchMotion.close.widthScaled(NotchMotion.widthLag))
+        #expect(NotchFrameSpring.motion(from: notice, to: home) == NotchMotion.close)
+        // A same-size slide, a content nudge, is the quiet one.
         #expect(NotchFrameSpring.motion(from: home,
                                         to: CGRect(x: 4, y: 0, width: 200, height: 40))
-                == NotchFrameSpring.morphMotion)
+                == NotchMotion.nudge)
     }
 
     @Test("a stalled tick lands the spring — sub-steps, never an explosion")
@@ -194,7 +196,7 @@ struct NotchGestureTests {
         let home = CGRect(x: 0, y: 0, width: 200, height: 40)
         let grown = CGRect(x: 0, y: -200, width: 200, height: 240)
         var spring = NotchFrameSpring(at: home)
-        spring.retarget(grown, motion: NotchFrameSpring.expandMotion)
+        spring.retarget(grown, motion: NotchMotion.open)
         // A display link that slept a full second integrates a sane,
         // sub-stepped half-second — the frame lands near its target,
         // it does not blow past it.

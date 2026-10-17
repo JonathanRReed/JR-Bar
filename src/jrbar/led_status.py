@@ -6,8 +6,11 @@ motion and cue programs, and the controller that writes them to a device.
 
 from __future__ import annotations
 
+import math
 import re
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -15,7 +18,6 @@ from typing import TYPE_CHECKING
 
 from .device_writer import (
     DEFAULT_FILE_NAME,
-    POWER_UP_FILE_NAME,
     DeviceWriteError,
     normalize_led_text,
     resolve_target_path,
@@ -105,28 +107,39 @@ DEVICE_SERIAL_LED_COUNTS = {
 _LED_COUNT_TTL_SECONDS = 60.0
 _LED_COUNT_RETRY_SECONDS = 5.0
 _LED_COUNT_CACHE: dict[Path, tuple[float, int | None]] = {}
+# The expiry is the other half of that story. On 2026-10-08 the minute's
+# end landed on the main thread three times in one day (``pipeline=`` of
+# 2.2 s, 2.4 s, 1.6 s in the refresh timing line, a 2.2 s run-loop stall
+# inside ``read_text``). Once a root has an entry, an expired one is served
+# as it is and a worker reads the volume again; only the first read of a
+# mount waits. The runner is a seam: tests run the job inline.
+_LED_COUNT_LOCK = threading.Lock()
+_LED_COUNT_REVALIDATING: set[Path] = set()
+_LED_COUNT_GENERATION: dict[Path, int] = {}
+
+
+def _start_count_worker(job: Callable[[], None]) -> None:
+    threading.Thread(target=job, name="JRBarLedCount", daemon=True).start()
+
+
+_count_refresh_runner: Callable[[Callable[[], None]], None] = _start_count_worker
 
 
 def invalidate_led_count_cache(root: Path) -> None:
     """Forget a cached LED count -- the device at ``root`` disconnected."""
-    _LED_COUNT_CACHE.pop(root, None)
+    with _LED_COUNT_LOCK:
+        _LED_COUNT_CACHE.pop(root, None)
+        # A read still out for the old device must not land on the next one.
+        _LED_COUNT_GENERATION[root] = _LED_COUNT_GENERATION.get(root, 0) + 1
 
 
-def _led_count_from_serial(root: Path) -> int | None:
-    now = time.monotonic()
-    cached = _LED_COUNT_CACHE.get(root)
-    if cached is not None and now - cached[0] < _LED_COUNT_TTL_SECONDS:
-        return cached[1]
-    count: int | None = None
+def _read_led_count(root: Path) -> tuple[bool, int | None]:
+    """``(read, count)``: whether STATUS.TXT could be read, and its count."""
     try:
         text = (root / "STATUS.TXT").read_text(errors="replace")[:4096]
     except OSError:
-        held = cached[1] if cached is not None else None
-        _LED_COUNT_CACHE[root] = (
-            now - (_LED_COUNT_TTL_SECONDS - _LED_COUNT_RETRY_SECONDS),
-            held,
-        )
-        return held
+        return False, None
+    count: int | None = None
     for line in text.splitlines():
         if not line.startswith("serial "):
             continue
@@ -135,8 +148,55 @@ def _led_count_from_serial(root: Path) -> int | None:
             prefix = parts[1].split("-", 1)[0].upper()
             count = DEVICE_SERIAL_LED_COUNTS.get(prefix)
         break
-    _LED_COUNT_CACHE[root] = (now, count)
-    return count
+    return True, count
+
+
+def _store_led_count(root: Path, read: bool, count: int | None, *, generation: int | None = None) -> int | None:
+    """Keep one read's outcome; a failed read keeps the last good count."""
+    now = time.monotonic()
+    with _LED_COUNT_LOCK:
+        if generation is not None and generation != _LED_COUNT_GENERATION.get(root, 0):
+            return count
+        if read:
+            _LED_COUNT_CACHE[root] = (now, count)
+            return count
+        cached = _LED_COUNT_CACHE.get(root)
+        held = cached[1] if cached is not None else None
+        _LED_COUNT_CACHE[root] = (now - (_LED_COUNT_TTL_SECONDS - _LED_COUNT_RETRY_SECONDS), held)
+        return held
+
+
+def _revalidate_led_count(root: Path) -> None:
+    with _LED_COUNT_LOCK:
+        if root in _LED_COUNT_REVALIDATING:
+            return
+        _LED_COUNT_REVALIDATING.add(root)
+        generation = _LED_COUNT_GENERATION.get(root, 0)
+
+    def job() -> None:
+        try:
+            read, count = _read_led_count(root)
+            _store_led_count(root, read, count, generation=generation)
+        finally:
+            with _LED_COUNT_LOCK:
+                _LED_COUNT_REVALIDATING.discard(root)
+
+    try:
+        _count_refresh_runner(job)
+    except Exception:
+        with _LED_COUNT_LOCK:
+            _LED_COUNT_REVALIDATING.discard(root)
+
+
+def _led_count_from_serial(root: Path) -> int | None:
+    now = time.monotonic()
+    cached = _LED_COUNT_CACHE.get(root)
+    if cached is not None:
+        if now - cached[0] >= _LED_COUNT_TTL_SECONDS:
+            _revalidate_led_count(root)
+        return cached[1]
+    read, count = _read_led_count(root)
+    return _store_led_count(root, read, count)
 
 
 def _led_count_from_name(name: str) -> int:
@@ -586,6 +646,103 @@ def apply_strip_transform_to_program(
     return apply_strip_transfer_to_program(program, gains)
 
 
+# --- What the strip actually EMITS --------------------------------------------
+# Two separate things dim a program on the strip, and until 2026-10-07 each
+# guarded its own half: the colour bytes (the hue-readable lift in
+# apply_strip_transfer_to_hex) and the ``brightness N`` scalar (the ambient
+# visibility floor in brightness_policy). The firmware multiplies them, so a
+# programme with a modest colour peak (a working roll painted at the Colors
+# window's 50% ceiling, a blended pair, a turn-length ember) under the floor's
+# ``brightness 16`` reached the die at 24 * 16 / 255 = 1.5 drive codes. At that
+# level every channel rounds to the same one or two codes and the green die's
+# extra efficiency decides the hue: the owner's "the SidePulse has been green
+# all night even though agents are working". Done, Ask and Failed were fine
+# (11-16 codes) only because their colours happen to be brighter, so working
+# read as idle while the quiet states shouted.
+#
+# This is the missing guard on the PRODUCT. A state a person is meant to read
+# is lifted, through the brightness scalar alone (the colour ratios the
+# program was authored with stay exact), until its brightest channel emits at
+# least the drive-12 visibility target that brightness_policy's floor was
+# written for. Explicit zero stays zero, and a program with no brightness line
+# is already at full scale and has nothing left to lift.
+STRIP_VISIBLE_EMISSION_DRIVE = 12
+# Idle is a whisper by design, so it is only held at the level where a colour
+# still has a hue (STRIP_HUE_HOLDING_DRIVE), never made a signal.
+STRIP_IDLE_EMISSION_DRIVE = STRIP_HUE_HOLDING_DRIVE
+
+
+def emitted_peak_drive(program: str) -> float:
+    """The brightest channel the firmware would drive for this program.
+
+    The program's largest colour byte times the ``brightness`` it obeys (the
+    last one wins; none means full scale), on the 0-255 drive scale. Zero for
+    a program that paints nothing or is switched off by ``brightness 0``.
+    """
+    text = program or ""
+    peak = 0
+    for match in _HEX_COLOR_RE.finditer(text):
+        digits = match.group(0)[1:]
+        peak = max(peak, int(digits[0:2], 16), int(digits[2:4], 16), int(digits[4:6], 16))
+    if peak <= 0:
+        return 0.0
+    level = 255
+    for match in _BRIGHTNESS_RE.finditer(text):
+        level = max(0, min(255, int(match.group(1))))
+    return peak * level / 255.0
+
+
+def lift_emission_to_floor(program: str, floor: float) -> str:
+    """Raise a program's ``brightness`` until it emits at least ``floor``.
+
+    Applied to the finished drive bytes, after the strip transfer. Only the
+    scalar moves, so every colour ratio is exactly the one authored. Left
+    alone: a program that already emits the floor, one switched off with
+    ``brightness 0``, one that paints nothing, and one with no brightness line
+    (full scale: nothing is left to raise).
+    """
+    text = program or ""
+    matches = list(_BRIGHTNESS_LINE_RE.finditer(text))
+    if not matches:
+        return program
+    level = max(0, min(255, int(matches[-1].group(2))))
+    if level <= 0:
+        return program
+    emitted = emitted_peak_drive(text)
+    if emitted <= 0.0 or emitted >= float(floor):
+        return program
+    peak = emitted * 255.0 / level
+    wanted = min(255, int(math.ceil(float(floor) * 255.0 / peak)))
+    if wanted <= level:
+        return program
+    last = matches[-1]
+    return f"{text[: last.start(2)]}{wanted}{text[last.end(2) :]}"
+
+
+#: The display states a person reads off the strip and so must be visible:
+#: Working is told from Done by motion and hue, and neither survives a drive
+#: of one or two codes.
+_VISIBLE_EMISSION_STATES = frozenset(
+    {
+        LedDisplayState.WORKING,
+        LedDisplayState.ASK,
+        LedDisplayState.DONE,
+        LedDisplayState.FAILED,
+    }
+)
+
+
+def emission_floor_for_state(state: LedDisplayState | None) -> float | None:
+    """The emission floor a display state is held to, or ``None`` for none."""
+    if state is None:
+        return None
+    if state in _VISIBLE_EMISSION_STATES:
+        return float(STRIP_VISIBLE_EMISSION_DRIVE)
+    if state is LedDisplayState.IDLE:
+        return float(STRIP_IDLE_EMISSION_DRIVE)
+    return None
+
+
 def normalize_channel_gain(value: float | None) -> float:
     if value is None:
         return DEFAULT_CHANNEL_GAIN
@@ -595,6 +752,28 @@ def normalize_channel_gain(value: float | None) -> float:
         return DEFAULT_CHANNEL_GAIN
     return max(MIN_CHANNEL_GAIN, min(MAX_CHANNEL_GAIN, value))
 
+
+
+def strip_transfer_metadata(
+    channel_gains: tuple[float, float, float] = NEUTRAL_CHANNEL_GAINS,
+    display_channel_gains: tuple[float, float, float] = NEUTRAL_CHANNEL_GAINS,
+) -> dict[str, object]:
+    """The transfer a display applies after sampling strip drive colors."""
+    def bounded(values: tuple[float, float, float]) -> list[float]:
+        result = []
+        for value in values:
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                value = DEFAULT_CHANNEL_GAIN
+            result.append(normalize_channel_gain(value) if math.isfinite(value) else DEFAULT_CHANNEL_GAIN)
+        return result
+
+    return {
+        "channel_gains": bounded(channel_gains),
+        "display_channel_gains": bounded(display_channel_gains),
+        "code_to_light_exponent": STRIP_CODE_TO_LIGHT_EXPONENT,
+    }
 
 def apply_channel_gain_to_hex(hex_color: str, gains: tuple[float, float, float]) -> str:
     """Scale a hex color's channels independently by ``(red, green, blue)``
@@ -725,12 +904,6 @@ IDLE_BREATH_APPROACH_MS = 160
 IDLE_BREATH_INHALE_MS = 1900
 IDLE_BREATH_EXHALE_MS = 2550
 IDLE_BREATH_DWELL_MS = 850
-IDLE_BREATH_CYCLE_MS = (
-    IDLE_BREATH_APPROACH_MS
-    + IDLE_BREATH_INHALE_MS
-    + IDLE_BREATH_EXHALE_MS
-    + IDLE_BREATH_DWELL_MS
-)
 
 # First light: the startup chime's job, done with light -- one soft
 # white cycle of the same asymmetric breath, then live status takes
@@ -1130,55 +1303,6 @@ def write_mode_to_leds(
     )
 
 
-def burn_saved_animation_to_power_up(
-    name: str,
-    *,
-    library_path: Path | None = None,
-    device_path: Path | None = None,
-    led_count: int | None = None,
-    dry_run: bool = True,
-    allow_warnings: bool = False,
-):
-    """Burn one of the owner's saved animations into INIT.LED.
-
-    The device-facing half of the animation editor, kept here with the rest
-    of the writing so there is ONE module that talks to LED files. Returns
-    an ``animation.BurnPlan``: on a dry run (the default) that is the exact
-    bytes and the target path with nothing written, and a caller that wants
-    the write has to say ``dry_run=False`` out loud.
-
-    ``led_count`` defaults to whatever the resolved device actually is, so a
-    2-LED Dot is validated as a 2-LED Dot -- an 8-LED program burned onto a
-    Dot is accepted by the parser and then silently paints six LEDs that do
-    not exist.
-    """
-    from .animation import burn_power_up_animation, parse_animation
-    from .animation_store import (
-        default_animation_library_path,
-        load_animation_library,
-    )
-
-    path = Path(library_path) if library_path else default_animation_library_path()
-    saved = load_animation_library(path).library.get(str(name))
-    if led_count is None:
-        try:
-            target = resolve_target_path(
-                device_path=device_path, file_name=POWER_UP_FILE_NAME
-            )
-        except DeviceWriteError:
-            led_count = 8
-        else:
-            led_count = led_count_for_target(target)
-    animation = parse_animation(saved.program, name=saved.name, led_count=led_count)
-    return burn_power_up_animation(
-        animation,
-        device_path=device_path,
-        led_count=led_count,
-        dry_run=dry_run,
-        allow_warnings=allow_warnings,
-    )
-
-
 def normalized_device_name(name: str) -> str:
     return "".join(char for char in name.lower() if char.isalnum())
 
@@ -1361,9 +1485,6 @@ def style_to_program(
     return apply_brightness(body, effective)
 
 
-NOTIFICATION_BLINK_SECONDS = 3 * 0.3 + 0.4  # default blink style's hold
-
-
 def notification_blink_program(color: str, brightness: float = 255) -> str:
     """The notification signal's DEFAULT style (app color override)
     through the one renderer."""
@@ -1500,7 +1621,7 @@ class AgentLedController:
         self.last_target = None
         self.last_attempt_monotonic = 0.0
 
-    def _for_strip(self, program: str) -> str:
+    def _for_strip(self, program: str, state: LedDisplayState | None = None) -> str:
         """The strip's last step, in the one place every write goes through.
 
         Resting glow, then the surface transfer (which carries the channel
@@ -1509,12 +1630,22 @@ class AgentLedController:
         numbers the Colors window shows and the same numbers the Screen Bar
         receives, so the two surfaces differ only in the final translation into
         their own units rather than diverging somewhere upstream.
+
+        With a ``state``, the finished bytes are also held to the emission
+        floor that state is read at (``emission_floor_for_state``): the colour
+        bytes times ``brightness N`` must leave the die at a level that holds a
+        hue. Without one -- the Dot's finalizer, calibration -- nothing is
+        lifted.
         """
-        return apply_strip_transform_to_program(
+        transformed = apply_strip_transform_to_program(
             program,
             resting_glow=getattr(self, "resting_glow", 0.0),
             gains=self.channel_gains,
         )
+        floor = emission_floor_for_state(state)
+        if floor is None:
+            return transformed
+        return lift_emission_to_floor(transformed, floor)
 
     def sync_mode(self, mode: AgentMode) -> LedStatusWrite:
         state = display_state_for_mode(mode)
@@ -1578,7 +1709,12 @@ class AgentLedController:
         self.last_target = result.target
         return result
 
-    def _phase_free_identity(self, render, relay_elapsed_seconds: float):
+    def _phase_free_identity(
+        self,
+        render,
+        relay_elapsed_seconds: float,
+        state: LedDisplayState | None = None,
+    ):
         """Identity = what the strip WOULD look like at a fixed phase.
 
         Dedupe must compare the visual RESULT, not the inputs and not the
@@ -1603,7 +1739,7 @@ class AgentLedController:
         # Same post-processing as the live program: calibration gains and
         # resting glow change what reaches the device, so they must be
         # able to invalidate the identity too.
-        return self._for_strip(identity)
+        return self._for_strip(identity, state)
 
     def sync_snapshot(
         self,
@@ -1648,7 +1784,7 @@ class AgentLedController:
         # still produces a different string here and correctly triggers a
         # rewrite, with no separate "did gains change" tracking needed.
         nominal = program
-        program = self._for_strip(program)
+        program = self._for_strip(program, state)
         # Dedupe on the INPUTS, never the rendered text. Relay bakes a
         # wall-clock phase into the program, so a text compare differs on
         # essentially every call -- the 60s reassert window never engaged
@@ -1664,6 +1800,7 @@ class AgentLedController:
                 relay_elapsed_seconds=phase,
             )[1],
             relay_elapsed_seconds,
+            state,
         )
         return self._write_deduped_program(
             state,
@@ -1696,7 +1833,7 @@ class AgentLedController:
             include_attention_arrival=arrival_fresh,
         )
         nominal = program
-        program = self._for_strip(program)
+        program = self._for_strip(program, state)
         identity = self._phase_free_identity(
             lambda phase: program_for_projection(
                 projection,
@@ -1707,6 +1844,7 @@ class AgentLedController:
                 relay_elapsed_seconds=phase,
             )[1],
             relay_elapsed_seconds,
+            state,
         )
         return self._write_deduped_program(
             state,
@@ -1724,10 +1862,16 @@ class AgentLedController:
         force: bool = False,
         trim_on_reassert: bool = True,
         timing: object | None = None,
+        hold_visible: bool = True,
     ) -> LedStatusWrite:
         """Writes a pre-rendered program through the same gain/dedup/retry
         path sync_snapshot uses -- for displays that aren't derived from
         agent statuses at all (e.g. the low-battery reminder).
+
+        ``hold_visible`` keeps a Working/Ask/Done/Failed program from leaving
+        the die below the emission floor (see ``emission_floor_for_state``). A
+        linked Dot turns it off: its level is the strip's scaled by a ratio the
+        person chose, and lifting it would undo that ratio.
 
         A linked Dot passes ``force`` when the strip just restarted (its
         program must restart with it whatever the deduper thinks),
@@ -1735,7 +1879,7 @@ class AgentLedController:
         from the strip's running one, and ``timing`` for the write boundary
         to rotate and retime it (``linked_sync.DeviceTiming``)."""
         nominal = program
-        program = self._for_strip(program)
+        program = self._for_strip(program, state if hold_visible else None)
         return self._write_deduped_program(
             state,
             program,

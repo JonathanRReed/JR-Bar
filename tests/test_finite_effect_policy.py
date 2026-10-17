@@ -10,6 +10,7 @@ from jrbar.animation import (
     RepeatStep,
     Timing,
     WholeBar,
+    animation_duration_ms,
 )
 from jrbar.finite_effect_policy import (
     MAX_FINITE_REPETITIONS,
@@ -230,7 +231,6 @@ def test_effect_that_cannot_fit_one_whole_cycle_uses_static_fallback__and_2_more
     assert plan.decision is FiniteEffectDecision.STATIC_SUBSTITUTE
     assert plan.static_fallback_key == "ambient-rest"
     assert plan.substitution_reason is StaticSubstitutionReason.REDUCE_MOTION
-    assert plan.reduce_motion_substituted is True
     assert plan.has_motion is False
     assert plan.intro is None
     assert plan.loop is None
@@ -336,4 +336,17 @@ def test_invalid_source_repeat_count_is_rejected__and_1_more() -> None:
                 animation,
                 requested_repetitions=value,  # type: ignore[arg-type]
             )
+
+
+def test_single_cycle_without_repeat_emits_its_planned_cadence_rest() -> None:
+    animation = _animation(100)
+
+    plan = plan_finite_loop("single-cycle", animation)
+
+    assert plan.loop is not None
+    assert plan.loop.repetitions == 1
+    assert plan.loop.cadence.inserted_rest_ms == 400
+    assert animation_duration_ms(plan.loop.animation) == plan.total_duration_ms == 500
+    assert plan.loop.animation.steps[-1] == _paint(400, "off")
+    assert animation.steps == (_paint(100),)
 

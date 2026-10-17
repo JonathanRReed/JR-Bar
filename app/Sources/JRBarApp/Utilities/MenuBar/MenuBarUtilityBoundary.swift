@@ -11,35 +11,35 @@ import SwiftUI
 extension MenuBarUtility {
     // MARK: The boundary
 
-    /// Seed our own items' preferred positions — the system stores them
-    /// in our defaults under this key, so the first run lands the
-    /// controls near the row's middle rather than wherever the system
-    /// happened to drop them. Only ever seeds an absent key: a slot
-    /// the person ⌘-dragged to is theirs.
-    static func seedPreferredPosition(_ position: Double, autosaveName: String) {
-        let key = "NSStatusItem Preferred Position \(autosaveName)"
-        if UserDefaults.standard.object(forKey: key) == nil {
-            UserDefaults.standard.set(position, forKey: key)
-            // The item registers a beat later — without the sync the
-            // write can sit in the in-memory cache and cfprefsd hands
-            // the registrar nothing.
-            UserDefaults.standard.synchronize()
-        }
+    /// The boundary: the host's spacer — the app's own status item, one
+    /// of ours on the row. No host, no boundary: JR-Bar never registers a
+    /// second item to stand in (a registered one, even hidden, still read
+    /// frames into the hot zones, the cover blockers and the ear limits).
+    /// Safe to call any time.
+    func installBoundary() {
+        host?.setBoundarySpacer(spacerToStand())
     }
 
-    /// The boundary: the host's spacer — the app's own status item, one
-    /// of ours on the row — and, under the concealer, the mirror's ‹.
-    /// No host, no boundary: JR-Bar never registers a second item to
-    /// stand in (a registered one, even hidden, still read frames into
-    /// the hot zones, the cover blockers and the ear limits). Safe to
-    /// call any time.
-    func installBoundary() {
-        // Under the agent the hider never sizes the control — and no
-        // affordance is claimed: the width pushed our slot into the
-        // notch dead zone and parked the item. Under the spacer engine
-        // the plan's own writes floor the mark; this only makes it
-        // immediate.
-        host?.setBoundarySpacer(concealer == nil ? Self.boundaryAffordance : 0)
+    /// The spacer the host's item should wear right now: the length the
+    /// hider last wrote (the floor before it has written any), never just
+    /// the floor: every settings write re-applies the utility and lands
+    /// here, and a floor written over a standing spacer folded the divider
+    /// while the hider still believed its length stood, so nothing wrote it
+    /// again and every item left of the icon was drawn (seen live,
+    /// 2026-10-08, 24 s after launch, at the first positional record).
+    func spacerToStand() -> CGFloat {
+        Self.standingSpacer(assigned: hider.assignedLengths[.hidden],
+                            glyph: host?.boundaryGlyphLength ?? MenuBarControlFrames.glyphLength,
+                            revealed: hider.effectiveRevealedSections.contains(.hidden))
+    }
+
+    /// The host's spacer for a hider length: the length less the icon's
+    /// own width. Hidden items retain the click affordance; a reveal
+    /// folds the blank space completely. Before the first write it keeps
+    /// the affordance floor. Pure so a test pins it.
+    nonisolated static func standingSpacer(assigned: CGFloat?, glyph: CGFloat, revealed: Bool = false) -> CGFloat {
+        guard let assigned else { return boundaryAffordance }
+        return max(revealed ? 0 : boundaryAffordance, assigned - glyph)
     }
 
     /// The status items earlier builds registered and this one never
@@ -66,19 +66,7 @@ extension MenuBarUtility {
         host?.setBoundarySpacer(0)
         host?.hiddenCount = 0
         host?.hiddenRevealed = false
-        ScreenBarGeometry.earItemLimitLeft = nil
-        ScreenBarGeometry.earItemLimitRight = nil
-    }
-
-    /// A spacer item's click: left toggles the hidden run; right-click
-    /// (or ⌥-click) opens the Item Bar.
-    func spacerClicked() {
-        guard let event = NSApp.currentEvent else { return }
-        if event.type == .rightMouseUp || event.modifierFlags.contains(.option) {
-            bar.toggle()
-        } else {
-            toggleHiddenSection()
-        }
+        ScreenBarGeometry.setEarItemLimits(left: nil, right: nil)
     }
 
     /// The host's blank stretch was clicked: the hidden run toggles.
@@ -93,6 +81,16 @@ extension MenuBarUtility {
     func hiddenItemsMenu() -> NSMenu? {
         guard running else { return nil }
         let menu = NSMenu()
+        // A bar too full for the icon says so first, with what to do.
+        if let help = dividerRoomHelp {
+            let note = NSMenuItem(title: "The bar is too full for the JR-Bar icon", action: nil, keyEquivalent: "")
+            note.isEnabled = false
+            menu.addItem(note)
+            let detail = NSMenuItem(title: help, action: nil, keyEquivalent: "")
+            detail.isEnabled = false
+            menu.addItem(detail)
+            menu.addItem(.separator())
+        }
         for entry in MenuBarCombinedMenu.entries(
             plan: lastPlan, hiddenRevealed: hider.revealed.contains(.hidden)) {
             switch entry.kind {
@@ -266,6 +264,7 @@ extension MenuBarUtility {
             switch settings().revealStyle {
             case .inline:
                 hider.reveal([.hidden])
+                openBarForRemainder()
             case .bar:
                 bar.open(keyboard: fromKeyboard)
             }
@@ -287,15 +286,10 @@ extension MenuBarUtility {
             menu.removeItem(toggle)
         }
         // The hide rows teach by acting; the hint speaks only when there
-        // is nothing on the bar a click could hide. Under the concealer a
-        // ⌘-drag across the icon is the way in (the picker when it is
-        // off); under the spacer the mark is the separator.
+        // is nothing on the bar a click could hide.
         if !menu.items.contains(where: { $0.action == #selector(MenuBarMenuActions.menuHideApp(_:))
                                           || $0.submenu != nil }) {
-            let hint = NSMenuItem(
-                title: Self.emptyRunHint(concealing: concealer != nil,
-                                         dragToHide: settings().curation.dragToHide),
-                action: nil, keyEquivalent: "")
+            let hint = NSMenuItem(title: Self.emptyRunHint, action: nil, keyEquivalent: "")
             hint.isEnabled = false
             menu.insertItem(hint, at: 0)
             menu.insertItem(.separator(), at: 1)
@@ -308,67 +302,27 @@ extension MenuBarUtility {
                    in: nil)
     }
 
-    /// The empty run's teach row: how an item gets hidden on this
-    /// engine. Pure so a test pins the copy.
-    nonisolated static func emptyRunHint(concealing: Bool, dragToHide: Bool) -> String {
-        guard concealing else { return "⌘-drag an item left of the ‹ mark to hide it" }
-        return dragToHide
-            ? "⌘-drag an item left of the JR-Bar icon to hide it"
-            : "Pick apps to hide in Settings › Utilities › Menu Bar"
-    }
-
-    /// The ear's ‹ handle — the hidden run's affordance while the agent
-    /// conceals and the real item is the icon: non-nil (the glyph's
-    /// direction) while it should stand. The screen bar reads it through
-    /// `menuHandleProvider`. While the mirror carries the icon its own ‹
-    /// is the handle, and a second one on the ear ~165 pt away would
-    /// only split the job — the right ear keeps just its provider mark.
-    var menuHandleRevealed: Bool? {
-        // The concealer's presence, not its instant assertion — a
-        // reveal lifts it for seconds, and the handle is exactly the ‹
-        // rehide affordance while the run is out. Seeded keeps it off a
-        // map-less fresh bar.
-        guard concealer != nil, settings().concealSeeded, !iconMirrored else { return nil }
-        return hider.revealed.contains(.hidden)
-    }
-
-    /// The island handle's click — the same toggle the chevron answers.
-    func toggleMenuHandle() {
-        MenuBarCombinedItem.log.notice("menu handle click: hidden=\(self.lastPlan.hidden.count) revealed=\(self.hider.revealed.contains(.hidden))")
-        toggleHiddenSection()
-    }
+    /// The empty run's teach row: how an item gets hidden. Pure so a test
+    /// pins the copy.
+    nonisolated static let emptyRunHint = "Hold ⌘ and drag an item left of the JR-Bar icon to hide it"
 
     /// The faces follow the run's state: the host takes the counts and
-    /// draws its own hint, and the ear's ‹ turns with the run.
+    /// draws its own hint.
     func refreshBoundary() {
-        let revealed = hider.revealed.contains(.hidden)
-        if let host {
-            host.hiddenCount = lastPlan.hidden.count + lastPlan.alwaysHidden.count
-            host.hiddenRevealed = revealed
-        }
-        // The ear's ‹ turns to › with the run: say so while it can stand.
-        if revealed != handleRevealedSeen {
-            handleRevealedSeen = revealed
-            if concealer != nil { menuHandleChanged() }
-        }
+        guard let host else { return }
+        host.hiddenCount = lastPlan.hidden.count + lastPlan.alwaysHidden.count
+        host.hiddenRevealed = hider.revealed.contains(.hidden)
     }
 
     /// The hider's length write. For the hidden run the host takes
     /// everything past its own glyph as spacer (a length at or under
     /// the glyph folds it).
     func setControlLength(_ section: MenuBarItemSection, length: CGFloat) {
-        if concealer != nil {
-            // The agent hides; nothing of ours ever grows — the
-            // affordance floor would push our slot into the notch dead
-            // zone and park the item.
-            host?.setBoundarySpacer(0)
-            return
-        }
         switch section {
         case .hidden:
             guard let host else { return }
-            host.setBoundarySpacer(max(Self.boundaryAffordance,
-                                     length - host.boundaryGlyphLength))
+            host.setBoundarySpacer(Self.standingSpacer(assigned: length, glyph: host.boundaryGlyphLength,
+                revealed: hider.effectiveRevealedSections.contains(.hidden)))
         case .alwaysHidden, .shown:
             return
         }
@@ -377,11 +331,7 @@ extension MenuBarUtility {
     /// The live control frame for the hider: the host's item, with the
     /// boundary's glyph share — none without a host.
     func controlFrames() -> MenuBarControlFrames {
-        // Under the concealer there is no boundary once the map is
-        // seeded: no positional sections, no spacer, no « to read.
-        if concealer != nil, settings().concealSeeded { return MenuBarControlFrames() }
-        return MenuBarControlFrames(
-            hidden: host?.boundaryFrame,
+        MenuBarControlFrames(hidden: host?.boundaryFrame,
             hiddenGlyph: host?.boundaryGlyphLength ?? MenuBarControlFrames.glyphLength)
     }
 
@@ -392,24 +342,31 @@ extension MenuBarUtility {
     /// x axis across the Quartz/AppKit flip — only x limits are read.
     /// nil per side while the flank is free.
     func publishEarAvoidance(_ plan: MenuBarHidePlan) {
+        // The plan can contain positions read before this pass moved the
+        // divider. Keep the last clearance until a new AX listing lands.
+        guard hider.hasFreshControlListing else { return }
         guard let island = ScreenBarGeometry.islandScreenRect else {
-            ScreenBarGeometry.earItemLimitLeft = nil
-            ScreenBarGeometry.earItemLimitRight = nil
+            ScreenBarGeometry.setEarItemLimits(left: nil, right: nil)
             return
         }
         let s = liveSettings()
         let (left, right) = Self.earLimits(
             items: plan.shown + plan.hidden + plan.alwaysHidden,
             island: island, row: MenuBarItemLister.menuBarRow(),
-            concealedApps: s.concealedApps, sections: s.sections,
-            revealed: hider.revealed,
-            ourPID: ProcessInfo.processInfo.processIdentifier)
-        if ScreenBarGeometry.earItemLimitLeft != left {
-            ScreenBarGeometry.earItemLimitLeft = left
-        }
-        if ScreenBarGeometry.earItemLimitRight != right {
-            ScreenBarGeometry.earItemLimitRight = right
-        }
+            concealedApps: [:], sections: Self.earSections(plan: plan, configured: s.sections),
+            revealed: hider.effectiveRevealedSections,
+            ourPID: ProcessInfo.processInfo.processIdentifier,
+            divider: host?.boundaryOccupiedFrame)
+        ScreenBarGeometry.setEarItemLimits(left: left, right: right)
+    }
+
+    nonisolated static func earSections(plan: MenuBarHidePlan,
+                                       configured: [String: MenuBarItemSection]) -> [String: MenuBarItemSection] {
+        var sections = configured
+        for item in plan.shown { sections[item.id] = .shown }
+        for item in plan.hidden { sections[item.id] = .hidden }
+        for item in plan.alwaysHidden { sections[item.id] = .alwaysHidden }
+        return sections
     }
 
     /// The ear-limit classifier — pure so tests drive it without a notch
@@ -421,22 +378,27 @@ extension MenuBarUtility {
     /// island's span just suppresses the ear, which is the honest answer
     /// when the flank is already taken.
     ///
-    /// Items our own process owns never earn a limit. Under the
-    /// concealer none of them is drawn: macOS hides our own item under
-    /// our own assertion, so the real item is slim and blank, and the
-    /// icon is the mirror, our own surface right of the band. An
-    /// undrawn slot of ours clamping an ear only took the ear off empty
-    /// bar — the blank-face bug: the slim item beside the notch's edge,
-    /// the ear yielding to it, and nothing visible where the icon sat.
+    /// Items our own process owns never earn a limit on their listed
+    /// frames. `divider` is its painted icon and chevron, not the blank
+    /// reservation used to park the hidden run. Moving blank space must
+    /// not shrink the Notch or retire its hover region.
     nonisolated static func earLimits(
         items: [MenuBarItem], island: CGRect, row: CGRect,
         concealedApps: [String: MenuBarItemSection],
         sections: [String: MenuBarItemSection],
         revealed: Set<MenuBarItemSection>,
-        ourPID: pid_t
+        ourPID: pid_t,
+        divider: CGRect? = nil
     ) -> (left: CGFloat?, right: CGFloat?) {
         var left: CGFloat? = nil
         var right: CGFloat? = nil
+        if let divider, divider.intersects(row) {
+            if divider.midX <= island.midX {
+                left = divider.maxX
+            } else {
+                right = divider.minX
+            }
+        }
         for item in items {
             if item.ownerPID == ourPID { continue }
             let f = item.bounds
@@ -455,59 +417,33 @@ extension MenuBarUtility {
         return (left, right)
     }
 
-    /// The stretch a hover or an empty-space click reveals: from the
-    /// region's edge to the boundary glyph's right edge, in AppKit
-    /// screen coordinates. nil while no boundary stands.
+    /// The hidden stretch ends strictly before the chevron beside JR-Bar's icon.
     func revealZone() -> NSRect? {
         let height = CGDisplayBounds(CGMainDisplayID()).height
-        if concealer != nil {
-            // Under the concealer the zone is the blank run the hidden
-            // apps leave left of the icon — from where nothing covers the
-            // row (the notch, the band and its ears, the front app's
-            // menus) to the mirror's left edge, on the row the mirror
-            // stands on. A notch-less bar also keeps only its right half:
-            // the menu edge is missing while the front app does not
-            // answer AX, and a hover over the File menu must never pop
-            // the run.
-            let row = Self.primaryRow()
-            var start = mirrorClearOf()
-            if NSScreen.screens.first?.auxiliaryTopRightArea == nil { start = max(start, row.midX) }
-            let mirrorMinX = iconMirrored ? standingMirrorFrame?.minX : nil
-            let shown = lastPlan.shown.filter {
-                $0.bounds.intersects(row) && Self.isForeignOwner($0.ownerName)
-                    && !$0.isNativeOverflowControl
-            }.map(\.bounds.minX)
-            guard let span = Self.concealedRevealSpan(start: start, mirrorMinX: mirrorMinX,
-                                                      shownMinXs: shown) else {
-                // No computable stretch: the hot frames alone answer
-                // the gesture — the whole row must never pop the run.
-                return NSRect.zero
-            }
-            return NSRect(x: span.lowerBound, y: height - row.maxY,
-                          width: span.upperBound - span.lowerBound, height: row.height)
+        let quartzRow = MenuBarItemLister.menuBarRow()
+        let row = NSRect(x: quartzRow.minX, y: height - quartzRow.maxY,
+                         width: quartzRow.width, height: quartzRow.height)
+        let boundary = controlFrames().hidden.map {
+            NSRect(x: $0.minX, y: height - $0.maxY, width: $0.width, height: $0.height)
         }
-        let row = MenuBarItemLister.menuBarRow()
-        let frames = controlFrames()
-        guard let boundary = frames.hidden, boundary.intersects(row) else { return nil }
-        // The blank stretch starts where the spacer may land, less the
-        // room the « takes — a gesture on the « is a gesture on the run.
-        let edge = (hider.fitEdge ?? boundary.minX) - 30
-        let minX = min(edge, boundary.minX)
-        return NSRect(x: minX, y: height - row.maxY,
-                      width: max(0, boundary.maxX - minX), height: row.height)
+        return Self.revealZone(row: row, boundary: boundary,
+                               hoverFrame: host?.boundaryHoverFrame, fitEdge: hider.fitEdge)
     }
 
-    /// The concealer's reveal span on x: from `start` to the mirror's
-    /// left edge — or, while no mirror stands, the leftmost foreign
-    /// shown item right of `start`. Our own items never bound it (the
-    /// slim real item sits wherever macOS keeps it), and the icon itself
-    /// is never inside it. nil when there is no stretch. Pure so a test
-    /// pins it.
-    nonisolated static func concealedRevealSpan(start: CGFloat, mirrorMinX: CGFloat?,
-                                                shownMinXs: [CGFloat]) -> ClosedRange<CGFloat>? {
-        guard let end = mirrorMinX ?? shownMinXs.filter({ $0 > start }).min(),
-              end > start else { return nil }
-        return start...end
+    nonisolated static func revealZone(row: NSRect, boundary: NSRect?,
+                                      hoverFrame: NSRect?, fitEdge: CGFloat?) -> NSRect? {
+        // Missing native geometry must not widen hover to the whole menu bar.
+        guard let boundary, boundary.intersects(row) else {
+            return NSRect(x: row.minX, y: row.minY, width: 0, height: row.height)
+        }
+        // An empty seat must stay empty. nil would make the gesture use the whole row.
+        guard let hoverFrame, hoverFrame.width > 0 else {
+            return NSRect(x: boundary.minX, y: row.minY, width: 0, height: row.height)
+        }
+        let edge = (fitEdge ?? boundary.minX) - 30
+        let minX = min(edge, boundary.minX)
+        let maxX = min(hoverFrame.maxX, boundary.maxX)
+        return NSRect(x: minX, y: row.minY, width: max(0, maxX - minX), height: row.height)
     }
 
     /// Bartender's "show for updates": a hidden item that rewrote its
@@ -548,23 +484,11 @@ extension MenuBarUtility {
             }
             return
         }
-        let reveal = Self.updateReveal(
-            changed: changed,
-            watch: Set(settings().curation.updateWatch),
-            concealing: concealer != nil,
-            appleExtras: concealsAppleExtras)
+        let sections = Self.updateReveal(changed: changed,
+                                         watch: Set(settings().curation.updateWatch))
+        guard !sections.isEmpty else { return }
         let seconds = settings().rehideSeconds
-        // Under the concealer the changed app stands alone for the clock
-        // — one item joins the row, not the whole run.
-        for app in reveal.lifts {
-            lift(app, until: Date().addingTimeInterval(seconds))
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
-                self?.syncConcealer()
-            }
-        }
-        guard !reveal.sections.isEmpty else { return }
-        hider.reveal(reveal.sections)
+        hider.reveal(sections)
         updateHideTask?.cancel()
         updateHideTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
@@ -573,40 +497,19 @@ extension MenuBarUtility {
         }
     }
 
-    /// The combined popover's agents line: the feed's combined state,
-    /// its detail, its tint.
-    func combinedAgentLine() -> MenuBarSystemModel.AgentLine {
-        let read = agentState()
-        return MenuBarSystemModel.AgentLine(label: "Agents — \(read.state.label)",
-                                            detail: read.detail, tintHex: read.state.tintHex)
-    }
-
     /// The owner key "show for updates" watches an item by: its bundle,
     /// or its own id for a helper without one.
     nonisolated static func updateWatchKey(_ item: MenuBarItem) -> String {
         item.bundleID ?? item.id
     }
 
-    /// What one show-for-updates pass acts on: the changed hidden items
-    /// the watch list lets through (all of them while it is empty). An
-    /// app the concealer takes is lifted alone — Apple's extras too with
-    /// `concealAppleExtras` on; anything else — a covered extra, any
-    /// item under the spacer engine — reveals its section. Pure so a
-    /// test pins it.
+    /// What one show-for-updates pass reveals: the sections of the changed
+    /// hidden items the watch list lets through (all of them while it is
+    /// empty). Pure so a test pins it.
     nonisolated static func updateReveal(changed: [(MenuBarItem, MenuBarItemSection)],
-                                         watch: Set<String>, concealing: Bool,
-                                         appleExtras: Bool = false) -> (lifts: Set<String>, sections: Set<MenuBarItemSection>) {
-        var lifts = Set<String>()
-        var sections = Set<MenuBarItemSection>()
-        for (item, section) in changed where watch.isEmpty || watch.contains(updateWatchKey(item)) {
-            if concealing, let app = item.bundleID,
-               MenuBarConcealPlan.canConcealApp(app, appleExtras: appleExtras) {
-                lifts.insert(app)
-            } else {
-                sections.insert(section)
-            }
-        }
-        return (lifts, sections)
+                                         watch: Set<String>) -> Set<MenuBarItemSection> {
+        Set(changed.filter { item, _ in watch.isEmpty || watch.contains(updateWatchKey(item)) }
+            .map(\.1))
     }
 
     /// Whether "show for updates" watches `item` by name — false while
@@ -624,62 +527,44 @@ extension MenuBarUtility {
         }
     }
 
-    /// A control's live frame in Quartz coordinates (top-left origin),
-    /// off its button's window; nil when the control is not installed
-    /// or has no window yet.
-    static func quartzFrame(of item: NSStatusItem?) -> CGRect? {
-        guard let frame = item?.button?.window?.frame else { return nil }
-        let height = CGDisplayBounds(CGMainDisplayID()).height
-        return CGRect(x: frame.minX, y: height - frame.maxY,
-                      width: frame.width, height: frame.height)
-    }
 }
 
 /// The boundary's host: what the Menu Bar utility needs from the app's
 /// own status item to make it the hidden run's edge — its frame, its
 /// icon's width, a spacer write, the reveal click, the hidden-items
-/// submenu, and the counts it draws its hint from — and, under the
-/// concealer, what the mirror needs to stand in for it.
+/// submenu, and the counts it draws its hint from.
 @MainActor
 protocol MenuBarBoundaryHost: AnyObject {
-    /// The icon's frame in Quartz coordinates — the mirror's face while
-    /// it carries the icon; nil before the item has a window.
+    /// The icon's frame in Quartz coordinates; nil before the item has a
+    /// window.
     var boundaryFrame: CGRect? { get }
+    /// Revealable blank space before the chevron, in AppKit screen coordinates.
+    var boundaryHoverFrame: NSRect? { get }
+    /// Painted controls that the Notch must avoid, excluding blank reservation.
+    var boundaryOccupiedFrame: CGRect? { get }
     /// The icon's own width — the part that is not spacer.
     var boundaryGlyphLength: CGFloat { get }
     /// Claim `length` points of blank bar left of the icon (0 folds).
     func setBoundarySpacer(_ length: CGFloat)
-    /// Whether the configured style draws an icon at all — every style
-    /// but `.hidden`. Only a drawn icon gets a mirror.
-    var anchorWantsVisibleSeat: Bool { get }
-    /// Hand the icon to the mirror (true) or take it back. While
-    /// mirrored the real item wears nothing and keeps a slim slot — the
-    /// single owner of both, so no other path can un-blank it.
-    func setFaceMirrored(_ mirrored: Bool)
-    /// The mirror's face frame in AppKit screen coordinates while it
-    /// carries the icon — the panel anchors on it. The utility writes it
-    /// on every move and nils it when the mirror goes down.
-    var mirroredFaceFrame: NSRect? { get set }
-    /// What the icon wears, for the mirror.
-    var face: MenuBarIconFace { get }
-    /// Fires whenever `face` changes — the mirror is pushed, never polls.
-    var onFaceChange: (@MainActor () -> Void)? { get set }
-    /// The icon's ordinary click — the panel toggle.
-    func faceClicked()
-    /// The icon's right/Option click — the item's full menu, popped
-    /// under `view`.
-    func popUpMenu(in view: NSView)
+    /// The menu bar's appearance, read off the real button: a template
+    /// glyph resolves to the bar's label colour, not the app's.
+    var barAppearance: NSAppearance? { get }
     var onBoundaryClick: (@MainActor () -> Void)? { get set }
     var hiddenItemsMenu: (@MainActor () -> NSMenu?)? { get set }
     var hiddenCount: Int { get set }
     var hiddenRevealed: Bool { get set }
-    /// Size the real item's slot to the mirror (`.slot` seat); nil is the
-    /// slim slot. A host that predates it keeps the slim slot.
-    func setMirrorSlotLength(_ length: CGFloat?)
 }
 
 extension MenuBarBoundaryHost {
-    func setMirrorSlotLength(_ length: CGFloat?) {}
+    var boundaryHoverFrame: NSRect? {
+        guard let frame = boundaryFrame else { return nil }
+        let height = CGDisplayBounds(CGMainDisplayID()).height
+        let bounds = StatusItemController.boundaryRevealBounds(
+            NSRect(origin: .zero, size: frame.size),
+            spacer: max(0, frame.width - boundaryGlyphLength), glyphWidth: boundaryGlyphLength)
+        return bounds.offsetBy(dx: frame.minX, dy: height - frame.maxY)
+    }
+    var boundaryOccupiedFrame: CGRect? { boundaryFrame }
 }
 
 /// The hidden-items submenu's target: an `NSObject` shim so `MenuBarUtility`

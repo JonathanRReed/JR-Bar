@@ -519,34 +519,6 @@ def parse_reset_epoch(value, *, now: float) -> float | None:
     return epoch
 
 
-def format_reset_countdown(
-    reset_epoch: float | None,
-    *,
-    now: float,
-) -> str | None:
-    """Return a compact future-only countdown for a normalized reset."""
-    reset = _finite_number(reset_epoch)
-    current = _finite_number(now)
-    if reset is None or current is None:
-        return None
-    remaining = reset - current
-    if remaining <= 0.0:
-        return None
-    if remaining < 60.0:
-        return "now"
-
-    total_minutes = max(1, int(math.ceil(remaining / 60.0)))
-    if total_minutes >= 24 * 60:
-        total_hours = int(math.ceil(total_minutes / 60.0))
-        days, hours = divmod(total_hours, 24)
-        return f"in {days}d {hours}h" if hours else f"in {days}d"
-
-    hours, minutes = divmod(total_minutes, 60)
-    if hours:
-        return f"in {hours}h {minutes}m" if minutes else f"in {hours}h"
-    return f"in {total_minutes}m"
-
-
 def _mapping_or_attribute(value, name: str, default=None):
     if isinstance(value, Mapping):
         return value.get(name, default)

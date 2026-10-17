@@ -214,7 +214,7 @@ struct PaletteView: View {
                 .background(Circle().fill(RadialGradient(colors: [Color.primary.opacity(0.10), Color.primary.opacity(0.03)],
                                                          center: .center, startRadius: 3, endRadius: 28)))
                 .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
-            Text(model.searching ? "Searching menus and the archive…" : "No results")
+            Text(model.searching ? "Searching menus and History…" : "No results")
                 .font(.system(size: 14, weight: .semibold))
             if !model.searching {
                 Text("Try an app, a session, or a verb — “hide”, “quiet 45m”, “scene”.")
@@ -448,6 +448,7 @@ struct PaletteActionPanel: View {
         VStack(spacing: 0) {
             ForEach(Array(actions.enumerated()), id: \.element.id) { index, action in
                 actionRow(action, selected: index == model.actionSelection)
+                    .id(action.id)
                     .onTapGesture { onRun(action.id) }
             }
         }
@@ -473,8 +474,16 @@ struct PaletteActionPanel: View {
             } else if actions.count <= Self.unscrolledLimit || snapshot {
                 actionRows(actions)
             } else {
-                ScrollView { actionRows(actions) }
-                    .frame(height: CGFloat(Self.unscrolledLimit) * 30 + 4)
+                ScrollViewReader { proxy in
+                    ScrollView { actionRows(actions) }
+                        .onAppear {
+                            if let id = model.selectedAction?.id { proxy.scrollTo(id) }
+                        }
+                        .onChange(of: model.selectedAction?.id) { _, id in
+                            if let id { proxy.scrollTo(id) }
+                        }
+                }
+                .frame(height: CGFloat(Self.unscrolledLimit) * 30 + 4)
             }
             Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5)
             Group {

@@ -44,6 +44,17 @@ struct UsageHistoryTests {
         #expect(account.fidelity == "official")
     }
 
+    @Test("reading_files decodes beside partial, and an older daemon reads as none")
+    func readingFiles() throws {
+        let json = #"{"provider":"codex","range":"30d","records":5,"partial":true,"reading_files":12}"#
+        let reading = try JSONDecoder().decode(UsageHistory.self, from: Data(json.utf8))
+        #expect(reading.readingFiles == 12)
+        #expect(reading.partial)
+        let finished = try JSONDecoder().decode(UsageHistory.self, from: Data(#"{"provider":"codex","range":"30d","reading_files":-3}"#.utf8))
+        #expect(finished.readingFiles == 0, "a count below zero is not a count")
+        #expect(try Self.fixture().readingFiles == 0)
+    }
+
     @Test("totals, cache share and savings")
     func totals() throws {
         let history = try Self.fixture()
@@ -55,7 +66,6 @@ struct UsageHistoryTests {
         // Cache reads at $0.30 instead of $3.00 per million.
         let expected = Double(history.totalCacheRead) / 1_000_000 * 2.7
         #expect(abs(savings - expected) < 0.0001)
-        #expect(history.peakDayTokens == history.days.map(\.totalTokens).max())
     }
 
     @Test("missing fields decode to zero and the empty shape is empty")
@@ -79,6 +89,39 @@ struct UsageHistoryTests {
         #expect(noCache.cacheSavings == nil)
     }
 
+    @Test("tokens with no price say so instead of reading $0.00")
+    func unpricedHeadline() {
+        let day = UsageHistoryDay(date: "2026-09-01", tokensIn: 5_000_000, tokensOut: 100_000)
+        let noTable = UsageHistory(provider: "grok", range: "30d", days: [day], records: 12, unpricedRecords: 12)
+        #expect(noTable.costIsUnpriced)
+        #expect(noTable.costHeadline == "No price")
+        let allUnpriced = UsageHistory(provider: "x", range: "30d", days: [day], pricing: UsagePricing(inputPerMillion: 3, estimated: false),
+                                       records: 4, unpricedRecords: 4)
+        #expect(allUnpriced.costHeadline == "No price")
+        let priced = UsageHistory(provider: "x", range: "30d", days: [UsageHistoryDay(date: "2026-09-01", tokensIn: 1000, costUsd: 12.4)],
+                                  pricing: UsagePricing(inputPerMillion: 3, estimated: false), records: 1)
+        #expect(!priced.costIsUnpriced)
+        #expect(priced.costHeadline == "$12.40")
+        let quiet = UsageHistory(provider: "x", range: "7d", days: [UsageHistoryDay(date: "2026-09-01")])
+        #expect(!quiet.costIsUnpriced, "no tokens, nothing to price")
+    }
+
+    @Test("one headline model price cannot claim mixed-model cache savings")
+    func mixedModelCacheSavings() {
+        var history = UsageHistory(provider: "claude", range: "7d",
+            days: [UsageHistoryDay(date: "2026-09-01", tokensIn: 1_000_000, cacheRead: 1_000_000)],
+            pricing: UsagePricing(inputPerMillion: 3, cacheReadPerMillion: 0.3))
+        #expect(history.cacheSavings == 2.7)
+        history.models = [UsageHistoryModel(model: "model-a", tokens: 1_000_000),
+                          UsageHistoryModel(model: "model-b", tokens: 1_000_000)]
+        #expect(history.cacheSavings == nil)
+        #expect(history.cacheShare == 0.5)
+        history.models.removeLast()
+        #expect(history.cacheSavings == 2.7)
+        history.unpricedRecords = 1
+        #expect(history.cacheSavings == nil)
+    }
+
     @Test("ranges and formatting")
     func formatting() {
         #expect(UsageHistoryRange.allCases.map(\.days) == [7, 30, 90, 365])
@@ -89,6 +132,16 @@ struct UsageHistoryTests {
         #expect(UsageFormat.tokens(4_560_000) == "4.6M")
         #expect(UsageFormat.tokens(12_000_000) == "12M")
         #expect(UsageFormat.tokens(2_500_000_000) == "2.5B")
+        // A tier never prints 1000 of the one below it.
+        #expect(UsageFormat.tokens(999_499) == "999k")
+        #expect(UsageFormat.tokens(999_500) == "1.0M")
+        #expect(UsageFormat.tokens(999_999) == "1.0M")
+        #expect(UsageFormat.tokens(9_949) == "9.9k")
+        #expect(UsageFormat.tokens(9_999) == "10k")
+        #expect(UsageFormat.tokens(9_999_999) == "10M")
+        #expect(UsageFormat.tokens(999_999_999) == "1.0B")
+        #expect(UsageFormat.cost(999.996) == "$1,000")
+        #expect(UsageFormat.cost(999.99) == "$999.99")
         #expect(UsageFormat.cost(14.6989) == "$14.70")
         #expect(UsageFormat.cost(0.004) == "<$0.01")
         #expect(UsageFormat.cost(0) == "$0.00")

@@ -22,10 +22,28 @@ curl -s -H "Authorization: Bearer $(cat ~/.local/state/jrbar/serve-token)" \
     http://127.0.0.1:8737/status.json
 ```
 
-The endpoint listens on loopback only and is read-only. The routes that
-answer an ask exist only while their own switch is on; that switch is off
-by default. Stream Deck support and the xbar example below are built on
-this endpoint.
+The endpoint listens on loopback only and is read-only. The app also serves
+`GET /asks.json` and `POST /answer` for a Stream Deck key, but they answer
+only while their own switch, `serve_answer_enabled`, is on. It is off by
+default and separate from Serve status (`jrbar set serve_answer_enabled
+true` turns it on). Both routes need the token, and an answer is a press by
+a person, never a rule. A Stream Deck "API request" key and the xbar example below
+are built on this endpoint.
+
+### Running it by hand
+
+`jrbar serve` also runs on its own, outside the app:
+
+```sh
+JRBAR_SERVE_ACCESS_TOKEN=<24 or more characters> jrbar serve --port 8737
+```
+
+It refuses to start without that token, unless you pass
+`--allow-anonymous-status` for a legacy client that cannot send one. `--port`
+takes 0 to 65535 and defaults to 8737; a taken port is named with an exit of
+1. `--allow-answers` adds the two answering routes above, reaching the
+running monitor over its socket, and they still act only while
+`serve_answer_enabled` is on and never without the token.
 
 ## The command line
 

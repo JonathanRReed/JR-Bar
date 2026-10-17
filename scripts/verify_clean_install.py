@@ -14,12 +14,20 @@ ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 
 
-def run(*arguments: object, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run(*arguments: object, home: Path, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     environment = {
         **os.environ,
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_STATE_HOME": str(home / ".local/state"),
+        "XDG_CACHE_HOME": str(home / ".cache"),
+        "XDG_DATA_HOME": str(home / ".local/share"),
         "PIP_DISABLE_PIP_VERSION_CHECK": "1",
         "PYTHONPATH": "",
     }
+    # Provider overrides otherwise bypass the temporary home during status probes.
+    for name in ("CODEX_HOME", "CLAUDE_CONFIG_DIR"):
+        environment.pop(name, None)
     return subprocess.run(
         [str(argument) for argument in arguments],
         cwd=cwd,
@@ -42,10 +50,12 @@ def main() -> int:
     wheel = wheel_path()
     with tempfile.TemporaryDirectory(prefix="jrbar-clean-install-") as directory:
         root = Path(directory)
+        home = root / "home"
+        home.mkdir()
         environment = root / "venv"
-        run(sys.executable, "-m", "venv", environment)
+        run(sys.executable, "-m", "venv", environment, home=home, cwd=root)
         python = environment / "bin" / "python"
-        run(python, "-m", "pip", "install", wheel)
+        run(python, "-m", "pip", "install", wheel, home=home, cwd=root)
 
         probe = """
 import importlib.metadata
@@ -71,7 +81,7 @@ for module in (
 ):
     __import__(module)
 """
-        run(python, "-c", probe, cwd=root)
+        run(python, "-c", probe, home=home, cwd=root)
 
         bin_dir = environment / "bin"
         for name in ("jrbar", "jrbar-integrations"):
@@ -79,17 +89,17 @@ for module in (
             if not path.is_file() or not os.access(path, os.X_OK):
                 raise RuntimeError(f"missing installed console script: {path}")
 
-        run(bin_dir / "jrbar", "--help", cwd=root)
-        run(bin_dir / "jrbar", "integrations", "status", "--json", cwd=root)
-        run(bin_dir / "jrbar-integrations", "status", "--json", cwd=root)
-        run(bin_dir / "jrbar", "agent-monitor", "--help", cwd=root)
-        run(python, "-m", "jrbar.hook_client", cwd=root)
-        run(python, "-m", "jrbar.hook_entry", cwd=root)
+        run(bin_dir / "jrbar", "--help", home=home, cwd=root)
+        run(bin_dir / "jrbar", "integrations", "status", "--json", home=home, cwd=root)
+        run(bin_dir / "jrbar-integrations", "status", "--json", home=home, cwd=root)
+        run(bin_dir / "jrbar", "agent-monitor", "--help", home=home, cwd=root)
+        run(python, "-m", "jrbar.hook_client", home=home, cwd=root)
+        run(python, "-m", "jrbar.hook_entry", home=home, cwd=root)
         if (bin_dir / "sidepulse").exists():
             raise RuntimeError("the retired sidepulse console alias is still installed")
 
         if platform.system() == "Darwin":
-            run(python, "-c", "import jrbar.status_bar", cwd=root)
+            run(python, "-c", "import jrbar.status_bar", home=home, cwd=root)
 
     print(f"Clean-install verification passed: {wheel.name}")
     return 0

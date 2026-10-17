@@ -16,6 +16,20 @@ struct UsageWindowLabelTests {
         #expect(UsageWindowLabel.short(id: "credits", name: "Credits") == "Credits")
     }
 
+    @Test("Factory pool windows keep distinct labels and reset spans")
+    func factoryWindows() {
+        for pool in ["standard", "core"] {
+            for (suffix, label, span) in [("5h", "5h", 18000.0), ("7d", "7d", 604800.0), ("30d", "Monthly", 2592000.0)] {
+                let id = "\(pool)-\(suffix)"
+                #expect(UsageWindowLabel.short(id: id, name: "\(pool) \(suffix)") == label)
+                #expect(UsageWindowLabel.windowSpan(id: id, name: nil) == span)
+                #expect(UsageWindowLabel.cadence(id: id, name: nil) == label)
+                #expect(UsageWindowLabel.ringTitle(id: id, name: "unrelated") == pool.capitalized)
+            }
+        }
+        #expect(UsageWindowLabel.long(id: "standard-5h", name: "Standard 5-hour") == "Standard 5-hour")
+    }
+
     @Test("today's short names pass through and long names are cut to six characters")
     func names() {
         #expect(UsageWindowLabel.short(id: nil, name: "5h") == "5h")

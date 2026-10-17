@@ -20,7 +20,7 @@ struct DecorativeBars: View {
 
     /// The live tap's band count.
     static let defaultCount = 6
-    static let frameInterval: TimeInterval = 1.0 / 12.0
+    nonisolated static let frameInterval: TimeInterval = 1.0 / 12.0
 
     /// How the bars tick: their own 12 frames a second and moving while
     /// `live` — unless the Mac asks for restraint (`PowerPolicy`): half the

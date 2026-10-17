@@ -26,7 +26,7 @@ struct InstalledBundleCacheTests {
 
     @Test("a missing app is asked every time, so an install shows at once")
     func missingIsAskedAgain() {
-        var installed = false
+        @Captured var installed = false
         var asks = 0
         let cache = InstalledBundleCache(lookUp: { _ in asks += 1; return installed }, monotonic: { 5 })
         #expect(!cache.isInstalled("io.example.later"))

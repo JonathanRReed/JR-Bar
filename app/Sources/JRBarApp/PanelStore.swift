@@ -15,11 +15,17 @@ struct SessionRow: Identifiable, Equatable {
     /// The terminal the daemon says owns the session (`terminal.app`),
     /// for "Open in Ghostty"; nil when it does not know.
     let terminalApp: String?
+    /// The app the person answers an ask in when JR-Bar cannot answer it
+    /// (`AskAnswerHost`): the terminal, else the app or IDE the hook named.
+    let answerHost: String?
     /// The family mailbox's snooze expiry (`snoozed_until`), while one is
     /// in effect; the row offers Unsnooze and says when it ends.
     let snoozedUntil: Double?
     let activity: SessionActivity
     let since: Date?
+    /// The session's last word began a tool call that has not finished
+    /// (`SilentSession.hasOpenToolCall`): a long build, not silence.
+    let openToolCall: Bool
     let workers: Int
     /// "10 workers", "1 worker"; nil with none.
     var workersText: String? {
@@ -75,6 +81,7 @@ struct SessionRow: Identifiable, Equatable {
         cwd = session.isRemote ? nil : session.cwd
         cwdTail = session.isRemote ? nil : session.cwd.map { Self.tail(of: $0) }
         terminalApp = session.terminal?.app
+        answerHost = AskAnswerHost.app(of: session)
         snoozedUntil = session.snoozedUntil
         activity = SessionActivity.reduce(session)
         activityFact = Self.activityFact(session: session, activity: activity)
@@ -83,6 +90,7 @@ struct SessionRow: Identifiable, Equatable {
         // would name this Mac's apps for another machine's session.
         originLabel = session.isRemote ? nil : Self.shortFact(session.origin?.label, limit: 32)
         since = session.since.map { Date(timeIntervalSince1970: $0) }
+        openToolCall = SilentSession.hasOpenToolCall(session)
         workers = session.workers
         workersWaiting = session.workersWaiting ?? 0
         ask = pinnedAsk ?? session.ask.map { ask in
@@ -118,9 +126,11 @@ struct SessionRow: Identifiable, Equatable {
         cwd = nil
         cwdTail = nil
         terminalApp = nil
+        answerHost = nil
         snoozedUntil = nil
         activity = .waiting
         since = ask.openedAt.map { Date(timeIntervalSince1970: $0) }
+        openToolCall = false
         workers = 0
         workersWaiting = 0
         self.ask = ask
@@ -143,6 +153,9 @@ struct SessionRow: Identifiable, Equatable {
                          ?? "A remote session — answer it on the machine it runs on")
         }
         if let cwd, !cwd.isEmpty { parts.append(cwd) }
+        if let line = ask?.staleLine(now: now) {
+            parts.append("Ask \(line). It stays until it is answered, the session ends, or you dismiss it")
+        }
         if isSnoozed(now: now), let until = snoozedUntil {
             parts.append("Snoozed until \(PanelStore.clockTime(Date(timeIntervalSince1970: until)))")
         }
@@ -167,22 +180,23 @@ struct SessionRow: Identifiable, Equatable {
         }
         if stale { parts.append("No signal in a while — the session may have ended without a goodbye") }
         if let quiet = quietText(now: now) {
-            parts.append("Listed as working and its process still vouches for it — but the last signal was \(quiet) ago")
+            parts.append("Listed as working and its process still vouches for it, with no tool running — but the last signal was \(quiet) ago")
         }
         return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
     /// A working-shaped row whose last signal is older than
-    /// `PanelStore.quietAfter`: the daemon only marks `stale` when no
-    /// process vouches, so a live-but-silent run needs its own cue or a
-    /// stuck agent reads identically to a healthy long one.
+    /// `SilentSession.threshold` with no tool call open: the daemon only
+    /// marks `stale` when no process vouches, so a live-but-silent run
+    /// needs its own cue or a stuck agent reads identically to a healthy
+    /// one. A tool that was started and has not finished is a long build,
+    /// not silence, and never counts.
     func isQuiet(now: Date) -> Bool { quietText(now: now) != nil }
 
-    /// "quiet 43m" / "quiet 3h" when this is a quiet working row, else nil.
+    /// "quiet 12m" / "quiet 3h" when this is a quiet working row, else nil.
     func quietText(now: Date) -> String? {
-        guard activity == .working, !stale, let since else { return nil }
-        let seconds = now.timeIntervalSince(since)
-        guard seconds >= PanelStore.quietAfter else { return nil }
+        guard SilentSession.silence(activity: activity, stale: stale, openToolCall: openToolCall,
+                                    lastSignal: since, now: now) != nil else { return nil }
         return PanelStore.elapsed(since: since, now: now).map { "quiet \($0)" }
     }
 
@@ -191,6 +205,11 @@ struct SessionRow: Identifiable, Equatable {
     func elapsedText(now: Date) -> String? {
         quietText(now: now) ?? PanelStore.elapsed(since: since, now: now)
     }
+
+    /// A local run that is working now can be asked about ("tell me when this
+    /// finishes"): a finished, failed, waiting or remote row has nothing to
+    /// wait for or no banner this Mac could post.
+    var canWatchForDone: Bool { !isRemote && activity == .working }
 
     /// `dismiss_session` hides a row until it next speaks: offered for the
     /// live-but-going-nowhere rows — idle, working, ended, stale. A row
@@ -313,12 +332,18 @@ final class PanelStore {
 
     // UI state.
     var isOpen = false
+    @ObservationIgnored private var panelGeneration = 0
+    @ObservationIgnored private var openRequestGeneration = 0
+    @ObservationIgnored var opener: @MainActor (String) async -> String? = { await SessionOpener.open($0) }
     var selectedID: String?
     /// The selection came from ↑/↓/Tab, not the pointer: the selected row
     /// gets an extra accent stroke so a keyboard pick reads as a pick.
     var selectionByKeyboard = false
     var now = Date()
     var localBrightness: Double?
+    /// The pending hand-back of the slider to the daemon's value after a
+    /// release; a new drag cancels it.
+    @ObservationIgnored private(set) var brightnessHandBack: DispatchWorkItem?
     var toast: String?
     var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     /// False from the moment the panel opens until it has finished
@@ -349,7 +374,7 @@ final class PanelStore {
     /// The ⇧⌘K palette.
     var onOpenPalette: (@MainActor () -> Void)?
     /// What's New, through the same route `jrbar://window/whats-new` takes.
-    var onOpenWhatsNew: (@MainActor () -> Void)? = { AppCommandRouter.shared.perform(.window(.whatsNew)) }
+    var onOpenWhatsNew: (@MainActor () -> Void)? = { _ = Task { await AppCommandRouter.shared.perform(.window(.whatsNew)) } }
     /// The overflow menu's "Check for Updates…" (Sparkle, through the delegate).
     var onCheckForUpdates: (@MainActor () -> Void)?
     var onRestartCore: (@MainActor () -> Void)?
@@ -380,6 +405,14 @@ final class PanelStore {
             guard let core else { throw CoreClientError.notConnected }
             return try await core.usageHistory(provider: provider, range: range)
         }
+        self.sendUndoClear = { [weak core] batch in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.send("undo_clear", args: ["batch": .string(batch)])
+        }
+        self.sendClearCompleted = { [weak core] sessions in
+            guard let core else { throw CoreClientError.notConnected }
+            return try await core.clearCompletedNow(sessions: sessions)
+        }
         self.draftsDefaults = draftsDefaults
         self.mediaFeed = mediaFeed
         self.screenBarShown = screenBarShown
@@ -404,7 +437,7 @@ final class PanelStore {
     static let recentEventLimit = 48
 
     /// "How it got here" under the popover's "what it is doing now".
-    var lightLog: [LightLogEntry] { LightLog.entries(from: recentEvents, limit: 4) }
+    var lightLog: [LightLogEntry] { LightLog.entries(from: recentEvents, limit: 4, privacyMode: core.state?.usage?.privacyMode) }
 
     /// One observation per frame, like the Replay store's: two events in
     /// the same turn can coalesce to the last one, which a four-line log
@@ -457,6 +490,7 @@ final class PanelStore {
     // MARK: Open / close bookkeeping
 
     func panelDidOpen() {
+        panelGeneration &+= 1
         isOpen = true
         animationsArmed = false
         // Nothing is selected until an arrow key says so.
@@ -485,6 +519,7 @@ final class PanelStore {
     }
 
     func panelDidClose() {
+        panelGeneration &+= 1
         isOpen = false
         animationsArmed = false
         selectedID = nil
@@ -501,8 +536,9 @@ final class PanelStore {
     /// What the panel shows, counted for `PanelLayout`. The quiet
     /// providers share one trailing row, so they count as one.
     var layoutContent: PanelLayout.Content {
-        PanelLayout.Content(asks: visibleAskRows.count, sessions: visiblePlainRows.count, hasWhyRow: lightExplanation != nil,
-                            usageProviders: usage.count + (quietUsage.isEmpty ? 0 : 1), hasHiddenFooter: hiddenCount > 0)
+        PanelLayout.Content(asks: askCardCount, sessions: visiblePlainRows.count, hasWhyRow: lightExplanation != nil,
+                            usageProviders: usage.count + (quietUsage.isEmpty ? 0 : 1), hasHiddenFooter: hiddenCount > 0,
+                            expandedAsks: expandedAskCount)
     }
 
     /// `state.hidden_count`: sessions the daemon keeps out of `sessions`
@@ -542,6 +578,7 @@ final class PanelStore {
 
     var connectionDot: ConnectionDot {
         if core.isLive { return .live }
+        if core.stateRejected != nil { return .fileFeeds }
         if case .connecting = core.connection { return .connecting }
         if case .connected = core.connection { return .connecting }
         return .fileFeeds
@@ -559,6 +596,9 @@ final class PanelStore {
             return "Monitor exited (\(failures)×); restarting in \(String(format: "%.1f", delay)) s"
         }
         if coreCrashed { return "\(coreCrashDetail). Restart it from the header." }
+        if let why = core.stateRejected {
+            return "Monitor connected, but its last update could not be read (\(why)). Showing the file feeds until a good one arrives."
+        }
         switch core.connection {
         case .connected where core.state != nil:
             let version = core.hello?.coreVersion ?? "?"
@@ -611,6 +651,7 @@ final class PanelStore {
     /// detail line. The order is `CoreAggregate.countParts`' — the daemon's
     /// precedence and the status icon's label agree.
     var headerCounts: String {
+        if core.stateRejected != nil { return Self.stateRejectedDetail }
         guard core.isLive, let state = core.state else { return fallbackDetail }
         // Past `stateStaleAfter` these counts are the last frame's, not
         // now's — the disclosure takes the line rather than present a
@@ -623,6 +664,10 @@ final class PanelStore {
         }
         return Self.countLine(parts: parts, headerWord: headerWord, total: state.mainSessions.count)
     }
+
+    /// What the header and the status item's tooltip say while the monitor's
+    /// newest update could not be read.
+    nonisolated static let stateRejectedDetail = "Can't read the monitor's last update"
 
     /// The count parts beside the header word, the word said once: a lone
     /// "2 working" under "Working" reads "2 sessions" when those are all
@@ -688,6 +733,13 @@ final class PanelStore {
     }
 
     @ObservationIgnored private var rowsMemo: RowsMemo?
+    @ObservationIgnored private var workingProviderCarousel = NotchProviderCarousel()
+    @ObservationIgnored var compactAwakeCarousel = NotchProviderCarousel(interval: 6)
+    var compactAwakeEligible = false
+    @ObservationIgnored private var lastWorkingDiagnostic: String?
+    private var workingProvider: String?
+    @ObservationIgnored private var workingFocusSession: String?
+    @ObservationIgnored var providerClock: @MainActor () -> Double = { Date().timeIntervalSince1970 }
     /// How many times `rows` was built — a test hook proving the memo
     /// holds across reads and lets go on an input change.
     @ObservationIgnored private(set) var rowsComputations = 0
@@ -727,10 +779,14 @@ final class PanelStore {
         // An ask whose session the daemon no longer lists still needs an
         // answer: it is counted in the header and it is what the light is
         // about, so it gets a row of its own rather than disappearing.
-        let orphans = state.orphanAsks.map {
+        // One row per session, the oldest ask first: a row's id is its
+        // session, and two rows with one id are one row to the list.
+        var seenOrphans = Set<String>()
+        let orphanAsks = state.orphanAsks.sorted { ($0.openedAt ?? .infinity) < ($1.openedAt ?? .infinity) }
+        let orphans = orphanAsks.map {
             SessionRow(orphanAsk: $0, document: document,
                        style: style(for: SessionRow.orphanProvider(of: $0)))
-        }
+        }.filter { seenOrphans.insert($0.id).inserted }
         let usage = inputs.usage
         // A sub-agent's ask, published only while sub-agent asks are on and
         // counted in the header like any other, gets a row of its own: its
@@ -769,10 +825,48 @@ final class PanelStore {
     /// words and the wing slot's tint read the same pick so they never
     /// disagree about who is on top.
     private var focusPick: SessionRow? {
+        focusPick(at: providerClock())
+    }
+
+    private func focusPick(at now: Double) -> SessionRow? {
         rows.first { $0.ask != nil }
             ?? rows.first { $0.activity == .failed }
-            ?? rows.first { $0.activity == .working }
+            ?? workingFocus(at: now)
             ?? rows.first { $0.activity == .done }
+    }
+
+    private var manualWorkingFocus: SessionRow? {
+        guard isOpen, let selectedID else { return nil }
+        return rows.first { $0.id == selectedID && $0.activity == .working }
+    }
+
+    private func workingFocus(at now: Double) -> SessionRow? {
+        let working = rows.filter { $0.activity == .working }
+        let provider = workingProviderCarousel.update(working.map { $0.style.id }, now: now)
+        if workingProvider != provider { workingProvider = provider }
+        if ScreenBarInteraction.diagnosticsEnabled {
+            let candidates = Set(working.map { ScreenBarInteraction.diagnosticProvider($0.style.id) }).sorted()
+            let selected = ScreenBarInteraction.diagnosticProvider(provider)
+            let next = workingProviderCarousel.nextChange.map { String($0) } ?? "none"
+            let message = "wings pick providers=\(candidates.joined(separator: ",")) selected=\(selected) manual=\(manualWorkingFocus != nil) next=\(next)"
+            if message != lastWorkingDiagnostic {
+                lastWorkingDiagnostic = message
+                ScreenBarInteraction.diag(message)
+            }
+        }
+        if let manual = manualWorkingFocus { return manual }
+        guard let provider = workingProvider else {
+            workingFocusSession = nil
+            return nil
+        }
+        let candidates = working.filter { $0.style.id == provider }
+        let pick = candidates.first { $0.id == workingFocusSession }
+            ?? candidates.sorted { a, b in
+                if a.isRemote != b.isRemote { return !a.isRemote }
+                return a.id < b.id
+            }.first
+        workingFocusSession = pick?.id
+        return pick
     }
 
     /// What the Screen Bar's tooltip names: a live ask first, then a failure,
@@ -784,8 +878,14 @@ final class PanelStore {
         let pick = focusPick
         // The click opens a local terminal; a mirrored remote row has none,
         // so it can be the focus's subject but never its target.
-        let clickable = rows.first { $0.ask != nil && !$0.isRemote }
-            ?? rows.first { $0.activity == .working && !$0.isRemote }
+        let clickable: SessionRow?
+        if let ask = rows.first(where: { $0.ask != nil && !$0.isRemote }) {
+            clickable = ask
+        } else if let pick, pick.activity == .working {
+            clickable = pick.isRemote ? nil : pick
+        } else {
+            clickable = rows.first { $0.activity == .working && !$0.isRemote }
+        }
         if let pick {
             let word = pick.ask != nil ? "Needs you" : pick.activity.word
             return ScreenBarFocus(style: pick.style, label: pick.label, word: word,
@@ -841,6 +941,11 @@ final class PanelStore {
     nonisolated static func meterWingText(_ meter: NotchIslandMeter, now: Date) -> String {
         var text = meter.percentText
         if let countdown = Self.countdown(to: meter.resetsAt, now: now, fix: meter.fix) { text += " · \(countdown)" }
+        // The last good reading stays on the ear, marked. Past its reset the
+        // countdown's own words ("Reconnect Claude", "waiting for a new
+        // reading") already say the figure is old.
+        let resetPassed = meter.resetsAt.map { Self.resetHasPassed($0, now: now) } ?? false
+        if meter.stale, !resetPassed { text += " · stale" }
         if meter.incident { text += " · incident" }
         return text
     }
@@ -857,16 +962,18 @@ final class PanelStore {
         if pick.ask != nil, askCount > 1 { text += " ·\(askCount)" }
         let opened = pick.ask.flatMap { $0.openedAt ?? pick.since?.timeIntervalSince1970 }
         if let opened, let waited = askWaitWords(opened: opened, now: now) { text += " · \(waited)" }
-        return ScreenBarWingSlot(
+        var slot = ScreenBarWingSlot(
             text: text, provider: pick.style.id,
             meter: opened.map { askAgeFraction(opened: $0, now: now, finalSeconds: finalSeconds) },
             tone: pick.activity == .failed ? .alert
                 : pick.ask != nil || pick.activity == .waiting ? .attention
                 : .neutral)
+        slot.workingActivity = pick.activity == .working && pick.ask == nil
+        return slot
     }
 
     /// When an unanswered ask reaches the escalation's last stage
-    /// (Settings › Notifications, 300 s by default) — where the ask-age
+    /// (Settings › Alerts & Sounds, 300 s by default) — where the ask-age
     /// ring closes.
     var escalationFinalSeconds: Double {
         let configured = settingsDocument?.double("escalation_final_seconds") ?? 300
@@ -882,10 +989,23 @@ final class PanelStore {
     /// The epoch at which the left ear next changes on its own, for the
     /// delegate's one-shot re-push: the daemon sends no frame while only
     /// the clock moves, so without it the ring would wait for unrelated
-    /// activity. Nil without an open ask in focus.
-    func nextAskAgeTick(now: Double = Date().timeIntervalSince1970) -> Double? {
-        Self.nextAskAgeTick(opened: focusAskOpened, now: now, finalSeconds: escalationFinalSeconds,
-                            holdUntil: focusAskHoldUntil)
+    /// activity. Working providers use the same wake for their next turn;
+    /// one provider needs no wake.
+    func nextAskAgeTick(now suppliedNow: Double? = nil) -> Double? {
+        let now = suppliedNow ?? providerClock()
+        // Use the captured clock for both selection and scheduling. A later
+        // focus read followed by this earlier time would reset the carousel.
+        let pick = focusPick(at: now)
+        let opened = pick.flatMap { row in row.ask.flatMap { $0.openedAt ?? row.since?.timeIntervalSince1970 } }
+        let holdUntil = pick?.ask.flatMap { $0.isHeldForDecision ? $0.decision?.holdUntil : nil }
+        let askTick = Self.nextAskAgeTick(opened: opened, now: now, finalSeconds: escalationFinalSeconds,
+                                        holdUntil: holdUntil)
+        _ = screenBarEarMarks(at: now)
+        let awakeTick = compactAwakeCarousel.nextChange
+        guard rows.allSatisfy({ $0.ask == nil && $0.activity != .failed }), manualWorkingFocus == nil else {
+            return [askTick, awakeTick].compactMap { $0 }.min()
+        }
+        return [askTick, awakeTick, workingProviderCarousel.nextChange].compactMap { $0 }.min()
     }
 
     /// When the hook's hold on the focus pick's ask lapses — a moment the
@@ -1125,9 +1245,14 @@ final class PanelStore {
         guard let quiet else { return nil }
         let word = Self.quietWord(quiet.mode)
         guard let until = quiet.until else { return word }
-        let seconds = until.timeIntervalSince(now)
+        return Self.quietLabel(word: word, secondsLeft: until.timeIntervalSince(stalenessReference))
+    }
+
+    /// The footer's countdown for a quiet with `secondsLeft` to run. The
+    /// last half minute reads "1m", never "0m".
+    nonisolated static func quietLabel(word: String, secondsLeft seconds: Double) -> String {
         if seconds <= 0 { return word }
-        let minutes = Int((seconds + 30) / 60)
+        let minutes = max(1, Int(saturating: (seconds + 30) / 60))
         if minutes < 60 { return "\(word) \(minutes)m" }
         if minutes < 24 * 60 { return "\(word) \((minutes + 30) / 60)h" }
         return "\(word) \((minutes + 12 * 60) / (24 * 60))d"
@@ -1164,12 +1289,6 @@ final class PanelStore {
         default: return "Quiet"
         }
     }
-
-    /// How long a working-shaped row may go without a signal before the
-    /// panel says so ("quiet 43m"). Shorter than the daemon's stale sweep —
-    /// stale means nobody vouches; quiet means a live process just hasn't
-    /// spoken in a while.
-    nonisolated static let quietAfter: TimeInterval = 30 * 60
 
     /// `HH:mm` for "until 08:00" in the toast and the menu's preset label.
     nonisolated static func clockTime(_ date: Date) -> String {
@@ -1216,18 +1335,68 @@ final class PanelStore {
         }
     }
 
-    /// `quiet {mode, seconds}` in the mode the Mode submenu last chose.
-    func quietFor(seconds: Int) {
-        core.quiet(mode: quietMode, seconds: seconds)
-        let until = Date().addingTimeInterval(TimeInterval(seconds))
-        show(toast: "\(Self.quietWord(quietMode)) until \(Self.clockTime(until))")
+    enum QuietResult: Equatable {
+        case applied(String)
+        case refused(String)
     }
 
-    /// `quiet {seconds: 0}`: end the override this menu set. Not offered
-    /// for a schedule or macOS Focus quiet — see `quietIsOurs`.
-    func endQuiet() {
-        core.quiet(mode: quietMode, seconds: 0)
-        show(toast: "Quiet ended")
+    private(set) var isQuietChanging = false
+    @ObservationIgnored var onManualQuietApplied: (@MainActor (Int) -> Void)?
+
+    @discardableResult
+    func quietFor(seconds: Int) -> Task<QuietResult, Never> {
+        requestQuiet(mode: quietMode, seconds: seconds)
+    }
+
+    @discardableResult
+    func endQuiet() -> Task<QuietResult, Never> {
+        requestQuiet(mode: quietMode, seconds: 0)
+    }
+
+    @discardableResult
+    func requestQuiet(mode: String, seconds: Int, feedback: Bool = true,
+                      onApplied: (@MainActor (Date?) -> Void)? = nil) -> Task<QuietResult, Never> {
+        guard !isQuietChanging else {
+            let message = "Quiet is already changing. Try again when it finishes."
+            if feedback { show(toast: message) }
+            return Task { .refused(message) }
+        }
+        isQuietChanging = true
+        return Task { [weak self] in
+            guard let self else { return .refused("JR-Bar is no longer available.") }
+            defer { self.isQuietChanging = false }
+            let result: QuietResult
+            do {
+                let reply = try await self.core.quiet(mode: mode, seconds: seconds)
+                if !reply.ok {
+                    let reason = reply.error?.message ?? reply.error?.code ?? "refused"
+                    result = .refused("Quiet failed: \(reason)")
+                } else if seconds <= 0, reply.result?["until"] == JSONValue.null {
+                    if let onApplied { onApplied(nil) }
+                    else { self.onManualQuietApplied?(seconds) }
+                    result = .applied("Temporary quiet override ended.")
+                } else if seconds > 0, case .number(let epoch)? = reply.result?["until"], epoch.isFinite,
+                          let appliedMode = reply.result?["mode"]?.stringValue,
+                          Self.quietModes.contains(where: { $0.id == appliedMode }) {
+                    let until = Date(timeIntervalSince1970: epoch)
+                    if let onApplied { onApplied(until) }
+                    else { self.onManualQuietApplied?(seconds) }
+                    let message = until <= Date() ? "Quiet ended before confirmation."
+                        : "\(Self.quietWord(appliedMode)) until \(Self.clockTime(until))"
+                    result = .applied(message)
+                } else {
+                    result = .refused("Quiet failed: the monitor returned an incomplete result.")
+                }
+            } catch {
+                result = .refused("Quiet failed: the monitor is not answering.")
+            }
+            if feedback {
+                switch result {
+                case .applied(let message), .refused(let message): self.show(toast: message)
+                }
+            }
+            return result
+        }
     }
 
     // MARK: Derived: why this light
@@ -1251,11 +1420,7 @@ final class PanelStore {
     /// the session is in front.
     func openExplainedSession() {
         guard let session = lightExplanation?.session else { return }
-        Task { [weak self] in
-            let refusal = await SessionOpener.open(session)
-            guard let self else { return }
-            if let refusal { self.show(toast: refusal) } else { self.onClose?() }
-        }
+        openSession(session)
     }
 
     // MARK: Derived: usage and devices
@@ -1362,6 +1527,12 @@ final class PanelStore {
         return days <= 7 ? .week : .month
     }
 
+    /// The days a row's sparkline draws: as many as the range it was asked
+    /// for, so a month's history is a month of bars, not its last week.
+    nonisolated static func sparklineValues(_ history: UsageHistory, range: UsageHistoryRange) -> [Double] {
+        UsageSparkline.tokensPerDay(history, count: range.days)
+    }
+
     /// How long after the panel opens its sparklines are asked for. The
     /// daemon answers one client's commands in order, so a burst of
     /// `usage_history` sent on open queued ahead of the Approve the panel
@@ -1409,10 +1580,10 @@ final class PanelStore {
                 guard let self else { return }
                 do {
                     let history = try await self.fetchUsageHistory(id, range)
-                    let values = UsageSparkline.tokensPerDay(history)
+                    let values = Self.sparklineValues(history, range: range)
                     if UsageSparkline.hasSignal(values) {
                         self.sparklines[id] = values
-                    } else {
+                    } else if !history.partial {
                         self.sparklines.removeValue(forKey: id)
                     }
                     // A partial answer is worth drawing, but it should not
@@ -1441,6 +1612,8 @@ final class PanelStore {
     static func foldsIntoQuietRow(_ usage: CoreProviderUsage) -> Bool {
         if usage.windows.isEmpty { return true }
         if let state = usage.state?.lowercased(), state == "disabled" || state == "source_not_found" { return true }
+        // An old reading or a vendor outage is news; a row of "at 0%" would bury it.
+        if usage.isStale || usage.incident?.isEmpty == false { return false }
         return usage.windows.allSatisfy { ($0.usedPct ?? 1) < 0.5 }
     }
 
@@ -1450,10 +1623,12 @@ final class PanelStore {
         case "disabled": return "off"
         case "source_not_found": return "not found"
         case "needs_sign_in": return "signed out"
-        case "needs_consent": return "needs consent"
+        case "needs_consent": return usage.usageIsOff ? "usage off" : "needs consent"
         case let state? where state != "ready" && state != "stale" && usage.windows.isEmpty:
             return state.replacingOccurrences(of: "_", with: " ")
-        default: return usage.windows.isEmpty ? "no windows" : "at 0%"
+        default:
+            guard usage.windows.isEmpty else { return "at 0%" }
+            return usage.quotaSource ? "no windows" : "no quota source"
         }
     }
 
@@ -1495,7 +1670,10 @@ final class PanelStore {
 
     static func usageTag(for usage: CoreProviderUsage, primary: CoreUsageWindow?, heldIdle: Bool, now: Date) -> UsageTag? {
         if usage.isStale { return .stale }
-        if (primary?.usedPct ?? 0) >= 100 || usage.forecast?.pace?.lowercased() == "exhausted" { return .usedUp }
+        // Past its reset the figure is the old window's: the reset line says
+        // so, and "Used up" would claim a limit that has already turned over.
+        let resetPassed = primary?.resetsAt.map { resetHasPassed($0, now: now) } ?? false
+        if !resetPassed, (primary?.usedPct ?? 0) >= 100 || usage.forecast?.pace?.lowercased() == "exhausted" { return .usedUp }
         // A held-idle provider's last slope is history, and a window that
         // resets before the forecast runs dry is on track.
         if !heldIdle, let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > now.timeIntervalSince1970,
@@ -1628,9 +1806,20 @@ final class PanelStore {
         saveReplyDrafts()
     }
 
+    /// How long an untouched draft is kept. It is words the person typed to
+    /// an agent, stored in plain preferences; one for an ask that resolved
+    /// elsewhere would otherwise sit there until fifty newer ones push it out.
+    private static let replyDraftLife: TimeInterval = 3 * 86_400
+
     private func loadReplyDrafts() -> [String: ReplyDraft] {
-        guard let data = draftsDefaults.data(forKey: Self.replyDraftsKey) else { return [:] }
-        return (try? JSONDecoder().decode([String: ReplyDraft].self, from: data)) ?? [:]
+        guard let data = draftsDefaults.data(forKey: Self.replyDraftsKey),
+              let saved = try? JSONDecoder().decode([String: ReplyDraft].self, from: data) else { return [:] }
+        let cutoff = Date().timeIntervalSince1970 - Self.replyDraftLife
+        let kept = saved.filter { $0.value.editedAt >= cutoff }
+        if kept.count != saved.count, let data = try? JSONEncoder().encode(kept) {
+            draftsDefaults.set(data, forKey: Self.replyDraftsKey)
+        }
+        return kept
     }
 
     private func saveReplyDrafts() {
@@ -1734,11 +1923,30 @@ final class PanelStore {
     /// cannot find is raised by the Dock's window locator. Success closes
     /// the panel as the row's click always did.
     func open(_ row: SessionRow) {
+        // The Try it ask has no session to raise.
+        if row.ask?.isDemo == true {
+            show(toast: DemoAsk.summary)
+            return
+        }
         selectedID = row.id
         selectionByKeyboard = false
+        openSession(row.id)
+    }
+
+    /// An open from a previous panel lifetime cannot close a reopened
+    /// panel or put its refusal over the new selection.
+    private func openSession(_ id: String) {
+        let generation = panelGeneration
+        openRequestGeneration &+= 1
+        let request = openRequestGeneration
+        let selection = selectedID
+        let open = opener
         Task { [weak self] in
-            let refusal = await SessionOpener.open(row.id)
-            guard let self else { return }
+            guard self?.panelGeneration == generation, self?.openRequestGeneration == request,
+                  self?.selectedID == selection else { return }
+            let refusal = await open(id)
+            guard let self, self.panelGeneration == generation,
+                  self.openRequestGeneration == request, self.selectedID == selection else { return }
             if let refusal { self.show(toast: refusal) } else { self.onClose?() }
         }
     }
@@ -1756,6 +1964,27 @@ final class PanelStore {
                     self.show(toast: "Dismissed \(row.label) — it returns when it next speaks")
                 } else {
                     self.show(toast: reply.error?.message ?? "Could not dismiss \(row.label)")
+                }
+            } catch {
+                self.show(toast: "The monitor is not answering")
+            }
+        }
+    }
+
+    /// `dismiss_ask` for an ask that may be stale: the daemon takes that one
+    /// ask off this Mac's surfaces. It is never an answer: nothing is sent
+    /// to the agent, and its own prompt is where it was. Offered only where
+    /// the daemon says the ask is dismissible (`CoreAsk.isDismissible`).
+    func dismissStaleAsk(_ ask: CoreAsk) {
+        guard ask.isDismissible, let session = ask.session else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.core.dismissAsk(session: session, request: ask.request)
+                if reply.ok {
+                    self.show(toast: "Dismissed — the agent was not told, and its own prompt is unchanged")
+                } else {
+                    self.show(toast: reply.error?.message ?? "Could not dismiss that ask")
                 }
             } catch {
                 self.show(toast: "The monitor is not answering")
@@ -1783,7 +2012,14 @@ final class PanelStore {
     /// The batch the daemon's last `clear_completed` reply named, and when
     /// it landed: while it is inside `EventPolicy.undoWindow` the footer
     /// offers Undo beside "Clear finished".
-    var undoOffer: (batch: String, at: Date, cleared: Int)?
+    var undoOffer: (batch: String, at: Date, cleared: Int)? {
+        didSet { undoOfferGeneration &+= 1 }
+    }
+    @ObservationIgnored private var undoOfferGeneration = 0
+    @ObservationIgnored private var clearRequestGeneration = 0
+    @ObservationIgnored var sendUndoClear: @MainActor (String) async throws -> CoreReply
+    @ObservationIgnored var sendClearCompleted: @MainActor ([String]?) async throws -> CoreReply
+    @ObservationIgnored private(set) var undoTask: Task<Void, Never>?
 
     /// True while the offer stands (the clock ticks every second the panel
     /// is open, so this goes false on its own).
@@ -1812,10 +2048,13 @@ final class PanelStore {
     /// "Clear": `sessions` nil asks for every clearable row, a list asks
     /// for just those. The reply's batch becomes the footer's Undo offer.
     private func runClear(sessions: [String]?, expected: Int? = nil) {
+        clearRequestGeneration &+= 1
+        let generation = clearRequestGeneration
         Task { [weak self] in
             guard let self else { return }
             do {
-                let reply = try await self.core.clearCompletedNow(sessions: sessions)
+                let reply = try await self.sendClearCompleted(sessions)
+                guard self.clearRequestGeneration == generation else { return }
                 guard reply.ok else {
                     self.show(toast: "Clear failed: \(reply.error?.message ?? reply.error?.code ?? "refused")")
                     return
@@ -1828,6 +2067,7 @@ final class PanelStore {
                     self.show(toast: "Cleared \(cleared)")
                 }
             } catch {
+                guard self.clearRequestGeneration == generation else { return }
                 self.show(toast: "Clear failed: the monitor is not answering")
             }
         }
@@ -1837,17 +2077,36 @@ final class PanelStore {
     func undoClear() {
         guard let offer = undoOffer, canUndoClear else { return }
         undoOffer = nil
-        Task { [weak self] in
+        let offerGeneration = undoOfferGeneration
+        let clearGeneration = clearRequestGeneration
+        undoTask = Task { [weak self] in
             guard let self else { return }
+            var retainOfferOnFailure = true
+            defer {
+                if retainOfferOnFailure, self.undoOffer == nil,
+                   self.undoOfferGeneration == offerGeneration,
+                   self.clearRequestGeneration == clearGeneration,
+                   Date().timeIntervalSince(offer.at) < EventPolicy.undoWindow {
+                    self.undoOffer = offer
+                }
+            }
             do {
-                let reply = try await self.core.send("undo_clear", args: ["batch": .string(offer.batch)])
+                let reply = try await self.sendUndoClear(offer.batch)
+                guard self.undoOfferGeneration == offerGeneration,
+                      self.clearRequestGeneration == clearGeneration else { return }
                 if reply.ok {
-                    let restored = reply.result?["restored"]?.arrayValue?.count ?? offer.cleared
-                    self.show(toast: restored == 1 ? "Restored 1 session" : "Restored \(restored) sessions")
+                    retainOfferOnFailure = false
+                    let count = reply.result?["restored"]?.arrayValue?.count ?? offer.cleared
+                    self.show(toast: count == 1 ? "Restored 1 session" : "Restored \(count) sessions")
                 } else {
+                    if let code = reply.error?.code, code == "expired" || code == "not_found" {
+                        retainOfferOnFailure = false
+                    }
                     self.show(toast: "Undo failed: \(reply.error?.message ?? reply.error?.code ?? "refused")")
                 }
             } catch {
+                guard self.undoOfferGeneration == offerGeneration,
+                      self.clearRequestGeneration == clearGeneration else { return }
                 self.show(toast: "Undo failed: the monitor is not answering")
             }
         }
@@ -1891,22 +2150,37 @@ final class PanelStore {
         return .ask(id: only)
     }
 
+    /// How long a freshly opened panel waits before a chord can answer.
+    /// A link, the daemon or a hotkey can open the panel under the
+    /// person's fingers; a ⌘↩ typed for another app a moment before
+    /// the panel arrived must not land on its ask.
+    nonisolated static let chordSettle: TimeInterval = 0.4
+
+    /// Whether a chord may answer now: not a held key's repeat (holding ⌘↩
+    /// would otherwise walk through every ask as each one leaves), and not
+    /// in the first moments of the panel's arrival.
+    nonisolated static func chordsArmed(isRepeat: Bool, openedAt: Date, now: Date) -> Bool {
+        !isRepeat && now.timeIntervalSince(openedAt) >= chordSettle
+    }
+
     /// ⌘↩ on the panel. True when the key was handled (an answer was sent,
     /// or the person was told to pick a card), false to let it through.
+    /// An unarmed chord that would have answered is swallowed, unanswered.
     @discardableResult
-    func approveSelectedAsk(typingInField: Bool = false) -> Bool {
-        answerFromKeyboard(.approve, typingInField: typingInField)
+    func approveSelectedAsk(typingInField: Bool = false, armed: Bool = true) -> Bool {
+        answerFromKeyboard(.approve, typingInField: typingInField, armed: armed)
     }
 
     /// ⌘D on the panel, with the same contract.
     @discardableResult
-    func denySelectedAsk(typingInField: Bool = false) -> Bool {
-        answerFromKeyboard(.deny, typingInField: typingInField)
+    func denySelectedAsk(typingInField: Bool = false, armed: Bool = true) -> Bool {
+        answerFromKeyboard(.deny, typingInField: typingInField, armed: armed)
     }
 
-    private func answerFromKeyboard(_ chord: AskChord, typingInField: Bool) -> Bool {
+    private func answerFromKeyboard(_ chord: AskChord, typingInField: Bool, armed: Bool) -> Bool {
         let askRows = visibleAskRows
         let target = Self.chordTarget(chord, typingInField: typingInField, selectedID: selectedID, askRows: askRows)
+        if target != .none, !armed { return true }
         switch target {
         case .none:
             return false
@@ -1984,6 +2258,10 @@ final class PanelStore {
     static let brightnessInterval: TimeInterval = 0.12
 
     func setBrightness(_ value: Double, final: Bool) {
+        // A drag that starts inside the last release's grace keeps its own
+        // value: the earlier release's hand-back must not land mid-drag.
+        brightnessHandBack?.cancel()
+        brightnessHandBack = nil
         localBrightness = value
         let now = Date()
         if final || now.timeIntervalSince(brightnessSentAt) >= Self.brightnessInterval {
@@ -2010,9 +2288,14 @@ final class PanelStore {
         core.setBrightness(device: "all", value: value)
         if final {
             // Let the daemon's next state carry the value from here.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-                MainActor.assumeIsolated { self?.localBrightness = nil }
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.brightnessHandBack = nil
+                    self?.localBrightness = nil
+                }
             }
+            brightnessHandBack = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
         }
     }
 
@@ -2168,7 +2451,7 @@ final class PanelStore {
 
     nonisolated static func elapsed(since date: Date?, now: Date) -> String? {
         guard let date else { return nil }
-        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        let seconds = max(0, Int(saturating: now.timeIntervalSince(date)))
         if seconds < 60 { return "\(seconds)s" }
         let minutes = seconds / 60
         if minutes < 60 { return "\(minutes)m" }
@@ -2182,7 +2465,7 @@ final class PanelStore {
         // Past the reset the number on screen is the old window's until
         // the next reading lands; "resets now" read like a promise.
         if resetHasPassed(epoch, now: now) { return "reset — waiting for a new reading" }
-        let seconds = Int(epoch - now.timeIntervalSince1970)
+        let seconds = Int(saturating: epoch - now.timeIntervalSince1970)
         let minutes = (seconds + 30) / 60
         if minutes < 60 { return "resets in \(max(1, minutes))m" }
         let hours = minutes / 60

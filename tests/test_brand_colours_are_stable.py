@@ -138,7 +138,7 @@ def test_every_shipped_brandless_provider_has_a_pinned_slot__and_2_more() -> Non
 
 
 
-def test_the_screen_bar_paints_the_working_agents_brand__and_2_more() -> None:
+def test_the_screen_bar_paints_the_working_agents_brand__and_1_more() -> None:
     # --- scenario: the_screen_bar_paints_the_working_agents_brand
     """The announcer had no provider input at all before this."""
     settings = ColorSettings.defaults()
@@ -171,24 +171,6 @@ def test_the_screen_bar_paints_the_working_agents_brand__and_2_more() -> None:
             settings, _glance(semantic), provider="claude"
         ) == color_for_resolved_glance(settings, _glance(semantic))
 
-    # --- scenario: applying_a_palette_never_repaints_a_declared_brand
-    """How the live install came to hold ``claude: #10A37F``.
-
-    That is OpenAI's own green, written by clicking the "OpenAI" palette.
-    From then on nothing anywhere could render Claude as Claude, because
-    every path reads ``agent_color`` and ``agent_color`` reads settings.
-    """
-    palette = colors_module.PROVIDER_PALETTES["OpenAI"]
-
-    colors = colors_module.apply_palette(ColorSettings.defaults(), palette)
-
-    assert colors.mode_color("done") == palette["modes"]["done"]
-    assert colors.agent_color("claude") == PROVIDER_BRAND_COLORS["claude"]
-    assert colors.agent_color("codex") == PROVIDER_BRAND_COLORS["codex"]
-    # 2026-08-20: EVERY registered provider carries a declared brand, so
-    # a palette owns the modes and repaints no provider at all.
-    assert palette["agents"] == {}
-    assert colors.agent_color("cursor") == PROVIDER_BRAND_COLORS["cursor"]
 
 
 

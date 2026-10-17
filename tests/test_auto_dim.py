@@ -4,6 +4,7 @@ it reaches the brightness plan, the settings document and ``lights``."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -158,11 +159,9 @@ def test_controller_feeds_the_factor_into_the_night_dim_stage(headless, monkeypa
     assert lights["auto_dim"]["source"] == "display" and lights["auto_dim"]["factor"] == 0.9
 
 
-def test_the_screen_bar_never_follows_the_backlight_twice(headless, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
-    """The Screen Bar is drawn on the display, whose backlight already
-    dims with the room: neither auto brightness nor the lux/display
-    auto-dim may scale it again. A deliberate night schedule still does,
-    and a strip beside the screen still follows both."""
+def test_screen_bar_auto_brightness_keeps_ambient_auto_dim_separate(headless, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    """Explicit auto-brightness follows the display. Ambient auto-dim
+    does not apply another display factor; deliberate schedules still do."""
     controller = headless
     controller.applicationDidFinishLaunching_(None)
     monkeypatch.setattr(auto_dim, "display_brightness_fraction", lambda: 0.3)
@@ -182,7 +181,7 @@ def test_the_screen_bar_never_follows_the_backlight_twice(headless, monkeypatch:
 
     for mode in ("ambient", "display"):
         controller.settings = controller.settings.with_auto_dim(AutoDimSettings(mode=mode))
-        assert step(bar, "base").after == 255
+        assert step(bar, "base").after == 72
         assert step(bar, "night_dim").factor == 1.0
         assert step(strip, "base").after == 72
         assert step(strip, "night_dim").factor == 0.3
@@ -190,6 +189,17 @@ def test_the_screen_bar_never_follows_the_backlight_twice(headless, monkeypatch:
         AutoDimSettings(mode="schedule", schedule_start_minutes=0, schedule_end_minutes=1439, schedule_fraction=0.3)
     )
     assert step(bar, "night_dim").factor == 0.3
+    assert step(bar, "base").after == 72
+
+    manual_bar = replace(bar, brightness=123, auto_brightness_enabled=False)
+    assert step(manual_bar, "base").after == 123
+
+    def unavailable():
+        raise display_brightness.DisplayBrightnessUnavailableError("synthetic unavailable display")
+
+    monkeypatch.setattr(display_brightness, "auto_led_brightness", unavailable)
+    assert step(replace(bar, brightness=123), "base").after == 123
+    assert step(manual_bar, "base").after == 123
 
 
 def test_set_setting_round_trips_auto_dim_by_dot_path(headless) -> None:  # noqa: F811
@@ -409,3 +419,58 @@ def test_only_the_panel_slider_over_hardware_votes() -> None:
     # One device's own slider is not the panel's.
     core_runtime._cmd_set_brightness(desk, {"device": "pro", "value": 0.2})
     assert desk._core_brightness_votes[0].level == 0.4
+
+
+def test_a_sensor_that_failed_to_load_is_retried_a_bounded_number_of_times__and_1_more() -> None:
+    from types import SimpleNamespace
+
+    from jrbar import auto_dim
+
+    class _Clock:
+        now = 0.0
+
+    loads: list[float] = []
+
+    def _sensor(succeed_on: int | None):
+        sensor = auto_dim._AmbientLightSensor(monotonic=lambda: _Clock.now)
+
+        def load() -> None:
+            loads.append(_Clock.now)
+            if succeed_on is not None and len(loads) >= succeed_on:
+                sensor._service = 1
+                sensor._iokit = SimpleNamespace(
+                    IOHIDServiceClientCopyEvent=lambda *_args: 7,
+                    IOHIDEventGetFloatValue=lambda *_args: 42.0,
+                )
+                sensor._cf = SimpleNamespace(CFRelease=lambda _event: None)
+                return
+            raise auto_dim.AmbientLightUnavailableError("not ready")
+
+        sensor._load = load
+        return sensor
+
+    # --- scenario: a_failure_waits_out_its_cooldown_then_tries_again
+    _Clock.now = 0.0
+    sensor = _sensor(succeed_on=2)
+    with pytest.raises(auto_dim.AmbientLightUnavailableError):
+        sensor.read_lux()
+    assert loads == [0.0]
+    _Clock.now = auto_dim.AMBIENT_RETRY_SECONDS - 1
+    with pytest.raises(auto_dim.AmbientLightUnavailableError):
+        sensor.read_lux()
+    assert loads == [0.0], "inside the cooldown nothing is attempted"
+    _Clock.now = auto_dim.AMBIENT_RETRY_SECONDS + 1
+    assert sensor.read_lux() == 42.0
+    assert len(loads) == 2, "the retry found the sensor, and it keeps working"
+    assert sensor.read_lux() == 42.0
+    assert len(loads) == 2
+
+    # --- scenario: a_mac_with_no_sensor_stops_trying
+    loads.clear()
+    _Clock.now = 0.0
+    sensor = _sensor(succeed_on=None)
+    for step in range(auto_dim.AMBIENT_MAX_LOAD_ATTEMPTS + 3):
+        _Clock.now = step * (auto_dim.AMBIENT_RETRY_SECONDS + 1)
+        with pytest.raises(auto_dim.AmbientLightUnavailableError):
+            sensor.read_lux()
+    assert len(loads) == auto_dim.AMBIENT_MAX_LOAD_ATTEMPTS

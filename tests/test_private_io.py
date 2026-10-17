@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import os
 import stat
 from pathlib import Path
@@ -9,7 +8,6 @@ from unittest.mock import patch
 import pytest
 
 from jrbar.private_io import (
-    REDACTION_MARKER,
     RetentionPolicy,
     append_private_text,
     atomic_private_write,
@@ -18,7 +16,6 @@ from jrbar.private_io import (
     ensure_private_file,
     read_private_log_slice,
     read_private_text,
-    redact_event_payload,
 )
 
 
@@ -442,105 +439,8 @@ def test_retention_refuses_hard_link_created_after_scan(tmp_path: Path) -> None:
     assert outside_link.read_text() == "must stay"
 
 
-def test_recursive_redaction_preserves_lifecycle_fields_and_input(
-    tmp_path: Path,
-) -> None:
-    payload = {
-        "hook_event_name": "Notification",
-        "logged_at": "2026-08-12T12:00:00Z",
-        "session_id": "session-1",
-        "turn_id": "turn-2",
-        "agent_id": "agent-3",
-        "cwd": str(tmp_path / "project"),
-        "workspaceRoot": str(tmp_path / "project"),
-        "tool_name": "Bash",
-        "notification_type": "idle_prompt",
-        "agent_origin": "Codex UI",
-        "message": "Claude is waiting for your input",
-        "headers": {
-            "Authorization": "Bearer secret-token",
-            "Cookie": "session=secret-cookie",
-            "X-Request-ID": "safe-routing-id",
-        },
-        "authToken": "nested-token",
-        "api_key": "private-api-key",
-        "webhook_url": "https://secret.example/hook",
-        "prompt": "private user prompt",
-        "raw": "malformed private body",
-        "tool_input": {"command": "cat ~/.credentials"},
-        "toolResult": {"stdout": "private result"},
-        "tool_use_result": {"stdout": "alternate private result"},
-        "command": "cat ~/.credentials",
-        "request": {"body": "private request"},
-        "response_body": ["private", {"token": "deeper-secret"}],
-    }
-    original = copy.deepcopy(payload)
-
-    redacted = redact_event_payload(payload)
-
-    assert payload == original
-    assert redacted["hook_event_name"] == "Notification"
-    assert redacted["session_id"] == "session-1"
-    assert redacted["turn_id"] == "turn-2"
-    assert redacted["agent_id"] == "agent-3"
-    assert redacted["cwd"] == str(tmp_path / "project")
-    assert redacted["workspaceRoot"] == str(tmp_path / "project")
-    assert redacted["tool_name"] == "Bash"
-    assert redacted["notification_type"] == "idle_prompt"
-    assert redacted["agent_origin"] == "Codex UI"
-    assert redacted["message"] == "Claude is waiting for your input"
-    assert redacted["headers"]["Authorization"] == REDACTION_MARKER
-    assert redacted["headers"]["Cookie"] == REDACTION_MARKER
-    assert redacted["headers"]["X-Request-ID"] == "safe-routing-id"
-    for key in (
-        "authToken",
-        "api_key",
-        "webhook_url",
-        "prompt",
-        "raw",
-        "tool_input",
-        "toolResult",
-        "tool_use_result",
-        "command",
-        "request",
-        "response_body",
-    ):
-        assert redacted[key] == REDACTION_MARKER
 
 
-def test_message_is_preserved_only_for_notification_classification() -> None:
-    notification = redact_event_payload(
-        {
-            "hook_event_name": "Notification",
-            "notification_type": "idle_prompt",
-            "message": "Claude is waiting for your input",
-        }
-    )
-    camel_notification = redact_event_payload(
-        {
-            "hookEventName": "notification",
-            "notificationType": "idle_prompt",
-            "message": "Turn complete",
-        }
-    )
-    codex_stop = redact_event_payload(
-        {
-            "logged_at": "2026-08-12T12:00:00Z",
-            "event": {
-                "hook_event_name": "Stop",
-                "message": "private assistant response",
-            },
-        }
-    )
-
-    assert notification["message"] == "Claude is waiting for your input"
-    assert camel_notification["message"] == "Turn complete"
-    assert codex_stop["event"]["message"] == REDACTION_MARKER
-    for event_name in ("UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"):
-        redacted = redact_event_payload(
-            {"hook_event_name": event_name, "message": "private event body"}
-        )
-        assert redacted["message"] == REDACTION_MARKER
 
 
 def test_retention_removes_age_then_oldest_with_stable_path_tie(
@@ -947,3 +847,61 @@ def test_only_the_small_critical_documents_ask_for_the_full_flush(
     atomic_private_write(tmp_path / "latest.json", "{}", durable_directory=False)
     atomic_private_write(tmp_path / "usage.json", "{}")
     assert len(sync.full) == after_ledger
+
+
+class _PermissionWrites:
+    """Count the chmod and fchmod calls a block makes."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __enter__(self) -> _PermissionWrites:
+        real_chmod, real_fchmod = os.chmod, os.fchmod
+
+        def chmod(*args, **kwargs):
+            self.calls.append("chmod")
+            return real_chmod(*args, **kwargs)
+
+        def fchmod(*args, **kwargs):
+            self.calls.append("fchmod")
+            return real_fchmod(*args, **kwargs)
+
+        self._patches = [patch("os.chmod", chmod), patch("os.fchmod", fchmod)]
+        for item in self._patches:
+            item.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        for item in self._patches:
+            item.stop()
+
+
+def test_reading_an_already_private_file_writes_no_permissions(tmp_path: Path) -> None:
+    """A tightening read used to chmod the folder twice and the file once on
+    every call: 5.1 ms a read against 0.14 ms, on the daemon's run loop, which
+    waited on those inode writes for seconds when the disk was busy."""
+    target = tmp_path / "state" / "records" / "session.json"
+    atomic_private_write(target, "{}")
+
+    with _PermissionWrites() as writes:
+        assert read_private_text(target) == "{}"
+        _, cursor = read_private_log_slice(target, cursor=None, max_bytes=1_024)
+        read_private_log_slice(target, cursor=cursor, max_bytes=1_024)
+        ensure_private_directory(target.parent)
+        append_private_text(target, "\n")
+
+    assert writes.calls == []
+
+
+def test_a_broad_mode_is_still_tightened_by_a_read(tmp_path: Path) -> None:
+    target = tmp_path / "state" / "session.json"
+    atomic_private_write(target, "{}")
+    target.parent.chmod(0o755)
+    target.chmod(0o644)
+
+    with _PermissionWrites() as writes:
+        assert read_private_text(target) == "{}"
+
+    assert mode(target.parent) == 0o700
+    assert mode(target) == 0o600
+    assert sorted(writes.calls) == ["chmod", "fchmod"]

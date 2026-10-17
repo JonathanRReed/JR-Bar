@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import JRBarCore
+@testable import JRBarCore
 @testable import JRBarApp
 
 /// History as the one home of the past: rows open their timeline in
@@ -12,7 +12,10 @@ import JRBarCore
 
     @Test("a readable row toggles open and closed; an unreadable one never opens")
     func expansion() {
-        let store = HistoryStore(core: CoreModel())
+        let core = CoreModel()
+        core.handle(.connected)
+        core.apply(.state(CoreState()))
+        let store = HistoryStore(core: core)
         let row = CoreHistoryRow(at: 10, kind: "completed", provider: "claude", session: "claude:session:\(Self.uuid)")
         let quota = CoreHistoryRow(at: 11, kind: "quota_crossed", provider: "claude")
         store.rows = [row, quota]
@@ -31,47 +34,6 @@ import JRBarCore
         #expect(store.expandedID == row.id)
         store.expandSelected(false)
         #expect(store.expandedID == nil)
-    }
-
-    @Test("a search finds runs by what their archived transcript said, and names the snippet")
-    func transcriptSearch() async {
-        let store = HistoryStore(core: CoreModel())
-        let said = CoreHistoryRow(at: 10, kind: "completed", provider: "claude", session: "claude:session:\(Self.uuid)", label: "Refactor")
-        let other = CoreHistoryRow(at: 11, kind: "completed", provider: "claude", session: "claude:session:1b2c3d4e-0000-4000-8000-000000000000", label: "Docs")
-        let named = CoreHistoryRow(at: 12, kind: "completed", provider: "codex", label: "auth follow-up")
-        store.rows = [said, other, named]
-        var asked: [String] = []
-        store.archiveSearch = { query in
-            asked.append(query)
-            return [Self.uuid: "fixed the «auth» middleware"]
-        }
-        #expect(!store.canSearchTranscripts)
-        store.archiveSearchAvailable = { true }
-        #expect(store.canSearchTranscripts)
-
-        store.filter.text = "auth"
-        store.searchTranscripts(debounce: .zero)
-        await store.transcriptSearch?.value
-        #expect(asked.last == "auth")
-        #expect(Set(store.filtered.map(\.id)) == [said.id, named.id])
-        #expect(store.transcriptSnippet(for: said) == "fixed the «auth» middleware")
-        // A row its own words already match shows its detail, not a snippet.
-        #expect(store.transcriptSnippet(for: named) == nil)
-
-        // The text moves on: the old hits stop counting before the new
-        // answer lands, and two letters never reach the archive.
-        store.filter.text = "mi"
-        #expect(store.filtered.isEmpty)
-        await store.transcriptSearch?.value
-        #expect(asked == ["auth"])
-        #expect(store.transcriptSnippet(for: said) == nil)
-    }
-
-    @Test("the snippet reads as words, matches still marked")
-    func snippetReadable() {
-        let raw = #"…"content":"please «deploy» the build\nnow"}]},"uuid":"u1…"#
-        #expect(TranscriptSnippet.readable(raw) == "… please «deploy» the build now, u1…")
-        #expect(String(HistoryRowView.marked("a «b» c").characters) == "a b c")
     }
 
     @Test("the Events tab filters the journal the Replay store read")
@@ -127,6 +89,21 @@ import JRBarCore
         #expect(!panel.isWatchedForDone(remote))
     }
 
+    @Test("the bell is offered on a local working run and nowhere else")
+    func bellEligibility() {
+        func row(_ id: String, _ mode: String) -> SessionRow {
+            SessionRow(session: CoreSession(id: id, provider: "claude", mode: mode), pinnedAsk: nil)
+        }
+        #expect(row("claude:run", "working").canWatchForDone)
+        #expect(!row("claude:run", "idle").canWatchForDone)
+        #expect(!row("claude:run", "completed").canWatchForDone)
+        #expect(!row("claude:run", "failed").canWatchForDone)
+        #expect(!row("remote:studio:claude:x", "working").canWatchForDone)
+        #expect(DoneBell.actionName(watched: false) == "Notify when done")
+        #expect(DoneBell.actionName(watched: true) == "Stop notifying when done")
+        #expect(DoneBell.help(watched: true) != DoneBell.help(watched: false))
+    }
+
     @Test("Screen Sharing reaches a peer by a clean host name only")
     func screenSharingHost() {
         #expect(PanelStore.screenSharingHost(peerHost: "studio.tail1234.ts.net", machine: "studio") == "studio.tail1234.ts.net")
@@ -141,40 +118,6 @@ import JRBarCore
         #expect(WhyDetailView.age(99_700, now: now) == "5m")
         #expect(WhyDetailView.age(92_000, now: now) == "2h")
         #expect(WhyDetailView.age(1_000, now: now) == "1d")
-    }
-
-    @Test("a gone transcript falls back to the archive's copy, asked for by the session's uuid")
-    func archiveFallback() async {
-        let store = OverviewStore(core: CoreModel())
-        let id = "claude:session:\(Self.uuid)"
-        store.roster = [CoreRosterEntry(session: CoreSession(id: id, provider: "claude", mode: "completed", lifecycle: "completed"))]
-        store.filter = OverviewFilter(preset: .all)
-        store.timelineSessionID = id
-        let record = ArchiveRecord(id: "rec", name: "\(Self.uuid).jsonl", sourcePath: "/x", byteCount: 1,
-                                   importedAt: Date(), sourceModifiedAt: nil, provider: "claude", sessionID: Self.uuid)
-        let rebuilt = SessionReconstructor.reconstruction(from: [CoreTimelineItem(seq: 0, kind: "message", role: "user", text: "hi")],
-                                                          running: false)
-        var asked: String?
-        store.archiveTimeline = { sessionID in
-            asked = sessionID
-            return (rebuilt, record)
-        }
-        await store.loadArchivedTimeline(for: id)
-        #expect(asked == Self.uuid)
-        #expect(store.archivedTimeline?.id == id)
-        #expect(store.archivedTimeline?.record.id == "rec")
-    }
-
-    @Test("the archive's timeline comes from its newest transcript, never a proxy log")
-    func newestTranscript() {
-        let old = ArchiveRecord(id: "old", name: "a", sourcePath: "/a", byteCount: 1, importedAt: Date(timeIntervalSince1970: 1),
-                                sourceModifiedAt: nil, provider: "claude", sessionID: "s")
-        let new = ArchiveRecord(id: "new", name: "b", sourcePath: "/b", byteCount: 1, importedAt: Date(timeIntervalSince1970: 2),
-                                sourceModifiedAt: nil, provider: "codex", sessionID: "s")
-        let proxy = ArchiveRecord(id: "proxy", name: "c", sourcePath: "/c", byteCount: 1, importedAt: Date(timeIntervalSince1970: 3),
-                                  sourceModifiedAt: nil, provider: "cliproxy", sessionID: "s")
-        #expect(DataHoarderModel.newestTranscript(in: [old, proxy, new])?.id == "new")
-        #expect(DataHoarderModel.newestTranscript(in: [proxy]) == nil)
     }
 
     @Test("revealing a session shows every row and selects it, now or once it loads")

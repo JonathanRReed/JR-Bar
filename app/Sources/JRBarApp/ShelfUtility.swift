@@ -22,6 +22,21 @@ import JRBarCore
 @MainActor
 @Observable
 final class ShelfUtilityModel {
+    struct MediaTrack: Hashable {
+        let title: String
+        let artist: String?
+        let album: String?
+        let player: String?
+        let duration: Double?
+
+        init(_ media: AlcoveMedia) {
+            title = media.title
+            artist = media.artist
+            album = media.album
+            player = media.bundleIdentifier
+            duration = media.duration.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        }
+    }
     /// Artwork payloads above this are dropped rather than decoded —
     /// a hostile or buggy source can't push an unbounded image into
     /// the card. 4 MiB comfortably covers real album art.
@@ -38,10 +53,7 @@ final class ShelfUtilityModel {
     private(set) var media: AlcoveMedia?
     /// The latest power-source read; `hasBattery == false` hides the
     /// battery row entirely.
-    private(set) var power = AlcovePowerMonitor.read()
-    /// The weather row's fetcher — the card toggle and city ride its
-    /// `settings` closure, wired by the delegate.
-    let weather = NotchWeather()
+    private(set) var power: AlcovePowerState
     /// Synced lyrics for the playing track — LRCLIB-backed, cached,
     /// nil when the track has none or the source named too little to
     /// query. The row reads `lyrics.line(at:)` on its timeline tick.
@@ -59,8 +71,10 @@ final class ShelfUtilityModel {
 
     /// `feed` is the shared Now Playing source; tests pass their own so
     /// a unit test never spawns the helper.
-    init(feed: MediaFeed? = nil) {
+    init(feed: MediaFeed? = nil, media: AlcoveMedia? = nil, power: AlcovePowerState? = nil) {
         self.feed = feed ?? MediaFeed.shared
+        self.media = media
+        self.power = power ?? AlcovePowerMonitor.read()
         powerMonitor.onTransition = { [weak self] _, new in
             self?.power = new
             // A charger plugged in or pulled: its watts follow.
@@ -74,19 +88,19 @@ final class ShelfUtilityModel {
         feedToken = feed.subscribe { [weak self] media in
             // Every helper line re-sends the whole track — a play, a
             // pause, a seek — and a row redraws for each assignment.
-            guard self?.media != media else { return }
-            self?.media = media
-            self?.lyrics.note(media: media)
-            self?.noteArtwork(media?.artworkData)
+            guard let self, self.media != media else { return }
+            if self.mediaTrack != media.map(MediaTrack.init) { self.cancelScrub() }
+            self.media = media
+            self.lyrics.note(media: media)
+            self.noteArtwork(media?.artworkData)
         }
         powerMonitor.start()
         // The shared feed kept polling for the island and the ear while
         // the card was folded: take its reading now, or the row would
         // wait for the next transition showing the charge it left with.
         power = powerMonitor.current
-        outputVolume = SystemLevelReader.outputVolume().map(Double.init)
+        outputVolume = readOutputVolume()
         adapterWatts = power.onAC ? readAdapterWatts() : nil
-        weather.start()
         // The device list is a HAL walk and the switches spawn their
         // reads: the turn after the card starts to grow does. The list
         // shows only in the picker's menu while the output has a volume,
@@ -119,12 +133,15 @@ final class ShelfUtilityModel {
     /// The default output's volume as the card opened, 0…1 — nil hides
     /// the slider (no hardware volume on this output).
     private(set) var outputVolume: Double?
+    @ObservationIgnored var readOutputVolume: () -> Double? = {
+        SystemLevelReader.outputVolume().map(Double.init)
+    }
 
     /// The slider's write: through the same CoreAudio path the level
     /// keys use, then read back so the slider shows what took.
     func setVolume(_ value: Double) {
         guard SystemLevelReader.setOutputVolume(Float(value)) else { return }
-        outputVolume = SystemLevelReader.outputVolume().map(Double.init) ?? value
+        outputVolume = readOutputVolume() ?? value
     }
 
     // MARK: Output route
@@ -146,25 +163,34 @@ final class ShelfUtilityModel {
         return { watch.stop() }
     }
     @ObservationIgnored private var outputWatchStop: (@MainActor () -> Void)?
+    @ObservationIgnored private var outputWatchGeneration = 0
     /// The route watch is listening — only while the card is up.
     var watchingOutputs: Bool { outputWatchStop != nil }
 
     /// The card opened: listen for devices and the default moving.
     func startWatchingOutputs() {
         guard outputWatchStop == nil else { return }
-        outputWatchStop = watchOutputs { [weak self] in self?.refreshOutputs() }
+        outputWatchGeneration &+= 1
+        let generation = outputWatchGeneration
+        outputWatchStop = watchOutputs { [weak self] in
+            guard let self, self.outputWatchGeneration == generation else { return }
+            self.refreshOutputs()
+        }
     }
 
     /// The card folded: the listeners go.
     func stopWatchingOutputs() {
-        outputWatchStop?()
+        outputWatchGeneration &+= 1
+        let stop = outputWatchStop
         outputWatchStop = nil
+        stop?()
     }
 
     func refreshOutputs() {
         let read = readOutputs()
         if outputs != read.devices { outputs = read.devices }
         if defaultOutput != read.current { defaultOutput = read.current }
+        outputVolume = readOutputVolume()
     }
 
     /// The picker's write: the sound moves to `device`, then the list and
@@ -172,7 +198,6 @@ final class ShelfUtilityModel {
     func pickOutput(_ device: CoreAudioOutputs.Device) {
         _ = writeOutput(device.id)
         refreshOutputs()
-        outputVolume = SystemLevelReader.outputVolume().map(Double.init)
     }
 
     /// The device playing now, for the picker's glyph and help.
@@ -190,13 +215,15 @@ final class ShelfUtilityModel {
     @ObservationIgnored var readAdapterWatts: () -> Int? = { AlcovePowerMonitor.adapterWatts() }
 
     func stop() {
+        // A drag the fold interrupted never reaches its release; left
+        // held, the slider would show the stale drag on every later track.
+        cancelScrub()
         guard running else { return }
         running = false
         if let feedToken { feed.unsubscribe(feedToken) }
         feedToken = nil
         powerMonitor.stop()
         stopWatchingOutputs()
-        weather.stop()
         lyrics.reset()
         // Keep-awake deliberately survives the fold: the user's
         // toggle is an app-level intent, not a card-lifetime lease —
@@ -227,6 +254,8 @@ final class ShelfUtilityModel {
     /// back mid-flight.
     var mediaScrub: Double?
     var mediaScrubHoldUntil = Date.distantPast
+    @ObservationIgnored private var scrubTrack: MediaTrack?
+    var mediaTrack: MediaTrack? { media.map(MediaTrack.init) }
 
     /// What the slider draws: the drag position while held (and
     /// briefly after), the feed's interpolated playhead otherwise.
@@ -237,13 +266,27 @@ final class ShelfUtilityModel {
 
     /// The drag began — the playhead follows the pointer until release.
     func beginScrub() {
+        scrubTrack = mediaTrack
         mediaScrubHoldUntil = .distantFuture
+    }
+
+    func cancelScrub() {
+        scrubTrack = nil
+        mediaScrub = nil
+        mediaScrubHoldUntil = .distantPast
     }
 
     /// The drag released: seek, then hold the position a beat so the
     /// next timeline tick doesn't flash the stale feed value.
     func commitScrub() {
-        if let mediaScrub { seek(to: mediaScrub) }
+        guard let scrubTrack, scrubTrack == mediaTrack,
+              let mediaScrub, mediaScrub.isFinite else { cancelScrub(); return }
+        var seconds = max(0, mediaScrub)
+        if let duration = media?.duration, duration.isFinite, duration >= 0 {
+            seconds = min(duration, seconds)
+        }
+        self.mediaScrub = seconds
+        seek(to: seconds)
         mediaScrubHoldUntil = Date().addingTimeInterval(0.9)
     }
 

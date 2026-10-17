@@ -58,6 +58,36 @@ import SwiftUI
         return (store, recorder)
     }
 
+    @MainActor final class Gate {
+        var probes = 0
+        var waiting: [CheckedContinuation<Void, Never>] = []
+        func probe() async {
+            probes += 1
+            await withCheckedContinuation { waiting.append($0) }
+        }
+        func release() { waiting.forEach { $0.resume() }; waiting = [] }
+    }
+
+    @Test func aSlowProbeIsNotStackedBehindByTheNextTick() async {
+        let gate = Gate()
+        var model = SetupModel()
+        model.refreshPermissions = { await gate.probe(); return [:] }
+        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in })
+        let first = store.pollPermissions()
+        #expect(first != nil)
+        #expect(store.pollPermissions() == nil, "the first probe is still reading")
+        for _ in 0..<10_000 where gate.waiting.isEmpty { await Task.yield() }
+        gate.release()
+        await first?.value
+        #expect(gate.probes == 1)
+        let again = store.pollPermissions()
+        #expect(again != nil, "once it finished the next tick probes again")
+        for _ in 0..<10_000 where gate.waiting.isEmpty { await Task.yield() }
+        gate.release()
+        await again?.value
+        #expect(gate.probes == 2)
+    }
+
     // MARK: Navigation
 
     @Test func stepsAdvanceInOrder() {
@@ -166,6 +196,29 @@ import SwiftUI
         #expect(!store.shouldPresentOnLaunch)
     }
 
+    @Test func aHandOpenedSetupDoesNotUseUpTheLaunchOffers() {
+        let (store, _) = make()
+        store.present(launch: false)
+        store.present(launch: false)
+        #expect(store.shouldPresentOnLaunch, "only the launch gate's own showings count")
+        store.present(launch: true)
+        store.present(launch: true)
+        #expect(!store.shouldPresentOnLaunch)
+    }
+
+    @Test func openingSetupAgainWhileItIsUpKeepsTheWalkthroughWhereItWas() {
+        let (store, _) = make(initialState: SetupState(finishedAt: 100, presentedCount: 1))
+        store.goNext()
+        store.goNext()
+        let step = store.step
+        let completed = store.completedSteps
+        store.present(launch: false, restart: false)
+        #expect(store.step == step)
+        #expect(store.completedSteps == completed)
+        store.present(launch: false, restart: true)
+        #expect(store.step == .welcome, "a fresh opening of a finished setup starts over")
+    }
+
     // MARK: Permissions
 
     @Test func permissionActionMapping() {
@@ -189,6 +242,28 @@ import SwiftUI
         #expect(SetupPermissionStatus.denied.word == "Denied")
         #expect(SetupPermissionStatus.unavailable.word == "Not available")
         #expect(SetupPermissionStatus.unknown.word == "Unknown")
+    }
+
+    @Test func theAccessibilityButtonRegistersJRBarBeforeOpeningThePane() async {
+        var steps: [String] = []
+        let prompt = SetupModel.accessibilityPrompt
+        let opener = SetupModel.openSettingsPane
+        defer {
+            SetupModel.accessibilityPrompt = prompt
+            SetupModel.openSettingsPane = opener
+        }
+        SetupModel.accessibilityPrompt = { steps.append("prompt") }
+        SetupModel.openSettingsPane = { steps.append($0.absoluteString) }
+        await SetupModel.act(on: .accessibility)
+        #expect(steps == ["prompt", SetupModel.accessibilitySettingsURL.absoluteString],
+                "the pane lists JR-Bar only after it has asked")
+    }
+
+    @Test func aDeniedAutomationPromptSendsThePersonToThePane() {
+        #expect(SetupModel.automationFollowUp(afterAsking: .denied) == AutomationPermission.settingsURL)
+        for answer in [AutomationPermission.granted, .needsConsent, .unavailable] {
+            #expect(SetupModel.automationFollowUp(afterAsking: answer) == nil)
+        }
     }
 
     @Test func theConsolidatedRowsSayWhatTheyAre() {
@@ -215,14 +290,6 @@ import SwiftUI
         #expect(SetupModel.lidHelperStatus(helperInstalled: true) == .granted)
         #expect(SetupModel.lidHelperStatus(helperInstalled: false) == .needed)
         #expect(SetupModel.lidHelperStatus(helperInstalled: nil) == .unknown)
-    }
-
-    @Test func theLidHelperCommandQuotesTheBundledCore() {
-        #expect(SetupModel.lidHelperCommand(coreExecutable: nil) == "sudo jrbar status-bar install-sleep-helper")
-        #expect(SetupModel.lidHelperCommand(
-            coreExecutable: "/Users/j/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core")
-                == "sudo '/Users/j/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core' status-bar install-sleep-helper")
-        #expect(SetupModel.lidHelperCommand(coreExecutable: "/tmp/it's") == "sudo '/tmp/it'\\''s' status-bar install-sleep-helper")
     }
 
     @Test func permissionStatusesRefreshFromTheModel() async {

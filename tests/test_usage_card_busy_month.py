@@ -198,9 +198,9 @@ def test_a_busy_claude_month_is_totalled_whole_and_stays_whole(
     reads: list[tuple[Path, int, int]] = []
     real_read = usage_stats._read_verified_prefix
 
-    def watched(path, info, resume_offset=0):
+    def watched(path, info, resume_offset=0, **options):
         reads.append((path, resume_offset, info.st_size))
-        return real_read(path, info, resume_offset)
+        return real_read(path, info, resume_offset, **options)
 
     monkeypatch.setattr(usage_stats, "_read_verified_prefix", watched)
     grown = [
@@ -370,9 +370,9 @@ def test_a_busy_codex_month_is_totalled_whole_and_stays_whole(
     reads: list[tuple[Path, int, int]] = []
     real_read = usage_stats._read_verified_prefix
 
-    def watched(path, info, resume_offset=0):
+    def watched(path, info, resume_offset=0, **options):
         reads.append((path, resume_offset, info.st_size))
-        return real_read(path, info, resume_offset)
+        return real_read(path, info, resume_offset, **options)
 
     monkeypatch.setattr(usage_stats, "_read_verified_prefix", watched)
     grown_session = next(

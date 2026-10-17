@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import errno
 import json
+import math
 import os
 import re
 import subprocess
@@ -625,6 +626,68 @@ def claude_session_index(sessions_dir: Path | None = None) -> dict[str, ProcessE
     return result
 
 
+@dataclass(frozen=True, slots=True)
+class ClaudeSessionActivity:
+    """What Claude's own pid file says the session is doing, and since when."""
+
+    status: str
+    changed_at: float
+
+
+def _epoch_seconds(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        return None
+    # Claude stamps milliseconds; accept seconds as well.
+    return number / 1000.0 if number > 1e11 else number
+
+
+def claude_session_activity(
+    sessions_dir: Path | None = None,
+) -> dict[str, ClaudeSessionActivity]:
+    """sessionId -> ``status`` and ``statusUpdatedAt`` from Claude's pid files.
+
+    ``status`` is ``busy`` while a turn runs and ``idle`` while Claude waits
+    for the next prompt. It is the one signal an Esc interrupt leaves behind,
+    because Claude fires no hook for it. A file without both a readable
+    status and a readable stamp says nothing.
+    """
+    base = sessions_dir if sessions_dir is not None else _claude_sessions_dir()
+    result: dict[str, ClaudeSessionActivity] = {}
+    try:
+        candidates = sorted(base.glob("*.json"))
+    except OSError:
+        return result
+    for path in candidates[:512]:
+        try:
+            if path.stat().st_size > MAX_RECORD_BYTES:
+                continue
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        session_id = payload.get("sessionId")
+        pid = payload.get("pid")
+        status = payload.get("status")
+        changed_at = _epoch_seconds(payload.get("statusUpdatedAt"))
+        if (
+            not isinstance(session_id, str)
+            or not session_id
+            or not isinstance(pid, int)
+            or isinstance(pid, bool)
+            or pid <= 1
+            or not isinstance(status, str)
+            or not 0 < len(status.strip()) <= 32
+            or changed_at is None
+        ):
+            continue
+        result[session_id] = ClaudeSessionActivity(status.strip().lower(), changed_at)
+    return result
+
+
 def claude_session_details(
     session_id: str,
     pid: int | None = None,
@@ -769,10 +832,28 @@ class ProcessSweeper:
         return dead, frozenset(live)
 
 
+def _record_file_is_ended(path: Path) -> bool:
+    try:
+        if path.stat().st_size > MAX_RECORD_BYTES:
+            return True
+        payload = json.loads(read_private_text(path))
+    except (OSError, ValueError):
+        # Unreadable is not live.
+        return True
+    return isinstance(payload, dict) and isinstance(
+        payload.get("ended_at_epoch"), (int, float)
+    )
+
+
 def prune_registry(
     *, state_dir: Path | None = None, max_age_seconds: float = 7 * 86400.0, now: float | None = None
 ) -> int:
-    """Delete ended or ancient records. Returns the number removed."""
+    """Delete ended records after ``max_age_seconds`` and any record after twice that.
+
+    A record is written when a session starts and again when it ends, so a
+    live agent's file keeps its start time for as long as it runs; only one
+    that is marked ended is dropped at the shorter age. Returns the number
+    removed."""
     base = registry_dir(state_dir)
     current = time.time() if now is None else now
     removed = 0
@@ -786,6 +867,8 @@ def prune_registry(
         except OSError:
             continue
         if age > max_age_seconds:
+            if age <= 2 * max_age_seconds and not _record_file_is_ended(path):
+                continue
             try:
                 path.unlink()
                 removed += 1
@@ -797,11 +880,13 @@ def prune_registry(
 __all__ = [
     "PROVIDER_PROCESS_NAMES",
     "AgentProcessRecord",
+    "ClaudeSessionActivity",
     "DeadAgentProcess",
     "ProcessEntry",
     "ProcessSweeper",
     "ProcessTableRefresher",
     "cached_process_table",
+    "claude_session_activity",
     "claude_session_details",
     "claude_session_index",
     "discover_agent_process",

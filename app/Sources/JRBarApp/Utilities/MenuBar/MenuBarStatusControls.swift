@@ -65,8 +65,7 @@ enum MenuBarCombinedMenu {
     }
 
     /// One row of the menu's "hide an app" list: the app's first shown
-    /// item stands for it — under the concealer the pick lands on the
-    /// whole bundle, under the spacer engine on that item.
+    /// item stands for it, and the pick lands on that item.
     struct HideRow: Equatable, Sendable {
         var itemID: String
         var title: String

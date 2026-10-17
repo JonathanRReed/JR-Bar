@@ -74,15 +74,10 @@ struct LightingPage: View {
             ColorVisionNote(store: store, colors: stateColors, others: providerColorsInUse)
         }
 
-        SettingGroup("Pulse range") {
-            DisclosureRow("Fine-tune pulsing", subtitle: "Floor and ceiling of each pulsing mode's brightness.") {
-                ForEach(SettingsKey.fadeModes, id: \.self) { mode in
-                    FadeRow(store: store, mode: mode)
-                }
-            }
-        }
-
         SettingGroup("Dimming") {
+            // The one brightness cap: General points here.
+            SettingSlider(store, "Maximum brightness", subtitle: "Caps every light JR-Bar drives.",
+                          path: "global_brightness_scale", in: 0.05...1.0, default: 1.0, format: SettingsStore.percent)
             SettingToggle(store, "Dim when idle", path: "idle_dim_enabled", default: true)
             SettingSlider(store, "After", path: "idle_dim_after_minutes", in: 1...180, step: 1, default: 10, format: SettingsStore.minutes)
                 .disabled(!(store.values.bool("idle_dim_enabled") ?? true))
@@ -96,8 +91,6 @@ struct LightingPage: View {
                 .disabled(!(store.values.bool("idle_auto_off_enabled") ?? false))
         }
 
-        AutoDimSection(store: store)
-
         SettingGroup("Scene") {
             SettingPicker(store, "Active scene", subtitle: "Which scene's effect assignments are in force.",
                           path: "active_scene", options: Self.scenes, default: "calm")
@@ -105,24 +98,6 @@ struct LightingPage: View {
             SettingRow("Effect Studio", subtitle: "Tune effects live and assign looks to states, scenes, providers and devices.") {
                 Button("Effect Studio…") { store.onOpenEffects?() }
             }
-        }
-
-        SettingGroup("Ambient cues", note: "Both are opt-in and carry no state you have to read; they yield to real signals and stay dark during Do Not Disturb and low power. Effect Studio › Moments lists every cue the lights can play.") {
-            SettingToggle(store, "Rainstick idle", subtitle: "A dim pixel drifts along the strip every thirty seconds while nothing else needs it.",
-                          path: "rainstick_idle_enabled")
-            SettingToggle(store, "Also at night", subtitle: "The Night scene withholds the drip unless you allow it here.",
-                          path: "rainstick_night_enabled")
-                .disabled(!(store.values.bool("rainstick_idle_enabled") ?? false))
-            SettingRow("Rainstick preview", subtitle: "Shown twenty-five times faster and brighter than the strip plays it.") {
-                LEDStripPreview(program: LightingPreviewPrograms.rainstick(), style: .dots, dotSize: 9, spacing: 6)
-                    .frame(width: 168)
-                    .opacity((store.values.bool("rainstick_idle_enabled") ?? false) ? 1 : 0.35)
-                    .accessibilityLabel("Rainstick idle preview")
-            }
-            SettingToggle(store, "Completion milestones", subtitle: "A short celebration when finished sessions cross a milestone.",
-                          path: "milestone_odometer_enabled")
-            MilestoneStepsField(store: store)
-                .disabled(!(store.values.bool("milestone_odometer_enabled") ?? false))
         }
     }
 
@@ -178,6 +153,42 @@ struct LightingPage: View {
             if let hex = store.values.string(SettingsPath(path)), NSColor(hex: hex) != nil { return hex }
         }
         return "#00FF66"
+    }
+}
+
+/// What Lighting keeps behind its Advanced disclosure: the pulse floors,
+/// Auto-dim and the ambient cues.
+struct LightingAdvanced: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        SettingGroup("Pulse range") {
+            SettingLabel(title: "Fine-tune pulsing", subtitle: "Floor and ceiling of each pulsing mode's brightness.")
+                .settingRowStyle()
+            ForEach(SettingsKey.fadeModes, id: \.self) { mode in
+                FadeRow(store: store, mode: mode)
+            }
+        }
+
+        AutoDimSection(store: store)
+
+        SettingGroup("Ambient cues", note: "Both are opt-in and carry no state you have to read; they yield to real signals and stay dark during Do Not Disturb and low power. Effect Studio › Moments lists every cue the lights can play.") {
+            SettingToggle(store, "Rainstick idle", subtitle: "A dim pixel drifts along the strip every thirty seconds while nothing else needs it.",
+                          path: "rainstick_idle_enabled")
+            SettingToggle(store, "Also at night", subtitle: "The Night scene withholds the drip unless you allow it here.",
+                          path: "rainstick_night_enabled")
+                .disabled(!(store.values.bool("rainstick_idle_enabled") ?? false))
+            SettingRow("Rainstick preview", subtitle: "Shown twenty-five times faster and brighter than the strip plays it.") {
+                LEDStripPreview(program: LightingPreviewPrograms.rainstick(), style: .dots, dotSize: 9, spacing: 6)
+                    .frame(width: 168)
+                    .opacity((store.values.bool("rainstick_idle_enabled") ?? false) ? 1 : 0.35)
+                    .accessibilityLabel("Rainstick idle preview")
+            }
+            SettingToggle(store, "Completion milestones", subtitle: "A short celebration when finished sessions cross a milestone.",
+                          path: "milestone_odometer_enabled")
+            MilestoneStepsField(store: store)
+                .disabled(!(store.values.bool("milestone_odometer_enabled") ?? false))
+        }
     }
 }
 
@@ -528,6 +539,7 @@ struct MilestoneStepsField: View {
                 TextField("", text: Binding(get: { focused ? draft : currentText }, set: { draft = $0 }),
                           prompt: Text("10, 25, 50, 100"))
                     .labelsHidden()
+                    .accessibilityLabel("Milestone steps")
                     .focused($focused)
                     .onChange(of: focused) { _, now in
                         if now { draft = currentText } else { commit() }
@@ -549,7 +561,7 @@ struct MilestoneStepsField: View {
     }
 }
 
-/// Settings › Lighting › Auto-dim: the `auto_dim` document (`mode`, and the
+/// Settings › Devices & Lighting › Advanced › Auto-dim: the `auto_dim` document (`mode`, and the
 /// rows of whichever mode is chosen) plus the live line from
 /// `lights.auto_dim`, what the daemon read and the factor it applied.
 struct AutoDimSection: View {
@@ -586,9 +598,11 @@ struct AutoDimSection: View {
                         HStack(spacing: 8) {
                             DatePicker("", selection: store.minutesOfDay(AutoDimSettings.scheduleStartPath.description, default: AutoDimSettings.defaults.scheduleStartMinutes),
                                        displayedComponents: .hourAndMinute).labelsHidden()
+                                .accessibilityLabel("Auto-dim from")
                             Text("to").foregroundStyle(.secondary)
                             DatePicker("", selection: store.minutesOfDay(AutoDimSettings.scheduleEndPath.description, default: AutoDimSettings.defaults.scheduleEndMinutes),
                                        displayedComponents: .hourAndMinute).labelsHidden()
+                                .accessibilityLabel("Auto-dim until")
                         }
                     }
                 }
@@ -816,6 +830,7 @@ struct ProviderSwatch: View {
         HStack(spacing: 8) {
             ColorPicker("", selection: store.color(path, default: style.accentHex), supportsOpacity: false)
                 .labelsHidden()
+                .accessibilityLabel("\(style.name) colour")
                 .disabled(!store.isProvided(path))
             VStack(alignment: .leading, spacing: 4) {
                 SwatchTitle(name: style.name,
@@ -861,6 +876,7 @@ struct ModeSwatch: View {
         HStack(spacing: 8) {
             ColorPicker("", selection: store.color(path, default: fallback), supportsOpacity: false)
                 .labelsHidden()
+                .accessibilityLabel("\(label.name) colour")
                 .disabled(!store.isProvided(path))
             VStack(alignment: .leading, spacing: 4) {
                 SwatchTitle(name: label.name,
@@ -911,9 +927,11 @@ struct FadeRow: View {
                 HStack(spacing: 10) {
                     Text("Floor").font(.callout).foregroundStyle(.secondary)
                     Slider(value: store.double(floorPath, default: 0.01), in: 0...1).frame(width: 90)
+                        .accessibilityLabel("\(mode.capitalized) floor")
                     ValueText(text: SettingsStore.percent(store.values.double(SettingsPath(floorPath)) ?? 0.01), width: 40)
                     Text("Ceiling").font(.callout).foregroundStyle(.secondary).padding(.leading, 6)
                     Slider(value: store.double(ceilingPath, default: 0.5), in: 0...1).frame(width: 90)
+                        .accessibilityLabel("\(mode.capitalized) ceiling")
                     ValueText(text: SettingsStore.percent(store.values.double(SettingsPath(ceilingPath)) ?? 0.5), width: 40)
                 }
             }
@@ -939,9 +957,13 @@ struct NotificationsPage: View {
     ]
 
     var body: some View {
+        SettingGroup("Alerts", note: "Each profile also sets how far an ignored ask escalates. The switches below stay yours to change.") {
+            AlertsProfileRow(store: store)
+        }
+
         SettingGroup("Completion") {
             SettingToggle(store, "Notification banner", subtitle: "A macOS banner when a main session finishes; needs the system notification permission.",
-                          path: "completion_notification_enabled")
+                          path: "completion_notification_enabled", default: true)
             if store.notificationPermissionDenied {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
@@ -956,6 +978,53 @@ struct NotificationsPage: View {
             SettingToggle(store, "Completion sweep", subtitle: "Sweeps the bar in the finishing agent's colour when a session completes.",
                           path: "completion_sweep_enabled", default: true)
         }
+        .task { store.refreshNotificationPermission() }
+
+        SettingGroup("Quiet hours") {
+            SettingToggle(store, "Schedule", subtitle: "The lights quiet down between the hours below.", path: "dnd_schedule_enabled")
+            Provided(store, "dnd_schedule_start_minutes", "dnd_schedule_end_minutes") {
+                SettingRow("From") {
+                    HStack(spacing: 8) {
+                        DatePicker("", selection: store.minutesOfDay("dnd_schedule_start_minutes", default: 1320), displayedComponents: .hourAndMinute).labelsHidden()
+                            .accessibilityLabel("Quiet hours from")
+                        Text("to").foregroundStyle(.secondary)
+                        DatePicker("", selection: store.minutesOfDay("dnd_schedule_end_minutes", default: 420), displayedComponents: .hourAndMinute).labelsHidden()
+                            .accessibilityLabel("Quiet hours until")
+                    }
+                }
+            }
+            .disabled(!(store.values.bool("dnd_schedule_enabled") ?? false))
+            SettingPicker(store, "While quiet", path: "dnd_schedule_mode", options: Self.focusModes, default: "dark")
+                .disabled(!(store.values.bool("dnd_schedule_enabled") ?? false))
+            SettingSlider(store, "Dim to", path: "dnd_dim_fraction", in: 0...1, default: 0.15, format: SettingsStore.percent)
+                .disabled(!(store.values.bool("dnd_schedule_enabled") ?? false) || store.values.string("dnd_schedule_mode") != "dim")
+        }
+
+        SettingGroup("Focus", note: "A Focus without a rule uses the idle brightness from Lighting.") {
+            SettingToggle(store, "React to Focus modes", subtitle: "Focus Status reads whether Focus is on. Full Disk Access adds named-mode rules.", path: "focus_sync_enabled")
+            SettingPicker(store, "In Do Not Disturb", path: "dnd_focus_mode", options: Self.focusModes, default: "pause")
+                .disabled(!(store.values.bool("focus_sync_enabled") ?? false))
+            FocusRoster(store: store) { focuses in
+                ForEach(focuses, id: \.id) { focus in
+                    FocusRuleRow(store: store, focusID: focus.id, name: focus.name)
+                        .disabled(!(store.values.bool("focus_sync_enabled") ?? false))
+                }
+            }
+        }
+    }
+}
+
+/// What Alerts keeps behind its Advanced disclosure: quiet sessions,
+/// the calendar glow, the escalation timings, the battery lights and the
+/// outbound webhook.
+struct NotificationsAdvanced: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        SettingGroup("Silent sessions", note: "A session is quiet after ten minutes with nothing sent and no tool running. A long build never counts.") {
+            SettingToggle(store, "Banner when a session goes quiet", subtitle: "One banner for each quiet stretch, a local notification only. Off unless you turn it on; the Loud profile does.",
+                          path: "silent_session_banner_enabled")
+        }
 
         CalendarGlowSection(store: store)
 
@@ -969,51 +1038,12 @@ struct NotificationsPage: View {
             SettingStepper(store, "Alert burst", subtitle: "Repetitions a courtesy signal gets before it settles; critical signals ignore this.",
                            path: "alert_burst", in: 1...10, default: 3, unit: "×")
             Provided(store, "escalation_tier_by_provider") {
-                DisclosureRow("Per provider", subtitle: "Hold one agent's asks lower than the stage above — Claude's may chime while another's never pass the light.") {
-                    ForEach(escalationProviders, id: \.self) { provider in
-                        EscalationCeilingRow(store: store, provider: provider)
-                    }
+                SettingLabel(title: "Per provider", subtitle: "Hold one agent's asks lower than the stage above, so Claude's may chime while another's never pass the light.")
+                    .settingRowStyle()
+                ForEach(escalationProviders, id: \.self) { provider in
+                    EscalationCeilingRow(store: store, provider: provider)
                 }
             }
-        }
-
-        SettingGroup("Quiet hours") {
-            SettingToggle(store, "Schedule", subtitle: "The lights quiet down between the hours below.", path: "dnd_schedule_enabled")
-            Provided(store, "dnd_schedule_start_minutes", "dnd_schedule_end_minutes") {
-                SettingRow("From") {
-                    HStack(spacing: 8) {
-                        DatePicker("", selection: store.minutesOfDay("dnd_schedule_start_minutes", default: 1320), displayedComponents: .hourAndMinute).labelsHidden()
-                        Text("to").foregroundStyle(.secondary)
-                        DatePicker("", selection: store.minutesOfDay("dnd_schedule_end_minutes", default: 420), displayedComponents: .hourAndMinute).labelsHidden()
-                    }
-                }
-            }
-            .disabled(!(store.values.bool("dnd_schedule_enabled") ?? false))
-            SettingPicker(store, "While quiet", path: "dnd_schedule_mode", options: Self.focusModes, default: "dark")
-                .disabled(!(store.values.bool("dnd_schedule_enabled") ?? false))
-            SettingSlider(store, "Dim to", path: "dnd_dim_fraction", in: 0...1, default: 0.15, format: SettingsStore.percent)
-                .disabled(!(store.values.bool("dnd_schedule_enabled") ?? false) || store.values.string("dnd_schedule_mode") != "dim")
-        }
-
-        SettingGroup("Focus", note: "A Focus without a rule uses the idle brightness from Lighting.") {
-            SettingToggle(store, "React to Focus modes", subtitle: "Reads the active Focus; needs Full Disk Access for this app.", path: "focus_sync_enabled")
-            SettingPicker(store, "In Do Not Disturb", path: "dnd_focus_mode", options: Self.focusModes, default: "pause")
-                .disabled(!(store.values.bool("focus_sync_enabled") ?? false))
-            FocusRoster(store: store) { focuses in
-                ForEach(focuses, id: \.id) { focus in
-                    FocusRuleRow(store: store, focusID: focus.id, name: focus.name)
-                        .disabled(!(store.values.bool("focus_sync_enabled") ?? false))
-                }
-            }
-        }
-
-        SettingGroup("Power") {
-            SettingToggle(store, "Keep Mac awake", subtitle: "While agents run, the Mac never idles to sleep.", path: "agent_keep_awake_enabled", default: true)
-            SettingToggle(store, "Keep display awake", subtitle: "While agents run, the screen stays on too — so it never locks mid-run. Off lets the display sleep while the Mac stays up.", path: "keep_display_awake", default: true)
-            SettingPicker(store, "Lid closed", subtitle: closedLidNote, path: "closed_lid_awake_policy", options: [
-                ("never", "Let it sleep"), ("agents", "Stay awake while agents run"), ("always", "Always stay awake"),
-            ], default: "never")
-            SettingToggle(store, "Keep awake on battery", subtitle: "Off releases the hold whenever the Mac is unplugged.", path: "keep_awake_on_battery", default: true)
         }
 
         SettingGroup("Battery") {
@@ -1032,7 +1062,7 @@ struct NotificationsPage: View {
             SettingToggle(store, "Show power changes", subtitle: "Plugging in or unplugging shows the charge on the lights for a few seconds.",
                           path: "battery_monitoring.show_on_power_change", default: true)
         }
-        .task { store.refreshNotificationPermission() }
+        WebhookGroup(store: store)
     }
 
     /// The providers worth a ceiling row: the ones this Mac runs (a live
@@ -1044,9 +1074,64 @@ struct NotificationsPage: View {
             running.contains($0) || ceilings[$0] != nil || (store.hookStatus($0).map { $0 != "missing" } ?? false)
         }
     }
+}
+
+/// General › Power: whether JR-Bar holds the Mac awake while agents run.
+struct PowerGroup: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        SettingGroup("Power") {
+            SettingToggle(store, "Keep Mac awake", subtitle: KeepAwakeReading.agentSleepHelp, path: "agent_keep_awake_enabled", default: true)
+            SettingToggle(store, "Keep display awake", subtitle: KeepAwakeReading.displaySleepHelp, path: "keep_display_awake", default: true)
+            SettingPicker(store, "Lid closed", subtitle: closedLidNote, path: "closed_lid_awake_policy", options: [
+                ("never", "Let it sleep"), ("agents", "Stay awake while agents run"), ("always", "Always stay awake"),
+            ], default: "never")
+            SettingToggle(store, "Keep awake on battery", subtitle: "Off releases the hold whenever the Mac is unplugged.", path: "keep_awake_on_battery", default: true)
+        }
+    }
 
     private var closedLidNote: String {
         ClosedLidNote.text(store.closedLid)
+    }
+}
+
+/// Settings › Alerts & Sounds › Alerts: Quiet, Balanced or Loud in one pick.
+/// The picker reads "Custom" while the switches below it differ from every
+/// profile; choosing a profile writes only `AlertsProfile.keys`.
+struct AlertsProfileRow: View {
+    @Bindable var store: SettingsStore
+
+    private static let custom = "custom"
+
+    private var current: AlertsProfile? { AlertsProfile.current(reading: { store.value(at: SettingsPath($0)) }) }
+
+    private var selection: Binding<String> {
+        Binding(
+            get: { current?.rawValue ?? Self.custom },
+            set: { word in
+                guard let profile = AlertsProfile(rawValue: word) else { return }
+                store.apply(profile)
+            }
+        )
+    }
+
+    var body: some View {
+        Provided(store, AlertsProfile.keys[0], AlertsProfile.keys[1], AlertsProfile.keys[2], AlertsProfile.keys[3]) {
+            Picker(selection: selection) {
+                ForEach(AlertsProfile.allCases, id: \.rawValue) { profile in
+                    Text(profile.title).tag(profile.rawValue)
+                }
+                if current == nil {
+                    Text("Custom").tag(Self.custom)
+                }
+            } label: {
+                SettingLabel(title: "Alerts profile", subtitle: current?.summary
+                    ?? "Your own mix of the switches below.")
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("alerts_profile")
+        }
     }
 }
 
@@ -1131,7 +1216,7 @@ struct EscalationCeilingRow: View {
     }
 }
 
-/// Settings › Notifications › Calendar & reminders: the daemon's two
+/// Settings › Alerts & Sounds › Advanced › Calendar & reminders: the daemon's two
 /// EventKit glows — a calm purple breathe before a timed event, and an
 /// amber glow when a Reminder comes due. Both read in the monitor; macOS
 /// asks for access the first time one is on, and a refused grant says
@@ -1245,10 +1330,6 @@ struct FocusRuleRow: View {
 struct RemotePage: View {
     @Bindable var store: SettingsStore
 
-    static let webhookEvents: [(value: String, label: String)] = [
-        ("completion", "Completion"), ("ask_opened", "Ask opened"), ("failed", "Failure"), ("quota_crossed", "Quota crossed"),
-    ]
-
     var body: some View {
         SettingGroup("Peers") {
             SettingToggle(store, "Remote peers", subtitle: "Discover other Macs running JR-Bar and show their agents here.", path: "remote_peers.enabled")
@@ -1304,17 +1385,50 @@ struct RemotePage: View {
                 }
             }
         }
+    }
+}
 
+/// Alerts › Phone alert: one short line through ntfy.
+struct PhoneAlertGroup: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        SettingGroup("Phone alert", note: "Sends one short line through ntfy: which agent needs you, or finished. Never prompt text, paths or tokens, and nothing on your phone can answer an agent. Nothing is sent until you enter a topic and turn it on.") {
+            SettingTextField(store, "ntfy topic", subtitle: "A topic name for ntfy.sh, or the https address of your own ntfy server.", path: "ntfy_topic", prompt: "my-agents", monospaced: true)
+            SettingToggle(store, "Send phone alerts", subtitle: "Off until you turn it on.", path: "ntfy_enabled")
+                .disabled((store.values.string("ntfy_topic") ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
+            SettingToggle(store, "Only when I'm away", subtitle: "Idle for five minutes, or the screen is locked. If JR-Bar cannot tell, nothing is sent.",
+                          path: "ntfy_only_when_away", default: true)
+                .disabled(!(store.values.bool("ntfy_enabled") ?? false))
+            SettingRow("Test", subtitle: "Sends one message now, whatever the switches say.") {
+                Button("Send test message") { store.testPhoneAlert() }
+                    .disabled((store.values.string("ntfy_topic") ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+                              || !store.isLive || store.phoneAlertTesting)
+            }
+        }
+    }
+}
+
+/// Alerts › Webhook: POSTs escalations to an address of your own.
+struct WebhookGroup: View {
+    @Bindable var store: SettingsStore
+
+    static let events: [(value: String, label: String)] = [
+        ("completion", "Completion"), ("ask_opened", "Ask opened"), ("failed", "Failure"), ("quota_crossed", "Quota crossed"),
+    ]
+
+    var body: some View {
         SettingGroup("Webhook") {
             SettingTextField(store, "Webhook URL", subtitle: "POSTs stage-3 escalations whenever set.", path: "escalation_webhook_url", prompt: "https://", monospaced: true)
             Provided(store, "webhook_events") {
                 MultiSelectMenu(store, "Also send",
                                 subtitle: "Extra events to post alongside escalations.",
                                 path: "webhook_events",
-                                options: Self.webhookEvents)
+                                options: Self.events)
             }
             .disabled((store.values.string("escalation_webhook_url") ?? "").isEmpty)
         }
+
     }
 }
 
@@ -1343,11 +1457,14 @@ struct MachineList: View {
                                 Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Remove \(machine)")
+                            .help("Remove \(machine)")
                         }
                     }
                     HStack(spacing: 6) {
                         TextField("", text: $draft, prompt: Text("Machine name"))
                             .labelsHidden()
+                            .accessibilityLabel("Machine name")
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 180)
                             .onSubmit(add)
@@ -1368,7 +1485,7 @@ struct MachineList: View {
     }
 }
 
-/// Settings › Devices & Screen Bar's Stream Deck card: the desk-side half
+/// Settings › Devices & Lighting's Stream Deck card: the desk-side half
 /// of the loopback status endpoint, next to the other pads. The switch is
 /// the same `serve_enabled` Settings › Remote carries; the deck polls
 /// `GET /status.json` with the bearer the Copy button fetches.
@@ -1398,7 +1515,7 @@ struct StreamDeckCard: View {
     }
 
     var body: some View {
-        SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.") {
+        SettingGroup(note: "In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”.") {
             SettingRow("Endpoint") {
                 StatusPill(statusText, tint: statusColor)
             }
@@ -1468,6 +1585,10 @@ struct AdvancedPage: View {
             }
         }
 
+        if let seal = store.seal {
+            SettingsSealGroup(seal: seal, isLive: store.isLive)
+        }
+
         SettingGroup {
             LogTail(entries: store.core.logTail)
         } header: {
@@ -1478,15 +1599,19 @@ struct AdvancedPage: View {
             }
         }
 
-        SettingGroup(note: "Each button puts that page's settings back to the monitor's defaults. Devices keep their identities.") {
-            // `catalogue == nil` pages (Toys) hold no daemon settings and
-            // have nothing to reset.
-            DisclosureRow("Reset to defaults", subtitle: "Rarely needed — puts one page's settings back.") {
-                ForEach(SettingsStore.Page.allCases.filter { $0 != .advanced && $0.catalogue != nil }) { page in
-                    LabeledContent(page.title) {
-                        Button("Reset…") { store.resetTarget = page }
-                            .disabled(!store.isLive)
-                    }
+    }
+}
+
+/// Puts one page's settings back to the monitor's defaults.
+struct ResetGroup: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        SettingGroup("Reset to defaults", note: "Each button puts that page's settings back. Devices keep their identities.") {
+            ForEach(SettingsStore.Page.allCases.filter { !$0.resettable.isEmpty }) { page in
+                LabeledContent(page.title) {
+                    Button("Reset…") { store.resetTarget = page }
+                        .disabled(!store.isLive)
                 }
             }
         }
@@ -1581,7 +1706,7 @@ struct DoctorSheet: View {
         let failing = checks.filter { $0["ok"]?.boolValue != true }.count
         VStack(alignment: .leading, spacing: SettingsMetrics.m + 2) {
             HStack(spacing: SettingsMetrics.m) {
-                SettingsIconTile(symbol: "stethoscope", tint: SettingsStore.Page.advanced.tint, size: 40)
+                SettingsIconTile(symbol: "stethoscope", tint: SettingsStore.Chapter.advanced.tint, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Doctor").font(.title3.weight(.semibold))
                     Text("What the monitor checked just now.")
@@ -1637,6 +1762,7 @@ struct DoctorSheet: View {
         }
         .padding(20)
         .frame(width: 480)
+        .background(NonblockingSheetWindow().frame(width: 0, height: 0).allowsHitTesting(false))
     }
 
     static func render(_ value: JSONValue) -> String {

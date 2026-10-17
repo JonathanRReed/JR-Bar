@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import heapq
 import json
+import math
 import os
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
@@ -41,8 +42,13 @@ from urllib.parse import quote
 
 LOCAL_HISTORY_PROVIDERS = ("pi", "grok", "gemini", "openclaw")
 MAX_FILES = 4000
+#: A file read whole into one JSON document (Gemini CLI's chats).
 MAX_FILE_BYTES = 64 * 1024 * 1024
-MAX_LINE_BYTES = 4 * 1024 * 1024
+#: A line-delimited file is streamed a line at a time, so only a pathological
+#: one is skipped; the 64 MiB limit above never applied to it by need.
+MAX_STREAMED_FILE_BYTES = 8 * 1024 * 1024 * 1024
+#: A line past this is skipped as one unparseable record, never held whole.
+MAX_LINE_BYTES = 16 * 1024 * 1024
 MAX_SQLITE_ROWS = 200_000
 
 
@@ -93,6 +99,8 @@ def roots(*, env=None, home=None) -> dict[str, Path]:
 def _number(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0
+    if isinstance(value, float) and not math.isfinite(value):
+        return 0
     return max(0, int(value))
 
 
@@ -100,17 +108,24 @@ def _epoch(value: object) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        number = float(value)
+        try:
+            number = float(value)
+        except OverflowError:
+            return None
+        if not math.isfinite(number):
+            return None
         return number / 1000.0 if number > 1e11 else number
     if isinstance(value, str) and value.strip():
         try:
             return datetime.fromisoformat(value.strip().replace("Z", "+00:00")).timestamp()
-        except ValueError:
+        except (ValueError, OverflowError, OSError):
             return None
     return None
 
 
-def _files(root: Path, pattern: str, since_epoch: float) -> Iterator[Path]:
+def _files(
+    root: Path, pattern: str, since_epoch: float, max_bytes: int = MAX_FILE_BYTES,
+) -> Iterator[Path]:
     """Regular files under ``root`` matching ``pattern`` changed since
     ``since_epoch``, never following a symlink, at most ``MAX_FILES``.
 
@@ -127,7 +142,7 @@ def _files(root: Path, pattern: str, since_epoch: float) -> Iterator[Path]:
             info = path.lstat()
         except OSError:
             continue
-        if path.is_symlink() or not path.is_file() or info.st_size > MAX_FILE_BYTES:
+        if path.is_symlink() or not path.is_file() or info.st_size > max_bytes:
             continue
         if info.st_mtime < since_epoch:
             continue
@@ -139,8 +154,19 @@ def _files(root: Path, pattern: str, since_epoch: float) -> Iterator[Path]:
 def _json_lines(path: Path) -> Iterator[dict]:
     try:
         with path.open("rb") as handle:
-            for raw in handle:
-                if len(raw) > MAX_LINE_BYTES or b"{" not in raw:
+            while True:
+                raw = handle.readline(MAX_LINE_BYTES + 1)
+                if not raw:
+                    break
+                if len(raw) > MAX_LINE_BYTES:
+                    # Too long to be a record: read past the rest of the line
+                    # in bounded pieces without keeping any of it.
+                    while not raw.endswith(b"\n"):
+                        raw = handle.readline(1024 * 1024)
+                        if not raw:
+                            break
+                    continue
+                if b"{" not in raw:
                     continue
                 try:
                     document = json.loads(raw)
@@ -179,9 +205,47 @@ def _message_record(provider: str, session: str, line: dict, since_epoch: float,
     )
 
 
+def _one_hour_writes(usage: dict) -> int:
+    """The one-hour part of a Pi message's cache writes, by the spellings Pi
+    (``cacheWrite1h``) and its OMP fork (``cttl.ephemeral1h``) use. It is a
+    subset of ``cacheWrite``; 0 when absent or not a clean count."""
+    ttl = usage.get("cttl") if isinstance(usage.get("cttl"), dict) else {}
+    for candidate in (
+        usage.get("cacheWrite1h"),
+        usage.get("cache_write_1h"),
+        ttl.get("ephemeral1h"),
+        ttl.get("ephemeral_1h"),
+    ):
+        if candidate is None:
+            continue
+        if isinstance(candidate, bool) or not isinstance(candidate, (int, float)) or candidate <= 0:
+            return 0
+        return _number(candidate)
+    return 0
+
+
+def _split_one_hour(record: tuple, line: dict) -> list[tuple]:
+    """The record, with its one-hour cache writes moved to a second record the
+    price table bills at the one-hour rate (usage_stats.ONE_HOUR_WRITE_SUFFIX)."""
+    from .usage_stats import ONE_HOUR_WRITE_SUFFIX
+
+    message = line.get("message")
+    usage = message.get("usage") if isinstance(message, dict) else None
+    if not isinstance(usage, dict):
+        return [record]
+    one_hour = min(_one_hour_writes(usage), record[6])
+    if one_hour <= 0:
+        return [record]
+    provider, session, model, epoch, inp, cache_read, cache_write, out, key = record
+    return [
+        (provider, session, model, epoch, inp, cache_read, cache_write - one_hour, out, key),
+        (provider, session, model + ONE_HOUR_WRITE_SUFFIX, epoch, 0, 0, one_hour, 0, key + ONE_HOUR_WRITE_SUFFIX),
+    ]
+
+
 def scan_pi_records(root: Path, since_epoch: float) -> list[tuple]:
     records = []
-    for path in _files(root, "*.jsonl", since_epoch):
+    for path in _files(root, "*.jsonl", since_epoch, MAX_STREAMED_FILE_BYTES):
         if "subagent-artifacts" in path.parts:
             continue
         session = f"pi:{path.stem}"
@@ -189,13 +253,13 @@ def scan_pi_records(root: Path, since_epoch: float) -> list[tuple]:
             key = f"pi:{line.get('id') or f'{path.name}:{index}'}"
             record = _message_record("pi", session, line, since_epoch, key)
             if record is not None:
-                records.append(record)
+                records.extend(_split_one_hour(record, line))
     return records
 
 
 def scan_grok_records(root: Path, since_epoch: float) -> list[tuple]:
     records = []
-    for path in _files(root, "updates.jsonl", since_epoch):
+    for path in _files(root, "updates.jsonl", since_epoch, MAX_STREAMED_FILE_BYTES):
         session = f"grok:{path.parent.name}"
         for index, line in enumerate(_json_lines(path)):
             params = line.get("params") if isinstance(line.get("params"), dict) else {}
@@ -321,7 +385,7 @@ def scan_openclaw_records(root: Path, since_epoch: float) -> list[tuple]:
                 if record is not None:
                     database_keys.add(key)
                     records.append(record)
-    for path in _files(root, "*.jsonl", since_epoch):
+    for path in _files(root, "*.jsonl", since_epoch, MAX_STREAMED_FILE_BYTES):
         session = f"openclaw:{path.stem}"
         for index, line in enumerate(_json_lines(path)):
             key = f"openclaw:{line.get('id') or f'{path.name}:{index}'}"

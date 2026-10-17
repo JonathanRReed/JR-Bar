@@ -4,10 +4,7 @@ import Testing
 import JRBarCore
 @testable import JRBarApp
 
-/// The right ear's claim: it is the menu handle's home while the
-/// concealer runs — the ‹ glyph included, on-row status item or not.
-/// The "right wing is hidden" bug was the ear collapsing to zero
-/// width whenever the handle went nil and no slot filled the claim.
+/// Notched wings keep a symmetric silhouette while either side has content.
 @Suite("Screen Bar ear claim")
 @MainActor
 struct ScreenBarEarTests {
@@ -36,10 +33,10 @@ struct ScreenBarEarTests {
     /// A window-sized view with a measured right claim — the geometry a
     /// notched screen answers when the right flank has room.
     private func makeView() -> ScreenBarView {
-        let view = ScreenBarView(frame: NSRect(x: 0, y: 0, width: 500, height: 48))
+        let view = ScreenBarView(frame: NSRect(x: 0, y: 0, width: 500, height: 64))
         view.wingGeometry = ScreenBarWingGeometry(
             notchWidth: 185, notchDepth: 32, bandSpan: 500,
-            leftExtent: 0, rightExtent: 60)
+            leftExtent: 132, rightExtent: 132)
         return view
     }
 
@@ -53,7 +50,7 @@ struct ScreenBarEarTests {
         let view = makeView()
         view.wings = ScreenBarWings(
             left: nil, right: ScreenBarWingSlot(text: "Working", provider: "codex"))
-        view.islandFrame = CGRect(x: 157.5, y: 16, width: 185, height: 32)
+        view.islandFrame = CGRect(x: 157.5, y: 32, width: 185, height: 32)
         view.relayout()
         let tray = try #require(view.trayRect)
         #expect(view.bandRect.maxY <= tray.minY,
@@ -82,9 +79,14 @@ struct ScreenBarEarTests {
         view.islandFrame = CGRect(x: 60, y: 20, width: 380, height: 300)
         view.relayout()
         #expect(view.bandRect.maxY == 20)
-        // The footlight sits inside the card's round foot, not past it.
-        #expect(view.bandRect.minX == 60 + Self.grownInset)
-        #expect(view.bandRect.width == 380 - 2 * Self.grownInset)
+        // The footlight sits inside the card's round foot, not past it:
+        // under the card's body, which stands in from its frame by the
+        // shoulder's width.
+        let body = NotchSilhouetteGeometry.body(of: view.islandFrame!, notchWidth: view.wingGeometry.notchWidth,
+                                                notchDepth: view.wingGeometry.notchDepth)
+        #expect(body.width < 380, "the body is narrower than the frame")
+        #expect(view.bandRect.minX == body.minX + Self.grownInset)
+        #expect(view.bandRect.width == body.width - 2 * Self.grownInset)
         #expect(view.bandRect.minY >= 0)
     }
 
@@ -97,96 +99,127 @@ struct ScreenBarEarTests {
         view.wings = ScreenBarWings(
             left: ScreenBarWingSlot(text: "Working", provider: "claude"),
             right: ScreenBarWingSlot(text: "Working", provider: "codex"))
-        view.menuHandleRevealed = false
         view.islandFrame = CGRect(x: 90, y: 20, width: 320, height: 300)
         view.relayout()
-        #expect(view.bandRect.minX == 90 + Self.grownInset)
-        #expect(view.bandRect.width == 320 - 2 * Self.grownInset)
+        let body = NotchSilhouetteGeometry.body(of: view.islandFrame!, notchWidth: 300, notchDepth: 32)
+        #expect(view.bandRect.minX == body.minX + Self.grownInset)
+        #expect(view.bandRect.width == body.width - 2 * Self.grownInset)
     }
 
-    @Test func theEarStandsWhileTheHandleLives() {
+    @Test func theEarCollapsesWithNoSlot() {
         let view = makeView()
-        view.menuHandleRevealed = false    // concealed — the ‹ is the ear's
-        let rect = view.rightWingRect
-        #expect(rect != nil, "the ear should stand while the handle lives")
-        #expect(rect?.width == 16, "the handle ear keeps its slim width")
-        #expect(view.menuHandleRect != nil, "the handle slice must be hittable")
+        #expect(view.rightWingRect == nil, "no slot means no ear — the claim is honest")
     }
 
-    @Test func theRevealedHandleStandsTheSameEar() {
-        let view = makeView()
-        view.menuHandleRevealed = true     // run is out — the › rehide mark
-        #expect(view.rightWingRect?.width == 16)
-        #expect(view.menuHandleRect != nil)
-    }
-
-    @Test func theEarCollapsesWithNoHandleAndNoSlot() {
-        let view = makeView()
-        view.menuHandleRevealed = nil      // no concealer, no content
-        #expect(view.rightWingRect == nil,
-                "no handle and no slot means no ear — the claim is honest")
-        #expect(view.menuHandleRect == nil)
-    }
-
-    @Test func theEarEndsAtTheBezelSoItsMarkSitsOnTheGlyphLine() throws {
+    @Test func theEarCentersItsFullMarkInsideTheNativeMenuRow() throws {
         let view = makeView()
         view.wings = ScreenBarWings(
             left: nil, right: ScreenBarWingSlot(text: "Working", provider: "codex"))
         view.relayout()
         let ear = try #require(view.rightWingRect)
         let tray = try #require(view.trayRect)
-        // Exactly the bezel's 32 pt, hung from the window's top: the mark
-        // centres 16 pt down, on the menu bar's own glyph line — the 6 pt
-        // drop had it at 19, a few points under every system icon.
-        #expect(ear.height == 32)
-        #expect(ear.maxY == view.bounds.height)
+        #expect(ear.height == ScreenBarGeometry.wingSeatHeight)
+        #expect(ear.midY == view.bounds.height - 16)
         #expect(view.bounds.height - ear.midY == 16)
-        #expect(tray.minY == view.bounds.height - 32, "the tray ends where the hardware ends")
+        #expect(tray.minY == view.bounds.height - 32 - ScreenBarGeometry.wingEarDrop)
     }
 
-    @Test func aMenuTitleAtTheBezelCollapsesTheRightEar() {
-        // An app whose menus spill right of the notch puts a title right
-        // at the bezel's edge: the ear (and the handle it carries) has no
-        // room and does not draw over "Window".
+    @Test func aMenuTitleAtTheBezelKeepsTheRightEarVisible() throws {
         let view = makeView()
         view.wings = ScreenBarWings(
             left: nil, right: ScreenBarWingSlot(text: "Working", provider: "codex"))
-        view.menuHandleRevealed = false
+        let left = try #require(view.leftWingRect)
+        let right = try #require(view.rightWingRect)
+        let tray = try #require(view.trayRect)
         view.rightEarLimit = 342.5 + 4
-        #expect(view.rightWingRect == nil)
-        #expect(view.menuHandleRect == nil)
-        // With room back the ear returns.
+        #expect(view.leftWingRect == left && view.rightWingRect == right)
+        #expect(view.trayRect == tray)
         view.rightEarLimit = nil
-        #expect(view.rightWingRect != nil)
+        #expect(view.leftWingRect == left && view.rightWingRect == right)
     }
 
-    @Test func theLeftEarYieldsToTheLastMenuTitle() throws {
-        let view = ScreenBarView(frame: NSRect(x: 0, y: 0, width: 500, height: 48))
+    @Test func theLeftEarPersistsBesideTheLastMenuTitle() throws {
+        let view = ScreenBarView(frame: NSRect(x: 0, y: 0, width: 500, height: 64))
         view.wingGeometry = ScreenBarWingGeometry(
             notchWidth: 185, notchDepth: 32, bandSpan: 500,
-            leftExtent: 60, rightExtent: 0)
+            leftExtent: 60, rightExtent: 60)
         view.wings = ScreenBarWings(
             left: ScreenBarWingSlot(text: "Working", provider: "claude"), right: nil)
-        // The bezel's left edge is x 157.5; a title ending 20 pt short
-        // of it leaves a 20 pt cap — no room for the mark, still an ear.
+        let left = try #require(view.leftWingRect)
+        let right = try #require(view.rightWingRect)
+        let tray = try #require(view.trayRect)
         view.leftEarLimit = 157.5 - 20
-        let capped = try #require(view.leftWingRect)
-        #expect(capped.width == 20)
-        #expect(capped.maxX == 157.5)
-        // Closer than the narrowest ear: the ear collapses.
+        #expect(view.leftWingRect == left && view.rightWingRect == right)
         view.leftEarLimit = 157.5 - 8
-        #expect(view.leftWingRect == nil)
+        #expect(view.leftWingRect == left && view.rightWingRect == right)
+        #expect(view.trayRect == tray)
     }
 
-    @Test func aContentSlotWidensPastTheHandle() {
+    @Test func aContentSlotKeepsBothEarsCompactAndBalanced() {
         let view = makeView()
         var wings = ScreenBarWings()
         wings.right = ScreenBarWingSlot(text: "track", visualizer: true)
         view.wings = wings
-        view.menuHandleRevealed = false
-        let rect = view.rightWingRect
-        #expect(rect?.width == 52, "content ear + handle slice = 36 + 16")
-        // The mark cedes the handle's slice — the slot rect stops short.
-        #expect(view.menuHandleRect != nil)
+        #expect(view.rightWingRect?.width == 19)
+        #expect(view.leftWingRect?.width == 19, "the empty peer keeps the silhouette balanced")
     }
+
+    @Test func secondaryMarksKeepTheCompactWingsBalanced() throws {
+        let view = makeView()
+        let mark = ScreenBarWingSlot(text: "Working", provider: "codex")
+        view.wings = ScreenBarWings(left: nil, right: mark)
+        let left = try #require(view.leftWingRect)
+        let right = try #require(view.rightWingRect)
+        let tray = try #require(view.trayRect)
+        var dressed = mark
+        dressed.accessory = ScreenBarWingAccessory(symbol: ScreenBarEarMarks.leaseSymbol)
+        dressed.sensors = NotchSensorState(microphoneInUse: true, cameraInUse: true)
+        view.wings = ScreenBarWings(left: mark, right: dressed)
+        #expect(view.leftWingRect?.width == 19)
+        #expect(view.rightWingRect?.width == 19)
+        #expect(view.trayRect?.width == tray.width)
+        view.wings = ScreenBarWings.withSensors(NotchSensorState(cameraInUse: true), on: .empty)
+        #expect(view.leftWingRect?.width == left.width)
+        #expect(view.rightWingRect?.width == right.width)
+        #expect(view.trayRect?.width == tray.width)
+        view.wings = .empty
+        #expect(view.leftWingRect == nil && view.rightWingRect == nil)
+        #expect(view.trayRect == nil)
+    }
+
+    @Test func changingMenuClearanceKeepsBothEarsBalancedAndVisible() throws {
+        let view = makeView()
+        view.wings = ScreenBarWings(left: ScreenBarWingSlot(text: "Working", provider: "claude"),
+                                    right: ScreenBarWingSlot(text: "Working", provider: "codex"))
+        let left = try #require(view.leftWingRect)
+        let right = try #require(view.rightWingRect)
+        let tray = try #require(view.trayRect)
+        #expect(left.width == right.width)
+        view.configureWingLayout(geometry: view.wingGeometry, leftLimit: 157.5 - 20, rightLimit: 342.5 + 50)
+        #expect(view.leftWingRect == left && view.rightWingRect == right)
+        view.rightEarLimit = 342.5 + 11
+        #expect(view.leftWingRect == left && view.rightWingRect == right)
+        #expect(view.trayRect == tray)
+        view.rightEarLimit = nil
+        #expect(view.leftWingRect == left && view.rightWingRect == right)
+        #expect(view.trayRect == tray)
+    }
+
+    @Test func missingPeerClaimSuppressesBothEars() {
+        let view = makeView()
+        view.wings = ScreenBarWings(left: nil, right: ScreenBarWingSlot(text: "Working", provider: "codex"))
+        view.wingGeometry.leftExtent = 0
+        #expect(view.leftWingRect == nil && view.rightWingRect == nil)
+    }
+
+    @Test func notchlessSlotsDoNotReserveAnEmptyPeer() {
+        let view = makeView()
+        view.wingGeometry = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 0, bandSpan: 213,
+                                                  leftExtent: 120, rightExtent: 120)
+        view.wings = ScreenBarWings(left: nil, right: ScreenBarWingSlot(text: "Working", provider: "codex"))
+        #expect(view.leftWingRect == nil)
+        #expect(view.rightWingRect != nil)
+        #expect(view.trayRect == nil)
+    }
+
 }

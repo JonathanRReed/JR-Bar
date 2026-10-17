@@ -32,95 +32,6 @@ public enum FoldMath {
     }
 }
 
-/// The hinge sensor wobbles a degree or two while the lid sits still, and
-/// every accepted reading redraws a full-screen Metal pass. The filter
-/// holds a deadband around the resting angle: readings inside it are
-/// noise and never reach the tracker. Once the lid genuinely moves —
-/// `tolerance` degrees from the anchor — the filter opens and streams
-/// every reading until the lid rests again, because re-anchoring on each
-/// accepted sample is what turned a 5° deadband into 5° stair-steps down
-/// the whole close. Rest is read off the readings, though, and a slow
-/// enough close reads as rest: under about 2° per `restAfter` (≈6.7°/s)
-/// the filter re-arms partway down and the rest of that close advances
-/// in tolerance-sized steps — a known trade, see `restAfter`. A
-/// tolerance of 0 (or less) accepts everything; the first reading always
-/// passes.
-public struct JitterFilter: Sendable {
-    public var tolerance: Double
-    /// Stillness that re-arms the deadband once motion started: readings
-    /// that stay inside the rest window of one spot for a third of a
-    /// second are a parked lid. Measured on the readings, not the gaps
-    /// between them — the pump publishes every period whether the angle
-    /// moved or not, so a gap-timed rest never came, and a lid parked on
-    /// a 100↔101 flicker streamed every wobble into the tracker for good.
-    ///
-    /// The cost is the slow close. From the default tolerance up the
-    /// window holds two whole degrees (R and R−1), so a lid closing
-    /// slower than about 2° per restAfter — ≈6.7°/s — sits inside it
-    /// long enough to count as parked: the filter re-arms on R−1, and
-    /// from there only a reading a full tolerance away gets through, so
-    /// the close lands in 2° steps at the default tolerance and 5° steps
-    /// at the widest. Faster closes stream every edge. Lengthening this
-    /// narrows the range (0.6 s moves the line to ≈3.3°/s) but streams
-    /// that much longer after every park and shifts the dwell clock — a
-    /// change to make on the hardware, not here.
-    public static let restAfter: TimeInterval = 0.3
-    /// The widest wobble rest may hold — the sensor's whole-degree
-    /// flicker, with room — or the tolerance when that is tighter.
-    /// Capped rather than riding `tolerance` alone: a 5° window would
-    /// call a steady 10°/s close parked after three readings and bring
-    /// the stair-steps back. The cap moves the line rather than removing
-    /// it — two whole degrees still fit, so closes under ≈6.7°/s re-arm
-    /// anyway (see `restAfter`).
-    public static let restWindow: Double = 1.5
-    private var anchor: Double?
-    private var streaming = false
-    /// Where the lid sits while streaming, and since when — the rest
-    /// clock, restarted whenever a reading leaves the window.
-    private var restAngle: Double = 0
-    private var restAt: TimeInterval = 0
-
-    public init(tolerance: Double) {
-        self.tolerance = tolerance
-    }
-
-    /// True when `angle` should be used. `at` is the sample's host
-    /// seconds (CACurrentMediaTime) so the rest detection shares the
-    /// tracker's clock.
-    public mutating func accept(_ angle: Double, at: TimeInterval) -> Bool {
-        guard let anchor, tolerance > 0, at.isFinite else {
-            self.anchor = angle
-            return true
-        }
-        if !streaming {
-            guard abs(angle - anchor) >= tolerance else { return false }
-            // Left the deadband: from here to rest, every edge is real
-            // lid travel — no more re-anchoring to step over.
-            streaming = true
-            restAngle = angle
-            restAt = at
-            return true
-        }
-        if abs(angle - restAngle) < min(tolerance, Self.restWindow) {
-            if at - restAt >= Self.restAfter {
-                // Parked again: re-anchor on the reading it settled at.
-                streaming = false
-                self.anchor = angle
-            }
-        } else {
-            restAngle = angle
-            restAt = at
-        }
-        return true
-    }
-
-    /// Forgets the baseline so the next reading passes.
-    public mutating func reset() {
-        anchor = nil
-        streaming = false
-    }
-}
-
 /// Why Fold is paused right now, or nil when it may run. The strings are
 /// written for the status chip, in Jonathan's voice.
 public enum FoldPause {
@@ -155,7 +66,7 @@ public enum FoldPause {
 }
 
 /// The card's "Try it" (Foldy's one-click demo): a scripted close and
-/// reopen played through the simulate path — the same tracker, chase
+/// reopen played through the simulate path — the same spring, gate ease
 /// and renderer a real lid drives, so the demo is the fold's own
 /// motion, not an animation of it. It folds from the fold's reference:
 /// where the lid rests when the fold starts from there, or the set

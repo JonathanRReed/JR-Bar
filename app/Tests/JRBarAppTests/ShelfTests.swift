@@ -83,6 +83,54 @@ import JRBarCore
         #expect(tray.evictionNotice == nil)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func aToolWithMuchToSayStillEnds() async {
+        // More than a pipe holds (64 KB) on stderr: read only after exit,
+        // the tool blocks on its write and Compress waits forever.
+        let script = "yes x | head -c 300000 >&2; exit 3"
+        do {
+            try await ShelfActions.run("/bin/sh", ["-c", script])
+            Issue.record("a failing tool must throw")
+        } catch ShelfActions.ActionError.failed(let said) {
+            #expect(said.hasPrefix("x\nx"))
+            #expect(said.count <= 8 * 1024, "only the head of it is kept")
+        } catch {
+            Issue.record("unexpected \(error)")
+        }
+    }
+
+    @Test func aDropIsNeverTheThingEvicted() {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        looseAdds(tray, (0..<3).map { "/tmp/old-\($0)/o\($0).txt" })
+        // Fifty files dropped together are one stack, over the shelf's
+        // cap on their own. The old chips go first; then the stack
+        // gives up its oldest members. The shelf never ends empty.
+        let dropped = (0..<50).map { URL(fileURLWithPath: "/tmp/big-drop/b\($0).txt") }
+        tray.add(dropped)
+        #expect(tray.items.count == ShelfTrayModel.maxItems)
+        #expect(tray.items.last?.name == "b49.txt", "the newest dropped file is kept")
+        #expect(!tray.items.contains { $0.name.hasPrefix("o") })
+        #expect(tray.evictionNotice?.contains("dropped off") == true)
+    }
+
+    @Test func filesDroppedOntoTheOldestStackKeepTheStack() {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        // The oldest chip: a 38-file stack. Then two loose files.
+        tray.add((0..<38).map { URL(fileURLWithPath: "/tmp/stack-dir/s\($0).txt") })
+        looseAdds(tray, ["/tmp/other-a/a.txt", "/tmp/other-b/b.txt"])
+        #expect(tray.items.count == ShelfTrayModel.maxItems)
+        let stack = tray.entries.first { $0.items.count > 1 }
+        #expect(stack != nil)
+        // Five more land on that stack; the loose files go, not the stack.
+        tray.add((0..<5).map { URL(fileURLWithPath: "/tmp/stack-dir/n\($0).txt") },
+                 onto: stack)
+        #expect(tray.items.filter { $0.name.hasPrefix("n") }.count == 5, "the new files are on the shelf")
+        #expect(tray.items.count <= ShelfTrayModel.maxItems)
+        #expect(!tray.items.contains { $0.name == "a.txt" })
+    }
+
     @Test func missingFilesMarkNotVanish() {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: "jrbar.shelfTray.paths")
@@ -123,8 +171,10 @@ import JRBarCore
     }
 
     @Test func aWebLinkDropMaterialisesAWebLoc() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-clips-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
         let link = URL(string: "https://example.com/page?q=1")!
-        let loc = try #require(ShelfTrayDrop.webLoc(for: link))
+        let loc = try #require(ShelfTrayDrop.webLoc(for: link, directory: directory))
         defer { try? FileManager.default.removeItem(at: loc) }
         #expect(loc.pathExtension == "webloc")
         #expect(loc.lastPathComponent.contains("example.com"))
@@ -134,13 +184,15 @@ import JRBarCore
         #expect(plist["URL"] as? String == link.absoluteString)
         // Re-dropping the same link lands on the same file — the
         // tray's path dedupe keeps it one entry.
-        #expect(ShelfTrayDrop.webLoc(for: link) == loc)
+        #expect(ShelfTrayDrop.webLoc(for: link, directory: directory) == loc)
     }
 
     @Test func trayURLsPassesFilesThroughAndConvertsLinks() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-clips-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
         let file = URL(fileURLWithPath: "/tmp/real.txt")
         let link = URL(string: "https://example.com/x")!
-        let converted = ShelfTrayDrop.trayURLs(from: [file, link])
+        let converted = ShelfTrayDrop.trayURLs(from: [file, link], directory: directory)
         #expect(converted.count == 2)
         #expect(converted[0] == file)
         #expect(converted[1].pathExtension == "webloc")
@@ -148,7 +200,7 @@ import JRBarCore
         // Non-http schemes never materialise — a javascript: drop
         // adds nothing (T49's rule).
         #expect(ShelfTrayDrop.trayURLs(from: [
-            URL(string: "javascript:alert(1)")!]).isEmpty)
+            URL(string: "javascript:alert(1)")!], directory: directory).isEmpty)
     }
 
     @Test func chipReorderMovesAndPersists() {
@@ -363,8 +415,10 @@ import JRBarCore
     }
 
     @Test func aTextDropMaterialisesATxt() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-clips-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
         let text = "remember the milk\nand the eggs"
-        let loc = try #require(ShelfTrayDrop.textLoc(for: text))
+        let loc = try #require(ShelfTrayDrop.textLoc(for: text, directory: directory))
         defer { try? FileManager.default.removeItem(at: loc) }
         #expect(loc.pathExtension == "txt")
         // The clip is a real file — every tray verb answers it.
@@ -372,11 +426,11 @@ import JRBarCore
         // Re-dropping the same clip lands on the same file — the
         // hash is stable across calls and launches, so the tray's
         // path dedupe keeps it one entry.
-        #expect(ShelfTrayDrop.textLoc(for: text) == loc)
+        #expect(ShelfTrayDrop.textLoc(for: text, directory: directory) == loc)
         #expect(ShelfTrayDrop.stableHash(text)
             == ShelfTrayDrop.stableHash(text))
         // Whitespace-only clips add nothing (T49's rule).
-        #expect(ShelfTrayDrop.textLoc(for: "  \n  ") == nil)
+        #expect(ShelfTrayDrop.textLoc(for: "  \n  ", directory: directory) == nil)
     }
 
     // MARK: - Timers (T51)
@@ -400,25 +454,30 @@ import JRBarCore
 
     @Test func overdueFiresExactlyOnceAcrossReloads() {
         let store = tempStore()
-        // A timer that came due while the app was down — the recovery
-        // sweep fires it once, marks it, and a reload never refires.
-        var overdue = ShelfTimerModel.Entry(id: "t1", label: "tea",
+        // A timer that came due while the app was down: once the app has
+        // wired its delivery, the recovery sweep speaks for it once, and
+        // a reload never speaks again.
+        let overdue = ShelfTimerModel.Entry(id: "t1", label: "tea",
                                             deadline: Date().addingTimeInterval(-10),
                                             fired: false)
         let data = try! JSONEncoder().encode([overdue])
         try! data.write(to: store, options: .atomic)
 
-        var fired = 0
+        var fired: [String] = []
         var model = ShelfTimerModel(storeURL: store)
-        model.onFire = { _ in fired += 1 }
-        // init's sweep ran before onFire was wired — sweep again to
-        // observe the edge: the persisted `fired` flag already fired.
-        model.add(label: "trigger", duration: 60)  // any mutation persists
-        model = ShelfTimerModel(storeURL: store)   // reload
-        model.onFire = { _ in fired += 1 }
-        #expect(fired == 0)  // init fired before onFire; never twice
+        // Constructing the model fires nothing: the app wires `onFire`
+        // right after, and the first wake finds it there.
+        #expect(model.entries.first { $0.id == "t1" }?.fired == false)
+        model.onFire = { fired.append($0.id) }
+        model.sweep()
+        #expect(fired == ["t1"])
         #expect(model.entries.first { $0.id == "t1" }?.fired == true)
-        overdue.fired = true
+
+        model.sweep()
+        model = ShelfTimerModel(storeURL: store)   // reload
+        model.onFire = { fired.append($0.id) }
+        model.sweep()
+        #expect(fired == ["t1"])  // never twice
         try? FileManager.default.removeItem(at: store)
     }
 
@@ -497,7 +556,7 @@ struct SharedCardShelfTests {
     /// One timer store means one fire: the delegate wires `onFire` once
     /// and both surfaces' entries run through it — even with both card
     /// models alive.
-    @Test func aDueTimerDeliversOnceAcrossBothSurfaces() async throws {
+    @Test func aDueTimerDeliversOnceAcrossBothSurfaces() {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("jrbar-shared-timers-\(UUID().uuidString).json")
         let timers = ShelfTimerModel(storeURL: url)
@@ -521,8 +580,7 @@ struct SharedCardShelfTests {
         // (the heartbeat is a main-runloop `Timer`, which a test runner
         // need not pump at all): what is proven is that the entry lands
         // exactly once however many sweeps see it, not when.
-        timers.add(label: "tea", duration: 1)
-        try await Task.sleep(for: .seconds(1.2))
+        timers.add(label: "tea", duration: 1, now: Date().addingTimeInterval(-5))
         timers.sweep()
         presenter.model.timers.sweep()
         store.notch.cardModel.timers.sweep()
@@ -684,6 +742,59 @@ extension ShelfTests {
         #expect(text.uppercased().contains("SHELF"), "read: \(text)")
     }
 
+    @Test func aReminderWriteThatFailedSaysSoUntilOneWorks() {
+        struct Denied: LocalizedError { var errorDescription: String? { "Reminders is not allowing changes." } }
+        struct Silent: Error {}
+        let model = ShelfRemindersModel()
+        #expect(model.writeNotice == nil)
+        model.recordWrite(.failure(Denied()), action: "add the reminder")
+        #expect(model.writeNotice == "Couldn't add the reminder: Reminders is not allowing changes.")
+        model.recordWrite(.failure(Silent()), action: "mark that reminder done")
+        #expect(model.writeNotice?.hasPrefix("Couldn't mark that reminder done") == true)
+        model.recordWrite(.success(()), action: "add the reminder")
+        #expect(model.writeNotice == nil, "the next write that works clears the complaint")
+        model.recordWrite(.failure(Denied()), action: "set the reminder")
+        model.stop()
+        #expect(model.writeNotice == nil, "unpinning the glance forgets it")
+        #expect(ShelfRemindersModel.failureWords("add the reminder", NSError(domain: "x", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "  "])) == "Couldn't add the reminder.")
+    }
+
+    @Test func copyTextNamesAFileItCouldNotRead() throws {
+        let folder = try scratchFolder()
+        let locked = folder.appendingPathComponent("locked.txt")
+        let fine = folder.appendingPathComponent("fine.txt")
+        let blank = folder.appendingPathComponent("blank.txt")
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: locked.path)
+            try? FileManager.default.removeItem(at: folder)
+        }
+        try "words".write(to: locked, atomically: true, encoding: .utf8)
+        try "hello".write(to: fine, atomically: true, encoding: .utf8)
+        try "   ".write(to: blank, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+
+        let mixed = ShelfActions.readTexts([fine, locked])
+        #expect(mixed.texts == ["hello"])
+        #expect(mixed.unreadable == ["locked.txt"])
+        #expect(ShelfActions.copyTextNotice(mixed, fileCount: 2, firstName: "fine.txt")
+                    .hasPrefix("Copied the text. Couldn't read locked.txt"))
+
+        // Only unreadable files: say so, never "no text found".
+        let onlyLocked = ShelfActions.readTexts([locked])
+        let notice = ShelfActions.copyTextNotice(onlyLocked, fileCount: 1, firstName: "locked.txt")
+        #expect(notice.hasPrefix("Couldn't read locked.txt"))
+        #expect(!notice.contains("No text found"))
+
+        // A readable file with no words is honestly "no text".
+        let empty = ShelfActions.readTexts([blank])
+        #expect(empty.unreadable.isEmpty)
+        #expect(ShelfActions.copyTextNotice(empty, fileCount: 1, firstName: "blank.txt")
+                    == "No text found in blank.txt")
+        #expect(ShelfActions.copyTextNotice(ShelfActions.TextRead(texts: ["a", "b"]), fileCount: 2, firstName: nil)
+                    == "Copied the text of 2 files")
+    }
+
     @Test func convertWritesBesideTheOriginalUnderAFreeName() throws {
         let folder = try scratchFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -777,6 +888,62 @@ extension ShelfTests {
         #expect(tray.items.allSatisfy { !$0.missing })
         #expect(tray.actionNotice?.hasPrefix("Moved 1, then couldn't move the next") == true,
                 "\(tray.actionNotice ?? "")")
+    }
+
+    @Test func movingAFolderCarriesShelvedDescendantsAndLeavesItsNeighbor() throws {
+        let tray = freshTray()
+        defer { UserDefaults.standard.removeObject(forKey: "jrbar.shelfTray.paths") }
+        let scratch = try scratchFolder()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let project = scratch.appendingPathComponent("Project", isDirectory: true)
+        let neighbor = scratch.appendingPathComponent("Project2", isDirectory: true)
+        let destination = scratch.appendingPathComponent("destination", isDirectory: true)
+        for folder in [project, neighbor, destination] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        let child = project.appendingPathComponent("note.txt")
+        let other = neighbor.appendingPathComponent("note.txt")
+        for file in [child, other] {
+            try "synthetic".write(to: file, atomically: true, encoding: .utf8)
+        }
+        // Separate drops keep the child selectable as its own chip.
+        tray.add([project])
+        tray.add([child])
+        tray.add([other])
+        let childEntry = try #require(tray.entries.first { $0.items.contains { $0.path == child.path } })
+        tray.toggleSelection(childEntry)
+        tray.beginKeyboardSelection()
+        let result = ShelfActions.transfer([project], to: destination, move: true)
+        tray.finishTransfer(result, to: destination, move: true)
+        tray.revalidate()
+        let movedChild = destination.appendingPathComponent("Project/note.txt")
+        #expect(result.failure == nil)
+        #expect(tray.items.contains { $0.path == movedChild.path && !$0.missing })
+        #expect(tray.items.contains { $0.path == other.path && !$0.missing })
+        #expect(!tray.items.contains { $0.path == child.path })
+        #expect(tray.selectedIDs.contains(movedChild.path))
+        #expect(tray.keyboardSelectionID == movedChild.path)
+    }
+
+    @Test func movingSelectedFolderAndChildMovesOnlyTheFolderInEitherOrder() throws {
+        for childFirst in [false, true] {
+            let scratch = try scratchFolder()
+            defer { try? FileManager.default.removeItem(at: scratch) }
+            let project = scratch.appendingPathComponent("Project", isDirectory: true)
+            let destination = scratch.appendingPathComponent("destination", isDirectory: true)
+            for folder in [project, destination] {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            }
+            let child = project.appendingPathComponent("note.txt")
+            try "synthetic".write(to: child, atomically: true, encoding: .utf8)
+            let urls = childFirst ? [child, project] : [project, child]
+            let result = ShelfActions.transfer(urls, to: destination, move: true)
+            #expect(result.failure == nil)
+            #expect(result.landed.count == 1)
+            #expect(result.landed.first?.from == project)
+            #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("Project/note.txt").path))
+            #expect(!FileManager.default.fileExists(atPath: destination.appendingPathComponent("note.txt").path))
+        }
     }
 
     @Test func theShelfSwitchedOffTakesNoFiles() {

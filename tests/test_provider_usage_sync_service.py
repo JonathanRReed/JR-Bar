@@ -211,3 +211,100 @@ def test_close_prevents_new_work():
     )
     assert result.closed is True
     assert runtime.calls == 0
+
+
+def test_close_during_callback_delivery_skips_remaining_callbacks():
+    started = threading.Event()
+    gate = threading.Event()
+
+    class BlockingRuntime:
+        def refresh(self, _state):
+            started.set()
+            assert gate.wait(2)
+            return ProviderSyncRefresh(True, None, (), None, (), 1000)
+
+    service = ProviderSyncService(BlockingRuntime())
+    callbacks = []
+    state = ProviderUsageState((), None, None, False)
+
+    def close_callback(result):
+        callbacks.append(result)
+        assert service.close(timeout_seconds=0.0) is False
+
+    try:
+        service.request(state, callback=close_callback)
+        assert started.wait(1)
+        service.request(state, callback=callbacks.append)
+        gate.set()
+        assert service.wait_idle(timeout_seconds=1.0)
+        assert len(callbacks) == 1
+        assert service.snapshot().closed is True
+    finally:
+        gate.set()
+        service.close(timeout_seconds=1.0)
+
+
+def test_worker_start_failure_reports_failure_and_next_request_recovers(monkeypatch) -> None:
+    runtime = Runtime()
+    service = ProviderSyncService(runtime)
+    state = ProviderUsageState((), None, None, False)
+    previous = service.refresh_now(state).refresh
+    callbacks = []
+
+    def unavailable_thread(_thread):
+        raise RuntimeError("synthetic thread resource failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(threading.Thread, "start", unavailable_thread)
+        result = service.request(state, callback=callbacks.append)
+    assert not result.refreshing
+    assert result.reason == "sync_refresh_failed"
+    assert result.refresh == previous
+    assert callbacks == [result]
+    assert service.wait_idle(timeout_seconds=0)
+
+    try:
+        service.request(state, callback=callbacks.append)
+        assert service.wait_idle(timeout_seconds=1)
+        assert runtime.calls == 2
+        assert len(callbacks) == 2
+        assert callbacks[-1].reason is None
+    finally:
+        assert service.close(timeout_seconds=1)
+
+
+def test_worker_start_failure_delivers_callback_without_lock_and_contains_errors(monkeypatch) -> None:
+    service = ProviderSyncService(Runtime())
+    state = ProviderUsageState((), None, None, False)
+    observed = threading.Event()
+    original_start = threading.Thread.start
+    readers = []
+    callback_lock_free = []
+
+    def fail_sync_worker(thread):
+        if thread.name == "JRBarProviderSync":
+            raise RuntimeError("synthetic thread resource failure")
+        original_start(thread)
+
+    def callback(_result):
+        def read_snapshot():
+            service.snapshot()
+            observed.set()
+
+        reader = threading.Thread(target=read_snapshot)
+        readers.append(reader)
+        reader.start()
+        callback_lock_free.append(observed.wait(1))
+        raise RuntimeError("synthetic callback failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(threading.Thread, "start", fail_sync_worker)
+        result = service.request(state, callback=callback)
+    for reader in readers:
+        reader.join(1)
+        assert not reader.is_alive()
+    assert observed.is_set()
+    assert callback_lock_free == [True]
+    assert result.reason == "sync_refresh_failed"
+    assert service.wait_idle(timeout_seconds=0)
+    assert service.close(timeout_seconds=1)

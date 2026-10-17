@@ -1,4 +1,4 @@
-import CoreGraphics
+import AppKit
 import Foundation
 import Testing
 @testable import JRBarApp
@@ -55,6 +55,29 @@ struct ScreenBarFullScreenTests {
         let fullOnExternal = CGRect(x: -400, y: -1440, width: 2560, height: 1440)
         #expect(ScreenBarController.coversScreen(windowBounds: [fullOnExternal], screenFrame: external, primaryHeight: 982))
         #expect(!ScreenBarController.coversScreen(windowBounds: [fullOnExternal], screenFrame: Self.builtIn, primaryHeight: 982))
+    }
+
+    @Test func changingDisplaysRechecksTheVideoGuard() {
+        var videoFillsSelectedScreen = false
+        let controller = ScreenBarController(
+            reduceMotionOverride: true,
+            videoGuardOverride: { videoFillsSelectedScreen })
+        controller.notchWingsEnabled = false
+        var liveEdges: [Bool] = []
+        controller.onLiveChange = { liveEdges.append($0) }
+        controller.show()
+        defer { controller.hide() }
+        #expect(!controller.steppedAsideForVideo)
+
+        videoFillsSelectedScreen = true
+        NotificationCenter.default.post(name: ScreenBarGeometry.preferredScreenDidChange, object: nil)
+        #expect(controller.steppedAsideForVideo)
+        #expect(liveEdges == [true, false])
+
+        videoFillsSelectedScreen = false
+        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        #expect(!controller.steppedAsideForVideo)
+        #expect(liveEdges == [true, false, true])
     }
 
     @Test func theRightNowLineSaysWhenItSteppedAside() {

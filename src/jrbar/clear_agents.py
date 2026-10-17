@@ -355,11 +355,6 @@ class ClearAgentsCommitPlan:
         ):
             raise ValueError("invalid Clear Agents commit plan")
 
-    @property
-    def cleared_count(self) -> int:
-        return len(self.batch_receipt.newly_added_keys)
-
-
 @dataclass(frozen=True, slots=True)
 class ClearAgentsUndoPlan:
     previous_state: ClearAgentsState
@@ -376,11 +371,6 @@ class ClearAgentsUndoPlan:
             and self.next_state.generation == self.previous_state.generation + 1
         ):
             raise ValueError("invalid Clear Agents Undo plan")
-
-    @property
-    def restored_count(self) -> int:
-        return len(self.batch_receipt.newly_added_keys)
-
 
 def _valid_preview_label(value: object) -> bool:
     return (

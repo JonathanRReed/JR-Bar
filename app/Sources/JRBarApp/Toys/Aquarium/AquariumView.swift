@@ -35,6 +35,8 @@ struct AquariumView: View {
         /// The card's settings for the shot, the swim settings included;
         /// nil builds them from `showLabels` and `density` above.
         var settings: AquariumSettings?
+        /// Fixed animation phase for focused render proofs.
+        var visualTime: TimeInterval?
     }
 
     let toy: AquariumToy?
@@ -89,7 +91,7 @@ struct AquariumView: View {
         case .appearance: return AquariumNightEase.appearanceNight(at: t, still: reduceMotion)
         case .cycle, .realTime, .sun: break
         }
-        if reduceMotion { return 0.4 }
+        if systemReduceMotion { return 0.4 }
         let date = Date(timeIntervalSince1970: t)
         switch mode {
         case .cycle:
@@ -106,7 +108,7 @@ struct AquariumView: View {
     /// by day in the bright themes — so the 30 fps pass converts no
     /// colours then — deepening with the night and in the dark themes.
     func decorTone() -> TankPaint.Tone {
-        let night = nightFactor(t: Date().timeIntervalSince1970)
+        let night = nightFactor(t: visualTime(at: Date()))
         let wash = max(isDarkTheme ? 0.40 : 0, night * 0.34)
         return TankPaint.Tone(wash: wash < 0.02 ? 0 : wash, toward: floorNS)
     }
@@ -134,7 +136,14 @@ struct AquariumView: View {
     /// stack of windows draws nothing.
     @ViewState private var ambientVisible = true
 
-    @Environment(\.accessibilityReduceMotion) var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    var isStill: Bool { tankSettings.motion == .still }
+    var reduceMotion: Bool { systemReduceMotion || isStill }
+
+    func visualTime(at now: Date) -> TimeInterval {
+        if let pinned = fixture?.visualTime { return pinned }
+        return motion.visualClock.time(at: now.timeIntervalSince1970, still: isStill)
+    }
     /// W14's selection: the tapped fish's id, cleared when it leaves
     /// the tank. Drives the inspector strip — the tap already hit-tests
     /// via `hoverProbe.boxes`, selection just keeps the last hit.
@@ -153,6 +162,7 @@ struct AquariumView: View {
         // Read the observable surface in `body` so the card's tracked
         // reads stay honest even while the timeline is paused.
         let fish = toy?.fish ?? fixture?.fish ?? []
+        let inspected = fish.first { $0.id == selectedID }
         // One read of the card: the chip under each fish, and the three
         // amounts — plankton, bubbles, and how much seeded dressing (the
         // stations use the same share, so a fish never works at a rock
@@ -171,7 +181,7 @@ struct AquariumView: View {
         // critical one stills the passes that only decorate.
         let power = PowerConditions.shared.policy
         let rates = AquariumFrameRates(power: power, reduceMotion: reduceMotion, stillTick: stillTick)
-        let decorationPaused = AquariumFrameRates.decorationPaused(power: power, occluded: paused)
+        let decorationPaused = isStill || AquariumFrameRates.decorationPaused(power: power, occluded: paused)
         let livePaused = AquariumFrameRates.livePaused(power: power, occluded: paused)
         ZStack {
             // The far tank: water, the back wall, the far bank and the
@@ -182,7 +192,7 @@ struct AquariumView: View {
             // live frame costs one texture composite, not the paths.
             TimelineView(.animation(minimumInterval: rates.still, paused: decorationPaused)) { context in
                 Canvas { canvas, size in
-                    let t = context.date.timeIntervalSince1970
+                    let t = visualTime(at: context.date)
                     drawWater(canvas: &canvas, size: size, t: t)
                     drawBackdrop(canvas: &canvas, size: size)
                     drawFarSand(canvas: &canvas, size: size)
@@ -206,7 +216,7 @@ struct AquariumView: View {
                 let empty = fish.isEmpty || fish.allSatisfy { $0.isRetired(at: context.date) }
                 Canvas { canvas, size in
                     let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
-                    drawPlants(canvas: &canvas, size: size, t: context.date.timeIntervalSince1970,
+                    drawPlants(canvas: &canvas, size: size, t: visualTime(at: context.date),
                                density: density, front: false, keepClear: caption?.rect)
                 }
             }
@@ -215,7 +225,7 @@ struct AquariumView: View {
             // caption's decor culling in step with retiring fish).
             TimelineView(.animation(minimumInterval: rates.still, paused: decorationPaused)) { context in
                 Canvas { canvas, size in
-                    let t = context.date.timeIntervalSince1970
+                    let t = visualTime(at: context.date)
                     drawSand(canvas: &canvas, size: size, t: t)
                     let empty = fish.isEmpty
                         || fish.allSatisfy { $0.isRetired(at: context.date) }
@@ -237,7 +247,7 @@ struct AquariumView: View {
             // points a second, so twelve frames a second is smooth.
             TimelineView(.animation(minimumInterval: rates.light,
                                     paused: decorationPaused)) { context in
-                let t = context.date.timeIntervalSince1970
+                let t = visualTime(at: context.date)
                 Canvas { canvas, size in
                     drawGodRays(canvas: &canvas, size: size, t: t)
                     drawSandCaustics(canvas: &canvas, size: size, t: t)
@@ -254,7 +264,7 @@ struct AquariumView: View {
             // paying a display-rate redraw for a scene that doesn't move.
             TimelineView(.animation(minimumInterval: rates.live,
                                     paused: livePaused)) { context in
-                let t = context.date.timeIntervalSince1970
+                let t = visualTime(at: context.date)
                 // The card's measured frame rate.
                 let _ = toy?.meter.tick()
                 // Memoized on the fish array: the timeline ticks 30×/s
@@ -300,12 +310,9 @@ struct AquariumView: View {
                     // A batch of finishes pops the chest: a fast
                     // plume off its lid while the milestone window
                     // is still open.
-                    let leavers = order.ordered.filter {
-                        !$0.isFry && $0.state == .leaving
-                            && context.date.timeIntervalSince($0.stateSince)
-                                < AquariumModel.milestoneWindow
-                    }
-                    if leavers.count >= AquariumModel.milestoneCount,
+                    let leavers = AquariumModel.milestoneLeavers(
+                        fish: order.ordered, at: context.date)
+                    if !isStill, leavers.count >= AquariumModel.milestoneCount,
                        let first = leavers.map(\.stateSince).min() {
                         drawChestBurst(canvas: &canvas, size: size,
                                        age: context.date.timeIntervalSince(first))
@@ -322,7 +329,7 @@ struct AquariumView: View {
                     // who comes to eat them are planned before the
                     // fish draw, because an eater's dart bends its
                     // layout.
-                    applyPursuits(meals, to: &layouts, now: context.date)
+                    if !isStill { applyPursuits(meals, to: &layouts, now: context.date) }
                     // The nameplate's target, off the previous
                     // frame's boxes: a fish wearing the tag skips
                     // its always-on chip so the two never stack.
@@ -349,8 +356,10 @@ struct AquariumView: View {
                     }
                     drawTokenPasses(canvas: &canvas, roster: order.ordered,
                                     layouts: layouts, t: t, now: context.date)
-                    drawMeals(canvas: &canvas, meals: meals, now: context.date)
-                    drawFeed(canvas: &canvas, size: size, now: context.date)
+                    if !isStill {
+                        drawMeals(canvas: &canvas, meals: meals, now: context.date)
+                        drawFeed(canvas: &canvas, size: size, now: context.date)
+                    }
                     // Only the decor that sways or glows draws over
                     // the lane; the still pieces baked in behind it.
                     // The buried treasure waits on the sand for its
@@ -370,13 +379,17 @@ struct AquariumView: View {
                     drawOyster(canvas: &canvas, size: size, t: t)
                     drawDrops(canvas: &canvas, size: size, t: t,
                               layouts: layouts)
-                    drawGoldBursts(canvas: &canvas, size: size, now: context.date)
-                    drawTrickRings(canvas: &canvas, size: size,
-                                   layouts: layouts, now: context.date)
+                    if !isStill {
+                        drawGoldBursts(canvas: &canvas, size: size, now: context.date)
+                        drawTrickRings(canvas: &canvas, size: size,
+                                       layouts: layouts, now: context.date)
+                    }
                     // The juice: tap/eat/collect rings and pearls
                     // arcing home to the counter.
-                    drawPuffs(canvas: &canvas, size: size, now: context.date)
-                    drawFlights(canvas: &canvas, size: size, now: context.date)
+                    if !isStill {
+                        drawPuffs(canvas: &canvas, size: size, now: context.date)
+                        drawFlights(canvas: &canvas, size: size, now: context.date)
+                    }
                     if owns(.snail) {
                         drawSnail(canvas: &canvas, size: size, t: t)
                     }
@@ -523,11 +536,6 @@ struct AquariumView: View {
                         inspectorStrip(selected)
                     }
                     .transition(.opacity)
-                    .task(id: selected.isResident ? selected.id : nil) {
-                        guard selected.isResident, let toy else { return }
-                        let log = await toy.residentLog(for: selected.id)
-                        residentLog = (selected.id, log)
-                    }
                 }
                 if toy != nil, !ambient {
                     gameChrome(fish: fish)
@@ -535,6 +543,24 @@ struct AquariumView: View {
             }
         }
         .coordinateSpace(.named(Self.tankSpace))
+        .task(id: inspected) {
+            residentLog = nil
+            guard let inspected, !inspected.isRetired(at: Date()) else {
+                selectedID = nil
+                return
+            }
+            if inspected.isResident, let toy {
+                let log = await toy.residentLog(for: inspected.id)
+                guard !Task.isCancelled, selectedID == inspected.id else { return }
+                residentLog = (inspected.id, log)
+            }
+            if inspected.state == .leaving {
+                let remaining = AquariumModel.leaveDuration - Date().timeIntervalSince(inspected.stateSince)
+                if remaining > 0 { try? await Task.sleep(for: .seconds(remaining)) }
+                guard !Task.isCancelled, selectedID == inspected.id else { return }
+                selectedID = nil
+            }
+        }
         // The card's Look › Open the shop… lands here: the window's tank
         // shows its shop as it comes up.
         .onChange(of: toy?.store?.wantsAquariumShop ?? false, initial: true) { _, wants in
@@ -602,6 +628,21 @@ struct AquariumView: View {
     /// frame and are consumed inside the Canvas, so tracking them as
     /// SwiftUI state would just buy invalidations.
     final class TankMotion {
+        let visualClock = AquariumMotionClock()
+        private var rosterIDs: Set<String>?
+
+        func retainFish(_ live: Set<String>) {
+            guard rosterIDs != live else { return }
+            rosterIDs = live
+            bodies = bodies.filter { live.contains($0.key) }
+            anchors = anchors.filter { live.contains($0.key) }
+            stages = stages.filter { live.contains($0.key) }
+            startles = startles.filter { live.contains($0.key) }
+            stationed = stationed.filter { live.contains($0.key) }
+            smileUntil = smileUntil.filter { live.contains($0.key) }
+            bounceUntil = bounceUntil.filter { live.contains($0.key) }
+            if let curiousID, !live.contains(curiousID) { self.curiousID = nil }
+        }
         /// Unit-space swim bodies, one per free-swimming adult fish.
         var bodies: [String: SwimBody] = [:]
         /// The unit position a fish was at when its state last
@@ -714,6 +755,25 @@ struct AquariumView: View {
     func feed(at point: CGPoint) {
         let size = motion.size
         guard size.width > 0, size.height > 0 else { return }
+        if isStill {
+            let now = Date()
+            let roster = toy?.fish ?? fixture?.fish ?? []
+            let eaters = roster.filter {
+                !$0.isFry && !$0.isRetired(at: now)
+                    && ($0.state == .swimming || $0.state == .idling)
+            }
+            var distances: [(fish: Fish, distance: Double)] = []
+            for fish in eaters {
+                let body = motion.bodies[fish.id] ?? spawnBody(for: fish, in: size)
+                distances.append((fish, hypot(body.x * size.width - point.x,
+                                              body.y * size.height - point.y)))
+            }
+            let nearest = distances.min { $0.distance < $1.distance }?.fish
+            if let nearest {
+                for _ in 0..<3 { toy?.pelletEaten(by: nearest.id) }
+            }
+            return
+        }
         let m = motion
         for _ in 0..<3 {
             m.pelletSeq += 1
@@ -758,17 +818,11 @@ struct AquariumView: View {
         // Reduce Motion ticks once a second: let the sim absorb real
         // elapsed time so sinking food and darting fish still arrive —
         // the motion reads as a stepped drift, not a frozen tank.
-        let dt = min(reduceMotion ? 1.2 : 0.12, max(0, t - m.lastT))
+        let dt = isStill ? 0 : min(reduceMotion ? 1.2 : 0.12, max(0, t - m.lastT))
         m.lastT = t
 
         let liveIDs = Set(roster.map(\.id))
-        if m.bodies.count > roster.count {
-            m.bodies = m.bodies.filter { liveIDs.contains($0.key) }
-            m.anchors = m.anchors.filter { liveIDs.contains($0.key) }
-            m.stages = m.stages.filter { liveIDs.contains($0.key) }
-            m.startles = m.startles.filter { liveIDs.contains($0.key) }
-            m.stationed = m.stationed.filter { liveIDs.contains($0.key) }
-        }
+        m.retainFish(liveIDs)
         m.swim.prune(keeping: liveIDs)
         // Transient FX expiry — puffs and flights are draw-only state.
         m.startles = m.startles.filter { now < $0.value.until }
@@ -978,7 +1032,7 @@ struct AquariumView: View {
             guard let claim = m.claims[pellet.id],
                   let b = m.bodies[claim] else { continue }
             let dx = b.x - pellet.x, dy = b.y - pellet.y
-            if dx * dx + dy * dy < 0.0025 {
+            if isStill || dx * dx + dy * dy < 0.0025 {
                 eaten.append(pellet.id)
                 m.smileUntil[claim] = now.addingTimeInterval(3.5)
                 m.bounceUntil[claim] = now.addingTimeInterval(0.7)

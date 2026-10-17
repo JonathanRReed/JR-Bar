@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Mapping
 from contextlib import redirect_stderr
 from dataclasses import replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
@@ -176,7 +177,6 @@ from jrbar.sd_eject_guard_launch import (
     SdEjectGuardPaths,
     build_sd_eject_guard_plist,
     install_sd_eject_guard,
-    sd_eject_guard_installed,
     stop_sd_eject_guard,
     uninstall_sd_eject_guard,
 )
@@ -208,12 +208,91 @@ from jrbar.settings import (
 )
 from jrbar.status_bar_launch import remove_retired_launch_agents
 
+# Production hook lines are routed and normalised before they are stored, so
+# nothing in src redacts a raw payload any more. These fixtures still build the
+# redacted shape (secret-bearing keys masked, the lifecycle fields kept) that
+# the classification tests below feed the collector.
+_REDACTION_MARKER = "[REDACTED]"
+_SENSITIVE_EXACT_KEYS = {
+    "args",
+    "arguments",
+    "body",
+    "command",
+    "content",
+    "input",
+    "output",
+    "payload",
+    "prompt",
+    "raw",
+    "request",
+    "response",
+    "text",
+    "toolargs",
+    "toolarguments",
+    "toolinput",
+    "tooloutput",
+    "toolresponse",
+    "toolresult",
+    "tooluseresult",
+    "lastassistantmessage",
+    "transcriptpath",
+}
+_SENSITIVE_KEY_FRAGMENTS = (
+    "authorization",
+    "apikey",
+    "cookie",
+    "credential",
+    "password",
+    "privatekey",
+    "secret",
+    "token",
+    "webhook",
+)
+
+
+def _normalized_key(key: object) -> str:
+    return "".join(character for character in str(key).casefold() if character.isalnum())
+
+
+def _sensitive_key(key: object) -> bool:
+    normalized = _normalized_key(key)
+    return normalized in _SENSITIVE_EXACT_KEYS or any(
+        fragment in normalized for fragment in _SENSITIVE_KEY_FRAGMENTS
+    ) or normalized.endswith("body")
+
+
+def _event_name(mapping: Mapping) -> str:
+    for key, value in mapping.items():
+        if _normalized_key(key) in {"eventname", "hookeventname"}:
+            return _normalized_key(value)
+    return ""
+
+
+def redact_event_payload(payload: object) -> object:
+    """Return a recursively redacted copy of one untrusted event payload."""
+    if isinstance(payload, Mapping):
+        notification = _event_name(payload) == "notification"
+        return {
+            key: (
+                _REDACTION_MARKER
+                if _sensitive_key(key)
+                or (_normalized_key(key) == "message" and not notification)
+                else redact_event_payload(value)
+            )
+            for key, value in payload.items()
+        }
+    if isinstance(payload, list):
+        return [redact_event_payload(value) for value in payload]
+    if isinstance(payload, tuple):
+        return tuple(redact_event_payload(value) for value in payload)
+    return payload
+
 
 def write_hook_line(log_path, line):
     """Local fixture writer (deleted from hook.py 2026-08-26: production
     goes through routed/normalized records; only fixtures write raw lines)."""
     from jrbar import audit
-    from jrbar.private_io import append_private_text, redact_event_payload
+    from jrbar.private_io import append_private_text
 
     log_path = log_path.expanduser()
     safe_line = redact_event_payload(line)
@@ -1372,7 +1451,7 @@ for (const event of [
     def test_wraps_menu_bar_settings(self) -> None:
         """The wrap flag persists and defaults false in old settings files."""
         # --- scenario: settings_persist_wraps_menu_bar_flag
-        settings = AgentMonitorSettings().with_virtual_status_device_wraps_menu_bar(True)
+        settings = dataclass_replace(AgentMonitorSettings(), virtual_status_device_wraps_menu_bar=True)
         self.assertTrue(settings.virtual_status_device_wraps_menu_bar)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
@@ -3561,7 +3640,7 @@ for (const event of [
                 1.6,
             )
 
-            completed = settings.with_setup_screen_completed(True)
+            completed = dataclass_replace(settings, setup_screen_completed=True)
             save_settings(completed, settings_path)
             loaded_completed = load_settings(settings_path)
             self.assertTrue(loaded_completed.setup_screen_completed)
@@ -3699,53 +3778,6 @@ for (const event of [
             self.assertFalse(plist["KeepAlive"])
             self.assertEqual(plist["StandardOutPath"], str(paths.stdout_path))
             self.assertEqual(plist["StandardErrorPath"], str(paths.stderr_path))
-
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            user_paths = SdEjectGuardPaths(
-                scope="user",
-                plist_path=base / "user" / "com.jonathanreed.jrbar.sdejectguard.plist",
-                binary_path=base / "user" / "sd_eject_guard",
-                stdout_path=base / "user" / "out.log",
-                stderr_path=base / "user" / "err.log",
-            )
-            system_paths = SdEjectGuardPaths(
-                scope="system",
-                plist_path=base / "system" / "com.jonathanreed.jrbar.sdejectguard.plist",
-                binary_path=base / "system" / "sd_eject_guard",
-                stdout_path=base / "system" / "out.log",
-                stderr_path=base / "system" / "err.log",
-            )
-
-            self.assertFalse(
-                sd_eject_guard_installed(
-                    user_paths=user_paths,
-                    system_paths=system_paths,
-                )
-            )
-            user_paths.plist_path.parent.mkdir(parents=True)
-            user_paths.plist_path.write_bytes(b"plist")
-
-            self.assertTrue(
-                sd_eject_guard_installed(
-                    user_paths=user_paths,
-                    system_paths=system_paths,
-                )
-            )
-            self.assertTrue(
-                sd_eject_guard_installed(
-                    "user",
-                    user_paths=user_paths,
-                    system_paths=system_paths,
-                )
-            )
-            self.assertFalse(
-                sd_eject_guard_installed(
-                    "system",
-                    user_paths=user_paths,
-                    system_paths=system_paths,
-                )
-            )
 
         # --- scenario: sd_eject_guard_auto_falls_back_to_user_scope
         with tempfile.TemporaryDirectory() as tmp:
@@ -6225,43 +6257,6 @@ class RoundRobinAndPaletteTests(unittest.TestCase):
         ]
         self.assertEqual(preview, expected)
 
-    def test_presets_own_feel_detect_cleanly_and_never_touch_layout(self) -> None:
-        base = ColorSettings.defaults().with_agent_color("claude", "#123456")
-        for preset in colors_module.PRESET_CHOICES:
-            applied = colors_module.apply_preset(base, preset)
-            # Detection is exact: applying a preset means matching it...
-            self.assertEqual(colors_module.matching_preset(applied), preset)
-            # ...agent identity colors are never touched by a preset...
-            self.assertEqual(applied.agent_color("claude"), "#123456")
-            # ...and any manual tweak honestly reads as Custom again.
-            tweaked = applied.with_cycle_speed(applied.effective_speed_seconds(applied.blend_mode) + 0.3)
-            self.assertEqual(colors_module.matching_preset(tweaked), colors_module.PRESET_CUSTOM)
-
-        """A preset owns FEEL only.
-
-        Presets used to set the blend mode as part of their package, so
-        clicking one silently destroyed the layout the user had
-        deliberately chosen -- "Everything" forced Spotlight, and their
-        explicit mode kept reverting with no warning and no undo.
-        """
-        base = ColorSettings.defaults().with_blend_mode(colors_module.BLEND_MODE_SPATIAL)
-        applied = [colors_module.apply_preset(base, p) for p in colors_module.PRESET_CHOICES]
-        # Layout survives every preset, untouched.
-        for result in applied:
-            self.assertEqual(result.blend_mode, colors_module.BLEND_MODE_SPATIAL)
-        # ...and the presets still genuinely differ from one another.
-        feels = [colors_module._feel_projection(result) for result in applied]
-        for index, feel in enumerate(feels):
-            self.assertNotIn(feel, feels[index + 1:])
-
-        # The chip reports FEEL, so picking a mode or recoloring an
-        # agent must not falsely read as Custom.
-        calm = colors_module.apply_preset(ColorSettings.defaults(), colors_module.PRESET_CALM)
-        self.assertEqual(colors_module.matching_preset(calm), colors_module.PRESET_CALM)
-        relaid = calm.with_blend_mode(colors_module.BLEND_MODE_RELAY)
-        self.assertEqual(colors_module.matching_preset(relaid), colors_module.PRESET_CALM)
-        recolored = relaid.with_agent_color("claude", "#123456")
-        self.assertEqual(colors_module.matching_preset(recolored), colors_module.PRESET_CALM)
 
     def test_attention_arrival_crests_once_then_holds_static_anchor(self) -> None:
         settings = ColorSettings.defaults()
@@ -7148,20 +7143,20 @@ class FocusSyncTests(unittest.TestCase):
 
         self.assertEqual(str(ASSERTIONS_PATH), str(Path.home() / "Library/DoNotDisturb/DB/Assertions.json"))
 
-        # Unreadable or unparseable data raises the typed error; an empty
-        # file just means "no assertion data yet".
-        with patch.object(focus_sync.Path, "read_text", side_effect=PermissionError("no FDA")):
-            with self.assertRaises(focus_sync.FocusSyncUnavailableError):
-                focus_sync.is_focus_active()
-        with patch.object(focus_sync.Path, "read_text", return_value="not json"):
-            with self.assertRaises(focus_sync.FocusSyncUnavailableError):
-                focus_sync.is_focus_active()
-        with patch.object(focus_sync.Path, "read_text", return_value=""):
-            self.assertFalse(focus_sync.is_focus_active())
-
-        payload = json.dumps({"data": [{"storeAssertionRecords": [{"assertionDetails": {"id": "abc"}}]}]})
-        with patch.object(focus_sync.Path, "read_text", return_value=payload):
-            self.assertTrue(focus_sync.is_focus_active())
+        with tempfile.TemporaryDirectory(prefix="jrbar-focus-") as root:
+            assertions = Path(root) / "assertions.json"
+            with patch.object(focus_sync, "ASSERTIONS_PATH", assertions):
+                with patch.object(focus_sync.Path, "open", side_effect=PermissionError("no FDA")):
+                    with self.assertRaises(focus_sync.FocusSyncUnavailableError):
+                        focus_sync.is_focus_active()
+                assertions.write_bytes(b"not json")
+                with self.assertRaises(focus_sync.FocusSyncUnavailableError):
+                    focus_sync.is_focus_active()
+                assertions.write_bytes(b"")
+                self.assertFalse(focus_sync.is_focus_active())
+                payload = {"data": [{"storeAssertionRecords": [{"assertionDetails": {"id": "synthetic"}}]}]}
+                assertions.write_bytes(json.dumps(payload).encode("utf-8"))
+                self.assertTrue(focus_sync.is_focus_active())
 
 
 def isolate_controller(case, *, build_controller=True):
@@ -7329,7 +7324,7 @@ class LowPowerModeTests(unittest.TestCase):
         # Plugged in means charging -- the reminder's job is done.
         self.assertFalse(controller.low_power_active(self._snapshot(4, plugged=True)))
         self.assertFalse(controller.low_power_active(None))
-        controller.settings = controller.settings.with_low_battery_alert_enabled(False)
+        controller.settings = dataclass_replace(controller.settings, low_battery_alert_enabled=False)
         self.assertFalse(controller.low_power_active(self._snapshot(2)))
 
     def test_low_power_outranks_every_display_kind(self) -> None:
@@ -7369,7 +7364,9 @@ class LowPowerModeTests(unittest.TestCase):
         self.assertLessEqual(len(program.encode()), 512)
 
     def test_low_battery_settings_round_trip(self) -> None:
-        settings = AgentMonitorSettings().with_low_battery_alert_enabled(False).with_low_battery_threshold_percent(12.0)
+        settings = dataclass_replace(
+            AgentMonitorSettings(), low_battery_alert_enabled=False
+        ).with_low_battery_threshold_percent(12.0)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             save_settings(settings, path)
@@ -7889,11 +7886,9 @@ class IdleTimeoutDimmingTests(unittest.TestCase):
         self.controller.idle_since_monotonic = time.monotonic() - (6 * 60)  # 6 minutes idle
         self.assertEqual(self.controller.idle_dim_scale_factor(), 0.25)
 
-        settings = (
-            self.controller.settings.with_idle_dim_enabled(False)
-            .with_idle_dim_after_minutes(1.0)
-            .with_idle_dim_fraction(0.1)
-        )
+        settings = dataclass_replace(
+            self.controller.settings, idle_dim_enabled=False
+        ).with_idle_dim_after_minutes(1.0).with_idle_dim_fraction(0.1)
         self.controller.settings = settings
         self.controller.idle_since_monotonic = time.monotonic() - 3600
         self.assertEqual(self.controller.idle_dim_scale_factor(), 1.0)
@@ -7919,18 +7914,17 @@ class IdleTimeoutDimmingTests(unittest.TestCase):
             61,
         )
 
-        self.controller.settings = self.controller.settings.with_sleep_dim_enabled(False)
+        self.controller.settings = dataclass_replace(self.controller.settings, sleep_dim_enabled=False)
         self.assertEqual(
             self.controller.effective_brightness_for_device(self._device(brightness=200)),
             200,
         )
 
         # Long-idle auto-off is a separate, harder cutoff than dimming.
-        self.controller.settings = (
-            self.controller.settings.with_idle_dim_fraction(0.5)
-            .with_idle_auto_off_enabled(True)
-            .with_idle_auto_off_after_minutes(30.0)
-        )
+        self.controller.settings = dataclass_replace(
+            self.controller.settings.with_idle_dim_fraction(0.5),
+            idle_auto_off_enabled=True,
+        ).with_idle_auto_off_after_minutes(30.0)
         self.controller._presentation_scheduler_inputs = SimpleNamespace(display_asleep=False)
         self.controller.idle_since_monotonic = time.monotonic() - (31 * 60)
         self.assertEqual(
@@ -7956,8 +7950,7 @@ class IdleTimeoutDimmingTests(unittest.TestCase):
 
     def test_idle_dim_settings_round_trip_defaults_and_clamps(self) -> None:
         settings = (
-            AgentMonitorSettings()
-            .with_idle_dim_enabled(False)
+            dataclass_replace(AgentMonitorSettings(), idle_dim_enabled=False)
             .with_idle_dim_after_minutes(20.0)
             .with_idle_dim_fraction(0.4)
         )
@@ -8190,7 +8183,7 @@ class ColorSettingsPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             save_settings(
-                AgentMonitorSettings().with_setup_screen_completed(True),
+                dataclass_replace(AgentMonitorSettings(), setup_screen_completed=True),
                 path,
             )
             data = json.loads(path.read_text())
@@ -8207,6 +8200,31 @@ class ColorSettingsPersistenceTests(unittest.TestCase):
 class TranscriptFallbackTests(unittest.TestCase):
     def setUp(self) -> None:
         isolate_controller(self)
+
+    def test_late_batch_cannot_rewind_a_newer_signature_or_ingest_records(self) -> None:
+        from jrbar.models import HookEvent
+        from jrbar.transcript_runtime import TranscriptFallbackBatch
+
+        source = object()
+        self.controller.transcript_monitor = source
+        self.controller.transcript_watermark = None
+        current = TranscriptFallbackBatch(2, id(source), "new", ())
+        self.controller.applyTranscriptFallbackBatch_(current)
+        record = HookEvent(provider="codex", logged_at=datetime.now(timezone.utc),
+                           event_name="SessionStart", raw={}, session_id="old-batch-session")
+        with patch.object(self.controller.monitor, "ingest_record") as ingest:
+            self.controller.applyTranscriptFallbackBatch_(
+                TranscriptFallbackBatch(1, id(source), "old", (record,))
+            )
+            ingest.assert_not_called()
+        self.assertEqual(self.controller.transcript_fallback_signature, "new")
+
+        replacement = object()
+        self.controller.transcript_monitor = replacement
+        self.controller.applyTranscriptFallbackBatch_(
+            TranscriptFallbackBatch(1, id(replacement), "replacement", ())
+        )
+        self.assertEqual(self.controller.transcript_fallback_signature, "replacement")
 
     def test_transcript_monitor_follows_the_switches(self) -> None:
         # The "Watch ... transcripts" switches used to save a setting
@@ -8791,7 +8809,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             external_settings = base / "external-settings.json"
-            external_settings.write_text(json.dumps(AgentMonitorSettings().with_setup_screen_completed(True).to_dict()))
+            external_settings.write_text(json.dumps(dataclass_replace(AgentMonitorSettings(), setup_screen_completed=True).to_dict()))
             settings_link = base / "settings.json"
             settings_link.symlink_to(external_settings)
             self.assertEqual(load_settings(settings_link), AgentMonitorSettings())
@@ -8874,7 +8892,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
                 directory.chmod(0o777)
 
             settings_path = settings_dir / "settings.json"
-            expected_settings = AgentMonitorSettings().with_setup_screen_completed(True)
+            expected_settings = dataclass_replace(AgentMonitorSettings(), setup_screen_completed=True)
             settings_path.write_text(json.dumps(expected_settings.to_dict()))
             self.assertEqual(load_settings(settings_path), expected_settings)
 
@@ -10042,7 +10060,7 @@ class SubagentAskAggregateTests(unittest.TestCase):
             AgentMode.WAITING_FOR_INPUT,
         )
         sub_only = self._snapshot(self._status("claude:agent:w1", AgentMode.BLOCKED_ERROR))
-        self.controller.settings = self.controller.settings.with_subagent_asks_alert(True)
+        self.controller.settings = dataclass_replace(self.controller.settings, subagent_asks_alert=True)
         self.assertEqual(self.controller.display_aggregate_mode(sub_only), AgentMode.BLOCKED_ERROR)
 
     def _worker_ask_snapshot(self, *, with_main: bool):
@@ -10103,7 +10121,7 @@ class SubagentAskAggregateTests(unittest.TestCase):
         alone = self._worker_ask_snapshot(with_main=False)
         quiet = self._repaint_modes(alone, resync)
         self.assertNotEqual(quiet, [AgentMode.WAITING_FOR_INPUT])
-        self.controller.settings = self.controller.settings.with_subagent_asks_alert(True)
+        self.controller.settings = dataclass_replace(self.controller.settings, subagent_asks_alert=True)
         enabled = self._repaint_modes(alone, resync)
         self.assertEqual(enabled, [AgentMode.WAITING_FOR_INPUT])
 
@@ -11035,7 +11053,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         claude = self.controller._usage_provider_models["claude"]
         self.assertEqual(codex.windows[0].percent_used, 22.0)
         self.assertEqual(claude.windows[0].percent_used, 31.0)
-        self.assertIn("Capacity source unavailable", claude.menu_line)
+        self.assertIn("Capacity source unavailable", claude.error_text)
         self.assertEqual(self.controller._usage_provider_states["codex"].consecutive_failures, 0)
         self.assertEqual(self.controller._usage_provider_states["claude"].consecutive_failures, 1)
 
@@ -11566,8 +11584,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         claude = self.controller._usage_provider_models["claude"]
         self.assertEqual(codex.windows[0].percent_used, 22.0)
         self.assertEqual(claude.windows[0].percent_used, 33.0)
-        self.assertIn("Codex today: 2 sessions", codex.settings_text)
-        self.assertIn("2 sessions · 3M tokens", claude.settings_text)
+        self.assertIn("Codex today: 2 sessions", codex.summary_text)
+        self.assertIn("2 sessions · 3M tokens", claude.summary_text)
         self.assertEqual(self.controller._usage_provider_states["codex"].consecutive_failures, 0)
         self.assertEqual(self.controller._usage_provider_states["claude"].consecutive_failures, 0)
         self.assertIs(self.controller.usage_day_bars, old_day_bars)
@@ -11740,14 +11758,15 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         )
         self.assertIn(
             "Last 7 days: 1 session · 2M processed tokens",
-            model.settings_text,
+            model.summary_text,
         )
         # One title, one owner. The summary names the period; the view names
         # the provider.
-        self.assertEqual(model.menu_line.count("Codex"), 1)
-        self.assertIn("Capacity source unavailable", model.settings_text)
-        self.assertNotIn("secret-token", model.settings_text)
-        self.assertNotIn("/Users", model.settings_text)
+        self.assertNotIn("Codex", model.summary_text)
+        self.assertIn("Capacity source unavailable", model.error_text)
+        for text in (model.error_text, model.summary_text, model.source_text):
+            self.assertNotIn("secret-token", text)
+            self.assertNotIn("/Users", text)
 
     def test_capacity_copy_follows_the_latest_shared_models(self) -> None:
         """The capacity copy states remaining, reset and age without
@@ -11779,24 +11798,18 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             )
 
         model = self.controller._usage_provider_models["codex"]
-        primary, secondary = self.status_bar.capacity_menu_lines(
-            model,
-            monotonic_now=500.0,
-            epoch_now=1_000.0,
-        )
-        self.assertEqual(primary, "Codex · 5h 38% left")
-        # Reset and freshness, and nothing from another rung. `partial` and the
-        # transcript file count describe the local SCAN's coverage, not this
-        # ceiling's; a disclaimer belonging to a different fact cannot qualify
-        # this one.
-        self.assertEqual(secondary, "resets in 1h · updated just now")
-        self.assertNotIn("partial", secondary)
-        self.assertNotIn("18 files", secondary)
+        window = model.windows[0]
+        self.assertEqual((window.duration_text, window.percent_remaining), ("5h", 38.0))
+        # Reset and freshness are facts of the ceiling, and nothing from
+        # another rung. `partial` and the transcript file count describe the
+        # local SCAN's coverage, not this ceiling's.
+        self.assertTrue(window.reset_known)
+        self.assertEqual(window.reset_epoch, 4_600.0)
+        self.assertEqual(model.last_success_at, 500.0)
         # The local coverage is still carried, still scrubbed, on its own rung.
         self.assertTrue(model.partial)
         self.assertIn("18 files", model.source_text)
         self.assertNotIn("/Users", model.source_text)
-        self.assertNotIn("/Users", secondary)
 
     def test_capacity_window_truthfulness(self) -> None:
         """A reset-only window never displays a fake zero percent; apply uses
@@ -11823,19 +11836,14 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             )
         }
 
-        primary, secondary = self.status_bar.capacity_menu_lines(
-            self.controller._usage_provider_models["codex"],
-            monotonic_now=500.0,
-            epoch_now=1_000.0,
-        )
-        # A window with no usable percentage says so. The bare "Codex · 5h" it
-        # used to print left the reader to guess whether the number was missing
-        # or the row simply had none.
-        self.assertEqual(primary, "Codex · 5h no reading")
-        self.assertIn("resets in 2m", secondary)
-        self.assertNotIn("0%", primary)
-        self.assertNotIn("0%", secondary)
-        self.assertNotIn("%", primary)
+        # A window with no usable percentage carries none, so no surface can
+        # print a fake zero for it; its reset is still a known fact.
+        window = self.controller._usage_provider_models["codex"].windows[0]
+        self.assertFalse(window.usage_known)
+        self.assertIsNone(window.percent_remaining)
+        self.assertIsNone(window.percent_used)
+        self.assertTrue(window.reset_known)
+        self.assertEqual(window.reset_epoch, 1_120.0)
 
         # --- scenario: apply_uses_monotonic_freshness_and_epoch_reset_clocks
         self.setUp()  # fresh isolated controller per scenario
@@ -11857,7 +11865,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertEqual(model.last_success_at, 500.0)
         self.assertFalse(model.stale)
         self.assertEqual(model.windows[0].reset_epoch, 1_800_000_120.0)
-        self.assertEqual(model.windows[0].reset_text(1_800_000_000.0), "in 2m")
+        self.assertTrue(model.windows[0].reset_known)
 
     def test_reset_timer_scheduling(self) -> None:
         """Apply schedules one earliest grouped reset timer across providers;
@@ -13980,7 +13988,7 @@ class AlcoveFollowTests(unittest.TestCase):
 
     def test_follow_setting_round_trips_default_on(self) -> None:
         self.assertTrue(AgentMonitorSettings().screen_bar_follow_alcove)
-        configured = AgentMonitorSettings().with_screen_bar_follow_alcove(False)
+        configured = dataclass_replace(AgentMonitorSettings(), screen_bar_follow_alcove=False)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             save_settings(configured, path)
@@ -14047,7 +14055,7 @@ class WingTipGaugeTests(unittest.TestCase):
 
     def test_setting_defaults_off_and_round_trips(self) -> None:
         self.assertFalse(AgentMonitorSettings().screen_bar_gauges_enabled)
-        configured = AgentMonitorSettings().with_screen_bar_gauges_enabled(True)
+        configured = dataclass_replace(AgentMonitorSettings(), screen_bar_gauges_enabled=True)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             save_settings(configured, path)
@@ -14358,6 +14366,7 @@ class PaletteTests(unittest.TestCase):
     def setUp(self) -> None:
         isolate_controller(self)
 
+
     def test_curated_palettes_are_complete_and_valid(self) -> None:
         from jrbar.colors import CURATED_PALETTES
 
@@ -14369,9 +14378,9 @@ class PaletteTests(unittest.TestCase):
             from jrbar.providers import PROVIDER_SPECS
 
             brandless = {spec.provider for spec in PROVIDER_SPECS if spec.provider not in PROVIDER_BRAND_COLORS}
-            # A palette owns exactly the brandless providers -- branded
-            # entries would be skipped by apply_palette, and non-provider
-            # names would write junk settings entries.
+            # A palette owns exactly the brandless providers: the settings
+            # repair that undoes old palette damage reads these tables, and
+            # non-provider names would make it look for junk entries.
             self.assertEqual(set(palette["agents"]), brandless)
             # Working, done and ask must be tellable apart.
             self.assertEqual(len({palette["modes"][k] for k in ("working", "done", "ask")}), 3)
@@ -14512,7 +14521,8 @@ class T3AdoptionTests(unittest.TestCase):
             event="PermissionRequest",
             tool="ExitPlanMode",
         )
-        self.assertTrue(plan.is_plan_ready)
+        self.assertIs(plan.mode, AgentMode.WAITING_FOR_INPUT)
+        self.assertEqual(plan.tool_name, "ExitPlanMode")
 
         # --- scenario: unacknowledged_completion_is_unseen
         self.setUp()  # fresh isolated controller per scenario
@@ -14746,8 +14756,6 @@ class ReminderObservationRuntimeTests(unittest.TestCase):
             "app_terminating": False,
             "animation_active": False,
             "next_visual_change_at": None,
-            "alcove_enabled": False,
-            "alcove_relevant": False,
             "pointer_interaction_relevant": False,
         }
         values.update(changes)
@@ -15145,8 +15153,6 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
             "app_terminating": False,
             "animation_active": False,
             "next_visual_change_at": None,
-            "alcove_enabled": False,
-            "alcove_relevant": False,
             "pointer_interaction_relevant": False,
         }
         values.update(changes)
@@ -15222,7 +15228,7 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
         self.controller.settings = self.controller.settings.with_calendar_alerts_enabled(
             True
         ).with_calendar_lead_minutes(12.0)
-        self.controller._calendar_observation_active = True
+        self.controller._set_calendar_observation_active(True, now=self.clock[0])
         self.controller._os_poll_generation = 8
         self.controller._presentation_scheduler_inputs = self._inputs()
         self.controller._os_poll_worker = SimpleNamespace(submit=submissions.append)
@@ -15252,8 +15258,8 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
 
         self.assertIsInstance(result, self.status_bar.CalendarObservationResult)
         self.assertTrue(result.available)
-        self.assertGreaterEqual(result.starts_in_seconds, 0.0)
-        self.assertLessEqual(result.starts_in_seconds, 120.0)
+        self.assertGreaterEqual(result.starts_at_monotonic, self.clock[0])
+        self.assertLessEqual(result.starts_at_monotonic, self.clock[0] + 120.0)
         self.assertNotIn(private_title, repr(result))
         self.assertNotIn("title", repr(result).casefold())
         self.assertNotIn("identifier", repr(result).casefold())
@@ -15261,7 +15267,7 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
         # --- scenario: calendar_results_are_generation_deadline_and_lifecycle_fenced
         self.setUp()  # fresh isolated controller per scenario
         self.controller.settings = self.controller.settings.with_calendar_alerts_enabled(True)
-        self.controller._calendar_observation_active = True
+        self.controller._set_calendar_observation_active(True, now=self.clock[0])
         self.controller._os_poll_generation = 11
         self.controller._presentation_scheduler_inputs = self._inputs()
         self.controller.calendar_glow_until = 0.0
@@ -15280,7 +15286,7 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
 
         result = self.status_bar.CalendarObservationResult(
             available=True,
-            starts_in_seconds=90.0,
+            starts_at_monotonic=self.clock[0] + 90.0,
         )
 
         self.controller._apply_os_poll_result(
@@ -15307,7 +15313,7 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
             current,
             self.status_bar.CalendarObservationResult(
                 available=True,
-                starts_in_seconds=None,
+                starts_at_monotonic=None,
             ),
         )
         self.controller._presentation_scheduler_inputs = self._inputs(app_terminating=True)
@@ -15315,7 +15321,7 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
             current,
             self.status_bar.CalendarObservationResult(
                 available=True,
-                starts_in_seconds=None,
+                starts_at_monotonic=None,
             ),
         )
 
@@ -15328,7 +15334,7 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
         # --- scenario: calendar_timeout_is_static_and_backs_off_without_retry
         self.setUp()  # fresh isolated controller per scenario
         self.controller.settings = self.controller.settings.with_calendar_alerts_enabled(True)
-        self.controller._calendar_observation_active = True
+        self.controller._set_calendar_observation_active(True, now=self.clock[0])
         self.controller._os_poll_generation = 4
         self.controller._presentation_scheduler_inputs = self._inputs()
         command = self.status_bar.RuntimeWorkCommand(
@@ -15351,7 +15357,7 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
             result,
             self.status_bar.CalendarObservationResult(
                 available=False,
-                starts_in_seconds=None,
+                starts_at_monotonic=None,
             ),
         )
         self.assertNotIn(private_error, repr(result))
@@ -15377,7 +15383,7 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
         self.controller._apply_calendar_observation_result(
             self.status_bar.CalendarObservationResult(
                 available=False,
-                starts_in_seconds=None,
+                starts_at_monotonic=None,
             )
         )
 
@@ -15446,7 +15452,7 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
             dispatch_main=drains.append,
         )
         self.controller.settings = self.controller.settings.with_calendar_alerts_enabled(True)
-        self.controller._calendar_observation_active = True
+        self.controller._set_calendar_observation_active(True, now=self.clock[0])
         self.controller._os_poll_generation = 5
         self.controller._presentation_scheduler_inputs = self._inputs()
         self.controller.refresh_ = MagicMock()
@@ -15566,8 +15572,6 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
             "app_terminating": False,
             "animation_active": False,
             "next_visual_change_at": None,
-            "alcove_enabled": False,
-            "alcove_relevant": False,
             "pointer_interaction_relevant": False,
         }
         values.update(changes)
@@ -16146,8 +16150,6 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
         active = self._inputs(
             animation_active=True,
             next_visual_change_at=self.clock[0] + 5.0,
-            alcove_enabled=True,
-            alcove_relevant=True,
             pointer_interaction_relevant=True,
         )
 
@@ -16155,9 +16157,9 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
             self.controller.reconcile_presentation_timers(active)
 
         snapshot = self.controller._runtime_timer_registry.snapshot()
-        self.assertEqual(len(snapshot.active_features), 4)
-        self.assertEqual(snapshot.created, 4)
-        self.assertEqual(len(self.factory.live), 4)
+        self.assertEqual(len(snapshot.active_features), 3)
+        self.assertEqual(snapshot.created, 3)
+        self.assertEqual(len(self.factory.live), 3)
         self.assertTrue(all(timer.target is self.controller for timer in self.factory.created))
 
         self.controller.reconcile_presentation_timers(self._inputs(app_terminating=True, animation_active=True))
@@ -16170,7 +16172,6 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
         device = SimpleNamespace(
             presentationStaticDeadline=MagicMock(),
             redraw_=MagicMock(),
-            presentationAlcoveObservation=MagicMock(),
         )
         self.controller.virtual_status_device = device
         elapsed = self._inputs(next_visual_change_at=self.clock[0] - 1.0)
@@ -16196,7 +16197,6 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
         device = SimpleNamespace(
             presentationStaticDeadline=MagicMock(),
             redraw_=MagicMock(),
-            presentationAlcoveObservation=MagicMock(),
         )
         self.controller.virtual_status_device = device
         self.controller.reconcile_presentation_timers(self._inputs(animation_active=True))
@@ -16215,37 +16215,29 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
 
         device.redraw_.assert_called_once_with(None)
 
-        # --- scenario: planned_alcove_and_pointer_handlers_dispatch_without_extra_timers
+        # --- scenario: planned_pointer_handler_dispatches_without_extra_timers
         self.setUp()  # fresh isolated controller per scenario
         device = SimpleNamespace(
             presentationStaticDeadline=MagicMock(),
             redraw_=MagicMock(),
-            presentationAlcoveObservation=MagicMock(),
         )
         self.controller.virtual_status_device = device
         self.controller.peekTick_ = MagicMock()
         self.controller.reconcile_presentation_timers(
-            self._inputs(
-                alcove_enabled=True,
-                alcove_relevant=True,
-                pointer_interaction_relevant=True,
-            )
+            self._inputs(pointer_interaction_relevant=True)
         )
         timers = {timer.feature: timer for timer in self.factory.live}
 
-        self.controller.runtimeTimerFired_(timers[self.status_bar.RuntimeFeature.ALCOVE_OBSERVATION])
         self.controller.runtimeTimerFired_(timers[self.status_bar.RuntimeFeature.POINTER_PEEK])
 
-        device.presentationAlcoveObservation.assert_called_once_with()
         self.controller.peekTick_.assert_called_once_with(None)
-        self.assertEqual(len(self.factory.live), 2)
+        self.assertEqual(len(self.factory.live), 1)
 
         # --- scenario: future_static_deadline_dispatches_once_and_removes_itself
         self.setUp()  # fresh isolated controller per scenario
         device = SimpleNamespace(
             presentationStaticDeadline=MagicMock(),
             redraw_=MagicMock(),
-            presentationAlcoveObservation=MagicMock(),
         )
         self.controller.virtual_status_device = device
         deadline = self.clock[0] + 2.0
@@ -16263,15 +16255,11 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
         self.setUp()  # fresh isolated controller per scenario
         active = self._inputs(
             animation_active=True,
-            alcove_enabled=True,
-            alcove_relevant=True,
             pointer_interaction_relevant=True,
         )
         asleep = self._inputs(
             display_asleep=True,
             animation_active=True,
-            alcove_enabled=True,
-            alcove_relevant=True,
             pointer_interaction_relevant=True,
         )
         max_live = 0
@@ -16283,7 +16271,7 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(self.factory.live, ())
 
         snapshot = self.controller._runtime_timer_registry.snapshot()
-        self.assertEqual(max_live, 3)
+        self.assertEqual(max_live, 2)
         self.assertEqual(snapshot.active_features, ())
         self.assertEqual(snapshot.created, snapshot.invalidated)
 
@@ -16315,8 +16303,6 @@ class LidObservationRuntimeTests(unittest.TestCase):
             "app_terminating": False,
             "animation_active": False,
             "next_visual_change_at": None,
-            "alcove_enabled": False,
-            "alcove_relevant": False,
             "pointer_interaction_relevant": False,
         }
         values.update(changes)
@@ -17663,7 +17649,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
             set_program=MagicMock(),
         )
         self.controller.virtual_status_device = virtual
-        self.controller.settings = self.controller.settings.with_virtual_status_device(True)
+        self.controller.settings = dataclass_replace(self.controller.settings, virtual_status_device_enabled=True)
         virtual_device = self.status_bar.StatusBarDevice(
             device_id=self.status_bar.VIRTUAL_DEVICE_ID,
             name=self.status_bar.VIRTUAL_DEVICE_NAME,
@@ -17864,7 +17850,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
             set_program=MagicMock(),
         )
         self.controller.virtual_status_device = virtual
-        self.controller.settings = self.controller.settings.with_virtual_status_device(True)
+        self.controller.settings = dataclass_replace(self.controller.settings, virtual_status_device_enabled=True)
         device = self.status_bar.StatusBarDevice(
             device_id=self.status_bar.VIRTUAL_DEVICE_ID,
             name=self.status_bar.VIRTUAL_DEVICE_NAME,
@@ -17933,7 +17919,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
             set_program=MagicMock(),
         )
         self.controller.virtual_status_device = virtual
-        self.controller.settings = self.controller.settings.with_virtual_status_device(True)
+        self.controller.settings = dataclass_replace(self.controller.settings, virtual_status_device_enabled=True)
         initial = (
             _status("codex", AgentMode.WORKING),
             _status("claude", AgentMode.WORKING),

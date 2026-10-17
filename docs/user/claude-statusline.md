@@ -11,12 +11,13 @@ JR-Bar can read them. It is off by default.
 
 Either:
 
-- Settings › Usage › Claude Code status line › **Read Claude Code's
+- Settings › Agents & Usage › Advanced › Claude Code status line › **Read Claude Code's
   status line**; or
 - `jrbar agent-monitor install claude-statusline`.
 
-Both point Claude Code's `statusLine` in `~/.claude/settings.json` at the
-bundled `jrbar-hook --statusline`, and both turn the source on.
+Both point Claude Code's `statusLine` in `~/.claude/settings.json` (or in
+the folder `CLAUDE_CONFIG_DIR` names) at JR-Bar's hook launcher (`~/.local/share/jrbar/hook/jrbar-hook`, which
+runs the bundled `jrbar-hook --statusline`), and both turn the source on.
 
 JR-Bar never replaces a status line you already have. If one exists, the
 command refuses and Settings asks first. Choosing **Keep Mine and Add

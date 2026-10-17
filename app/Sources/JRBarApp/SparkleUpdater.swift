@@ -43,6 +43,8 @@ final class SparkleUpdater: NSObject {
     nonisolated static let automaticChecksDefaultsKey = "SUEnableAutomaticChecks"
     /// Posted (on the main queue) when `automaticallyChecksForUpdates` changes.
     nonisolated static let automaticChecksDidChange = Notification.Name("JRBarSparkleAutomaticChecksDidChange")
+    /// Posted on main when a check finishes, so Settings reads its latest date.
+    nonisolated static let updateCycleDidFinish = Notification.Name("JRBarSparkleUpdateCycleDidFinish")
 
     /// The one updater the app owns; Settings reaches it through here.
     private(set) static var shared: SparkleUpdater?
@@ -56,7 +58,12 @@ final class SparkleUpdater: NSObject {
     /// reminder can go.
     var onUpdateAttended: (() -> Void)?
 
-    let availability: Availability
+    private(set) var availability: Availability
+    /// The feed this build was made with. Sparkle reads a `SUFeedURL`
+    /// written into the app's preferences before the one in Info.plist, so
+    /// the delegate answers with this instead (`feedURLString(for:)`): a
+    /// stray `defaults write` cannot point update checks at another host.
+    nonisolated let pinnedFeed: String?
     private let log: (String) -> Void
     #if canImport(Sparkle)
     private var controller: SPUStandardUpdaterController?
@@ -65,15 +72,12 @@ final class SparkleUpdater: NSObject {
     init(bundle: Bundle = .main, log: @escaping (String) -> Void) {
         self.log = log
         let feed = bundle.object(forInfoDictionaryKey: "SUFeedURL") as? String ?? ""
+        pinnedFeed = Self.pinnedFeed(feed)
         let key = bundle.object(forInfoDictionaryKey: "SUPublicEDKey") as? String ?? ""
         #if canImport(Sparkle)
-        if feed.isEmpty || key.isEmpty {
-            availability = .misconfigured("this build has no SUFeedURL / SUPublicEDKey")
-        } else if Data(base64Encoded: key)?.count != 32 {
-            availability = .misconfigured("SUPublicEDKey is not a 32-byte Ed25519 key")
-        } else {
-            availability = .ready
-        }
+        availability = Self.configurationAvailability(
+            frameworkAvailable: true, feed: feed, publicKey: key,
+            requiresSignedFeed: bundle.object(forInfoDictionaryKey: "SURequireSignedFeed") as? Bool == true)
         #else
         _ = feed; _ = key
         availability = .missingFramework
@@ -89,9 +93,13 @@ final class SparkleUpdater: NSObject {
                 defaults.set(false, forKey: Self.automaticChecksDefaultsKey)
             }
             let controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
-            self.controller = controller
-            controller.startUpdater()
-            log("updater: Sparkle \(Self.frameworkVersion ?? "?") on \(feed), channel \(selectedChannel), automatic checks \(automaticallyChecksForUpdates ? "on" : "off")")
+            availability = Self.startedAvailability(configuration: availability) { try controller.updater.start() }
+            if availability == .ready {
+                self.controller = controller
+                log("updater: Sparkle \(Self.frameworkVersion ?? "?") on \(feed), channel \(selectedChannel), automatic checks \(automaticallyChecksForUpdates ? "on" : "off")")
+            } else {
+                log("updater: \(availability.description)")
+            }
         } else {
             log("updater: \(availability.description)")
         }
@@ -99,6 +107,60 @@ final class SparkleUpdater: NSObject {
         log("updater: \(availability.description)")
         #endif
         Self.shared = self
+    }
+
+    /// Validates bundle metadata without starting Sparkle or reading preferences.
+    nonisolated static func configurationAvailability(
+        frameworkAvailable: Bool, feed: String?, publicKey: String?, requiresSignedFeed: Bool
+    ) -> Availability {
+        guard frameworkAvailable else { return .missingFramework }
+        guard let feed, !feed.isEmpty, let publicKey, !publicKey.isEmpty else {
+            return .misconfigured("this build has no SUFeedURL / SUPublicEDKey")
+        }
+        guard pinnedFeed(feed) != nil else { return .misconfigured("SUFeedURL is not an https address") }
+        guard Data(base64Encoded: publicKey)?.count == 32 else {
+            return .misconfigured("SUPublicEDKey is not a 32-byte Ed25519 key")
+        }
+        guard requiresSignedFeed else { return .misconfigured("this build does not require a signed update feed") }
+        return .ready
+    }
+
+    /// A valid bundle can still fail Sparkle's startup checks.
+    static func startedAvailability(configuration: Availability, start: () throws -> Void) -> Availability {
+        guard configuration == .ready else { return configuration }
+        do {
+            try start()
+            return .ready
+        } catch {
+            return .misconfigured("updater could not start: \(error.localizedDescription)")
+        }
+    }
+
+    /// The Info.plist feed when it is an https address, else nil.
+    nonisolated static func pinnedFeed(_ plistValue: String?) -> String? {
+        guard let text = plistValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let url = URL(string: text), url.scheme?.lowercased() == "https",
+              let host = url.host, !host.isEmpty else { return nil }
+        return text
+    }
+
+    /// A clean cycle can include a dismissed or deferred update. Only
+    /// `SUNoUpdateError` says that no eligible newer update was found.
+    nonisolated static func cycleLine(error: (any Error)?) -> String {
+        guard let error else { return "updater: check finished" }
+        let ns = error as NSError
+        if ns.domain == "SUSparkleErrorDomain" {
+            if ns.code == 1001 { return "updater: check finished, nothing newer" }
+            if ns.code == 4007 { return "updater: installation canceled" }
+        }
+        return "updater: check failed: \(ns.localizedDescription)"
+    }
+
+    /// Publish completion without starting an updater; tests use their own center.
+    static func finishUpdateCycle(message: String, log: (String) -> Void,
+                                  notificationCenter: NotificationCenter = .default) {
+        log(message)
+        notificationCenter.post(name: updateCycleDidFinish, object: nil)
     }
 
     static var frameworkVersion: String? {
@@ -257,10 +319,18 @@ enum InstalledCopies {
         let copies = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: bundleID)
         let stale = stale(among: copies, running: Bundle.main.bundleURL, home: home)
         guard let first = stale.first(where: { !defaults.bool(forKey: noticedKey($0)) }) else { return }
-        defaults.set(true, forKey: noticedKey(first))
-        notices.say(.init(key: "stale-copy", text: noticeText(for: first, home: home), actionTitle: "Show") {
-            NSWorkspace.shared.activateFileViewerSelecting([first])
-        })
+        notices.say(notice(for: first, home: home, defaults: defaults))
+    }
+
+    /// The notice for one stale copy. The "told them" mark is saved when
+    /// the panel shows it, not when it is queued: a notice held for a panel
+    /// that never opened before the app quit is said again next launch.
+    @MainActor
+    static func notice(for copy: URL, home: URL, defaults: UserDefaults) -> LaunchNotices.Notice {
+        .init(key: "stale-copy", text: noticeText(for: copy, home: home), actionTitle: "Show",
+              onShown: { defaults.set(true, forKey: noticedKey(copy)) }) {
+            NSWorkspace.shared.activateFileViewerSelecting([copy])
+        }
     }
 }
 
@@ -270,9 +340,14 @@ extension SparkleUpdater: SPUUpdaterDelegate {
         Self.allowedChannels(from: .standard)
     }
 
+    nonisolated func feedURLString(for updater: SPUUpdater) -> String? { pinnedFeed }
+
     nonisolated func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: (any Error)?) {
-        let message = error.map { "updater: check finished with \($0.localizedDescription)" } ?? "updater: check finished, nothing newer"
-        Task { @MainActor [weak self] in self?.log(message) }
+        let message = Self.cycleLine(error: error)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            Self.finishUpdateCycle(message: message, log: self.log)
+        }
     }
 }
 

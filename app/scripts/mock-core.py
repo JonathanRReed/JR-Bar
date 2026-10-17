@@ -50,20 +50,37 @@ Standard library only.
   mock-core.py --step 1.5            # seconds between timeline steps
   mock-core.py --once                # hello/state/lights/settings, then exit
   mock-core.py --parent-pid 4242     # stop by itself once process 4242 is gone
+
+Authentication (docs/CORE-PROTOCOL.md, "Who may send what"): like the real
+daemon, the mock takes an app secret from its stdin pipe when the environment
+says JRBAR_AUTH_STDIN=1 (the supervising app does that for any
+JRBAR_CORE_EXEC child). Holding one, it offers a nonce in `hello`, checks the
+`auth` command's HMAC proof, and refuses every command outside its open list
+with `unauthenticated` until the connection has proved it. Started without
+one (a bare `mock-core.py`, a test that connects a plain socket) it accepts
+every command from every connection: that bypass is the mock's own, on its
+own socket, and the real daemon has no such mode outside JRBAR_DEV_ALLOW_UNAUTH.
 """
 
 from __future__ import annotations
 
 import argparse
+import colorsys
+import errno
 import hashlib
+import hmac
 import json
 import os
+import random
+import select
 import signal
 import socket
+import stat
 import sys
 import threading
 import time
 from pathlib import Path
+from typing import ClassVar
 
 PROTOCOL_VERSION = 1
 # The installed daemon's socket. The mock never binds it unless told so in
@@ -71,6 +88,61 @@ PROTOCOL_VERSION = 1
 # on that path drives the real menu bar, sounds and notifications.
 REAL_SOCKET = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "jrbar" / "core.sock"
 DEFAULT_SOCKET = Path(os.environ.get("TMPDIR") or "/tmp") / "jrbar-mock.sock"
+
+AUTH_CONTEXT = b"jrbar-core-auth-v1\n"
+SECRET_BYTES = 32
+# The commands any connection may send when the mock holds an app secret.
+# src/jrbar/core_auth.py is the source of truth (tests/test_mock_core_parity.py
+# keeps this in step); set_setting and reset_settings are open there for
+# display preferences only, and the mock simply refuses them to a stranger.
+MOCK_OPEN_COMMANDS = frozenset({
+    "ping", "list_commands", "replay_events", "doctor", "hooks_doctor", "list_history", "list_roster",
+    "list_providers", "list_effects", "list_assignments", "list_lid_presets", "list_finish_looks",
+    "list_scene_packs", "list_cues", "list_focuses", "list_light_log", "usage_history", "usage_graph",
+    "usage_hooks_status", "session_energy", "session_timeline", "compare_sessions", "session_usage", "firmware_status",
+    "quiet", "quiet_lease", "scene_lease", "snooze", "confetti", "hold_awake", "release_awake", "refresh_usage", "set_brightness",
+})
+
+
+def adopt_stdin_secret() -> bytes | None:
+    """The app's secret from our stdin pipe, once (JRBAR_AUTH_STDIN=1), as the
+    real daemon takes it. stdin is then pointed at /dev/null. A 2 or 3 says the
+    pipe holds a seal key after the secret; the mock seals nothing, so it reads
+    the key to empty the pipe and drops it."""
+    announced = os.environ.pop("JRBAR_AUTH_STDIN", None)
+    if announced not in ("1", "2", "3"):
+        return None
+    wanted = SECRET_BYTES * (1 if announced == "1" else 2)
+    secret = None
+    try:
+        if stat.S_ISFIFO(os.fstat(0).st_mode):
+            data = b""
+            deadline = time.monotonic() + 2.0
+            while len(data) < wanted:
+                left = deadline - time.monotonic()
+                if left <= 0 or not select.select([0], [], [], left)[0]:
+                    break
+                chunk = os.read(0, wanted - len(data))
+                if not chunk:
+                    break
+                data += chunk
+            if len(data) == wanted:
+                secret = data[:SECRET_BYTES]
+    except OSError:
+        secret = None
+    finally:
+        try:
+            null = os.open(os.devnull, os.O_RDONLY)
+            os.dup2(null, 0)
+            os.close(null)
+        except OSError:
+            pass
+    return secret
+
+
+def auth_proof(secret: bytes, nonce: str) -> str:
+    return hmac.new(secret, AUTH_CONTEXT + nonce.encode("ascii"), hashlib.sha256).hexdigest()
+
 
 WORKING_RELAY = (
     "off 160ms cosine\n"
@@ -103,7 +175,7 @@ BEACON_DARK = "off"
 # dispatch's `dot_binary_heartbeat`.
 DOT_BINARY_HEARTBEAT = "off 200ms none\n0:#3A3A3C 220ms cosine\n0:#000000 220ms cosine\n1:#3A3A3C 220ms cosine\n1:#000000 220ms cosine\noff 1200ms none\nrepeat"
 
-HOME = str(Path.home())
+FIXTURE_HOME = "/synthetic/jrbar-proof"
 CLAUDE_ID = "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973"
 CLAUDE_WORKER_ID = "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973:worker:1"
 CODEX_ID = "codex:session:0f3b2c9a-71d4-4e0e-9a8e-2c1d5f6a7b8c"
@@ -199,9 +271,6 @@ def deck_control_label(index: int) -> str:
 # Effects: the registry mirrored from src/jrbar/effect_registry.py (captured
 # 2026-09-09), a parametric LEDS renderer for previews, and data-only packs.
 # --------------------------------------------------------------------------
-
-import colorsys
-import random
 
 EFFECT_BASE_COLOR = "#00E5FF"
 MIN_CYCLE_SECONDS = 0.3
@@ -590,7 +659,7 @@ def _rgb(hex_color: str) -> tuple[float, float, float]:
 
 
 def _hex(rgb: tuple[float, float, float]) -> str:
-    return "#%02X%02X%02X" % tuple(max(0, min(255, int(round(c * 255)))) for c in rgb)
+    return "#{:02X}{:02X}{:02X}".format(*(max(0, min(255, int(round(c * 255)))) for c in rgb))
 
 
 def _scale(hex_color: str, factor: float) -> str:
@@ -678,7 +747,7 @@ def render_effect_program(effect: dict, values: dict, led_count: int = 8, color:
         hues = " ".join(_hue_shift("#FF0044", i * 360.0 / n) for i in range(n))
         return f"{hues}\nroll 2s linear\nrepeat"
     if motion == "alert":
-        return f"#FF3A00 500ms none\noff 500ms none\nrepeat"
+        return "#FF3A00 500ms none\noff 500ms none\nrepeat"
     if motion == "notification":
         return f"{c} 300ms none\noff 300ms none\n{c} 300ms none\noff 1400ms cosine"
     if motion == "breathe":
@@ -849,7 +918,7 @@ USAGE_PRICING = {
 }
 USAGE_ACCOUNTS = {
     "devin": {"plan": "Team", "label": None, "fidelity": "official"},
-    "claude": {"plan": "Max 20×", "label": "jonathan@…", "fidelity": "official"},
+    "claude": {"plan": "Max 20×", "label": "jonathan@…", "fidelity": "official"},  # noqa: RUF001
     "codex": {"plan": "Plus", "label": "ChatGPT", "fidelity": "derived"},
     "gemini": {"plan": "AI Pro", "label": None, "fidelity": "manual"},
     "cursor": {"plan": None, "label": None, "fidelity": None},
@@ -1063,7 +1132,7 @@ def default_settings_document() -> dict:
         },
         "battery_monitoring": {
             "charging_idle_enabled": True, "full_charge_watts": None, "low_battery_alert_enabled": True,
-            "low_battery_threshold_percent": 5.0, "power_change_preview_seconds": 7.0, "show_on_power_change": True,
+            "low_battery_threshold_percent": 5.0, "low_battery_threshold_minutes": 0.0, "power_change_preview_seconds": 7.0, "show_on_power_change": True,
         },
         "calendar_alerts_enabled": False,
         "calendar_lead_minutes": 5.0,
@@ -1075,7 +1144,7 @@ def default_settings_document() -> dict:
         "closed_lid_awake_policy": "never",
         "closed_lid_grace_minutes": 5.0,
         "cloud_ingest_enabled": False,
-        "cloud_ingest_token_path": f"{HOME}/.local/state/jrbar/cloud-ingest.token",
+        "cloud_ingest_token_path": f"{FIXTURE_HOME}/.local/state/jrbar/cloud-ingest.token",
         "codex_percent_enabled": True,
         "colors": {
             "agent_colors": {
@@ -1099,7 +1168,8 @@ def default_settings_document() -> dict:
             "tint_by_tool": False,
             "done_celebration_style": "bloom",
         },
-        "completion_notification_enabled": False,
+        "completion_notification_enabled": True,
+        "silent_session_banner_enabled": False,
         "completion_sweep_enabled": True,
         "devices": [
             device(PRO_ID, "SidePulse", "/Volumes/SidePulse"),
@@ -1126,6 +1196,7 @@ def default_settings_document() -> dict:
         "escalation_menu_bar_seconds": 120.0,
         "escalation_ramp_seconds": 30.0,
         "escalation_tier": "menu_bar",
+        "escalation_tier_by_provider": {},
         "escalation_webhook_url": "",
         "focus_dim_rules": {},
         "focus_profile_rules": {},
@@ -1182,6 +1253,9 @@ def default_settings_document() -> dict:
         "operator_history_retention_days": 0,
         "provider_status_feeds_enabled": False,
         "provider_update_checks_enabled": False,
+        "ntfy_enabled": False,
+        "ntfy_topic": "",
+        "ntfy_only_when_away": True,
         "quota_alert_thresholds": [90.0, 95.0],
         "quota_alerts_enabled": True,
         "rainstick_idle_enabled": False,
@@ -1201,6 +1275,8 @@ def default_settings_document() -> dict:
         "screen_bar_hidden_apps": [],
         "screen_bar_min_glow": 0.25,
         "screen_bar_notch_wings": True,
+        "screen_bar_notch_profile": "auto",
+        "screen_bar_notch_corner": 8.0,
         "screen_bar_phase_offset_ms": 0.0,
         "screen_bar_show_in_full_screen": False,
         "screen_bar_wing_length": None,
@@ -1212,6 +1288,8 @@ def default_settings_document() -> dict:
         "sleep_dim_fraction": 0.2,
         "studio_library": [],
         "studio_program": "",
+        "ask_expire_after_days": 7.0,
+        "ask_stale_after_hours": 6.0,
         "subagent_asks_alert": False,
         "tips_enabled": True,
         "transcript_monitoring": {"claude": False, "codex": False, "gemini": False, "pi": False},
@@ -1337,21 +1415,52 @@ def log(message: str) -> None:
 # the daemon's wire shape (`usage.providers[]`), rebuilt on every state so
 # the resets keep counting down.
 
-USAGE_SCENARIOS = ("opencode", "statusline", "hub", "stale")
+USAGE_SCENARIOS = ("opencode", "statusline", "hub", "stale", "consent")
+
+#: The `consent` scenario's providers, each with the daemon's own words
+#: (provider_usage_consent._DISCLOSURES) for what turning its usage on does.
+CONSENT_COPY = {
+    "claude": ("Claude", ["api.anthropic.com"],
+               "JR-Bar will ask Anthropic for your usage with the sign-in Claude Code already has. Nothing else is sent.",
+               "Asks api.anthropic.com for your 5-hour and weekly windows with the sign-in Claude Code keeps in your Keychain. Nothing else is sent."),
+    "codex": ("Codex", ["chatgpt.com"],
+              "JR-Bar will ask OpenAI for your Codex limits, by running Codex's own app server with the sign-in Codex already has. Nothing else is sent.",
+              "Runs `codex app-server`, which asks chatgpt.com for your Codex limits with Codex's own sign-in. Nothing else is sent."),
+    "cursor": ("Cursor", ["cursor.com"],
+               "JR-Bar will ask Cursor for your plan usage with the sign-in the Cursor app already has. Nothing else is sent.",
+               "Asks cursor.com for your plan usage with the sign-in read from Cursor's own local database, or a browser session you imported. Nothing else is sent."),
+    "opencode": ("OpenCode", ["opencode.ai"],
+                 "JR-Bar will ask OpenCode for your Go plan limits with your OpenCode Go key. This only matters if you have a Go subscription. Nothing else is sent.",
+                 "Asks opencode.ai for your Go plan limits with the OpenCode Go key in OpenCode's auth.json or OPENCODE_API_KEY. Token totals from OpenCode's database stay local either way."),
+}
 
 
-def scenario_usage(name: str, now: float) -> list[dict]:
+def consent_row(provider: str, granted: bool) -> dict:
+    """A `list_providers` row for the `consent` scenario."""
+    label, hosts, summary, detail = CONSENT_COPY[provider]
+    return {"id": provider, "instance": "default", "label": label, "enabled": True, "menu_visible": True,
+            "browser_sources_enabled": False, "supports_browser_sources": False, "supports_local_tokens": True,
+            "supports_quota": True, "supports_instances": False, "source_order": [], "options": {},
+            "consents": [], "credentials": [], "imported_credential": False,
+            "usage_consent": {"granted": granted, "version": 1 if granted else 0,
+                              "source": "settings" if granted else None, "at": None, "required_version": 1,
+                              "question": f"Show {label} usage?", "summary": summary, "detail": detail,
+                              "hosts": hosts, "credential": "its own sign-in"}}
+
+
+def scenario_usage(name: str, now: float, granted: frozenset = frozenset()) -> list[dict]:
     """The scenario's rows, each with a `read_at` the way the daemon sends
     one: equal to `observed_at` unless the scenario says its numbers were
-    read earlier."""
-    rows = _scenario_rows(name, now)
+    read earlier. `granted` is the `consent` scenario's providers the
+    person has turned on."""
+    rows = _scenario_rows(name, now, granted)
     for row in rows:
         if "observed_at" in row:
             row.setdefault("read_at", row["observed_at"])
     return rows
 
 
-def _scenario_rows(name: str, now: float) -> list[dict]:
+def _scenario_rows(name: str, now: float, granted: frozenset = frozenset()) -> list[dict]:
     def window(key, label, used, resets_in, *, bindable=True, source=None, detail=False):
         row = {"id": key, "name": label, "used_pct": used, "resets_at": now + resets_in, "bindable": bindable,
                "detail": detail}
@@ -1360,6 +1469,34 @@ def _scenario_rows(name: str, now: float) -> list[dict]:
         return row
 
     tokens = {"input": 2_140_000, "cached_input": 0, "output": 380_000}
+    if name == "consent":
+        # A fresh install: nothing is asked until the person says so. Each
+        # provider that is off says so and carries only the token totals
+        # counted on this Mac; one the person turned on shows its reading.
+        def off(provider, counts):
+            return {"id": provider, "instance": "default", "quota_source": True, "state": "needs_consent",
+                    "reason": "usage_not_turned_on", "action": f"Turn on {CONSENT_COPY[provider][0]} usage",
+                    "fidelity": "official", "observed_at": now - 20, "windows": [], "tokens": counts}
+
+        def on(provider, plan, windows, counts):
+            return {"id": provider, "instance": "default", "quota_source": True, "state": "ready",
+                    "fidelity": "official", "observed_at": now - 20,
+                    "account": {"plan": plan, "label": None, "fidelity": "official"},
+                    "windows": windows, "tokens": counts}
+
+        rows = []
+        for provider in ("claude", "codex", "cursor", "opencode"):
+            counts = tokens if provider in ("claude", "codex") else None
+            if provider in granted and provider == "claude":
+                rows.append(on("claude", "Max 20×", [window("five-hour", "5h", 42.0, 2 * 3600 + 900, source="claude-oauth"),  # noqa: RUF001
+                                                     window("weekly", "7d", 61.0, 3 * 86400, source="claude-oauth")], counts))
+            elif provider in granted and provider == "codex":
+                rows.append(on("codex", "Pro", [window("weekly", "7d", 30.0, 5 * 86400, source="codex-app-server")], counts))
+            elif provider in granted:
+                rows.append(on(provider, "Pro", [window("weekly", "7d", 20.0, 5 * 86400)], counts))
+            else:
+                rows.append(off(provider, counts or {"input": 0, "cached_input": 0, "output": 0}))
+        return rows
     if name == "opencode":
         return [
             # An OpenCode Go subscription: the rolling and weekly windows
@@ -1384,7 +1521,7 @@ def _scenario_rows(name: str, now: float) -> list[dict]:
             # from Claude Code's own statusLine report instead.
             {"id": "claude", "instance": "default", "quota_source": True, "state": "ready",
              "fidelity": "official", "observed_at": now - 25,
-             "account": {"plan": "Max 20×", "label": None, "fidelity": "official"},
+             "account": {"plan": "Max 20×", "label": None, "fidelity": "official"},  # noqa: RUF001
              "windows": [window("five-hour", "5h", 42.0, 2 * 3600 + 900, source="claude-statusline"),
                          window("weekly", "7d", 61.0, 3 * 86400 + 5 * 3600, source="claude-statusline")],
              "tokens": tokens},
@@ -1400,7 +1537,7 @@ def _scenario_rows(name: str, now: float) -> list[dict]:
             # that model, so it keeps its ring.
             {"id": "claude", "instance": "default", "quota_source": True, "state": "ready",
              "fidelity": "official", "observed_at": now - 30,
-             "account": {"plan": "Max 20×", "label": "jonathan@…", "fidelity": "official"},
+             "account": {"plan": "Max 20×", "label": "jonathan@…", "fidelity": "official"},  # noqa: RUF001
              "windows": [window("five-hour", "5h", 42.0, 2 * 3600 + 900, source="claude-oauth"),
                          window("weekly", "7d", 61.0, 3 * 86400 + 5 * 3600, source="claude-oauth"),
                          window("fable-only", "7d Fable", 30.0, 3 * 86400 + 5 * 3600, bindable=False,
@@ -1429,7 +1566,7 @@ def _scenario_rows(name: str, now: float) -> list[dict]:
             {"id": "claude", "instance": "default", "quota_source": True, "state": "stale",
              "fidelity": "stale", "reason": "rate_limited", "action": "Retry",
              "observed_at": now - 60, "read_at": now - (5 * 3600 + 600),
-             "account": {"plan": "Max 20×", "label": None, "fidelity": "stale"},
+             "account": {"plan": "Max 20×", "label": None, "fidelity": "stale"},  # noqa: RUF001
              "windows": [window("five-hour", "5h", 52.0, -20 * 60, source="claude-oauth"),
                          window("weekly", "7d", 61.0, 3 * 86400 + 5 * 3600, source="claude-oauth")],
              "tokens": tokens},
@@ -1477,6 +1614,8 @@ class World:
         self.step_seconds = step_seconds
         self.loop = loop
         self.auto_dim_now_minutes: int | None = None
+        # The app's secret, when a supervising app handed one over (see main).
+        self.auth_secret: bytes | None = None
         self.generation = 4800
         self.settings_generation = 17
         self.clients: list[Client] = []
@@ -1485,26 +1624,26 @@ class World:
         now = self.start
         self.sessions: dict[str, dict] = {
             CLAUDE_ID: self._session(
-                CLAUDE_ID, "claude", "jr-bar-b7", f"{HOME}/Downloads/JR-Bar", now - 3600,
+                CLAUDE_ID, "claude", "jr-bar-b7", f"{FIXTURE_HOME}/Downloads/JR-Bar", now - 3600,
                 origin={"kind": "claude_desktop", "label": "Claude Desktop", "bundle_id": "com.anthropic.claudefordesktop"},
                 terminal={"app": "Ghostty", "bundle_id": "com.mitchellh.ghostty", "tty": "/dev/ttys004"},
                 pid=9170,
             ),
             CODEX_ID: self._session(
-                CODEX_ID, "codex", "sidepulse-core", f"{HOME}/Downloads/JR-Bar/src", now - 1500,
+                CODEX_ID, "codex", "sidepulse-core", f"{FIXTURE_HOME}/Downloads/JR-Bar/src", now - 1500,
                 origin={"kind": "terminal", "label": "Terminal", "bundle_id": "com.apple.Terminal"},
                 terminal={"app": "Terminal", "bundle_id": "com.apple.Terminal", "tty": "/dev/ttys007"},
                 pid=9311,
             ),
             GEMINI_ID: self._session(
-                GEMINI_ID, "gemini", "docs-sweep", f"{HOME}/Projects/notes", now - 9000,
+                GEMINI_ID, "gemini", "docs-sweep", f"{FIXTURE_HOME}/Projects/notes", now - 9000,
                 origin={"kind": "terminal", "label": "Ghostty", "bundle_id": "com.mitchellh.ghostty"},
                 terminal={"app": "Ghostty", "bundle_id": "com.mitchellh.ghostty", "tty": "/dev/ttys009"},
                 pid=8020, mode="idle", lifecycle="active", next_actor="user",
             ),
         }
         self.sessions[CLAUDE_WORKER_ID] = self._session(
-            CLAUDE_WORKER_ID, "claude", "worker", f"{HOME}/Downloads/JR-Bar", now - 600,
+            CLAUDE_WORKER_ID, "claude", "worker", f"{FIXTURE_HOME}/Downloads/JR-Bar", now - 600,
             kind="worker", parent=CLAUDE_ID, pid=9188,
         )
         self.asks: list[dict] = []
@@ -1646,6 +1785,8 @@ class World:
         self.hot_history = False
         #: --usage-scenario: a focused provider set in place of the default one.
         self.usage_scenario: str | None = None
+        #: The `consent` scenario's providers the person has turned on.
+        self.consent_granted: set[str] = set()
         #: usage_hooks_test answers, by rule, for usage_hooks_status.
         self.hook_results: dict[str, dict] = {"chime": {
             "rule": "chime", "event": "quota_low", "provider": "claude", "at": time.time() - 540,
@@ -1797,7 +1938,8 @@ class World:
             "asks": list(self.asks),
             "devices": devices,
             "usage": {"refreshed_at": self.usage_refreshed_at,
-                      "providers": scenario_usage(self.usage_scenario, now) if self.usage_scenario else providers},
+                      "providers": scenario_usage(self.usage_scenario, now, frozenset(self.consent_granted))
+                      if self.usage_scenario else providers},
             "power": {"keep_awake": True, "closed_lid": {"policy": "agents", "holding": False, "helper_installed": True}},
             "focus": self.focus,
             "escalation": self.escalation,
@@ -1880,7 +2022,7 @@ class World:
             self.deck_bank = 0
 
     def deck_cycle_scope(self, delta: int) -> str:
-        order = ["automatic"] + self.deck_all_scopes()
+        order = ["automatic", *self.deck_all_scopes()]
         index = order.index(self.deck_scope) if self.deck_scope in order else 0
         self.deck_set_scope(order[(index + delta) % len(order)])
         return self.deck_scope
@@ -2322,7 +2464,7 @@ class World:
     # -- provider sign-in and updates (docs/CORE-PROTOCOL.md) ---------------------------
 
     #: What Fix sign-in answers per provider: (outcome, command, message, sign_in_url).
-    SIGN_IN_ANSWERS = {
+    SIGN_IN_ANSWERS: ClassVar[dict] = {
         "claude": ("renewed", None, "Claude Code renewed its sign-in, so Claude usage is refreshing now.", None),
         "grok": ("opened_terminal", "grok login",
                  "Opened Ghostty on `grok login`: finish signing in there, JR-Bar notices on its own.", None),
@@ -2387,7 +2529,7 @@ class World:
     def push_log(self, level: str, message: str) -> None:
         self.broadcast(self.log_message(level, message))
 
-    def finish_history_scan(self, provider: str, range_name: str) -> None:   # noqa: D401
+    def finish_history_scan(self, provider: str, range_name: str) -> None:
         """The off-thread `usage_history` scan landed: tell every client so
         the one that got a partial answer can ask again. `notify: false`;
         an app that ignores the event still catches up on its own."""
@@ -2411,7 +2553,8 @@ class World:
             if changed:
                 s["since"] = time.time()
 
-    def open_ask(self, sid: str, summary: str, kind: str = "permission") -> None:
+    def open_ask(self, sid: str, summary: str, kind: str = "permission", age_seconds: float = 0.0,
+                 preview: str | None = None, risk: str | None = None, detail: dict | None = None) -> None:
         with self.lock:
             # `answerable`/`replyable` mirror the daemon's contract-derived
             # flags: the mock's claude and codex rows stand in for the
@@ -2427,12 +2570,26 @@ class World:
                 return
             answerable = provider in ("claude", "codex") and not sid.startswith("remote:")
             replyable = answerable and kind == "input"
-            ask = {"session": sid, "kind": kind, "opened_at": time.time(), "summary": summary,
+            # An ask older than the daemon's "may be stale" mark (6 hours)
+            # from a silent session says so and offers Dismiss; a remote
+            # ask is never dismissible here.
+            opened_at = time.time() - max(0.0, age_seconds)
+            stale = age_seconds >= 6 * 3600
+            ask = {"session": sid, "kind": kind, "opened_at": opened_at, "summary": summary,
+                   "last_activity_at": opened_at, "stale": stale,
+                   "dismissible": stale and not sid.startswith("remote:"),
                    "answerable": answerable, "replyable": replyable}
+            # The card's one line, the destructive mark and the expanded
+            # view (docs/CORE-PROTOCOL.md, `detail`) ride only when given.
+            if preview is not None:
+                ask["preview"] = preview
+            if risk is not None:
+                ask["risk"] = risk
+            if detail is not None:
+                ask["detail"] = detail
             self.asks = [a for a in self.asks if a["session"] != sid] + [ask]
             if sid in self.sessions:
-                self.sessions[sid]["ask"] = {"kind": kind, "opened_at": ask["opened_at"], "summary": summary,
-                                             "answerable": answerable, "replyable": replyable}
+                self.sessions[sid]["ask"] = {k: v for k, v in ask.items() if k != "session"}
             self.ask_opened_at[sid] = ask["opened_at"]
             self.set_mode(sid, "waiting", "active", "user")
             self.escalation = {"stage": "none", "since": None}
@@ -2536,7 +2693,9 @@ class World:
                 self.push_state()
         elif name == "codex_ask":
             log("timeline: codex ask opens")
-            self.open_ask(CODEX_ID, "Run: rm -rf build")
+            self.open_ask(CODEX_ID, "Run: rm -rf build", preview="rm -rf build", risk="destructive",
+                          detail={"command": "cd packages/web\nrm -rf build dist\nnpm ci && npm run build",
+                                  "truncated": False})
             self.push_state()
             self.push_lights("ask")
             self.push_event("ask_opened", CODEX_ID, "sidepulse-core", sound="funk", detail="Run: rm -rf build", provider="codex")
@@ -2816,6 +2975,31 @@ class World:
             self.push_state()
             self.push_log("info", f"dismissed {sid} until it next speaks")
             result = {"session": sid, "dismissed": True}
+        elif name == "dismiss_ask":
+            # Take one STALE ask off the Mac's surfaces. Never an answer:
+            # nothing is sent to the agent. A fresh or remote ask is
+            # refused, the daemon's own gate.
+            sid = str(args.get("session") or "")
+            with self.lock:
+                ask = next((a for a in self.asks if a["session"] == sid), None)
+                if ask is None:
+                    return self._error(cid, "not_found", "no open ask for that session")
+                if sid.startswith("remote:"):
+                    return self._error(cid, "refused", "a remote session is the peer's to manage")
+                expected = args.get("request")
+                if expected is not None and expected != ask.get("request"):
+                    return self._error(cid, "stale_request", "that request was replaced")
+                if not ask.get("dismissible"):
+                    return self._error(cid, "refused", "only an ask that may be stale can be dismissed")
+                self.asks = [a for a in self.asks if a["session"] != sid]
+                if sid in self.sessions:
+                    self.sessions[sid]["ask"] = None
+                    self.set_mode(sid, "idle_ready", "active", "provider")
+                if not self.asks:
+                    self.escalation = {"stage": "none", "since": None}
+            self.push_state()
+            self.push_log("info", f"dismissed the stale ask on {sid}")
+            result = {"session": sid, "dismissed": True, "opened_at": ask["opened_at"]}
         elif name == "list_history":
             limit = int(args.get("limit") or 500)
             since = args.get("since")
@@ -3073,6 +3257,37 @@ class World:
                 self.document["closed_lid_awake_policy"] = str(args.get("policy", "never"))
             self.push_settings()
             result = {"policy": self.document["closed_lid_awake_policy"]}
+        elif name == "list_providers":
+            if self.usage_scenario != "consent":
+                return self._error(cid, "unsupported", "list_providers is only mocked for --usage-scenario consent")
+            result = {"providers": [consent_row(p, p in self.consent_granted) for p in CONSENT_COPY]}
+        elif name == "set_provider_usage_consent":
+            provider = args.get("provider")
+            enabled = args.get("enabled")
+            if self.usage_scenario != "consent" or provider not in CONSENT_COPY:
+                return self._error(cid, "unknown_provider", f"unknown provider {provider!r}")
+            if not isinstance(enabled, bool):
+                return self._error(cid, "invalid_args", "enabled must be a boolean")
+            with self.lock:
+                (self.consent_granted.add if enabled else self.consent_granted.discard)(provider)
+            self.push_state()
+            result = {"provider": consent_row(provider, enabled)}
+        elif name == "factory_session_profiles":
+            if args:
+                return self._error(cid, "invalid_args", "factory_session_profiles takes no arguments")
+            result = {"profiles": [{"browser": "zen", "profile": "synthetic.default", "label": "Zen · synthetic.default"}]}
+        elif name == "factory_session_import":
+            if (set(args) != {"browser", "profile", "instance", "confirm"}
+                    or args.get("confirm") is not True
+                    or args.get("browser") != "zen" or args.get("profile") != "synthetic.default"):
+                return self._error(cid, "invalid_args", "Select a profile and confirm its import")
+            instance = args["instance"]
+            result = {"provider": "factory", "instance": "default" if instance == "wrong-reply" else instance,
+                      "message": f"Imported Factory browser sign-in for {instance}."}
+        elif name == "factory_session_disconnect":
+            if set(args) != {"instance"}:
+                return self._error(cid, "invalid_args", "instance is required")
+            result = {"provider": "factory", "instance": args["instance"], "message": "Factory browser sign-in removed."}
         elif name == "provider_sign_in":
             provider = args.get("provider")
             if not isinstance(provider, str) or not provider:
@@ -3117,6 +3332,14 @@ class World:
                 timer.daemon = True
                 timer.start()
                 result = {"provider": provider, "started": True, "reason": None, "message": f"Updating {provider}…"}
+        elif name == "ntfy_test":
+            # Never sends: the mock has no network. It answers the way the daemon
+            # does for a missing topic, else as if the line went.
+            topic = str(self.document.get("ntfy_topic") or "").strip()
+            if not topic:
+                result = {"sent": False, "reason": "no_topic", "message": "Enter an ntfy topic first."}
+            else:
+                result = {"sent": True, "reason": "sent", "message": "Sent. Your phone should show it in a moment."}
         elif name == "provider_update_check":
             enabled = self.document.get("provider_update_checks_enabled") is True
             if enabled:
@@ -3134,6 +3357,14 @@ class World:
             self.tick_usage(0.0)
             # The daemon's reply shape; the new numbers ride the next `state`.
             result = {"requested_at": self.usage_refreshed_at, "providers": providers}
+        elif name == "reset_receipt":
+            # The Confetti toy's account of a quota_reset it was sent; the
+            # real daemon stores it on the reset event.
+            outcome = args.get("outcome")
+            if not isinstance(args.get("event_id"), str) or outcome not in (
+                    "delivered", "held", "dropped", "expired", "suppressed"):
+                return self._error(cid, "invalid_args", "event_id and a known outcome are required")
+            result = {"recorded": True}
         elif name == "usage_history":
             provider = str(args.get("provider", ""))
             range_name = str(args.get("range", "30d"))
@@ -3698,6 +3929,30 @@ class Client:
         self.stop = stop
         self.write_lock = threading.Lock()
         self.alive = True
+        self.authenticated = False
+        self.nonce: str | None = None
+
+    def handle_auth(self, command: dict) -> bool:
+        """The `auth` command. Returns False when the connection must close."""
+        secret = self.world.auth_secret
+        cid = command.get("id")
+        if secret is None:
+            self.send({"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": False,
+                       "error": {"code": "auth_unavailable", "message": "this mock holds no app secret"}})
+            return True
+        if self.authenticated:
+            self.send({"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": True, "result": {"authenticated": True}})
+            return True
+        nonce, self.nonce = self.nonce, None
+        proof = (command.get("args") or {}).get("proof")
+        if nonce is not None and isinstance(proof, str) and hmac.compare_digest(
+                auth_proof(secret, nonce).encode("ascii"), proof.encode("utf-8", "replace")):
+            self.authenticated = True
+            self.send({"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": True, "result": {"authenticated": True}})
+            return True
+        self.send({"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": False,
+                   "error": {"code": "auth_failed", "message": "the proof did not match"}})
+        return False
 
     def send(self, document: dict) -> None:
         if not self.alive:
@@ -3713,7 +3968,11 @@ class Client:
         world = self.world
         with world.lock:
             world.clients.append(self)
-            documents = [world.hello(), world.state(), world.lights(), world.settings()]
+            hello = world.hello()
+            if world.auth_secret is not None:
+                self.nonce = os.urandom(16).hex()
+                hello["auth"] = {"scheme": "hmac-sha256", "nonce": self.nonce}
+            documents = [hello, world.state(), world.lights(), world.settings()]
         for document in documents:
             self.send(document)
         log("client connected; sent hello/state/lights/settings")
@@ -3751,6 +4010,17 @@ class Client:
                         continue
                     log(f"command {command.get('name')} {json.dumps(command.get('args') or {})} (id {command.get('id')})")
                     if command.get("t") != "command":
+                        continue
+                    if command.get("name") == "auth":
+                        if not self.handle_auth(command):
+                            return
+                        continue
+                    if (world.auth_secret is not None and not self.authenticated
+                            and command.get("name") not in MOCK_OPEN_COMMANDS):
+                        self.send({"t": "reply", "v": PROTOCOL_VERSION, "id": command.get("id"), "ok": False,
+                                   "error": {"code": "unauthenticated",
+                                             "message": "That change has to be made in JR-Bar itself: "
+                                                        "open JR-Bar and use Settings."}})
                         continue
                     self.send(world.handle_command(command))
         except OSError:
@@ -3792,6 +4062,34 @@ def parent_watch(pid: int):
     return gone
 
 
+def prepare_socket_path(path: Path) -> None:
+    """Remove a stale socket while preserving other files and live listeners."""
+    try:
+        previous = path.lstat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISSOCK(previous.st_mode):
+        raise ValueError(f"refusing to replace {path}: it is not a socket")
+    if previous.st_uid != os.getuid():
+        raise ValueError(f"refusing to replace {path}: another user owns it")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.25)
+        try:
+            probe.connect(str(path))
+        except OSError as exc:
+            if exc.errno != errno.ECONNREFUSED:
+                raise ValueError(f"cannot confirm a stale socket at {path}: {exc}") from exc
+        else:
+            raise ValueError(f"another daemon is listening on {path}; refusing to replace it")
+    try:
+        current = path.lstat()
+    except FileNotFoundError:
+        return
+    if (current.st_dev, current.st_ino) != (previous.st_dev, previous.st_ino):
+        raise ValueError(f"socket path changed while checking {path}; refusing to replace it")
+    path.unlink()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--socket", default=str(DEFAULT_SOCKET),
@@ -3825,6 +4123,9 @@ def main() -> int:
                              "Mac with no quota source), statusline (Claude read from Claude Code's statusLine), "
                              "hub (a second Claude and a Codex account read through CLIProxyAPI), "
                              "stale (a Claude reading kept five hours through failed polls)")
+    parser.add_argument("--stale-ask", action="store_true",
+                        help="start with the Codex session holding an ask nobody has answered for eight hours: "
+                             "it is still an ask, says it may be stale, and offers dismiss_ask")
     parser.add_argument("--parent-pid", type=int, default=None, metavar="PID",
                         help="stop by itself once process PID exits (tests pass their own pid, so a killed "
                              "test run leaves no mock behind); without it the mock runs until it is stopped")
@@ -3842,18 +4143,11 @@ def main() -> int:
             "--i-know-this-is-the-real-socket.")
         return 2
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            probe.connect(str(path))
-        except OSError:
-            path.unlink()
-        else:
-            probe.close()
-            log(f"another daemon is listening on {path}; refusing to replace it")
-            return 2
-        finally:
-            probe.close()
+    try:
+        prepare_socket_path(path)
+    except ValueError as exc:
+        log(str(exc))
+        return 2
 
     stop = threading.Event()
     world = World(step_seconds=args.step, loop=args.loop and not args.no_loop)
@@ -3862,6 +4156,9 @@ def main() -> int:
     world.history_scan_seconds = max(0.0, args.history_scan)
     world.hidden_count = max(0, args.hidden)
     world.usage_scenario = args.usage_scenario
+    world.auth_secret = adopt_stdin_secret()
+    if args.stale_ask:
+        world.open_ask(CODEX_ID, "Run: rm -rf build", age_seconds=8 * 3600)
     world.deck_present = args.deck != "absent"
     world.deck_approved = args.deck in ("approved", "usb", "recovering")
     world.deck_transport = "usb" if args.deck == "usb" else "bluetooth"
@@ -3899,7 +4196,7 @@ def main() -> int:
                 break
             try:
                 conn, _ = server.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break

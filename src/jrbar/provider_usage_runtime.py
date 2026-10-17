@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .adaptive_refresh import (
     AdaptiveRefreshPlan,
+    degraded_signature,
     plan_adaptive_refresh_cadence,
 )
 from .provider_feature_settings import (
@@ -31,6 +32,7 @@ from .provider_reconnect import (
     should_collect,
 )
 from .provider_usage_platform import (
+    USAGE_OFF_REASON,
     ProviderSourceState,
     ProviderUsageSnapshot,
     provider_descriptor,
@@ -46,6 +48,9 @@ ProviderRefreshScope = str | tuple[str, str]
 #: usage endpoint 429s, and before this gate existed the service kept
 #: re-asking every 120 s, which is exactly how one STAYS rate limited.
 _TERMINAL_FAILURE_STATES = frozenset({ProviderSourceState.NEEDS_SIGN_IN})
+#: Reasons a collector gave when it never answered at all.
+_UNANSWERED_REASONS = frozenset({"response_timed_out", "collector_failed"})
+_RESET_RECOVERY_SECONDS = 15.0
 _TRANSIENT_FAILURE_STATES = frozenset(
     {
         ProviderSourceState.RATE_LIMITED,
@@ -283,69 +288,10 @@ def _empty_snapshot(
 
 
 def _default_collectors() -> dict[str, Collector]:
-    from .provider_usage_codex_claude import collect_claude, collect_codex
-    from .provider_usage_collectors import (
-        collect_antigravity,
-        collect_cursor,
-        collect_devin,
-        collect_gemini,
-        collect_grok,
-        collect_openai_api,
-        collect_opencode,
-    )
+    """Every shipped collector, each behind its provider's usage consent."""
+    from .provider_usage_consent import consent_gated_collectors
 
-    return {
-        "codex": lambda preference, home, observed, credentials: collect_codex(
-            preference,
-            home=home,
-            observed_at=observed,
-            live_probe=codex_app_server_probe,
-        ),
-        "claude": lambda preference, home, observed, credentials: collect_claude(
-            preference,
-            home=home,
-            observed_at=observed,
-            credentials=credentials,
-        ),
-        "cursor": lambda preference, home, observed, credentials: collect_cursor(
-            preference,
-            home=home,
-            observed_at=observed,
-            credentials=credentials,
-        ),
-        "devin": lambda preference, home, observed, credentials: collect_devin(
-            preference,
-            observed_at=observed,
-            credentials=credentials,
-        ),
-        "grok": lambda preference, home, observed, credentials: collect_grok(
-            preference,
-            home=home,
-            observed_at=observed,
-            credentials=credentials,
-        ),
-        "gemini": lambda preference, home, observed, credentials: collect_gemini(
-            preference,
-            home=home,
-            observed_at=observed,
-            credentials=credentials,
-        ),
-        "antigravity": lambda preference, home, observed, credentials: collect_antigravity(
-            preference,
-            observed_at=observed,
-            home=home,
-        ),
-        "opencode": lambda preference, home, observed, credentials: collect_opencode(
-            preference,
-            observed_at=observed,
-            home=home,
-        ),
-        "openai-api": lambda preference, home, observed, credentials: collect_openai_api(
-            preference,
-            observed_at=observed,
-            credentials=credentials,
-        ),
-    }
+    return dict(consent_gated_collectors(live_probe=codex_app_server_probe))
 
 
 def _interval_for(
@@ -654,6 +600,7 @@ class ProviderUsageService:
         collector_deadline_seconds: float = DEFAULT_COLLECTOR_DEADLINE_SECONDS,
         partial_publish_after_seconds: float | None = DEFAULT_PARTIAL_PUBLISH_AFTER_SECONDS,
         monotonic: Callable[[], float] = time.monotonic,
+        timer_factory: Callable[..., object] = threading.Timer,
     ) -> None:
         if type(max_concurrent_collectors) is not int or max_concurrent_collectors < 1:
             raise ValueError("invalid collector concurrency")
@@ -684,6 +631,13 @@ class ProviderUsageService:
         self._home = Path(home)
         self._collectors = dict(_default_collectors() if collectors is None else collectors)
         self._clock = clock
+        self._timer_factory = timer_factory
+        self._due_timer = None
+        self._due_timer_revision = 0
+        self._auth_poll_at: float | None = None
+        self._scheduled_callback = None
+        self._reset_attempts: set[tuple[tuple[str, str], float]] = set()
+        self._reset_retries: dict[tuple[tuple[str, str], float], float] = {}
         self._state_saver = state_saver
         if receipt_handler is not None and not callable(receipt_handler):
             raise ValueError("invalid refresh receipt handler")
@@ -733,9 +687,15 @@ class ProviderUsageService:
         self._menu_last_opened_at: float | None = None
         #: True while the LED bar renders Quota Runway.
         self._ambient_usage_visible = False
+        self._active_work = False
         #: While a jump waits for its confirming read, the last moment it
         #: can still be confirmed (note_reset_candidates); None otherwise.
         self._reset_confirm_until: float | None = None
+        #: What was degraded at the last accepted read, and since when it
+        #: has been degraded that way: a source that stays broken is asked
+        #: less often (adaptive_refresh.DEGRADED_BACKOFF_LADDER).
+        self._degraded_signature: frozenset = frozenset()
+        self._degraded_since: float | None = None
         self._last_cadence_plan = plan_adaptive_refresh_cadence(
             (),
             observed_at=0.0,
@@ -743,7 +703,7 @@ class ProviderUsageService:
 
     @staticmethod
     def _can_retain(snapshot: ProviderUsageSnapshot) -> bool:
-        return snapshot.provider_id != "claude" or snapshot.account_discriminator is not None
+        return snapshot.provider_id not in {"claude", "grok", "factory"} or snapshot.account_discriminator is not None
 
     @staticmethod
     def _is_invented_antigravity_reading(snapshot: ProviderUsageSnapshot) -> bool:
@@ -761,22 +721,50 @@ class ProviderUsageService:
         self,
         state: ProviderUsageState,
     ) -> ProviderUsageState:
-        """Withhold saved Claude quota until its account scope is proved.
+        """Withhold saved Claude and Grok quota until its account scope is proved.
 
         Also drops a saved Antigravity reading no server ever measured, so
-        it is not served back as a stale "last known good".
+        it is not served back as a stale "last known good", and a saved
+        reading whose provider's usage is off.
         """
-        try:
-            from .claude_quota import account_facts_from_claude_config
+        snapshots = self._without_unconsented_readings(state.snapshots)
+        current_claude_account = None
+        # A Claude reading is kept only for the account it was read for, and
+        # only a reading that names one can be: the account file is read
+        # just then, never for a "usage off" state or an empty start.
+        if any(
+            snapshot.provider_id == "claude"
+            and snapshot.account_discriminator is not None
+            for snapshot in snapshots
+        ):
+            try:
+                from .claude_quota import account_facts_from_claude_config
 
-            _plan, current_claude_account = account_facts_from_claude_config(
-                self._home
-            )
-        except Exception:
-            current_claude_account = None
+                _plan, current_claude_account = account_facts_from_claude_config(
+                    self._home
+                )
+            except Exception:
+                current_claude_account = None
+        current_grok_account = None
+        if any(
+            snapshot.provider_id == "grok"
+            and snapshot.source_instance_id == "default"
+            and snapshot.account_discriminator is not None
+            and snapshot.reason_code != USAGE_OFF_REASON
+            for snapshot in snapshots
+        ):
+            try:
+                from .provider_account_identity import grok_account_metadata
+                from .provider_usage_collectors import _read_grok_auth
+
+                auth = _read_grok_auth(self._home, float(self._clock())).credential
+                if auth is not None:
+                    _email, current_grok_account = grok_account_metadata(self._home, auth[1])
+            except Exception:
+                current_grok_account = None
         kept = tuple(
             snapshot
-            for snapshot in state.snapshots
+            for snapshot in snapshots
             if not self._is_invented_antigravity_reading(snapshot)
             and (
                 snapshot.provider_id != "claude"
@@ -786,10 +774,46 @@ class ProviderUsageService:
                     and snapshot.account_discriminator == current_claude_account
                 )
             )
+            and (
+                snapshot.provider_id != "grok"
+                or snapshot.reason_code == USAGE_OFF_REASON
+                or (
+                    snapshot.source_instance_id == "default"
+                    and current_grok_account is not None
+                    and snapshot.account_discriminator == current_grok_account
+                )
+            )
         )
-        if len(kept) == len(state.snapshots):
+        if kept == tuple(state.snapshots):
             return state
         return replace(state, snapshots=kept, next_refresh_at=None)
+
+    def _without_unconsented_readings(
+        self,
+        snapshots: tuple[ProviderUsageSnapshot, ...],
+    ) -> tuple[ProviderUsageSnapshot, ...]:
+        """A saved reading must not outlive the consent that allowed it."""
+        gated = {
+            provider_id
+            for provider_id, collector in self._collectors.items()
+            if getattr(collector, "requires_usage_consent", False)
+        }
+        if not gated or not any(item.provider_id in gated for item in snapshots):
+            return tuple(snapshots)
+        try:
+            loaded = self._settings_loader()
+            settings = getattr(loaded, "settings", loaded)
+            preferences = {item.identity: item for item in settings.providers}
+        except Exception:
+            return tuple(snapshots)
+        from .provider_usage_consent import overlay_usage_off
+
+        return tuple(
+            overlay_usage_off(item, preferences[item.identity])
+            if item.provider_id in gated and item.identity in preferences
+            else item
+            for item in snapshots
+        )
 
     @staticmethod
     def _continuity_key(snapshot: ProviderUsageSnapshot) -> tuple[str, str, str]:
@@ -798,6 +822,15 @@ class ProviderUsageService:
             snapshot.source_instance_id,
             snapshot.account_discriminator or "",
         )
+
+    def note_active_work(self, active: bool) -> None:
+        """Working main sessions keep usage fresh without a menu visit."""
+        with self._lock:
+            active = bool(active)
+            if active == self._active_work:
+                return
+            self._active_work = active
+            self._replan_cached_cadence_locked(float(self._clock()))
 
     def note_ambient_usage_visible(self, visible: bool) -> None:
         """Tell the cadence whether a usage number is on screen already."""
@@ -836,7 +869,9 @@ class ProviderUsageService:
             menu_last_opened_at=self._menu_last_opened_at,
             constrained=self._last_cadence_plan.constrained,
             ambient_usage_visible=self._ambient_usage_visible,
+            active_work=self._active_work,
             reset_confirm_until=self._reset_confirm_until,
+            degraded_for_seconds=self._degraded_for(observed_at),
         )
         next_refresh_at = self._state.next_refresh_at
         if next_refresh_at is not None:
@@ -846,6 +881,153 @@ class ProviderUsageService:
             )
             self._state = replace(self._state, next_refresh_at=next_refresh_at)
         self._last_cadence_plan = plan
+        self._schedule_due_locked()
+
+    @staticmethod
+    def _reset_boundary_eligible(snapshot, gate) -> bool:
+        if gate.terminal or snapshot.state not in {
+            ProviderSourceState.READY, ProviderSourceState.STALE,
+            ProviderSourceState.UNAVAILABLE, ProviderSourceState.ERROR,
+        }:
+            return False
+        if gate.strikes and snapshot.reason_code not in {
+            "network_unavailable", "response_timed_out", "collector_failed",
+            "invalid_provider_response",
+        }:
+            return False
+        return True
+
+    def _reset_boundary_read(self, snapshot, gate, observed_at: float) -> bool:
+        """Read a known reset, then allow one short transport recovery."""
+        if not self._reset_boundary_eligible(snapshot, gate):
+            return False
+        with self._lock:
+            due = [
+                (snapshot.identity, lane.reset_at)
+                for lane in snapshot.lanes
+                if lane.reset_at is not None
+                and snapshot.observed_at < lane.reset_at <= observed_at
+                and (snapshot.identity, lane.reset_at) not in self._reset_attempts
+            ]
+            self._reset_attempts.update(due)
+            for key in due:
+                self._reset_retries[key] = observed_at + _RESET_RECOVERY_SECONDS
+            retries = [
+                key for key, deadline in self._reset_retries.items()
+                if key[0] == snapshot.identity and deadline <= observed_at
+            ]
+            for key in retries:
+                del self._reset_retries[key]
+            return bool(due or retries)
+
+    def _cancel_due_locked(self) -> None:
+        self._due_timer_revision += 1
+        if self._due_timer is not None:
+            self._due_timer.cancel()
+            self._due_timer = None
+
+    def _watched_auth_providers_locked(self) -> tuple[tuple[str, str], ...]:
+        settings = self._settings_snapshot
+        if settings is None:
+            return ()
+        return tuple(
+            preference.identity for preference in settings.providers
+            if preference.provider_id in {"claude", "grok"}
+            and preference.source_instance_id == "default"
+            and preference.enabled and preference.usage_consented
+            and preference.provider_id in self._collectors
+            and self._failure_gates.get(preference.identity, FailureGate()).terminal
+        )
+
+    def _changed_auth_providers_locked(self) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            identity for identity in self._watched_auth_providers_locked()
+            if credential_fingerprint(self._home, identity[0])
+            != self._failure_gates[identity].terminal_fingerprint
+        )
+
+    def _schedule_due_locked(self) -> None:
+        self._cancel_due_locked()
+        if self._closed or self._scheduled_callback is None:
+            return
+        deadline = self._state.next_refresh_at
+        if deadline is None:
+            return
+        now = float(self._clock())
+        resets = [
+            (snapshot.identity, lane.reset_at)
+            for snapshot in self._state.snapshots
+            for lane in snapshot.lanes
+            if lane.reset_at is not None
+            and (snapshot.identity, lane.reset_at) not in self._reset_attempts
+            and (lane.reset_at > now or (
+                snapshot.observed_at < lane.reset_at <= now
+                and self._reset_boundary_eligible(
+                    snapshot, self._failure_gates.get(snapshot.identity, FailureGate())
+                )
+            ))
+        ]
+        reset_providers = None
+        resets.extend(
+            (identity, retry_at)
+            for (identity, _boundary), retry_at in self._reset_retries.items()
+            if any(
+                snapshot.identity == identity
+                and self._reset_boundary_eligible(
+                    snapshot, self._failure_gates.get(identity, FailureGate())
+                )
+                for snapshot in self._state.snapshots
+            )
+        )
+        if resets:
+            boundary = min(at for _identity, at in resets)
+            reset_deadline = max(now, boundary)
+            if reset_deadline <= deadline:
+                deadline = reset_deadline
+                reset_providers = tuple(dict.fromkeys(identity for identity, at in resets if at == boundary))
+        self._state = replace(self._state, next_refresh_at=deadline)
+        # While signed out, inspect only source attributes once a minute.
+        # An unchanged source makes no provider request and keeps its cadence.
+        if self._watched_auth_providers_locked():
+            if self._auth_poll_at is None or self._auth_poll_at <= now:
+                self._auth_poll_at = now + 60.0
+            wake_at = min(deadline, self._auth_poll_at)
+        else:
+            self._auth_poll_at = None
+            wake_at = deadline
+        revision = self._due_timer_revision
+
+        def due() -> None:
+            with self._lock:
+                if self._closed or revision != self._due_timer_revision:
+                    return
+                self._due_timer = None
+                callback = self._scheduled_callback
+                moment = float(self._clock())
+                if moment < wake_at:
+                    self._schedule_due_locked()
+                    return
+                if moment < deadline:
+                    providers = self._changed_auth_providers_locked()
+                    if not providers:
+                        self._schedule_due_locked()
+                        return
+                else:
+                    providers = reset_providers
+            self.request(callback=callback, providers=providers)
+
+        timer = self._timer_factory(max(0.0, wake_at - now), due)
+        timer.daemon = True
+        self._due_timer = timer
+        timer.start()
+
+    def _degraded_for(self, observed_at: float) -> float | None:
+        """How long the sources degraded at the last accepted read have been
+        degraded that way, or None when none is."""
+        since = getattr(self, "_degraded_since", None)
+        if since is None:
+            return None
+        return max(0.0, observed_at - since)
 
     def snapshot(self) -> ProviderUsageState:
         with self._lock:
@@ -890,6 +1072,7 @@ class ProviderUsageService:
             self._settings_revision += 1
             self._settings_snapshot = settings
             self._explicit_settings_revision = self._settings_revision
+            self._cancel_due_locked()
 
     def _settings(self) -> ProviderUsageSettings:
         settings, _revision = self._settings_with_revision()
@@ -1007,13 +1190,26 @@ class ProviderUsageService:
                 )
                 continue
             gate = books.failure_gates.get(identity, FailureGate())
-            fingerprint = credential_fingerprint(self._home, provider_id)
+            # A provider whose usage is off has its sign-in left alone, even
+            # to check whether it changed.
+            usage_off = bool(
+                getattr(collector, "requires_usage_consent", False)
+                and not preference.usage_consented
+            )
+            # CLI sign-in files belong to the default profile. Named
+            # profiles use stored credentials and retry on their own
+            # explicit reconnect, not another account's CLI rotation.
+            fingerprint = (
+                credential_fingerprint(self._home, provider_id)
+                if not usage_off and preference.source_instance_id == "default"
+                else None
+            )
             previous = previous_by_provider.get(identity)
             if previous is not None and not should_collect(
                 gate,
                 now=observed_at,
                 fingerprint=fingerprint,
-                forced=force,
+                forced=force or self._reset_boundary_read(previous, gate, observed_at),
             ):
                 # The gate is armed and nothing changed: serve the last
                 # snapshot instead of re-asking a server that already
@@ -1031,6 +1227,7 @@ class ProviderUsageService:
                     fingerprint=fingerprint,
                     repair_grok=(
                         provider_id == "grok"
+                        and not usage_off
                         and preference.source_instance_id == "default"
                         and gate.terminal
                         and fingerprint != gate.terminal_fingerprint
@@ -1118,6 +1315,7 @@ class ProviderUsageService:
                 unpublished = False
         state: ProviderUsageState | None = None
         cadence_plan: AdaptiveRefreshPlan | None = None
+        active_work_at_plan = self._active_work
         if not superseded:
             self._decide_incidents(books, observed_at)
             ordered = tuple(self._with_incident_decisions(current_snapshots(), books))
@@ -1129,6 +1327,16 @@ class ProviderUsageService:
                     force=force,
                     wanted=selected is None or bool({"claude", "codex"} & selected_provider_ids),
                 )
+            degraded_now = degraded_signature(ordered)
+            if not degraded_now:
+                degraded_since = None
+            elif degraded_now == getattr(self, "_degraded_signature", frozenset()):
+                degraded_since = getattr(self, "_degraded_since", None)
+                if degraded_since is None:
+                    degraded_since = observed_at
+            else:
+                degraded_since = observed_at
+            active_work_at_plan = self._active_work
             cadence_plan = plan_adaptive_refresh_cadence(
                 ordered,
                 observed_at=observed_at,
@@ -1137,7 +1345,13 @@ class ProviderUsageService:
                 ambient_usage_visible=bool(
                     getattr(self, "_ambient_usage_visible", False)
                 ),
+                active_work=active_work_at_plan,
                 reset_confirm_until=getattr(self, "_reset_confirm_until", None),
+                degraded_for_seconds=(
+                    None
+                    if degraded_since is None
+                    else max(0.0, observed_at - degraded_since)
+                ),
             )
             state = ProviderUsageState(
                 snapshots=ordered,
@@ -1167,11 +1381,62 @@ class ProviderUsageService:
                 publication_outcome = RefreshPublicationOutcome.SUPERSEDED
                 result = self._state
             else:
+                if active_work_at_plan != self._active_work:
+                    cadence_plan = plan_adaptive_refresh_cadence(
+                        state.snapshots, observed_at=observed_at,
+                        menu_last_opened_at=self._menu_last_opened_at,
+                        constrained=cadence_plan.constrained,
+                        ambient_usage_visible=self._ambient_usage_visible,
+                        active_work=self._active_work,
+                        reset_confirm_until=self._reset_confirm_until,
+                        degraded_for_seconds=self._degraded_for(observed_at),
+                    )
+                    state = replace(state, next_refresh_at=observed_at + cadence_plan.interval_seconds)
+                unread_usage = selected is not None and any(
+                    snapshot.lanes
+                    and snapshot.provider_id not in selected_provider_ids
+                    and snapshot.identity not in selected_instances
+                    for snapshot in previous_state.snapshots
+                )
+                if (self._reset_confirm_until is not None and unread_usage
+                        and self._state.next_refresh_at is not None
+                        and state.next_refresh_at is not None):
+                    # A scoped read cannot pay another source's confirmation
+                    # read or postpone the deadline already reserved for it.
+                    state = replace(state, next_refresh_at=min(
+                        state.next_refresh_at, self._state.next_refresh_at,
+                    ))
                 self._state = state
                 self._last_known_good = books.last_known_good
                 self._failure_gates = books.failure_gates
+                known_resets = {
+                    (snapshot.identity, lane.reset_at)
+                    for snapshot in state.snapshots for lane in snapshot.lanes
+                    if lane.reset_at is not None
+                }
+                self._reset_attempts.intersection_update(known_resets)
+                self._reset_retries = {
+                    key: deadline for key, deadline in self._reset_retries.items()
+                    if key in known_resets and any(
+                        snapshot.identity == key[0]
+                        # A valid response can still quote the ended window
+                        # while the provider catches up. Keep its single
+                        # recovery read just as for a transport failure.
+                        and (snapshot.state in {
+                            ProviderSourceState.READY, ProviderSourceState.STALE,
+                        } or self._failure_gates.get(key[0], FailureGate()).strikes > 0)
+                        and self._reset_boundary_eligible(
+                            snapshot, self._failure_gates.get(key[0], FailureGate())
+                        )
+                        for snapshot in state.snapshots
+                    )
+                }
                 self._last_cadence_plan = cadence_plan
+                self._degraded_signature = degraded_now
+                self._degraded_since = degraded_since
                 self._last_publication_revision = settings_revision
+                self._schedule_due_locked()
+                state = self._state
                 result = state
                 publication_outcome = RefreshPublicationOutcome.ACCEPTED
                 if self._state_saver is not None:
@@ -1270,6 +1535,18 @@ class ProviderUsageService:
     ) -> ProviderUsageSnapshot:
         """Fold one instance's answer into the books; return what it shows."""
         identity = job.identity
+        if candidate.reason_code == USAGE_OFF_REASON:
+            # Usage is off: nothing was asked, nothing is retried, no status
+            # page is looked up for a provider nothing found on this Mac,
+            # and no earlier reading is kept as "last good" beyond the
+            # person's consent.
+            books.failure_gates.pop(identity, None)
+            books.last_known_good = {
+                key: value
+                for key, value in books.last_known_good.items()
+                if key[:2] != identity
+            }
+            return candidate
         if candidate.state is not ProviderSourceState.SOURCE_NOT_FOUND:
             # A source that is there but failing (signed out, rate
             # limited, erroring) is exactly when "the provider is down"
@@ -1293,13 +1570,14 @@ class ProviderUsageService:
             )
         else:
             books.failure_gates.pop(identity, None)
+        candidate = self._with_proven_claude_account(candidate, books)
         continuity_key = self._continuity_key(candidate)
         previous_good = (
             books.last_known_good.get(continuity_key)
             if self._can_retain(candidate)
             else None
         )
-        if candidate.provider_id == "claude" and candidate.account_discriminator is not None:
+        if candidate.provider_id in {"claude", "grok", "factory"} and candidate.account_discriminator is not None:
             books.last_known_good = {
                 key: value
                 for key, value in books.last_known_good.items()
@@ -1352,6 +1630,53 @@ class ProviderUsageService:
                 last_known_good=previous_good,
             )
         return candidate
+
+    def _with_proven_claude_account(
+        self,
+        candidate: ProviderUsageSnapshot,
+        books: _RefreshBooks,
+    ) -> ProviderUsageSnapshot:
+        """Give a failed default-instance Claude answer its account name.
+
+        A collector that timed out or raised, or one that could not read
+        ``~/.claude.json``, answers without an account discriminator, and a
+        Claude reading is only kept for the account it was read for. So the
+        last good reading was dropped and the owner saw a bare error after a
+        slow wake from sleep. Here the failure takes the account the config
+        names now, or, when the config cannot be read, the one the last good
+        reading carried; a different account still keeps nothing.
+        """
+        if (
+            candidate.provider_id != "claude"
+            or candidate.source_instance_id != "default"
+            or candidate.account_discriminator is not None
+            or candidate.state is ProviderSourceState.READY
+            or candidate.reason_code == USAGE_OFF_REASON
+        ):
+            return candidate
+        stored = [
+            value
+            for key, value in books.last_known_good.items()
+            if key[:2] == candidate.identity
+            and value.account_discriminator is not None
+        ]
+        if len(stored) != 1:
+            return candidate
+        try:
+            from .claude_quota import account_facts_from_claude_config
+
+            _plan, current = account_facts_from_claude_config(self._home)
+        except Exception:
+            current = None
+        discriminator = stored[0].account_discriminator
+        if current is None:
+            # An unreadable account file proves nothing, but a collector that
+            # never answered said nothing about the account either.
+            if candidate.reason_code not in _UNANSWERED_REASONS:
+                return candidate
+        elif current != discriminator:
+            return candidate
+        return replace(candidate, account_discriminator=discriminator)
 
     def _decide_incidents(
         self,
@@ -1619,13 +1944,22 @@ class ProviderUsageService:
                     self._settings_revision,
                 )
                 return self._state
+            self._scheduled_callback = callback
             now = float(self._clock())
             if (
                 not force
                 and self._state.next_refresh_at is not None
                 and now < self._state.next_refresh_at
             ):
-                return self._state
+                changed = self._changed_auth_providers_locked()
+                changed = tuple(identity for identity in changed
+                                if providers is None or identity in providers or identity[0] in providers)
+                if not changed:
+                    self._schedule_due_locked()
+                    return self._state
+                # A renewed sign-in bypasses cadence only for its own source.
+                providers = changed
+            self._cancel_due_locked()
             active = any(worker.is_alive() for worker in self._workers)
             if active and not force:
                 self._callbacks.append((self._refresh_generation, callback))
@@ -1697,6 +2031,7 @@ class ProviderUsageService:
                 self._workers.discard(threading.current_thread())
                 if self._worker is threading.current_thread():
                     self._worker = None
+                self._schedule_due_locked()
             superseded_callbacks = False
             for index, callback in enumerate(callbacks):
                 # Keep the revision check and callback invocation in one
@@ -1731,6 +2066,7 @@ class ProviderUsageService:
     def close(self) -> None:
         with self._lock:
             self._closed = True
+            self._cancel_due_locked()
             self._refresh_generation += 1
             self._callbacks.clear()
             self._pending_refresh = None

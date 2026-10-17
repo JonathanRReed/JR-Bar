@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 
 /// Render proof for the utility surfaces people see: the Dock's preview
 /// panel and ⌥⇥ switcher, the menu bar's Item Bar and layout editor, and
-/// the Data Hoarder's archive and rebuilt timeline — each with realistic
+/// the rebuilt session timeline — each with realistic
 /// fixtures (real app icons, drawn window stills, live agent marks), in
 /// light and dark, over a desktop-like backdrop with a stand-in for the
 /// glass the real panels float on. Rendered through `NSHostingView` and
@@ -212,6 +212,61 @@ struct UtilitySurfacesRenderProofTests {
         #expect(panel.width == expected)
     }
 
+    @Test("paused video metadata never widens the Dock preview")
+    func pausedVideoMetadataKeepsWidth() {
+        for spacing in [0.6, 1, 1.6] {
+            let short = Self.pausedVideo(title: "A video", artist: "A channel", spacing: spacing)
+            let expected = DockPreviewPanel(content: short).fittingSize()
+            for (title, artist) in [(String(repeating: "A synthetic video title ", count: 12), "A channel"),
+                                    ("A video", String(repeating: "A synthetic channel name ", count: 12))] {
+                let content = Self.pausedVideo(title: title, artist: artist, spacing: spacing)
+                let actual = DockPreviewPanel(content: content).fittingSize()
+                #expect(actual.width == expected.width)
+                #expect(actual.height == expected.height)
+            }
+        }
+    }
+
+    @Test("hour-long video timestamps stay on one row")
+    func pausedVideoHourTimestampsKeepHeight() {
+        let short = Self.pausedVideo(title: "A video", artist: "A channel", duration: 258)
+        let expected = DockPreviewPanel(content: short).fittingSize()
+        for (duration, elapsed) in [(3600.0, 149.0), (7200.0, 3601.0), (360000.0, 359999.0)] {
+            let content = Self.pausedVideo(title: "A video", artist: "A channel", duration: duration, elapsed: elapsed)
+            let actual = DockPreviewPanel(content: content).fittingSize()
+            #expect(actual.width == expected.width)
+            #expect(actual.height == expected.height)
+        }
+    }
+
+    private static func pausedVideo(title: String, artist: String, spacing: Double = 1,
+                                    duration: Double = 3600, elapsed: Double = 149) -> DockPreviewContent {
+        let content = Fixtures.musicContent(spacing: spacing)
+        content.appName = "Video App"
+        content.bundleID = "test.video-player"
+        content.icon = NSImage(systemSymbolName: "play.rectangle", accessibilityDescription: nil)
+        content.media = AlcoveMedia(title: title, artist: artist, playing: false,
+                                    bundleIdentifier: "test.video-player", duration: duration, elapsed: elapsed,
+                                    timestamp: 0)
+        return content
+    }
+
+    @Test(.enabled(if: Self.enabled))
+    func pausedVideoWidthProof() throws {
+        for (name, title) in [("short", "A paused video"),
+                              ("long", String(repeating: "A synthetic paused video title ", count: 8))] {
+            let content = Self.pausedVideo(title: title, artist: "A synthetic channel")
+            let width = DockPreviewPanel(content: content).fittingSize().width
+            for dark in [true, false] {
+                let view = DockPreviewView(content: content, actions: DockPreviewActions(content: content))
+                    .frame(width: width)
+                try Self.write(view, glassRadius: content.metrics.panelRadius,
+                               name: "dock-paused-video-\(name)", dark: dark,
+                               canvas: CGSize(width: 900, height: 460))
+            }
+        }
+    }
+
     // MARK: Proof shots
 
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the utility PNGs"))
@@ -408,20 +463,20 @@ struct UtilitySurfacesRenderProofTests {
 
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the utility PNGs"))
     func itemBar() async throws {
-        let tiles = MenuBarLiveTiles()
-        let live = Fixtures.barItems.prefix(2)
-        tiles.itemsProvider = { Array(live) }
-        tiles.rowRects = { [CGRect(x: 0, y: 0, width: 3000, height: 24)] }
-        tiles.capture = { rect in Fixtures.liveCapture(width: rect.width) }
-        await tiles.refreshOnce()
         let shots: [(String, MenuBarBarModel)] = [
             ("itembar", Fixtures.barModel()),
             ("itembar-keyboard", Fixtures.barModel(query: "", selection: 2)),
             ("itembar-filtered", Fixtures.barModel(query: "vpn", selection: 0)),
             ("itembar-empty", MenuBarBarModel()),
         ]
-        for (name, model) in shots {
-            for dark in [true, false] {
+        for dark in [true, false] {
+            let tiles = MenuBarLiveTiles()
+            let live = Fixtures.barItems.prefix(2)
+            tiles.itemsProvider = { Array(live) }
+            tiles.rowRects = { [CGRect(x: 0, y: 0, width: 3000, height: 24)] }
+            tiles.capture = { rect in Fixtures.liveCapture(width: rect.width, dark: dark) }
+            await tiles.refreshOnce()
+            for (name, model) in shots {
                 let widths = model.rowWidths(liveWidths: tiles.imageWidths)
                 let size = model.items.isEmpty
                     ? MenuBarBarLayout.contentSize(itemCount: 0)
@@ -437,33 +492,6 @@ struct UtilitySurfacesRenderProofTests {
     }
 
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the utility PNGs"))
-    func layoutEditor() throws {
-        let subjects = Fixtures.barItems.map {
-            MenuBarProfileSubject(key: $0.bundleID ?? $0.id, isApp: $0.bundleID != nil,
-                                  title: $0.ownerName, item: $0)
-        }
-        let sections: [String: MenuBarItemSection] = [
-            "istat": .shown, "weather": .shown, "vpn": .hidden, "tailscale": .hidden,
-            "dropover": .hidden, "shottr": .hidden, "bt": .shown,
-        ]
-        let faces = Fixtures.barModel().glyphs
-        for (name, fill) in [("layout-editor", true), ("layout-editor-empty", false)] {
-            let source = MenuBarLayoutEditorView.Source(
-                subjects: { subjects },
-                section: { fill ? sections[$0.id] ?? .shown : ($0.id == "vpn" ? .hidden : .shown) },
-                setSection: { _, _ in },
-                face: { faces[$0.id] })
-            let view = MenuBarLayoutEditorView(source: source, placement: { _ in "hidden" })
-                .padding(16)
-                .frame(width: 520)
-            for dark in [true, false] {
-                try Self.write(view, glassRadius: nil, name: name, dark: dark,
-                               canvas: CGSize(width: 520, height: 160), window: true)
-            }
-        }
-    }
-
-    @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the utility PNGs"))
     func timeline() throws {
         let view = ReconstructedTimelineView(reconstruction: Fixtures.reconstruction(),
                                              viewState: ReconstructedTimelineViewState())
@@ -472,55 +500,6 @@ struct UtilitySurfacesRenderProofTests {
         for dark in [true, false] {
             try Self.write(view, glassRadius: nil, name: "timeline", dark: dark,
                            canvas: CGSize(width: 600, height: 900), window: true)
-        }
-    }
-
-    @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the utility PNGs"))
-    func dataHoarder() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("jrbar-proof-archive-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        for (name, mode) in [("hoarder-timeline", DataHoarderModel.DetailMode.timeline),
-                             ("hoarder-contents", .contents)] {
-            let model = Fixtures.hoarderModel(root: root)
-            model.detailMode = mode
-            let view = DataHoarderView(model: model).frame(width: 1040, height: 700)
-            for dark in [true, false] {
-                try Self.write(view, glassRadius: nil, name: name, dark: dark,
-                               canvas: CGSize(width: 1040, height: 700), window: true)
-            }
-        }
-    }
-
-    @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write the utility PNGs"))
-    func hoarderSources() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("jrbar-proof-archive-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let model = Fixtures.hoarderModel(root: root)
-        let now = Date()
-        func inventory(_ id: String, _ name: String, _ path: String, files: Int,
-                       warnings: [String] = []) -> ArchiveSourceInventory {
-            ArchiveSourceInventory(
-                source: ArchiveSource(id: id, name: name, root: URL(fileURLWithPath: NSHomeDirectory() + path),
-                                      extensions: ["jsonl"]),
-                files: (0..<files).map { index in
-                    ArchiveSourceFile(url: URL(fileURLWithPath: "/tmp/\(id)-\(index).jsonl"),
-                                      byteCount: Int64(120_000 * (index + 1)),
-                                      modifiedAt: now.addingTimeInterval(-Double(index) * 86_400 * 3))
-                },
-                warnings: warnings)
-        }
-        model.sourceInventories = [
-            inventory("claude-projects", "Claude Code", "/.claude/projects", files: 14),
-            inventory("codex-sessions", "Codex", "/.codex/sessions", files: 6),
-            inventory("gemini-chats", "Gemini CLI", "/.gemini/tmp", files: 0,
-                      warnings: ["Some files could not be read"]),
-        ]
-        model.selectedSources = ["claude-projects"]
-        for dark in [true, false] {
-            try Self.write(DataHoarderSourcesView(model: model), glassRadius: nil, name: "hoarder-sources",
-                           dark: dark, canvas: CGSize(width: 630, height: 480), window: true)
         }
     }
 
@@ -794,9 +773,8 @@ private enum Fixtures {
         return MenuBarGlyphCache.Face(image: image, width: max(18, image.size.width + 4), template: true)
     }
 
-    /// A live capture of a menu bar item: its glyph drawn in the bar's
-    /// white on the bar's dark row, as a capture of the real row lands.
-    static func liveCapture(width: CGFloat) -> CGImage? {
+    /// A synthetic menu bar capture with ink matched to the row's appearance.
+    static func liveCapture(width: CGFloat, dark: Bool = true) -> CGImage? {
         let scale: CGFloat = 2
         let size = CGSize(width: width, height: 24)
         let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale),
@@ -809,7 +787,8 @@ private enum Fixtures {
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
         let text = width > 42 ? "CPU 12%" : "72°"
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12.5, weight: .medium), .foregroundColor: NSColor.white,
+            .font: NSFont.systemFont(ofSize: 12.5, weight: .medium),
+            .foregroundColor: dark ? NSColor.white : NSColor.black,
         ]
         let measured = (text as NSString).size(withAttributes: attributes)
         (text as NSString).draw(at: CGPoint(x: (size.width - measured.width) / 2,
@@ -819,7 +798,7 @@ private enum Fixtures {
         return rep.cgImage
     }
 
-    // MARK: Data Hoarder
+    // MARK: Session timeline
 
     static func reconstruction() -> SessionReconstruction {
         let start = Date().timeIntervalSince1970 - 1800
@@ -852,52 +831,8 @@ private enum Fixtures {
                                  diedMidTurn: false,
                                  lastUserIntent: "Polish the Dock previews — continuous corners, calmer type.",
                                  failedToolNames: ["Bash"], failingTurnSeconds: 95)
-        let request = CLIProxyRequest(timestamp: Date(timeIntervalSince1970: start + 30), method: "POST",
-                                      path: "/v1/messages", client: "claude-cli/2.1.222",
-                                      sessionID: "proof", model: "claude-opus-5-5", status: 529,
-                                      upstreamURL: "api.anthropic.com/v1/messages", attemptCount: 2,
-                                      errorSummary: "HTTP 529 overloaded_error")
         return SessionReconstruction(items: items, story: story, gaps: ["malformed_lines:2"],
-                                     totalLines: 184, redactedLines: 0, proxyRequests: [request])
-    }
-
-    static func hoarderModel(root: URL) -> DataHoarderModel {
-        let model = DataHoarderModel(archive: DataHoarderArchive(root: root))
-        model.enabled = true
-        let now = Date()
-        func record(_ id: String, _ title: String?, provider: String?, project: String?,
-                    hours: Double, bytes: Int64, state: CaptureState, segments: Int = 12) -> ArchiveRecord {
-            ArchiveRecord(id: id, name: "\(id).jsonl",
-                          sourcePath: NSHomeDirectory() + "/.claude/projects/-Users-jr-JR-Bar/\(id).jsonl",
-                          byteCount: bytes, importedAt: now.addingTimeInterval(-hours * 3600),
-                          sourceModifiedAt: now, provider: provider, sessionID: "5f1c9a2e-\(id)",
-                          project: project, model: "claude-opus-5-5", title: title,
-                          startedAt: now.addingTimeInterval(-hours * 3600 - 1800),
-                          lastActivityAt: now.addingTimeInterval(-hours * 3600),
-                          segmentCount: segments, captureState: state)
-        }
-        model.records = [
-            record("a1", "Polish the Dock previews", provider: "claude", project: "/Users/jr/JR-Bar",
-                   hours: 0.2, bytes: 1_240_000, state: .live),
-            record("a2", "Release notes for 0.8", provider: "codex", project: "/Users/jr/JR-Bar",
-                   hours: 5, bytes: 420_000, state: .closed),
-            record("a3", "Fix the Screen Bar ears", provider: "claude", project: "/Users/jr/JR-Bar",
-                   hours: 26, bytes: 2_900_000, state: .gap),
-            record("a4", nil, provider: "other", project: nil, hours: 50, bytes: 88_000, state: .snapshot),
-            record("a5", "Site copy pass", provider: "gemini", project: "/Users/jr/site",
-                   hours: 80, bytes: 310_000, state: .closed),
-        ]
-        model.selectedID = "a1"
-        model.detailKind = .transcript
-        model.reconstruction = reconstruction()
-        model.preview = """
-        {"type":"user","message":{"role":"user","content":"Polish the Dock previews"}}
-        {"type":"assistant","message":{"model":"claude-opus-5-5","content":[{"type":"text"}]}}
-        """
-        model.storageUsage = ArchiveStorageUsage(recordCount: 5, contentBytes: 4_958_000,
-                                                 allocatedBytes: 5_300_000, trashedRecordCount: 1,
-                                                 trashedContentBytes: 12_000)
-        return model
+                                     totalLines: 184)
     }
 }
 

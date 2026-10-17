@@ -29,6 +29,26 @@ struct PanelSessionRowTests {
                 "short words all rest on the elapsed floor")
     }
 
+    @Test("a working row is quiet after ten minutes, unless a tool is still running")
+    func quietAfterTenMinutesWithNoToolOpen() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        func row(minutesAgo: Double, mode: String = "working", event: String? = "PostToolUse") -> SessionRow {
+            SessionRow(session: CoreSession(id: "claude:r", provider: "claude", label: "r", mode: mode,
+                                            since: now.timeIntervalSince1970 - minutesAgo * 60, event: event),
+                       pinnedAsk: nil)
+        }
+        #expect(!row(minutesAgo: 9).isQuiet(now: now))
+        #expect(row(minutesAgo: 10).quietText(now: now) == "quiet 10m")
+        #expect(row(minutesAgo: 12).help(now: now)?.contains("with no tool running") == true)
+        // A long build says nothing for an hour and is not a stuck agent.
+        let building = row(minutesAgo: 60, mode: "tool_running", event: "PreToolUse")
+        #expect(building.openToolCall)
+        #expect(!building.isQuiet(now: now))
+        #expect(building.elapsedText(now: now)?.hasPrefix("quiet") == false)
+        // The finishing event hands the row back to the clock.
+        #expect(row(minutesAgo: 60, event: "PostToolUse").isQuiet(now: now))
+    }
+
     @Test("a quiet working row's elapsed time fits the column whole")
     func quietElapsedFits() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

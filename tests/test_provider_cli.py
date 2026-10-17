@@ -43,6 +43,7 @@ def test_the_command_table_is_fixed_and_says_what_each_cli_can_do() -> None:
     assert PROVIDER_CLIS["codex"].sign_in == ("login",)
     assert PROVIDER_CLIS["opencode"].sign_in == ("providers", "login")
     assert PROVIDER_CLIS["claude"].update == ("update",)
+    assert PROVIDER_CLIS["codex"].update is None
     assert PROVIDER_CLIS["opencode"].update == ("upgrade",)
     # Gemini CLI has no login command and no updater of its own.
     assert PROVIDER_CLIS["gemini"].sign_in is None
@@ -62,7 +63,18 @@ def test_the_command_table_is_fixed_and_says_what_each_cli_can_do() -> None:
         "devin": None,
         "opencode": "opencode-ai",
         "gemini": "@google/gemini-cli",
+        "kiro": None,
     }
+
+
+def test_kiro_only_has_a_fixed_person_started_login_command() -> None:
+    cli = PROVIDER_CLIS["kiro"]
+    assert cli.binary == "kiro-cli"
+    assert cli.sign_in == ("login",)
+    assert cli.sign_in_display() == "kiro-cli login"
+    assert cli.update is None
+    assert cli.npm_package is None
+    assert not cli.watches_sign_in
 
 
 def test_the_table_cannot_be_changed_at_run_time() -> None:
@@ -123,6 +135,58 @@ def tool(directory: Path, name: str = "agent-tool", mode: int = 0o755) -> Path:
     path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     path.chmod(mode)
     return path
+
+
+@pytest.mark.parametrize("provider,package", [("codex", "@openai/codex"), ("gemini", "@google/gemini-cli")])
+def test_update_command_preserves_a_proven_global_npm_prefix(tmp_path, provider, package):
+    prefix = tmp_path / "node-version"
+    target = tool(prefix / "lib" / "node_modules" / package / "bin", "cli.js")
+    manager = tool(prefix / "bin", "npm")
+    entry = prefix / "bin" / provider
+    entry.symlink_to(target)
+    command = provider_cli.resolve_update_command(PROVIDER_CLIS[provider], str(entry))
+    assert command == provider_cli.ProviderUpdateCommand(str(manager), (
+        "install", "-g", "--prefix", str(prefix), f"{package}@latest"))
+    manager.chmod(0o777)
+    assert provider_cli.resolve_update_command(PROVIDER_CLIS[provider], str(entry)) is None
+
+
+@pytest.mark.parametrize("provider,area,formula,flag", [
+    ("codex", "Caskroom", "codex", "--cask"),
+    ("codex", "Cellar", "codex", "--formula"),
+    ("gemini", "Cellar", "gemini-cli", "--formula"),
+])
+def test_update_command_uses_the_trusted_owning_homebrew(tmp_path, provider, area, formula, flag):
+    prefix = tmp_path / "brew"
+    target = tool(prefix / area / formula / "1.2.3" / "bin", provider)
+    manager = tool(prefix / "bin", "brew")
+    entry = prefix / "bin" / provider
+    entry.symlink_to(target)
+    command = provider_cli.resolve_update_command(PROVIDER_CLIS[provider], str(entry),
+                                                  group_writable_roots=(str(prefix),))
+    assert command == provider_cli.ProviderUpdateCommand(str(manager), ("upgrade", flag, formula))
+    manager.unlink()
+    assert provider_cli.resolve_update_command(PROVIDER_CLIS[provider], str(entry),
+                                               group_writable_roots=(str(prefix),)) is None
+
+
+@pytest.mark.parametrize("kind", ["local", "unknown", "wrong_package", "wrong_link"])
+def test_update_command_refuses_ambiguous_or_project_local_installs(tmp_path, kind):
+    prefix = tmp_path / "project"
+    directory = prefix / "node_modules" / "@openai" / "codex" / "bin"
+    if kind == "unknown":
+        directory = prefix / "tools"
+    elif kind == "wrong_package":
+        directory = prefix / "lib" / "node_modules" / "other-package" / "bin"
+    elif kind == "wrong_link":
+        directory = prefix / "lib" / "node_modules" / "@openai" / "codex" / "bin"
+    target = tool(directory)
+    tool(prefix / "bin", "npm")
+    entry_directory = prefix / ("project-bin" if kind == "wrong_link" else "bin")
+    entry_directory.mkdir(exist_ok=True)
+    entry = entry_directory / "codex"
+    entry.symlink_to(target)
+    assert provider_cli.resolve_update_command(PROVIDER_CLIS["codex"], str(entry)) is None
 
 
 def find(directory: Path | str, name: str = "agent-tool", **kwargs) -> str | None:

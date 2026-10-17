@@ -23,7 +23,7 @@ struct SettingsRenderProofTests {
     static let paneWidth: CGFloat = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_WIDTH"]
         .flatMap(Double.init).map { CGFloat($0) } ?? 560
 
-    private static var directory: URL {
+    static var directory: URL {
         URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
             ?? "/tmp/jrbar-settings-proof", isDirectory: true)
     }
@@ -90,7 +90,7 @@ struct SettingsRenderProofTests {
     /// Every card id on the Utilities and Toys pages.
     private static func cardIDs(_ fixture: Fixture) -> [String] {
         var ids = [fixture.utilities.menuBar.id, fixture.utilities.dock.id,
-                   fixture.utilities.agents.id, fixture.utilities.dataHoarder.id]
+                   fixture.utilities.agents.id]
         if let notch = fixture.toys.notch { ids.append(notch.id) }
         ids += fixture.toys.toys.map(\.id)
         return ids
@@ -101,7 +101,7 @@ struct SettingsRenderProofTests {
     /// Draws `view` in an offscreen window at `size` under the given
     /// appearance and returns its layer tree as a bitmap — AppKit-backed
     /// controls included, which `ImageRenderer` cannot draw.
-    private static func snapshot<V: View>(_ view: V, size: CGSize, dark: Bool) throws -> NSBitmapImageRep {
+    static func snapshot<V: View>(_ view: V, size: CGSize, dark: Bool) throws -> NSBitmapImageRep {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let hosting = NSHostingView(rootView: view
             .environment(\.colorScheme, dark ? .dark : .light)
@@ -137,7 +137,7 @@ struct SettingsRenderProofTests {
 
     /// Crops a snapshot's empty tail: rows at the bottom that match the
     /// last row's colour everywhere.
-    private static func cropped(_ rep: NSBitmapImageRep, margin: Int = 24) -> CGImage? {
+    static func cropped(_ rep: NSBitmapImageRep, margin: Int = 24) -> CGImage? {
         guard let image = rep.cgImage else { return nil }
         let width = image.width, height = image.height
         guard let data = image.dataProvider?.data, let bytes = CFDataGetBytePtr(data) else { return image }
@@ -190,6 +190,23 @@ struct SettingsRenderProofTests {
         withExtendedLifetime(fixture) {}
     }
 
+    /// Every page with its Advanced fold open, in both appearances.
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the Settings PNGs"))
+    func pagesAdvancedOpen() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        for page in SettingsStore.Page.allCases {
+            for dark in [false, true] where Self.wanted("advanced-\(page.rawValue)") {
+                fixture.settings.page = page
+                fixture.settings.setFold(SettingsFold.advanced(page), open: true)
+                let view = SettingsPageContainer(store: fixture.settings, page: page)
+                let rep = try Self.snapshot(view, size: CGSize(width: Self.paneWidth, height: 7000), dark: dark)
+                try Self.write(rep, named: "advanced-\(page.rawValue)-\(dark ? "dark" : "light")")
+            }
+        }
+        withExtendedLifetime(fixture) {}
+    }
+
     /// Each Utilities and Toys card open on its own page, in both
     /// appearances.
     @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the card PNGs"))
@@ -198,7 +215,7 @@ struct SettingsRenderProofTests {
         let fixture = try Self.fixture()
         for card in Self.cardIDs(fixture) {
             fixture.settings.expandedCards = [card]
-            let page: SettingsStore.Page = fixture.toys.toys.contains { $0.id == card } ? .toys : .utilities
+            let page = SettingsStore.Page.utilities
             for dark in [false, true] where Self.wanted("card-\(card)") {
                 let view = SettingsPageContainer(store: fixture.settings, page: page)
                 let rep = try Self.snapshot(view, size: CGSize(width: Self.paneWidth, height: 6000), dark: dark)
@@ -219,7 +236,7 @@ struct SettingsRenderProofTests {
                                      .unavailable("No lid-angle sensor"), .note("Watching quietly")]
         let sheet = Form {
             Section {
-                SettingsPageHeader(page: .toys)
+                SettingsPageHeader(page: .utilities)
             }
             SettingGroup("A grouped page", note: "A footer note under the group, in the subtitle's size.") {
                 Toggle(isOn: .constant(true)) {
@@ -329,7 +346,7 @@ struct SettingsRenderProofTests {
     func window() throws {
         try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
         let fixture = try Self.fixture()
-        for page in [SettingsStore.Page.utilities, .toys, .general] {
+        for page in [SettingsStore.Page.utilities, .general] {
             fixture.settings.page = page
             for dark in [false, true] where Self.wanted("window-\(page.rawValue)") {
                 let view = SettingsRootView(store: fixture.settings)
@@ -383,24 +400,13 @@ struct SettingsRenderProofTests {
 
     // MARK: lane menubar
 
-    /// A concealer backend that never asserts anything.
-    private final class MenuBarQuietBackend: MenuBarConcealBackend {
-        func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken {
-            MenuBarAssertionToken(NSNumber(value: 1))
-        }
-        func invalidate(_ token: MenuBarAssertionToken) {}
-    }
-
-    /// The Menu Bar card as the card draws it, Advanced open and under a
-    /// concealer that is never started: the ⌘-drag rows, Item Bar opens
-    /// at, then Relaunch, New menu bar items, Icon seat and the layout
-    /// table in their real places.
+    /// The Menu Bar card as the card draws it, Advanced open: the Item Bar
+    /// opens at, then Relaunch and the profile rows in their real places.
     @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the Menu Bar Advanced PNGs"))
     func menuBarAdvanced() throws {
         try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
         let fixture = try Self.fixture()
         let utility = fixture.utilities.menuBar
-        utility.concealer = MenuBarConcealer(backend: MenuBarQuietBackend())
         for dark in [false, true] where Self.wanted("card-menuBar-advanced") {
             let card = Form {
                 Section {
@@ -413,8 +419,41 @@ struct SettingsRenderProofTests {
             let rep = try Self.snapshot(card, size: CGSize(width: Self.paneWidth, height: 6000), dark: dark)
             try Self.write(rep, named: "card-menuBar-advanced-\(dark ? "dark" : "light")")
         }
-        utility.concealer = nil
         withExtendedLifetime(fixture) {}
+    }
+
+    /// Every state the Menu Bar card's banner can say, stacked.
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the Menu Bar banner PNGs"))
+    func menuBarBanner() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        var inputs: [MenuBarHidingStatus.Inputs] = []
+        func add(_ edit: (inout MenuBarHidingStatus.Inputs) -> Void) {
+            var i = MenuBarHidingStatus.Inputs()
+            i.engine = .divider
+            i.dividerHidden = 4
+            i.recovery = .clear
+            edit(&i)
+            inputs.append(i)
+        }
+        add { _ in }
+        add { $0.dividerHidden = 0 }
+        add { $0.noRoom = true; $0.noRoomHelp = "macOS is holding 5 items in its « overflow. Quit or switch off at least 1 menu bar item to give the JR-Bar icon a place." }
+        add { $0.overlay = .showEverything; $0.overlayNote = "Everything is showing until 14:30 — your picks come back then." }
+        add { $0.rivals = ["Bartender"] }
+        add { $0.accessibilityGranted = false }
+        add { $0.enabled = false }
+        for dark in [false, true] where Self.wanted("card-menuBar-banner") {
+            let stack = VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(inputs.enumerated()), id: \.offset) { _, input in
+                    MenuBarHidingBanner(status: MenuBarHidingStatus.assess(input)) { _ in }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(nsColor: .windowBackgroundColor))
+            let rep = try Self.snapshot(stack, size: CGSize(width: 560, height: 1100), dark: dark)
+            try Self.write(rep, named: "card-menuBar-banner-\(dark ? "dark" : "light")")
+        }
     }
 
     // MARK: lane confetti
@@ -428,7 +467,7 @@ struct SettingsRenderProofTests {
         let fixture = try Self.fixture()
         for dark in [false, true] where Self.wanted("card-confetti-search") {
             fixture.settings.reveal(SettingsSearchEntry(.toys, "Confetti", "Hang time", card: "confetti"))
-            let view = SettingsPageContainer(store: fixture.settings, page: .toys)
+            let view = SettingsPageContainer(store: fixture.settings, page: .utilities)
             let rep = try Self.snapshot(view, size: CGSize(width: Self.paneWidth, height: 6000), dark: dark)
             try Self.write(rep, named: "card-confetti-search-\(dark ? "dark" : "light")")
         }
@@ -584,7 +623,7 @@ struct SettingsRenderProofTests {
 
     // MARK: lane oss
 
-    /// Settings › Usage › Hooks: a rule that runs, with its last result,
+    /// Settings › Agents & Usage › Advanced › Hooks: a rule that runs, with its last result,
     /// and one that never will, with the reason, over the mock's rules.
     @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the usage hooks PNGs"))
     func usageHooks() throws {
@@ -605,7 +644,7 @@ struct SettingsRenderProofTests {
         withExtendedLifetime(fixture) {}
     }
 
-    /// Settings › Usage › Claude Code status line with a monitor that
+    /// Settings › Agents & Usage › Advanced › Claude Code status line with a monitor that
     /// answers: the question asked before someone's own status line is
     /// kept, and the refusal for one JR-Bar can't keep.
     @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write the status line PNGs"))

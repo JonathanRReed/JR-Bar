@@ -157,4 +157,39 @@ struct ScreenBarDaemonSyncTests {
         let decision = sync.reconcile(live: true, daemonValue: true, appValue: false, now: later(1))
         #expect(decision == .adopt(true))
     }
+
+    @Test("an older refused write cannot clear the latest toggle")
+    func staleRefusalPreservesLatestToggle() {
+        var sync = ScreenBarDaemonSync()
+        sync.toggled(shown: true, live: true, now: start)
+        let oldGeneration = sync.writeGeneration
+        sync.toggled(shown: false, live: true, now: later(1))
+        sync.pushRefused(forGeneration: oldGeneration)
+        #expect(sync.pending?.value == false)
+        let decision = sync.reconcile(live: true, daemonValue: true, appValue: false, now: later(2))
+        #expect(decision == .wait)
+    }
+
+    @Test("an older connection failure cannot turn the latest write into an offline choice")
+    func staleDisconnectPreservesLatestWrite() {
+        var sync = ScreenBarDaemonSync()
+        sync.toggled(shown: true, live: true, now: start)
+        let oldGeneration = sync.writeGeneration
+        sync.toggled(shown: false, live: true, now: later(1))
+        sync.pushLostOffline(forGeneration: oldGeneration)
+        #expect(!sync.changedOffline)
+        #expect(sync.pending?.value == false)
+    }
+
+    @Test("a reconnect push gets a new write identity")
+    func reconnectInvalidatesOldFailure() {
+        var sync = ScreenBarDaemonSync()
+        sync.toggled(shown: false, live: true, now: start)
+        let oldGeneration = sync.writeGeneration
+        sync.pushLostOffline(forGeneration: oldGeneration)
+        let decision = sync.reconcile(live: true, daemonValue: true, appValue: false, now: later(1))
+        #expect(decision == .push(false))
+        sync.pushRefused(forGeneration: oldGeneration)
+        #expect(sync.pending?.value == false)
+    }
 }

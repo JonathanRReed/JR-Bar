@@ -195,10 +195,10 @@ def test_area_failure_is_recorded_and_other_areas_continue__and_1_more(tmp_path:
     _legacy_tree(tmp_path)
     original = migration._copy_entry
 
-    def failing_copy(entry: Path, target: Path) -> None:
+    def failing_copy(entry: Path, target: Path, *, dry_run: bool = False) -> bool:
         if entry.name == "capacity-history.json":
             raise PermissionError("no")
-        original(entry, target)
+        return original(entry, target, dry_run=dry_run)
 
     monkeypatch.setattr(migration, "_copy_entry", failing_copy)
 
@@ -289,7 +289,7 @@ def test_cli_setup_runs_the_migration_first(monkeypatch: pytest.MonkeyPatch, cap
         )
 
     monkeypatch.setattr(migration, "migrate_from_sidepulse", fake_migrate)
-    monkeypatch.setattr(cli, "install_hook_results", lambda args: [])
+    monkeypatch.setattr(cli, "install_hook_results", lambda args, failures=None: [])
     monkeypatch.setattr(cli, "print_install_results", lambda results, dry_run: None)
     args = argparse.Namespace(
         dry_run=True,

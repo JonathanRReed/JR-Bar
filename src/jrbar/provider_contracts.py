@@ -210,11 +210,6 @@ class ProductCapabilityDeclaration:
         return self.supported
 
     @property
-    def is_supported(self) -> bool:
-        """Boolean spelling useful to callers rendering capability state."""
-        return self.supported
-
-    @property
     def capability_id(self) -> ProductCapability:
         """Stable product capability identifier."""
         return self.capability

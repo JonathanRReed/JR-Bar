@@ -454,13 +454,15 @@ def _canonical_section_for(
     # Without this gate an hour-dead ACTIVE work sat "In Progress" (and
     # counted active) until 24h retention -- while the Agent Browser
     # beside it already called the same work stale.
+    # An ask the person has not answered is not history: it stays in
+    # Needs You for as long as the request is live (``ask_lifetime``).
+    if row.actionable:
+        return MailboxSectionKind.NEEDS_YOU
     if (
         now_epoch is not None
         and now_epoch - row.updated_at_epoch > PRESENCE_HORIZON_SECONDS
     ):
         return MailboxSectionKind.RECENT
-    if row.actionable:
-        return MailboxSectionKind.NEEDS_YOU
     # ACTIVE means HEARD FROM: a silent-past-the-line work is not "In
     # Progress" and must not count active. WAITING stays -- waiting on
     # the owner is silence by design.

@@ -1,7 +1,7 @@
-"""The jrbar-rates-v3 price table (usage_stats.py MODEL_PRICING /
+"""The jrbar-rates-v4 price table (usage_stats.py MODEL_PRICING /
 GPT_MODEL_PRICING / GEMINI_MODEL_PRICING + CACHE_READ_RATE_OVERRIDES),
 pinned row by row so a marker reorder or a rate typo fails loudly.
-Rates checked 2026-09-20; do not relax a pin without re-checking the
+Rates checked 2026-10-07; do not relax a pin without re-checking the
 provider's pricing page."""
 
 from __future__ import annotations
@@ -31,6 +31,10 @@ def _record(provider: str, model: str, when: datetime, *, inp=1000, cached=500, 
         ("claude", "claude-fable-5-1-20260901", 10.0, 50.0, 0.25),
         ("claude", "claude-fable-5", 10.0, 50.0, 1.0),
         ("claude", "claude-opus-5", 5.0, 25.0, 0.5),
+        # Opus 5.5 is $4/$20 and reads cache at 0.05x ($0.20).
+        ("claude", "claude-opus-5-5", 4.0, 20.0, 0.2),
+        ("claude", "claude-opus-5.5-20261001", 4.0, 20.0, 0.2),
+        ("claude", "claude-sonnet-5-5", 2.0, 10.0, 0.2),
         ("claude", "claude-opus-4-7", 5.0, 25.0, 0.5),
         ("claude", "claude-opus-4-1", 15.0, 75.0, 1.5),
         ("claude", "claude-opus-4-20250514", 15.0, 75.0, 1.5),
@@ -40,11 +44,32 @@ def _record(provider: str, model: str, when: datetime, *, inp=1000, cached=500, 
         ("claude", "claude-3-5-haiku", 0.8, 4.0, 0.08),
         # OpenAI: cache reads at 0.1x input.
         ("codex", "gpt-6-astra", 10.0, 50.0, 1.0),
+        # GPT-6 Sol, 6.1 Sol and Luna are not Astra: "gpt-6" must not catch them.
+        ("codex", "gpt-6.1-sol", 2.0, 10.0, 0.1),
+        ("codex", "gpt-6-sol", 2.0, 10.0, 0.2),
+        ("codex", "gpt-6-luna", 0.10, 0.50, 0.01),
         ("codex", "gpt-5.6-sol", 4.0, 20.0, 0.4),
+        ("codex", "gpt-5.6-cyber", 12.5, 75.0, 1.25),
+        ("codex", "gpt-5.5", 5.0, 30.0, 0.5),
+        ("codex", "gpt-5.5-pro", 30.0, 180.0, 3.0),
+        ("codex", "gpt-5.4-pro", 30.0, 180.0, 3.0),
+        ("codex", "gpt-5.4", 2.5, 15.0, 0.25),
         ("codex", "gpt-5.4-mini", 0.75, 4.5, 0.075),
+        ("codex", "gpt-5.3-codex", 1.75, 14.0, 0.175),
+        ("codex", "gpt-5.2", 1.75, 14.0, 0.175),
+        ("codex", "gpt-5.2-pro", 21.0, 168.0, 2.1),
+        ("codex", "gpt-5.1-codex-max", 1.25, 10.0, 0.125),
+        ("codex", "gpt-5.1-codex-mini", 0.25, 2.0, 0.025),
+        ("codex", "gpt-5-codex", 1.25, 10.0, 0.125),
+        ("codex", "gpt-5-nano", 0.05, 0.40, 0.005),
         # Gemini.
         ("gemini", "gemini-3.1-pro-preview", 2.0, 12.0, 0.2),
         ("gemini", "gemini-3.8-flash", 0.75, 3.75, 0.075),
+        ("gemini", "gemini-3.5-flash", 1.5, 9.0, 0.15),
+        ("gemini", "gemini-3.5-flash-lite", 0.30, 2.50, 0.03),
+        ("gemini", "gemini-2.5-pro", 1.25, 10.0, 0.125),
+        ("gemini", "gemini-2.5-flash", 0.30, 2.50, 0.03),
+        ("gemini", "gemini-2.5-flash-lite", 0.10, 0.40, 0.01),
         ("gemini", "gemini-3-flash-preview", 0.5, 3.0, 0.05),
         ("gemini", "gemini-3.1-flash-lite", 0.25, 1.5, 0.025),
     ),
@@ -108,8 +133,8 @@ def test_table_version_and_as_of_reach_the_coverage_metrics_and_document(tmp_pat
     )
     totals = usage_stats.scan_usage(root, None)
     metrics = totals.pricing_coverage
-    assert metrics.table_version == usage_stats.PRICING_TABLE_VERSION == "jrbar-rates-v3"
-    assert metrics.table_as_of == usage_stats.PRICING_TABLE_AS_OF == "2026-09-20"
+    assert metrics.table_version == usage_stats.PRICING_TABLE_VERSION == "jrbar-rates-v4"
+    assert metrics.table_as_of == usage_stats.PRICING_TABLE_AS_OF == "2026-10-07"
 
     document = history.usage_history_document(
         [_record("claude", "claude-sonnet-5", NOW, dedupe="v")],
@@ -117,8 +142,8 @@ def test_table_version_and_as_of_reach_the_coverage_metrics_and_document(tmp_pat
         range_name="7d",
         now=NOW.timestamp(),
     )
-    assert document["pricing"]["table_version"] == "jrbar-rates-v3"
-    assert document["pricing"]["as_of"] == "2026-09-20"
+    assert document["pricing"]["table_version"] == "jrbar-rates-v4"
+    assert document["pricing"]["as_of"] == "2026-10-07"
 
 
 def test_usage_cache_written_under_an_older_table_goes_cold(tmp_path: Path) -> None:
@@ -147,7 +172,7 @@ def test_usage_cache_written_under_an_older_table_goes_cold(tmp_path: Path) -> N
     assert totals.input_tokens == 7 and cache.exists()
 
     payload = json.loads(cache.read_text())
-    assert payload["pricing_semantics_version"] == "jrbar-rates-v3"
+    assert payload["pricing_semantics_version"] == "jrbar-rates-v4"
     assert usage_stats._load_cache(cache)  # warm: the fresh cache loads
 
     # A cache written under the previous table (no stamp, or an old one)
@@ -163,7 +188,7 @@ def test_usage_cache_written_under_an_older_table_goes_cold(tmp_path: Path) -> N
         rescan = usage_stats.scan_usage(root, cache)
         assert rescan.input_tokens == 7
         rewritten = json.loads(cache.read_text())
-        assert rewritten["pricing_semantics_version"] == "jrbar-rates-v3"
+        assert rewritten["pricing_semantics_version"] == "jrbar-rates-v4"
 
     # The result-level guard agrees: a priced result stamped for an
     # older table cannot validate, so callers must rescan.
@@ -178,7 +203,7 @@ def test_usage_cache_written_under_an_older_table_goes_cold(tmp_path: Path) -> N
         and row.observation_invocation_allowed
     )
     result, _ = usage_stats._scan_provider_usage_with_totals(source, root, None, since_epoch=0.0)
-    assert result.pricing_as_of == "2026-09-20"
+    assert result.pricing_as_of == "2026-10-07"
     with pytest.raises(ValueError):
         dataclasses.replace(result, pricing_as_of="2026-08-26")
 

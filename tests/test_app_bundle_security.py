@@ -20,7 +20,6 @@ SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 # Helpers with its own libpython, and the compiled hook shim beside it.
 CORE_HELPER = Path("Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core")
 HOOK_SHIM = Path("Contents/Helpers/jrbar-hook")
-ASSERTER = Path("Contents/Helpers/jrbar-asserter.app/Contents/MacOS/jrbar-asserter")
 RUNTIME = Path("Contents/Helpers/jrbar-core.app/Contents/Frameworks/libpython3.12.dylib")
 
 
@@ -50,7 +49,6 @@ def make_bundle(
     for helper, payload in (
         (CORE_HELPER, b"core-mach-o"),
         (HOOK_SHIM, b"shim-mach-o"),
-        (ASSERTER, b"asserter-mach-o"),
     ):
         path = bundle / helper
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,7 +82,6 @@ def verifier_runner(
     runtime = bundle / RUNTIME
     core = bundle / CORE_HELPER
     shim = bundle / HOOK_SHIM
-    asserter = bundle / ASSERTER
     dependency_map = dependencies or {
         str(executable): (
             "@rpath/Sparkle.framework/Versions/B/Sparkle",
@@ -93,14 +90,13 @@ def verifier_runner(
         ),
         str(core): ("@rpath/libpython3.12.dylib", "/usr/lib/libSystem.B.dylib"),
         str(shim): ("/usr/lib/libSystem.B.dylib",),
-        str(asserter): ("/usr/lib/libSystem.B.dylib",),
         str(runtime): ("/usr/lib/libSystem.B.dylib",),
     }
     rpath_map = rpaths or {
         str(executable): ("@executable_path/../Frameworks",),
         str(core): ("@executable_path/../Frameworks",),
     }
-    always_macho = {str(core), str(shim), str(asserter)}
+    always_macho = {str(core), str(shim)}
 
     def run(command: Sequence[str | os.PathLike[str]], **_kwargs):
         arguments = [str(part) for part in command]
@@ -599,7 +595,7 @@ def test_sd_guard_requires_an_explicit_volume_uuid_before_registration__and_2_mo
 def test_package_builder_removes_candidate_metadata_before_codesign__and_2_more() -> None:
     # --- scenario: package_builder_removes_candidate_metadata_before_codesign
     source = (REPO_ROOT / "packaging" / "build_macos_pkg.sh").read_text()
-    sanitize = source.index('/usr/bin/xattr -cr "$APP_PATH"')
+    sanitize = source.index("\nclear_candidate_metadata\n")
     signed = source.index("packaging/sign_macos_app.py")
 
     assert sanitize < signed
@@ -635,6 +631,7 @@ def test_package_builder_uses_isolated_roots_identity_and_pre_pkg_verifier(tmp_p
     scripts_dir = packaging_dir / "scripts"
     scripts_dir.mkdir(parents=True)
     shutil.copy2(REPO_ROOT / "packaging" / "build_macos_pkg.sh", packaging_dir)
+    shutil.copy2(REPO_ROOT / "packaging" / "build_input_manifest.py", packaging_dir)
     shutil.copy2(REPO_ROOT / "packaging" / "entitlements.plist", packaging_dir)
     shutil.copy2(REPO_ROOT / "packaging" / "jrbar_entry.py", packaging_dir)
     shutil.copy2(REPO_ROOT / "packaging" / "verify_macos_app.py", packaging_dir)
@@ -665,6 +662,8 @@ def test_package_builder_uses_isolated_roots_identity_and_pre_pkg_verifier(tmp_p
         REPO_ROOT / "requirements" / "release-lock.txt",
         requirements_dir,
     )
+
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
 
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
@@ -769,11 +768,6 @@ echo "build-app.sh $JRBAR_VERSION" >> "$PACKAGE_TEST_EVENT_LOG"
 printf '%s' '{plist_head}' > "$JRBAR_BUNDLE/Contents/Info.plist"
 printf '<key>CFBundleIdentifier</key><string>com.jonathanreed.jrbar</string>' >> "$JRBAR_BUNDLE/Contents/Info.plist"
 printf '<key>CFBundleExecutable</key><string>JR-Bar</string><key>LSUIElement</key><true/></dict></plist>' >> "$JRBAR_BUNDLE/Contents/Info.plist"
-# The asserter helper ships inside the app bundle, exactly as the real
-# build-app.sh arranges it — the packaging script asserts its presence.
-asserter="$JRBAR_BUNDLE/Contents/Helpers/jrbar-asserter.app/Contents/MacOS"
-/bin/mkdir -p "$asserter"
-/bin/cp /usr/bin/true "$asserter/jrbar-asserter"
 """,
     )
     _write_executable(
@@ -799,6 +793,9 @@ if [ "$1" = "-c" ]; then
     exit 0
 fi
 case "$1" in
+    */build_input_manifest.py)
+        exec "$PACKAGE_TEST_REAL_PYTHON" "$@"
+        ;;
     */validate_release_version.py)
         printf '0.5.0\n'
         exit 0
@@ -861,6 +858,7 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         "XCRUN_TOOL": str(fake_bin / "xcrun"),
         "LSREGISTER_TOOL": str(lsregister),
         "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
+        "PACKAGE_TEST_REAL_PYTHON": sys.executable,
         "PACKAGE_TEST_EVENT_LOG": str(event_log),
         "PACKAGE_TEST_BUILD_ROOT": str(build_root),
         "PACKAGE_TEST_PYTHON_TEMPLATE": str(python_template),
@@ -931,7 +929,7 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert (app / "Contents" / "Frameworks" / "Sparkle.framework" / "Versions" / "B" / "Sparkle").is_file()
     assert (app / "Contents" / "Resources" / "ThirdPartyLicenses" / "Sparkle.txt").read_text() == "fixture license\n"
 
-    # Build order: Sparkle (the app links it), app, shim, sign, three
+    # Build order: Sparkle (the app links it), app, shim, notices, sign, three
     # verifiers, archive, PKG, and as the script exits the build's own
     # JR-Bar.app copies leave Launch Services, so a jrbar:// link can only
     # reach the one in ~/Applications. They stay on disk.
@@ -939,6 +937,8 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         "prepare_sparkle.py",
         "build-app.sh 0.5.0",
         "build.sh hook",
+        "strip_build_origin.py",
+        "copy_runtime_notices.py",
         "sign_macos_app.py",
         "verify_macos_app.py",
         "verify_entitlements.py",

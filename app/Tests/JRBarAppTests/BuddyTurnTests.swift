@@ -448,6 +448,73 @@ struct BuddyTurnTests {
         #expect(abs((still?.age ?? -1) - 0.1) < 1e-5)
     }
 
+    @Test("a wall clock set back ends a completion hop on the hop's own clock")
+    func clockSetBackHop() {
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: ToysState(), cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy = store.notchBuddy
+        store.state.notchBuddy.enabled = true
+        let t0 = Date(timeIntervalSince1970: 100_000)
+        var wall = t0
+        toy.wallClock = { wall }
+        _ = toy.summary(at: t0)
+
+        // A completion lands: the hop runs until +1.1 s.
+        toy.noteEvent(CoreEvent(id: "e1", kind: "completed", provider: "claude"), at: t0)
+        wall = t0.addingTimeInterval(0.4)
+        #expect(toy.summary(at: wall).mood == .celebrating)
+
+        // Mid-hop the wall clock is set back an hour. The hop still ends
+        // 0.7 s from now — it does not celebrate for the hour too.
+        wall = t0.addingTimeInterval(0.4 - 3600)
+        _ = toy.summary(at: wall)
+        wall = wall.addingTimeInterval(0.5)
+        #expect(toy.summary(at: wall).mood == .celebrating, "0.9 s in, still hopping")
+        wall = wall.addingTimeInterval(0.25)
+        #expect(toy.summary(at: wall).mood != .celebrating,
+                "the hop ends on its own 1.1 s, not an hour late")
+    }
+
+    @Test("a wall clock set back carries the one-off beats' clocks with it")
+    func clockSetBackEffects() {
+        let core = CoreModel()
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: ToysState(), cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy = store.notchBuddy
+        store.state.notchBuddy.enabled = true
+        let t0 = Date(timeIntervalSince1970: 100_000)
+        var wall = t0
+        toy.wallClock = { wall }
+        _ = toy.summary(at: t0)
+
+        // A treat and a completion land together: hearts, a crumb and a
+        // hop all mid-beat.
+        toy.giveTreat(at: t0)
+        toy.noteEvent(CoreEvent(id: "e1", kind: "completed", provider: "claude"), at: t0)
+        wall = t0.addingTimeInterval(0.4)
+        _ = toy.summary(at: wall)
+        let burstBefore = toy.treatBurstAt
+        let hopBefore = toy.hopUntil
+        let crumbBefore = toy.crumbAt
+
+        // The wall clock is set back an hour. Every effect clock moves
+        // with it, keeping the time each beat had left.
+        wall = t0.addingTimeInterval(0.4 - 3600)
+        _ = toy.summary(at: wall)
+        let step: TimeInterval = -3600
+        #expect(toy.treatBurstAt == burstBefore?.addingTimeInterval(step),
+                "the treat's hearts keep their age")
+        #expect(toy.hopUntil == hopBefore?.addingTimeInterval(step),
+                "the hop keeps the time it had left")
+        #expect(toy.crumbAt == crumbBefore?.addingTimeInterval(step),
+                "the crumb keeps its age")
+    }
+
     @Test("the dangle's lag is finite-safe")
     func followIsSafe() {
         #expect(BuddyTurn.follow(3, toward: 10, dt: 0) == 3)
@@ -500,5 +567,65 @@ struct BuddyTurnTests {
         let landed = NotchBuddyView.presence(tuck: nil, arrival: toy.arrival(at: wakeAt.addingTimeInterval(1)),
                                              docked: true, scale: 1, reduceMotion: false)
         #expect(landed.opacity == 1 && landed.scale == 1)
+    }
+
+    @Test("a screen change or a display wake lays the buddy out again, only while it is on")
+    func displaysRelayTheBuddy() {
+        let screens = NotificationCenter()
+        let workspace = NotificationCenter()
+        let core = CoreModel()
+        let buddy = NotchBuddyToy(core: core, notificationCenter: screens, workspaceCenter: workspace)
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: ToysState(), cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        buddy.store = store
+        var layouts = 0
+        buddy.onVisibilityChange = { layouts += 1 }
+        screens.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        #expect(layouts == 0, "off: nothing to lay out")
+        store.state.notchBuddy.enabled = true
+        screens.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        workspace.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
+        #expect(layouts == 2)
+    }
+
+    @Test("background display notifications deliver Buddy layout changes on the main actor")
+    func backgroundDisplayNotification() async {
+        let center = NotificationCenter()
+        let core = CoreModel()
+        let buddy = NotchBuddyToy(core: core, notificationCenter: center,
+                                  workspaceCenter: NotificationCenter())
+        var state = ToysState()
+        state.notchBuddy.enabled = true
+        let store = ToysStore(core: core, settings: SettingsStore(core: core),
+                              state: state, cardModel: makeTestCardModel(),
+                              notchRuntimeEnabled: false)
+        buddy.store = store
+        var layouts = 0
+        buddy.onVisibilityChange = {
+            #expect(Thread.isMainThread)
+            layouts += 1
+        }
+        await Task.detached {
+            center.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        }.value
+        #expect(layouts == 1)
+        withExtendedLifetime(store) {}
+    }
+
+    @Test("VoiceOver hears what the fleet is doing, not only the buddy's name")
+    func voiceOverHearsTheFleet() {
+        let core = CoreModel()
+        let buddy = NotchBuddyToy(core: core)
+        #expect(buddy.accessibilityStatus == "Nothing running")
+        core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "a", provider: "claude", mode: "working", lifecycle: "active"),
+            CoreSession(id: "b", provider: "codex", mode: "waiting_for_user", lifecycle: "active",
+                        nextActor: "user",
+                        ask: CoreAsk(session: "b", kind: "question", openedAt: 1)),
+        ], asks: [])))
+        #expect(buddy.accessibilityStatus.contains("1 waiting for you"))
+        #expect(buddy.accessibilityStatus.contains("1 working"))
     }
 }

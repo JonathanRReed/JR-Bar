@@ -114,7 +114,15 @@ def test_a_wall_clock_step_back_does_not_stretch_the_spool_lock_wait(
         os.close(holder)
     assert result.returncode == 0 and result.stdout == b""
     assert 0.2 <= elapsed < 3.0
-    rows = [json.loads(line) for line in pending.read_text().splitlines()]
+    assert pending.read_bytes() == b""
+    from jrbar.hook_pending import pending_hook_files
+
+    spools = pending_hook_files(sock_dir)
+    published = [path for path in spools if path != pending]
+    assert len(published) == 1
+    assert published[0].stat().st_mode & 0o777 == 0o600
+    assert set(sock_dir.iterdir()) == {pending, published[0]}
+    rows = [json.loads(line) for path in spools for line in path.read_text().splitlines()]
     assert [row["payload"] for row in rows] == [payload]
 
 

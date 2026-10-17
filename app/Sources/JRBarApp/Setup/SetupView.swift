@@ -39,6 +39,21 @@ struct SetupView: View {
             .transition(.opacity)
             .animation(PanelMotion.crossfade(reduced: reduced), value: store.step)
 
+            if let failure = store.persistenceFailure {
+                Label {
+                    Text(failure)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                }
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 10)
+                    .accessibilityElement(children: .combine)
+            }
             footer
         }
         .frame(width: SetupWindowController.contentSize.width,
@@ -227,12 +242,29 @@ struct SetupAgentsStep: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if !store.monitorLive {
-                Label("The monitor is not connected yet — hooks can install from Settings › Agents once it is.",
+                Label("Waiting for the monitor. Once it connects, you can install hooks and choose which providers show usage.",
                       systemImage: "bolt.horizontal.circle")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 10)
+            }
+            if store.monitorLive, store.loadingUsageOffers {
+                Text("Reading usage choices…")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .padding(.bottom, 10)
+            }
+            if store.monitorLive, let failure = store.usageOffersFailure {
+                HStack(alignment: .top, spacing: 10) {
+                    Label(failure, systemImage: "exclamationmark.triangle")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Retry") { _ = Task { await store.refreshUsageOffers() } }
+                        .controlSize(.small)
+                        .disabled(store.loadingUsageOffers)
+                }
+                .padding(.bottom, 10)
             }
             if store.agentRows.isEmpty {
                 Text("No providers to show.")
@@ -252,6 +284,9 @@ struct SetupAgentsStep: View {
             }
         }
         .padding(.horizontal, 24)
+        .onChange(of: store.usageOfferRefreshKey) { _, key in
+            if key != nil { _ = Task { await store.refreshUsageOffers() } }
+        }
     }
 }
 
@@ -260,6 +295,7 @@ struct SetupAgentRow: View {
     let agent: SetupAgent
 
     private var statusColor: Color {
+        guard store.monitorLive else { return Color(nsColor: .tertiaryLabelColor) }
         switch agent.hookStatus {
         case "ok": return .green
         case "stale": return .orange
@@ -269,6 +305,16 @@ struct SetupAgentRow: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            hookRow
+            if let offer = store.usageOffer(for: agent.id) {
+                SetupUsageOfferView(store: store, offer: offer)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var hookRow: some View {
         HStack(spacing: 10) {
             ProviderTile(style: ProviderStyle.style(for: agent.id), size: 24)
             VStack(alignment: .leading, spacing: 1) {
@@ -310,7 +356,63 @@ struct SetupAgentRow: View {
             .disabled(!store.canInstall(agent))
             .help(agent.detected == false ? "No \(agent.name) CLI found on this Mac" : "Install \(agent.name)'s hooks")
         }
-        .padding(.vertical, 6)
+    }
+}
+
+/// "Show Claude usage?" with the daemon's sentence about exactly what is
+/// asked, of whom, with whose sign-in — and one answer per provider, never
+/// an all-or-nothing. "Not now" asks nothing and sends nothing.
+struct SetupUsageOfferView: View {
+    @Bindable var store: SetupStore
+    let offer: SetupUsageOffer
+
+    private var busy: Bool { store.usageBusy.contains(offer.id) }
+    private var declined: Bool { store.usageChoices[offer.id] == .notNow }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(offer.question)
+                .font(.callout.weight(.medium))
+            Text(offer.summary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                if offer.isOn {
+                    Label("On", systemImage: "checkmark.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.green)
+                    Button("Turn off") { store.turnOffUsage(for: offer.id) }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                        .disabled(busy || !store.monitorLive)
+                        .accessibilityLabel("Turn off \(offer.name) usage")
+                } else {
+                    Button("Turn on") { store.turnOnUsage(for: offer.id) }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(busy || !store.monitorLive)
+                        .accessibilityLabel("Turn on \(offer.name) usage")
+                    Button("Not now") { store.declineUsage(for: offer.id) }
+                        .controlSize(.small)
+                        .disabled(busy)
+                    if declined {
+                        Text("Off. Settings › Agents & Usage turns it on any time.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                if busy { DelayedWait(size: 12) }
+            }
+            if let note = store.usageNotes[offer.id] {
+                Text(note.text)
+                    .font(.caption)
+                    .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.leading, 34)
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -350,7 +452,7 @@ struct SetupPermissionsStep: View {
             }
             .padding(.horizontal, 24)
         }
-        .onAppear { store.startPermissionUpdates() }
+        .onAppear { _ = store.startPermissionUpdates() }
         .onDisappear { store.stopPermissionUpdates() }
     }
 }
@@ -390,8 +492,12 @@ struct SetupPermissionRow: View {
             }
             Spacer(minLength: 8)
             if let action = permission.action(for: status) {
-                Button(action.title) { store.act(on: permission) }
+                Button(store.permissionBusy.contains(permission) ? "Waiting…" : action.title) {
+                    store.act(on: permission)
+                }
                     .controlSize(.small)
+                    .disabled(store.permissionBusy.contains(permission))
+                    .accessibilityLabel("\(action.title) \(permission.title)")
             }
         }
         .padding(.vertical, 7)
@@ -477,6 +583,7 @@ struct SetupDoneStep: View {
                 }
             }
             .windowWell(padding: 0)
+            SetupTryItRow(store: store)
             Spacer(minLength: 0)
             Label("The menu-bar icon opens the panel; asks land there with Approve and Deny.",
                   systemImage: "menubar.arrow.up.rectangle")
@@ -487,5 +594,16 @@ struct SetupDoneStep: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 24)
         .padding(.bottom, 14)
+    }
+}
+
+/// "Try it" on the Done step: a made-up ask on the real surfaces, so the
+/// first real one is not the first time Approve and Deny are seen.
+struct SetupTryItRow: View {
+    @Bindable var store: SetupStore
+
+    var body: some View {
+        DemoAskTryRow { store.tryDemoAsk() }
+            .windowWell(padding: 12)
     }
 }

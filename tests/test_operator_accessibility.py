@@ -10,8 +10,6 @@ from jrbar.operator_accessibility import (
     MAX_ACCESSIBILITY_LABEL_LENGTH,
     MAX_ACCESSIBILITY_VALUE_LENGTH,
     AccessibilityText,
-    FocusSnapshot,
-    normalize_semantic_text_scale,
     status_item_accessibility,
 )
 from jrbar.operator_state import (
@@ -157,27 +155,15 @@ def _all_text(text: AccessibilityText) -> str:
     return " ".join((text.label, text.value, text.help))
 
 
-def test_accessibility_records_are_frozen_and_reject_blank_or_unbounded_text__and_2_more() -> None:
-    # --- scenario: accessibility_records_are_frozen_and_reject_blank_or_unbounded_text
+def test_accessibility_records_are_frozen_and_reject_blank_or_unbounded_text() -> None:
     text = AccessibilityText("JR-Bar", "No agents need attention", "Open JR-Bar status")
-    focus = FocusSnapshot("agent-browser", "search", None, (3, 2), "agents")
 
     with pytest.raises(FrozenInstanceError):
         text.value = ""  # type: ignore[misc]
-    with pytest.raises(FrozenInstanceError):
-        focus.control_key = None  # type: ignore[misc]
     with pytest.raises(ValueError):
         AccessibilityText("", "value", "help")
     with pytest.raises(ValueError):
         AccessibilityText("x" * (MAX_ACCESSIBILITY_LABEL_LENGTH + 1), "value", "help")
-
-    # --- scenario: semantic_text_scale_accepts_only_the_five_exact_percentage_choices
-    for choice, expected in ((100, 1.0), (125, 1.25), (150, 1.5), (175, 1.75), (200, 2.0)):
-        assert normalize_semantic_text_scale(choice) == expected
-
-    # --- scenario: invalid_semantic_text_scale_normalizes_to_one_hundred_percent
-    for invalid in (None, True, False, 0, 99, 201, 125.0, 1.25, "125", float("nan"), object()):
-        assert normalize_semantic_text_scale(invalid) == 1.0
 
 
 def test_status_item_has_stable_role_text_and_nonblank_value_for_every_glance__and_2_more() -> None:
@@ -231,17 +217,6 @@ def test_status_item_has_stable_role_text_and_nonblank_value_for_every_glance__a
     assert result.value.strip()
 
 
-def test_focus_snapshot_rejects_invalid_text_selection() -> None:
-    # --- scenario: focus_snapshot_rejects_invalid_text_selection
-    for invalid_selection in ((-1, 0), (0, -1), (True, 0), (0, 1.5), (0,), [0, 0]):
-        with pytest.raises(ValueError):
-            FocusSnapshot(
-                "agent-browser",
-                "search",
-                None,
-                invalid_selection,  # type: ignore[arg-type]
-                "agents",
-            )
 
 
 def test_all_public_helpers_return_nonempty_bounded_privacy_safe_text() -> None:

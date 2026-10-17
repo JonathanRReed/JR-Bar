@@ -23,9 +23,7 @@ final class HistoryStore {
     /// The daemon's settings document, for provider colour overrides.
     var document: SettingsDocument? { core.settings.map { SettingsDocument($0.document) } }
     var rows: [CoreHistoryRow] = []
-    var filter = HistoryFilter() {
-        didSet { if filter.text != oldValue.text { searchTranscripts() } }
-    }
+    var filter = HistoryFilter()
     var loading = false
     var error: String?
     var loadedAt: Date?
@@ -46,13 +44,29 @@ final class HistoryStore {
 
     @ObservationIgnored private var clock: Timer?
     @ObservationIgnored private var lastEventID: String?
+    @ObservationIgnored private var loadToken: UUID?
+    @ObservationIgnored private var readDuringVisit = false
+    private let schedulingEnabled: Bool
+    @ObservationIgnored var readHistory: @MainActor () async throws -> [CoreHistoryRow]
+    @ObservationIgnored var markSeen: @MainActor () async throws -> Void
+    @ObservationIgnored var readTimeline: @MainActor (CoreHistoryRow) async throws -> CoreTimelinePage
+    @ObservationIgnored private var activeTimelineReads: Set<String> = []
     /// Without an event, rows are refreshed this often (the daemon may
     /// record things that never raise an event).
     static let refreshInterval: TimeInterval = 30
 
-    init(core: CoreModel) {
+    init(core: CoreModel, schedulingEnabled: Bool = true) {
         self.core = core
+        self.schedulingEnabled = schedulingEnabled
         self.replay = ReplayStore(core: core)
+        self.readHistory = { try await core.listHistory() }
+        self.markSeen = { _ = try await core.markHistorySeen() }
+        self.readTimeline = { row in
+            guard let session = row.session else { throw CoreReplyError(code: "invalid_args") }
+            return try await core.sessionTimeline(
+                id: session, limit: 150, provider: HistoryTimelineRequest.provider(of: row),
+                session: HistoryTimelineRequest.sessionUUID(from: session))
+        }
     }
 
     /// The journal reloads on live frames only while someone is looking
@@ -101,6 +115,9 @@ final class HistoryStore {
     let expandedViewState = ReconstructedTimelineViewState()
     private(set) var expandedTimelines: [String: SessionReconstruction] = [:]
     private(set) var expandedLoading: Set<String> = []
+    /// Rows whose last timeline read failed: the gap line stands in for the
+    /// timeline, and opening the row again asks again.
+    private(set) var failedTimelines: Set<String> = []
 
     func canExpand(_ row: CoreHistoryRow) -> Bool { HistoryTimelineRequest.canExpand(row) }
 
@@ -108,6 +125,11 @@ final class HistoryStore {
         guard canExpand(row) else { return }
         if expandedID == row.id {
             expandedID = nil
+            return
+        }
+        // A row that opens onto nothing says why; it never opens blank.
+        guard core.isLive else {
+            say("A run's timeline needs the monitor. Try again when it connects.", isError: true)
             return
         }
         expandedID = row.id
@@ -119,25 +141,38 @@ final class HistoryStore {
     /// The newest page of the row's transcript, through the same
     /// `session_timeline` the Overview reads; an ended session that aged
     /// out of the roster still resolves by provider and uuid.
-    func loadTimeline(for row: CoreHistoryRow, force: Bool = false) {
-        guard let session = row.session, core.isLive, !expandedLoading.contains(row.id) else { return }
-        if !force, expandedTimelines[row.id] != nil { return }
-        expandedLoading.insert(row.id)
+    @discardableResult
+    func loadTimeline(for row: CoreHistoryRow, force: Bool = false) -> Task<Void, Never>? {
+        guard let session = row.session, core.isLive, !expandedLoading.contains(row.id) else { return nil }
         let running = isLiveSession(session)
-        Task { [weak self] in
+        guard Self.shouldLoadTimeline(cached: expandedTimelines[row.id] != nil, failed: failedTimelines.contains(row.id),
+                                      running: running, force: force || activeTimelineReads.contains(row.id)) else { return nil }
+        expandedLoading.insert(row.id)
+        let read = readTimeline
+        return Task { [weak self] in
             guard let self else { return }
             defer { self.expandedLoading.remove(row.id) }
             do {
-                let page = try await self.core.sessionTimeline(
-                    id: session, limit: 150, provider: HistoryTimelineRequest.provider(of: row),
-                    session: HistoryTimelineRequest.sessionUUID(from: session))
+                let page = try await read(row)
+                if running { self.activeTimelineReads.insert(row.id) }
+                else { self.activeTimelineReads.remove(row.id) }
                 self.expandedTimelines[row.id] = SessionReconstructor.reconstruction(
                     from: page.events, gaps: page.gaps, running: running)
+                self.failedTimelines.remove(row.id)
             } catch {
                 self.expandedTimelines[row.id] = SessionReconstructor.reconstruction(
-                    from: [], gaps: [(error as? CoreReplyError)?.message ?? error.localizedDescription], running: running)
+                    from: [], gaps: [UsageCenterStore.describe(error)], running: running)
+                self.failedTimelines.insert(row.id)
             }
         }
+    }
+
+    /// Whether opening a row reads its timeline again. A read that landed
+    /// is kept for a finished run; one that failed is asked for again, and
+    /// a run still going is too. A page read while active also needs one
+    /// final read after completion before it can be kept.
+    nonisolated static func shouldLoadTimeline(cached: Bool, failed: Bool, running: Bool, force: Bool) -> Bool {
+        force || !cached || failed || running
     }
 
     /// → / Space open the selected row's timeline, ← closes it.
@@ -150,111 +185,41 @@ final class HistoryStore {
     func timeline(for row: CoreHistoryRow) -> SessionReconstruction? { expandedTimelines[row.id] }
     func isLoadingTimeline(_ row: CoreHistoryRow) -> Bool { expandedLoading.contains(row.id) }
 
-    // MARK: Transcript search
-
-    /// The Data Hoarder's full-text index: session uuid → the best
-    /// snippet for a query. Set by the app delegate while the archive is
-    /// on; nil searches the rows' own words only.
-    var archiveSearch: ((String) async -> [String: String])?
-    /// Whether the archive is on to be searched — the field's placeholder
-    /// only promises transcripts when it is.
-    var archiveSearchAvailable: (() -> Bool)?
-    var canSearchTranscripts: Bool { archiveSearch != nil && (archiveSearchAvailable?() ?? false) }
-    /// Sessions whose archived transcript said the text, for the query
-    /// they answered — so "which run touched the auth middleware?" finds
-    /// the run even though no row's label says so.
-    private(set) var transcriptHits: (query: String, snippets: [String: String]) = ("", [:])
-    @ObservationIgnored private(set) var transcriptSearch: Task<Void, Never>?
-    /// Shorter queries match too much of a transcript to mean anything.
-    static let transcriptQueryMinimum = 3
-
     private var trimmedQuery: String { filter.text.trimmingCharacters(in: .whitespacesAndNewlines) }
-
-    /// Debounced so typing does not run a query per key; a stale answer
-    /// (the text moved on) is dropped.
-    func searchTranscripts(debounce: Duration = .milliseconds(300)) {
-        transcriptSearch?.cancel()
-        let query = trimmedQuery
-        guard query.count >= Self.transcriptQueryMinimum, let archiveSearch else {
-            transcriptHits = ("", [:])
-            return
-        }
-        transcriptSearch = Task { [weak self] in
-            if debounce > .zero { try? await Task.sleep(for: debounce) }
-            guard !Task.isCancelled else { return }
-            let snippets = await archiveSearch(query)
-            guard !Task.isCancelled, let self, self.trimmedQuery == query else { return }
-            self.transcriptHits = (query, snippets)
-        }
-    }
-
-    // MARK: The Data Hoarder offer
-
-    /// Whether the Data Hoarder already keeps agent transcripts. Set by
-    /// the app delegate; unset reads as yes, so nothing is offered.
-    var hoarderKeepsTranscripts: (() -> Bool)?
-    /// The consent sheet's Turn On: the chosen sources and the backfill
-    /// window, handed to the utility — set by the app delegate.
-    @ObservationIgnored var keepTranscripts: (@MainActor (_ sourceIDs: [String], _ days: Int) -> Void)?
-    /// Whether Data Hoarder's full-content switch is on — the sheet's
-    /// consent text says verbatim, not redacted, when it is.
-    @ObservationIgnored var hoarderFullContent: () -> Bool = { false }
-    /// When each agent source was last kept — the sheet's estimate for a
-    /// source kept before counts what changed since, not the window.
-    @ObservationIgnored var hoarderResumePoints: @MainActor ([String]) async -> [String: Date] = { _ in [:] }
-    /// The folders the sheet looks in; tests point it at fixtures.
-    @ObservationIgnored var offerSources: () -> [ArchiveSource] = { DataHoarderModel.agentSources() }
-    /// The open consent sheet, if any.
-    var hoarderOffer: DataHoarderOffer?
-
-    /// The empty search's one-line offer: a real query found nothing, and
-    /// no transcript copy exists for it to have searched.
-    var offersHoarder: Bool {
-        trimmedQuery.count >= Self.transcriptQueryMinimum && keepTranscripts != nil
-            && !(hoarderKeepsTranscripts?() ?? true)
-    }
-
-    /// The offer's click opens the sheet. Only file names, sizes and dates
-    /// are read for its estimate; contents wait for its Turn On.
-    func offerHoarder() {
-        guard offersHoarder, let keep = keepTranscripts else { return }
-        hoarderOffer = DataHoarderOffer(sources: offerSources(), fullContent: hoarderFullContent(),
-                                        resumePoints: hoarderResumePoints) { [weak self] sourceIDs, days in
-            let resuming = self?.hoarderOffer?.resumesEveryChosenSource ?? false
-            keep(sourceIDs, days)
-            self?.hoarderTurnedOn(days: days, resuming: resuming)
-        }
-    }
-
-    /// Turn On landed: the search reruns against what is indexed so far,
-    /// and the notice says the copy is still filling — or, when every
-    /// chosen folder was kept before, that it picks up where it stopped.
-    func hoarderTurnedOn(days: Int, resuming: Bool = false) {
-        hoarderOffer = nil
-        say(resuming
-                ? "Data Hoarder picks up where it stopped — search reaches it as it indexes"
-                : "Data Hoarder is reading the last \(days) days — search reaches it as it indexes",
-            isError: false)
-        searchTranscripts(debounce: .seconds(2))
-    }
-
-    /// The session uuids the current text found in transcripts.
-    private var liveTranscriptHits: Set<String> {
-        transcriptHits.query == trimmedQuery && !trimmedQuery.isEmpty ? Set(transcriptHits.snippets.keys) : []
-    }
-
-    /// The snippet for a row the text found only in its transcript.
-    func transcriptSnippet(for row: CoreHistoryRow) -> String? {
-        guard !filter.matchesOwnWords(row), transcriptHits.query == trimmedQuery,
-              let uuid = HistoryTimelineRequest.sessionUUID(from: row.session) else { return nil }
-        return transcriptHits.snippets[uuid]
-    }
 
     // MARK: Derived
 
-    var filtered: [CoreHistoryRow] { filter.apply(rows, transcriptHits: liveTranscriptHits) }
+    var filtered: [CoreHistoryRow] { filter.apply(rows) }
     var days: [HistoryDay] { HistoryGrouping.days(filtered, now: now) }
-    var away: AwaySummary? { AwaySummary.make(from: rows) }
+    /// "While you were away" is what was unseen when the window opened, and
+    /// it stays that for as long as the window is open: opening moved the
+    /// daemon's `last_seen` mark, so a later refresh reports the same rows
+    /// as seen. Rows that arrive while the window is open are not away.
+    var away: AwaySummary? {
+        let baseline = awayIDs.map { ids in rows.filter { ids.contains($0.id) } } ?? rows
+        return AwaySummary.make(from: baseline.map { row in
+            var row = row
+            row.unseen = isUnseen(row)
+            return row
+        })
+    }
+
+    /// The ids unseen at the window's first read after it opened; nil until
+    /// that read lands, when the daemon's own flag stands.
+    private(set) var awayIDs: Set<String>?
+    @ObservationIgnored private var awaitingAwayBaseline = false
+
+    func isUnseen(_ row: CoreHistoryRow) -> Bool { awayIDs?.contains(row.id) ?? row.unseen }
+
+    /// A read of the rows landed. The first one after the window opened
+    /// fixes what counts as away.
+    func adopt(rows: [CoreHistoryRow]) {
+        self.rows = rows
+        if awaitingAwayBaseline {
+            awaitingAwayBaseline = false
+            awayIDs = Set(rows.filter(\.unseen).map(\.id))
+        }
+    }
     var providers: [String] {
         var seen: [String] = []
         for row in rows { if let provider = row.provider, !seen.contains(provider) { seen.append(provider) } }
@@ -267,41 +232,50 @@ final class HistoryStore {
         let left = Int(EventPolicy.undoWindow - now.timeIntervalSince(last.at))
         return left >= 60 ? "\(left / 60) min" : "\(max(0, left)) s"
     }
-    var completedCount: Int { core.sessions.filter { SessionActivity.reduce($0) == .done }.count }
+    var completedCount: Int { core.sessions.filter { SessionActivity.reduce($0).isClearable || $0.stale }.count }
     var isLive: Bool { core.isLive }
 
     // MARK: Lifecycle
 
-    func windowDidOpen() {
+    @discardableResult
+    func windowDidOpen() -> Task<Void, Never>? {
         now = Date()
+        // Showing the window again while it is open is not a new visit.
+        if !windowOpen {
+            loadToken = nil
+            loading = false
+            readDuringVisit = false
+            awayIDs = nil
+            awaitingAwayBaseline = true
+        }
         windowOpen = true
         syncReplay()
         lastEventID = core.lastEvent?.id
         clock?.invalidate()
-        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.now = Date()
-                // New rows follow events (a completion, an ask); refetch
-                // on each one, and every 30 s regardless.
-                guard self.core.isLive else { return }
-                let eventID = self.core.lastEvent?.id
-                let stale = self.loadedAt.map { self.now.timeIntervalSince($0) > Self.refreshInterval } ?? true
-                if eventID != self.lastEventID || stale {
-                    self.lastEventID = eventID
-                    self.reload()
+        clock = nil
+        if schedulingEnabled {
+            let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    _ = self?.refreshOnClockTick()
                 }
             }
+            RunLoop.main.add(timer, forMode: .common)
+            clock = timer
         }
-        RunLoop.main.add(timer, forMode: .common)
-        clock = timer
-        reload()
-        // Opening the window is itself a look: advance the daemon's
-        // `last_seen` watermark so `unseen` means "since you last looked".
-        Task { [weak self] in
-            guard let self else { return }
-            _ = try? await self.core.markHistorySeen()
-        }
+        return reload()
+    }
+
+    /// A queued tick may reach the main actor after the window closed.
+    @discardableResult
+    func refreshOnClockTick() -> Task<Void, Never>? {
+        guard windowOpen else { return nil }
+        now = Date()
+        guard core.isLive else { return nil }
+        let eventID = core.lastEvent?.id
+        let stale = loadedAt.map { now.timeIntervalSince($0) > Self.refreshInterval } ?? true
+        guard eventID != lastEventID || stale else { return nil }
+        lastEventID = eventID
+        return reload()
     }
 
     func windowDidClose() {
@@ -309,32 +283,49 @@ final class HistoryStore {
         syncReplay()
         clock?.invalidate()
         clock = nil
-        // The window was open and read: advance the daemon's `last_seen`
-        // watermark so `unseen` means "since you last looked", not "since
-        // the app last disconnected" (the app stays connected).
-        Task { [weak self] in
-            guard let self else { return }
-            _ = try? await self.core.markHistorySeen()
+        loadToken = nil
+        loading = false
+        // A failed read never acknowledges rows the person could not see.
+        if readDuringVisit {
+            Task { [weak self] in
+                try? await self?.markSeen()
+            }
         }
     }
 
-    func reload() {
+    /// What every load failure starts with; the empty state, whose title
+    /// already says it, shows the reason alone.
+    static let loadFailurePrefix = "Could not load history: "
+
+    @discardableResult
+    func reload() -> Task<Void, Never>? {
         guard core.isLive else {
             error = "History needs the monitor. Rows appear when it connects."
-            return
+            return nil
         }
-        guard !loading else { return }
+        guard !loading else { return nil }
         loading = true
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.loading = false }
+        let token = UUID()
+        loadToken = token
+        return Task { [weak self] in
+            guard let self, self.loadToken == token else { return }
+            defer {
+                if self.loadToken == token { self.loading = false }
+            }
             do {
-                let rows = try await self.core.listHistory()
-                self.rows = rows
+                let rows = try await self.readHistory()
+                guard self.loadToken == token else { return }
+                let firstRead = self.awaitingAwayBaseline && self.windowOpen
+                self.adopt(rows: rows)
                 self.error = nil
                 self.loadedAt = Date()
+                if self.windowOpen {
+                    self.readDuringVisit = true
+                    if firstRead { try? await self.markSeen() }
+                }
             } catch {
-                self.error = "Could not load history: \(error)"
+                guard self.loadToken == token else { return }
+                self.error = Self.loadFailurePrefix + UsageCenterStore.describe(error)
             }
         }
     }
@@ -371,8 +362,7 @@ final class HistoryStore {
 
     // MARK: Resume
 
-    /// The last Open or Resume's outcome, in the daemon's words — a
-    /// receipt or a refusal — for a few seconds under the filter bar.
+    /// The last action's receipt or refusal, shown under the filter bar.
     struct Notice: Equatable {
         let text: String
         let isError: Bool
@@ -453,6 +443,20 @@ final class HistoryStore {
     /// The rows in the order the window shows them (days, newest first).
     var displayed: [CoreHistoryRow] { days.flatMap(\.rows) }
 
+    /// A palette hit: the Activity tab (the Events tab has no filter to
+    /// see), the query as the filter, and the row selected. A row folded
+    /// under a newer one of its session selects the row that stands for it.
+    func focus(on row: CoreHistoryRow?, query: String) {
+        mode = .activity
+        filter = HistoryFilter(text: query)
+        guard let row else { return }
+        for day in days {
+            if day.rows.contains(where: { $0.id == row.id }) { selectedID = row.id; return }
+            if let head = day.folded.first(where: { $0.value.contains { $0.id == row.id } }) { selectedID = head.key; return }
+        }
+        selectedID = row.id
+    }
+
     /// ↑/↓ move the selection through the displayed rows.
     func moveSelection(by delta: Int) {
         let rows = displayed
@@ -469,23 +473,51 @@ final class HistoryStore {
         open(row)
     }
 
-    func clearCompleted() {
-        core.clearCompleted()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            MainActor.assumeIsolated { self?.reload() }
-        }
-    }
+    enum HistoryAction: Equatable { case clear, undo }
+    private(set) var pendingAction: HistoryAction?
 
-    func undo() {
-        Task { [weak self] in
+    @discardableResult
+    func clearCompleted() -> Task<Void, Never>? { performHistoryAction(.clear) }
+
+    @discardableResult
+    func undo() -> Task<Void, Never>? { performHistoryAction(.undo) }
+
+    private func performHistoryAction(_ action: HistoryAction) -> Task<Void, Never>? {
+        guard pendingAction == nil else { return nil }
+        pendingAction = action
+        return Task { [weak self] in
             guard let self else { return }
+            defer { self.pendingAction = nil }
+            let verb = action == .clear ? "Clear" : "Undo"
             do {
-                if let reply = try await self.core.undoClear(), !reply.ok {
-                    self.error = "Undo refused: \(reply.error?.message ?? reply.error?.code ?? "unknown")"
+                let reply: CoreReply
+                if action == .clear {
+                    reply = try await self.core.clearCompletedNow()
+                } else {
+                    guard let undone = try await self.core.undoClear() else {
+                        self.say("Nothing to undo. The undo window has passed.", isError: true)
+                        return
+                    }
+                    reply = undone
                 }
-                self.reload()
+                guard reply.ok else {
+                    self.say("\(verb) failed: \(reply.error?.message ?? reply.error?.code ?? "refused")", isError: true)
+                    return
+                }
+                let countKey = action == .clear ? "cleared" : "restored"
+                let count = reply.result?[countKey]?.arrayValue?.count ?? 0
+                let quantity = "\(count) \(count == 1 ? "session" : "sessions")"
+                if action == .clear {
+                    let undo = reply.result?["batch"]?.stringValue == nil ? "" : " Undo is available for 5 minutes."
+                    self.say(count > 0 ? "Cleared \(quantity).\(undo)" : "Nothing to clear.", isError: false)
+                } else {
+                    self.say("Restored \(quantity).", isError: false)
+                }
+                self.loadToken = nil
+                self.loading = false
+                if let refresh = self.reload() { await refresh.value }
             } catch {
-                self.error = "Undo failed: \(error)"
+                self.say("\(verb) failed: the monitor is not answering.", isError: true)
             }
         }
     }
@@ -510,7 +542,7 @@ final class HistoryStore {
     /// `m:ss` under an hour, `h:mm:ss` after; monospaced in the column.
     static func duration(_ seconds: Double?) -> String? {
         guard let seconds, seconds >= 0 else { return nil }
-        let total = Int(seconds.rounded())
+        let total = Int(saturating: seconds.rounded())
         if total < 3600 { return String(format: "%d:%02d", total / 60, total % 60) }
         return String(format: "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
     }

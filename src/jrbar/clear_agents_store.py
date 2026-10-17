@@ -25,6 +25,7 @@ from .clear_agents import (
 )
 from .private_io import (
     atomic_private_write,
+    decode_strict_json,
     private_file_identity,
     quarantine_private_file,
     read_private_text,
@@ -107,7 +108,7 @@ def load_clear_agents_state(path: Path | None = None) -> ClearAgentsRestore:
 
     try:
         raw = read_private_text(target, max_bytes=MAX_CLEAR_AGENTS_STORE_BYTES)
-        document = _decode_document(raw)
+        document = decode_strict_json(raw, _CorruptClearAgentsStore)
         state = _state_from_document(document)
     except FileNotFoundError:
         return _degraded_restore(ClearAgentsRestoreHealth.MISSING)
@@ -145,27 +146,6 @@ def save_clear_agents_state(path: Path, state: ClearAgentsState) -> Path:
 
 def _degraded_restore(health: ClearAgentsRestoreHealth) -> ClearAgentsRestore:
     return ClearAgentsRestore(ClearAgentsState(), health)
-
-
-def _strict_object(pairs: list[tuple[object, object]]) -> dict[object, object]:
-    result: dict[object, object] = {}
-    for key, value in pairs:
-        if type(key) is not str or key in result:
-            raise _CorruptClearAgentsStore
-        result[key] = value
-    return result
-
-
-def _reject_constant(_value: str) -> None:
-    raise _CorruptClearAgentsStore
-
-
-def _decode_document(raw: str) -> object:
-    return json.loads(
-        raw,
-        object_pairs_hook=_strict_object,
-        parse_constant=_reject_constant,
-    )
 
 
 def _has_exact_fields(value: object, fields: frozenset[str]) -> bool:

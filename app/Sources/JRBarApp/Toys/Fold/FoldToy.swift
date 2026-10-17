@@ -30,18 +30,23 @@ enum FoldLog {
 /// a short cooldown, so the purple indicator only shows while a fold
 /// can be on screen), `FoldCapture` grabs the built-in display — one
 /// picture for the Duo, the desktop plus the wallpaper-only far wall
-/// and the window cards for the Room — `EdgeInterpolator` and
-/// `SlewTracker` turn the 10 Hz integer sensor into a steady,
-/// overshoot-free glide, `DeltaChase` unwinds the displayed delta when
-/// the gate snaps it to 0 mid-motion, and `FoldRenderer` draws the look
-/// into the click-through `FoldOverlayWindow`. Render can also be
-/// handed to Bendy or Lid Plane; then all of this stays parked.
+/// and the window cards for the Room — `FoldMotion` turns the 10 Hz
+/// whole-degree sensor into one steady, overshoot-free angle,
+/// `FoldGateEase` eases the displayed delta out when the gate snaps it
+/// to 0 mid-motion, `FoldEntryFade` brings a fold that is already under
+/// way into view, and `FoldRenderer` draws the look into the click-through
+/// `FoldOverlayWindow`. Render can also be handed to Bendy or Lid Plane;
+/// then all of this stays parked.
 @MainActor
 @Observable
 final class FoldToy: Toy {
     let core: CoreModel
+    @ObservationIgnored private let hotkeyCenter: HotkeyCenter
+    @ObservationIgnored private var dismissal = FoldDismissal()
+    private(set) var dismissalKeyUnavailable = false
     /// The owning store; weak, the store keeps the toy.
     weak var store: ToysStore?
+    @ObservationIgnored private(set) var isShutdown = false
 
     /// The hinge. Polls only while the toy is on and JR-Bar is rendering.
     let sensor = LidAngleSensor()
@@ -59,6 +64,10 @@ final class FoldToy: Toy {
     /// limit. Not observed: the engine reads it where it needs it, and
     /// the card reads `cardAngle`.
     @ObservationIgnored private(set) var rawAngle: Double?
+    /// When the sensor last delivered anything (`Sample.at`, host
+    /// seconds). A fold that is up while this goes stale lets go of its
+    /// last reading — see `FoldSensorSilence`.
+    @ObservationIgnored private var lastSampleAt: TimeInterval?
     /// What the card shows: the lid in whole degrees (the simulation
     /// while one plays), the fold's state line, and why it is paused —
     /// each changed at most ten times a second (`FoldCardFeed`), and only
@@ -103,29 +112,18 @@ final class FoldToy: Toy {
     /// Recording permission actually lands.
     private(set) var permissionVersion = 0
 
-    @ObservationIgnored private var jitter = JitterFilter(tolerance: 0)
-    /// The display-angle tracker: critically damped and slew-limited, so
-    /// the 10 Hz integer-degree sensor becomes a continuous glide that
-    /// can never overshoot — a slammed lid eases shut in ~300 ms instead
-    /// of lurching between samples. Fed on accepted samples, ticked on
-    /// every vsync.
-    @ObservationIgnored private var tracker = SlewTracker()
-    /// The Duo's sensor smoothing: the lid drawn one sensor period in
-    /// the past, straight between edges, so a steady close moves at a
-    /// steady speed. Feeds the tracker every tick; the simulate slider
-    /// and Try it bypass it (they are already smooth).
-    @ObservationIgnored private var edges = EdgeInterpolator()
-    /// The movement fold's ease from 0 to the live delta when the first
-    /// captured frame lands late.
-    @ObservationIgnored private var catchUp = FirstFrameCatchUp()
-    /// Set when a capture starts; the first frame clears it.
-    @ObservationIgnored private var awaitingFirstFrame = false
+    /// The one motion path: every raw sensor reading in, the angle to
+    /// draw out. A steady close is followed with no lag, a stop settles
+    /// without overshoot, and a parked lid's flicker never reaches the
+    /// picture. Fed on readings, ticked on every vsync; the simulate
+    /// slider and Try it go straight to its spring.
+    @ObservationIgnored private var motion = FoldMotion()
     /// The Duo's black hold across the closed-lid pause.
     @ObservationIgnored private var blackout = FoldBlackout()
     @ObservationIgnored private var blackoutWork: DispatchWorkItem?
-    /// When the overlay last ordered in, for the Duo's order-in fade;
-    /// nil while it is out.
-    @ObservationIgnored private var overlayShownAt: TimeInterval?
+    /// How a fold already under way comes into view when its first frame
+    /// lands late: opacity on the lid's travel, never a rush to catch up.
+    @ObservationIgnored private var entryFade = FoldEntryFade()
     /// The reference the Duo draws this gesture from: taken as the
     /// overlay orders in and kept until it orders out, so an unwind that
     /// outlives its anchor (the dwell re-seat, a reopen that settles
@@ -133,19 +131,19 @@ final class FoldToy: Toy {
     /// and a reopen from the black hold unfolds from the lid it closed
     /// from.
     @ObservationIgnored private var heldReference: Double?
-    /// The displayed-delta follower: instant while the fold deepens, a
-    /// slew-limited unwind when the gate snaps the target to 0 —
-    /// opening counter-rotates the room back through the hinge instead
-    /// of cutting to black mid-swing.
-    @ObservationIgnored private var chase = DeltaChase()
+    /// The displayed delta: exactly the lid's while the fold deepens or
+    /// the lid opens, and a quarter-second ease when the gate snaps the
+    /// target to 0 under a fold in flight, so it never cuts to black
+    /// mid-swing.
+    @ObservationIgnored private var gateEase = FoldGateEase()
     /// The capture-lifecycle machine: the streams exist only inside the
     /// arming band and through its cooldown, and it owns the fold gate's
     /// hysteresis at the activation edge.
     @ObservationIgnored private var arming = FoldArming()
     /// The movement-anchored reference (`FoldAnchor.movement`): where
     /// the lid was resting when the gesture began. Fed every raw sample
-    /// — stillness IS its signal — while the jitter filter still guards
-    /// what reaches the tracker.
+    /// — stillness IS its signal — while the motion's rest guard still
+    /// keeps a parked lid's flicker off the picture.
     @ObservationIgnored private var moveAnchor = MoveAnchor()
     /// The latest window-card layout, kept so an overlay created after
     /// the poll still gets it.
@@ -163,6 +161,7 @@ final class FoldToy: Toy {
     /// The frames: the ScreenCaptureKit streams, or — without Screen
     /// Recording — the wallpaper alone (`FoldWallpaperSource`).
     @ObservationIgnored private var capture: (any FoldFrameSource)?
+    @ObservationIgnored private var captureStartTask: Task<Void, Never>?
     @ObservationIgnored private var captureDisplayVersion = -1
     @ObservationIgnored private var captureFailure: String?
     /// When the capture source last failed to start or died, and so when
@@ -183,19 +182,14 @@ final class FoldToy: Toy {
     @ObservationIgnored private var cachedMirrored = false
     @ObservationIgnored private var cachedFactsVersion = -1
     @ObservationIgnored private var cachedFactsAt: TimeInterval = 0
-    /// The vsync heartbeat while the fold is armed. CADisplayLink needs
-    /// an NSObject target, so the box holds the closure.
-    @ObservationIgnored private var tickLink: CADisplayLink?
-    @ObservationIgnored private let tickBox = TickBox()
+    /// The vsync heartbeat while the fold is armed: the one clock that
+    /// moves the motion, writes the uniforms and draws.
+    @ObservationIgnored private let ticker: FoldTickDriver
     /// A missing built-in screen makes `ensureOverlay` fail; retrying
     /// every vsync would spin, so attempts are half a second apart.
     @ObservationIgnored private var lastOverlayAttempt: TimeInterval = 0
-    /// When the current capture was asked to start — a stream that stays
-    /// frameless for seconds is dead on arrival (a hung
-    /// SCShareableContent fetch never throws), so it gets recycled.
-    @ObservationIgnored private var captureBeganAt: TimeInterval = 0
-    /// Last frameless-capture recycle; retries stay seconds apart.
-    @ObservationIgnored private var lastCaptureRecycle: TimeInterval = 0
+    /// A hung start recovers even while the parked lid needs no draw clock.
+    @ObservationIgnored private let captureWatchdog = FoldCaptureWatchdog()
     /// The displayParameters version the overlay was last framed for.
     @ObservationIgnored private var reframedVersion = -1
     /// Set when a safety input parked us; only a resume from here waits
@@ -223,32 +217,49 @@ final class FoldToy: Toy {
     /// `noteDiag`.
     @ObservationIgnored private var lastNoticeDiag: FoldDiagState?
 
-    init(core: CoreModel, store: ToysStore) {
+    init(core: CoreModel, store: ToysStore,
+         makeTickLink: @escaping FoldTickDriver.Factory = FoldTickDriver.displayLink,
+         hotkeyCenter: HotkeyCenter = .shared) {
         self.core = core
+        self.hotkeyCenter = hotkeyCenter
         self.store = store
-        jitter.tolerance = store.state.fold.jitterTolerance
+        ticker = FoldTickDriver(makeLink: makeTickLink)
+        motion.tolerance = store.state.fold.jitterTolerance
 
         let workspace = NSWorkspace.shared.notificationCenter
         observers.append(workspace.addObserver(
             forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.screenAsleep = true }
+            MainActor.assumeIsolated {
+                guard let self, !self.isShutdown else { return }
+                if self.overlayOnScreen || self.tryingIt { self.dismissEffect() }
+                self.screenAsleep = true
+            }
         })
         observers.append(workspace.addObserver(
             forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.screenAsleep = false }
+            MainActor.assumeIsolated {
+                guard let self, !self.isShutdown else { return }
+                self.screenAsleep = false
+            }
         })
         observers.append(workspace.addObserver(
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.motionVersion += 1 }
+            MainActor.assumeIsolated {
+                guard let self, !self.isShutdown else { return }
+                self.motionVersion += 1
+            }
         })
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.workspaceVersion += 1 }
+                MainActor.assumeIsolated {
+                    guard let self, !self.isShutdown else { return }
+                    self.workspaceVersion += 1
+                }
             })
         }
         // The lock and a fast-user switch both hand the screen to
@@ -258,32 +269,48 @@ final class FoldToy: Toy {
         observers.append(workspace.addObserver(
             forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.sessionInactive = true }
+            MainActor.assumeIsolated {
+                guard let self, !self.isShutdown else { return }
+                if self.overlayOnScreen || self.tryingIt { self.dismissEffect() }
+                self.sessionInactive = true
+            }
         })
         observers.append(workspace.addObserver(
             forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.sessionInactive = false }
+            MainActor.assumeIsolated {
+                guard let self, !self.isShutdown else { return }
+                self.sessionInactive = false
+            }
         })
         let distributed = DistributedNotificationCenter.default()
         distributedObservers.append(distributed.addObserver(
             forName: FoldSessionState.lockedNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.screenLocked = true }
+            MainActor.assumeIsolated {
+                guard let self, !self.isShutdown else { return }
+                if self.overlayOnScreen || self.tryingIt { self.dismissEffect() }
+                self.screenLocked = true
+            }
         })
         distributedObservers.append(distributed.addObserver(
             forName: FoldSessionState.unlockedNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.screenLocked = false }
+            MainActor.assumeIsolated {
+                guard let self, !self.isShutdown else { return }
+                self.screenLocked = false
+            }
         })
         let center = NotificationCenter.default
         observers.append(center.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.displayVersion += 1
+                guard let self, !self.isShutdown else { return }
+                if self.overlayOnScreen || self.tryingIt { self.dismissEffect() }
+                self.displayVersion += 1
                 // A changed display set is a fresh ask.
-                self?.captureRetry.reset()
+                self.captureRetry.reset()
             }
         })
         observers.append(center.addObserver(
@@ -294,33 +321,84 @@ final class FoldToy: Toy {
                 // Recording permission lands — drop the cached
                 // preflight so the next read asks TCC once, here,
                 // instead of waiting out the 30 s freshness.
+                guard let self, !self.isShutdown else { return }
                 FoldCapturePermission.invalidate()
-                self?.captureRetry.reset()
-                self?.permissionVersion += 1
+                self.captureRetry.reset()
+                self.permissionVersion += 1
             }
         })
 
         sensor.onSample = { [weak self] angle in self?.noteSensorSample(angle) }
-        tickBox.onTick = { [weak self] in
-            MainActor.assumeIsolated { self?.tickFrame() }
-        }
+        ticker.onTick = { [weak self] time in self?.tickFrame(now: time) }
         observe()
         publishCard()
     }
 
+    var notificationObserverCount: Int { observers.count + distributedObservers.count }
+
+    /// Terminal owner retirement, separate from the reopenable off state.
+    func shutdown() {
+        guard !isShutdown else { return }
+        isShutdown = true
+        cancelTryIt()
+        tryGeneration &+= 1
+        tryTimer?.invalidate()
+        tryTimer = nil
+        for work in [cardFlush, blackoutWork, cooldownWork, resumeWork, dwellWork] { work?.cancel() }
+        cardFlush = nil
+        blackoutWork = nil
+        cooldownWork = nil
+        resumeWork = nil
+        dwellWork = nil
+        reconcileQueued = false
+        stopCapture()
+        sensor.onSample = nil
+        sensor.setPolling(false)
+        ticker.onTick = { _ in }
+        ticker.stop()
+        overlay?.releaseFrames()
+        overlay?.close()
+        hotkeyCenter.releaseFoldEscape()
+        overlay = nil
+        removeObservers()
+    }
+
+    private func removeObservers() {
+        let workspace = NSWorkspace.shared.notificationCenter
+        for observer in observers {
+            workspace.removeObserver(observer)
+            NotificationCenter.default.removeObserver(observer)
+        }
+        observers.removeAll()
+        for observer in distributedObservers { DistributedNotificationCenter.default().removeObserver(observer) }
+        distributedObservers.removeAll()
+    }
+
+    isolated deinit {
+        overlay?.setVisible(false)
+        hotkeyCenter.releaseFoldEscape()
+        removeObservers()
+        tryTimer?.invalidate()
+        for work in [cardFlush, blackoutWork, cooldownWork, resumeWork, dwellWork] { work?.cancel() }
+        captureStartTask?.cancel()
+    }
+
     let id = "fold"
     let name = "Fold"
-    let blurb = "Your desktop folds into the screen as the lid comes down."
+    let blurb = "Folds the desktop as the MacBook lid moves."
     let symbol = "laptopcomputer"
 
     var isOn: Bool {
-        get { store?.state.fold.enabled ?? false }
+        get { !isShutdown && (store?.state.fold.enabled ?? false) }
         set {
+            guard !isShutdown else { return }
             store?.state.fold.enabled = newValue
             store?.save()
             if newValue {
                 // Re-enabling is a fresh ask — a stale renderer
                 // failure must not outlive the toggle.
+                dismissal = FoldDismissal()
+                dismissalKeyUnavailable = false
                 rendererFailed = false
                 captureRetry.reset()
             }
@@ -395,6 +473,10 @@ final class FoldToy: Toy {
         ].joined(separator: " · ")
     }
 
+    /// A picture the GPU can sample is in the renderer: a captured frame
+    /// that has landed, or the one held across the closed-lid hold.
+    private var pictureReady: Bool { overlay?.renderer.hasTexture == true }
+
     /// Frames can come from somewhere: the capture with Screen Recording,
     /// or the wallpaper without it when the card allows.
     private var canFold: Bool {
@@ -437,12 +519,11 @@ final class FoldToy: Toy {
     /// lead cannot open the overlay a hair early.
     private var gateAngle: Double? { simulatedAngle ?? rawAngle }
 
-    /// What the fold amount reads: the tracker's smoothed angle (the
-    /// simulation feeds it while held, so the slider glides too). Before
-    /// the first accepted sample there is no estimate — fall back to the
-    /// raw truth rather than the tracker's zero.
+    /// What the fold amount reads: the motion's angle (the simulation
+    /// feeds it while held, so the slider glides too). Before the first
+    /// reading there is no estimate — fall back to the raw truth.
     private var renderAngle: Double? {
-        tracker.primed ? tracker.angle : (simulatedAngle ?? rawAngle)
+        motion.angle ?? simulatedAngle ?? rawAngle
     }
 
     /// The number the "Lid angle" row prints — the measured truth.
@@ -457,18 +538,21 @@ final class FoldToy: Toy {
     /// a fold can be on screen), a half-second quiet before a paused
     /// fold comes back.
     private func reconcile() {
+        guard !isShutdown else { return }
         let settings = settings
         selectAnchorMode(at: CACurrentMediaTime())
-        jitter.tolerance = settings.jitterTolerance
+        motion.tolerance = settings.jitterTolerance
         moveAnchor.tolerance = settings.jitterTolerance
         moveAnchor.parkAfter = settings.anchor == .movement ? max(1, settings.dwellTimeout) : nil
-        // Both looks arm on 3° of real travel down, so a nudge never
-        // flashes the Screen Recording indicator, and neither does
-        // tilting the screen back: neither look folds on the way up. The
-        // Duo's tracker runs stiffer: the edge interpolator already
-        // smooths what it chases.
-        moveAnchor.armThreshold = max(3, settings.jitterTolerance)
-        tracker.omega = isDuo ? 40 : 20
+        // Both looks arm on the first move down that cannot be flicker:
+        // the capture takes a quarter second to land its first frame, so
+        // every degree it starts sooner is a degree less to catch up. A
+        // parked lid's one-degree flicker is absorbed by the anchor and
+        // never arms; the second whole degree of a close does, about two
+        // degrees of travel. Tilting the screen back arms nothing:
+        // neither look folds on the way up. A wider Jitter setting waits
+        // for as much more.
+        moveAnchor.armThreshold = max(0.5, settings.jitterTolerance - 1)
         overlay?.renderer.look = settings.look
         // Every path — off, parked, paused — leaves the vsync link
         // matching the machine; a parked fold runs no timer. The card
@@ -478,9 +562,9 @@ final class FoldToy: Toy {
             publishCard()
         }
         guard settings.enabled, settings.provider == .jrbar else {
+            cancelTryIt()
             endBlackout(hide: true)
-            edges.reset()
-            catchUp.reset()
+            entryFade.reset()
             paused = false
             resumeWork?.cancel()
             resumeWork = nil
@@ -490,8 +574,8 @@ final class FoldToy: Toy {
             dwellAnchor = nil
             arming.reset()
             scheduleCooldown(nil)
-            tracker.reset()
-            chase.reset()
+            motion.reset()
+            gateEase.reset()
             moveAnchor.reset()
             restGate.reset()
             displayedDelta = 0
@@ -499,27 +583,34 @@ final class FoldToy: Toy {
             sensor.setPolling(false)
             return
         }
+        if dismissal.suppressed {
+            standDown()
+            sensor.setPolling(true)
+            return
+        }
         // Inside this band the sensor polls at 120 Hz so a 10 Hz sensor
         // edge is timestamped to ±8 ms; above it the poll idles at the
         // sensor's own 10 Hz — dense where the fold lives, quiet where
-        // it doesn't. Movement mode has no band: nothing consumes edge
-        // timestamps any more (the slew tracker ticks on vsync dt), so
-        // the poll stays at the sensor's own 10 Hz the whole time —
-        // the idle-power floor. A pause parks the band the same way: a
+        // it doesn't. Movement mode has no band: it steps up with the
+        // arming instead (below) and idles at the sensor's own 10 Hz
+        // otherwise — the idle-power floor. A pause parks the band the same way: a
         // sleeping or mirrored screen, or no built-in one, cannot show
         // a fold wherever the lid sits, and the pass that lifts the
         // pause restores the band as the resume quiet starts. A shut
         // lid the pump parks by itself, beat by beat, without waiting
         // for a pass here.
-        // The Duo's movement fold is the exception: while it is armed the
-        // poll runs 120 Hz so each edge the interpolator glides between is
-        // timestamped to ±8 ms; parked, it idles at 10 Hz like the rest.
+        // The movement fold steps up while it is armed: the motion reads
+        // each sensor edge as a timed measurement, so the poll runs 120 Hz
+        // to timestamp it to ±8 ms; parked, it idles at 10 Hz like the rest.
         sensor.armingAngle = pauseReason != nil ? -.infinity
             : settings.anchor == .angle ? settings.activationAngle + 12
-            : (isDuo && arming.phase != .idle) ? .infinity : -.infinity
+            : arming.phase != .idle ? .infinity : -.infinity
         // The sensor keeps polling while paused — its next reading is the
         // thing that tells us the lid reopened.
         sensor.setPolling(true)
+        // The shaders compile once, off the main thread, now — not on the
+        // first gesture, where the compile would stall the first frame.
+        if settings.provider == .jrbar { FoldShaderCache.shared.prewarm(pixelFormat: .bgra8Unorm) }
         // A failed renderer re-arms past its cooldown rather than
         // staying benched for the app's lifetime: the flag lifts here
         // and the next arm attempt retries the init — if Metal is
@@ -531,6 +622,7 @@ final class FoldToy: Toy {
             rendererFailed = false
         }
         guard !rendererFailed, canFold else {
+            if overlayOnScreen || tryingIt { dismissEffect() }
             endBlackout(hide: true)
             arming.reset()
             scheduleCooldown(nil)
@@ -556,8 +648,8 @@ final class FoldToy: Toy {
             dwellAnchor = nil
             arming.reset()
             scheduleCooldown(nil)
-            catchUp.reset()
-            chase.reset()
+            entryFade.reset()
+            gateEase.reset()
             moveAnchor.reset()
             displayedDelta = 0
             standDown()
@@ -573,6 +665,15 @@ final class FoldToy: Toy {
             blackout.note(angle: gateAngle, at: CACurrentMediaTime())
             scheduleBlackoutWatchdog()
         }
+        if paused && blackout.active && pictureReady {
+            // A reopen from the black hold has its picture in hand and
+            // is only following the lid: there is nothing to debounce,
+            // and half a second of quiet would put the fold half a
+            // second behind the lid.
+            paused = false
+            resumeWork?.cancel()
+            resumeWork = nil
+        }
         if paused {
             // All clear: half a second of quiet before the fold comes
             // back, so a lid bouncing between reasons cannot flap the
@@ -580,7 +681,7 @@ final class FoldToy: Toy {
             guard resumeWork == nil else { return }
             let work = DispatchWorkItem { [weak self] in
                 MainActor.assumeIsolated {
-                    guard let self else { return }
+                    guard let self, !self.isShutdown else { return }
                     self.resumeWork = nil
                     self.paused = false
                     self.reconcile()
@@ -635,7 +736,7 @@ final class FoldToy: Toy {
         } else {
             let dwellSeconds = settings.dwellTimeout
             let dwellArmed = settings.anchor == .angle && dwellSeconds > 0 && outcome.capture
-                && arming.foldGateOpen && tracker.atRest && chase.atRest
+                && arming.foldGateOpen && motionAtRest && gateEase.atRest
                 && targetDelta > 0.002
             if dwellArmed {
                 // One pending timer per rest stretch — reconcile runs
@@ -645,7 +746,7 @@ final class FoldToy: Toy {
                     dwellAnchor = gateAngle
                     let work = DispatchWorkItem { [weak self] in
                         MainActor.assumeIsolated {
-                            guard let self else { return }
+                            guard let self, !self.isShutdown else { return }
                             self.dwellWork = nil
                             self.dwellPaused = true
                             // Movement mode: the parked angle re-seats
@@ -703,7 +804,7 @@ final class FoldToy: Toy {
             phase: arming.phase, gate: arming.foldGateOpen,
             capture: capture == nil ? 0 : capture!.hasFrame ? 2 : 1,
             texture: overlay?.renderer.hasTexture ?? false, visible: overlay?.isVisible ?? false,
-            link: tickLink != nil, blackout: blackout.active)
+            link: ticker.isRunning, blackout: blackout.active)
         let angles = diagAngles
         if stage == "tick" {
             if let last = lastDiag, last.state == state, last.angles == angles { return }
@@ -779,9 +880,9 @@ final class FoldToy: Toy {
     /// True while the Duo look is the one drawing.
     private var isDuo: Bool { settings.look == .duo }
 
-    /// The Duo's edge interpolation runs on the real sensor only: the
-    /// simulate slider and Try it are already smooth.
-    private var smoothsEdges: Bool { isDuo && simulatedAngle == nil }
+    /// Nothing left to move in the angle path: the lid parked and the
+    /// spring on it.
+    private var motionAtRest: Bool { motion.atRest(at: CACurrentMediaTime()) }
 
     /// Where the Duo's picture stays put: the resting angle the gesture
     /// started from, or the set angle.
@@ -795,24 +896,31 @@ final class FoldToy: Toy {
     private func foldDelta(angle: Double, reference: Double) -> Double {
         guard isDuo else { return FoldMath.deltaRadians(angle: angle, reference: reference) }
         guard angle.isFinite, reference.isFinite, angle < reference else { return 0 }
+        // A lid resting at or below the eye's edge-on angle shows the
+        // glass edge-on already: every pixel would be black, so the Duo
+        // has nothing to fold from there.
+        guard FoldDuoModel.foldsFrom(reference: reference, perspective: settings.perspective)
+        else { return 0 }
         return (reference - max(0, angle)) * .pi / 180
     }
 
     /// The delta the fold wants right now — 0 when the gate is closed.
     /// The gate is `FoldArming`'s, fed the raw angle in `reconcile` with
     /// a degree of hysteresis so a sensor wobble on the line can never
-    /// flick the fold; the delta itself rides the tracker's render
-    /// angle, so the room counter-rotates by the hinge's own arc — and
-    /// when the gate shuts mid-motion the chase unwinds the displayed
-    /// delta home instead of snapping it.
+    /// flick the fold; the delta itself rides the motion's angle, so the
+    /// room counter-rotates by the hinge's own arc — and when the gate
+    /// shuts mid-motion the gate ease unwinds the displayed delta home
+    /// instead of snapping it.
     private var targetDelta: Double {
-        guard arming.foldGateOpen, pauseReason == nil, !dwellPaused else { return 0 }
+        guard !dismissal.suppressed, arming.foldGateOpen, pauseReason == nil, !dwellPaused else { return 0 }
         if settings.anchor == .movement {
             // The streams arm on the first move; until the first
             // complete frame lands the delta holds at 0 — the capture
-            // warm-up, so the room never opens black. The delta itself
-            // is positive only: opening back through the anchor reads 0.
-            guard capture?.hasFrame == true,
+            // warm-up, so the room never opens black. A picture held
+            // across the closed-lid hold counts, so a reopen needs no
+            // new capture. The delta itself is positive only: opening
+            // back through the anchor reads 0.
+            guard pictureReady,
                   let reference = moveAnchor.anchor,
                   let angle = renderAngle ?? gateAngle else { return 0 }
             return foldDelta(angle: angle, reference: reference)
@@ -823,74 +931,66 @@ final class FoldToy: Toy {
 
     /// Starts or stops the vsync heartbeat to match the machine: armed
     /// means the fold could be or become visible — enabled, ours to
-    /// render, permissioned, unpaused. A stopped link is not a parked
-    /// fold; `reconcile` calls `tickFrame` once on every pass so a new
-    /// sample is never a frame late.
+    /// render, permissioned, unpaused. The link exists only to move and
+    /// draw pixels: a parked fold — gate shut, motion settled, nothing on
+    /// screen — runs no timer at all. A link that has just started ticks
+    /// once at once, so a new sample is never a frame late; a running one
+    /// ticks on its own vsync.
     private func refreshTick() {
+        guard !isShutdown else { ticker.stop(); return }
         let armed = settings.enabled && settings.provider == .jrbar && !paused
             && !rendererFailed && canFold && pauseReason == nil
-        // The link exists only to move pixels: a parked fold — gate
-        // shut, tracker settled — runs no timer at all. Without this
-        // check the link was born and killed on every parked sensor
-        // sample.
-        let busy = targetDelta > 0 || displayedDelta > 0.002
-            || !tracker.atRest || !chase.atRest || blackout.active
-            || (smoothsEdges && !edges.settled(at: CACurrentMediaTime()))
-        if armed && busy {
-            if tickLink == nil {
-                frameClock.reset()
-                // On macOS the link comes from the screen it drives.
-                let link = (FoldOverlayWindow.builtinScreen() ?? NSScreen.main)?
-                    .displayLink(target: tickBox, selector: #selector(TickBox.tick))
-                link?.add(to: .main, forMode: .common)
-                tickLink = link
-            }
+        let wanted = FoldTickPolicy.wantsTick(
+            armed: armed, targetDelta: targetDelta, displayedDelta: displayedDelta,
+            motionAtRest: motionAtRest, easeAtRest: gateEase.atRest,
+            blackout: blackout.active, entryFading: entryFade.active)
+        switch ticker.update(wanted: wanted) {
+        case .started:
+            frameClock.reset()
             tickFrame()
-        } else if let link = tickLink {
-            link.invalidate()
-            tickLink = nil
+        case .stopped:
             frameClock.reset()
             // The blackout outlives the link: it is a flat clear with no
             // motion to tick, and it lets go on its own terms.
             if !blackout.active { hideOverlay() }
+        case .unchanged:
+            break
         }
     }
 
-    /// One heartbeat: advance the tracker's slew-limited glide, read
-    /// the delta off it, push the uniforms, and show or hide the
-    /// overlay to match. Runs at the display's refresh while armed, so
-    /// the fold's motion is the screen's own cadence — the sensor only
-    /// moves the target.
-    private func tickFrame() {
-        let now = CACurrentMediaTime()
+    /// One heartbeat: advance the motion, read the delta off it, push the
+    /// uniforms, and show or hide the overlay to match. Runs at the
+    /// display's refresh while armed, so the fold's motion is the
+    /// screen's own cadence — the sensor only moves the target.
+    private func tickFrame(now: TimeInterval = CACurrentMediaTime()) {
+        guard !isShutdown else { return }
         defer { publishCard(now: now) }
+        if simulatedAngle == nil, rawAngle != nil,
+           FoldSensorSilence.isSilent(lastSampleAt: lastSampleAt, now: now) {
+            letGoOfSilentSensor()
+        }
         let dt = frameClock.tick(at: now)
-        if smoothsEdges, let drawn = edges.value(at: now) { tracker.feed(drawn) }
-        tracker.tick(dt: dt)
+        motion.tick(at: now, dt: dt)
         refreshDisplayFactsIfStale()
         if blackout.active {
             // The reopen takes over from black once the lid is past the
             // release angle with a frame captured after the close.
-            guard blackout.releases(angle: gateAngle, freshFrame: capture?.hasFrame == true) else {
+            guard blackout.releases(angle: gateAngle, pictureReady: pictureReady) else {
                 showBlackout()
                 noteDiag(stage: "tick")
                 return
             }
-            FoldLog.log.notice("blackout: reopened, unfolding from black")
+            // The held picture is up: the fold takes over from the black
+            // at the lid's real angle and follows it to full open. Under
+            // edge-on it draws as black as the hold did, so nothing jumps.
+            FoldLog.log.notice("blackout: reopened, following the lid up from black")
             endBlackout(hide: false)
-            // The unfold starts from the last angle that still draws all
-            // black, so the first frame matches the hold, and the chase
-            // unwinds from there to the live lid.
-            let reference = heldReference ?? duoReference ?? 110
-            chase.reset(to: FoldDuoModel.reopenDelta(
-                reference: reference, perspective: self.settings.perspective))
         }
-        // The tracker's glide IS the easing while the lid moves; the
-        // chase owns the rest — instant while the target grows, a damped
-        // unwind when the gate snaps it to 0 mid-motion, so opening
-        // counter-rotates back through the hinge instead of snapping.
-        // A late first frame eases in over `FirstFrameCatchUp.duration`.
-        displayedDelta = chase.tick(target: targetDelta * catchUp.scale(at: now), dt: dt)
+        // The motion's glide IS the easing while the lid moves; the gate
+        // ease owns the rest — exactly the lid's delta while it deepens or
+        // opens, a quarter-second ease when the gate snaps it to 0 mid-
+        // motion, so a fold in flight never cuts out.
+        displayedDelta = gateEase.tick(target: targetDelta, dt: dt)
         // Bendy's return click: the fold fully unwound after being up.
         if displayedDelta > 0.05 {
             foldWasUp = true
@@ -899,28 +999,15 @@ final class FoldToy: Toy {
             if settings.restoreSound { NotchSounds.tick() }
         }
         let wantVisible = FoldMath.showsOverlay(
-            delta: displayedDelta, hasFrame: capture?.hasFrame ?? false)
+            delta: displayedDelta, hasFrame: pictureReady)
         noteDiag(stage: "tick")
         guard wantVisible else {
             hideOverlay()
-            // A capture that stays frameless for seconds is dead on
-            // arrival — a hung SCShareableContent fetch never throws, it
-            // just never delivers. Recycle it, seconds apart, instead of
-            // waiting on a stream that is not coming back.
-            if let capture, !capture.hasFrame,
-               now - captureBeganAt > 5, now - lastCaptureRecycle > 5 {
-                lastCaptureRecycle = now
-                stopCapture()
-                FoldLog.log.warning("capture: no frame in 5s — restarting stream")
-                ensureCaptureRunning()
-            }
             // The link's only job is motion; fully at rest — gate shut,
-            // the tracker settled and the unwind landed — it stands
-            // down until the next reconcile arms it again.
-            let glideDone = !smoothsEdges || edges.settled(at: now)
-            if targetDelta == 0 && tracker.atRest && chase.atRest && glideDone, let link = tickLink {
-                link.invalidate()
-                tickLink = nil
+            // the motion settled and the unwind landed — it stands down
+            // until the next reconcile arms it again.
+            if targetDelta == 0 && motionAtRest && gateEase.atRest && !entryFade.active,
+               ticker.stop() {
                 frameClock.reset()
             }
             return
@@ -934,7 +1021,10 @@ final class FoldToy: Toy {
         }
         if let overlay {
             overlay.renderer.look = settings.look
-            if !overlay.isVisible { overlayShownAt = now }
+            // A fold that comes into view with the lid already well down
+            // fades in on the lid's travel instead of popping.
+            if !overlay.isVisible { entryFade.begin(delta: displayedDelta, at: now) }
+            let entry = entryFade.opacity(delta: displayedDelta, at: now)
             // `apply` writes only the animatable fields, so the upload's
             // imageSize/texAspect survive the per-tick pass.
             if isDuo {
@@ -950,10 +1040,10 @@ final class FoldToy: Toy {
                                    hold: settings.holdStrength, perspective: settings.perspective,
                                    blur: settings.blur, shade: settings.shade,
                                    fadeLength: settings.fadeLength, reduceMotion: reduceMotion)
-                // The first degrees fade the overlay in, and so does its
-                // first 120 ms on screen — a late frame never pops.
-                let ramp = FoldDuoModel.orderInRamp(elapsed: now - (overlayShownAt ?? now))
-                overlay.alphaValue = CGFloat(Double(overlay.renderer.params.opacity) * ramp)
+                // The first degrees fade the overlay in, and so does the
+                // lid's next stretch of travel when a late first frame
+                // lands on a fold already under way.
+                overlay.alphaValue = CGFloat(Double(overlay.renderer.params.opacity) * entry)
             } else {
                 // The Room: Perspective, Blur, Shade and Frost are the
                 // knobs. A switch back to the Duo takes a fresh reference.
@@ -969,16 +1059,65 @@ final class FoldToy: Toy {
                                       reduceMotion: reduceMotion)
                 // The activation-edge fade is the window's own alpha — a
                 // crossfade under Reduce Motion, a materialize otherwise.
-                overlay.alphaValue = CGFloat(overlay.renderer.params.opacity)
+                overlay.alphaValue = CGFloat(Double(overlay.renderer.params.opacity) * entry)
             }
+            guard ensureDismissalKey() else { return }
             overlay.setVisible(true)
+            // The uniforms and the pixels are one frame: drawn here, in
+            // the tick that wrote them, never on a clock of the view's own.
+            overlay.drawFrame()
         }
+    }
+
+    private func ensureDismissalKey() -> Bool {
+        guard !dismissal.suppressed else { return false }
+        guard hotkeyCenter.acquireFoldEscape(action: { [weak self] in
+            self?.dismissEffect()
+        }, lost: { [weak self] in
+            self?.dismissEffect(keyUnavailable: true)
+        }) else {
+            dismissEffect(keyUnavailable: true)
+            return false
+        }
+        dismissalKeyUnavailable = false
+        return true
+    }
+
+    func dismissEffect(keyUnavailable: Bool = false) {
+        dismissal.dismiss()
+        dismissalKeyUnavailable = keyUnavailable
+        tryGeneration &+= 1
+        tryTimer?.invalidate()
+        tryTimer = nil
+        tryingIt = false
+        simulatedAngle = nil
+        simulating = false
+        for work in [cooldownWork, resumeWork, dwellWork, blackoutWork] { work?.cancel() }
+        cooldownWork = nil
+        resumeWork = nil
+        dwellWork = nil
+        blackoutWork = nil
+        blackout.end()
+        paused = false
+        dwellPaused = false
+        dwellAnchor = nil
+        arming.reset()
+        motion.reset()
+        gateEase.reset()
+        entryFade.reset()
+        heldReference = nil
+        displayedDelta = 0
+        standDown()
+        ticker.stop()
+        frameClock.reset()
+        publishCard()
     }
 
     /// Orders the overlay out and forgets when it came in.
     private func hideOverlay() {
         overlay?.setVisible(false)
-        overlayShownAt = nil
+        if !tryingIt { hotkeyCenter.releaseFoldEscape() }
+        entryFade.reset()
     }
 
     // MARK: Blackout
@@ -1013,8 +1152,8 @@ final class FoldToy: Toy {
         dwellAnchor = nil
         arming.reset()
         scheduleCooldown(nil)
-        catchUp.reset()
-        chase.reset()
+        entryFade.reset()
+        gateEase.reset()
         displayedDelta = 0
         stopCapture()
         showBlackout()
@@ -1024,10 +1163,11 @@ final class FoldToy: Toy {
 
     /// The flat black frame, fully opaque.
     private func showBlackout() {
-        guard let overlay else { return }
+        guard let overlay, ensureDismissalKey() else { return }
         FoldDuoModel.applyBlackout(to: &overlay.renderer.params)
         overlay.alphaValue = 1
         overlay.setVisible(true)
+        overlay.drawFrame()
     }
 
     /// Let go of the black hold: ordered out (`hide`), or handed to the
@@ -1050,7 +1190,7 @@ final class FoldToy: Toy {
         let delay = max(0, blackout.deadline - CACurrentMediaTime())
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, !self.isShutdown else { return }
                 self.blackoutWork = nil
                 guard self.blackout.expired(at: CACurrentMediaTime()) else {
                     self.scheduleBlackoutWatchdog()
@@ -1071,19 +1211,17 @@ final class FoldToy: Toy {
     private func expireBlackout() {
         let handsOver = FoldBlackout.watchdogHandsOver(
             angle: gateAngle, drawing: !paused && pauseReason == nil,
-            freshFrame: capture?.hasFrame == true)
+            pictureReady: pictureReady)
         guard handsOver else {
             endBlackout(hide: true)
             return
         }
         FoldLog.log.notice("blackout: watchdog handed over to the fold")
         endBlackout(hide: false)
-        let reference = heldReference ?? duoReference ?? 110
-        chase.reset(to: FoldDuoModel.reopenDelta(
-            reference: reference, perspective: self.settings.perspective))
     }
 
     private func ensureOverlay() -> FoldOverlayWindow? {
+        guard !isShutdown else { return nil }
         if let overlay { return overlay }
         guard let screen = FoldOverlayWindow.builtinScreen() else { return nil }
         do {
@@ -1105,6 +1243,7 @@ final class FoldToy: Toy {
     /// the band or its cooldown — so the purple indicator never outlives
     /// a fold that could be on screen.
     private func ensureCaptureRunning() {
+        guard !isShutdown else { return }
         // A display change retires the source even before the next frame.
         if capture != nil && captureDisplayVersion != displayVersion { stopCapture() }
         // A wallpaper stand-in yields to the real capture the moment the
@@ -1115,7 +1254,8 @@ final class FoldToy: Toy {
         // The Duo runs one stream and the Room two: a look change swaps
         // the capture for the right shape.
         let dual = settings.look == .room
-        if let current = capture as? FoldCapture, current.dual != dual {
+        if let current = capture as? FoldCapture,
+           current.dual != dual || current.still != FoldCaptureMode.stillWanted(dual: dual) {
             stopCapture()
         }
         guard capture == nil else { return }
@@ -1125,7 +1265,8 @@ final class FoldToy: Toy {
         let kind: FoldCaptureRetry.Source = FoldCapturePermission.granted ? .capture : .wallpaper
         guard captureRetry.mayStart(kind, at: CACurrentMediaTime()) else { return }
         let capture: any FoldFrameSource = kind == .capture
-            ? FoldCapture(dual: dual) : FoldWallpaperSource()
+            ? FoldCapture(dual: dual, still: FoldCaptureMode.stillWanted(dual: dual))
+            : FoldWallpaperSource()
         self.capture = capture
         captureDisplayVersion = displayVersion
         captureFailure = nil
@@ -1136,10 +1277,10 @@ final class FoldToy: Toy {
                 && self.isOn && self.settings.provider == .jrbar
                 && !self.screenAsleep && !self.screenLocked && !self.sessionInactive
         }
-        captureBeganAt = CACurrentMediaTime()
-        awaitingFirstFrame = true
         FoldCaptureCallbacks.install(on: capture, isCurrent: isCurrent, full: { [weak self] buffer in
-            guard let self, let overlay = self.ensureOverlay() else { return }
+            guard let self, !self.isShutdown else { return }
+            self.captureWatchdog.cancel()
+            guard let overlay = self.ensureOverlay() else { return }
             // Push once per delivered frame; a draw then costs one
             // triangle, not a texture conversion. The overlay is made
             // here, not at show time: on a static screen SCK may deliver
@@ -1148,19 +1289,21 @@ final class FoldToy: Toy {
             // invisible, for the whole fold.
             overlay.renderer.look = self.settings.look
             guard overlay.renderer.setFullFrame(buffer) else { return }
-            if self.awaitingFirstFrame {
-                self.awaitingFirstFrame = false
-                self.noteFirstFrame()
-            }
-            self.tickFrame()
+            // The new picture is drawn by the next tick; if nothing is
+            // ticking yet, this is what starts it.
+            self.refreshTick()
         }, far: { [weak self] buffer in
             // The wallpaper-only far wall is the Room's nice-to-have half —
             // the renderer stands the full texture in until it lands. The
             // Duo has no far wall.
             guard let self, self.settings.look == .room else { return }
             _ = self.overlay?.renderer.setFarFrame(buffer)
+        }, farInvalidated: { [weak self] in
+            guard let self, !self.isShutdown else { return }
+            self.overlay?.renderer.invalidateFarFrame()
+            self.refreshTick()
         }, cards: { [weak self] cards in
-            guard let self else { return }
+            guard let self, !self.isShutdown else { return }
             self.lastCards = cards
             self.overlay?.renderer.setCards(cards)
         }, failed: { [weak self] message in
@@ -1168,17 +1311,25 @@ final class FoldToy: Toy {
             // builds a fresh one rather than trusting a dead hasFrame.
             // A revoked grant kills streams this way, so the cached
             // preflight goes stale here — re-ask on the next read.
-            guard let self else { return }
+            guard let self, !self.isShutdown else { return }
             FoldCapturePermission.invalidate()
             self.captureRetry.noteFailure(kind, at: CACurrentMediaTime())
             self.captureFailure = message
-            self.stopCapture()
+            self.dismissEffect()
             self.core.appendLocalLog(level: "error", "Fold capture stopped: \(message)")
             self.noteDiag(stage: "capture-error")
             self.publishCard()
         })
+        captureWatchdog.arm(isCurrent: isCurrent, hasFrame: { [weak capture] in
+            capture?.hasFrame == true
+        }, expired: { [weak self] in
+            guard let self, !self.isShutdown else { return }
+            self.dismissEffect()
+            FoldLog.log.warning("capture: no frame in 5s — restarting stream")
+            self.ensureCaptureRunning()
+        })
         FoldLog.log.notice("capture: starting stream")
-        Task { [weak self, weak capture] in
+        captureStartTask = Task { [weak self, weak capture] in
             guard let capture, isCurrent() else { return }
             do {
                 try await capture.start()
@@ -1193,7 +1344,7 @@ final class FoldToy: Toy {
                 FoldCapturePermission.invalidate()
                 self.captureRetry.noteFailure(kind, at: CACurrentMediaTime())
                 self.captureFailure = error.localizedDescription
-                self.stopCapture()
+                self.dismissEffect()
                 FoldLog.log.error("capture: start failed: \(error.localizedDescription, privacy: .public)")
                 self.core.appendLocalLog(level: "error", "Fold capture failed: \(error.localizedDescription)")
                 self.publishCard()
@@ -1211,7 +1362,7 @@ final class FoldToy: Toy {
         let delay = max(0, until - CACurrentMediaTime())
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, !self.isShutdown else { return }
                 self.cooldownWork = nil
                 self.reconcile()
             }
@@ -1220,16 +1371,24 @@ final class FoldToy: Toy {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    /// The movement Duo's first frame of a gesture: a quick close is
-    /// already well in, so the displayed delta eases up to it. Not after
-    /// a blackout — that fold unfolds from black, not from the desktop.
-    private func noteFirstFrame() {
-        guard isDuo, settings.anchor == .movement, !blackout.active else { return }
-        catchUp.begin(liveDelta: targetDelta, at: CACurrentMediaTime())
-    }
-
     /// Overlay off, capture stopped. The sensor is the caller's choice —
     /// a pause keeps it, off/external stops it.
+    /// The sensor stopped delivering while its last reading still holds
+    /// the fold up. That reading is no longer a fact: the angle is
+    /// forgotten, the fold eases home and the pass that follows re-arms
+    /// from whatever the sensor says next.
+    private func letGoOfSilentSensor() {
+        if overlayOnScreen || tryingIt { dismissEffect() }
+        FoldLog.log.notice("sensor: silent, letting go of the last angle")
+        rawAngle = nil
+        lastSampleAt = nil
+        store?.noteHinge(nil)
+        motion.reset()
+        moveAnchor.reset()
+        restGate.reset()
+        reconcile()
+    }
+
     private func standDown() {
         hideOverlay()
         stopCapture()
@@ -1242,21 +1401,42 @@ final class FoldToy: Toy {
     /// Capture stopped, the overlay left as it is — the blackout keeps
     /// its black frame up with nothing being recorded.
     private func stopCapture() {
-        awaitingFirstFrame = false
+        captureStartTask?.cancel()
+        captureStartTask = nil
+        captureWatchdog.cancel()
         lastCards = []
         overlay?.renderer.setCards([])
-        guard let capture else { return }
+        let capture = self.capture
         self.capture = nil
-        FoldCaptureCallbacks.detach(from: capture)
+        FoldCaptureCallbacks.retire(capture) { self.overlay?.renderer.invalidateFarFrame() }
+        guard let capture else { return }
         Task { await capture.stop() }
     }
 
     /// The raw reading always lands — `targetDelta` gates on it every
     /// tick, so a suppressed or extrapolated reading above the limit
     /// still drives the delta to zero and the overlay eases home on the
-    /// same glide the simulate slider gets — then the filter and tracker
-    /// decide what the fold does with it.
+    /// same glide the simulate slider gets — then the rest guard and the
+    /// motion decide what the fold does with it.
     private func noteSensorSample(_ sample: LidAngleSensor.Sample) {
+        guard !isShutdown else { return }
+        lastSampleAt = sample.at
+        if dismissal.suppressed { refreshDisplayFactsIfStale() }
+        let closed = sample.clamshell ?? cachedClamshell ?? false
+        let safetyClear = FoldDismissal.safetyClear(
+            angle: sample.angle, closed: closed, builtInPresent: cachedBuiltinPresent,
+            mirrored: cachedMirrored, screenAsleep: screenAsleep,
+            screenLocked: screenLocked, sessionInactive: sessionInactive)
+        if dismissal.note(angle: sample.angle, closed: closed, safetyClear: safetyClear,
+                          mode: settings.anchor, activation: settings.activationAngle,
+                          tolerance: settings.jitterTolerance, at: sample.at) {
+            dismissalKeyUnavailable = false
+            if let angle = sample.angle { moveAnchor.reseat(angle, at: sample.at) }
+            rawAngle = sample.angle
+            motion.reset()
+            publishCard()
+            return
+        }
         // A sample may beat the settings observation to the main actor.
         // Seat a changed mode before replacing the parked raw reading.
         selectAnchorMode(at: sample.at)
@@ -1292,28 +1472,27 @@ final class FoldToy: Toy {
         }
         if settings.anchor == .movement {
             // Stillness is the anchor's signal, so it sees every raw
-            // sample — jitter-rejected ones included — while the filter
-            // still guards what reaches the tracker. Reconcile runs on
-            // every sample too: the 400 ms stillness boundary and the
+            // sample — held ones included — while the rest guard still
+            // keeps a parked lid's flicker off the motion. Reconcile runs
+            // on every sample too: the 400 ms stillness boundary and the
             // first-move arm can't wait for an accepted edge.
             feedMovementAnchor(angle, at: sample.at)
-            if jitter.accept(angle, at: sample.at) { feedTracker(angle, at: sample.at) }
+            motion.feed(angle, at: sample.at)
             reconcile()
             return
         }
-        guard jitter.accept(angle, at: sample.at) else {
+        guard motion.feed(angle, at: sample.at) else {
             // Inside the band the machine still reads every raw sample:
             // the gate edge, the band exit and the dwell clock ride
             // reconcile, and a parked lid's deadband would otherwise
             // starve them a third of a second after it stops — before
-            // the tracker lands, so the dwell never arms. Only the
-            // tracker is spared the wobble. Parked above the band
+            // the motion lands, so the dwell never arms. Only the
+            // motion is spared the wobble. Parked above the band
             // (idle) the reading stops here, unless it carried a
             // clamshell flip.
             if arming.phase != .idle || clamshellChanged { reconcile() } else { publishCard() }
             return
         }
-        feedTracker(angle, at: sample.at)
         reconcile()
     }
 
@@ -1335,11 +1514,11 @@ final class FoldToy: Toy {
     /// no simulation, no capture and nothing armed, the fold gate shut
     /// and nothing on screen, no pause, resume, dwell or blackout under
     /// way, and the hinge voice quiet. Only then may the rest gate hold
-    /// readings back. The tracker and the edge glide may still be
-    /// settling on the last reading that got through: they draw nothing
-    /// with the gate shut, and the link stands down once they land. (A
-    /// flicker the jitter filter lets through keeps them from ever
-    /// settling, which is why settled cannot be the test.)
+    /// readings back. The motion may still be settling on the last
+    /// reading that got through: it draws nothing with the gate shut, and
+    /// the link stands down once it lands. (A flicker the motion lets
+    /// through keeps it from ever settling, which is why settled cannot
+    /// be the test.)
     private func restingQuietly(at now: TimeInterval) -> Bool {
         let settings = settings
         guard settings.enabled, settings.provider == .jrbar, simulatedAngle == nil, !tryingIt else { return false }
@@ -1356,12 +1535,15 @@ final class FoldToy: Toy {
     /// the fields that changed are written. Cheap to call on every pass:
     /// inside the tenth it only makes sure one flush is waiting.
     private func publishCard(now: TimeInterval = CACurrentMediaTime()) {
+        guard !isShutdown else { return }
         let due = cardFeed.due(at: now)
         guard due <= now else {
             scheduleCardFlush(after: due - now)
             return
         }
-        let reading = FoldCardFeed.Reading(angle: measuredAngle, detail: foldDetail, pause: pauseReason)
+        let pause = dismissalKeyUnavailable ? "Escape is unavailable"
+            : dismissal.suppressed ? "Dismissed, waiting for a new gesture" : pauseReason
+        let reading = FoldCardFeed.Reading(angle: measuredAngle, detail: foldDetail, pause: pause)
         guard let shown = cardFeed.land(reading, at: now) else { return }
         if shown.angle != cardAngle { cardAngle = shown.angle }
         if (shown.angle != nil) != cardHasAngle { cardHasAngle = shown.angle != nil }
@@ -1373,7 +1555,7 @@ final class FoldToy: Toy {
         guard cardFlush == nil else { return }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, !self.isShutdown else { return }
                 self.cardFlush = nil
                 self.publishCard()
             }
@@ -1385,29 +1567,19 @@ final class FoldToy: Toy {
     /// The slider's and Try it's writes run the machine on the next turn,
     /// once however many landed — as the observation of the angle did.
     private func scheduleReconcile() {
-        guard !reconcileQueued else { return }
+        guard !isShutdown, !reconcileQueued else { return }
         reconcileQueued = true
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, !self.isShutdown else { return }
             self.reconcileQueued = false
             self.reconcile()
-        }
-    }
-
-    /// An accepted reading into the motion: through the edge
-    /// interpolator in the Duo (the tick feeds the tracker from it),
-    /// straight to the tracker in the Room.
-    private func feedTracker(_ angle: Double, at t: TimeInterval) {
-        if isDuo {
-            edges.feed(angle, at: t)
-        } else {
-            tracker.feed(angle)
         }
     }
 
     /// One observation pass over every input, re-armed on each change —
     /// the same pattern `observeSessions` uses for the buddy.
     private func observe() {
+        guard !isShutdown else { return }
         withObservationTracking {
             _ = store?.state.fold
             _ = sensor.available
@@ -1427,7 +1599,7 @@ final class FoldToy: Toy {
             _ = rendererFailed
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, !self.isShutdown else { return }
                 self.reconcile()
                 self.observe()
             }
@@ -1442,14 +1614,15 @@ final class FoldToy: Toy {
         Binding(
             get: { self.simulatedAngle ?? self.measuredAngle ?? 90 },
             set: {
+                guard !self.isShutdown else { return }
                 self.selectAnchorMode(at: CACurrentMediaTime())
                 self.simulatedAngle = $0
                 if !self.simulating { self.simulating = true }
                 // The card's demo and the slider preview the voice too.
                 self.voice($0, at: CACurrentMediaTime())
-                // The tracker turns the slider's jumps into the same
-                // capped glide the hinge gets.
-                self.tracker.feed($0)
+                // The spring turns the slider's jumps into the same
+                // glide the hinge gets.
+                self.motion.feedDirect($0)
                 if self.settings.anchor == .movement {
                     // The slider exercises the movement path too — a
                     // still drag end re-seats the anchor on its own.
@@ -1460,18 +1633,32 @@ final class FoldToy: Toy {
             })
     }
 
+    /// A slider drag takes ownership without handing the angle back to the sensor.
+    func beginSimulate() {
+        guard !isShutdown else { return }
+        dismissal = FoldDismissal()
+        dismissalKeyUnavailable = false
+        tryTimer?.invalidate()
+        tryTimer = nil
+        tryingIt = false
+        tryGeneration += 1
+    }
+
     // MARK: Try it
 
     /// True while the card's "Try it" demo plays.
     private(set) var tryingIt = false
     @ObservationIgnored private var tryTimer: Timer?
+    @ObservationIgnored private(set) var tryGeneration = 0
 
     /// Foldy's one-click demo: a scripted close and reopen fed through
-    /// the simulate path at 60 Hz — the same tracker and chase the hinge
+    /// the simulate path at 60 Hz — the same spring and ease the hinge
     /// drives — then the fold goes back to the sensor. A drag on the
     /// Simulate slider takes over from it.
     func tryIt() {
-        guard !tryingIt else { return }
+        guard !isShutdown, !tryingIt else { return }
+        dismissal = FoldDismissal()
+        guard ensureDismissalKey() else { return }
         // The demo folds from the fold's own reference: where the lid
         // rests, or the set angle.
         let resting = settings.anchor == .movement
@@ -1480,20 +1667,40 @@ final class FoldToy: Toy {
                                          lead: resting ? 0 : FoldTryIt.setAngleLead)
         let began = CACurrentMediaTime()
         tryingIt = true
+        tryGeneration += 1
+        let generation = tryGeneration
         simulateBinding.wrappedValue = start
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
-                let elapsed = CACurrentMediaTime() - began
-                if let angle = FoldTryIt.angle(at: elapsed, start: start, reference: reference) {
-                    self.simulateBinding.wrappedValue = angle
-                } else {
-                    self.stopTrying()
-                }
+                guard let self, !self.isShutdown else { return }
+                self.advanceTryIt(elapsed: CACurrentMediaTime() - began, start: start,
+                                  reference: reference, generation: generation)
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         tryTimer = timer
+    }
+
+    /// A retired demo cannot overwrite a manual drag or a newer demo.
+    func advanceTryIt(elapsed: TimeInterval, start: Double, reference: Double, generation: Int) {
+        guard tryingIt, tryGeneration == generation else { return }
+        if let angle = FoldTryIt.angle(at: elapsed, start: start, reference: reference) {
+            simulateBinding.wrappedValue = angle
+        } else {
+            stopTrying()
+        }
+    }
+
+    /// The toy went off (or is not ours to render) mid-demo: the timer
+    /// stops now rather than running out its three seconds, and the
+    /// simulated angle is handed back. No reconcile — the caller is one.
+    private func cancelTryIt() {
+        guard tryingIt else { return }
+        tryTimer?.invalidate()
+        tryTimer = nil
+        tryingIt = false
+        simulatedAngle = nil
+        if simulating { simulating = false }
     }
 
     private func stopTrying() {
@@ -1515,16 +1722,12 @@ final class FoldToy: Toy {
         simulatedAngle = nil
         if simulating { simulating = false }
         restGate.reset()
-        // The tracker's glide belongs to the real lid — a drag that
-        // just jumped the angle 40° must not carry over.
-        tracker.reset()
-        edges.reset()
-        catchUp.reset()
+        // The motion belongs to the real lid — a drag that just jumped
+        // the angle 40° must not carry over.
+        motion.reset()
+        entryFade.reset()
         moveAnchor.reset()
-        if let raw = rawAngle {
-            tracker.feed(raw)
-            edges.feed(raw, at: CACurrentMediaTime())
-        }
+        if let raw = rawAngle { motion.seat(raw, at: CACurrentMediaTime()) }
         reconcile()
     }
 
@@ -1596,10 +1799,9 @@ final class FoldToy: Toy {
         arming.reset()
         scheduleCooldown(nil)
         endBlackout(hide: true)
-        tracker.reset()
-        edges.reset()
-        catchUp.reset()
-        chase.reset()
+        motion.reset()
+        entryFade.reset()
+        gateEase.reset()
         moveAnchor.reset()
         restGate.reset()
         displayedDelta = 0
@@ -1829,20 +2031,20 @@ private struct FoldControlsView: View {
 
             sliderRow(SettingLabel(title: "Starts folding at",
                                    subtitle: startSubtitle),
-                      value: toy.bind(\.activationAngle), range: 60...160,
+                      value: toy.bind(\.activationAngle), range: FoldSettings.activationAngleRange,
                       readout: "\(Int(toy.settings.activationAngle.rounded()))°")
                 .disabled(toy.settings.anchor == .movement)
 
             sliderRow(SettingLabel(title: "Release when parked",
                                    subtitle: "Return to the desktop after the lid settles. Resting angle uses one second automatically."),
-                      value: toy.bind(\.dwellTimeout), range: 0...10, step: 1,
+                      value: toy.bind(\.dwellTimeout), range: FoldSettings.dwellTimeoutRange, step: 1,
                       readout: toy.settings.dwellTimeout == 0
                           ? (toy.settings.anchor == .movement ? "Auto" : "Off")
                           : "\(Int(toy.settings.dwellTimeout))s")
 
             sliderRow(SettingLabel(title: "Jitter",
                                    subtitle: "Ignore angle wobbles smaller than this."),
-                      value: toy.bind(\.jitterTolerance), range: 0...5, step: 0.5,
+                      value: toy.bind(\.jitterTolerance), range: FoldSettings.jitterToleranceRange, step: 0.5,
                       readout: degrees(toy.settings.jitterTolerance))
 
             Divider().padding(.vertical, 6)
@@ -1884,7 +2086,7 @@ private struct FoldControlsView: View {
             LabeledContent {
                 HStack(spacing: 10) {
                     Slider(value: toy.simulateBinding, in: 0...160) { editing in
-                        if !editing { toy.endSimulate() }
+                        if editing { toy.beginSimulate() } else { toy.endSimulate() }
                     }
                     .frame(width: 180)
                     // Read only while a simulation plays: the lid's own
@@ -2062,13 +2264,6 @@ private struct FoldControlsView: View {
     private func degrees(_ value: Double) -> String {
         value == value.rounded() ? "\(Int(value))°" : String(format: "%.1f°", value)
     }
-}
-
-/// The display link's target — CADisplayLink needs an NSObject with an
-/// @objc selector, so the toy's `tickFrame` rides inside a closure.
-private final class TickBox: NSObject {
-    var onTick: () -> Void = {}
-    @objc func tick() { onTick() }
 }
 
 /// The machine's state as `noteDiag` compares it: the notice line's

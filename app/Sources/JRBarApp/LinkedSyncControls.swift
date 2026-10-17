@@ -1,7 +1,7 @@
 import JRBarCore
 import SwiftUI
 
-/// Settings › Devices & Screen Bar › Pro & Dot: how the linked Dot keeps
+/// Settings › Devices & Lighting › Pro & Dot: how the linked Dot keeps
 /// the strip's beat (`jrbar.linked_sync`; `docs/CORE-PROTOCOL.md`,
 /// "Keeping the Dot on the strip's beat").
 ///
@@ -34,10 +34,16 @@ struct LinkedSyncControls: View {
         return linked && DotRole.parse(store.values.string("dot_role")) == .extend
     }
 
+    /// Said above the rows while they are dimmed.
+    static let notExtendingNote = "These apply while the Dot follows the strip and its role is Extend."
+
     private var extending: Bool { Self.isExtending(store) }
     private var style: String { store.values.string("dot_extend_style") ?? "continue" }
 
     var body: some View {
+        if !extending {
+            CardNote(Self.notExtendingNote)
+        }
         SettingPicker(store, "Look", subtitle: styleSubtitle, path: "dot_extend_style",
                       options: Self.styles, default: "continue", segmented: true)
             .disabled(!extending)
@@ -50,7 +56,7 @@ struct LinkedSyncControls: View {
                       subtitle: "Nudges the Dot if the two still read apart; plus runs it ahead.",
                       path: "linked_dot_phase_trim_ms", in: -250...250, step: 5, default: 0) { Self.trimText($0) }
             .disabled(!extending)
-        DisclosureRow("Clock", subtitle: "How the monitor keeps the Dot's slower clock on the strip's beat.") {
+        DisclosureRow("Clock", subtitle: "How the monitor keeps the Dot's slower clock on the strip's beat.", fold: SettingsFold.dotClock) {
             LinkedClockRows(store: store)
         }
         if let until = checkUntil, until > Date() {

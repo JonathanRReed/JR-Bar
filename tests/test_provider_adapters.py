@@ -541,6 +541,9 @@ _CONFORMANCE = (
     ("claude", "SubagentStop", "subagent_stop", WorkLifecycle.COMPLETED, False),
     ("claude", "Stop", "stop", WorkLifecycle.COMPLETED, False),
     ("claude", "SessionEnd", "session_end", WorkLifecycle.COMPLETED, False),
+    # Not a hook Claude sends: the liveness sweep ends an Esc-stopped turn
+    # from the session's own pid file and reduces it as Codex's Interrupt.
+    ("claude", "Interrupt", "interrupt", WorkLifecycle.IDLE, False),
     # Devin
     ("devin", "SessionStart", "session_start", WorkLifecycle.IDLE, False),
     ("devin", "UserPromptSubmit", "user_prompt_submit", WorkLifecycle.ACTIVE, False),
@@ -1220,3 +1223,15 @@ def test_a_mapped_notification_type_keeps_its_kind(
 
     assert type(normalized) is NormalizedProviderRecord
     assert normalized.notification_kind is kind
+
+
+def test_codex_activity_progress_is_content_free_active_without_new_turn_or_request() -> None:
+    normalized, batch = _batch(_event(event_name="ActivityProgress", raw={"message": "private progress"}))
+    assert type(normalized) is NormalizedProviderRecord
+    assert normalized.event_name is ProviderEventName.ACTIVITY_PROGRESS
+    assert "private progress" not in repr(normalized)
+    assert len(batch.work_facts) == 1
+    assert batch.work_facts[0].lifecycle is WorkLifecycle.ACTIVE
+    assert batch.work_facts[0].next_actor is NextActor.PROVIDER
+    assert not batch.work_facts[0].starts_turn
+    assert not batch.request_facts

@@ -966,6 +966,7 @@ extension AquariumView {
                    layouts: [String: Layout]) -> (point: CGPoint, fall: Double) {
         let spot = dropSpot(drop, size: size, layouts: layouts, t: t)
         let rest = dropRest(drop, size: size, layouts: layouts, t: t)
+        if isStill { return (rest, 1) }
         guard let fromY = spot.fromY else { return (rest, 1) }
         let p = clamp01((t - spot.seenAt) / Self.dropFallSeconds)
         guard p < 1 else { return (rest, 1) }

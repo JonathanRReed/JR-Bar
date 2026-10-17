@@ -94,15 +94,6 @@ class LicenseMetadata:
     source_url: str | None = None
     attribution_url: str | None = None
 
-    @property
-    def spdx_identifier(self) -> str:
-        return self.spdx_id
-
-    @property
-    def human_label(self) -> str:
-        return self.label
-
-
 # This remains a data contract, rather than a network-backed SPDX resolver.
 _LICENSE_KEYS = frozenset({"spdx_id", "label", "source_url", "attribution_url"})
 _MAX_LICENSE_URL_CHARACTERS = 2048

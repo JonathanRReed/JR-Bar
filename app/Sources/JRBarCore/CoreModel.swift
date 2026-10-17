@@ -1,6 +1,12 @@
 import Foundation
 import Observation
 
+public struct CoreSettingsFrame: Hashable, Sendable {
+    public let settings: CoreSettings
+    public let stream: String?
+    public let connectionRevision: UInt64
+}
+
 /// The app's view of the daemon: the latest full documents, the connection
 /// status, and a way to send commands. Main-actor and `@Observable`, so
 /// SwiftUI and AppKit observers both see every change.
@@ -16,19 +22,68 @@ public final class CoreModel {
         public var isConnected: Bool { self == .connected }
     }
 
+    /// Whether the daemon on the socket takes this app's privileged commands.
+    public enum AuthState: Equatable, Sendable {
+        /// No secret is held (no daemon of ours is supervised), or the exchange
+        /// has not finished on this connection.
+        case unproven
+        /// The daemon accepted the proof for this connection.
+        case authenticated
+        /// It did not, or could not be asked; the sentence says why.
+        case refused(String)
+    }
+
     public let socketPath: String
+    /// The secret of the daemon the supervisor started, and that daemon's pid,
+    /// in memory only. The supervisor writes them; the client proves it.
+    public let authSecret = CoreAuthSecret()
+    public private(set) var authState: AuthState = .unproven
+    /// Called when a connection could not be authenticated, so the app can
+    /// restart the daemon it supervises (once) or say what is wrong.
+    @ObservationIgnored public var onAuthRefused: (@MainActor (CoreAuthRefusal) -> Void)?
+    /// Called when a connection has been authenticated.
+    @ObservationIgnored public var onAuthenticated: (@MainActor () -> Void)?
+    /// Called with every `settings` frame, after the model has taken it.
+    @ObservationIgnored public var onSettingsFrame: (@MainActor (CoreSettings) -> Void)?
     public private(set) var connection: Connection = .idle
     public private(set) var hello: CoreHello?
     public private(set) var state: CoreState?
     public private(set) var lights: CoreLights?
-    public private(set) var settings: CoreSettings?
+    public private(set) var settingsFrame: CoreSettingsFrame?
+    /// A reconnect can deliver unchanged settings from the same daemon stream.
+    public private(set) var settingsConnectionRevision: UInt64 = 0
+    public var settings: CoreSettings? { settingsFrame?.settings }
     /// The most recent transient event; consumers compare ids.
     public private(set) var lastEvent: CoreEvent?
+    /// How many events the model keeps for a reader that was busy when a
+    /// burst arrived.
+    public static let recentEventLimit = 32
+    /// The newest events in arrival order, past dedup. `lastEvent` is only
+    /// the newest of them: two events in one turn of the run loop would
+    /// show a watcher of it just the second.
+    public private(set) var recentEvents: [CoreEvent] = []
+    /// How many events have been applied; the event at the end of
+    /// `recentEvents` is number `eventSequence`.
+    public private(set) var eventSequence = 0
+
+    /// The retained events numbered after `sequence`, oldest first: what a
+    /// reader that last looked at `sequence` has not seen.
+    public func events(after sequence: Int) -> [CoreEvent] {
+        let firstKept = eventSequence - recentEvents.count
+        let start = max(0, sequence - firstKept)
+        guard start < recentEvents.count else { return [] }
+        return Array(recentEvents[start...])
+    }
     public private(set) var lastLog: CoreLog?
     /// The daemon's recent `log` messages, oldest first, bounded.
     public private(set) var logTail: [CoreLog] = []
     public static let logTailLimit = 200
     public private(set) var lastDecodeFailure: String?
+    /// Why the newest `state` frame was refused (too big, unreadable, or of
+    /// a protocol this app does not speak), or nil while the newest one was
+    /// taken. While it is set the model is not live: what is on screen is
+    /// the frame before the bad one, and nothing says it is current.
+    public private(set) var stateRejected: String?
     public private(set) var unknownMessageCount = 0
     public private(set) var connectedAt: Date?
     /// Wall-clock arrival of the most recent `state` frame. The daemon
@@ -48,29 +103,34 @@ public final class CoreModel {
 
     /// Called for every event before the model applies it.
     public var onEvent: (@MainActor (CoreEvent) -> Void)?
+    /// A repeated durable reset reaches only its receipt-aware consumer.
+    public var onResetReplay: (@MainActor (CoreEvent) -> Void)?
 
     @ObservationIgnored private var client: CoreClient?
     /// Queued events from retired clients cannot change the current model.
     @ObservationIgnored private var clientGeneration: UInt64 = 0
     var eventGeneration: UInt64 { clientGeneration }
     @ObservationIgnored private var seenEventKeys: [String] = []
+    /// Cached facts may outlive a stopped client, but cannot prove a new
+    /// connection has delivered its own state.
+    @ObservationIgnored private var hasStateForConnection = false
 
     public init(socketPath: String = CoreSocketPath.resolve()) {
         self.socketPath = socketPath
     }
 
-    /// Facts and lights are only trusted once the daemon has said hello and
-    /// sent a state; until then the file feeds keep running.
+    /// Facts and lights are only trusted once this connection has sent an
+    /// accepted state; until then the file feeds keep running.
     ///
     /// Stored, and written only when it flips: a view that asks whether
     /// the monitor is live is not re-rendered by every `state` push, only
     /// by a connect, a first state or a disconnect.
     public private(set) var isLive = false
 
-    /// Recomputes `isLive` from the connection and the state, assigning
+    /// Recomputes `isLive` from this connection's accepted state, assigning
     /// only a change so its readers are not woken for nothing.
     private func refreshLive() {
-        let live = connection.isConnected && state != nil
+        let live = connection.isConnected && hasStateForConnection && state != nil && stateRejected == nil
         if isLive != live { isLive = live }
     }
 
@@ -103,7 +163,7 @@ public final class CoreModel {
         guard client == nil else { return }
         clientGeneration &+= 1
         let generation = clientGeneration
-        let client = CoreClient(socketPath: socketPath) { [weak self] event in
+        let client = CoreClient(socketPath: socketPath, auth: authSecret) { [weak self] event in
             Task { @MainActor [weak self] in
                 self?.handle(event, generation: generation)
             }
@@ -116,6 +176,7 @@ public final class CoreModel {
         clientGeneration &+= 1
         client?.stop()
         client = nil
+        hasStateForConnection = false
         connection = .idle
         connectedAt = nil
         lastStateAt = nil
@@ -136,7 +197,36 @@ public final class CoreModel {
         guard let client else { throw CoreClientError.notConnected }
         inFlightCommands += 1
         defer { inFlightCommands -= 1 }
-        return try await client.send(name: name, args: args, timeout: timeout)
+        let reply = try await client.send(name: name, args: args, timeout: timeout ?? Self.deckReplyTimeout(for: name))
+        return explaining(reply)
+    }
+
+    /// The Deck worker admits one operation without a queue. Apply can
+    /// inspect and write, each with a 60-second daemon budget.
+    nonisolated static func deckReplyTimeout(for command: String) -> TimeInterval? {
+        switch command {
+        case "deck_plan_keymap", "deck_restore_keymap": return 65
+        case "deck_apply_keymap": return 125
+        case "deck_approve_device": return 22
+        case "deck_disable": return 20
+        default: return nil
+        }
+    }
+
+    /// A daemon's `unauthenticated` refusal tells a terminal to use the app.
+    /// Said to the app itself that would be a riddle, so it gets the reason
+    /// this connection is not trusted instead.
+    func explaining(_ reply: CoreReply) -> CoreReply {
+        guard !reply.ok, reply.error?.code == "unauthenticated" else { return reply }
+        var explained = reply
+        if case .refused(let sentence) = authState {
+            explained.error = CoreReplyError(code: "unauthenticated", message: sentence)
+        } else {
+            explained.error = CoreReplyError(
+                code: "unauthenticated",
+                message: "The daemon did not take this change from JR-Bar. Restart JR-Bar if this keeps happening.")
+        }
+        return explained
     }
 
     /// Sends and forgets; failures land in `lastDecodeFailure` for the log
@@ -167,6 +257,8 @@ public final class CoreModel {
     @discardableResult
     public func answerAskNow(session: String, approve: Bool, onlyIfFrontmost: Bool = false,
                              replyText: String? = nil, request: String? = nil) async throws -> CoreReply {
+        // The Try it ask has no agent: a second guard behind the desk's.
+        if DemoAsk.isDemo(session: session) { return Self.demoRefusal }
         var args: [String: JSONValue] = [
             "session": .string(session),
             "decision": .string(approve ? "approve" : "deny"),
@@ -186,10 +278,17 @@ public final class CoreModel {
     @discardableResult
     public func answerAskNow(session: String, decision: String, answers: [String: JSONValue]? = nil,
                              request: String? = nil) async throws -> CoreReply {
-        try await send("answer_ask", args: Self.answerAskArgs(session: session, decision: decision,
-                                                              answers: answers, request: request),
-                       timeout: 8)
+        if DemoAsk.isDemo(session: session) { return Self.demoRefusal }
+        return try await send("answer_ask", args: Self.answerAskArgs(session: session, decision: decision,
+                                                                     answers: answers, request: request),
+                              timeout: 8)
     }
+
+    /// What a caller gets for the Try it ask: a refusal made here, with
+    /// nothing put on the socket.
+    nonisolated static let demoRefusal = CoreReply(
+        id: "", ok: false,
+        error: CoreReplyError(code: "demo", message: "That is the demo ask — nothing was sent to any agent"))
 
     /// The `answer_ask` arguments for a decision word — pure, so what an
     /// Always allow or a picked option puts on the wire is a test.
@@ -208,23 +307,17 @@ public final class CoreModel {
         return args
     }
 
-    /// Acknowledges completions; the reply's `batch` is kept so `undoClear`
-    /// can put them back within `EventPolicy.undoWindow`.
-    public func clearCompleted(sessions: [String]? = nil) {
-        Task { [weak self] in
-            guard let self else { return }
-            do { _ = try await self.clearCompletedNow(sessions: sessions) }
-            catch { self.lastDecodeFailure = "clear_completed: \(error)" }
-        }
-    }
-
     /// `clear_completed` and its reply: `ok` with `{batch, cleared[]}`, the
     /// batch remembered for `undoClear`. Throws when the socket is down.
     @discardableResult
     public func clearCompletedNow(sessions: [String]? = nil) async throws -> CoreReply {
+        clearRequestGeneration &+= 1
+        let generation = clearRequestGeneration
         let scope: JSONValue = sessions.map { .array($0.map(JSONValue.string)) } ?? .string("all")
         let reply = try await send("clear_completed", args: ["sessions": scope])
-        if reply.ok, let batch = reply.result?["batch"]?.stringValue {
+        if reply.ok, let batch = reply.result?["batch"]?.stringValue,
+           generation > acceptedClearGeneration {
+            acceptedClearGeneration = generation
             lastClear = (batch, Date())
         }
         return reply
@@ -236,6 +329,8 @@ public final class CoreModel {
 
     /// The last `clear_completed` batch and when it happened.
     public private(set) var lastClear: (batch: String, at: Date)?
+    @ObservationIgnored private var clearRequestGeneration: UInt64 = 0
+    @ObservationIgnored private var acceptedClearGeneration: UInt64 = 0
 
     /// True while the last clear is still inside the undo window.
     public var canUndoClear: Bool {
@@ -248,8 +343,12 @@ public final class CoreModel {
     @discardableResult
     public func undoClear() async throws -> CoreReply? {
         guard let lastClear, canUndoClear else { return nil }
+        let generation = acceptedClearGeneration
         let reply = try await send("undo_clear", args: ["batch": .string(lastClear.batch)])
-        if reply.ok { self.lastClear = nil }
+        let terminal = reply.ok || reply.error?.code == "expired" || reply.error?.code == "not_found"
+        if terminal, acceptedClearGeneration == generation, self.lastClear?.batch == lastClear.batch {
+            self.lastClear = nil
+        }
         return reply
     }
 
@@ -322,24 +421,19 @@ public final class CoreModel {
     /// the range on one scale, the day-grid heatmap, and the scan's own
     /// summary/disclosures. `days`, `metric`, `providers` are
     /// per-request overrides — the daemon does not rewrite settings.
-    /// The scan is heavy on a cold cache (~30s), so the timeout runs
-    /// long and the view shows its scanning state meanwhile.
+    /// Transcript scans use a longer request timeout.
     public func usageGraph(days: Int? = nil, metric: String? = nil,
                            providers: [String]? = nil) async throws -> CoreUsageGraphDocument {
         var args: [String: JSONValue] = [:]
         if let days { args["days"] = .number(Double(days)) }
         if let metric { args["metric"] = .string(metric) }
         if let providers { args["providers"] = .array(providers.map(JSONValue.string)) }
-        // Commands dispatch serially per socket: a pick made mid-scan
-        // queues behind the in-flight cold scan (~60s measured) before
-        // running its own — warm, ~2s — so the budget covers one cold
-        // wait plus its own scan, with margin for a concurrent client.
         let reply = try await send("usage_graph", args: args, timeout: 150)
         guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "usage_graph failed") }
         guard let result = reply.result else {
             throw CoreReplyError(code: "bad_reply", message: "usage_graph: missing result")
         }
-        return try ReplyDecoding.decode(CoreUsageGraphDocument.self, from: result)
+        return try await ReplyDecoding.decodeOffMain(CoreUsageGraphDocument.self, from: result)
     }
 
     /// `replay_events`: the retained event journal for the Replay
@@ -380,8 +474,8 @@ public final class CoreModel {
         post("set_brightness", args: ["device": .string(device), "value": .number(min(1, max(0, value)))])
     }
 
-    public func quiet(mode: String = "dnd", seconds: Int) {
-        post("quiet", args: ["mode": .string(mode), "seconds": .number(Double(seconds))])
+    public func quiet(mode: String = "dnd", seconds: Int) async throws -> CoreReply {
+        try await send("quiet", args: ["mode": .string(mode), "seconds": .number(Double(seconds))])
     }
 
     public func snooze(session: String? = nil, seconds: Int) {
@@ -401,8 +495,8 @@ public final class CoreModel {
         ["session": .string(session), "seconds": .number(Double(max(0, seconds))), "scope": .string("run")]
     }
 
-    /// A validated settings write; the daemon echoes a new `settings`
-    /// document and replies with its generation.
+    /// Returns the daemon's reply, including refusals. On success the
+    /// daemon separately echoes settings and replies with its generation.
     @discardableResult
     public func setSetting(_ path: SettingsPath, value: JSONValue) async throws -> CoreReply {
         try await send("set_setting", args: ["path": .string(path.description), "value": value])
@@ -478,6 +572,18 @@ public final class CoreModel {
         try await send("dismiss_session", args: ["session": .string(session)])
     }
 
+    /// `dismiss_ask {session, request?}`: take one ask that may be stale
+    /// off this Mac's surfaces. The daemon accepts it only for an ask it
+    /// calls stale (`ask.isDismissible`), and it sends nothing to the
+    /// agent: it is never an answer. `request` pins the ask the card shows,
+    /// so a replaced one is refused (`stale_request`).
+    @discardableResult
+    public func dismissAsk(session: String, request: String? = nil) async throws -> CoreReply {
+        var args: [String: JSONValue] = ["session": .string(session)]
+        if let request { args["request"] = .string(request) }
+        return try await send("dismiss_ask", args: args)
+    }
+
     /// `list_scene_packs`: the installed scene packs (id, name, effect ids).
     public func listScenePacks() async throws -> [ScenePackSummary] {
         let reply = try await send("list_scene_packs")
@@ -514,6 +620,19 @@ public final class CoreModel {
         return reply.result?["token"]?.stringValue
     }
 
+    /// `ntfy_test`: Settings › Remote's Test button. One fixed line to the
+    /// saved ntfy topic, sent only because the person clicked. The reply's
+    /// `message` is the sentence to show, verbatim.
+    public func testPhoneAlert() async throws -> (sent: Bool, message: String) {
+        let reply = try await send("ntfy_test", timeout: 15)
+        guard reply.ok else {
+            throw reply.error ?? CoreReplyError(code: "error", message: "ntfy_test failed")
+        }
+        let sent = reply.result?["sent"]?.boolValue ?? false
+        let message = reply.result?["message"]?.stringValue ?? (sent ? "Sent." : "Nothing was sent.")
+        return (sent, message)
+    }
+
     /// Puts every listed path back to the daemon's default.
     @discardableResult
     public func resetSettings(paths: [String]) async throws -> CoreReply {
@@ -529,15 +648,16 @@ public final class CoreModel {
 
     // MARK: Usage Center (app-proposed extensions, see app/README.md)
 
-    /// How long a `usage_history` request may take: a cold transcript scan
-    /// runs tens of seconds on the daemon's socket thread.
+    /// Includes time queued behind other scan-lane commands.
     public static let usageHistoryTimeout: TimeInterval = 30
 
-    /// `usage_history {provider, range}` → daily and hourly token/cost rows.
-    /// Waits `usageHistoryTimeout` rather than the default 10 s.
-    public func usageHistory(provider: String, range: UsageHistoryRange) async throws -> UsageHistory {
-        try await request("usage_history", args: ["provider": .string(provider), "range": .string(range.rawValue)],
-                          as: UsageHistory.self, timeout: Self.usageHistoryTimeout)
+    /// Observation reports current memory without starting or retrying a scan.
+    public func usageHistory(provider: String, range: UsageHistoryRange,
+                             observe: Bool = false) async throws -> UsageHistory {
+        var args: [String: JSONValue] = ["provider": .string(provider), "range": .string(range.rawValue)]
+        if observe { args["observe"] = .bool(true) }
+        return try await request("usage_history", args: args, as: UsageHistory.self,
+                                 timeout: Self.usageHistoryTimeout)
     }
 
     /// `refresh_usage {providers[]}`; an empty list means every provider.
@@ -565,6 +685,59 @@ public final class CoreModel {
         return try ReplyDecoding.decode([ProviderRow].self, from: reply.result?["providers"])
     }
 
+    /// Store a key without changing consent or requesting usage.
+    @discardableResult
+    public func setProviderCredential(
+        _ provider: String, account: String, secret: String, instance: String = "default"
+    ) async throws -> ProviderCredentialReceipt {
+        let normalized = try Self.normalizedProviderSecret(secret)
+        return try await providerCredentialCommand("set_provider_credential", provider: provider,
+            account: account, instance: instance, secret: normalized, available: true)
+    }
+
+    @discardableResult
+    public func deleteProviderCredential(
+        _ provider: String, account: String, instance: String = "default"
+    ) async throws -> ProviderCredentialReceipt {
+        try await providerCredentialCommand("delete_provider_credential", provider: provider,
+            account: account, instance: instance, secret: nil, available: false)
+    }
+
+    public nonisolated static func normalizedProviderSecret(_ secret: String) throws -> String {
+        let value = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasControls = value.unicodeScalars.contains { scalar in
+            switch scalar.properties.generalCategory {
+            case .control, .format, .lineSeparator, .paragraphSeparator: return true
+            default: return false
+            }
+        }
+        guard !value.isEmpty, value.utf8.count <= 64 * 1024, !hasControls else {
+            throw CoreReplyError(code: "invalid_args", message: "Enter a single-line API key of at most 64 KiB.")
+        }
+        return value
+    }
+
+    private func providerCredentialCommand(
+        _ command: String, provider: String, account: String, instance: String,
+        secret: String?, available: Bool
+    ) async throws -> ProviderCredentialReceipt {
+        var args: [String: JSONValue] = [
+            "provider": .string(provider), "account": .string(account), "instance": .string(instance),
+        ]
+        if let secret { args["secret"] = .string(secret) }
+        let reply = try await send(command, args: args)
+        guard reply.ok else {
+            throw CoreReplyError(code: reply.error?.code ?? "credential_unavailable")
+        }
+        let receipt: ProviderCredentialReceipt
+        do { receipt = try ReplyDecoding.decode(ProviderCredentialReceipt.self, from: reply.result) }
+        catch { throw CoreReplyError(code: "bad_reply") }
+        guard receipt.matches(provider: provider, instance: instance, account: account, available: available) else {
+            throw CoreReplyError(code: "bad_reply")
+        }
+        return receipt
+    }
+
     /// `set_provider_enabled {provider, enabled, instance}` → the row as
     /// persisted. `settings_changed` means a concurrent edit won; reload
     /// and retry.
@@ -584,6 +757,54 @@ public final class CoreModel {
             throw reply.error ?? CoreReplyError(code: "error", message: "set_provider_enabled failed")
         }
         return try ReplyDecoding.decode(ProviderRow.self, from: reply.result?["provider"])
+    }
+
+    /// `set_provider_usage_consent {provider, enabled, instance, source}` →
+    /// the row as persisted. Turning it on is the person's own act: the
+    /// caller shows the row's `usage_consent.summary` first. `source` is
+    /// `setup`, `settings` or `usage_center`.
+    @discardableResult
+    public func setProviderUsageConsent(
+        _ provider: String,
+        enabled: Bool,
+        source: String,
+        instance: String? = nil
+    ) async throws -> ProviderRow {
+        var args: [String: JSONValue] = [
+            "provider": .string(provider),
+            "enabled": .bool(enabled),
+            "source": .string(source),
+        ]
+        if let instance { args["instance"] = .string(instance) }
+        let reply = try await send("set_provider_usage_consent", args: args)
+        guard reply.ok else {
+            throw reply.error ?? CoreReplyError(code: "error", message: "set_provider_usage_consent failed")
+        }
+        return try ReplyDecoding.decode(ProviderRow.self, from: reply.result?["provider"])
+    }
+
+    /// Save source choices without changing usage consent.
+    @discardableResult
+    public func setProviderOptions(
+        _ provider: String,
+        options: [String: String],
+        instance: String? = nil
+    ) async throws -> ProviderRow {
+        let args = Self.providerOptionsArguments(provider, options: options, instance: instance)
+        let reply = try await send("set_provider_options", args: args)
+        guard reply.ok else {
+            throw reply.error ?? CoreReplyError(code: "error", message: "set_provider_options failed")
+        }
+        return try ReplyDecoding.decode(ProviderRow.self, from: reply.result?["provider"])
+    }
+
+    nonisolated static func providerOptionsArguments(
+        _ provider: String, options: [String: String], instance: String?
+    ) -> [String: JSONValue] {
+        var args: [String: JSONValue] = ["provider": .string(provider),
+                                        "options": .object(options.mapValues { .string($0) })]
+        if let instance { args["instance"] = .string(instance) }
+        return args
     }
 
     /// `provider_add_instance {provider, instance, label}` → the new
@@ -953,20 +1174,35 @@ public final class CoreModel {
     func handle(_ event: CoreClient.Event) {
         switch event {
         case .connecting(let attempt):
+            hasStateForConnection = false
             connection = .connecting(attempt: attempt)
         case .connected:
+            hasStateForConnection = false
             connection = .connected
             connectedAt = Date()
             hello = nil
+            authState = .unproven
+        case .authenticated:
+            authState = .authenticated
+            onAuthenticated?()
+        case .authRefused(let reason):
+            authState = .refused(reason.sentence)
+            appendLocalLog(level: "warn", reason.sentence)
+            onAuthRefused?(reason)
         case .disconnected(let reason):
+            hasStateForConnection = false
+            authState = .unproven
             connection = .disconnected(reason: reason)
             connectedAt = nil
             state = nil
+            stateRejected = nil
             applySlices(nil)
             lights = nil
             lastStateAt = nil
         case .decodeFailure(let why):
             lastDecodeFailure = why
+        case .stateRejected(let why):
+            stateRejected = why
         case .message(let message):
             apply(message)
         }
@@ -976,23 +1212,36 @@ public final class CoreModel {
     public func apply(_ message: CoreMessage) {
         switch message {
         case .hello(let hello):
+            settingsConnectionRevision &+= 1
             self.hello = hello
         case .state(let state):
+            stateRejected = nil
             self.state = state
             applySlices(state)
+            hasStateForConnection = connection.isConnected
             refreshLive()
             lastStateAt = Date()
             usageSamples.record(state.usage, now: state.now ?? Date().timeIntervalSince1970)
         case .lights(let lights):
             self.lights = lights
         case .settings(let settings):
-            self.settings = settings
+            self.settingsFrame = CoreSettingsFrame(settings: settings, stream: hello?.stream,
+                                                  connectionRevision: settingsConnectionRevision)
+            onSettingsFrame?(settings)
         case .event(let event):
             let key = event.cursor ?? hello?.stream.map { "\($0):\(event.id)" } ?? event.id
-            guard !seenEventKeys.contains(key) else { return }
+            if seenEventKeys.contains(key) {
+                if event.isDurableResetReplay { onResetReplay?(event) }
+                return
+            }
             seenEventKeys.append(key)
             if seenEventKeys.count > 64 { seenEventKeys.removeFirst(seenEventKeys.count - 64) }
             onEvent?(event)
+            eventSequence += 1
+            recentEvents.append(event)
+            if recentEvents.count > Self.recentEventLimit {
+                recentEvents.removeFirst(recentEvents.count - Self.recentEventLimit)
+            }
             lastEvent = event
         case .reply:
             break
@@ -1000,8 +1249,15 @@ public final class CoreModel {
             lastLog = log
             logTail.append(log)
             if logTail.count > Self.logTailLimit { logTail.removeFirst(logTail.count - Self.logTailLimit) }
-        case .unknown:
+        case .unknown(let type, let version):
             unknownMessageCount += 1
+            // A `state` from another protocol version is not this app's to
+            // read: the old model must not stand as current beside it.
+            if type == "state" {
+                let theirs = version.map(String.init) ?? "unknown"
+                stateRejected = "its protocol version is \(theirs), this app speaks \(CoreProtocol.version)"
+                refreshLive()
+            }
         }
     }
 
@@ -1031,6 +1287,8 @@ public final class CoreModel {
     /// `state.provider_updates`: what each agent CLI's updater last did,
     /// keyed by provider id; empty from an older daemon.
     public private(set) var providerUpdates: [String: ProviderUpdateStatus] = [:]
+    /// `state.firmware`: the firmware update job, nil while there is none.
+    public private(set) var firmware: FirmwareJob?
     /// `state.catalog_generation` and `state.settings_generation`: what
     /// the Effect Studio reloads on.
     public private(set) var catalogGeneration: Int?
@@ -1057,6 +1315,7 @@ public final class CoreModel {
         assign(\.deck, state?.deck)
         assign(\.health, state?.health)
         assign(\.providerUpdates, state?.providerUpdates ?? [:])
+        assign(\.firmware, state?.firmware)
         assign(\.catalogGeneration, state?.catalogGeneration)
         assign(\.stateSettingsGeneration, state?.settingsGeneration)
     }

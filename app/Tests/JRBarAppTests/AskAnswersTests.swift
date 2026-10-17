@@ -114,6 +114,17 @@ struct AskAnswersTests {
                 "two labels for a single-pick question")
     }
 
+    @Test("a multi-select rejects non-string items instead of silently dropping them")
+    func mixedChoiceValuesAreRefused() async {
+        let answers: [String: JSONValue] = ["Which checks?": .array([.string("Lint"), .number(1)])]
+        #expect(AskChoicePicks(answers: answers, choices: [Self.multi]) == nil)
+        let sent = Sent()
+        let desk = desk(sent) { Self.reply(mechanism: "permission_hook") }
+        let outcome = await desk.answer(Self.held(choices: [Self.multi]), .choose(answers))
+        #expect(!outcome.ok)
+        #expect(sent.calls.isEmpty)
+    }
+
     // MARK: Picks
 
     @Test("a single-pick question holds one label; a multi-select toggles, in the agent's order on the wire")
@@ -306,6 +317,17 @@ struct AskAnswersTests {
         let away = desk(sent) { throw CoreClientError.notConnected }
         let outcome = await away.answer(Self.held(always: true), .always)
         #expect(!outcome.ok && outcome.line == NotchAskRefusal.unreachable)
+    }
+
+    @Test("a send that timed out or dropped may have landed, so it never says the ask is still open")
+    func deskUnconfirmed() async {
+        for failure in [CoreClientError.timeout, .disconnected] {
+            let desk = desk(Sent()) { throw failure }
+            let outcome = await desk.answer(Self.held(always: true), .always)
+            #expect(!outcome.ok)
+            #expect(outcome.line == AskAnswerDesk.unconfirmedLine, "\(failure)")
+            #expect(!outcome.line.contains("still open"))
+        }
     }
 
     @Test("a reply is its own verdict: words, for an ask that wants them, sent once and pinned")

@@ -33,6 +33,21 @@ final class LEDSStudioModel {
     private(set) var playingUntil: Date?
     private(set) var playingOn: String?
     private(set) var inFlight = false
+    private enum ShelfMutation {
+        case save(String, String)
+        case remove(String)
+    }
+    private struct ShelfConfirmation {
+        let stream: String?
+        let connectionRevision: UInt64
+        let generation: Int
+        let value: JSONValue
+    }
+    private var shelfMutations: [ShelfMutation] = []
+    private var shelfWriting = false
+    private var shelfConfirmation: ShelfConfirmation?
+    private var uncertainShelf: (stream: String?, connectionRevision: UInt64, generation: Int)?
+
     /// The device a confirmed burn goes to; non-nil while the confirm is up.
     var burnTarget: CoreDevice?
     /// The name field of "Save to shelf…"; non-nil while the sheet is up.
@@ -63,7 +78,14 @@ final class LEDSStudioModel {
 
     /// `studio_library`: the shelf of named programs, `[[name, program]]`.
     var shelf: [(name: String, program: String)] {
-        Self.shelf(from: document.array("studio_library"))
+        if let confirmation = shelfConfirmation, confirmation.stream == core.hello?.stream,
+           confirmation.connectionRevision == core.settingsConnectionRevision {
+            let frame = core.settingsFrame
+            if frame?.stream != confirmation.stream || (frame?.settings.generation ?? -1) < confirmation.generation {
+                return Self.shelf(from: confirmation.value.arrayValue)
+            }
+        }
+        return Self.shelf(from: document.array("studio_library"))
     }
 
     static func shelf(from value: [JSONValue]?) -> [(name: String, program: String)] {
@@ -107,11 +129,113 @@ final class LEDSStudioModel {
     func saveToShelf(named name: String) {
         let cleaned = name.trimmingCharacters(in: .whitespaces)
         guard !cleaned.isEmpty, analysis.playable else { return }
-        write("studio_library", Self.shelf(shelf, saving: cleaned, program: text), done: "Shelved “\(cleaned)”")
+        enqueueShelf(.save(cleaned, text))
     }
 
     func removeFromShelf(named name: String) {
-        write("studio_library", Self.shelf(shelf, removing: name), done: "Removed “\(name)” from the shelf")
+        enqueueShelf(.remove(name))
+    }
+
+    private func enqueueShelf(_ mutation: ShelfMutation) {
+        guard let currentFrame = core.settingsFrame,
+              currentFrame.connectionRevision == core.settingsConnectionRevision,
+              currentFrame.stream == core.hello?.stream else {
+            onError?("Shelf state is not confirmed. Wait for refreshed settings, then try again.")
+            return
+        }
+        if let uncertain = uncertainShelf {
+            let frame = core.settingsFrame
+            let currentStream = core.hello?.stream
+            guard let frame, frame.stream == currentStream,
+                  frame.connectionRevision == core.settingsConnectionRevision,
+                  core.settingsConnectionRevision != uncertain.connectionRevision
+                    || currentStream != uncertain.stream || frame.settings.generation > uncertain.generation else {
+                onError?("Shelf state is not confirmed. Wait for refreshed settings, then try again.")
+                return
+            }
+            uncertainShelf = nil
+            shelfConfirmation = nil
+        }
+        shelfMutations.append(mutation)
+        guard !shelfWriting else { return }
+        shelfWriting = true
+        let stream = core.hello?.stream
+        let connection = core.settingsConnectionRevision
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.shelfWriting = false }
+            while !self.shelfMutations.isEmpty {
+                guard self.core.hello?.stream == stream, self.core.settingsConnectionRevision == connection else {
+                    self.stopShelfWrites("The monitor changed. Refresh the shelf before trying again.",
+                        stream: stream, connection: connection, generation: -1)
+                    return
+                }
+                let mutation = self.shelfMutations.removeFirst()
+                let value: JSONValue
+                let done: String
+                switch mutation {
+                case .save(let name, let program):
+                    value = Self.shelf(self.shelf, saving: name, program: program)
+                    done = "Shelved “\(name)”"
+                case .remove(let name):
+                    value = Self.shelf(self.shelf, removing: name)
+                    done = "Removed “\(name)” from the shelf"
+                }
+                let sendGeneration = self.core.settingsFrame?.settings.generation ?? -1
+                let reply: CoreReply
+                do {
+                    reply = try await self.core.setSetting(SettingsPath("studio_library"), value: value)
+                } catch let error as CoreReplyError {
+                    guard self.core.hello?.stream == stream, self.core.settingsConnectionRevision == connection else {
+                        self.stopShelfWrites("The monitor changed. Refresh the shelf before trying again.",
+                            stream: stream, connection: connection, generation: sendGeneration)
+                        return
+                    }
+                    self.onError?("Could not save: \(EffectStudioStore.describe(error))")
+                    continue
+                } catch {
+                    self.stopShelfWrites("Shelf save was not confirmed. Wait for refreshed settings before trying again.",
+                        stream: stream, connection: connection, generation: sendGeneration, value: value)
+                    return
+                }
+                guard self.core.hello?.stream == stream, self.core.settingsConnectionRevision == connection else {
+                    self.stopShelfWrites("The monitor changed. Refresh the shelf before trying again.",
+                        stream: stream, connection: connection, generation: sendGeneration)
+                    return
+                }
+                guard reply.ok else {
+                    self.onError?(reply.error?.message ?? "Refused")
+                    continue
+                }
+                guard reply.result?["path"]?.stringValue == "studio_library",
+                      reply.result?["value"] == value,
+                      case .number(let rawGeneration) = reply.result?["generation"],
+                      let generation = Int(exactly: rawGeneration), generation >= 0 else {
+                    self.stopShelfWrites("Shelf save was not confirmed. Wait for refreshed settings before trying again.",
+                        stream: stream, connection: connection, generation: sendGeneration, value: value)
+                    return
+                }
+                self.shelfConfirmation = ShelfConfirmation(stream: stream, connectionRevision: connection,
+                    generation: generation, value: value)
+                self.onStatus?(done)
+            }
+        }
+    }
+
+    private func stopShelfWrites(_ message: String, stream: String?, connection: UInt64,
+                                 generation: Int, value: JSONValue? = nil) {
+        shelfMutations.removeAll()
+        shelfConfirmation = nil
+        let frame = core.settingsFrame
+        let sameConnection = core.settingsConnectionRevision == connection
+        let frameBelongsToRequest = frame?.connectionRevision == connection && frame?.stream == stream
+        let frameIsNewer = (frame?.settings.generation ?? -1) > generation
+        let frameHasRequestedShelf = value != nil && frame?.settings.document["studio_library"] == value
+        let confirmedByFrame = frameBelongsToRequest && frameIsNewer && frameHasRequestedShelf
+        let boundary = sameConnection && !confirmedByFrame
+            ? (frame?.settings.generation ?? generation) : generation
+        uncertainShelf = (stream: stream, connectionRevision: connection, generation: boundary)
+        onError?(message)
     }
 
     private func write(_ path: String, _ value: JSONValue, done: String) {
@@ -483,7 +607,7 @@ struct LEDSStudioView: View {
             Text(model.isSavedProgram
                  ? "This is the Studio program. A device set to Display › Studio program plays it."
                  : model.savedProgram.isEmpty
-                    ? "No Studio program yet. Keep this one and choose Studio program under Settings › Devices › Display."
+                    ? "No Studio program yet. Keep this one and choose Studio program under Settings › Devices & Lighting › Display."
                     : "Differs from the saved Studio program.")
                 .font(.callout)
                 .foregroundStyle(.secondary)

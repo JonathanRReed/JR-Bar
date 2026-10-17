@@ -1020,10 +1020,14 @@ def test_a_decided_request_is_remembered_until_the_agents_own_events_close_it__a
     assert parsed == []
 
 
-def test_the_decided_cap_is_the_time_canonical_state_keeps_a_request_live() -> None:
-    from jrbar.operator_state import REQUEST_LIVE_GRACE_SECONDS
+def test_the_decided_cap_is_the_ask_lifetime_not_the_old_hour() -> None:
+    # An approved tool may run for hours and the reducer no longer demotes a
+    # live request at an hour (REQUEST_LIVE_GRACE_SECONDS is gone), so the
+    # memory that the ask was answered lasts as long as the ask itself can.
+    from jrbar.ask_lifetime import ASK_EXPIRES_UNANSWERED_SECONDS
 
-    assert DECIDED_TOMBSTONE_CAP_SECONDS == REQUEST_LIVE_GRACE_SECONDS == 3600.0
+    assert DECIDED_TOMBSTONE_CAP_SECONDS == ASK_EXPIRES_UNANSWERED_SECONDS
+    assert DECIDED_TOMBSTONE_CAP_SECONDS > 3600.0
 
 
 # --- answer_ask through the lane -----------------------------------------------
@@ -1244,7 +1248,7 @@ def test_every_permission_request_leaves_its_card_a_preview__and_3_more() -> Non
     assert not previews.note("claude", _claude_payload(tool_input="nope"))
     assert not previews.note("hermes", text)
 
-    # --- scenario: bounded, and forgotten after an hour
+    # --- scenario: bounded, and forgotten at the ask's outer lifetime, not at an hour
     for index in range(MAX_ASK_PREVIEWS + 5):
         clock.now += 1
         previews.note("claude", _claude_payload(tool_input={"command": f"echo {index}"}))
@@ -1253,6 +1257,52 @@ def test_every_permission_request_leaves_its_card_a_preview__and_3_more() -> Non
     assert previews.lookup("claude", newest.request_id)[0] == f"echo {MAX_ASK_PREVIEWS + 4}"
     clock.now += ASK_PREVIEW_TTL_SECONDS + 1
     assert previews.lookup("claude", newest.request_id) == (None, None)
+
+
+def test_the_ask_card_carries_the_expanded_detail_only_when_there_is_one() -> None:
+    from jrbar.core_projection import ask_document
+
+    previews = AskPreviews()
+    plan = _claude_payload(tool_name="ExitPlanMode", tool_input={"plan": "1. Read\n2. Change"})
+    request_id = _request_identity_for(plan)
+    assert previews.note("claude", plan)
+    controller, status, _request, _ = _controller(request_id=request_id)
+
+    # --- scenario: a plan approval shows its plan, undecidable from here
+    document = ask_document(
+        status,
+        controller.current_operator_state,
+        with_session=False,
+        decision_lane=_broker(),
+        ask_previews=previews,
+    )
+    assert document["decision"] is None
+    assert document["detail"] == {"plan": "1. Read\n2. Change", "truncated": False}
+
+    # --- scenario: a one-line ask has a null detail, not an empty one
+    short = _claude_payload()
+    short_id = _request_identity_for(short)
+    previews.note("claude", short)
+    controller, status, _request, _ = _controller(request_id=short_id)
+    document = ask_document(
+        status,
+        controller.current_operator_state,
+        with_session=False,
+        decision_lane=_broker(),
+        ask_previews=previews,
+    )
+    assert document["preview"] == "npm test" and document["detail"] is None
+
+
+def _request_identity_for(text: str) -> str:
+    from jrbar.answer_decisions import _request_identity
+    from jrbar.provider_adapters import hook_request_identity
+
+    routed = _request_identity("claude", text)
+    assert routed is not None
+    request_id = hook_request_identity(routed[1])
+    assert request_id is not None
+    return request_id
 
 
 # --- a question held as a choice ----------------------------------------------------

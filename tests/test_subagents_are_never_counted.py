@@ -71,6 +71,10 @@ from jrbar.status_bar import StatusBarController
 
 _NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
 
+#: The fixed instant the canonical work fixtures are stamped at (`_watermark`).
+#: The browser documents are built as of it, never as of the day the test runs.
+_EVENTS_EPOCH = 1_800_000_000.0
+
 #: The live fan-out that produced "Active: 34". One main agent can spawn
 #: 100+ Task workers; 200 have been observed on this machine.
 _OBSERVED_FANOUT = 40
@@ -350,6 +354,7 @@ def test_the_menu_bar_title_counts_main_agents_only__and_2_more() -> None:
             woke_work_keys=(),
         ),
         LocalTriageState(acknowledgements=()),
+        now_epoch=_EVENTS_EPOCH,
     )
 
     projection = project_agent_browser(
@@ -695,7 +700,7 @@ def _run_leds_once(snapshot, *, subagent_asks_alert: bool, monkeypatch) -> list[
     from jrbar import cli
 
     _RecordingLeds.modes = []
-    settings = AgentMonitorSettings().with_subagent_asks_alert(subagent_asks_alert)
+    settings = replace(AgentMonitorSettings(), subagent_asks_alert=subagent_asks_alert)
     monkeypatch.setattr(
         cli, "monitor_from_args", lambda _args: type("M", (), {"snapshot": lambda _s: snapshot})()
     )
@@ -756,7 +761,7 @@ def test_jrbar_status_names_a_main_agent_as_the_reason_for_the_aggregate(
         monkeypatch.setattr(
             cli,
             "load_settings",
-            lambda *a, alert=alert, **k: AgentMonitorSettings().with_subagent_asks_alert(alert),
+            lambda *a, alert=alert, **k: replace(AgentMonitorSettings(), subagent_asks_alert=alert),
         )
         assert cli.cmd_status(Namespace(json=False, all=False)) == 0
         out = capsys.readouterr().out

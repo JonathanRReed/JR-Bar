@@ -7,6 +7,43 @@ import Testing
 /// recovery.
 @Suite("Aquarium save file")
 struct AquariumSaveTests {
+    @Test("flush retries a retained save after a temporary write failure")
+    func retriesFailedSave() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "jrbar-aqretry-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let blocked = root.appending(path: "state")
+        try Data("blocked".utf8).write(to: blocked)
+        let file = AquariumSaveFile(url: blocked.appending(path: "aquarium-save.json"))
+        let writer = AquariumSaveWriter(file: file)
+        writer.write(AquariumSave(game: AquariumGame(pearls: 42)))
+        writer.flush()
+        #expect(!file.exists)
+
+        try FileManager.default.removeItem(at: blocked)
+        writer.flush()
+        #expect(file.load().game.pearls == 42)
+    }
+
+    @Test("a newer save replaces a retained failed save")
+    func newerSaveReplacesFailedSave() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "jrbar-aqretry-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let blocked = root.appending(path: "state")
+        try Data("blocked".utf8).write(to: blocked)
+        let file = AquariumSaveFile(url: blocked.appending(path: "aquarium-save.json"))
+        let writer = AquariumSaveWriter(file: file)
+        writer.write(AquariumSave(game: AquariumGame(pearls: 10)))
+        writer.flush()
+        writer.write(AquariumSave(game: AquariumGame(pearls: 30)))
+        writer.flush()
+
+        try FileManager.default.removeItem(at: blocked)
+        writer.flush()
+        #expect(file.load().game.pearls == 30)
+    }
+
     private func tempFile() -> (file: AquariumSaveFile, url: URL) {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "jrbar-aqtest-\(UUID().uuidString)")
@@ -253,10 +290,91 @@ struct AquariumSaveTests {
         #expect(file.load().game.pearls == 2)
     }
 
+    @Test("a save that could not be read is kept as a recovery before a fresh tank overwrites it")
+    func unreadableSaveIsKept() throws {
+        let (file, url) = tempFile()
+        let directory = url.deletingLastPathComponent()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // A perfectly good save, momentarily unreadable.
+        let good = AquariumSave(game: AquariumGame(pearls: 41))
+        try file.save(good)
+        let original = try Data(contentsOf: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
+
+        let loaded = file.loadResult()
+        #expect(loaded.previousWasUnreadable)
+        #expect(loaded.save.game == AquariumGame(), "the tank starts fresh in memory")
+
+        // The failure passes; the first save over the file keeps it.
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        let writer = AquariumSaveWriter(file: file)
+        writer.keepPreviousOnNextSave()
+        writer.write(AquariumSave(game: AquariumGame(pearls: 1)))
+        writer.flush()
+        let backups = try Self.recoveries(in: directory)
+        #expect(backups.count == 1)
+        if let backup = backups.first { #expect(try Data(contentsOf: backup) == original) }
+        #expect(file.load().game.pearls == 1)
+
+        // Once, not on every save.
+        writer.write(AquariumSave(game: AquariumGame(pearls: 2)))
+        writer.flush()
+        #expect(try Self.recoveries(in: directory).count == 1)
+    }
+
+    @Test("a missing file is not an unreadable one, and a healthy one is not either")
+    func missingAndHealthyAreNotUnreadable() throws {
+        let (file, url) = tempFile()
+        let directory = url.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(!file.loadResult().previousWasUnreadable)
+        try file.save(AquariumSave(game: AquariumGame(pearls: 3)))
+        let loaded = file.loadResult()
+        #expect(!loaded.previousWasUnreadable)
+        #expect(loaded.save.game.pearls == 3)
+        _ = url
+    }
+
     private static func recoveries(in directory: URL) throws -> [URL] {
         try FileManager.default.contentsOfDirectory(at: directory,
             includingPropertiesForKeys: nil).filter {
                 $0.lastPathComponent.hasPrefix("aquarium-save.recovery-")
             }
+    }
+
+    @Test("a save with absurd numbers loads clamped and the first work tick does not trap")
+    func absurdNumbersAreClamped() throws {
+        let json = """
+        {"game":{"pearls":9223372036854775807,"lifetimePearls":9223372036854775807,
+        "pearlProgress":1e30,"goalCarrySeconds":1e300,"streakDays":9223372036854775807,
+        "inventory":{"snail":9223372036854775807,"castle":9223372036854775807}}}
+        """
+        let save = try JSONDecoder().decode(AquariumSave.self, from: Data(json.utf8))
+        var game = save.game
+        #expect(game.pearlProgress.isFinite && game.pearlProgress <= 1_000_000_000)
+        #expect(game.goalCarrySeconds.isFinite && game.goalCarrySeconds <= 1_000_000_000)
+        #expect(game.pearls <= 1_000_000_000 && game.lifetimePearls <= 1_000_000_000)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        game.apply(.workTick(seconds: 20, working: ["a"]), now: now)
+        game.apply(.setWindowOpen(false), now: now)
+        game.apply(.workTick(seconds: 20, working: ["a"]), now: now.addingTimeInterval(20))
+        #expect(game.pearls >= 0)
+    }
+
+    @Test("one mistyped entry costs only itself, never a whole collection")
+    func mistypedEntryCostsOnlyItself() throws {
+        let json = """
+        {"game":{"inventory":{"snail":1,"castle":"two"},
+        "unlocked":{"streak7":5,"bad":"x"},
+        "lastVisitorAt":{"whale":7,"bad":"x"}}}
+        """
+        let game = try JSONDecoder().decode(AquariumSave.self, from: Data(json.utf8)).game
+        #expect(game.inventory[ShopItem.snail.rawValue] == 1)
+        #expect(game.unlocked["streak7"] == 5)
+        #expect(game.lastVisitorAt["whale"] == 7)
     }
 }

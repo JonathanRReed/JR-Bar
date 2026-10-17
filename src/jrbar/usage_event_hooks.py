@@ -358,8 +358,11 @@ def rule_problem(rule: UsageHookRule) -> str | None:
         return "the executable must be an absolute path"
     if len(rule.arguments) > MAX_ARGUMENTS:
         return f"more than {MAX_ARGUMENTS} arguments"
-    if any(_too_long(text) for text in (rule.executable, *rule.arguments)):
-        return "a string is over 4 KiB"
+    try:
+        if any(_too_long(text) for text in (rule.executable, *rule.arguments)):
+            return "a string is over 4 KiB"
+    except UnicodeError:
+        return "a string is not valid UTF-8"
     return None
 
 
@@ -394,6 +397,13 @@ def config_for_settings(settings: object) -> UsageHookConfig:
 # --- Limiter ---------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class _CooldownReservation:
+    key: tuple[str, str, str, str, str] | None
+    at: float
+    order: int
+
+
 class UsageHookLimiter:
     """One run per ``interval`` for each rule, event, provider, account and
     lane, for the chatty events (``THROTTLED_EVENTS``)."""
@@ -402,21 +412,67 @@ class UsageHookLimiter:
         self.interval = float(interval)
         self._lock = threading.Lock()
         self._last: dict[tuple[str, str, str, str, str], float] = {}
+        self._orders: dict[tuple[str, str, str, str, str], int] = {}
+        self._pending: dict[
+            tuple[str, str, str, str, str], dict[int, _CooldownReservation]
+        ] = {}
+        self._next_order = 0
 
     def admit(self, rule: UsageHookRule, event: UsageHookEvent, now: float) -> bool:
+        reservation = self.reserve(rule, event, now)
+        if reservation is None:
+            return False
+        self.commit(reservation)
+        return True
+
+    def reserve(
+        self, rule: UsageHookRule, event: UsageHookEvent, now: float
+    ) -> _CooldownReservation | None:
         if event.name not in THROTTLED_EVENTS:
-            return True
+            return _CooldownReservation(None, now, 0)
         key = (rule.id, event.name, event.provider_id, event.source_instance_id, event.lane_id)
         with self._lock:
             last = self._last.get(key)
+            pending = self._pending.get(key, {})
+            if pending:
+                newest = pending[max(pending)]
+                if newest.order > self._orders.get(key, -1):
+                    last = newest.at
             if last is not None and now - last < self.interval:
-                return False
-            self._last[key] = now
+                return None
+            self._next_order += 1
+            reservation = _CooldownReservation(key, now, self._next_order)
+            self._pending.setdefault(key, {})[reservation.order] = reservation
+            return reservation
+
+    def commit(self, reservation: _CooldownReservation) -> None:
+        self._settle(reservation, committed=True)
+
+    def refund(self, reservation: _CooldownReservation) -> None:
+        self._settle(reservation, committed=False)
+
+    def _settle(self, reservation: _CooldownReservation, *, committed: bool) -> None:
+        key = reservation.key
+        if key is None:
+            return
+        with self._lock:
+            pending = self._pending.get(key)
+            if pending is None or pending.get(reservation.order) is not reservation:
+                return
+            del pending[reservation.order]
+            if not pending:
+                del self._pending[key]
+            if committed and reservation.order > self._orders.get(key, -1):
+                self._last[key] = reservation.at
+                self._orders[key] = reservation.order
             if len(self._last) > 4096:
-                oldest = sorted(self._last.items(), key=lambda item: item[1])[:1024]
+                oldest = sorted(
+                    ((key, at) for key, at in self._last.items() if key not in self._pending),
+                    key=lambda item: item[1],
+                )[:1024]
                 for stale, _at in oldest:
-                    self._last.pop(stale, None)
-            return True
+                    del self._last[stale]
+                    del self._orders[stale]
 
 
 # --- Running ---------------------------------------------------------------
@@ -553,7 +609,7 @@ def run_rule(
         )
     except (OSError, ValueError) as error:
         return UsageHookResult(
-            rule.id, event.name, event.provider_id, started, "error", detail=f"could not start: {error.strerror or error}"
+            rule.id, event.name, event.provider_id, started, "error", detail=f"could not start: {getattr(error, 'strerror', None) or error}"
         )
     try:
         process.communicate(input=payload if rule.argv != "legacy" else None, timeout=limit)
@@ -626,12 +682,15 @@ def dispatch_usage_hooks(
     if not rules:
         return None
     now = clock()
-    work: list[tuple[UsageHookRule, UsageHookEvent]] = [
-        (rule, event)
-        for event in events
-        for rule in rules
-        if rule.matches(event) and limiter.admit(rule, event, now)
-    ]
+    work: list[tuple[UsageHookRule, UsageHookEvent]] = []
+    reservations: list[_CooldownReservation] = []
+    for event in events:
+        for rule in rules:
+            if rule.matches(event):
+                reservation = limiter.reserve(rule, event, now)
+                if reservation is not None:
+                    work.append((rule, event))
+                    reservations.append(reservation)
     if not work:
         return None
     snapshot_env = dict(os.environ if environ is None else environ)
@@ -645,8 +704,24 @@ def dispatch_usage_hooks(
                 # log is the minimum honesty a fire-and-forget hook owes.
                 log(f"usage hook {rule.id}: {result.sentence()}")
 
-    worker = threading.Thread(target=_run, name="JRBarUsageHooks", daemon=True)
-    worker.start()
+    try:
+        worker = threading.Thread(target=_run, name="JRBarUsageHooks", daemon=True)
+        worker.start()
+    except Exception:
+        for reservation in reversed(reservations):
+            limiter.refund(reservation)
+        for rule, event in work:
+            results.record(UsageHookResult(
+                rule.id, event.name, event.provider_id, now, "error",
+                detail="did not start hook worker",
+            ))
+        try:
+            log("usage hooks: did not start hook worker")
+        except Exception:
+            pass
+        return None
+    for reservation in reservations:
+        limiter.commit(reservation)
     return worker
 
 

@@ -39,7 +39,7 @@ jrbar usage-hooks test quota_low      # run the matching rules once with a made-
 jrbar usage-hooks disable rule-1      # or enable, or remove, one rule
 ```
 
-Settings › Usage › Hooks shows the same rules, each with its last result
+Settings › Agents & Usage › Advanced › Hooks shows the same rules, each with its last result
 and a Test button. Rules live in the settings under `usage_hooks`.
 
 ## What your program gets

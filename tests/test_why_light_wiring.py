@@ -283,46 +283,6 @@ class WhyLightWiringTests(unittest.TestCase):
         self.assertIn("Scene: Unavailable", body)
 
 
-    def test_production_context_reuses_screen_bar_renderer_timing(self) -> None:
-        renderer_timing = LocalHealthTiming(
-            count=7,
-            p50_ms=22.2,
-            p95_ms=44.4,
-            latest_ms=33.3,
-        )
-        health = SimpleNamespace(
-            source_freshness_seconds=12.25,
-            screen_bar_renderer_latency=renderer_timing,
-            hardware_write_latency=None,
-            refresh_duration=LocalHealthTiming(
-                count=4,
-                p50_ms=88.8,
-                p95_ms=99.9,
-                latest_ms=77.7,
-            ),
-        )
-        self.controller.settings = replace(
-            self.controller.settings,
-            virtual_status_device_enabled=True,
-        )
-        with patch.object(
-            self.controller,
-            "local_health_snapshot",
-            return_value=health,
-        ) as snapshot:
-            context = self.controller.current_why_light_context()
-
-        self.assertIs(context.renderer_timing.availability, ValueAvailability.AVAILABLE)
-        self.assertEqual(context.renderer_timing.sample_count, 7)
-        self.assertEqual(context.renderer_timing.latest_ms, 33.3)
-        self.assertEqual(context.renderer_timing.p50_ms, 22.2)
-        self.assertEqual(context.renderer_timing.p95_ms, 44.4)
-        self.assertIs(
-            context.renderer_timing.source,
-            OutputTimingSource.SCREEN_BAR_RENDERER,
-        )
-        snapshot.assert_called_once_with()
-
     def test_physical_only_timing_is_labeled_as_hardware_write_latency(
         self,
     ) -> None:
@@ -334,7 +294,6 @@ class WhyLightWiringTests(unittest.TestCase):
         )
         health = SimpleNamespace(
             source_freshness_seconds=12.25,
-            screen_bar_renderer_latency=None,
             hardware_write_latency=hardware_timing,
             refresh_duration=None,
         )
@@ -362,7 +321,6 @@ class WhyLightWiringTests(unittest.TestCase):
     ) -> None:
         health = SimpleNamespace(
             source_freshness_seconds=12.25,
-            screen_bar_renderer_latency=None,
             hardware_write_latency=None,
             refresh_duration=LocalHealthTiming(
                 count=7,

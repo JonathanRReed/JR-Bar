@@ -13,8 +13,9 @@ import OSLog
 /// it prints — one per now-playing change, `null` while nothing plays.
 ///
 /// The dylib is compiled bytes shipped inside the app binary
-/// (`AlcoveMediaAdapterAsset`), materialized to a temp file named by its
-/// sha so an upgrade never runs a stale copy. Anything missing — no
+/// (`AlcoveMediaAdapterAsset`), written to a private folder under
+/// Application Support, named by its sha and checked against it before
+/// every launch, so an upgrade never runs a stale copy. Anything missing — no
 /// perl, a failed write, a process that dies — drops the monitor onto
 /// the in-process MediaRemote path, which still works where reads were
 /// never gated.
@@ -83,26 +84,15 @@ final class AlcoveMediaAdapter {
         "helper live after \(Int((seconds * 1000).rounded())) ms — \(track ? "a track is playing" : "nothing playing")"
     }
 
-    /// Writes the embedded dylib beside the temp dir, keyed by its sha —
-    /// a new build is a new file, never an overwrite of a mapped image.
+    /// A verified copy of the embedded dylib in a folder only this account
+    /// can enter (`AlcoveMediaAdapterFiles`), hashed against the pinned
+    /// sha256 on every launch; nil when it cannot be made.
     private func materialize() -> URL? {
-        guard let bytes = Data(base64Encoded: AlcoveMediaAdapterAsset.dylibBase64),
-              !bytes.isEmpty else { return nil }
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("jrbar-alcove", isDirectory: true)
-        let url = dir.appendingPathComponent(
-            "mediaremote-\(AlcoveMediaAdapterAsset.dylibSHA256.prefix(16)).dylib")
-        let fm = FileManager.default
-        if fm.fileExists(atPath: url.path),
-           (try? Data(contentsOf: url, options: .mappedIfSafe)) == bytes {
-            return url
-        }
+        guard let files = AlcoveMediaAdapterFiles.live() else { return nil }
         do {
-            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-            try bytes.write(to: url, options: .atomic)
-            return url
+            return try files.prepare()
         } catch {
-            NSLog("JR-Bar: alcove media adapter write failed: %@", error.localizedDescription)
+            NSLog("JR-Bar: alcove media adapter not ready: %@", String(describing: error))
             return nil
         }
     }
@@ -118,6 +108,7 @@ final class AlcoveMediaAdapter {
             fail(perlIsInstalled ? "the helper dylib could not be written" : "no /usr/bin/perl")
             return
         }
+        let token = UUID()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
         process.arguments = ["-MDynaLoader", "-e", Self.perlDriver, dylib.path]
@@ -128,14 +119,13 @@ final class AlcoveMediaAdapter {
         process.standardError = FileHandle.nullDevice
         process.terminationHandler = { [weak self] _ in
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.terminated() }
+                MainActor.assumeIsolated { self?.terminated(from: token) }
             }
         }
         // A line carries the cover as base64 — up to 600 KB — and the
         // helper re-sends it with every play, pause and seek. The JSON
         // and the cover are read on the reader's queue; only the parsed
         // track reaches the main thread.
-        let token = UUID()
         let reader = AlcoveMediaLineReader { [weak self] media in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.deliver(media, from: token) }
@@ -161,7 +151,7 @@ final class AlcoveMediaAdapter {
         startedAt = Date()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, self.running, !self.sawFirstLine else { return }
+                guard let self, self.running, self.readerToken == token, !self.sawFirstLine else { return }
                 self.fail("the helper stayed silent for 4 s")
             }
         }
@@ -173,17 +163,30 @@ final class AlcoveMediaAdapter {
     /// helper is entitled, so this works on the releases where the
     /// in-process `MRMediaRemoteSendCommand` also still works; the
     /// monitor sends through whichever path is alive.
-    func send(_ command: MediaRemoteBridge.Command) {
-        guard running, let stdin else { return }
-        try? stdin.write(contentsOf: Data("send \(command.rawValue)\n".utf8))
+    func send(_ command: MediaRemoteBridge.Command) -> MediaTransportSubmission {
+        submit(Data("send \(command.rawValue)\n".utf8))
     }
 
     /// A scrub: "seek <seconds>" — the helper calls
     /// `MRMediaRemoteSetElapsedTime` and refreshes, so the next line
     /// already carries the landed playhead.
-    func seek(to seconds: Double) {
-        guard running, let stdin else { return }
-        try? stdin.write(contentsOf: Data(String(format: "seek %.3f\n", seconds).utf8))
+    func seek(to seconds: Double) -> MediaTransportSubmission {
+        submit(Data(String(format: "seek %.3f\n", seconds).utf8))
+    }
+
+    private func submit(_ data: Data) -> MediaTransportSubmission {
+        guard running, let stdin else { return .unavailable }
+        return Self.submit(data, write: { try stdin.write(contentsOf: $0) })
+    }
+
+    /// An error cannot prove that a pipe write delivered no bytes.
+    static func submit(_ data: Data, write: (Data) throws -> Void) -> MediaTransportSubmission {
+        do {
+            try write(data)
+            return .submitted
+        } catch {
+            return .uncertain
+        }
     }
 
     func stop() {
@@ -208,8 +211,8 @@ final class AlcoveMediaAdapter {
     /// The helper died: silent while nothing was ever heard (the watchdog
     /// reports it), or an ordinary drop mid-run — either way the caller
     /// moves to the in-process path until the retry budget is spent.
-    private func terminated() {
-        guard running else { return }
+    private func terminated(from token: UUID) {
+        guard running, readerToken == token else { return }
         fail(sawFirstLine ? "the helper exited mid-run" : "the helper exited before answering")
     }
 
@@ -235,7 +238,7 @@ final class AlcoveMediaAdapter {
     private func deliver(_ lines: [AlcoveMedia?], from token: UUID) {
         guard token == readerToken else { return }
         for media in lines {
-            guard running else { return }
+            guard running, token == readerToken else { return }
             let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
             if !sawFirstLine {
                 Self.log.info("Now Playing: \(Self.firstLineNote(after: elapsed, track: media != nil), privacy: .public)")
@@ -301,8 +304,12 @@ final class AlcoveMediaLineReader: @unchecked Sendable {
     /// Only ever touched on `queue`.
     private var pending = Data()
     private var cover: Cover?
+    private var discardingLine = false
+    private let maxLineBytes: Int
 
-    init(deliver: @escaping @Sendable ([AlcoveMedia?]) -> Void) {
+    init(maxLineBytes: Int = 8 * 1024 * 1024,
+         deliver: @escaping @Sendable ([AlcoveMedia?]) -> Void) {
+        self.maxLineBytes = maxLineBytes
         self.deliver = deliver
     }
 
@@ -316,22 +323,30 @@ final class AlcoveMediaLineReader: @unchecked Sendable {
         queue.sync {}
     }
 
-    /// Append the chunk, split whole lines, parse each into a media. The
-    /// newline search starts where the last chunk ended, so a long line
-    /// arriving in many chunks is scanned once.
+    /// Oversized lines are discarded through their newline. A broken
+    /// helper cannot retain an unbounded stream while the next line recovers.
     private func consume(_ chunk: Data) {
-        let searchFrom = pending.endIndex
-        pending.append(chunk)
         var lines: [AlcoveMedia?] = []
-        var start = pending.startIndex
-        var from = searchFrom
-        while let newline = pending[from...].firstIndex(of: UInt8(ascii: "\n")) {
-            lines.append(AlcoveMediaAdapter.parse(pending[start..<newline], cover: &cover))
-            start = pending.index(after: newline)
-            from = start
-        }
-        if start != pending.startIndex {
-            pending = pending.subdata(in: start..<pending.endIndex)
+        var start = chunk.startIndex
+        while start < chunk.endIndex {
+            let newline = chunk[start...].firstIndex(of: UInt8(ascii: "\n"))
+            let end = newline ?? chunk.endIndex
+            let segment = chunk[start..<end]
+            if !discardingLine {
+                if segment.count <= maxLineBytes - pending.count {
+                    pending.append(segment)
+                } else {
+                    pending.removeAll(keepingCapacity: false)
+                    discardingLine = true
+                }
+            }
+            guard let newline else { break }
+            if !discardingLine {
+                lines.append(AlcoveMediaAdapter.parse(pending, cover: &cover))
+            }
+            pending.removeAll(keepingCapacity: false)
+            discardingLine = false
+            start = chunk.index(after: newline)
         }
         if !lines.isEmpty { deliver(lines) }
     }

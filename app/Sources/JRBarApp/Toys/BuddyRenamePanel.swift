@@ -23,6 +23,8 @@ final class BuddyRenamePanel: NSPanel {
         field.bezelStyle = .roundedBezel
         field.lineBreakMode = .byTruncatingTail
         field.maximumNumberOfLines = 1
+        field.setAccessibilityLabel("Buddy name")
+        field.setAccessibilityHelp("Return saves. Escape cancels. Leave empty to use the default name.")
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         self.field = field
 
@@ -136,6 +138,10 @@ final class BuddyRenamePanel: NSPanel {
         onCommit(field.stringValue)
         orderOut(nil)
     }
+
+    /// The buddy went away under the field: the edit is dropped, nothing
+    /// is committed to a character that is no longer showing.
+    func dismiss() { cancelAndClose() }
 
     /// Escape drops the edit; every other command is the field's own.
     private func cancelAndClose() {

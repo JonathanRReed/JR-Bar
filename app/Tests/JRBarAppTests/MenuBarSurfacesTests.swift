@@ -33,8 +33,6 @@ struct MenuBarSurfacesTests {
     func tileCaptureRectParked() {
         let parked = item("P", x: 7, y: 970)
         #expect(MenuBarTileMath.captureRect(of: parked, row: row) == nil)
-        #expect(MenuBarTileMath.capturableItems(
-            [item("A", x: 100), parked], row: row).map(\.id) == ["A"])
     }
 
     @Test("an item half off the row's band still clips to a capturable sliver")
@@ -99,23 +97,6 @@ struct MenuBarSurfacesTests {
         tiles.stop()
     }
 
-    @MainActor
-    @Test("an uncapturable ghost keeps the icon fallback — no empty-bar screenshot")
-    func tileRefreshSkipsGhosts() async {
-        let tiles = MenuBarLiveTiles()
-        var captured: [CGRect] = []
-        tiles.capture = { rect in captured.append(rect); return nil }
-        tiles.rowRects = { [self.row] }
-        // "G" is a concealed item's ghost — on-row frame, no pixels.
-        tiles.isCapturable = { $0.id != "G" }
-        tiles.itemsProvider = { [
-            self.item("A", x: 100), self.item("G", x: 200),
-        ] }
-        await tiles.refreshOnce()
-        #expect(captured.map(\.minX) == [100])
-        tiles.stop()
-    }
-
     // MARK: Appearance — settings → cover look
 
     @Test("defaults reproduce the shipping cover — menubar material, no tint, square, no separator")
@@ -166,7 +147,7 @@ struct MenuBarSurfacesTests {
 
     // MARK: Profiles — capture / apply / save / rename / delete
 
-    @Test("capture keeps the look, reveal, spacing and spacers — and only a profile's own deltas")
+    @Test("capture keeps the look, reveal and spacing — and only a profile's own deltas")
     func profileCapture() {
         var settings = MenuBarSettings(enabled: true,
                                        rehideSeconds: 9, rehideMode: .untilClick,
@@ -174,8 +155,7 @@ struct MenuBarSurfacesTests {
                                        coverMaterial: .hud,
                                        coverTint: "#112233", coverTintOpacity: 0.5,
                                        coverRoundness: 6, showCoverSeparator: true,
-                                       itemSpacing: 8,
-                                       spacers: [MenuBarSettings.Spacer(id: "s1", label: "•", width: 40)])
+                                       itemSpacing: 8)
         settings.sections = ["A": .hidden]
         let profile = MenuBarProfiles.capture(name: "Work", from: settings, id: "p1")
         #expect(profile.name == "Work")
@@ -191,7 +171,6 @@ struct MenuBarSurfacesTests {
         #expect(profile.rehideMode == .untilClick)
         #expect(profile.rehideSeconds == 9)
         #expect(profile.itemSpacing == 8)
-        #expect(profile.spacers == [MenuBarSettings.Spacer(id: "s1", label: "•", width: 40)])
         // Over an active profile, save-as duplicates what it changes.
         settings.profiles = [profile]
         settings.profiles[0].concealedApps = ["slack": .hidden]
@@ -210,8 +189,7 @@ struct MenuBarSurfacesTests {
             coverMaterial: .popover, coverTint: "#FF0000", coverTintOpacity: 0.8,
             coverRoundness: 10, showCoverSeparator: true,
             revealStyle: .inline, rehideMode: .untilClick, rehideSeconds: 12,
-            itemSpacing: 4,
-            spacers: [MenuBarSettings.Spacer(id: "s1", label: "|")])
+            itemSpacing: 4)
         settings.profiles = [profile]
         MenuBarProfiles.apply(profile, to: &settings)
         // The base is never written; the profile is the active layer.
@@ -226,7 +204,6 @@ struct MenuBarSurfacesTests {
         #expect(settings.rehideMode == .untilClick)
         #expect(settings.rehideSeconds == 12)
         #expect(settings.itemSpacing == 4)
-        #expect(settings.spacers.map(\.id) == ["s1"])
         // Reveal gestures are not the profile's business.
         #expect(!settings.revealOnHover)
         #expect(settings.enabled)
@@ -244,7 +221,6 @@ struct MenuBarSurfacesTests {
         #expect(settings.rehideMode == .timed)
         #expect(settings.rehideSeconds == MenuBarSettings.defaultRehideSeconds)
         #expect(settings.itemSpacing == 0)
-        #expect(settings.spacers.isEmpty)
     }
 
     @Test("save-as overwrites a same-named profile's look and keeps its deltas, appends a new one")
@@ -282,6 +258,43 @@ struct MenuBarSurfacesTests {
         #expect(settings.profiles.count == 1)
         MenuBarProfiles.delete(id: "p1", in: &settings)
         #expect(settings.profiles.isEmpty)
+    }
+
+    @Test("rename rejects another profile's name without changing settings")
+    func profileRenameCollision() {
+        var settings = MenuBarSettings(enabled: true, profiles: [
+            MenuBarSettings.Profile(id: "work", name: "Work", sections: ["a": .hidden]),
+            MenuBarSettings.Profile(id: "travel", name: "Travel", concealedApps: ["b": .alwaysHidden])
+        ])
+        settings.curation.activeProfileID = "travel"
+        settings.displayProfiles = ["display": "travel"]
+        let before = settings
+
+        for name in ["Work", "work", "  WORK  "] {
+            #expect(!MenuBarProfiles.canRename(id: "travel", to: name, in: settings))
+            MenuBarProfiles.rename(id: "travel", to: name, in: &settings)
+            #expect(settings == before)
+        }
+
+        #expect(MenuBarProfiles.canRename(id: "travel", to: "  travel  ", in: settings))
+        #expect(!MenuBarProfiles.canRename(id: "missing", to: "New", in: settings))
+        #expect(!MenuBarProfiles.canRename(id: "travel", to: "None", in: settings))
+        #expect(!MenuBarProfiles.canRename(id: "travel", to: "   ", in: settings))
+        MenuBarProfiles.rename(id: "travel", to: "  travel  ", in: &settings)
+        var renamed = before
+        renamed.profiles[1].name = "travel"
+        #expect(settings == renamed, "own-name capitalization changes only the name")
+
+        // Save still intentionally overwrites the existing profile's look.
+        settings.coverMaterial = .sheet
+        let savedID = MenuBarProfiles.saveCurrent(as: "  WORK  ", in: &settings)
+        #expect(savedID == "work")
+        #expect(settings.profiles.count == 2)
+        #expect(settings.profiles[0].coverMaterial == .sheet)
+        #expect(settings.profiles[0].sections == before.profiles[0].sections)
+        #expect(settings.profiles[1] == renamed.profiles[1])
+        #expect(settings.curation.activeProfileID == "travel")
+        #expect(settings.displayProfiles == before.displayProfiles)
     }
 
     @Test("profiles persist through the settings' Codable round trip")

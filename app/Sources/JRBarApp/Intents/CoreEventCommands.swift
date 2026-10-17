@@ -14,7 +14,7 @@ extension AppCommand {
     nonisolated static let coreRequestMaximumAge: TimeInterval = 10
 
     /// The command a daemon event asks for, or nil for every other event,
-    /// an unknown window, or a request older than `coreRequestMaximumAge`.
+    /// an unknown window, a request older than `coreRequestMaximumAge`, or one with no time.
     nonisolated static func requested(by event: CoreEvent, now: Date = Date()) -> AppCommand? {
         let command: AppCommand
         switch event.kind {
@@ -26,7 +26,8 @@ extension AppCommand {
         default:
             return nil
         }
-        if let at = event.at, now.timeIntervalSince1970 - at > coreRequestMaximumAge { return nil }
+        // A request with no stamp cannot prove it is fresh, so it opens nothing.
+        guard let at = event.at, now.timeIntervalSince1970 - at <= coreRequestMaximumAge else { return nil }
         return command
     }
 }

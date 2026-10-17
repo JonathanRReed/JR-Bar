@@ -22,6 +22,8 @@ enum ScreenBarPeekIntent: Equatable {
     /// pinned one.
     case toggle
     case close
+    case leave
+    case resumeHover
 }
 
 // MARK: - The ear's marks
@@ -29,29 +31,20 @@ enum ScreenBarPeekIntent: Equatable {
 /// The menu bar's say on the right ear, read off `MenuBarEarFeed`: while
 /// items are tucked away and nothing else claims the side, a resting
 /// mark holds the ear — the peek's home — so the reveal surface is there
-/// whenever there is something to reveal. When hiding stops working the
-/// ear says so in the alert tone, and its peek says why.
+/// whenever there is something to reveal.
 struct ScreenBarMenuBarMarks: Equatable {
     /// How many hidden items the feed tiles.
     var hiddenCount = 0
-    /// Why hiding stopped — the alert mark's VoiceOver words; nil while
-    /// the engine is healthy.
-    var failure: String?
     /// The standing nudge's mark, while its beat on the ear lasts.
     var nudge: ScreenBarWingSlot?
 
-    /// The alert mark: the menu bar itself, in the failed tone — the
-    /// subject, not a generic warning, so it never reads as the band's
-    /// refused program.
-    static let failureSymbol = "menubar.rectangle"
     /// The resting mark: one ellipsis, the ‹'s "more here" — the same
     /// for two items or twenty, so it never reads as a meter. How many
     /// is VoiceOver's and the peek's to say.
     static let restingSymbol = "ellipsis"
 
-    init(hiddenCount: Int = 0, failure: String? = nil, nudge: ScreenBarWingSlot? = nil) {
+    init(hiddenCount: Int = 0, nudge: ScreenBarWingSlot? = nil) {
         self.hiddenCount = hiddenCount
-        self.failure = failure
         self.nudge = nudge
     }
 
@@ -59,7 +52,6 @@ struct ScreenBarMenuBarMarks: Equatable {
     /// on the ear still lasts.
     init(feed: MenuBarEarFeed?, showsNudge: Bool = true) {
         hiddenCount = feed?.hidden.count ?? 0
-        failure = feed?.failure
         nudge = showsNudge ? feed?.nudge.map(Self.nudgeSlot) : nil
     }
 
@@ -86,17 +78,14 @@ struct ScreenBarMenuBarMarks: Equatable {
         count == 1 ? "1 menu bar item tucked away" : "\(count) menu bar items tucked away"
     }
 
-    /// `wings` with the menu bar's marks on the right ear. A failure
-    /// takes the side from whatever ambient mark held it — hiding
-    /// stopped, and the person should see that where they look — then a
-    /// nudge, for its beat. The resting mark only fills an empty side:
-    /// the meter, the media ear and a device beat all keep it, and their
-    /// ear still opens the peek.
+    /// `wings` with the menu bar's marks on the right ear. A nudge takes
+    /// the side from whatever ambient mark held it, for its beat. The
+    /// resting mark only fills an empty side: the meter, the media ear
+    /// and a device beat all keep it, and their ear still opens the
+    /// peek.
     static func apply(_ marks: ScreenBarMenuBarMarks, to wings: ScreenBarWings) -> ScreenBarWings {
         var dressed = wings
-        if let failure = marks.failure {
-            dressed.right = ScreenBarWingSlot(text: failure, symbol: failureSymbol, tone: .alert)
-        } else if let nudge = marks.nudge {
+        if let nudge = marks.nudge {
             // A newcomer or a change holds the side for its beat, then
             // the side goes back to what it showed.
             dressed.right = nudge
@@ -111,11 +100,20 @@ struct ScreenBarMenuBarMarks: Equatable {
 // MARK: - Geometry
 
 /// Where the peek stands and how wide it is — pure, so a test pins it.
-/// It hangs below the band, never over it: the light under the notch
-/// stays one unbroken strip. Its right edge lines up with the right
+/// It hangs below the band when there is room, and flips up on a short
+/// display. Its right edge lines up with the right
 /// ear's outer edge, so it reads as that ear's lobe grown down; a wide
 /// row grows it toward the notch and past it, never off the screen.
 enum ScreenBarPeekLayout {
+    static func corridorContains(_ point: CGPoint, popup: CGRect, ear: CGRect) -> Bool {
+        if popup.contains(point) || ear.contains(point) { return true }
+        // Only the gap below the ear belongs to the popup. A bounding
+        // union also claims the notch above a wide row and steals hover.
+        let gap = CGRect(x: ear.minX, y: popup.maxY, width: ear.width,
+                         height: max(0, ear.minY - popup.maxY))
+        return gap.contains(point)
+    }
+
     static let padding: CGFloat = 10
     static let spacing: CGFloat = 8
     /// A tile's height on the black — the Item Bar's glyph line.
@@ -146,15 +144,20 @@ enum ScreenBarPeekLayout {
         contentWidth(tileWidths: tileWidths, hasWords: hasWords) + 2 * padding
     }
 
-    /// The peek's frame for a panel of `size`: its top below the band
-    /// (or the ear, where no band stands under it), its right edge on
-    /// the ear's outer edge, kept inside the screen. AppKit coordinates.
+    /// Prefer below the band, flip up when needed, and keep content
+    /// below the hardware. AppKit coordinates.
     static func frame(size: CGSize, ear: CGRect, band: CGRect?, screen: CGRect) -> CGRect {
         let top = band.map { min(ear.minY, $0.minY - gapBelowBand) } ?? ear.minY
         let rightmost = screen.maxX - edgeMargin
         let leftmost = screen.minX + edgeMargin
         let x = max(leftmost, min(ear.maxX, rightmost) - size.width)
-        return CGRect(x: x, y: top - size.height, width: size.width, height: size.height)
+        let floor = screen.minY + edgeMargin
+        let ceiling = min(ear.minY, screen.maxY - edgeMargin)
+        let height = min(size.height, max(0, ceiling - floor))
+        let below = top - height
+        let above = (band?.maxY ?? ear.maxY) + gapBelowBand
+        let y = min(ceiling - height, max(floor, below >= floor ? below : above))
+        return CGRect(x: x, y: y, width: size.width, height: height)
     }
 }
 
@@ -165,47 +168,71 @@ enum ScreenBarPeekLayout {
 @MainActor
 @Observable
 final class ScreenBarPeekModel {
-    var tiles: [MenuBarEarFeed.Tile] = []
-    /// Why hiding stopped, when it has — the alert mark's reason.
-    var failure: String?
+    @ObservationIgnored private(set) var layoutRevision = 0
+    var tiles: [MenuBarEarFeed.Tile] = [] {
+        didSet { if tiles != oldValue { layoutRevision &+= 1 } }
+    }
     /// The newcomer or change on offer, with its three answers.
-    var nudge: MenuBarEarFeed.Nudge?
-    var width: CGFloat = ScreenBarPeekLayout.width(tileWidths: [], hasWords: false)
+    var nudge: MenuBarEarFeed.Nudge? {
+        didSet { if nudge != oldValue { layoutRevision &+= 1 } }
+    }
+    var width: CGFloat = ScreenBarPeekLayout.width(tileWidths: [], hasWords: false) {
+        didSet { if width != oldValue { layoutRevision &+= 1 } }
+    }
     /// A glyph was clicked: open that item the Item Bar's way.
     @ObservationIgnored var onOpen: @MainActor (String) -> Void = { _ in }
     /// A nudge's answer was clicked — the only way one is ever answered.
     @ObservationIgnored var onChoose: @MainActor (MenuBarEarChoice, String) -> Void = { _, _ in }
     /// The keep-awake hold the ear's cup or laptop stands for — its words
     /// at the peek's foot, since the ear itself never spells them.
-    var awake: ScreenBarEarMarks.Awake?
+    var awake: ScreenBarEarMarks.Awake? {
+        didSet { if awake != oldValue { layoutRevision &+= 1 } }
+    }
 
     /// Whether the peek carries sentences, which set its floor width.
-    var hasWords: Bool { failure != nil || nudge != nil || awake != nil }
+    var hasWords: Bool { nudge != nil || awake != nil }
 }
 
-/// The peek's face, top to bottom in notch black: the reason hiding
-/// stopped, when it has; the nudge standing, with its three answers; the
-/// hidden glyphs in a row; the keep-awake hold in words. Template glyphs
+/// The peek's face, top to bottom in notch black: the nudge standing,
+/// with its three answers; the hidden glyphs in a row; the keep-awake
+/// hold in words. Template glyphs
 /// are drawn white, as the bar would draw them on a dark wallpaper; a
 /// glyph never photographed shows its app's icon.
 struct ScreenBarPeekView: View {
     let model: ScreenBarPeekModel
+    let viewportHeight: CGFloat?
+
+    init(model: ScreenBarPeekModel, viewportHeight: CGFloat? = nil) {
+        self.model = model
+        self.viewportHeight = viewportHeight
+    }
 
     var body: some View {
+        fittedContent
+            .frame(width: model.width, alignment: .leading)
+            .background(
+                UnevenRoundedRectangle(topLeadingRadius: ScreenBarPeekLayout.topCornerRadius,
+                                       bottomLeadingRadius: ScreenBarPeekLayout.bottomCornerRadius,
+                                       bottomTrailingRadius: ScreenBarPeekLayout.bottomCornerRadius,
+                                       topTrailingRadius: ScreenBarPeekLayout.topCornerRadius,
+                                       style: .continuous)
+                    .fill(.black))
+            .environment(\.colorScheme, .dark)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(model.tiles.isEmpty ? "Menu bar" : "Hidden menu bar items")
+    }
+
+    @ViewBuilder private var fittedContent: some View {
+        if let viewportHeight {
+            ScrollView(.vertical) { contents }
+                .frame(height: viewportHeight)
+        } else {
+            contents
+        }
+    }
+
+    private var contents: some View {
         VStack(alignment: .leading, spacing: ScreenBarPeekLayout.spacing) {
-            if let failure = model.failure {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: ScreenBarMenuBarMarks.failureSymbol)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.red)
-                        .accessibilityHidden(true)
-                    Text(failure)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.92))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .accessibilityElement(children: .combine)
-            }
             if let nudge = model.nudge {
                 ScreenBarPeekNudge(nudge: nudge,
                                    open: { model.onOpen(nudge.tile.id) },
@@ -229,17 +256,6 @@ struct ScreenBarPeekView: View {
             }
         }
         .padding(ScreenBarPeekLayout.padding)
-        .frame(width: model.width, alignment: .leading)
-        .background(
-            UnevenRoundedRectangle(topLeadingRadius: ScreenBarPeekLayout.topCornerRadius,
-                                   bottomLeadingRadius: ScreenBarPeekLayout.bottomCornerRadius,
-                                   bottomTrailingRadius: ScreenBarPeekLayout.bottomCornerRadius,
-                                   topTrailingRadius: ScreenBarPeekLayout.topCornerRadius,
-                                   style: .continuous)
-                .fill(.black))
-        .environment(\.colorScheme, .dark)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(model.tiles.isEmpty ? "Menu bar" : "Hidden menu bar items")
     }
 
     private var tileRow: some View {
@@ -342,8 +358,14 @@ struct ScreenBarPeekTile: View {
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .help(tile.name + " — click to open")
-        .accessibilityLabel(tile.name)
+        .accessibilityLabel(Self.spokenName(tile))
         .accessibilityHint("Opens its menu")
+    }
+
+    /// The tile's name for VoiceOver. The unseen dot is the only sign an
+    /// item changed since you looked, so the name carries it in words.
+    nonisolated static func spokenName(_ tile: MenuBarEarFeed.Tile) -> String {
+        tile.changed ? "\(tile.name), changed since you last looked" : tile.name
     }
 
     @ViewBuilder
@@ -421,10 +443,21 @@ final class ScreenBarPeek {
     let model = ScreenBarPeekModel()
     /// Where it hangs now; nil when the ear is gone.
     var anchor: @MainActor () -> ScreenBarPeekAnchor? = { nil }
-    private(set) var isShown = false
+    private(set) var isShown = false {
+        didSet { if isShown != oldValue { onVisibilityChange(isShown) } }
+    }
+    var onVisibilityChange: @MainActor (Bool) -> Void = { _ in }
     private(set) var isPinned = false
     private var panel: ScreenBarPeekPanel?
     private var hosting: NSHostingView<ScreenBarPeekView>?
+    private var sizeProbe: NSHostingView<ScreenBarPeekView>?
+    private var naturalSize: (revision: Int, size: NSSize)?
+    private var displayedRevision: Int?
+    var measureNaturalSize: @MainActor (NSHostingView<ScreenBarPeekView>) -> NSSize = { probe in
+        probe.layoutSubtreeIfNeeded()
+        return probe.fittingSize
+    }
+    private var hoverDismissAnchor: ScreenBarPeekAnchor?
     /// Esc while the peek is pinned (`CardEscapeWatch`): only an Esc no
     /// other JR-Bar window owns is taken.
     private var escape: CardEscapeWatch?
@@ -436,24 +469,36 @@ final class ScreenBarPeek {
 
     /// The panel's frame while it hangs.
     var frame: NSRect? { isShown ? panel?.frame : nil }
+    var canResumeHover: Bool {
+        guard let hoverDismissAnchor, panel?.isVisible == true else { return false }
+        return !isShown && anchor() == hoverDismissAnchor
+    }
+    var hoverFrame: NSRect? { isShown || canResumeHover ? panel?.frame : nil }
 
-    /// The peek eases in and out like the band (0.18 s, the context's
-    /// own curve); Reduce Motion keeps the instant swap.
-    private static let fadeSeconds: TimeInterval = 0.18
+    /// Entry remains a soft fade; dismissal leaves faster. Reduce Motion swaps immediately.
+    private static let revealSeconds: TimeInterval = 0.18
+    private static let dismissSeconds: TimeInterval = 0.10
+    var presentPanel: @MainActor (ScreenBarPeekPanel, CGFloat?) -> Void = { panel, start in
+        NotchSurfaceMotion.present(panel, from: start, duration: ScreenBarPeek.revealSeconds,
+                                   reducedDuration: nil, curve: nil)
+    }
 
     func show(pinned: Bool) {
-        guard anchor() != nil else { return }
+        guard anchor() != nil else { hide(); return }
         let panel = self.panel ?? makePanel()
         if pinned, !isPinned { installKeyMonitors() }
         isPinned = isPinned || pinned
         guard !isShown else { relayout(); return }
+        hoverDismissAnchor = nil
         isShown = true
         panel.ignoresMouseEvents = false
         relayout()
-        NotchSurfaceMotion.present(panel, from: 0, duration: Self.fadeSeconds, reducedDuration: nil, curve: nil)
+        guard isShown else { return }
+        presentPanel(panel, panel.isVisible ? nil : 0)
     }
 
-    func hide() {
+    func hide(resumable: Bool = false) {
+        hoverDismissAnchor = resumable && isShown && !isPinned ? anchor() : nil
         removeKeyMonitors()
         isPinned = false
         guard isShown, let panel else { isShown = false; return }
@@ -462,7 +507,7 @@ final class ScreenBarPeek {
         // click on a glyph lands on a fading panel and must not open the
         // item twice.
         panel.ignoresMouseEvents = true
-        NotchSurfaceMotion.dismiss(panel, duration: Self.fadeSeconds, reducedDuration: nil, curve: nil,
+        NotchSurfaceMotion.dismiss(panel, duration: Self.dismissSeconds, reducedDuration: nil, curve: nil,
                                    stillGone: { [weak self] in self.map { !$0.isShown } ?? false })
     }
 
@@ -472,16 +517,34 @@ final class ScreenBarPeek {
     func relayout() {
         guard isShown, let panel, let hosting else { return }
         guard let anchor = anchor() else { hide(); return }
-        let size = hosting.fittingSize
+        let revision = model.layoutRevision
+        let size: NSSize
+        if let cached = naturalSize, cached.revision == revision {
+            size = cached.size
+        } else {
+            let view = ScreenBarPeekView(model: model)
+            let probe = sizeProbe ?? NSHostingView(rootView: view)
+            probe.sizingOptions = [.intrinsicContentSize]
+            sizeProbe = probe
+            probe.rootView = view
+            size = measureNaturalSize(probe)
+            naturalSize = (revision, size)
+        }
         let frame = ScreenBarPeekLayout.frame(size: CGSize(width: model.width, height: size.height),
                                               ear: anchor.ear, band: anchor.band, screen: anchor.screen)
+        let viewportHeight = frame.height < size.height ? frame.height : nil
+        if displayedRevision != revision || hosting.rootView.viewportHeight != viewportHeight {
+            hosting.rootView = ScreenBarPeekView(model: model, viewportHeight: viewportHeight)
+            hosting.layoutSubtreeIfNeeded()
+            displayedRevision = revision
+        }
         if panel.frame != frame { panel.setFrame(frame, display: true) }
     }
 
     func makePanel() -> ScreenBarPeekPanel {
         let panel = ScreenBarPeekPanel()
         let hosting = NSHostingView(rootView: ScreenBarPeekView(model: model))
-        hosting.sizingOptions = []
+        hosting.sizingOptions = [.intrinsicContentSize]
         panel.contentView = hosting
         self.panel = panel
         self.hosting = hosting
@@ -523,10 +586,12 @@ extension ScreenBarController {
     /// and when a gesture is the ear's rather than the bar's.
     func attachMenuBar(_ menuBar: MenuBarUtility, interaction: ScreenBarInteraction) {
         menuBar.earAvailable = { [weak self] in self?.carriesMenuBarMarks ?? false }
-        menuBar.earAnswersGesture = { [weak self] in
+        menuBar.earAnswersGesture = { [weak self] point in
             guard let self else { return false }
-            let point = NSEvent.mouseLocation
             return self.peekZone(atScreenPoint: point) || self.peekCorridor(contains: point)
+                || self.hoverScreenRects.contains(where: { $0.contains(point) })
+                || self.shoulderContains(point)
+                || ScreenBarGeometry.islandScreenRect?.contains(point) == true
         }
         peek.model.onOpen = { [weak self, weak menuBar] id in
             self?.peek.hide()
@@ -542,6 +607,7 @@ extension ScreenBarController {
         interaction.peekState = { [weak self] in
             (shown: self?.peek.isShown ?? false, pinned: self?.peek.isPinned ?? false)
         }
+        interaction.peekCanResume = { [weak self] in self?.peek.canResumeHover ?? false }
         interaction.onPeek = { [weak self] intent in self?.handlePeek(intent) }
         observeMenuBarFeed(menuBar)
     }

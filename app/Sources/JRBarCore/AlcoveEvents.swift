@@ -646,6 +646,8 @@ public struct AlcoveMedia: Equatable, Sendable {
     public var artist: String?
     public var album: String?
     public var playing: Bool
+    /// Positive media seconds per real second, when the source reports it.
+    public var playbackRate: Double?
     /// `kMRMediaRemoteNowPlayingInfoArtworkData`, a PNG/JPEG payload.
     public var artworkData: Data?
     /// The now-playing app's bundle id when the source named one — the
@@ -662,11 +664,13 @@ public struct AlcoveMedia: Equatable, Sendable {
 
     public init(title: String, artist: String? = nil, album: String? = nil,
                 playing: Bool, artworkData: Data? = nil, bundleIdentifier: String? = nil,
-                duration: Double? = nil, elapsed: Double? = nil, timestamp: Double? = nil) {
+                duration: Double? = nil, elapsed: Double? = nil, timestamp: Double? = nil,
+                playbackRate: Double? = nil) {
         self.title = title
         self.artist = artist
         self.album = album
         self.playing = playing
+        self.playbackRate = playbackRate.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
         self.artworkData = artworkData
         self.bundleIdentifier = bundleIdentifier
         self.duration = duration
@@ -680,22 +684,23 @@ public struct AlcoveMedia: Equatable, Sendable {
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.title == rhs.title && lhs.artist == rhs.artist && lhs.album == rhs.album
             && lhs.playing == rhs.playing
+            && lhs.playbackRate == rhs.playbackRate
             && ArtworkPrint(lhs.artworkData) == ArtworkPrint(rhs.artworkData)
             && lhs.bundleIdentifier == rhs.bundleIdentifier && lhs.duration == rhs.duration
             && lhs.elapsed == rhs.elapsed && lhs.timestamp == rhs.timestamp
     }
 
     /// The playhead as of `date`: the sampled `elapsed` advanced by
-    /// wall-clock drift while playing (rate ≈ 1 — MediaRemote reports
-    /// the nominal speed for scrub-rate players, which overstates a
-    /// slowed stream less than a dead playhead would understate it).
+    /// wall-clock drift at the reported speed while playing. A missing
+    /// or invalid rate keeps the previous 1x fallback.
     /// nil when the source never named a playhead — the slider stays
     /// hidden rather than sit at 0:00 lying.
     public func liveElapsed(at date: Date = Date()) -> Double? {
         guard let elapsed else { return nil }
         var value = elapsed
         if playing, let timestamp, timestamp > 0 {
-            value += max(0, date.timeIntervalSinceReferenceDate - timestamp)
+            let advanced = value + max(0, date.timeIntervalSinceReferenceDate - timestamp) * (playbackRate ?? 1)
+            if advanced.isFinite { value = advanced }
         }
         if let duration, duration > 0 { value = min(value, duration) }
         return max(0, value)
@@ -736,7 +741,8 @@ public struct AlcoveMedia: Equatable, Sendable {
                            duration: seconds("kMRMediaRemoteNowPlayingInfoDuration"),
                            elapsed: (info["kMRMediaRemoteNowPlayingInfoElapsedTime"] as? NSNumber)?
                                .doubleValue,
-                           timestamp: timestamp)
+                           timestamp: timestamp,
+                           playbackRate: rate)
     }
 
     /// The perl adapter's line — the same now-playing dictionary, already
@@ -758,7 +764,8 @@ public struct AlcoveMedia: Equatable, Sendable {
                            bundleIdentifier: string("bundleIdentifier"),
                            duration: (payload["duration"] as? NSNumber)?.doubleValue,
                            elapsed: (payload["elapsed"] as? NSNumber)?.doubleValue,
-                           timestamp: (payload["timestamp"] as? NSNumber)?.doubleValue)
+                           timestamp: (payload["timestamp"] as? NSNumber)?.doubleValue,
+                           playbackRate: (payload["playbackRate"] as? NSNumber)?.doubleValue)
     }
 
     /// Music's own `com.apple.Music.playerInfo` distributed payload —
@@ -971,11 +978,18 @@ public enum AlcovePower {
 }
 
 extension NotchIsland {
-    /// Points of idle content a Now Playing strip adds: the artwork
-    /// thumbnail, a truncated "title — artist", and the visualizer bars.
-    /// Fixed, like every idle content measure — the panel's frame is its
-    /// drawn shape, so the width is never measured off a live label.
-    public static let mediaContentWidth: CGFloat = 148
+    /// The Now Playing strip is Alcove's compact live activity: the cover
+    /// on one side of the notch and a small waveform on the other, never a
+    /// title (the card and the tooltip carry the words). Every measure is
+    /// fixed, so the island's width is the same for every track and never
+    /// shifts as the title changes; the panel's frame is its drawn shape,
+    /// so nothing here is measured off a live label.
+    public static let mediaArtWidth: CGFloat = 14
+    public static let mediaBarsWidth: CGFloat = 22
+    public static let mediaGap: CGFloat = 6
+    /// Both halves together, for when they share a shoulder (an agent
+    /// HUD holds the other) and for the notch-less pill.
+    public static let mediaContentWidth: CGFloat = mediaArtWidth + mediaGap + mediaBarsWidth
     /// The gap between the session dots and the media strip.
     public static let mediaSeparatorWidth: CGFloat = 10
 
@@ -998,6 +1012,32 @@ extension NotchIslandLayout {
     /// slot — room for the glyph and one line of copy.
     public static let noticeShoulder: CGFloat = 50
     public static let noticeMinWidth: CGFloat = 240
+    /// A one-line notice is as wide as its copy asks (`noticeWidth`),
+    /// kept between these reaches past the notch's side: never a sliver
+    /// narrower than the shoulder's flare needs, never wider than the
+    /// grown card (which is its own width less the slot's).
+    public static let noticeMinShoulder: CGFloat = 28
+    public static let noticeMaxShoulder: CGFloat = 64
+    /// What a notice's line spends besides its words: the glyph and the
+    /// gap after it, and the air at each end of the line.
+    public static let noticeGlyphRoom: CGFloat = 12 + 7
+    public static let noticeLineAir: CGFloat = 16
+    /// The notch-less pill's own bounds for the same fit.
+    public static let noticeFloatingMinWidth: CGFloat = 150
+    public static let noticeFloatingMaxWidth: CGFloat = 340
+
+    /// How wide a one-line notice's shape is for words that measure
+    /// `copyWidth` points: the line's room (glyph, words, air) plus the
+    /// body's inset on each side, held between the least and the most a
+    /// shoulder reaches past the notch. A short "Tea done" is a lip a
+    /// little wider than the notch, a long line is the most the card
+    /// would allow, and it is always a whole number of points.
+    public static func noticeWidth(slotWidth: CGFloat, copyWidth: CGFloat) -> CGFloat {
+        let needed = noticeGlyphRoom + max(0, copyWidth) + 2 * noticeLineAir + 2 * bodyInset
+        let low = slotWidth > 0 ? slotWidth + 2 * noticeMinShoulder : noticeFloatingMinWidth
+        let high = slotWidth > 0 ? slotWidth + 2 * noticeMaxShoulder : noticeFloatingMaxWidth
+        return min(high, max(low, needed.rounded(.up)))
+    }
     /// How far below the notch the bare notice capsule reaches — one
     /// line's worth of lip.
     public static let noticeLip: CGFloat = 22
@@ -1020,13 +1060,17 @@ extension NotchIslandLayout {
     /// under the bar's black at the standard 8 pt corner, nearly all of
     /// it at a 16 pt one. The climb grows with the height, at most about
     /// half a point a point, so stepping up a point at a time clears the
-    /// room in a few steps. The width is exactly the slot plus its
-    /// shoulders — never more: a minimum that could outgrow
-    /// notch-plus-wings would read as a panel, not the notch speaking.
-    /// Notch-less screens get the fixed floating pill.
+    /// room in a few steps. The width is the slot plus its shoulders —
+    /// never more: a minimum that could outgrow notch-plus-wings would
+    /// read as a panel, not the notch speaking. Given `copyWidth` (the
+    /// line's measured words) the shoulders fit the copy
+    /// (`noticeWidth`); without it, the standard fixed width. Notch-less
+    /// screens get the floating pill.
     public static func noticeSize(slotWidth: CGFloat, notchDepth: CGFloat,
-                                  underHousing restingRadius: CGFloat? = nil) -> CGSize {
-        let width = slotWidth > 0 ? slotWidth + 2 * noticeShoulder : noticeMinWidth
+                                  underHousing restingRadius: CGFloat? = nil,
+                                  copyWidth: CGFloat? = nil) -> CGSize {
+        let width = copyWidth.map { noticeWidth(slotWidth: slotWidth, copyWidth: $0) }
+            ?? (slotWidth > 0 ? slotWidth + 2 * noticeShoulder : noticeMinWidth)
         guard notchDepth > 0, let restingRadius else {
             return CGSize(width: width, height: notchDepth + noticeLip)
         }

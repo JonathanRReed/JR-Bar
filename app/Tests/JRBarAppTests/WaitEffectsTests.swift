@@ -561,6 +561,14 @@ struct WaitEffectsTests {
         #expect(WaitPolicy.fade < WaitPolicy.beamAfter - WaitPolicy.orbAfter)
     }
 
+    @Test("a hold deadline that is not a plausible time cannot build an unbounded schedule")
+    func railTicksAreBounded() {
+        let absurd = Self.start.addingTimeInterval(1.7e12)
+        let ticks = RailHoldRing.ticks(from: Self.start, until: absurd, every: 1)
+        #expect(ticks.count <= Int(RailHoldRing.maximumHorizon) + 2)
+        #expect(ticks.last == Self.start.addingTimeInterval(RailHoldRing.maximumHorizon))
+    }
+
     @Test("the Rail's hold ring schedule is framed, so its deadline fires")
     func railTicksAreFramed() {
         let deadline = Self.start.addingTimeInterval(3)

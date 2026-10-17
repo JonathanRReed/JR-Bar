@@ -143,8 +143,9 @@ enum MenuBarBarLayout {
 /// and Esc clears the filter before it folds the bar.
 enum MenuBarBarKeys {
     enum Key: Equatable, Sendable {
-        case left, right, first, last, submit, cancel, backspace
+        case left, right, first, last, submit, cancel, clearFilter, backspace
         case text(String)
+        case query(String)
         /// ⌘1…⌘9 — the tile at that place in the (filtered) row.
         case jump(Int)
     }
@@ -167,7 +168,7 @@ enum MenuBarBarKeys {
         let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
         guard !words.isEmpty else { return items }
         return items.filter { item in
-            let haystack = item.ownerName + " " + (item.title ?? "")
+            let haystack = item.ownerName + " " + (item.title ?? "") + " " + (item.searchName ?? "")
             return words.allSatisfy { haystack.localizedStandardContains($0) }
         }
     }
@@ -175,6 +176,18 @@ enum MenuBarBarKeys {
     /// The selection kept inside a row of `count` tiles.
     nonisolated static func clamped(_ selection: Int, count: Int) -> Int {
         count == 0 ? 0 : min(max(0, selection), count - 1)
+    }
+
+    nonisolated static func refreshed(_ state: State, from oldItems: [MenuBarItem],
+                                      to newItems: [MenuBarItem]) -> State {
+        let oldVisible = filter(oldItems, query: state.query)
+        let newVisible = filter(newItems, query: state.query)
+        let oldIndex = clamped(state.selection, count: oldVisible.count)
+        let selectedID = oldVisible.indices.contains(oldIndex) ? oldVisible[oldIndex].id : nil
+        var next = state
+        next.selection = selectedID.flatMap { id in newVisible.firstIndex { $0.id == id } }
+            ?? clamped(state.selection, count: newVisible.count)
+        return next
     }
 
     /// One key against the bar: the next state and what the bar does.
@@ -195,6 +208,9 @@ enum MenuBarBarKeys {
         case .text(let typed):
             next.query += typed
             next.selection = 0
+        case .query(let query):
+            next.query = query
+            next.selection = 0
         case .backspace:
             guard !next.query.isEmpty else { return (state, .none) }
             next.query.removeLast()
@@ -208,6 +224,8 @@ enum MenuBarBarKeys {
         case .cancel:
             guard !state.query.isEmpty else { return (state, .close) }
             next = State()
+        case .clearFilter:
+            next = State()
         }
         return (next, .none)
     }
@@ -217,6 +235,13 @@ enum MenuBarBarKeys {
     nonisolated static func key(keyCode: UInt16, characters: String?,
                                 modifiers: NSEvent.ModifierFlags) -> Key? {
         let flags = modifiers.intersection([.command, .control, .option, .shift])
+        guard flags.intersection([.control, .option]).isEmpty else { return nil }
+        if flags.contains(.command) {
+            if flags == .command, let characters, let digit = Int(characters), (1...9).contains(digit) {
+                return .jump(digit)
+            }
+            return nil
+        }
         switch Int(keyCode) {
         case kVK_LeftArrow: return .left
         case kVK_RightArrow: return .right
@@ -229,24 +254,47 @@ enum MenuBarBarKeys {
         default: break
         }
         guard let characters, !characters.isEmpty else { return nil }
-        if flags == .command {
-            if let digit = Int(characters), (1...9).contains(digit) { return .jump(digit) }
-            return nil
-        }
         guard flags.isSubset(of: [.shift]),
               characters.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0)
                                                       && $0.value < 0xF700 }) else { return nil }
         return .text(characters)
     }
 
-    /// Whether the bar's local key monitor takes a key-down. The
-    /// keyboard's bar claims every key aimed at its own window — it
-    /// answers its own and swallows the rest, so a stray ⌘Q or ⌘W never
-    /// reaches JR-Bar's menus from under it — and leaves a key aimed at
-    /// another JR-Bar window, the palette's field, to that window. The
-    /// pointer's bar takes Esc alone, to fold.
-    nonisolated static func claims(keyCode: UInt16, keyboard: Bool, inBar: Bool) -> Bool {
-        keyboard ? inBar : Int(keyCode) == kVK_Escape
+    /// Keys outside the panel and Control/Option chords keep their responder
+    /// path. Inside the keyboard bar, the caller routes text to the field
+    /// and navigation to tiles while keeping ⌘Q/⌘W out of the app's menus.
+    /// The pointer's bar takes Escape alone.
+    nonisolated static func claims(keyCode: UInt16, keyboard: Bool, inBar: Bool,
+                                   modifiers: NSEvent.ModifierFlags = []) -> Bool {
+        guard modifiers.intersection([.control, .option]).isEmpty else { return false }
+        return keyboard ? inBar : Int(keyCode) == kVK_Escape && !modifiers.contains(.command)
+    }
+
+    nonisolated static func usesNativeTextInput(_ key: Key?, characters: String?,
+                                               modifiers: NSEvent.ModifierFlags,
+                                               markedText: Bool) -> Bool {
+        let flags = modifiers.intersection([.command, .control, .option, .shift])
+        if flags.contains(.command) {
+            return flags.isSubset(of: [.command, .shift])
+                && ["a", "c", "v", "x", "z"].contains(characters?.lowercased() ?? "")
+        }
+        if markedText { return true }
+        guard let key else {
+            guard let characters, !characters.isEmpty else {
+                return flags.contains(.option) && !flags.contains(.control)
+            }
+            return characters.unicodeScalars.allSatisfy {
+                !CharacterSet.controlCharacters.contains($0) && !(0xF700...0xF8FF).contains($0.value)
+            }
+        }
+        switch key {
+        case .text(_), .backspace: return true
+        default: return false
+        }
+    }
+
+    nonisolated static func searchWidth(_ query: String) -> CGFloat {
+        max(140, chipWidth(query))
     }
 
     /// The typed filter's chip width — measured in the chip's own font,
@@ -256,7 +304,19 @@ enum MenuBarBarKeys {
         guard !query.isEmpty else { return 0 }
         let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         let text = (query as NSString).size(withAttributes: [.font: font]).width
-        return min(170, max(40, ceil(text) + 36))
+        return min(190, max(60, ceil(text) + 56))
+    }
+
+    nonisolated static var noMatchesWidth: CGFloat {
+        ceil(("No matches" as NSString).size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium)
+        ]).width)
+    }
+
+    nonisolated static var noItemsWidth: CGFloat {
+        ceil(("No hidden items" as NSString).size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium)
+        ]).width)
     }
 }
 
@@ -270,8 +330,8 @@ final class MenuBarBarModel {
     /// Items macOS parked off the row — no pixels to capture, so their
     /// tiles carry the state glyph instead of pretending otherwise.
     var parkedIDs: Set<String> = []
-    /// Photographed glyphs by item id — the real face a concealed item
-    /// has no pixels for right now.
+    /// Photographed glyphs by item id — the real face a hidden item has
+    /// no pixels for right now.
     var glyphs: [String: MenuBarGlyphCache.Face] = [:]
     /// Items whose picture changed since the bar last closed — a sync
     /// badge, a VPN's state — marked with a dot.
@@ -307,7 +367,11 @@ final class MenuBarBarModel {
     /// The row's widths as the frame measures them: the typed filter's
     /// chip, when there is one, leads the tiles.
     func rowWidths(liveWidths: [String: CGFloat]) -> [CGFloat] {
-        let chip = MenuBarBarKeys.chipWidth(keys?.query ?? "")
+        let chip = keys.map { MenuBarBarKeys.searchWidth($0.query) } ?? 0
+        if chip > 0, visibleItems.isEmpty {
+            let message = keys?.query.isEmpty == true ? MenuBarBarKeys.noItemsWidth : MenuBarBarKeys.noMatchesWidth
+            return [chip, message]
+        }
         return (chip > 0 ? [chip] : []) + tileWidths(liveWidths: liveWidths)
     }
 }
@@ -380,31 +444,11 @@ struct MenuBarEarFeed: Equatable {
 
     /// The hidden and always-hidden runs, in the Item Bar's order.
     var hidden: [Tile] = []
-    /// Why hiding stopped, in the peek's words — the ear's alert mark
-    /// stands while it is set. nil while the engine is healthy.
-    var failure: String?
     /// The nudge standing now, if any — one at a time.
     var nudge: Nudge?
 
     /// Whether there is anything of the menu bar's for the ear to show.
-    var isEmpty: Bool { hidden.isEmpty && failure == nil && nudge == nil }
-
-    /// The failure worth an alert on the ear, or nil. Only two states
-    /// are one: macOS refusing every assertion (nothing is hidden, the
-    /// real icon is back), and the concealer's framework missing on a
-    /// macOS that ships it — a point release that renamed it. On macOS
-    /// 26 the spacer engine is simply the engine, and a forced or
-    /// unnotarized spacer is the person's own choice: no alert.
-    nonisolated static func failure(for health: MenuBarEngineHealth, osMajor: Int) -> String? {
-        switch health {
-        case .concealerFailing:
-            return health.line()
-        case .spacer(.frameworkMissing) where osMajor >= 27:
-            return "macOS's concealer didn't load on this Mac, so hiding fell back to the spacer engine — a macOS update may have moved it."
-        default:
-            return nil
-        }
-    }
+    var isEmpty: Bool { hidden.isEmpty && nudge == nil }
 
     /// The feed for `items` — the Item Bar's own tiles, each wearing the
     /// face the cache holds for it.
@@ -452,14 +496,14 @@ enum MenuBarEarChoice: CaseIterable, Sendable {
 /// silence, so turning this on never nudges about the whole bar.
 enum MenuBarNewcomers {
     /// The apps in `items` a nudge can speak for, in bar order, once
-    /// each: someone else's, concealable per app (Apple's own extras and
-    /// bare helpers are not), never our own family.
+    /// each: someone else's, an app the record speaks for (Apple's own
+    /// extras and bare helpers are not), never our own family.
     nonisolated static func candidates(_ items: [MenuBarItem], ownBundleID: String?) -> [String] {
         var seen = Set<String>()
         var out: [String] = []
         for item in items where !item.isNativeOverflowControl
             && !MenuBarItemLister.isProtected(ownerName: item.ownerName) {
-            guard let id = item.bundleID, MenuBarConcealPlan.canConcealApp(id),
+            guard let id = item.bundleID, MenuBarUtility.recordsApp(id),
                   !(ownBundleID.map { id == $0 || id.hasPrefix($0 + ".") } ?? false),
                   seen.insert(id).inserted else { continue }
             out.append(id)
@@ -557,10 +601,87 @@ struct MenuBarBarAnchor {
 /// required — the gate lives in `MenuBarUtility.trigger`); ⌘-click
 /// pulls the item up a section instead.
 @MainActor
+final class MenuBarFilterEditor {
+    private weak var field: MenuBarFilterField.Field?
+
+    func attach(_ field: MenuBarFilterField.Field) {
+        self.field = field
+        field.owner = self
+    }
+
+    func detach(_ field: MenuBarFilterField.Field) {
+        if self.field === field { self.field = nil }
+    }
+
+    func clear() {
+        field?.delegate = nil
+        field?.owner = nil
+        field = nil
+    }
+
+    @discardableResult
+    func focus(in window: NSWindow) -> Bool {
+        guard let field, field.window === window else { return false }
+        if let current = field.currentEditor(), window.firstResponder === current { return true }
+        if let editor = window.firstResponder as? NSTextView, editor.hasMarkedText() { return false }
+        return window.makeFirstResponder(field)
+    }
+}
+
+struct MenuBarFilterField: NSViewRepresentable {
+    let text: String
+    let editor: MenuBarFilterEditor
+    let onChange: @MainActor (String) -> Void
+
+    func makeNSView(context: Context) -> Field {
+        let field = Field(frame: .zero)
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: 12, weight: .semibold)
+        field.placeholderString = "Filter items"
+        field.maximumNumberOfLines = 1
+        field.cell?.isScrollable = true
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.setAccessibilityLabel("Filter menu bar items")
+        field.delegate = field
+        field.onChange = onChange
+        field.stringValue = text
+        editor.attach(field)
+        return field
+    }
+
+    func updateNSView(_ field: Field, context: Context) {
+        field.onChange = onChange
+        editor.attach(field)
+        field.delegate = field
+        if let current = field.currentEditor() as? NSTextView, current.hasMarkedText() { return }
+        if field.stringValue != text {
+            field.stringValue = text
+            if let current = field.currentEditor() as? NSTextView { current.string = text }
+        }
+    }
+
+    static func dismantleNSView(_ field: Field, coordinator: ()) {
+        field.owner?.detach(field)
+        field.delegate = nil
+        field.onChange = { _ in }
+    }
+
+    final class Field: NSTextField, NSTextFieldDelegate {
+        weak var owner: MenuBarFilterEditor?
+        var onChange: @MainActor (String) -> Void = { _ in }
+
+        func controlTextDidChange(_ notification: Notification) { onChange(stringValue) }
+    }
+}
+
+@MainActor
 final class MenuBarBarPanel: NSPanel {
     static let cornerRadius: CGFloat = 14
 
     private let hosting: NSHostingView<MenuBarBarView>
+    private let filterEditor: MenuBarFilterEditor
 
     init(model: MenuBarBarModel,
          tiles: MenuBarLiveTiles,
@@ -570,14 +691,19 @@ final class MenuBarBarPanel: NSPanel {
          onMoveItem: @escaping @MainActor (MenuBarItem, MenuBarItemSection) -> Void,
          updateWatch: @escaping @MainActor (MenuBarItem) -> Bool? = { _ in nil },
          onUpdateWatch: @escaping @MainActor (MenuBarItem, Bool) -> Void = { _, _ in },
-         beginDrag: @escaping @MainActor (MenuBarItem, NSImage?) -> Void = { _, _ in }) {
+         beginDrag: @escaping @MainActor (MenuBarItem, NSImage?) -> Void = { _, _ in },
+         onClearFilter: @escaping @MainActor () -> Void = {},
+         onQueryChange: @escaping @MainActor (String) -> Void = { _ in }) {
+        let filterEditor = MenuBarFilterEditor()
         let hosting = NSHostingView(rootView: MenuBarBarView(
             model: model, tiles: tiles,
             onTrigger: onTrigger, onRevealItem: onRevealItem,
             itemSection: itemSection, onMoveItem: onMoveItem,
             updateWatch: updateWatch, onUpdateWatch: onUpdateWatch,
-            beginDrag: beginDrag))
+            beginDrag: beginDrag, onClearFilter: onClearFilter, onQueryChange: onQueryChange,
+            filterEditor: filterEditor))
         self.hosting = hosting
+        self.filterEditor = filterEditor
         let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 120, height: 26))
         glass.cornerRadius = Self.cornerRadius
         glass.style = .regular
@@ -614,6 +740,8 @@ final class MenuBarBarPanel: NSPanel {
     var takesKeys = false
     override var canBecomeKey: Bool { takesKeys }
     override var canBecomeMain: Bool { false }
+    func focusFilter() { filterEditor.focus(in: self) }
+    func releaseFilter() { filterEditor.clear() }
 }
 
 /// The tiles' SwiftUI half: each tile shows the item's own face — a
@@ -641,6 +769,9 @@ struct MenuBarBarView: View {
     /// session with the tile's face, so the tile can be dropped on the
     /// menu bar right of the icon to show its app.
     var beginDrag: @MainActor (MenuBarItem, NSImage?) -> Void = { _, _ in }
+    var onClearFilter: @MainActor () -> Void = {}
+    var onQueryChange: @MainActor (String) -> Void = { _ in }
+    var filterEditor = MenuBarFilterEditor()
     /// The tile under the pointer, for its plate.
     @ViewState private var hoveredID: String?
     /// Reduce Motion keeps a pressed tile still; its plate still darkens.
@@ -655,7 +786,7 @@ struct MenuBarBarView: View {
         Group {
             if let note = model.note {
                 MenuBarDropNoteRow(text: note)
-            } else if items.isEmpty && query.isEmpty {
+            } else if items.isEmpty && model.keys == nil {
                 Text("No hidden items")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -668,8 +799,14 @@ struct MenuBarBarView: View {
                     ScrollViewReader { proxy in
                         ScrollView(.horizontal) {
                             HStack(spacing: MenuBarBarLayout.tileGap) {
-                                if !query.isEmpty {
-                                    queryChip(query)
+                                if model.keys != nil {
+                                    searchField(query)
+                                }
+                                if items.isEmpty {
+                                    Text(query.isEmpty ? "No hidden items" : "No matches")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: query.isEmpty ? MenuBarBarKeys.noItemsWidth : MenuBarBarKeys.noMatchesWidth)
                                 }
                                 ForEach(Array(zip(items, widths)), id: \.0.id) { item, width in
                                     Button {
@@ -708,6 +845,7 @@ struct MenuBarBarView: View {
                         }
                         .scrollIndicators(overflow ? .visible : .hidden)
                         .accessibilityLabel("Hidden menu bar items")
+                        .accessibilityValue(query.isEmpty ? "\(items.count) items" : "\(items.count) matches")
                         .onChange(of: selectedID) { _, id in
                             if let id { proxy.scrollTo(id, anchor: .center) }
                         }
@@ -725,24 +863,34 @@ struct MenuBarBarView: View {
         tiles.images[item.id] ?? model.glyphs[item.id]?.image ?? MenuBarAppIcons.icon(for: item)
     }
 
-    /// What the keyboard has typed — the filter the row stands under,
-    /// in the accent the keyboard's pick wears.
-    private func queryChip(_ query: String) -> some View {
+    /// Native text input owns composition, selection and clipboard editing.
+    private func searchField(_ query: String) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 9.5, weight: .bold))
                 .foregroundStyle(Color.accentColor)
-            Text(query)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-                .truncationMode(.head)
+            MenuBarFilterField(text: query, editor: filterEditor, onChange: onQueryChange)
+            if !query.isEmpty {
+                Button {
+                    onClearFilter()
+                    if let window = NSApp.keyWindow { filterEditor.focus(in: window) }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear filter")
+                .help("Clear filter (Escape)")
+            }
         }
         .padding(.horizontal, 9)
-        .frame(width: MenuBarBarKeys.chipWidth(query), height: 24, alignment: .leading)
+        .frame(width: MenuBarBarKeys.searchWidth(query), height: 24, alignment: .leading)
         .background(Capsule().fill(Color.accentColor.opacity(0.14)))
         .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 0.5))
         .frame(height: MenuBarBarLayout.tileSize)
-        .accessibilityLabel("Filter: \(query)")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Item Bar search")
     }
 
     private func itemLabel(for item: MenuBarItem) -> String {
@@ -971,7 +1119,9 @@ final class MenuBarBar {
             },
             updateWatch: { [weak self] item in self?.updateWatch(item) ?? nil },
             onUpdateWatch: { [weak self] item, on in self?.onUpdateWatch(item, on) },
-            beginDrag: { [weak self] item, image in self?.beginTileDrag(item, image: image) })
+            beginDrag: { [weak self] item, image in self?.beginTileDrag(item, image: image) },
+            onClearFilter: { [weak self] in self?.press(.clearFilter) },
+            onQueryChange: { [weak self] query in self?.press(.query(query)) })
         closeNote()
         hang.opened(underPointer: centersOnAnchor(), spot: anchorFrame())
         panel.setFrame(frame(on: screen), display: false)
@@ -1046,6 +1196,9 @@ final class MenuBarBar {
             !rows.contains { $0.intersects(item.bounds) }
         }.map(\.id))
         guard listed != model.items || parked != model.parkedIDs else { return }
+        if let keys = model.keys {
+            model.keys = MenuBarBarKeys.refreshed(keys, from: model.items, to: listed)
+        }
         model.items = listed
         model.parkedIDs = parked
         model.glyphs = glyphs(for: listed)
@@ -1077,6 +1230,7 @@ final class MenuBarBar {
         for monitor in dismissMonitors { NSEvent.removeMonitor(monitor) }
         dismissMonitors = []
         tiles.stop()
+        panel?.releaseFilter()
         panel?.orderOut(nil)
         panel = nil
         isOpen = false
@@ -1183,7 +1337,8 @@ final class MenuBarBar {
         if let keys = NSEvent.addGlobalMonitorForEvents(
             matching: .keyDown,
             handler: { [weak self] event in
-                guard event.keyCode == UInt16(kVK_Escape) else { return }
+                guard MenuBarBarKeys.key(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
+                                        modifiers: event.modifierFlags) == .cancel else { return }
                 Task { @MainActor [weak self] in self?.close() }
             }) {
             dismissMonitors.append(keys)
@@ -1193,15 +1348,24 @@ final class MenuBarBar {
             handler: { [weak self] event in
                 guard let self else { return event }
                 let keyboard = self.model.keys != nil
+                let key = MenuBarBarKeys.key(keyCode: event.keyCode,
+                                             characters: event.charactersIgnoringModifiers,
+                                             modifiers: event.modifierFlags)
+                let marked = (self.panel?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
+                if keyboard, event.window === self.panel, !event.modifierFlags.contains(.control),
+                   MenuBarBarKeys.usesNativeTextInput(key, characters: event.charactersIgnoringModifiers,
+                                                     modifiers: event.modifierFlags, markedText: marked) {
+                    self.panel?.focusFilter()
+                    return event
+                }
                 guard MenuBarBarKeys.claims(keyCode: event.keyCode, keyboard: keyboard,
-                                            inBar: event.window === self.panel) else { return event }
+                                            inBar: event.window === self.panel,
+                                            modifiers: event.modifierFlags) else { return event }
                 guard keyboard else {
                     self.close()
                     return nil
                 }
-                if let key = MenuBarBarKeys.key(keyCode: event.keyCode,
-                                                characters: event.charactersIgnoringModifiers,
-                                                modifiers: event.modifierFlags) {
+                if let key {
                     self.press(key)
                 }
                 return nil

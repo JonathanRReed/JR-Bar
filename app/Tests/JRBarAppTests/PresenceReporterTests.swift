@@ -227,9 +227,15 @@ struct PresenceReporterTests {
 
     @Test("a card's Mirror is watched: asked for on a pinned card, the lens is ours")
     func mirrorOnACard() async {
+        let suite = ScratchDefaults.suiteName("presence-mirror")
+        defer { ScratchDefaults.remove(suite) }
         let timers = ShelfTimerModel(storeURL: FileManager.default.temporaryDirectory
             .appendingPathComponent("jrbar-presence-timers-\(UUID().uuidString).json"))
-        let card = NotchCardModel(timers: timers, tray: ShelfTrayModel(), runtimeEnabled: false)
+        let mirror = ShelfMirrorModel(driver: ShelfMirrorStateTests.Driver(), authorization: { .authorized })
+        let noBattery = AlcovePowerState(hasBattery: false, onAC: false, charging: false,
+                                         percent: nil, fullyCharged: false)
+        let card = NotchCardModel(timers: timers, tray: ShelfTrayModel(defaults: ScratchDefaults.open(suite)),
+                                 utility: ShelfUtilityModel(power: noBattery), mirror: mirror, runtimeEnabled: false)
         card.mirrorEnabled = { true }
         let presence = PresenceReporter(core: CoreModel(), cards: { [card] })
         presence.noteSensors(NotchSensorState(cameraInUse: true))
@@ -237,11 +243,99 @@ struct PresenceReporterTests {
         #expect(!PresenceReporter.mirrorHasCamera(card))
         card.pinned = true
         card.summonMirror()
+        mirror.sync(enabled: true)
         // Summoned before its session is up: the lens can light first.
         #expect(PresenceReporter.mirrorHasCamera(card))
         await settle { !presence.onCall }
         #expect(!presence.onCall, "the Mirror's own lens, seen without a sensor edge")
         card.pinned = false
+        mirror.sync(enabled: false)
         #expect(!PresenceReporter.mirrorHasCamera(card), "folding the card puts the lens away")
+    }
+
+    @Test("waiting for permission does not claim another app's live camera")
+    func permissionWaitingIsNotSelfCapture() {
+        let suite = ScratchDefaults.suiteName("presence-mirror-permission")
+        defer { ScratchDefaults.remove(suite) }
+        let mirror = ShelfMirrorModel(driver: ShelfMirrorStateTests.Driver(), authorization: { .notDetermined },
+                                     requestAccess: { _ in })
+        let noBattery = AlcovePowerState(hasBattery: false, onAC: false, charging: false,
+                                         percent: nil, fullyCharged: false)
+        let card = NotchCardModel(timers: ShelfTimerModel(storeURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("jrbar-presence-timers-\(UUID().uuidString).json")),
+                                 tray: ShelfTrayModel(defaults: ScratchDefaults.open(suite)),
+                                 utility: ShelfUtilityModel(power: noBattery),
+                                 mirror: mirror, runtimeEnabled: false)
+        card.pinned = true
+        card.mirrorEnabled = { true }
+        card.summonMirror()
+        mirror.sync(enabled: true)
+        #expect(mirror.state == .requestingPermission)
+        #expect(!PresenceReporter.mirrorHasCamera(card))
+        mirror.sync(enabled: false)
+        card.pinned = false
+    }
+}
+
+/// The Focus re-read's cache: a granted answer is asked for once a minute,
+/// not on every 15 s beat.
+@Suite("Focus read cache")
+@MainActor
+struct FocusReadCacheTests {
+    /// The clock and the two system probes, counted.
+    final class Probes {
+        var now = Date(timeIntervalSince1970: 1_800_000_000)
+        var authorized = true
+        var focused: Bool? = false
+        var authorizationReads = 0
+        var focusReads = 0
+    }
+
+    private func read(_ cache: FocusReadCache, _ probes: Probes) -> Bool? {
+        cache.read(authorized: { probes.authorizationReads += 1; return probes.authorized },
+                   focused: { probes.focusReads += 1; return probes.focused })
+    }
+
+    @Test("a granted answer is asked for once a minute, the Focus on every read")
+    func grantedAnswerLives() {
+        let probes = Probes()
+        let cache = FocusReadCache(clock: { probes.now })
+        for beat in 0..<4 {
+            probes.now = Date(timeIntervalSince1970: 1_800_000_000 + Double(beat) * 15)
+            probes.focused = beat >= 2
+            #expect(read(cache, probes) == (beat >= 2))
+        }
+        #expect(probes.authorizationReads == 1)
+        #expect(probes.focusReads == 4)
+
+        probes.now = Date(timeIntervalSince1970: 1_800_000_000 + FocusReadCache.authorizationLifetime)
+        _ = read(cache, probes)
+        #expect(probes.authorizationReads == 2, "the minute's end asks the system again")
+    }
+
+    @Test("not being authorized is asked every time and reads nothing")
+    func deniedIsNotRemembered() {
+        let probes = Probes()
+        probes.authorized = false
+        let cache = FocusReadCache(clock: { probes.now })
+        #expect(read(cache, probes) == nil)
+        #expect(read(cache, probes) == nil)
+        #expect(probes.authorizationReads == 2)
+        #expect(probes.focusReads == 0)
+
+        probes.authorized = true
+        probes.focused = true
+        #expect(read(cache, probes) == true, "a grant just given is seen at the next beat")
+    }
+
+    @Test("forgetting asks the system at the next read")
+    func forgetting() {
+        let probes = Probes()
+        let cache = FocusReadCache(clock: { probes.now })
+        _ = read(cache, probes)
+        probes.authorized = false
+        cache.forget()
+        #expect(read(cache, probes) == nil)
+        #expect(probes.authorizationReads == 2)
     }
 }

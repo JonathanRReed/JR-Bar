@@ -177,6 +177,10 @@ def hook_doctor_report(
             )
             entry["installed"] = bool(config.exists and config.hook_events)
             entry["hook_events"] = len(config.hook_events)
+            # Hooks present but switched off in the agent's own settings
+            # (Claude's disableAllHooks, Codex's hooks feature): installed,
+            # and still silent. The app says so instead of "12 events hooked".
+            entry["hooks_enabled"] = bool(config.hooks_enabled)
             registered = registered_commands(config.config_path, spec.provider)
             if spec.provider == "openclaw":
                 # The argv lives in the installed handler, not the gateway config.

@@ -102,4 +102,13 @@ import Testing
         // A short count after a token-ish word is not a secret.
         #expect(clean.contains("tokens: 12"))
     }
+
+    @Test("a secret inside an escaped JSON line is redacted too")
+    func escapedJSONSecret() {
+        let raw = #"core log: {\"serve_token\":\"abcdef123456\",\"count\":3} ok"#
+        let clean = DiagnosticsReport.redact(raw, home: "/Users/j")
+        #expect(!clean.contains("abcdef123456"))
+        #expect(clean.contains("<redacted>"))
+        #expect(clean.contains("ok"))
+    }
 }

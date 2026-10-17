@@ -103,7 +103,8 @@ def test_provider_rows_inspect_without_secrets(fake_home):
     rows = pm.provider_rows(credentials=credentials, state=state)
     assert [row["id"] for row in rows] == [
         "codex", "claude", "cursor", "devin", "grok",
-        "gemini", "antigravity", "opencode", "openai-api",
+        "gemini", "antigravity", "opencode", "factory", "openai-api",
+        "kimi", "kilo", "kiro",
     ]
     devin = next(row for row in rows if row["id"] == "devin")
     assert devin["state"] == "needs_consent"

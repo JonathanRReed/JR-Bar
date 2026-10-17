@@ -15,11 +15,12 @@ from .provider_instances import (
     OPEN_SESSION_ACTION_CHOICES,
     REMOTE_SHARING_CHOICES,
 )
-from .provider_usage_settings import ProviderUsageSettings
+from .provider_usage_settings import USAGE_CONSENT_VERSION, ProviderUsageSettings
 from .provider_usage_sync_settings import ProviderSyncPeer, ProviderSyncSettings
 
-MAX_FEATURE_IDS = 128
 MAX_FEATURE_ID_LENGTH = 128
+# Bound receipt text independently of the number of providers and accounts.
+MAX_FEATURE_IDS = (512 * 1024) // MAX_FEATURE_ID_LENGTH
 
 
 def _require_string(value: object, name: str) -> str:
@@ -37,11 +38,20 @@ class ProviderCollectionFeature:
     browser_sources: bool
     options: tuple[tuple[str, str], ...]
     source_instance_id: str = "default"
+    #: The person's saved consent to this provider's usage read (zero: never
+    #: asked). A collector that makes a request or reads a sign-in checks it.
+    usage_consent_version: int = 0
+
+    @property
+    def usage_consented(self) -> bool:
+        return self.usage_consent_version >= USAGE_CONSENT_VERSION
 
     def __post_init__(self) -> None:
         _require_string(self.provider_id, "provider_id")
         if (
-            type(self.enabled) is not bool
+            type(self.usage_consent_version) is not int
+            or self.usage_consent_version < 0
+            or type(self.enabled) is not bool
             or type(self.browser_sources) is not bool
             or type(self.options) is not tuple
             or len({key for key, _value in self.options}) != len(self.options)
@@ -480,13 +490,6 @@ class ProviderSettingsChangeReceipt:
         ):
             raise ValueError("invalid provider settings change receipt")
 
-    @property
-    def changed_features(self) -> tuple[str, ...]:
-        """Stable ordering for loggers and consumers that avoid set semantics."""
-
-        return tuple(sorted(self.changed_feature_ids))
-
-
 @dataclass(frozen=True, slots=True)
 class ProviderFeatureSettingsProjection:
     """All three typed views plus the revision receipt that produced them."""
@@ -528,6 +531,7 @@ def project_collection_settings(settings: ProviderUsageSettings) -> ProviderColl
                 browser_sources=preference.browser_sources,
                 options=preference.options,
                 source_instance_id=preference.source_instance_id,
+                usage_consent_version=preference.usage_consent_version,
             )
             for preference in settings.providers
         )

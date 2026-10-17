@@ -22,6 +22,23 @@ struct MenuBarBarKeysTests {
          item("dropbox", "Dropbox"), item("zoom", "zoom.us")]
     }
 
+    @Test("search names agree across filtering, Return, jumps and refresh")
+    func searchNameSelection() throws {
+        var named = item("vpn", "Mullvad VPN", title: "Connected")
+        named.identifier = "status"
+        let key = try #require(MenuBarSearchNames.key(for: named))
+        let labeled = MenuBarSearchNames.applying([key: "Private network"], to: [items[0], named])
+        let state = Keys.State(query: "private network")
+        #expect(Keys.filter(labeled, query: state.query).map(\.id) == ["vpn"])
+        #expect(Keys.reduce(state, key: .submit, items: labeled).1 == .trigger(itemID: "vpn"))
+        #expect(Keys.reduce(state, key: .jump(1), items: labeled).1 == .trigger(itemID: "vpn"))
+        let reordered = Array(labeled.reversed())
+        let refreshed = Keys.refreshed(state, from: labeled, to: reordered)
+        #expect(Keys.reduce(refreshed, key: .submit, items: reordered).1 == .trigger(itemID: "vpn"))
+        let cleared = MenuBarSearchNames.applying([:], to: reordered)
+        #expect(Keys.reduce(refreshed, key: .submit, items: cleared).1 == .none)
+    }
+
     @Test("arrows walk the row and stop at its ends; Home and End jump")
     func walk() {
         var state = Keys.State()
@@ -91,6 +108,72 @@ struct MenuBarBarKeysTests {
         #expect(Keys.key(keyCode: UInt16(kVK_F5), characters: "\u{F708}", modifiers: []) == nil)
     }
 
+    @Test("inventory refresh keeps the selected item's identity through insertion and removal")
+    func refreshSelection() {
+        let state = Keys.State(query: "o", selection: 1)
+        let visible = Keys.filter(items, query: state.query)
+        let selected = visible[1]
+        let inserted = [item("new", "New owner")] + items
+        let refreshed = Keys.refreshed(state, from: items, to: inserted)
+        #expect(refreshed.query == state.query)
+        #expect(Keys.reduce(refreshed, key: .submit, items: inserted).1 == .trigger(itemID: selected.id))
+
+        let removed = inserted.filter { $0.id != visible[0].id }
+        let next = Keys.refreshed(refreshed, from: inserted, to: removed)
+        #expect(Keys.reduce(next, key: .submit, items: removed).1 == .trigger(itemID: selected.id))
+
+        let reordered = Array(removed.reversed())
+        let reorderedState = Keys.refreshed(next, from: removed, to: reordered)
+        #expect(Keys.reduce(reorderedState, key: .submit, items: reordered).1 == .trigger(itemID: selected.id))
+    }
+
+    @Test("an empty search reserves its message and clearing the filter keeps the bar open")
+    @MainActor
+    func clearEmptySearch() {
+        let model = MenuBarBarModel()
+        model.items = items
+        let state = Keys.State(query: "no-such-item", selection: 3)
+        model.keys = state
+        #expect(model.visibleItems.isEmpty)
+        #expect(model.rowWidths(liveWidths: [:]) == [Keys.searchWidth("no-such-item"), Keys.noMatchesWidth])
+        let (cleared, effect) = Keys.reduce(state, key: .clearFilter, items: items)
+        #expect(cleared == Keys.State())
+        #expect(effect == .none)
+        model.keys = cleared
+        #expect(model.visibleItems == items)
+        #expect(model.selectedID == items.first?.id)
+        #expect(Keys.reduce(cleared, key: .clearFilter, items: items).1 == .none)
+    }
+
+    @Test("inventory refresh clamps when the selected item disappears and handles empty rows")
+    func refreshMissingSelection() {
+        let state = Keys.State(selection: 3)
+        let reduced = Array(items.prefix(2))
+        let refreshed = Keys.refreshed(state, from: items, to: reduced)
+        #expect(refreshed.selection == 1)
+        #expect(Keys.reduce(refreshed, key: .submit, items: reduced).1 == .trigger(itemID: reduced[1].id))
+        let empty = Keys.refreshed(refreshed, from: reduced, to: [])
+        #expect(empty.selection == 0)
+        #expect(Keys.reduce(empty, key: .submit, items: []).1 == .none)
+        #expect(Keys.refreshed(empty, from: [], to: items).selection == 0)
+    }
+
+    @Test("modified navigation is not turned into bar actions or swallowed from accessibility")
+    func modifiedNavigation() {
+        let codes = [kVK_LeftArrow, kVK_RightArrow, kVK_Tab, kVK_Return, kVK_Escape, kVK_Delete]
+        let chords: [NSEvent.ModifierFlags] = [.control, .option, [.control, .option], [.control, .option, .shift]]
+        for code in codes {
+            for chord in chords {
+                #expect(Keys.key(keyCode: UInt16(code), characters: nil, modifiers: chord) == nil)
+                #expect(!Keys.claims(keyCode: UInt16(code), keyboard: true, inBar: true, modifiers: chord))
+                #expect(!Keys.claims(keyCode: UInt16(code), keyboard: false, inBar: true, modifiers: chord))
+            }
+            #expect(Keys.key(keyCode: UInt16(code), characters: nil, modifiers: .command) == nil)
+        }
+        #expect(Keys.claims(keyCode: UInt16(kVK_ANSI_Q), keyboard: true, inBar: true, modifiers: .command))
+        #expect(!Keys.claims(keyCode: UInt16(kVK_Escape), keyboard: false, inBar: true, modifiers: .command))
+    }
+
     @Test("the keyboard's bar claims only keys aimed at its own window; the pointer's bar only Esc")
     func claimsKeys() {
         let letter = UInt16(kVK_ANSI_K)
@@ -115,29 +198,66 @@ struct MenuBarBarKeysTests {
         #expect(model.selectedID == visible.last?.id, "an out-of-range selection clamps")
         let widths = model.rowWidths(liveWidths: [:])
         #expect(widths.count == visible.count + 1)
-        #expect(widths.first == Keys.chipWidth("o"))
+        #expect(widths.first == Keys.searchWidth("o"))
         model.keys = Keys.State()
-        #expect(model.rowWidths(liveWidths: [:]).count == items.count, "no filter, no chip")
+        #expect(model.rowWidths(liveWidths: [:]).count == items.count + 1, "keyboard search remains visible")
+        model.keys = nil
+        #expect(model.rowWidths(liveWidths: [:]).count == items.count, "the pointer's bar keeps its compact row")
+    }
+
+    @Test("native text replaces the whole query for committed Unicode text and pasted words")
+    func nativeQueryReplacement() {
+        let japanese = item("jp", "辞書", title: "日本語")
+        let state = Keys.State(query: "romaji", selection: 3)
+        let (committed, effect) = Keys.reduce(state, key: .query("日本語"), items: [japanese] + items)
+        #expect(committed.query == "日本語")
+        #expect(committed.selection == 0)
+        #expect(effect == .none)
+        #expect(Keys.filter([japanese] + items, query: committed.query).map(\.id) == ["jp"])
+        let (pasted, _) = Keys.reduce(committed, key: .query("Mullvad Connected"), items: items)
+        #expect(Keys.filter(items, query: pasted.query).map(\.id) == ["vpn"])
+    }
+
+    @Test("composition owns navigation and commit keys while ordinary tile actions stay intact")
+    func nativeCompositionRouting() {
+        let navigation: [Keys.Key] = [.left, .right, .first, .last, .submit, .cancel]
+        for key in navigation {
+            #expect(Keys.usesNativeTextInput(key, characters: nil, modifiers: [], markedText: true))
+            #expect(!Keys.usesNativeTextInput(key, characters: nil, modifiers: [], markedText: false))
+        }
+        #expect(Keys.usesNativeTextInput(.text("a"), characters: "a", modifiers: [], markedText: false))
+        #expect(Keys.usesNativeTextInput(.backspace, characters: nil, modifiers: [], markedText: false))
+        #expect(!Keys.usesNativeTextInput(nil, characters: "\u{F704}", modifiers: [], markedText: false))
+        #expect(!Keys.usesNativeTextInput(nil, characters: "\u{F704}", modifiers: .option, markedText: false))
+        #expect(!Keys.usesNativeTextInput(nil, characters: nil, modifiers: [], markedText: false))
+        #expect(Keys.usesNativeTextInput(nil, characters: "´", modifiers: .option, markedText: false))
+        #expect(Keys.usesNativeTextInput(nil, characters: "", modifiers: .option, markedText: false))
+        for character in ["a", "c", "v", "x", "z"] {
+            #expect(Keys.usesNativeTextInput(nil, characters: character, modifiers: .command, markedText: false))
+        }
+        for marked in [true, false] {
+            #expect(!Keys.usesNativeTextInput(nil, characters: "q", modifiers: .command, markedText: marked))
+            #expect(!Keys.usesNativeTextInput(nil, characters: "w", modifiers: .command, markedText: marked))
+            #expect(!Keys.usesNativeTextInput(.jump(1), characters: "1", modifiers: .command, markedText: marked))
+        }
+    }
+
+    @Test("an empty keyboard bar reserves space for native search and its empty-state text")
+    @MainActor
+    func emptyKeyboardSearchLayout() {
+        let model = MenuBarBarModel()
+        model.keys = Keys.State()
+        #expect(model.rowWidths(liveWidths: [:]) == [Keys.searchWidth(""), Keys.noItemsWidth])
+        #expect(Keys.searchWidth("") >= 140)
     }
 }
 
-/// The keyboard's way in, named where the pointer already goes: the ‹'s
-/// tooltip and the icon menu's Open Item Bar row.
+/// The keyboard's way in, named where the pointer already goes: the icon
+/// menu's Open Item Bar row.
 @Suite("Menu Bar — naming the keyboard's way in")
 struct MenuBarKeyboardHintTests {
     private let toggle = MenuBarHotkeyBinding(action: .toggleReveal, keyCode: UInt32(kVK_ANSI_B),
                                               modifiers: UInt32(cmdKey | optionKey), enabled: true)
-
-    @Test("the ‹ says what a click does, and names the hotkey when it is on")
-    func tooltip() {
-        #expect(MenuBarUtility.chevronToolTip(hiddenCount: 0, toggleHotkey: toggle, style: .bar) == nil)
-        #expect(MenuBarUtility.chevronToolTip(hiddenCount: 1, toggleHotkey: nil, style: .bar)
-                == "1 hidden item — click for the Item Bar")
-        let named = MenuBarUtility.chevronToolTip(hiddenCount: 3, toggleHotkey: toggle, style: .bar)
-        #expect(named?.hasPrefix("3 hidden items — click for the Item Bar. ⌥⌘B opens it for the keyboard") == true)
-        #expect(MenuBarUtility.chevronToolTip(hiddenCount: 2, toggleHotkey: toggle, style: .inline)
-                == "2 hidden items — click to bring them back. ⌥⌘B does the same.")
-    }
 
     @Test("a letter or digit hotkey becomes the menu row's key equivalent; an arrow does not")
     func keyEquivalent() {

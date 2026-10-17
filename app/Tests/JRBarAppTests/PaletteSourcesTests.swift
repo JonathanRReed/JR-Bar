@@ -497,34 +497,6 @@ struct PaletteSourcesTests {
         #expect(PaletteRanking.rank(off, query: "tada", usage: PaletteUsage(), now: now).count == 1)
     }
 
-    // MARK: Archive
-
-    @Test("archive hits read as one quiet line, and a search row carries the query into the window")
-    func archiveRows() {
-        let log = Log()
-        let record = ArchiveRecord(id: "rec1", name: "session.jsonl", sourcePath: "/tmp/session.jsonl",
-                                   byteCount: 10, importedAt: now, sourceModifiedAt: nil,
-                                   provider: "codex", sessionID: "abc", title: "Fix the flaky build")
-        let hit = ArchiveSearchResult(record: record, snippets: ["the «flaky»   test\nfailed twice"])
-        let verbs = ArchivePaletteVerbs(
-            openRecord: { log.calls.append("open:\($0.id):\($1)") },
-            search: { log.calls.append("search:\($0)") },
-            sessionFor: { $0.sessionID == "abc" ? "codex:session:abc" : nil },
-            openSession: { log.calls.append("session:\($0)") })
-        let items = ArchivePaletteRows.items(query: " flaky ", hits: [hit], verbs: verbs)
-        #expect(items.map(\.id) == ["archive.rec1", "archive.search"])
-        #expect(items[0].title == "Fix the flaky build")
-        #expect(items[0].subtitle == "the flaky test failed twice")
-        #expect(items[0].section == .archive)
-        #expect(items[0].actions.map(\.id) == ["open", "session", "reveal", "copyPath"])
-        _ = items[0].primary?.run()
-        _ = items[0].actions[1].run()
-        _ = items[1].primary?.run()
-        #expect(log.calls == ["open:rec1:flaky", "session:codex:session:abc", "search:flaky"])
-        #expect(ArchivePaletteRows.items(query: "fl", hits: [hit], verbs: verbs).isEmpty,
-                "too short to search")
-    }
-
     // MARK: History
 
     private func historyVerbs(_ log: Log) -> HistoryPaletteVerbs {
@@ -600,7 +572,7 @@ struct PaletteSourcesTests {
         source.prepare()
         #expect(await source.results(for: "re").isEmpty, "too short to fetch")
         #expect(fetches.count == 0)
-        #expect(await source.results(for: "release").map(\.id).first == "history.1.0|completed||release notes")
+        #expect(await source.results(for: "release").map(\.id).first == "history.1.0|completed||release notes|")
         #expect(await source.results(for: "notes").count == 2)
         #expect(fetches.count == 1, "one fetch serves the open")
         source.prepare()
@@ -697,39 +669,33 @@ struct PaletteSourcesTests {
         model.setSearchResults([
             PaletteItem(id: "menu.1", title: "Save", icon: .symbol("circle", .gray), kind: "Menu Item",
                         section: menu, actions: []),
-            PaletteItem(id: "archive.1", title: "saved notes", icon: .symbol("circle", .gray),
-                        kind: "Archive", section: .archive, actions: []),
+            PaletteItem(id: "history.1", title: "saved notes", icon: .symbol("circle", .gray),
+                        kind: "History", section: .history, actions: []),
             PaletteItem(id: "menu.2", title: "Save As…", icon: .symbol("circle", .gray), kind: "Menu Item",
                         section: menu, actions: []),
         ], for: "sav")
-        #expect(model.sections.map(\.section.id) == ["results", "appMenu", "archive"])
+        #expect(model.sections.map(\.section.id) == ["results", "appMenu", "history"])
         #expect(model.sections[1].items.map(\.id) == ["menu.1", "menu.2"])
     }
 
     // MARK: Windows and Settings
 
-    @Test("every window and Settings page is a row; the archive only while the hoarder is on")
+    @Test("every window and Settings page is a row")
     func windowRows() {
         let log = Log()
-        func verbs(archive: Bool) -> PaletteWindowVerbs {
-            var openArchive: (@MainActor () -> Void)?
-            if archive { openArchive = { log.calls.append("archive") } }
-            return PaletteWindowVerbs(
-                overview: { log.calls.append("overview") }, usageCenter: {}, history: {}, effects: {},
-                deck: {}, replay: {}, archive: openArchive,
-                panel: {}, checkForUpdates: {}, settings: { log.calls.append("settings:\($0.rawValue)") },
-                whatsNew: { log.calls.append("whatsNew") })
-        }
-        let with = WindowPaletteRows.items(verbs: verbs(archive: true))
-        #expect(with.contains { $0.id == "open.archive" })
-        #expect(!WindowPaletteRows.items(verbs: verbs(archive: false)).contains { $0.id == "open.archive" })
+        let verbs = PaletteWindowVerbs(
+            overview: { log.calls.append("overview") }, usageCenter: {}, history: {}, effects: {},
+            deck: {}, replay: {},
+            panel: {}, checkForUpdates: {}, settings: { log.calls.append("settings:\($0.rawValue)") },
+            whatsNew: { log.calls.append("whatsNew") })
+        let with = WindowPaletteRows.items(verbs: verbs)
         _ = with.first { $0.id == "open.overview" }?.primary?.run()
         let whatsNew = PaletteRanking.rank(with, query: "release notes", usage: PaletteUsage(), now: now).first
         #expect(whatsNew?.id == "open.whatsNew")
         #expect(whatsNew?.kind == "Window")
         _ = whatsNew?.primary?.run()
         let pages = WindowPaletteRows.settingsItems { log.calls.append("settings:\($0.rawValue)") }
-        #expect(pages.count == SettingsStore.Page.allCases.count)
+        #expect(pages.count == SettingsStore.Chapter.allCases.count, "every old page is still one palette row")
         let hit = PaletteRanking.rank(pages, query: "screen bar", usage: PaletteUsage(), now: now).first
         #expect(hit?.id == "settings.devices")
         _ = hit?.primary?.run()
@@ -737,7 +703,7 @@ struct PaletteSourcesTests {
     }
 
     @Test("the palette's What's New takes the route jrbar://window/whats-new takes")
-    func whatsNewRoutesLikeTheLink() {
+    func whatsNewRoutesLikeTheLink() async {
         let router = AppCommandRouter.shared
         let saved = router.openWindow
         defer { router.openWindow = saved }
@@ -747,6 +713,9 @@ struct PaletteSourcesTests {
             overview: {}, usageCenter: { _ in }, history: {}, effects: {}, deck: {}, replay: {},
             panel: {}, checkForUpdates: {}, settings: { _ in })
         windows.whatsNew()
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while opened.isEmpty, clock.now < deadline, !Task.isCancelled { await Task.yield() }
         #expect(opened == [.whatsNew])
         #expect(AppCommand.parse(URL(string: "jrbar://window/whats-new")!) == .window(.whatsNew))
     }
@@ -783,5 +752,16 @@ struct PaletteSourcesTests {
         for _ in 0..<200 where controller.model.rows.count != 2 { await Task.yield() }
         #expect(controller.model.rows.map(\.id) == ["ask.0", "ask.1"])
         #expect(prepared.calls == ["prepare"], "a re-gather never re-prepares")
+    }
+
+    @Test("an ask row keeps the end of a long command, where it says what it does")
+    func askSubtitleKeepsTheCommandsEnd() {
+        let command = "cd /tmp/some-synthetic-project && make clean && make all && find . -name build -type d -prune -exec rm -rf {} +"
+        let line = AgentPaletteRows.askSubtitle(summary: "Run a command in the working folder of this session", preview: command)
+        #expect(line.hasSuffix("-exec rm -rf {} +"))
+        #expect(line.contains("…"))
+        #expect(line.count < 130)
+        #expect(AgentPaletteRows.askSubtitle(summary: "Run it", preview: "ls") == "Run it — ls")
+        #expect(AgentPaletteRows.askSubtitle(summary: "Needs your answer", preview: nil) == "Needs your answer")
     }
 }

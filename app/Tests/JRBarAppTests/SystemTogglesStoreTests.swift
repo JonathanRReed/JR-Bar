@@ -226,6 +226,32 @@ import Testing
         #expect(!state.awake.held, "a refusal is not a reason to hold anyway")
     }
 
+    @Test func aLeaseThatErroredIsNotAnOlderDaemon() async throws {
+        struct Dropped: Error {}
+        #expect(SystemTogglesStore.State.answer(failing: Dropped()) == .failed("the monitor didn't answer."))
+        #expect(SystemTogglesStore.State.answer(failing: Dropped()) != .unavailable)
+
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (store, state, fake) = try leased(defaults)
+        let assertions = FakeAssertions()
+        state.takeAssertion = { _ in assertions.taken += 1; return 0 }
+        state.releaseAssertion = { _ in assertions.released += 1; return kIOReturnSuccess }
+        fake.answer = .failed("the monitor didn't answer.")
+        store.apply(.keepAwake)
+        await settle(state)
+        #expect(store.caption == "Awake: the monitor didn't answer.")
+        #expect(!state.awake.held, "the daemon may hold it: no second hold")
+        #expect(assertions.taken == 0)
+        #expect(!state.leaseUnsupported, "an error does not retire the lease for the connection")
+        // The next tap asks again, and a daemon that answers takes it.
+        fake.answer = .taken
+        store.apply(.keepAwake)
+        await settle(state)
+        #expect(fake.sent.count == 2)
+        #expect(store.caption != "Awake: the monitor didn't answer.")
+    }
+
     @Test func aHoldTakenWhileTheDaemonWasAwayBecomesItsLease() async throws {
         let (defaults, suite) = try isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -235,9 +261,9 @@ import Testing
             fake.sent.append(request)
             return fake.answer
         }
-        // Stand in for an assertion the app took while the daemon was
-        // away (id 0 is never a real one; releasing it is a no-op).
-        state.awake.held = true
+        state.takeAssertion = { _ in 42 }
+        state.releaseAssertion = { _ in kIOReturnSuccess }
+        state.holdAwake(seconds: nil)
         state.noteDaemonHold(nil, live: false)
         #expect(state.isOn[.keepAwake] == true)
         state.noteDaemonHold(try JSONDecoder().decode(CoreAwakeHold.self, from: Data(#"{"state":"off"}"#.utf8)),
@@ -272,7 +298,7 @@ import Testing
         // Stand-in assertions: id 0 is never a real one.
         let assertions = FakeAssertions()
         state.takeAssertion = { _ in assertions.taken += 1; return 0 }
-        state.releaseAssertion = { _ in assertions.released += 1 }
+        state.releaseAssertion = { _ in assertions.released += 1; return kIOReturnSuccess }
         fake.answer = .unavailable
         store.apply(.keepAwake)
         await settle(state)

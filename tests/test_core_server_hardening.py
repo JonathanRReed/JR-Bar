@@ -20,10 +20,53 @@ from pathlib import Path
 
 import pytest
 
-from jrbar.core_server import MAX_FRAME_BYTES, CoreServer, encode_frame
+from jrbar.core_server import MAX_FRAME_BYTES, CoreServer, _Client, encode_frame
 from tests.test_core_server import _connect
 
 HANG_BOUND_SECONDS = 30.0
+
+
+def test_sender_rechecks_dead_stream_after_acquiring_write_lock() -> None:
+    writes = []
+
+    class Connection:
+        def sendall(self, frame):
+            writes.append(frame)
+
+    client = _Client(Connection(), 1)
+
+    class ClosingLock:
+        def __enter__(self):
+            # Another sender failed while this sender waited for the lock.
+            client.alive = False
+
+        def __exit__(self, *_args):
+            pass
+
+    client.write_lock = ClosingLock()
+    assert client.send(b"reply\n") is False
+    assert writes == []
+
+
+def test_failed_reply_stops_dispatching_commands_already_buffered() -> None:
+    calls = []
+
+    class Connection:
+        def recv(self, _size):
+            return _command("first", "ping") + _command("second", "approve")
+
+        def sendall(self, _frame):
+            raise BlockingIOError("send stalled")
+
+    instance = CoreServer(
+        dispatch=lambda name, args: calls.append(name),
+        initial_documents=lambda: [],
+    )
+    instance._running = True
+    client = _Client(Connection(), 1)
+    instance._read_commands(client)
+    assert calls == ["ping"]
+    assert client.alive is False
 
 
 @pytest.fixture
@@ -443,15 +486,37 @@ def test_a_backlog_of_scans_does_not_make_a_short_read_busy(
 def test_every_slow_lane_command_belongs_to_exactly_one_lane() -> None:
     from jrbar.core_server import (
         ACTION_LANE_COMMANDS,
+        DECK_LANE_COMMANDS,
         READ_LANE_COMMANDS,
         SCAN_LANE_COMMANDS,
         SLOW_LANE_COMMANDS,
     )
 
     assert SCAN_LANE_COMMANDS == {"usage_graph", "usage_history"}
-    assert ACTION_LANE_COMMANDS == {"provider_sign_in"}
+    assert ACTION_LANE_COMMANDS == {
+        "provider_sign_in", "factory_session_profiles", "factory_session_import", "factory_session_disconnect",
+    }
     assert not SCAN_LANE_COMMANDS & READ_LANE_COMMANDS
     assert not ACTION_LANE_COMMANDS & (SCAN_LANE_COMMANDS | READ_LANE_COMMANDS)
-    assert SCAN_LANE_COMMANDS | READ_LANE_COMMANDS | ACTION_LANE_COMMANDS == SLOW_LANE_COMMANDS
+    assert not DECK_LANE_COMMANDS & (SCAN_LANE_COMMANDS | READ_LANE_COMMANDS | ACTION_LANE_COMMANDS)
+    assert SCAN_LANE_COMMANDS | READ_LANE_COMMANDS | ACTION_LANE_COMMANDS | DECK_LANE_COMMANDS == SLOW_LANE_COMMANDS
     # History's pair shares a lane: the mark must wait behind the read.
     assert {"list_history", "mark_history_seen"} <= READ_LANE_COMMANDS
+
+
+# -- 5. a peer cannot turn the frame parser into a crash or a growing file -------
+
+
+def test_a_deeply_nested_frame_is_refused_as_not_json_and_the_connection_lives(sock_dir: Path) -> None:
+    instance = _serve(sock_dir, lambda name, args: {"pong": True})
+    try:
+        client = _connect(instance)
+        _read_strict(client, 2)
+        client.sendall(b"[" * 50_000 + b"]" * 50_000 + b"\n")
+        client.sendall(_command("after", "ping"))
+        replies = _read_strict(client, 2)
+        assert replies[0]["ok"] is False and replies[0]["error"]["code"] == "bad_frame"
+        assert replies[1]["ok"] is True
+        client.close()
+    finally:
+        instance.stop()

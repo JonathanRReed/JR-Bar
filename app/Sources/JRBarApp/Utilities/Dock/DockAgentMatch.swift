@@ -352,6 +352,12 @@ struct DockAgentGuard {
         armedKey == key && now - armedAt <= Self.window
     }
 
+    mutating func expire(_ key: String, now: TimeInterval) -> Bool {
+        guard armedKey == key, now - armedAt > Self.window else { return false }
+        armedKey = nil
+        return true
+    }
+
     mutating func reset() { armedKey = nil }
 
     /// The line the armed card shows: "Claude is waiting on you here —

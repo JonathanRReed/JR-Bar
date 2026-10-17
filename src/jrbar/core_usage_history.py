@@ -126,14 +126,41 @@ def record_rates(provider: str, model: str, *, codex_default_model: str | None =
     return quote.input_per_mtok, quote.output_per_mtok, quote.cache_read_per_mtok
 
 
-def quote_cost(provider: str, quote: PriceQuote | None, inp: int, cached_in: int, cache_create: int, out: int) -> float:
+def quote_write_rate(provider: str, quote: PriceQuote) -> float:
+    """Dollars per million tokens a quote bills cache writes at."""
+    # OpenAI bills cache writes at the plain input rate; Anthropic at 1.25x.
+    default_write = 1.0 if provider == "codex" else usage_stats.CACHE_WRITE_RATE
+    return quote.input_per_mtok * usage_stats.cache_write_rate_for_model(quote.model, default_write)
+
+
+def quote_cost(
+    provider: str,
+    quote: PriceQuote | None,
+    inp: int,
+    cached_in: int,
+    cache_create: int,
+    out: int,
+    *,
+    write_rate: float | None = None,
+    long_context: bool = False,
+) -> float:
+    """Dollars for these tokens at ``quote``. A pass over many records of one
+    model passes ``write_rate`` (``quote_write_rate``) so the person's
+    overrides are read once, not once per record. ``long_context`` marks one
+    request over OpenAI's 272K prompt line, billed at 2x input-side and 1.5x
+    output; the caller decides it per request, never from a sum."""
     if quote is None:
         return 0.0
     input_rate, output_rate, cache_rate = quote.input_per_mtok, quote.output_per_mtok, quote.cache_read_per_mtok
-    # OpenAI bills cache writes at the plain input rate; Anthropic at 1.25x.
-    default_write = 1.0 if provider == "codex" else usage_stats.CACHE_WRITE_RATE
-    write_rate = input_rate * usage_stats.cache_write_rate_for_model(quote.model, default_write)
-    return (inp * input_rate + cached_in * cache_rate + cache_create * write_rate + out * output_rate) / 1_000_000.0
+    if write_rate is None:
+        write_rate = quote_write_rate(provider, quote)
+    input_side = inp * input_rate + cached_in * cache_rate + cache_create * write_rate
+    if long_context:
+        input_side *= usage_stats.LONG_CONTEXT_INPUT_MULTIPLIER
+        output_side = out * output_rate * usage_stats.LONG_CONTEXT_OUTPUT_MULTIPLIER
+    else:
+        output_side = out * output_rate
+    return (input_side + output_side) / 1_000_000.0
 
 
 def record_cost(
@@ -171,6 +198,7 @@ def usage_history_document(
     }
     model_tokens: dict[str, int] = {}
     quotes: dict[str, PriceQuote | None] = {}
+    write_rates: dict[str, float] = {}
     seen: set[str] = set()
     counted = 0
     estimated_records = 0
@@ -192,28 +220,47 @@ def usage_history_document(
         day_bucket = days.get(stamp.date().isoformat())
         if day_bucket is None:
             continue
-        counted += 1
         model_name = str(model)
-        if model_name not in quotes:
-            quotes[model_name] = price_quote(provider, model_name, codex_default_model=codex_default_model)
+        # A message's one-hour cache writes ride a second record under the
+        # same model plus a marker (usage_stats.ONE_HOUR_WRITE_SUFFIX). It
+        # prices at its own rate but is the same request on the same model:
+        # it is neither a model of its own nor another record.
+        display_name = usage_stats.base_model_key(model_name)
+        companion = display_name != model_name
+        if not companion:
+            counted += 1
+        for priced_name in {model_name, display_name}:
+            if priced_name not in quotes:
+                quotes[priced_name] = price_quote(provider, priced_name, codex_default_model=codex_default_model)
+                priced_quote = quotes[priced_name]
+                if priced_quote is not None:
+                    write_rates[priced_name] = quote_write_rate(provider, priced_quote)
         quote = quotes[model_name]
         if quote is None:
             # No price at all: the tokens are counted, the $0 is NOT a
             # price. Unpriced coverage stays its own number (T24) --
             # never blended into "estimated" and never hidden.
-            unpriced_records += 1
-            if model_name not in unpriced_models:
-                unpriced_models.append(model_name)
-        elif quote.estimated:
+            if not companion:
+                unpriced_records += 1
+            if display_name not in unpriced_models:
+                unpriced_models.append(display_name)
+        elif quote.estimated and not companion:
             estimated_records += 1
-        cost = quote_cost(provider, quote, int(inp), int(cached_in), int(cache_create), int(out))
+        cost = quote_cost(
+            provider, quote, int(inp), int(cached_in), int(cache_create), int(out),
+            write_rate=write_rates.get(model_name),
+            long_context=usage_stats.is_long_context_request(
+                provider, model_name, int(inp) + int(cached_in) + int(cache_create)
+            ),
+        )
         total = int(inp) + int(cached_in) + int(cache_create) + int(out)
-        model_tokens[model_name] = model_tokens.get(model_name, 0) + total
+        model_tokens[display_name] = model_tokens.get(display_name, 0) + total
         # The per-model split the Usage Center's breakdown draws.
-        model_split = model_rows.setdefault(model_name, {"tokens": 0, "cost_usd": 0.0, "records": 0})
+        model_split = model_rows.setdefault(display_name, {"tokens": 0, "cost_usd": 0.0, "records": 0})
         model_split["tokens"] += total
         model_split["cost_usd"] += cost
-        model_split["records"] += 1
+        if not companion:
+            model_split["records"] += 1
         for bucket in (day_bucket, hours.get(stamp.strftime("%Y-%m-%dT%H:00"))):
             if bucket is None:
                 continue
@@ -242,6 +289,10 @@ def usage_history_document(
         "account": account,
         "state": state,
         "records": counted,
+        # Transcripts the scan has not finished reading (the service fills it
+        # in; a document built from records alone has read everything it was
+        # given).
+        "reading_files": 0,
         # True when any counted record was priced at a stand-in rate: the
         # dollars are approximate anyway, these more so.
         "estimated": estimated_records > 0,
@@ -270,27 +321,61 @@ def usage_history_document(
 
 
 def scan_provider_records(provider: str, *, days: int, home: Path | None = None) -> list[tuple]:
-    """The local transcript records for one provider over the last ``days``."""
+    """The local transcript records for one provider over the last ``days``,
+    read to the end however long that takes."""
+    return scan_provider_pass(provider, days=days, home=home, seconds=None).records
+
+
+@dataclass(frozen=True, slots=True)
+class ScanPass:
+    """One bounded pass of a provider's scan: the records read so far and how
+    many transcripts it left unfinished (carried on by the next pass)."""
+
+    records: list[tuple]
+    reading_files: int = 0
+
+
+def scan_provider_pass(
+    provider: str,
+    *,
+    days: int,
+    home: Path | None = None,
+    seconds: float | None = usage_stats.USAGE_PASS_BUDGET_SECONDS,
+) -> ScanPass:
+    """The local transcript records for one provider over the last ``days``,
+    from at most about ``seconds`` of reading (all of it when ``seconds`` is
+    None).
+
+    A transcript of any size is read, never skipped; a pass that runs out of
+    time stops on a line boundary, saves where each file got to and reports
+    the files it left, so the caller asks again and the next pass carries on.
+    """
     from .local_token_history import scan_local_records
 
     start = (datetime.now() - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
     if provider in LOCAL_HISTORY_PROVIDERS:
         # Pi, Grok, Gemini CLI and OpenClaw: their own session files.
-        return scan_local_records((provider,), start.timestamp(), home=home)
+        return ScanPass(scan_local_records((provider,), start.timestamp(), home=home))
     if provider not in SCANNED_PROVIDERS:
-        return []
+        return ScanPass([])
     base = Path(home) if home is not None else Path.home()
     from .provider_homes import scan_usage_all_homes
 
     # Every home of this provider (CLAUDE_CONFIG_DIR, CODEX_HOME and
     # provider_extra_homes), each real folder once.
+    options = {} if seconds is None else {"budget": usage_stats.ScanBudget(seconds)}
     totals = scan_usage_all_homes(
         default_state_dir() / "usage-scan-cache.json",
         since_epoch=start.timestamp(),
         provider_ids=(provider,),
         home=base,
+        **options,
     )
-    return [record for record in totals.records if record and record[0] == provider]
+    coverage = totals.source_coverage.get(provider)
+    return ScanPass(
+        [record for record in totals.records if record and record[0] == provider],
+        coverage.pending_files if coverage is not None else 0,
+    )
 
 
 #: How long a reply may wait for a running scan before it answers from
@@ -299,8 +384,13 @@ def scan_provider_records(provider: str, *, days: int, home: Path | None = None)
 REPLY_BUDGET_SECONDS: Final = 2.0
 #: A document younger than this answers without a rescan at all.
 FRESH_SECONDS: Final = 60.0
+#: How long the scan thread rests between two bounded passes over a large
+#: corpus, so a cold start over many gigabytes never holds a core.
+PASS_PAUSE_SECONDS: Final = 0.5
 #: The event the daemon pushes when a scan that outlived the budget lands.
 READY_EVENT: Final = "usage_history_ready"
+FAILED_EVENT: Final = "usage_history_failed"
+FAILURE_MESSAGE: Final = "Local history could not be refreshed. Try again."
 #: Ranges the startup warm-up scans so the first request finds a hot cache.
 WARM_RANGE: Final = "30d"
 
@@ -316,6 +406,11 @@ class _Entry:
     error: str | None = None
 
 
+class UsageHistoryScanError(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("Local history scan failed")
+
+
 class UsageHistoryService:
     """Serves ``usage_history`` inside a reply budget, scanning off-thread.
 
@@ -325,9 +420,14 @@ class UsageHistoryService:
     ``pending`` (nothing yet) or ``stale`` (an older document), and the
     scan's completion is announced with a ``usage_history_ready`` event
     carrying the fresh document's counts. A document younger than ``fresh``
-    is answered as is, no scan. ``scan`` is ``(provider, days) -> records``;
-    ``publish`` is ``(kind, **fields)``; ``codex_default_model`` is read at
-    bucketing time so a config change prices the next answer.
+    is answered as is, no scan. ``scan`` is ``(provider, days) -> records``,
+    or a ``ScanPass`` when it reads in bounded passes: a pass that left
+    transcripts unread (``reading_files``) is stored and announced like any
+    other, the reply says it is still being read, and the thread waits
+    ``pass_pause`` seconds (on the daemon's stop flag, never a sleep) and
+    scans again until none are left. ``publish`` is ``(kind, **fields)``;
+    ``codex_default_model`` is read at bucketing time so a config change
+    prices the next answer.
     """
 
     def __init__(
@@ -341,8 +441,18 @@ class UsageHistoryService:
         log: Callable[[str], None] | None = None,
         clock: Callable[[], float] = time.time,
         thread_factory: Callable[..., threading.Thread] | None = None,
+        thread_setup: Callable[[], None] | None = None,
+        pass_pause: float = PASS_PAUSE_SECONDS,
+        wall_clock: Callable[[], float] | None = None,
     ) -> None:
         self._scan = scan
+        #: "Today" for the day and hour buckets; ``clock`` only dates scans.
+        self._wall_clock = wall_clock if wall_clock is not None else (lambda: time.time())
+        self._pass_pause = float(pass_pause)
+        #: Run on each scan thread before it scans (the daemon lowers the
+        #: thread's priority: six figures of JSONL lines are pure GIL time
+        #: that would otherwise compete with the main thread).
+        self._thread_setup = thread_setup
         self._publish = publish
         self._budget = float(budget)
         self._fresh = float(fresh)
@@ -373,27 +483,65 @@ class UsageHistoryService:
             raise ValueError("range must be one of " + ", ".join(RANGE_DAYS))
         if provider not in HISTORY_PROVIDERS:
             return self._finish(
-                usage_history_document([], provider=provider, range_name=range_name, codex_default_model=self._codex_default_model()),
+                usage_history_document(
+                    [], provider=provider, range_name=range_name, now=self._wall_clock(),
+                    codex_default_model=self._codex_default_model(),
+                ),
                 account, state, pending=False, stale=False, scanned_at=self._clock(),
             )
         key = (provider, days)
         now = self._clock()
         with self._state_lock:
             entry = self._entries.setdefault(key, _Entry())
-            if entry.document is not None and entry.inflight is None and now - entry.scanned_at < self._fresh:
+            if (
+                entry.document is not None
+                and entry.inflight is None
+                and entry.error is None
+                and now - entry.scanned_at < self._fresh
+            ):
                 return self._finish(entry.document, account, state, pending=False, stale=False, scanned_at=entry.scanned_at)
             event = self._start_locked(key, entry, now)
         wait = self._budget if budget is None else float(budget)
         event.wait(max(0.0, wait))
         with self._state_lock:
-            entry = self._entries[key]
-            if entry.inflight is not None:
-                entry.owed = True
-            if entry.document is None:
-                empty = usage_history_document([], provider=provider, range_name=range_name, codex_default_model=self._codex_default_model())
-                return self._finish(empty, account, state, pending=True, stale=False, scanned_at=None)
-            stale = entry.inflight is not None
-            return self._finish(entry.document, account, state, pending=False, stale=stale, scanned_at=entry.scanned_at)
+            return self._project_locked(self._entries[key], provider, range_name, account, state)
+
+    def observe(
+        self,
+        provider: str,
+        range_name: str,
+        *,
+        account: dict[str, Any] | None = None,
+        state: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Read the current scan outcome without starting or retrying work."""
+        days = range_days(range_name)
+        if days is None:
+            raise ValueError("range must be one of " + ", ".join(RANGE_DAYS))
+        if provider not in HISTORY_PROVIDERS:
+            return self.document(provider, range_name, account=account, state=state, budget=0)
+        with self._state_lock:
+            entry = self._entries.get((provider, days))
+            if entry is None or (entry.document is None and entry.inflight is None and entry.error is None):
+                return None
+            return self._project_locked(entry, provider, range_name, account, state)
+
+    def _project_locked(
+        self, entry: _Entry, provider: str, range_name: str,
+        account: dict[str, Any] | None, state: str | None,
+    ) -> dict[str, Any]:
+        if entry.inflight is None and entry.error is not None:
+            raise UsageHistoryScanError()
+        if entry.inflight is not None:
+            entry.owed = True
+        if entry.document is None:
+            empty = usage_history_document(
+                [], provider=provider, range_name=range_name, now=self._wall_clock(),
+                codex_default_model=self._codex_default_model(),
+            )
+            return self._finish(empty, account, state, pending=True, stale=False, scanned_at=None)
+        stale = entry.inflight is not None
+        return self._finish(entry.document, account, state, pending=False, stale=stale, scanned_at=entry.scanned_at)
 
     def warm(self, providers: Iterable[str] = SCANNED_PROVIDERS, range_name: str = WARM_RANGE) -> None:
         """Start the scans a first request would need, without waiting."""
@@ -429,50 +577,100 @@ class UsageHistoryService:
         # ``threading.Thread`` is in force must not depend on when this
         # module happened to be imported.
         factory = self._thread_factory or threading.Thread
-        thread = factory(target=self._run, args=(key, event), name=f"JRBarUsageScan-{key[0]}-{key[1]}", daemon=True)
-        thread.start()
+        try:
+            thread = factory(target=self._run, args=(key, event), name=f"JRBarUsageScan-{key[0]}-{key[1]}", daemon=True)
+            thread.start()
+        except Exception:
+            entry.inflight = None
+            entry.owed = False
+            event.set()
+            raise
         return event
 
     def _run(self, key: tuple[str, int], event: threading.Event) -> None:
         provider, days = key
         range_name = next((name for name, count in RANGE_DAYS.items() if count == days), f"{days}d")
-        document: dict[str, Any] | None = None
-        error: str | None = None
-        started = self._clock()
-        try:
-            with self._scan_lock:
-                records = self._scan(provider, days)
-            document = usage_history_document(
-                records, provider=provider, range_name=range_name, codex_default_model=self._codex_default_model()
-            )
-        except Exception as exc:  # the scan must never take the daemon down
-            error = exc.__class__.__name__
-        finished = self._clock()
-        with self._state_lock:
-            entry = self._entries.setdefault(key, _Entry())
-            if document is not None:
-                entry.document = document
-                entry.scanned_at = finished
-            entry.error = error
-            entry.inflight = None
-            owed = entry.owed
-            entry.owed = False
-        event.set()
-        if self._log is not None:
-            if error is not None:
-                self._log(f"core: usage history scan {provider} {range_name} failed: {error}")
-            else:
-                self._log(f"core: usage history scan {provider} {range_name} {finished - started:.1f}s records={document['records'] if document else 0}")
-        if self._publish is not None and document is not None and owed:
-            self._publish(
-                READY_EVENT,
-                provider=provider,
-                label=provider,
-                detail=range_name,
-                range=range_name,
-                records=document["records"],
-                scanned_at=finished,
-            )
+        if self._thread_setup is not None:
+            try:
+                self._thread_setup()
+            except Exception:
+                pass
+        while True:
+            document: dict[str, Any] | None = None
+            error: str | None = None
+            reading = 0
+            started = self._clock()
+            try:
+                with self._scan_lock:
+                    outcome = self._scan(provider, days)
+                records = outcome.records if isinstance(outcome, ScanPass) else outcome
+                reading = outcome.reading_files if isinstance(outcome, ScanPass) else 0
+                document = usage_history_document(
+                    records, provider=provider, range_name=range_name, now=self._wall_clock(),
+                    codex_default_model=self._codex_default_model(),
+                )
+                document["reading_files"] = reading
+            except Exception as exc:  # the scan must never take the daemon down
+                error = exc.__class__.__name__
+            finished = self._clock()
+            more = reading > 0 and error is None and not self.stopping.is_set()
+            following = threading.Event() if more else None
+            with self._state_lock:
+                entry = self._entries.setdefault(key, _Entry())
+                if document is not None:
+                    entry.document = document
+                    entry.scanned_at = finished
+                entry.error = error
+                # A scan still reading hands its place to the next pass, so a
+                # reply that arrives meanwhile still sees a scan in flight.
+                entry.inflight = following
+                owed = entry.owed
+                entry.owed = False
+            event.set()
+            if self._log is not None:
+                try:
+                    if error is not None:
+                        self._log(f"core: usage history scan {provider} {range_name} failed: {error}")
+                    else:
+                        still = f" reading={reading}" if reading else ""
+                        self._log(
+                            f"core: usage history scan {provider} {range_name} {finished - started:.1f}s "
+                            f"records={document['records'] if document else 0}{still}"
+                        )
+                except Exception:
+                    pass
+            if self._publish is not None and owed:
+                try:
+                    if document is not None:
+                        self._publish(
+                            READY_EVENT,
+                            provider=provider,
+                            label=provider,
+                            detail=range_name,
+                            range=range_name,
+                            records=document["records"],
+                            reading_files=reading,
+                            scanned_at=finished,
+                        )
+                    elif error is not None:
+                        self._publish(
+                            FAILED_EVENT, provider=provider, range=range_name,
+                            code="unavailable", message=FAILURE_MESSAGE, notify=False,
+                        )
+                except Exception:
+                    if following is not None:
+                        with self._state_lock:
+                            if entry.inflight is following:
+                                # A missed partial notice is still owed when the next pass lands.
+                                entry.owed = True
+            if following is None:
+                return
+            event = following
+            if self.stopping.wait(self._pass_pause):
+                with self._state_lock:
+                    self._entries[key].inflight = None
+                event.set()
+                return
 
     @staticmethod
     def _finish(
@@ -484,14 +682,24 @@ class UsageHistoryService:
         stale: bool,
         scanned_at: float | None,
     ) -> dict[str, Any]:
-        return {**document, "account": account, "state": state, "pending": pending, "stale": stale, "scanned_at": scanned_at}
+        # ``partial`` is what the app keeps its "still reading" note and its
+        # retry on: the rows are a first answer (nothing scanned yet) or the
+        # pass left transcripts unread.
+        partial = pending or bool(document.get("reading_files"))
+        return {
+            **document, "account": account, "state": state, "pending": pending, "stale": stale,
+            "partial": partial, "scanned_at": scanned_at,
+        }
 
 
 __all__ = [
     "CODEX_RECORD_MODEL",
+    "FAILED_EVENT",
+    "FAILURE_MESSAGE",
     "FRESH_SECONDS",
     "HISTORY_PROVIDERS",
     "HOURS_SHOWN",
+    "PASS_PAUSE_SECONDS",
     "RANGE_DAYS",
     "READY_EVENT",
     "REFERENCE_MODEL",
@@ -499,13 +707,17 @@ __all__ = [
     "SCANNED_PROVIDERS",
     "WARM_RANGE",
     "PriceQuote",
+    "ScanPass",
+    "UsageHistoryScanError",
     "UsageHistoryService",
     "default_codex_model",
     "price_quote",
     "quote_cost",
+    "quote_write_rate",
     "range_days",
     "record_cost",
     "record_rates",
+    "scan_provider_pass",
     "scan_provider_records",
     "usage_history_document",
 ]

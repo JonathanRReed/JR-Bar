@@ -94,6 +94,68 @@ enum MenuBarAX {
         let size: CGSize
         let title: String?
         let identifier: String?
+        var identifierComplete = true
+        var status = InventoryStatus()
+    }
+
+    struct InventoryStatus {
+        var incomplete = false
+        var timedOut = false
+
+        mutating func include(_ other: Self) {
+            incomplete = incomplete || other.incomplete
+            timedOut = timedOut || other.timedOut
+        }
+    }
+
+    struct AttributeRead {
+        var value: CFTypeRef?
+        var error: AXError
+    }
+
+    /// Batch copies encode per-attribute errors as AXValues.
+    nonisolated static func batchAttribute(_ value: CFTypeRef) -> AttributeRead {
+        if CFGetTypeID(value) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError {
+            var error = AXError.failure
+            AXValueGetValue(value as! AXValue, .axError, &error)
+            return AttributeRead(value: nil, error: error)
+        }
+        return AttributeRead(value: value, error: .success)
+    }
+
+    private nonisolated static func copyAttribute(_ element: AXUIElement, _ attribute: String) -> AttributeRead {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        return AttributeRead(value: value, error: error)
+    }
+
+    nonisolated static func extrasStatus(_ read: AttributeRead) -> InventoryStatus {
+        if read.error == .attributeUnsupported || read.error == .noValue { return InventoryStatus() }
+        let valid = read.error == .success && read.value.map { CFGetTypeID($0) == AXUIElementGetTypeID() } == true
+        return InventoryStatus(incomplete: !valid, timedOut: read.error == .cannotComplete)
+    }
+
+    nonisolated static func childrenStatus(error: AXError, hasChildren: Bool) -> InventoryStatus {
+        InventoryStatus(incomplete: error != .success || !hasChildren, timedOut: error == .cannotComplete)
+    }
+
+    /// Geometry is required for item roles; groups only need their role
+    /// and a separate successful children read. Labels are optional.
+    nonisolated static func elementStatus(_ reads: [AttributeRead], includeButtons: Bool = true) -> InventoryStatus {
+        guard reads.count == elementAttributes.count else { return InventoryStatus(incomplete: true) }
+        let role = reads[0], position = reads[1], size = reads[2]
+        guard role.error == .success, let name = role.value as? String else {
+            return InventoryStatus(incomplete: true, timedOut: role.error == .cannotComplete)
+        }
+        guard name == "AXMenuBarItem" || (includeButtons && name == "AXButton") else { return InventoryStatus() }
+        let geometry = [(position, AXValueType.cgPoint), (size, AXValueType.cgSize)]
+        let invalid = geometry.contains { read, type in
+            read.error != .success || read.value.map {
+                CFGetTypeID($0) != AXValueGetTypeID() || AXValueGetType($0 as! AXValue) != type
+            } != false
+        }
+        return InventoryStatus(incomplete: invalid,
+                               timedOut: geometry.contains { $0.0.error == .cannotComplete })
     }
 
     /// The attributes an extras child is read for, in one request.
@@ -105,37 +167,49 @@ enum MenuBarAX {
     /// single round trip — five separate copies were five, each one a
     /// Mach message pair and a wake of the owner's main thread. Falls
     /// back to the separate copies if the owner refuses the batch.
-    private nonisolated static func read(_ element: AXUIElement) -> ExtrasElement {
+    private nonisolated static func read(_ element: AXUIElement, includeButtons: Bool = true) -> ExtrasElement {
         var values: CFArray?
+        let reads: [AttributeRead]
         if AXUIElementCopyMultipleAttributeValues(element, elementAttributes as CFArray, AXCopyMultipleAttributeOptions(),
                                                   &values) == .success,
            let list = values as? [AnyObject], list.count == 5 {
-            func entry(_ i: Int) -> CFTypeRef? {
-                let v = list[i] as CFTypeRef
-                // A missing attribute comes back as an AXValue carrying
-                // the error — nil, as the single copy would give.
-                if CFGetTypeID(v) == AXValueGetTypeID(), AXValueGetType(v as! AXValue) == .axError { return nil }
-                return v
-            }
-            var position = CGPoint.zero
-            if let v = entry(1), CFGetTypeID(v) == AXValueGetTypeID() {
-                AXValueGetValue(v as! AXValue, .cgPoint, &position)
-            }
-            var size = CGSize.zero
-            if let v = entry(2), CFGetTypeID(v) == AXValueGetTypeID() {
-                AXValueGetValue(v as! AXValue, .cgSize, &size)
-            }
-            return ExtrasElement(element: element,
-                                 role: entry(0) as? String,
-                                 position: position, size: size,
-                                 title: (entry(3) as? String).flatMap { $0.isEmpty ? nil : $0 },
-                                 identifier: (entry(4) as? String).flatMap { $0.isEmpty ? nil : $0 })
+            reads = list.map { batchAttribute($0 as CFTypeRef) }
+        } else {
+            reads = elementAttributes.map { copyAttribute(element, $0) }
         }
-        return ExtrasElement(element: element, role: role(element),
-                             position: point(element, kAXPositionAttribute),
-                             size: size(element, kAXSizeAttribute),
-                             title: string(element, kAXTitleAttribute),
-                             identifier: string(element, "AXIdentifier"))
+        return extrasElement(element, reads: reads, includeButtons: includeButtons)
+    }
+
+    nonisolated static func identifierReadComplete(_ read: AttributeRead) -> Bool {
+        if read.error == .attributeUnsupported || read.error == .noValue { return true }
+        guard read.error == .success, let value = read.value else { return false }
+        return CFGetTypeID(value) == CFStringGetTypeID()
+    }
+
+    nonisolated static func extrasElement(_ element: AXUIElement, reads: [AttributeRead],
+                                         includeButtons: Bool = true) -> ExtrasElement {
+        guard reads.count == elementAttributes.count else {
+            return ExtrasElement(element: element, role: nil, position: .zero,
+                                 size: .zero, title: nil, identifier: nil,
+                                 identifierComplete: false, status: InventoryStatus(incomplete: true))
+        }
+        var position = CGPoint.zero
+        if let value = reads[1].value, CFGetTypeID(value) == AXValueGetTypeID(),
+           AXValueGetType(value as! AXValue) == .cgPoint {
+            AXValueGetValue(value as! AXValue, .cgPoint, &position)
+        }
+        var size = CGSize.zero
+        if let value = reads[2].value, CFGetTypeID(value) == AXValueGetTypeID(),
+           AXValueGetType(value as! AXValue) == .cgSize {
+            AXValueGetValue(value as! AXValue, .cgSize, &size)
+        }
+        return ExtrasElement(element: element, role: reads[0].value as? String,
+                             position: position, size: size,
+                             title: (reads[3].value as? String).flatMap { $0.isEmpty ? nil : $0 },
+                             identifier: reads[4].error == .success
+                                ? (reads[4].value as? String).flatMap { $0.isEmpty ? nil : $0 } : nil,
+                             identifierComplete: identifierReadComplete(reads[4]),
+                             status: elementStatus(reads, includeButtons: includeButtons))
     }
 
     /// The extras-bar children of one app that are menu bar items —
@@ -146,13 +220,13 @@ enum MenuBarAX {
     /// did not answer the first question in time.
     private nonisolated static func extrasElements(of pid: pid_t,
                                                    timeout: TimeInterval = messagingTimeout)
-        -> (elements: [ExtrasElement], timedOut: Bool) {
+        -> (elements: [ExtrasElement], status: InventoryStatus) {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, Float(timeout))
-        var extras: CFTypeRef?
-        let error = AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &extras)
-        guard error == .success, let extras, CFGetTypeID(extras) == AXUIElementGetTypeID()
-        else { return ([], error == .cannotComplete) }
+        let extrasRead = copyAttribute(app, "AXExtrasMenuBar")
+        guard extrasRead.error == .success, let extras = extrasRead.value,
+              CFGetTypeID(extras) == AXUIElementGetTypeID()
+        else { return ([], extrasStatus(extrasRead)) }
         let bar = extras as! AXUIElement
         AXUIElementSetMessagingTimeout(bar, Float(timeout))
         var childrenValue: CFTypeRef?
@@ -160,31 +234,37 @@ enum MenuBarAX {
         // A stall on the children copy earns the retry as much as one
         // on the extras question — a would-be owner that only ever ran
         // out the quick wait would otherwise be skipped every walk.
-        guard let children = childrenValue as? [AXUIElement]
-        else { return ([], childrenError == .cannotComplete) }
+        guard childrenError == .success, let children = childrenValue as? [AXUIElement]
+        else { return ([], childrenStatus(error: childrenError, hasChildren: false)) }
         var items: [ExtrasElement] = []
+        var status = InventoryStatus()
         for child in children {
             AXUIElementSetMessagingTimeout(child, Float(timeout))
             let entry = Self.read(child)
+            status.include(entry.status)
             if entry.role == "AXMenuBarItem" || entry.role == "AXButton" {
                 items.append(entry)
-            } else if entry.role == "AXGroup",
-                      let sub = value(child, kAXChildrenAttribute) as? [AXUIElement] {
+            } else if entry.role == "AXGroup" {
+                let copied = copyAttribute(child, kAXChildrenAttribute)
+                let children = copied.value as? [AXUIElement]
+                status.include(childrenStatus(error: copied.error, hasChildren: children != nil))
+                guard copied.error == .success, let sub = children else { continue }
                 for element in sub {
                     AXUIElementSetMessagingTimeout(element, Float(timeout))
-                    let item = Self.read(element)
+                    let item = Self.read(element, includeButtons: false)
+                    status.include(item.status)
                     if item.role == "AXMenuBarItem" { items.append(item) }
                 }
             }
         }
-        return (items, false)
+        return (items, status)
     }
 
     /// One app's extras items → `MenuBarItem`s (identities not yet
     /// assigned — that happens in `items(from:)`, which sees all
     /// owners at once).
     private nonisolated static func rawItems(of target: Target,
-                                             rows: [CGRect]) -> (items: [MenuBarItem], timedOut: Bool) {
+                                             rows: [CGRect]) -> (items: [MenuBarItem], status: InventoryStatus) {
         let answer = extrasElements(of: target.pid, timeout: target.timeout)
         let items = answer.elements.enumerated().compactMap { index, element -> MenuBarItem? in
             let size = element.size
@@ -206,13 +286,14 @@ enum MenuBarAX {
                                isNativeOverflowControl: element.role == "AXButton",
                                bundleID: target.bundleID)
         }
-        return (items, answer.timedOut)
+        return (items, answer.status)
     }
 
     /// A scan's answer: the items, and the apps that ran out of time.
     struct Scan: Sendable {
         var items: [MenuBarItem]
         var timedOut: Set<pid_t>
+        var incomplete: Set<pid_t> = []
     }
 
     /// Every target's extras items, identities assigned, sorted left to
@@ -227,6 +308,7 @@ enum MenuBarAX {
             var next = 0
             var items: [MenuBarItem] = []
             var timedOut: Set<pid_t> = []
+            var incomplete: Set<pid_t> = []
         }
         let box = Box()
         let workers = min(maxConcurrentQueries, targets.count)
@@ -238,10 +320,11 @@ enum MenuBarAX {
                 box.lock.unlock()
                 guard i < targets.count else { return }
                 let answer = rawItems(of: targets[i], rows: rows)
-                guard !answer.items.isEmpty || answer.timedOut else { continue }
+                guard !answer.items.isEmpty || answer.status.incomplete else { continue }
                 box.lock.lock()
                 box.items.append(contentsOf: answer.items)
-                if answer.timedOut { box.timedOut.insert(targets[i].pid) }
+                if answer.status.timedOut { box.timedOut.insert(targets[i].pid) }
+                if answer.status.incomplete { box.incomplete.insert(targets[i].pid) }
                 box.lock.unlock()
             }
         }
@@ -268,7 +351,7 @@ enum MenuBarAX {
                                isNativeOverflowControl: item.isNativeOverflowControl,
                                bundleID: item.bundleID)
         }
-        return Scan(items: items, timedOut: box.timedOut)
+        return Scan(items: items, timedOut: box.timedOut, incomplete: box.incomplete)
     }
 
     /// The front app's menu extras' right edge — where its menus stop
@@ -300,6 +383,32 @@ enum MenuBarAX {
             found = true
         }
         return found ? edge : nil
+    }
+
+    nonisolated static func shortcutInventory(of pid: pid_t) -> MenuBarItemShortcutNative.Inventory {
+        let answer = extrasElements(of: pid)
+        return shortcutInventory(elements: answer.elements, status: answer.status)
+    }
+
+    nonisolated static func shortcutInventory(
+        elements: [ExtrasElement], status: InventoryStatus,
+        perform: @escaping (AXUIElement, CFString) -> AXError = AXUIElementPerformAction
+    ) -> MenuBarItemShortcutNative.Inventory {
+        let rows = elements.map { entry in
+            MenuBarItemShortcutNative.Element(identifier: entry.identifier,
+                                               protected: entry.role != "AXMenuBarItem",
+                                               press: { pressShortcutElement(entry.element, perform: perform) })
+        }
+        return MenuBarItemShortcutNative.Inventory(elements: rows, complete: !status.incomplete,
+                                                    identifiersComplete: elements.allSatisfy(\.identifierComplete))
+    }
+
+    nonisolated static func pressShortcutElement(
+        _ element: AXUIElement,
+        perform: (AXUIElement, CFString) -> AXError = AXUIElementPerformAction
+    ) -> Bool {
+        if delivered(perform(element, kAXPressAction as CFString)) { return true }
+        return delivered(perform(element, kAXShowMenuAction as CFString))
     }
 
     // MARK: Pressing

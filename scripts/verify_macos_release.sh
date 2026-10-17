@@ -234,10 +234,6 @@ PUBLISHABLE=1
 for ready in "$INSTALLER_SIGNED" "$NOTARIZED" "$APPCAST_SIGNED" "$PERFORMANCE_READY"; do
     [ "$ready" = "1" ] || PUBLISHABLE=0
 done
-if [ "$MODE" != "authoritative" ]; then
-    PUBLISHABLE=0
-fi
-
 if [ "$MODE" = "preflight" ]; then
     echo
     if [ "$PUBLISHABLE" = "1" ]; then
@@ -250,6 +246,10 @@ if [ "$MODE" = "preflight" ]; then
         [ "$PERFORMANCE_READY" = "1" ] || echo "  - performance budget: $PERFORMANCE_REASON"
     fi
     exit 0
+fi
+
+if [ "$MODE" != "authoritative" ]; then
+    PUBLISHABLE=0
 fi
 
 # ------------------------------------------------------------- release commit
@@ -289,6 +289,8 @@ if [ "$RUN_BUILD" = "1" ]; then
         ./packaging/build_macos_pkg.sh
     resolve_sparkle_account
 else
+    "$PYTHON" "$ROOT_DIR/packaging/build_input_manifest.py" verify "$ROOT_DIR" \
+        "$BUILD_DIR/release-evidence-raw/build-inputs.json"
     skip packaging "--$MODE reuses the artifacts already in build/ and dist/"
 fi
 
@@ -861,16 +863,14 @@ if [ "$APPCAST_SIGNED" = "1" ]; then
     artifacts+=("$appcast" "$channel_metadata")
 fi
 sbom="$ROOT_DIR/dist/jrbar-sbom.cdx.json"
-sbom_args=(--output "$sbom" --root "$ROOT_DIR" --application-version "$version")
+sbom_args=(--root "$ROOT_DIR" --application-version "$version" --app "$APP")
 for artifact in "${artifacts[@]}"; do
     sbom_args+=(--artifact "$artifact")
 done
 SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" \
-    "$PYTHON" scripts/generate_sbom.py "${sbom_args[@]}"
+    "$PYTHON" scripts/generate_sbom.py --output "$sbom" "${sbom_args[@]}"
 record_receipt sbom "$sbom" \
-    "$PYTHON" -c \
-    'import json,sys; d=json.load(open(sys.argv[1], encoding="utf-8")); assert d.get("bomFormat") == "CycloneDX"' \
-    "$sbom"
+    "$PYTHON" scripts/generate_sbom.py --validate "$sbom" "${sbom_args[@]}"
 artifacts+=("$sbom")
 
 # -------------------------------------------------------------- the manifest

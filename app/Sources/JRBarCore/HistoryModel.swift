@@ -6,6 +6,8 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
     /// `started`, `completed`, `asked`, `answered`, `failed`, `ended`.
     public var kind: String
     public var provider: String?
+    public var instance: String?
+    public var instanceLabel: String?
     public var session: String?
     public var label: String?
     public var detail: String?
@@ -16,7 +18,14 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
     /// Mac spent that time (asleep, locked, or simply unopened).
     public var unseen: Bool
 
-    public var id: String { "\(at)|\(kind)|\(session ?? "")|\(label ?? "")" }
+    /// Two rows can share a moment, a kind and a name (a poll that crosses
+    /// the 75 and the 90 percent lines at once), so the detail is part of
+    /// who a row is.
+    public var id: String {
+        let base = "\(at)|\(kind)|\(session ?? "")|\(label ?? "")|\(detail ?? "")"
+        guard let instance, !instance.isEmpty, instance != "default" else { return base }
+        return "\(base)|\(instance)"
+    }
 
     /// The label as the panel shows sessions (`SessionLabel`): the daemon's
     /// "Claude 8870963f-850a-…" row reads "8870963f", never the provider
@@ -49,10 +58,12 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
     }
 
     public init(at: Double, kind: String, provider: String? = nil, session: String? = nil, label: String? = nil,
-                detail: String? = nil, duration: Double? = nil, unseen: Bool = false) {
+                detail: String? = nil, duration: Double? = nil, unseen: Bool = false, instance: String? = nil, instanceLabel: String? = nil) {
         self.at = at
         self.kind = kind
         self.provider = provider
+        self.instance = instance
+        self.instanceLabel = instanceLabel
         self.session = session
         self.label = label
         self.detail = detail
@@ -60,13 +71,18 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
         self.unseen = unseen
     }
 
-    enum CodingKeys: String, CodingKey { case at, kind, provider, session, label, detail, duration, unseen }
+    enum CodingKeys: String, CodingKey {
+        case at, kind, provider, session, label, detail, duration, unseen, instance
+        case instanceLabel = "instance_label"
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         at = try c.decodeIfPresent(Double.self, forKey: .at) ?? 0
         kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "event"
         provider = try c.decodeIfPresent(String.self, forKey: .provider)
+        instance = try? c.decodeIfPresent(String.self, forKey: .instance)
+        instanceLabel = try? c.decodeIfPresent(String.self, forKey: .instanceLabel)
         session = try c.decodeIfPresent(String.self, forKey: .session)
         label = try c.decodeIfPresent(String.self, forKey: .label)
         detail = try c.decodeIfPresent(String.self, forKey: .detail)
@@ -74,14 +90,34 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
         unseen = try c.decodeIfPresent(Bool.self, forKey: .unseen) ?? false
     }
 
+    public func displayTitle(privacyMode: Bool?) -> String {
+        let original = displayTitle
+        guard QuotaAccountCaption.isQuota(kind), let provider, !provider.isEmpty else { return original }
+        let name = SessionLabel.providerName(provider)
+        let caption = QuotaAccountCaption.provider(provider, instance: instance, label: instanceLabel, privacyMode: privacyMode)
+        guard caption != name else { return original }
+        if original.caseInsensitiveCompare(name) == .orderedSame { return caption }
+        if original.range(of: name + " ", options: [.anchored, .caseInsensitive]) != nil {
+            return caption + String(original.dropFirst(name.count))
+        }
+        let sourceLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if sourceLabel.range(of: name + " ", options: [.anchored, .caseInsensitive]) != nil {
+            // SessionLabel removes the provider prefix from the ordinary title.
+            return "\(caption) \(original)"
+        }
+        return "\(original) · \(caption)"
+    }
+
     public var date: Date { Date(timeIntervalSince1970: at) }
 
     /// The kinds the daemon's `list_history` emits (`completed`, `asked`,
-    /// `failed`, `quota_crossed`) plus the ones older documents carried.
-    public static let kinds = ["started", "completed", "asked", "answered", "failed", "ended", "quota_crossed"]
+    /// `failed`, `quota_crossed`, `ask_expired`) plus the ones older
+    /// documents carried.
+    public static let kinds = ["started", "completed", "asked", "answered", "failed", "ended",
+                               "quota_crossed", "ask_expired"]
 
     /// "Started", "Needed you", "Answered", "Finished", "Failed", "Ended",
-    /// "Quota crossed".
+    /// "Quota crossed", "Ask expired unanswered".
     public var kindWord: String {
         switch kind {
         case "started": return "Started"
@@ -91,6 +127,7 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
         case "failed": return "Failed"
         case "ended": return "Ended"
         case "quota_crossed": return "Quota crossed"
+        case "ask_expired": return "Ask expired unanswered"
         default: return kind.prefix(1).uppercased() + kind.dropFirst()
         }
     }
@@ -117,18 +154,11 @@ public struct HistoryFilter: Equatable, Sendable {
         providers.isEmpty && kinds.isEmpty && text.trimmingCharacters(in: .whitespaces).isEmpty && day == nil
     }
 
-    /// `transcriptHits` are the session uuids whose archived transcript
-    /// matched the text (the Data Hoarder's full-text index): a row about
-    /// one of them passes the text test even when its own words do not.
-    public func matches(_ row: CoreHistoryRow, transcriptHits: Set<String> = []) -> Bool {
+    public func matches(_ row: CoreHistoryRow) -> Bool {
         if let day, !Calendar.current.isDate(row.date, inSameDayAs: day) { return false }
         if !providers.isEmpty, !providers.contains(row.provider ?? "") { return false }
         if !kinds.isEmpty, !kinds.contains(row.kind) { return false }
-        if !matchesOwnWords(row) {
-            guard let uuid = HistoryTimelineRequest.sessionUUID(from: row.session),
-                  transcriptHits.contains(uuid) else { return false }
-        }
-        return true
+        return matchesOwnWords(row)
     }
 
     /// The text test against the row's own words (label, detail,
@@ -140,8 +170,8 @@ public struct HistoryFilter: Equatable, Sendable {
         return haystack.contains { $0.contains(needle) }
     }
 
-    public func apply(_ rows: [CoreHistoryRow], transcriptHits: Set<String> = []) -> [CoreHistoryRow] {
-        rows.filter { matches($0, transcriptHits: transcriptHits) }
+    public func apply(_ rows: [CoreHistoryRow]) -> [CoreHistoryRow] {
+        rows.filter(matches)
     }
 }
 
@@ -235,7 +265,7 @@ public struct AwaySummary: Equatable, Sendable {
     public var sessions: Int
 
     public var text: String {
-        let order = ["completed", "asked", "failed", "answered", "started", "quota_crossed", "ended"]
+        let order = ["completed", "asked", "failed", "answered", "started", "quota_crossed", "ask_expired", "ended"]
         let parts = order.compactMap { kind -> String? in
             guard let count = counts[kind], count > 0 else { return nil }
             switch kind {
@@ -245,6 +275,7 @@ public struct AwaySummary: Equatable, Sendable {
             case "answered": return "\(count) answered"
             case "started": return "\(count) started"
             case "quota_crossed": return count == 1 ? "1 quota crossing" : "\(count) quota crossings"
+            case "ask_expired": return count == 1 ? "1 ask expired unanswered" : "\(count) asks expired unanswered"
             default: return "\(count) ended"
             }
         }

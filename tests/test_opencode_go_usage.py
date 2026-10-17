@@ -334,3 +334,20 @@ def test_unsupported_replaces_old_lanes_instead_of_going_stale(tmp_path: Path) -
     current = result.by_provider("opencode")
     assert current.state is ProviderSourceState.UNSUPPORTED
     assert current.lanes == ()
+
+
+def test_only_a_clear_on_leaves_the_go_request_enabled(tmp_path: Path) -> None:
+    # A value that is not recognisably "on" must never leave the request to
+    # opencode.ai running because it was not exactly "off".
+    root = _data_root(tmp_path)
+    _write_auth(root, {"opencode-go": {"type": "api", "key": SYNTHETIC_KEY}})
+    for value in ("off", "false", "0", "no", "disabled", "of"):
+        http = FakeHttp(AssertionError(f"go_usage={value} must not reach opencode.ai"))
+        collect_opencode(
+            _preference(go_usage=value),
+            observed_at=OBSERVED,
+            home=tmp_path,
+            env={"OPENCODE_API_KEY": SYNTHETIC_KEY},
+            http_json=http,
+        )
+        assert http.calls == [], value

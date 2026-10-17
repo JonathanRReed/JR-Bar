@@ -9,8 +9,8 @@ def screen_bar_quota_ember_level(controller, *, wall_clock=time.time) -> float:
     """How far the tightest live lane has sunk below its provider's threshold.
 
     A lane whose window has already reset is skipped: it describes a window
-    that is over, so its old percent must not glow (or send the exhausted
-    signal) for the window running now.
+    that is over. An exhausted lane also has no standing glow: its
+    capacity notice is finite, while Usage keeps the remaining amount.
     """
     try:
         from .provider_usage_platform import ProviderSourceState, most_constrained_lane
@@ -24,12 +24,14 @@ def screen_bar_quota_ember_level(controller, *, wall_clock=time.time) -> float:
         thresholds = {preference.identity: preference.threshold_remaining for preference in settings.providers}
         worst = 0.0
         for snapshot in controller.provider_usage_state.snapshots:
+            if snapshot.identity in getattr(controller, "_capacity_limit_seen", {}):
+                continue
             if snapshot.provider_id in hidden or snapshot.identity in hidden_instances:
                 continue
             if snapshot.state not in {ProviderSourceState.READY, ProviderSourceState.STALE}:
                 continue
             lane = most_constrained_lane(snapshot, now=now)
-            if lane is None or lane.remaining_percent is None:
+            if lane is None or lane.remaining_percent is None or lane.remaining_percent <= 0:
                 continue
             threshold = thresholds.get(snapshot.identity, 20.0)
             if threshold > 0.0 and lane.remaining_percent <= threshold:
@@ -79,7 +81,6 @@ def append_quota_to_status_title(controller, *, wall_clock=time.time) -> None:
     color_name = {
         "fast": "systemOrangeColor",
         "critical": "systemRedColor",
-        "out": "systemRedColor",
     }.get(glance.verdict or "")
     if color_name is None:
         return

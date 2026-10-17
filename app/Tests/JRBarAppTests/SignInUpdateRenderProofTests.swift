@@ -8,7 +8,7 @@ import Testing
 /// Render proof for Fix sign-in and Update: the Usage Center's fix controls for a
 /// stale Claude card, a signed-out Grok card and a card that is stale for another
 /// reason; the signed-out card in the real Usage Center over the mock daemon; and
-/// Settings › Agents' rows with their version, "available" note, Update button and
+/// Settings › Agents & Usage' rows with their version, "available" note, Update button and
 /// the daemon's one-line result. Off by default; set `JRBAR_RENDER_PROOF=1` to write
 /// `signin-update-*.png` into `JRBAR_RENDER_PROOF_DIR`.
 @Suite("Fix sign-in and Update render proof", .serialized)

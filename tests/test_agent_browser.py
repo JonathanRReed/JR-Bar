@@ -56,6 +56,10 @@ from jrbar.provider_facts import (
     WorkLifecycle,
 )
 
+#: The instant the fixtures' watermarks are stamped at; documents are built
+#: as of it, so no test depends on the day it runs.
+_NOW = 1_800_000_000.0
+
 
 def _source(instance: str = "local:01", provider: str = "codex") -> SourceKey:
     return SourceKey(provider, "hooks", instance, "live_agent_events")
@@ -411,6 +415,7 @@ def test_build_indexes_product_tokens_but_never_visible_family_or_identity_copy_
         mailbox,
         preferences,
         triage,
+        now_epoch=_NOW,
     )
 
     assert len(documents) == 1
@@ -494,6 +499,7 @@ def bounded_browser_fixture() -> tuple[
         mailbox,
         _preference_projection(mailbox),
         LocalTriageState(()),
+        now_epoch=_NOW,
     )
     return documents, workers
 
@@ -586,6 +592,7 @@ def test_selected_family_retires_stale_worker_without_mutating_primary_watch__an
         fresh_mailbox,
         fresh_preferences,
         LocalTriageState(()),
+        now_epoch=_NOW,
     )
     fresh_family = project_agent_browser(
         fresh_documents,
@@ -609,6 +616,7 @@ def test_selected_family_retires_stale_worker_without_mutating_primary_watch__an
         stale_mailbox,
         stale_preferences,
         LocalTriageState(()),
+        now_epoch=_NOW,
     )
     stale_family = project_agent_browser(
         stale_documents,
@@ -643,6 +651,7 @@ def test_selected_family_retires_stale_worker_without_mutating_primary_watch__an
         mailbox,
         _preference_projection(mailbox),
         LocalTriageState(()),
+        now_epoch=_NOW,
     )
 
     assert documents == ()
@@ -671,6 +680,7 @@ def test_selected_family_retires_stale_worker_without_mutating_primary_watch__an
         moved_mailbox,
         _preference_projection(moved_mailbox),
         LocalTriageState(()),
+        now_epoch=_NOW,
     )
     counts = {row.work_key: row.worker_count for row in moved_documents}
 
@@ -703,6 +713,7 @@ def test_primary_overflow_keeps_exact_count_and_every_retained_family_reachable_
         mailbox,
         _preference_projection(mailbox),
         LocalTriageState(()),
+        now_epoch=_NOW,
     )
 
     assert len(documents) == 100
@@ -750,6 +761,7 @@ def test_primary_overflow_keeps_exact_count_and_every_retained_family_reachable_
         mailbox,
         _preference_projection(mailbox),
         LocalTriageState(()),
+        now_epoch=_NOW,
     )
 
     assert len(documents) == 100
@@ -784,6 +796,7 @@ def test_primary_overflow_keeps_exact_count_and_every_retained_family_reachable_
         mailbox,
         _preference_projection(mailbox),
         LocalTriageState(()),
+        now_epoch=_NOW,
     )
 
     default_root = project_agent_browser(

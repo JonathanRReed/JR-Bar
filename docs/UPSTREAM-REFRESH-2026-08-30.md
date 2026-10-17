@@ -1,5 +1,9 @@
 # JR-Bar P5.72 upstream refresh
 
+> **Superseded for CodexBar and T3 Code** by
+> [UPSTREAM-REFRESH-2026-10-07-02.md](UPSTREAM-REFRESH-2026-10-07-02.md). The
+> SidePulse findings below stand until their own review lands.
+
 Reviewed 2026-08-30 (America/Chicago), with live GitHub API and repository
 pages checked during this run. This is a research ledger, not a merge or
 release approval. GitHub issue and pull-request text is treated as an

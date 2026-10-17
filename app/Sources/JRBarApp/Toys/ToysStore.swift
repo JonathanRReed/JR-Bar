@@ -70,6 +70,7 @@ final class ToysStore {
     /// neither read the user's real tank nor pay pearls into it.
     init(core: CoreModel, settings: SettingsStore, state: ToysState,
          cardModel: NotchCardModel, notchRuntimeEnabled: Bool = true,
+         nativeSourcesEnabled: Bool = true,
          aquariumSave: AquariumSaveFile? = nil) {
         self.core = core
         self.settings = settings
@@ -90,7 +91,7 @@ final class ToysStore {
         confetti.store = self
         cards.append(confetti)
         let notch = NotchToy(core: core, store: self, cardModel: cardModel,
-                             runtimeEnabled: notchRuntimeEnabled)
+                             runtimeEnabled: notchRuntimeEnabled, nativeSourcesEnabled: nativeSourcesEnabled)
         self.notch = notch
         // The Notch card renders on the Utilities page — it manages a
         // real macOS surface, so it is a utility, not a toy; `toys`
@@ -99,8 +100,18 @@ final class ToysStore {
     }
 
     isolated deinit {
+        shutdown()
+    }
+
+    /// Retire toy work before the owner's windows or run loop disappear.
+    func shutdown() {
         saveWork?.cancel()
+        saveWork = nil
         notch?.shutdown()
+        fold?.shutdown()
+        aquarium?.shutdown()
+        notchBuddy.shutdown()
+        confetti.shutdown()
     }
 
     // MARK: Persistence
@@ -113,6 +124,20 @@ final class ToysStore {
         }
         saveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    /// Swaps the whole state in — a settings import — and brings the toys
+    /// that own a window or a timer in line with it. Assigning `state`
+    /// alone would leave an imported "off" tank open and an imported "on"
+    /// one dark, because only each toy's own switch does that work.
+    func replaceState(_ imported: ToysState) {
+        state = imported
+        aquarium?.stateReplaced()
+        if !notchBuddy.isOn { notchBuddy.dismissPanels() }
+        notchBuddy.onVisibilityChange?()
+        // An imported "off" lets a held burst go and stops its recheck
+        // timer now, not at the next state document.
+        confetti.roomChanged()
     }
 
     /// Writes `state` now; also the debounce's target. Never throws — the

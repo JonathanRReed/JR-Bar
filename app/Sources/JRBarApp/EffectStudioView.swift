@@ -80,12 +80,16 @@ struct EffectStudioView: View {
 
     /// The effect library room: library, inspector, assignments.
     @ViewBuilder
-    private var effectsRoom: some View {
+    var effectsRoom: some View {
         Group {
             if !store.isLive {
                 WindowEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
                                  text: "The effect registry, packs and assignments live in the monitor. The studio fills in once the socket is live.",
                                  tint: .orange)
+            } else if store.catalog == nil, let error = store.loadError, !store.loading {
+                WindowEmptyState(symbol: "exclamationmark.triangle", title: "Could not load effects",
+                                 text: error.replacingOccurrences(of: "Could not load effects: ", with: ""),
+                                 tint: .orange, actionTitle: "Try again", action: { _ = store.reload() })
             } else if store.catalog == nil {
                 VStack(spacing: 12) {
                     ProgressView().controlSize(.regular)
@@ -137,7 +141,7 @@ struct EffectStudioView: View {
             .disabled(!store.isLive)
         }
         ToolbarItem(placement: .primaryAction) {
-            Button { store.reload() } label: {
+            Button { _ = store.reload() } label: {
                 if store.loading {
                     DelayedWait { Label("Refresh", systemImage: "arrow.clockwise") }
                 } else {
@@ -335,8 +339,9 @@ struct EffectLibraryRow: View {
                 Divider()
                 ForEach(uses) { assignment in
                     Button("Remove from \(store.targetTitle(for: assignment)) (\(assignment.scope.label.lowercased()))") {
-                        store.remove(assignment)
+                        _ = store.remove(assignment)
                     }
+                    .disabled(store.assignmentChanging(assignment))
                 }
             }
         }
@@ -543,7 +548,8 @@ struct EffectInspectorPane: View {
                             Text("· tuned").font(.caption2).foregroundStyle(.tertiary)
                         }
                         Spacer()
-                        Button("Remove") { store.remove(assignment) }.buttonStyle(.link).font(.caption)
+                        Button("Remove") { _ = store.remove(assignment) }.buttonStyle(.link).font(.caption)
+                            .disabled(store.assignmentChanging(assignment))
                     }
                     .font(.callout)
                 }
@@ -777,11 +783,28 @@ struct EffectAssignmentsPane: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Active scene").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Picker("Active scene", selection: Binding(get: { store.activeScene }, set: { store.setActiveScene($0) })) {
+                Picker("Active scene", selection: Binding(get: { store.activeScene }, set: { _ = store.setActiveScene($0) })) {
                     ForEach(EffectScene.allCases) { Text($0.label).tag($0.rawValue) }
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
+                .disabled(store.sceneChanging)
+                if store.sceneChanging {
+                    Text("Changing scene…").font(.caption2).foregroundStyle(.secondary)
+                }
+                if store.activeSceneIsAutomatic {
+                    HStack {
+                        Text("Automatic scene. Saved choice: \(EffectScene(rawValue: store.selectedScene)?.label ?? store.selectedScene).")
+                            .font(.caption2).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Keep \(EffectScene(rawValue: store.activeScene)?.label ?? store.activeScene)") {
+                            _ = store.setActiveScene(store.activeScene)
+                        }
+                        .buttonStyle(.link).font(.caption)
+                        .disabled(store.sceneChanging)
+                        .help("Use this scene after the rule ends")
+                    }
+                }
                 Text("Scene assignments apply while that scene is active; asks and failures keep their reserved effects in every scene.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -791,6 +814,9 @@ struct EffectAssignmentsPane: View {
             Divider()
             if store.scenePacksSupported {
                 VStack(alignment: .leading, spacing: 4) {
+                    if store.scenePackChanging {
+                        Text("Changing scene pack…").font(.caption).foregroundStyle(.secondary)
+                    }
                     ForEach(store.scenePacks) { pack in
                         ScenePackRow(pack: pack, store: store)
                     }
@@ -803,8 +829,9 @@ struct EffectAssignmentsPane: View {
                             Text("Active pack “\(activeID)” is no longer installed")
                                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             Spacer()
-                            Button("Use built-in scenes") { store.setActiveScenePack(nil) }
+                            Button("Use built-in scenes") { _ = store.setActiveScenePack(nil) }
                                 .buttonStyle(.link)
+                                .disabled(store.scenePackChanging)
                                 .font(.caption)
                         }
                         .padding(.vertical, 1)
@@ -846,8 +873,9 @@ struct EffectAssignmentsPane: View {
                                 AssignmentRow(assignment: assignment, title: store.targetTitle(for: assignment),
                                               effect: store.catalog?.effect(assignment.effectID),
                                               note: store.assignmentNote(assignment),
-                                              selected: store.selectedID == assignment.effectID) {
-                                    store.remove(assignment)
+                                              selected: store.selectedID == assignment.effectID,
+                                              changing: store.assignmentChanging(assignment)) {
+                                    _ = store.remove(assignment)
                                 } select: {
                                     store.selectedID = assignment.effectID
                                 }
@@ -915,12 +943,14 @@ struct ScenePackRow: View {
             }
             Spacer()
             if isActive {
-                Button("Built-in scenes") { store.setActiveScenePack(nil) }
+                Button("Built-in scenes") { _ = store.setActiveScenePack(nil) }
+                    .disabled(store.scenePackChanging)
                     .buttonStyle(.link)
                     .font(.caption)
                     .help("Stop applying this pack's scene policies")
             } else {
-                Button("Use this pack") { store.setActiveScenePack(pack.id) }
+                Button("Use this pack") { _ = store.setActiveScenePack(pack.id) }
+                    .disabled(store.scenePackChanging)
                     .buttonStyle(.link)
                     .font(.caption)
                     .help("Apply this pack's policies over the built-in scenes")
@@ -1051,6 +1081,7 @@ struct AssignmentRow: View {
     /// applies) — shown in place of nothing, not hidden.
     var note: String? = nil
     let selected: Bool
+    var changing = false
     let remove: () -> Void
     let select: () -> Void
     @ViewState private var hovering = false
@@ -1079,12 +1110,13 @@ struct AssignmentRow: View {
             }
             Spacer()
             Button(action: remove) {
-                Image(systemName: "minus.circle").foregroundStyle(.secondary)
+                Image(systemName: changing ? "hourglass" : "minus.circle").foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .opacity(hovering ? 1 : 0.35)
+            .disabled(changing)
+            .opacity(changing || hovering ? 1 : 0.35)
             .help(suppressed ? "Stop suppressing this scope" : "Remove this assignment")
-            .accessibilityLabel("Remove")
+            .accessibilityLabel(changing ? "Updating assignment" : "Remove")
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: select)
@@ -1094,6 +1126,7 @@ struct AssignmentRow: View {
             Button("Show “\(effect?.label ?? assignment.effectID)”", action: select)
             Divider()
             Button(suppressed ? "Stop suppressing this scope" : "Remove assignment", role: .destructive, action: remove)
+                .disabled(changing)
         }
     }
 }
@@ -1104,7 +1137,7 @@ struct AssignSheet: View {
     @Bindable var store: EffectStudioStore
 
     var body: some View {
-        let effect = store.selected
+        let effect = store.assignmentEffect
         let draft = store.draft
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
@@ -1137,6 +1170,19 @@ struct AssignSheet: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
+            .disabled(store.assignmentSavingThisDraft)
+            if let error = store.assignmentError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !store.assignmentEffectAvailable {
+                Text("This effect is no longer in the library. Close this sheet and choose another effect.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let effect, effect.safety.warns {
                 Label("\(effect.safety.label) effect: it will blink on that scope. The monitor clamps it to 2 Hz.", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
@@ -1156,11 +1202,22 @@ struct AssignSheet: View {
                     .foregroundStyle(.secondary)
             }
             HStack {
+                if let draft, store.isRemoving(draft) {
+                    Text("Removing this scope's assignment…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if store.assignmentSaving, !store.assignmentSavingThisDraft {
+                    Text("Finishing previous assignment…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                Button("Cancel") { store.assigning = false }.keyboardShortcut(.cancelAction)
-                Button("Assign") { store.commitAssignment() }
+                Button(store.assignmentSavingThisDraft ? "Close" : "Cancel") { store.assigning = false }
+                    .keyboardShortcut(.cancelAction)
+                Button(store.assignmentSavingThisDraft ? "Assigning…" : "Assign") { _ = store.commitAssignment() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(draft == nil || draft?.problem != nil)
+                    .disabled(!store.canCommitAssignment)
             }
         }
         .padding(18)
@@ -1176,7 +1233,7 @@ struct AssignSheet: View {
             Picker("State", selection: $store.draftTarget) {
                 ForEach(EffectSemantic.assignable) { Text($0.label).tag($0.rawValue) }
             }
-            Text("Ask and Error keep their reserved alert on purpose — it is the one light you can never miss. Their colour is yours on Settings › Lighting.")
+            Text("Ask and Error keep their reserved alert on purpose — it is the one light you can never miss. Their colour is yours on Settings › Devices & Lighting.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

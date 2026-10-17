@@ -1,6 +1,6 @@
 """`provider_update_checks_enabled`: off by default, and only a real true turns it on.
 
-The daemon's own switch for Settings > Agents' "Check for agent updates". Off, no request
+The daemon's own switch for Settings > Agents & Usage' "Check for agent updates". Off, no request
 leaves the Mac and no thread starts: the registry is asked only after the person turns it
 on. The behaviour behind it is in test_provider_updates.py; this holds the key itself and
 proves the daemon's own settings drive it. Every fetch here is injected; nothing reaches a
@@ -8,6 +8,8 @@ network (conftest refuses a connect off this Mac in any case).
 """
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 import pytest
 
@@ -19,7 +21,7 @@ def test_the_default_settings_leave_update_checks_off() -> None:
 
     assert AgentMonitorSettings().provider_update_checks_enabled is False
     assert AgentMonitorSettings().to_dict()["provider_update_checks_enabled"] is False
-    on = AgentMonitorSettings().with_provider_update_checks_enabled(True)
+    on = replace(AgentMonitorSettings(), provider_update_checks_enabled=True)
     assert on.provider_update_checks_enabled is True
     assert on.to_dict()["provider_update_checks_enabled"] is True
 
@@ -29,7 +31,7 @@ def test_the_setting_round_trips_and_a_mistyped_value_is_off(tmp_path) -> None:
     from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
     target = tmp_path / "settings.json"
-    save_settings(AgentMonitorSettings().with_provider_update_checks_enabled(True), target)
+    save_settings(replace(AgentMonitorSettings(), provider_update_checks_enabled=True), target)
     assert load_settings(target).provider_update_checks_enabled is True
 
     document = AgentMonitorSettings().to_dict()

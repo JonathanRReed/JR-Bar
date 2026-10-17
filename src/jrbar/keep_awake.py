@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import firmware_hold
 from .device_writer import KNOWN_LED_FILE_NAMES
 from .models import AgentMode
 from .power_policy import configure_caffeinate_display_assertion
@@ -39,6 +40,29 @@ CAFFEINATE_COMMAND = (
 WORK_MODES = frozenset(
     {AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS}
 )
+
+
+#: How old a battery reading may be and still decide the low-battery yield.
+#: The observation service keeps the last good reading when ``ioreg`` stalls
+#: or fails, so an hour-old "3 %, unplugged" could otherwise yield a hold on
+#: a Mac that has been on the charger since. Past this age the power state is
+#: unknown, and an unknown power state never releases a hold.
+BATTERY_READING_MAX_AGE_SECONDS = 120.0
+
+
+def fresh_battery_snapshot(observation, *, now: float):
+    """The observation's snapshot when it is recent enough to act on, else
+    None. ``now`` is on the observation service's monotonic clock."""
+    if observation is None:
+        return None
+    snapshot = getattr(observation, "snapshot", None)
+    observed_at = getattr(observation, "observed_at", None)
+    observed = _finite(observed_at)
+    moment = _finite(now)
+    if snapshot is None or observed is None or moment is None:
+        return None
+    age = moment - observed
+    return snapshot if 0 <= age <= BATTERY_READING_MAX_AGE_SECONDS else None
 
 
 def battery_yields_hold(snapshot, settings) -> bool:
@@ -86,6 +110,11 @@ AGENT_LEASE_BACKSTOP_SECONDS = 12 * 60 * 60.0
 MAX_LEASE_SESSIONS = 32
 MAX_LEASE_SESSION_ID_LENGTH = 256
 MAX_LEASE_SOURCE_LENGTH = 32
+# JSON escapes a non-BMP character as two six-byte surrogate escapes.
+# Include every bounded text field plus room for keys, numbers and separators.
+MAX_LEASE_FILE_BYTES = 12 * (
+    MAX_LEASE_SESSIONS * MAX_LEASE_SESSION_ID_LENGTH + MAX_LEASE_SOURCE_LENGTH
+) + 1024
 LEASE_FILE_NAME = "keep-awake-lease.json"
 
 #: A session the "agents" lease still waits on: working, or blocked on the
@@ -113,10 +142,17 @@ class LeaseRefusedError(ValueError):
     """A well-formed request the daemon will not honour right now."""
 
 
+class LeasePersistenceError(OSError):
+    """The requested manual lease could not be saved."""
+
+
 def _finite(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
     return number if math.isfinite(number) else None
 
 
@@ -684,6 +720,13 @@ def merge_history_rows(
     return merged[: max(0, int(limit))]
 
 
+@dataclass(eq=False, slots=True)
+class _StatusReadRequest:
+    generation: int
+    previous_read: float | None
+    started: bool = False
+
+
 class KeepAwakeController:
     def __init__(
         self,
@@ -713,8 +756,12 @@ class KeepAwakeController:
         self.grace_until_monotonic: float | None = None
         self.last_error: str | None = None
         self.last_status_read_monotonic_by_path: dict[Path, float] = {}
+        self.release_failed = False
         self.last_status_error: str | None = None
         self.status_read_in_flight_by_path: set[Path] = set()
+        self._status_read_lock = threading.Lock()
+        self._status_read_generation = 0
+        self._status_read_requests: dict[Path, _StatusReadRequest] = {}
         # The daemon-owned lease and the environment it yields to. Nothing
         # below changes behaviour until someone starts a lease or reports
         # the environment (observe_environment): the menu-bar app that
@@ -722,6 +769,7 @@ class KeepAwakeController:
         self.wall_clock: Callable[[], float] = time.time
         self.lease: AwakeLease | None = None
         self.lease_path: Path | None = None
+        self.persistence_error: str | None = None
         self.power_log: PowerLog | None = None
         self.thermal = ThermalGovernor()
         self.thermal_state: int | None = None
@@ -733,22 +781,33 @@ class KeepAwakeController:
         self.working_count = 0
         #: The agents alone want the Mac awake (working, or in the grace).
         self.agent_demand = False
+        #: The agents' hold is actually asked for: demanded, switched on,
+        #: not blocked by the battery setting, not yielding to heat. The
+        #: chip's "agents" word is this, not the bare demand.
+        self.agent_holding = False
         #: Why a demanded hold is yielding right now, or None.
         self.suspension: str | None = None
         self._process_display: bool | None = None
         self._grace_epoch: tuple[float, float] | None = None
 
     def set_enabled(self, enabled: bool) -> None:
-        if self.enabled == enabled:
-            return
-        self.enabled = enabled
+        with self._status_read_lock:
+            if self.enabled == enabled:
+                return
+            self.enabled = enabled
+            if not enabled:
+                self._status_read_generation += 1
+                self.last_status_error = None
+                self.last_status_read_monotonic_by_path.clear()
+                for path, request in list(self._status_read_requests.items()):
+                    if not request.started:
+                        del self._status_read_requests[path]
+                        self.status_read_in_flight_by_path.discard(path)
         if not enabled:
             self.release()
             self.holding_requested = False
+            self.agent_holding = False
             self.grace_until_monotonic = None
-            self.last_status_error = None
-            self.last_status_read_monotonic_by_path.clear()
-            self.status_read_in_flight_by_path.clear()
 
     def set_grace_seconds(self, seconds: float) -> None:
         """Live-adjustable -- called every poll with the current setting
@@ -794,6 +853,7 @@ class KeepAwakeController:
         # and only the low-battery floor (a suspension) overrides a lease.
         battery_blocked = on_battery is True and not hold_on_battery
         agent_hold = self.enabled and should_hold and not battery_blocked
+        self.agent_holding = agent_hold and suspension is None
 
         if not (agent_hold or lease_holds) or suspension is not None:
             self.release()
@@ -818,8 +878,13 @@ class KeepAwakeController:
         from .private_io import read_private_text
 
         try:
-            raw = json.loads(read_private_text(self.lease_path, max_bytes=4096))
-        except (OSError, ValueError):
+            raw = json.loads(read_private_text(self.lease_path, max_bytes=MAX_LEASE_FILE_BYTES))
+        except FileNotFoundError:
+            return
+        except OSError:
+            return
+        except ValueError:
+            self._save_lease(None)
             return
         lease = AwakeLease.from_dict(raw)
         if lease is None or lease_verdict(
@@ -832,16 +897,19 @@ class KeepAwakeController:
     def start_lease(self, lease: AwakeLease) -> AwakeLease:
         if type(lease) is not AwakeLease:
             raise ValueError("a keep-awake lease must be an AwakeLease")
+        if not self._save_lease(lease):
+            raise LeasePersistenceError("Manual Keep Awake could not be saved.")
         if self.lease is not None:
             self._log(POWER_LEASE_ENDED, reason=LEASE_END_REPLACED)
         self.lease = lease
-        self._save_lease(lease)
         self._log(POWER_LEASE_STARTED, reason=lease.kind)
         return lease
 
     def end_lease(self, reason: str = LEASE_END_CANCELLED) -> bool:
         lease = self.lease
         if lease is None:
+            if self.persistence_error == "clear_failed":
+                self._save_lease(None)
             return False
         self.lease = None
         self._save_lease(None)
@@ -919,32 +987,71 @@ class KeepAwakeController:
         except ValueError:
             pass
 
-    def _save_lease(self, lease: AwakeLease | None) -> None:
+    def _save_lease(self, lease: AwakeLease | None) -> bool:
         path = self.lease_path
         if path is None:
-            return
+            self.persistence_error = None
+            return True
         from .private_io import atomic_private_write
 
-        try:
-            if lease is None:
+        if lease is None:
+            try:
                 path.unlink(missing_ok=True)
-            else:
-                atomic_private_write(path, json.dumps(lease.to_dict(), allow_nan=False))
-        except (OSError, ValueError) as exc:
-            self.last_error = f"lease not saved: {exc.__class__.__name__}"
+            except OSError:
+                try:
+                    atomic_private_write(path, "null")
+                except (OSError, ValueError):
+                    self.persistence_error = "clear_failed"
+                    return False
+        else:
+            previous = self.lease
+            previous_payload = (
+                "null" if previous is None else json.dumps(previous.to_dict(), allow_nan=False)
+            )
+            payload = json.dumps(lease.to_dict(), allow_nan=False)
+            try:
+                atomic_private_write(path, payload)
+            except (OSError, ValueError):
+                from .private_io import read_private_text
+
+                def read_saved() -> tuple[bool, str | None]:
+                    try:
+                        return True, read_private_text(path, max_bytes=MAX_LEASE_FILE_BYTES)
+                    except FileNotFoundError:
+                        return True, None
+                    except (OSError, ValueError):
+                        return False, None
+
+                readable, saved = read_saved()
+                if readable and saved == payload:
+                    # A write can publish before its parent-directory fsync fails.
+                    try:
+                        atomic_private_write(path, previous_payload)
+                    except (OSError, ValueError):
+                        pass
+                    readable, saved = read_saved()
+                prior_confirmed = readable and saved in (None, previous_payload)
+                if self.persistence_error != "clear_failed":
+                    self.persistence_error = (
+                        "clear_failed" if previous is None and not prior_confirmed else "save_failed"
+                    )
+                return False
+        self.persistence_error = None
+        return True
 
     def hold_state(self) -> str:
         """The three words the chip draws: ``manual`` while a lease is in
         force, ``agents`` while the agents hold the Mac, else ``off``."""
         if self.lease is not None:
             return HOLD_STATE_MANUAL
-        if self.enabled and self.agent_demand:
+        if self.enabled and self.agent_holding:
             return HOLD_STATE_AGENTS
         return HOLD_STATE_OFF
 
     def hold_document(self, *, now_monotonic: float | None = None) -> dict[str, object]:
         """``state.power.hold``: why the Mac is (or is not) held awake."""
         state = self.hold_state()
+        active = self.process_running()
         grace_until = None
         deadline = self.grace_until_monotonic
         if state == HOLD_STATE_AGENTS and deadline is not None:
@@ -962,12 +1069,14 @@ class KeepAwakeController:
         return {
             "state": state,
             "agents": self.working_count if state == HOLD_STATE_AGENTS else 0,
-            "active": self.process_running(),
-            "display": self.effective_display(),
+            "active": active,
+            "display": self._process_display if active else self.effective_display(),
+            "release_failed": self.release_failed,
             "grace_until": grace_until,
             "lease": None if self.lease is None else self.lease.to_dict(),
             "suspended": self.suspension,
             "thermal": thermal_word(self.thermal_state),
+            "persistence_error": self.persistence_error,
         }
 
     def should_hold_for_mode(self, mode: AgentMode, now: float) -> bool:
@@ -992,8 +1101,12 @@ class KeepAwakeController:
 
     def ensure_awake(self) -> None:
         if self.process_running():
+            if self.release_failed and self._process_display == self.effective_display():
+                self.release_failed = False
+                self.last_error = None
             return
 
+        self.release_failed = False
         try:
             self.process = self.process_factory(
                 self.caffeinate_command(),
@@ -1002,6 +1115,7 @@ class KeepAwakeController:
             )
             self._process_display = self.effective_display()
             self.last_error = None
+            self.release_failed = False
         except Exception as exc:
             self.process = None
             self.last_error = str(exc)
@@ -1011,47 +1125,87 @@ class KeepAwakeController:
 
     def _terminate_process(self) -> None:
         process = self.process
-        self.process = None
         if process is None:
             return
 
+        failure = None
         try:
             if process.poll() is None:
                 process.terminate()
                 process.wait(timeout=1)
-        except Exception:
+        except Exception as exc:
+            failure = exc
             try:
                 process.kill()
-            except Exception:
-                pass
+                process.wait(timeout=1)
+            except Exception as exc:
+                failure = exc
+        try:
+            exited = process.poll() is not None
+        except Exception as exc:
+            exited = False
+            failure = exc
+        if exited:
+            self.process = None
+            self._process_display = None
+            self.last_error = None
+            self.release_failed = False
+        else:
+            detail = str(failure) if failure is not None else "process is still running"
+            self.last_error = f"Could not release Keep Awake: {detail}"
+            self.release_failed = True
 
     def process_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
     def poke_status_file(self, target: Path | None, *, now: float | None = None) -> Path | None:
-        if not self.enabled or target is None:
+        if target is None:
             return None
+        with self._status_read_lock:
+            if not self.enabled:
+                return None
 
         current = time.monotonic() if now is None else now
         status_path = keepalive_file_for_target(target)
-        last_read = self.last_status_read_monotonic_by_path.get(status_path)
-        if last_read is not None and current - last_read < self.status_read_seconds:
+        if firmware_hold.held_reason(status_path.parent) is not None:
+            # A firmware update owns the drive; the keepalive waits for it.
             return None
-
-        self.last_status_read_monotonic_by_path[status_path] = current
-        if self.status_read_async:
-            if status_path in self.status_read_in_flight_by_path:
+        with self._status_read_lock:
+            if not self.enabled or status_path in self._status_read_requests:
                 return None
+            last_read = self.last_status_read_monotonic_by_path.get(status_path)
+            if last_read is not None and current - last_read < self.status_read_seconds:
+                return None
+            request = _StatusReadRequest(self._status_read_generation, last_read)
+            self._status_read_requests[status_path] = request
             self.status_read_in_flight_by_path.add(status_path)
-            thread = threading.Thread(
-                target=self._run_status_reader,
-                args=(status_path,),
-                daemon=True,
-            )
-            thread.start()
+            self.last_status_read_monotonic_by_path[status_path] = current
+
+        if self.status_read_async:
+            try:
+                thread = threading.Thread(
+                    target=self._run_status_reader,
+                    args=(status_path, request),
+                    daemon=True,
+                )
+                thread.start()
+            except Exception as exc:
+                with self._status_read_lock:
+                    if self._status_read_requests.get(status_path) is request:
+                        del self._status_read_requests[status_path]
+                        self.status_read_in_flight_by_path.discard(status_path)
+                        if request.generation == self._status_read_generation:
+                            if request.previous_read is None:
+                                self.last_status_read_monotonic_by_path.pop(status_path, None)
+                            else:
+                                self.last_status_read_monotonic_by_path[status_path] = (
+                                    request.previous_read
+                                )
+                            self.last_status_error = str(exc)
+                return None
             return status_path
 
-        return self._run_status_reader(status_path)
+        return self._run_status_reader(status_path, request)
 
     def caffeinate_command(self) -> list[str]:
         command = list(
@@ -1064,24 +1218,44 @@ class KeepAwakeController:
             command.extend(["-w", str(os.getpid())])
         return command
 
-    def _run_status_reader(self, status_path: Path) -> Path | None:
+    def _run_status_reader(
+        self, status_path: Path, request: _StatusReadRequest
+    ) -> Path | None:
+        with self._status_read_lock:
+            if (
+                self._status_read_requests.get(status_path) is not request
+                or request.generation != self._status_read_generation
+                or not self.enabled
+            ):
+                return None
+            request.started = True
+        error = None
         try:
             self.status_reader(status_path)
-            self.last_status_error = None
-            return status_path
         except Exception as exc:
-            self.last_status_error = str(exc)
-            return None
+            error = str(exc)
         finally:
-            self.status_read_in_flight_by_path.discard(status_path)
+            with self._status_read_lock:
+                if self._status_read_requests.get(status_path) is request:
+                    del self._status_read_requests[status_path]
+                    self.status_read_in_flight_by_path.discard(status_path)
+                    if request.generation == self._status_read_generation:
+                        self.last_status_error = error
+        return status_path if error is None else None
 
     def detail(self, *, now: float | None = None) -> str:
+        if self.release_failed:
+            return f"Keep awake error: {self.last_error}"
         if self.suspension == SUSPENDED_THERMAL:
             return "Keep awake let go: the Mac is too hot"
         if self.suspension == SUSPENDED_BATTERY:
             return "Keep awake let go: battery low"
         if self.suspension == SUSPENDED_LOW_POWER:
             return "Keep awake let go: Low Power Mode is on"
+        if self.persistence_error == "clear_failed":
+            return "Manual Keep Awake stopped, but its saved data could not be cleared"
+        if self.persistence_error == "save_failed":
+            return "Manual Keep Awake could not be saved"
         if self.lease is not None:
             return f"Keep awake held by you ({self.lease.kind})"
         if not self.enabled:
@@ -1109,6 +1283,7 @@ def keepalive_file_for_target(target: Path) -> Path:
 
 
 def touch_keepalive_file(path: Path) -> None:
+    firmware_hold.require_not_held(path)
     subprocess.run(
         ["/usr/bin/touch", str(path)],
         stdout=subprocess.DEVNULL,

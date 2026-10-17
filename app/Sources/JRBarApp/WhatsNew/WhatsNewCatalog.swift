@@ -33,54 +33,52 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "0.9.16"
+    static let releaseID = "0.9.17"
 
     /// The header's one line.
-    static let headline = "Sub-agent asks stay quiet, sign-in and updates are one click, and token totals cover the month."
+    static let headline = "Steady provider turns, clearer quotas, and controls within reach."
 
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
 
     static let entries: [WhatsNewEntry] = [
         WhatsNewEntry(
-            id: "subagents", symbol: "person.2",
-            title: "Sub-agent asks stay quiet",
-            detail: "While Sub-agent asks is off, a worker's prompt stays quiet and its session says how many are waiting.",
-            tryIt: .settings(page: "agents"), opens: "Opens Settings › Agents, where Sub-agent asks is"),
+            id: "provider-turns", symbol: "arrow.triangle.2.circlepath",
+            title: "Providers take steady turns",
+            detail: "Working providers take three-second turns; one stays still, and waiting asks keep priority."),
         WhatsNewEntry(
-            id: "signin", symbol: "key",
-            title: "Fix sign-in in one click",
-            detail: "A stale or signed-out provider card has a Fix sign-in button for Claude's renewal or the CLI's login.",
+            id: "quota-evidence", symbol: "chart.bar",
+            title: "Inspect each quota window",
+            detail: "Inspect a ring's reading, reset and forecast, then compare recent pace with its budget.",
             tryIt: .window(.usage), opens: "Opens Usage, where the provider cards are"),
         WhatsNewEntry(
-            id: "updates", symbol: "arrow.down.circle",
-            title: "Update agent CLIs",
-            detail: "Settings › Agents shows each CLI's version with an Update button that runs its own updater.",
+            id: "hook-health", symbol: "checkmark.circle",
+            title: "Recheck hook health",
+            detail: "Recheck the receiver and provider configuration, with failures and old reports clearly labeled.",
             tryIt: .settings(page: "agents"), opens: "Opens Settings › Agents"),
         WhatsNewEntry(
-            id: "tokens", symbol: "chart.bar",
-            title: "Token totals cover the month",
-            detail: "The Claude and Codex cards add up all 30 days, however busy, and never show a partial total.",
-            tryIt: .window(.usage), opens: "Opens Usage"),
+            id: "notch-controls", symbol: "timer",
+            title: "Keep notch controls nearby",
+            detail: "Now keeps unanswered requests actionable and shows a timer; Clear Shelf offers Undo."),
         WhatsNewEntry(
             id: "aquarium", symbol: "fish",
-            title: "Toys rest on low power",
-            detail: "The Aquarium, Notch Buddy and island halve or pause decorative motion in Low Power Mode or heat.",
+            title: "Aquarium Live or Still",
+            detail: "Pause visual motion and inspect fish from a menu while sessions and rewards keep updating.",
             tryIt: .aquarium, opens: "Opens the Aquarium"),
         WhatsNewEntry(
             id: "dot", symbol: "light.strip.2",
-            title: "Screen Bar flash stays safe",
-            detail: "A 5 Hz preview is slowed to the flash limit, and the Dot no longer holds a pulse's peak.",
+            title: "Device reports stay honest",
+            detail: "Disconnected devices label their last report, and calibration keeps refusals visible.",
             tryIt: .settings(page: "devices"), opens: "Opens Settings › Devices, where Pro & Dot is"),
         WhatsNewEntry(
-            id: "esc", symbol: "escape",
-            title: "Esc stays with its window",
-            detail: "Esc folds the notch card only from its own window, so Settings text fields keep their Esc.",
-            keys: "Esc"),
+            id: "utility-controls", symbol: "moon.zzz",
+            title: "More useful utility controls",
+            detail: "Use one-time Awake sessions, Dock exclusions, and clearer menu-bar hiding status."),
         WhatsNewEntry(
-            id: "saved", symbol: "externaldrive",
-            title: "Saved files survive damage",
-            detail: "A file JR-Bar cannot read is set aside as corrupt, not overwritten, and good rows survive."),
+            id: "reply-feedback", symbol: "text.bubble",
+            title: "Reply feedback stays nearby",
+            detail: "Refused or unconfirmed replies retain the draft and explain the outcome in the sheet.",
+            tryIt: .window(.overview), opens: "Opens Agent Overview"),
     ]
 }
 

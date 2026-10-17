@@ -12,14 +12,14 @@ The canonical local verification command is:
 make verify
 ```
 
-That creates `.venv`, installs the `test` extra, runs Ruff, executes the complete macOS test suite, builds the wheel and source distribution, and validates both with Twine. The complete suite requires macOS because the daemon calls macOS frameworks through PyObjC. A fast ordinary-change gate is available after bootstrap through:
+That creates `.venv` (Python 3.12), installs the `dev` extra with the reviewed constraints, runs `pip check`, the dependency policy, the secret scan and Ruff, executes the complete macOS test suite, builds the wheel and source distribution, validates both with Twine, and writes an SBOM. The complete suite requires macOS because the daemon calls macOS frameworks through PyObjC. A fast ordinary-change gate is available after bootstrap through:
 
 ```sh
 make fast
 ```
 
 It runs Ruff, real package imports, lightweight architecture and repository
-contracts, the tracked-file secret scan, literal provider and schema fixtures,
+contracts, the tracked-file secret scan, the doc-link check, literal provider and schema fixtures,
 the contract, fixture, and semantic test files that answer in seconds,
 compilation, dependency and version policy, and diff hygiene. It does not
 bootstrap or install tools, build or clean artifacts,

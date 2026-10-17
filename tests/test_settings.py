@@ -17,28 +17,61 @@ from jrbar.settings import (
 )
 
 
-def test_notification_banner_is_off_for_new_installs_and_preserves_legacy_choice_once(
+def test_alerts_default_to_balanced_for_new_installs_and_never_written_keys(
     tmp_path: Path,
 ) -> None:
+    """The finish banner and the quota alerts are on until a person turns them off."""
     missing = tmp_path / "missing-settings.json"
-    legacy = tmp_path / "legacy-settings.json"
-    current = tmp_path / "current-settings.json"
-    legacy.write_text("{}", encoding="utf-8")
-    current.write_text(
-        json.dumps({"notification_policy_version": 1}),
+    empty = tmp_path / "empty-settings.json"
+    versioned = tmp_path / "versioned-settings.json"
+    empty.write_text("{}", encoding="utf-8")
+    versioned.write_text(json.dumps({"notification_policy_version": 1}), encoding="utf-8")
+
+    for settings in (
+        AgentMonitorSettings(),
+        load_settings(missing),
+        load_settings(empty),
+        load_settings(versioned),
+    ):
+        assert settings.completion_notification_enabled is True
+        assert settings.quota_alerts_enabled is True
+        assert settings.escalation_tier == "menu_bar"
+
+
+def test_an_explicit_alert_choice_is_kept_on_load_and_save(tmp_path: Path) -> None:
+    """A settings file that holds a value keeps it, off included."""
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "notification_policy_version": 1,
+                "completion_notification_enabled": False,
+                "quota_alerts_enabled": False,
+                "escalation_tier": "light",
+            }
+        ),
         encoding="utf-8",
     )
 
-    assert AgentMonitorSettings().completion_notification_enabled is False
-    assert load_settings(missing).completion_notification_enabled is False
-    assert load_settings(current).completion_notification_enabled is False
+    loaded = load_settings(path)
+    assert loaded.completion_notification_enabled is False
+    assert loaded.quota_alerts_enabled is False
+    assert loaded.escalation_tier == "light"
 
-    migrated = load_settings(legacy)
-    assert migrated.completion_notification_enabled is True
-    save_settings(migrated, legacy)
-    payload = json.loads(legacy.read_text(encoding="utf-8"))
-    assert payload["notification_policy_version"] == 1
-    assert payload["completion_notification_enabled"] is True
+    save_settings(loaded, path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["completion_notification_enabled"] is False
+    assert payload["quota_alerts_enabled"] is False
+    assert payload["escalation_tier"] == "light"
+
+
+def test_alert_keys_are_local_and_not_sealed() -> None:
+    """The alert profile writes only local, unsealed keys: nothing it flips can send."""
+    from jrbar.settings_seal import SEALED_KEYS, UNSEALED_PRIVILEGED
+
+    for key in ("completion_notification_enabled", "quota_alerts_enabled", "escalation_tier"):
+        assert key not in SEALED_KEYS
+        assert key in UNSEALED_PRIVILEGED
 
 
 def test_capacity_history_is_opt_in() -> None:
@@ -53,13 +86,11 @@ def test_sleep_dim_and_idle_auto_off_are_separate_persisted_choices(
     tmp_path: Path,
 ) -> None:
     target = tmp_path / "settings.json"
-    configured = (
-        AgentMonitorSettings()
-        .with_sleep_dim_enabled(True)
-        .with_sleep_dim_fraction(0.2)
-        .with_idle_auto_off_enabled(True)
-        .with_idle_auto_off_after_minutes(45.0)
-    )
+    configured = replace(
+        AgentMonitorSettings(),
+        sleep_dim_enabled=True,
+        idle_auto_off_enabled=True,
+    ).with_sleep_dim_fraction(0.2).with_idle_auto_off_after_minutes(45.0)
 
     save_settings(configured, target)
     restored = load_settings(target)
@@ -535,13 +566,12 @@ def test_scene_pack_selection_round_trips_and_decodes_tolerantly__and_1_more(tmp
     assert defaults.milestone_odometer_steps == (10, 25, 50, 100)
 
     target = tmp_path / "settings.json"
-    settings = (
-        AgentMonitorSettings()
-        .with_rainstick_idle_enabled(True)
-        .with_rainstick_night_enabled(True)
-        .with_milestone_odometer_enabled(True)
-        .with_milestone_odometer_steps([50, 5, 5, -3, True])
-    )
+    settings = replace(
+        AgentMonitorSettings(),
+        rainstick_idle_enabled=True,
+        rainstick_night_enabled=True,
+        milestone_odometer_enabled=True,
+    ).with_milestone_odometer_steps([50, 5, 5, -3, True])
     save_settings(settings, target)
     loaded = load_settings(target)
 
@@ -590,3 +620,26 @@ def test_device_resting_glow_persists_and_defaults_to_zero(tmp_path: Path) -> No
         encoding="utf-8",
     )
     assert load_settings(legacy).resting_glow_for_device("strip-b") == 0.0
+
+
+def test_alerts_profile_keys_in_the_app_are_local_unsealed_settings() -> None:
+    """The Swift alerts profile may only write keys that cannot send anything.
+
+    Reads the key list out of ``AlertsProfile.swift`` so a key added there
+    without a decision here fails this test.
+    """
+    import re
+
+    from jrbar.settings_seal import SEALED_KEYS, UNSEALED_PRIVILEGED
+
+    source = (Path(__file__).resolve().parents[1] / "app" / "Sources" / "JRBarCore" / "AlertsProfile.swift").read_text(
+        encoding="utf-8"
+    )
+    block = re.search(r"static let keys: \[String\] = \[(.*?)\]", source, re.S)
+    assert block is not None
+    keys = re.findall(r'"([a-z_]+)"', block.group(1))
+    assert keys
+    for key in keys:
+        assert key not in SEALED_KEYS, key
+        assert key in UNSEALED_PRIVILEGED, key
+        assert hasattr(AgentMonitorSettings(), key), key

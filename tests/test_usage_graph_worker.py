@@ -10,6 +10,7 @@ the settings snapshot and the persisted answer cache's keys.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -56,8 +57,9 @@ def test_scan_period_start_is_pinned_to_injected_calendar_day() -> None:
     )
 
 
-def test_scan_opencode_records_parses_messages(tmp_path):
-    db_file = tmp_path / "opencode.db"
+@pytest.mark.parametrize("filename", ["opencode.db", "usage?#% space.db"])
+def test_scan_opencode_records_parses_messages(tmp_path, filename):
+    db_file = tmp_path / filename
     con = sqlite3.connect(db_file)
     con.execute("CREATE TABLE message (id TEXT, session_id TEXT, time_created INT, data TEXT)")
     msg_data = {
@@ -104,7 +106,7 @@ def test_scan_t3code_records_parses_activities(tmp_path):
 
     records = usage_graph_worker._scan_t3code_records(db_file, 1700000000.0)
     assert len(records) == 1
-    assert records[0][0] == "t3code"
+    assert records[0][0] == "other"
     assert records[0][1] == "th1"
     assert records[0][4] == 3000
     assert records[0][7] == 500
@@ -598,7 +600,7 @@ def test_activity_selection_applies_to_chart_heatmap_and_summary(monkeypatch, tm
     assert tuple(model["heatmap"].providers) == selected
     assert "Codex" not in summary and "OpenCode" not in summary and "Grok" not in summary
     if mode in ("tokens", "cost"):
-        assert "Claude 19" in summary
+        assert ("Claude 19" if mode == "tokens" else "Claude estimated $") in summary
         assert "1 sessions" in summary
         assert model["heatmap"].aggregate.totals.tokens == 19
     elif mode == "sessions":
@@ -663,9 +665,11 @@ def test_explicit_t3_statistics_choice_is_shared_by_chart_and_heatmap(monkeypatc
 
     model, summary = usage_graph_worker._build_payload(make_target().settings, t3_policy=policy)
 
-    assert [series["provider_id"] for series in model["series"]] == ["t3code"]
-    assert model["heatmap"].providers["t3code"].totals.tokens == 15
-    assert "T3 Code 15" in summary
+    assert model["series"] == ()
+    assert "t3code" not in model["heatmap"].providers
+    assert model["source_statistics"][0]["tokens"] == 15
+    assert model["source_statistics"][0]["included_tokens"] == 0
+    assert "T3 Code source: 15 observed tokens" in summary
 
 
 @pytest.mark.parametrize("coverage_status", ("partial", "missing"))
@@ -695,18 +699,23 @@ def test_t3_incomplete_coverage_is_exposed_in_model_and_summary(
     )
 
     model, summary = usage_graph_worker._build_payload(
-        make_target(providers=()).settings,
+        make_target(providers=("codex",)).settings,
         t3_policy=policy,
     )
 
-    assert model["partial_provider_ids"] == ("t3code",)
-    assert "Partial local history: T3 Code" in summary
+    assert model["partial_provider_ids"] == ()
+    expected = "partial" if coverage_status == "partial" else "unavailable"
+    assert model["source_statistics"][0]["data_status"] == expected
+    assert model["source_statistics"][0]["tokens"] is None
+    assert "T3 Code source " + expected in summary
 
 
-def test_scan_antigravity_records_parses_summaries(tmp_path):
+@pytest.mark.parametrize("folder", ["normal", "usage?#% space"])
+def test_scan_antigravity_records_parses_summaries(tmp_path, folder):
+    tmp_path = tmp_path / folder
     import sqlite3
     agy_dir = tmp_path / "antigravity-cli"
-    agy_dir.mkdir()
+    agy_dir.mkdir(parents=True)
     db_file = agy_dir / "conversation_summaries.db"
     con = sqlite3.connect(db_file)
     con.execute("CREATE TABLE conversation_summaries (conversation_id TEXT, step_count INT, last_modified_time TEXT)")
@@ -821,7 +830,7 @@ def test_usage_graph_document_applies_per_request_overrides(monkeypatch):
     assert seen == {"days": 30, "metric": "sessions",
                     "providers": ("codex", "t3code")}
     # The override is echoed, not the stored set.
-    assert document["graph"]["providers"] == ["codex", "t3code"]
+    assert document["graph"]["providers"] == ["codex"]
 
 
 def test_usage_graph_document_defaults_to_stored_settings(monkeypatch):
@@ -1038,6 +1047,63 @@ def _stub_scans(monkeypatch):
     )
 
 
+def test_only_cost_graph_payload_contains_exact_pricing_coverage(monkeypatch):
+    _stub_scans(monkeypatch)
+    monkeypatch.setattr(usage_graph_worker, "scan_usage_all_homes",
+                        lambda *_args, **_kwargs: usage_graph_worker.usage_stats.UsageTotals())
+    epoch = datetime.now().timestamp()
+    monkeypatch.setattr(usage_graph_worker, "_scan_opencode_records", lambda *_args: [
+        ("opencode", "mixed", "gpt-5.6-sol", epoch, 10, 2, 3, 4, "priced"),
+        ("opencode", "mixed", "future-model", epoch, 5, 6, 7, 8, "unpriced"),
+    ])
+    target = make_target(mode="cost", providers=("opencode",))
+    model, summary = usage_graph_worker._build_payload(target.settings)
+    assert model["cost_coverage"] == {
+        "observed_records": 2, "priced_records": 1, "unpriced_records": 1,
+        "unpriced_sessions": 1,
+        "token_categories": {"input": 5, "cached_input": 6, "cache_creation": 7, "output": 8},
+    }
+    assert model["cost_semantics"] == "api_equivalent_estimate"
+    assert "No price for future-model" in summary
+    percent_model = {key: value for key, value in model.items()
+                     if key not in {"cost_coverage", "cost_semantics"}}
+    monkeypatch.setattr(usage_graph_worker.usage_percent_history, "shared_percent_graph_model",
+                        lambda **_kwargs: percent_model)
+    for mode in ("tokens", "sessions", "percent"):
+        target.settings.usage_display_mode = mode
+        model, _ = usage_graph_worker._build_payload(target.settings)
+        assert "cost_coverage" not in model
+
+
+def test_unpriced_t3_note_explains_missing_per_turn_model():
+    note = usage_graph_worker._unpriced_note({"t3code": 42, "future-model": 10})
+    assert "No price for" in note
+    assert "T3 Code's saved usage has no per-turn model" in note
+    assert "tokens counted, cost left out" in note
+
+
+@pytest.mark.parametrize("known_free", [False, True])
+def test_cost_series_pricing_signal_and_summary_distinguish_unknown_from_free(monkeypatch, known_free):
+    _stub_scans(monkeypatch)
+    stats = usage_graph_worker.usage_stats
+    monkeypatch.setattr(usage_graph_worker, "scan_usage_all_homes", lambda *_args, **_kwargs: stats.UsageTotals())
+    if known_free:
+        monkeypatch.setattr(stats, "rates_for_record", lambda *_args: stats.RecordRates(0, 0, 1))
+    epoch = datetime.now().timestamp()
+    monkeypatch.setattr(usage_graph_worker, "_scan_opencode_records", lambda *_args: [
+        ("opencode", "session", "future-model", epoch, 1, 2, 3, 4, "record"),
+    ])
+    model, summary = usage_graph_worker._build_payload(make_target(mode="cost", providers=("opencode",)).settings)
+    document = usage_graph_worker._project_graph_document(model, summary, ("opencode",))
+    assert document["graph"]["series"][0]["has_priced_usage"] is known_free
+    if known_free:
+        assert "estimated $0.00" in summary
+        assert "Unpriced" not in summary
+    else:
+        assert "Unpriced" in summary
+        assert "$0" not in summary
+
+
 def _write_ledger(state_dir, provider_id, offsets_and_work):
     """A synthetic ledger: (days ago, work id) for each session_start."""
     now = datetime.now()
@@ -1155,9 +1221,330 @@ def test_the_document_cache_is_keyed_to_the_gap_days_and_pricing_semantics():
     # Documents cached before gap days existed are zero-filled, and cost
     # documents cached before records were priced by their model's maker
     # leave GPT and Gemini models at no cost; the version is part of the
-    # cache key, so they are rebuilt rather than served.
-    assert usage_graph_worker._USAGE_DOC_CACHE_VERSION == 3
+    # cache key, so they are rebuilt rather than served. The current
+    # version also rebuilds cost documents missing pricing coverage and
+    # graphs missing carried percent readings or URI-escaped sources.
+    assert usage_graph_worker._USAGE_DOC_CACHE_VERSION == 12
     snapshot = usage_graph_worker._settings_snapshot(
         make_target(mode="sessions", providers=("devin",)).settings
     )
-    assert usage_graph_worker._usage_doc_cache_meta(snapshot, None)["v"] == 3
+    assert usage_graph_worker._usage_doc_cache_meta(snapshot, None)["v"] == 12
+
+
+def _v2_turns_database(path: Path, turns: list[tuple]) -> Path:
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE orchestration_v2_projection_provider_turns ("
+        "provider_turn_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, provider_thread_id TEXT NOT NULL,"
+        " node_id TEXT NOT NULL, run_attempt_id TEXT, ordinal INTEGER NOT NULL, status TEXT NOT NULL,"
+        " started_at TEXT, completed_at TEXT, payload_json TEXT NOT NULL)"
+    )
+    connection.executemany(
+        "INSERT INTO orchestration_v2_projection_provider_turns VALUES (?,?,?,?,?,?,?,?,?,?)",
+        turns,
+    )
+    connection.commit()
+    connection.close()
+    return path
+
+
+def _v2_turn(turn_id: str, thread_id: str, completed_at: str | None, usage: dict | None, ordinal: int = 1):
+    payload = {"id": turn_id}
+    if usage is not None:
+        payload["turnTokenUsage"] = usage
+    return (
+        turn_id, thread_id, "pt-1", "node", None, ordinal, "completed",
+        None, completed_at, json.dumps(payload),
+    )
+
+
+def test_t3_v2_turn_usage_becomes_activity_records(tmp_path) -> None:
+    usage = {
+        "usageScope": "main_agent", "usageStatus": "complete", "hasSubagents": False,
+        "inputTokens": 1000, "cachedInputTokens": 600, "cacheCreationTokens": 100,
+        "outputTokens": 250, "reasoningTokens": 50,
+    }
+    database = _v2_turns_database(
+        tmp_path / "statev2.sqlite",
+        [
+            _v2_turn("turn-1", "thread-1", "2026-10-06T10:00:00Z", usage),
+            _v2_turn("turn-2", "thread-1", "2026-10-06T11:00:00Z", None, ordinal=2),
+            _v2_turn("turn-3", "thread-2", None, usage),
+        ],
+    )
+
+    statuses: list[str] = []
+    records = usage_graph_worker._scan_t3code_v2_records(
+        database, 1_700_000_000.0, coverage_reporter=statuses.append
+    )
+
+    assert statuses == ["complete"]
+    assert len(records) == 1
+    provider, session, model, _epoch, uncached, cached, written, output, dedupe = records[0]
+    assert (provider, session, model) == ("other", "thread-1", "")
+    # T3's input already includes cache reads and writes; the record splits it.
+    assert (uncached, cached, written, output) == (300, 600, 100, 250)
+    assert uncached + cached + written == 1000
+    assert dedupe == "t3code:turn:turn-1"
+
+
+def test_t3_v2_partial_usage_with_only_an_output_count_is_still_counted(tmp_path) -> None:
+    database = _v2_turns_database(
+        tmp_path / "statev2.sqlite",
+        [
+            _v2_turn(
+                "turn-1", "thread-1", "2026-10-06T10:00:00Z",
+                {"usageScope": "main_agent", "usageStatus": "partial", "hasSubagents": True,
+                 "outputTokens": 40},
+            ),
+            _v2_turn(
+                "turn-2", "thread-1", "2026-10-06T10:05:00Z",
+                {"usageScope": "main_agent", "usageStatus": "unavailable", "hasSubagents": False},
+                ordinal=2,
+            ),
+        ],
+    )
+
+    records = usage_graph_worker._scan_t3code_v2_records(database, 1_700_000_000.0)
+
+    assert [(record[4], record[7]) for record in records] == [(0, 40)]
+
+
+def test_t3_v2_scan_is_bounded_to_the_newest_turns(tmp_path) -> None:
+    usage = {"usageScope": "main_agent", "usageStatus": "complete", "hasSubagents": False,
+             "inputTokens": 10, "outputTokens": 2}
+    database = _v2_turns_database(
+        tmp_path / "statev2.sqlite",
+        [
+            _v2_turn("old", "thread-old", "2026-10-06T08:00:00Z", usage, ordinal=1),
+            _v2_turn("middle", "thread-middle", "2026-10-06T09:00:00Z", usage, ordinal=2),
+            _v2_turn("new", "thread-new", "2026-10-06T10:00:00Z", usage, ordinal=3),
+        ],
+    )
+    statuses: list[str] = []
+
+    records = usage_graph_worker._scan_t3code_v2_records(
+        database, 1_700_000_000.0, maximum_records=2, coverage_reporter=statuses.append
+    )
+
+    assert [record[1] for record in records] == ["thread-new", "thread-middle"]
+    assert statuses == ["stable_partial"]
+
+
+def test_t3_v2_scan_respects_the_window(tmp_path) -> None:
+    usage = {"usageScope": "main_agent", "usageStatus": "complete", "hasSubagents": False,
+             "inputTokens": 10, "outputTokens": 2}
+    database = _v2_turns_database(
+        tmp_path / "statev2.sqlite",
+        [_v2_turn("old", "thread-old", "2020-01-01T00:00:00Z", usage)],
+    )
+
+    assert usage_graph_worker._scan_t3code_v2_records(database, 1_700_000_000.0) == []
+
+
+def test_activity_statistics_read_turns_when_the_live_database_is_v2(tmp_path) -> None:
+    usage = {"usageScope": "main_agent", "usageStatus": "complete", "hasSubagents": False,
+             "inputTokens": 10, "outputTokens": 2}
+    base = tmp_path / "t3"
+    (base / "userdata").mkdir(parents=True)
+    _v2_turns_database(
+        base / "userdata" / "statev2.sqlite",
+        [_v2_turn("turn-1", "thread-1", "2026-10-06T10:00:00Z", usage)],
+    )
+    policy = project_t3_read_only_policy(
+        SimpleNamespace(
+            t3code_enabled=True,
+            t3code_activity_statistics_enabled=True,
+            t3code_base_dir=str(base),
+        )
+    )
+
+    records = usage_graph_worker.scan_t3_activity_statistics(policy, 1_700_000_000.0)
+
+    assert [record[1] for record in records] == ["thread-1"]
+
+
+def test_a_missing_v2_turn_table_is_reported_not_guessed(tmp_path) -> None:
+    database = tmp_path / "statev2.sqlite"
+    sqlite3.connect(database).close()
+    statuses: list[str] = []
+
+    records = usage_graph_worker._scan_t3code_v2_records(
+        database, 1_700_000_000.0, coverage_reporter=statuses.append
+    )
+
+    assert records == []
+    assert statuses == ["failed"]
+
+
+def _reading_totals(*, pending: int, malformed: int = 0):
+    from jrbar import usage_stats
+
+    totals = usage_stats.UsageTotals()
+    totals.source_coverage["codex"] = usage_stats.UsageSourceCoverage(
+        provider_id="codex",
+        status=usage_stats.UsageSourceStatus.PARTIAL if pending or malformed else usage_stats.UsageSourceStatus.OK,
+        root_present=True, root_walked=True, files_discovered=12, files_read=4, cache_hits=0,
+        malformed_lines=malformed, unreadable_files=0, skipped_symlinks=0, duplicate_physical_files=0,
+        pending_files=pending,
+    )
+    return totals
+
+
+def _stub_sources(monkeypatch, totals, seen=None):
+    def scan(*_args, **kwargs):
+        if seen is not None:
+            seen.update(kwargs)
+        return totals
+
+    monkeypatch.setattr(usage_graph_worker, "scan_usage_all_homes", scan)
+    monkeypatch.setattr(usage_graph_worker, "_scan_opencode_records", lambda *_args: [])
+    monkeypatch.setattr(usage_graph_worker, "_scan_antigravity_records", lambda *_args: [])
+
+
+def test_a_pass_that_is_still_reading_says_so_and_is_bounded(monkeypatch) -> None:
+    seen: dict = {}
+    _stub_sources(monkeypatch, _reading_totals(pending=8), seen)
+
+    model, summary = usage_graph_worker._build_payload(make_target(providers=("codex",)).settings)
+
+    assert model["reading_files"] == 8
+    assert summary.endswith("Still reading 8 files")
+    assert "Partial local history" not in summary, "unread work alone is not damage"
+    assert isinstance(seen["budget"], usage_graph_worker.usage_stats.ScanBudget)
+
+
+def test_still_reading_beside_a_real_gap_keeps_both_notes(monkeypatch) -> None:
+    _stub_sources(monkeypatch, _reading_totals(pending=1, malformed=2))
+
+    _model, summary = usage_graph_worker._build_payload(make_target(providers=("codex",)).settings)
+
+    assert "Partial local history: Codex" in summary and summary.endswith("Still reading 1 file")
+
+
+def test_a_finished_scan_adds_no_reading_note(monkeypatch) -> None:
+    _stub_sources(monkeypatch, _reading_totals(pending=0))
+
+    model, summary = usage_graph_worker._build_payload(make_target(providers=("codex",)).settings)
+
+    assert model["reading_files"] == 0
+    assert "Still reading" not in summary and "Partial" not in summary
+
+
+def test_a_reply_that_is_still_reading_is_not_remembered(monkeypatch) -> None:
+    settings = make_target(providers=("codex",)).settings
+    builds = []
+    reading = {"files": 3}
+
+    def build(settings, *, t3_policy=None):
+        builds.append(1)
+        model, summary = _document_payload(settings)
+        return {**model, "reading_files": reading["files"]}, summary
+
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
+    monkeypatch.setattr(usage_graph_worker, "_agent_histories_found", lambda: ())
+
+    first = usage_graph_worker.usage_graph_document(settings)
+    usage_graph_worker.usage_graph_document(settings)
+    assert len(builds) == 2, "an unfinished answer is asked for again"
+    assert first["graph"]["reading_files"] == 3
+
+    reading["files"] = 0
+    usage_graph_worker.usage_graph_document(settings)
+    usage_graph_worker.usage_graph_document(settings)
+    assert len(builds) == 3, "a finished one is remembered"
+
+
+def test_graph_cache_notices_same_size_edits_below_the_newest_file_mtime(monkeypatch, tmp_path):
+    root = tmp_path / "corpus"
+    root.mkdir()
+    older = root / "older.jsonl"
+    newest = root / "newest.jsonl"
+    older.write_text('{"tokens":10}\n')
+    newest.write_text('{"tokens":20}\n')
+    os.utime(older, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(newest, ns=(9_000_000_000, 9_000_000_000))
+    before = usage_graph_worker._tree_fingerprint(root)
+    builds = []
+
+    def build(settings, *, t3_policy=None):
+        builds.append(1)
+        return _document_payload(settings)
+
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
+    monkeypatch.setattr(usage_graph_worker, "_agent_histories_found", lambda: ())
+    monkeypatch.setattr(usage_graph_worker, "_corpus_fingerprint", lambda *_a, **_k: usage_graph_worker._tree_fingerprint(root))
+    settings = make_target(providers=("codex",)).settings
+    usage_graph_worker.usage_graph_document(settings)
+    usage_graph_worker.usage_graph_document(settings)
+    assert len(builds) == 1
+
+    older.write_text('{"tokens":99}\n')
+    os.utime(older, ns=(2_000_000_000, 2_000_000_000))
+    after = usage_graph_worker._tree_fingerprint(root)
+    for key in ("files", "bytes", "newest_ns", "inos"):
+        assert before[key] == after[key]
+    assert before["stat_digest"] != after["stat_digest"]
+    usage_graph_worker.usage_graph_document(settings)
+    usage_graph_worker.usage_graph_document(settings)
+    assert len(builds) == 2
+
+
+@pytest.mark.parametrize("provider", ["codex", "t3code"])
+def test_failed_or_partial_source_document_retries_without_corpus_stat_changes(monkeypatch, provider):
+    settings = make_target(providers=(provider,)).settings
+    builds = []
+    failing = [True]
+
+    def build(settings, *, t3_policy=None):
+        builds.append(1)
+        model, summary = _document_payload(settings)
+        model["partial_provider_ids"] = (provider,) if failing[0] else ()
+        model["reading_files"] = 0
+        return model, summary
+
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
+    monkeypatch.setattr(usage_graph_worker, "_corpus_fingerprint", lambda *_a, **_k: {"unchanged": True})
+    monkeypatch.setattr(usage_graph_worker, "_agent_histories_found", lambda: ())
+    first = usage_graph_worker.usage_graph_document(settings)
+    usage_graph_worker.usage_graph_document(settings)
+    assert len(builds) == 2
+    assert first["graph"]["partial_provider_ids"] == [provider]
+    failing[0] = False
+    usage_graph_worker.usage_graph_document(settings)
+    usage_graph_worker.usage_graph_document(settings)
+    assert len(builds) == 3, "a recovered complete answer can be cached"
+
+
+@pytest.mark.parametrize("failure", ["walk_failed", "unreadable", "malformed"])
+def test_graph_marks_read_failures_for_retry_but_keeps_stable_malformed_gap_policy(monkeypatch, failure):
+    from dataclasses import replace
+
+    totals = _reading_totals(pending=0, malformed=2 if failure == "malformed" else 0)
+    coverage = totals.source_coverage["codex"]
+    if failure == "walk_failed":
+        coverage = replace(coverage, status=usage_graph_worker.usage_stats.UsageSourceStatus.FAILED,
+                           root_walked=False, files_discovered=0, files_read=0)
+    elif failure == "unreadable":
+        coverage = replace(coverage, status=usage_graph_worker.usage_stats.UsageSourceStatus.PARTIAL,
+                           unreadable_files=1)
+    totals.source_coverage["codex"] = coverage
+    _stub_sources(monkeypatch, totals)
+    model, summary = usage_graph_worker._build_payload(make_target(providers=("codex",)).settings)
+    assert model["partial_provider_ids"] == (() if failure == "malformed" else ("codex",))
+    assert "Partial local history: Codex" in summary
+
+
+def test_native_partial_transcripts_retry_with_unchanged_fingerprint(monkeypatch):
+    _stub_sources(monkeypatch, _reading_totals(pending=0, malformed=2))
+    monkeypatch.setattr(usage_graph_worker, "_corpus_fingerprint", lambda *_args, **_kwargs: {})
+    original_build = usage_graph_worker._build_payload
+    builds = []
+    def build(*args, **kwargs):
+        builds.append(1)
+        return original_build(*args, **kwargs)
+    monkeypatch.setattr(usage_graph_worker, "_build_payload", build)
+    settings = make_target(providers=("codex",)).settings
+    usage_graph_worker.usage_graph_document(settings, provider_ids=("codex",))
+    usage_graph_worker.usage_graph_document(settings, provider_ids=("codex",))
+    assert builds == [1, 1]

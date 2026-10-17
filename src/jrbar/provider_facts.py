@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 from typing import Final
 
@@ -27,6 +27,8 @@ from .provider_contracts import (
     SchemaVersion,
     SourceInstanceIdentifier,
 )
+
+_CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE = object()
 
 MAX_IDENTIFIER_LENGTH: Final = 64
 MAX_WORK_FACTS_PER_BATCH: Final = 1_000
@@ -373,6 +375,7 @@ class WorkLifecycle(str, Enum):
 class ProviderTerminalCause(str, Enum):
     NONE = "none"
     CODEX_USAGE_LIMIT = "codex_usage_limit"
+    CLAUDE_RATE_LIMIT = "claude_rate_limit"
     # The app observed the agent's OS process disappear and ended the
     # session itself. Nobody confirmed a result; the row is "ended", not
     # "completed".
@@ -482,10 +485,21 @@ class ProviderWorkFact:
     # lives in provider_adapters, which imports this module -- the field
     # carries the enum's string value instead.
     terminal_event: str | None = None
+    # True for the fact a person's own new prompt produces. A prompt can only
+    # be sent once whatever the agent was asking has been dealt with, so the
+    # reducer closes the work's open asks on it (a refused tool call, or a
+    # prompt answered in the terminal, reports nothing of its own).
+    starts_turn: bool = False
+    _terminal_provenance: object | None = field(default=None, compare=False, repr=False)
+
+    @property
+    def has_codex_usage_limit_provenance(self) -> bool:
+        return self._terminal_provenance is _CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE
 
     def __post_init__(self) -> None:
         if not (
             type(self.key) is WorkKey
+            and type(self.starts_turn) is bool
             and type(self.lifecycle) is WorkLifecycle
             and type(self.watermark) is ProviderWatermark
             and self.watermark.source_key == self.key.source_key
@@ -504,6 +518,12 @@ class ProviderWorkFact:
             raise ProviderFactValidationError("invalid work parent")
         if self.terminal_cause is ProviderTerminalCause.CODEX_USAGE_LIMIT and not (
             self.key.source_key.provider_id == "codex"
+            and self.lifecycle is WorkLifecycle.FAILED
+            and self.next_actor is NextActor.NONE
+        ):
+            raise ProviderFactValidationError("invalid terminal cause")
+        if self.terminal_cause is ProviderTerminalCause.CLAUDE_RATE_LIMIT and not (
+            self.key.source_key.provider_id == "claude"
             and self.lifecycle is WorkLifecycle.FAILED
             and self.next_actor is NextActor.NONE
         ):

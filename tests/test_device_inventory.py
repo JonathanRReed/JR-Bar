@@ -320,10 +320,67 @@ def test_a_failed_first_status_read_is_retried_within_seconds_not_a_minute(
     assert led_status.led_count_for_target(root / "LEDS.LED") == 8
     assert status.reads == 1, "a failed read must not be repeated on every call"
 
+    # The retry is a worker's: the call that finds the window over still
+    # answers with what it held, and the next one has the serial.
     _backdate(led_status, root, led_status._LED_COUNT_RETRY_SECONDS)
     status.failing = False
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 8
+    assert status.reads == 2
     assert led_status.led_count_for_target(root / "LEDS.LED") == 2
     assert status.reads == 2
+
+
+def test_an_expired_led_count_is_served_while_a_worker_reads_the_volume_again(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A FAT volume that answers in two seconds stalled the daemon's run
+    loop three times on 2026-10-08, always at the minute's end."""
+    from jrbar import led_status
+
+    root = _bare_label_root(tmp_path, "serial SPD-000120\n")
+    status = _StatusReads(monkeypatch)
+    led_status._LED_COUNT_CACHE.clear()
+    jobs: list = []
+    monkeypatch.setattr(led_status, "_count_refresh_runner", jobs.append)
+
+    # The first read of a mount has nothing to serve: it waits, once.
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2
+    assert (status.reads, len(jobs)) == (1, 0)
+
+    # Expired: the held count comes back without touching the volume.
+    _backdate(led_status, root, led_status._LED_COUNT_TTL_SECONDS)
+    (root / "STATUS.TXT").write_text("serial SPP-000067\n")
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2
+    assert (status.reads, len(jobs)) == (1, 1)
+
+    # One read is out; asking again does not send a second.
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2
+    assert len(jobs) == 1
+
+    jobs[0]()
+    assert status.reads == 2
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 8
+
+
+def test_a_worker_read_that_outlives_a_disconnect_is_dropped(tmp_path: Path, monkeypatch) -> None:
+    from jrbar import led_status
+
+    root = _bare_label_root(tmp_path, "serial SPD-000120\n")
+    _StatusReads(monkeypatch)
+    led_status._LED_COUNT_CACHE.clear()
+    jobs: list = []
+    monkeypatch.setattr(led_status, "_count_refresh_runner", jobs.append)
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2
+    _backdate(led_status, root, led_status._LED_COUNT_TTL_SECONDS)
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2
+
+    # The Dot is unplugged and a Pro mounts at the same path before the
+    # worker's read of the old volume comes back.
+    led_status.invalidate_led_count_cache(root)
+    (root / "STATUS.TXT").write_text("serial SPP-000067\n")
+    jobs[0]()
+    assert root not in led_status._LED_COUNT_CACHE
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 8
 
 
 def test_a_status_file_without_a_serial_is_still_memoized_for_the_full_ttl(
@@ -421,3 +478,72 @@ def test_the_identity_cache_carries_identities_across_its_own_rounds(monkeypatch
     assert cache._inventory() == ()
     assert seen == [cache._carried, cache._carried] and seen[0] is cache._carried
     cache.close()
+
+
+def test_an_unchanged_mount_is_not_probed_again_until_the_reuse_window_ends__and_2_more(tmp_path: Path) -> None:
+    from jrbar.device_inventory import DISKUTIL_FACTS_REUSE_SECONDS
+
+    # --- scenario: an_unchanged_mount_is_probed_once
+    mount = tmp_path / "SidePulseDot"
+    mount.mkdir()
+    probes: list[str] = []
+
+    def runner(arguments, **kwargs):
+        probes.append(arguments[-1])
+        return completed(
+            {
+                "MountPoint": str(mount),
+                "VolumeName": "SidePulseDot",
+                "VolumeUUID": "stable-uuid",
+                "DeviceIdentifier": "disk4s1",
+            }
+        )
+
+    now = [1000.0]
+    carried: dict = {}
+    carried_facts: dict = {}
+
+    def round_():
+        return inventory_mounts(
+            tmp_path, runner=runner, carried=carried, carried_facts=carried_facts, clock=lambda: now[0]
+        )
+
+    first = round_()
+    for _ in range(20):
+        now[0] += 10.0
+        assert round_() == first
+    assert len(probes) == 1, "twenty more rounds on the same mount fork nothing"
+
+    # --- scenario: the_facts_are_asked_for_again_after_the_reuse_window
+    now[0] += DISKUTIL_FACTS_REUSE_SECONDS
+    assert round_() == first
+    assert len(probes) == 2
+
+    # --- scenario: a_changed_or_removed_mount_is_probed_afresh
+    mount.rmdir()
+    assert round_() == ()
+    assert carried_facts == {}
+    mount.mkdir()
+    assert round_() == first
+    assert len(probes) == 3, "a volume that went away and came back is a new mount"
+
+
+def test_the_firmware_serial_is_still_read_every_round_even_when_diskutil_is_not_asked(tmp_path: Path) -> None:
+    mount = tmp_path / "SidePulse"
+    mount.mkdir()
+    probes: list[str] = []
+
+    def runner(arguments, **kwargs):
+        probes.append(arguments[-1])
+        return completed(
+            {"MountPoint": str(mount), "VolumeName": "SIDEPULSE", "VolumeUUID": "uuid", "DeviceIdentifier": "disk5s1"}
+        )
+
+    carried: dict = {}
+    carried_facts: dict = {}
+    before = inventory_mounts(tmp_path, runner=runner, carried=carried, carried_facts=carried_facts)
+    (mount / "STATUS.TXT").write_text("serial SPP-000067\n")
+    after = inventory_mounts(tmp_path, runner=runner, carried=carried, carried_facts=carried_facts)
+
+    assert len(probes) == 1
+    assert before != after, "the serial that appeared after the first probe changes the identity"

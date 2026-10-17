@@ -62,22 +62,35 @@ _kCFStringEncodingUTF8: Final = 0x08000100
 _kCFNumberSInt32Type: Final = 3
 
 
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _fraction(value: object, default: float, *, minimum: float = MIN_FRACTION) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+    number = _finite_number(value)
+    if number is None:
         return default
-    return max(minimum, min(1.0, float(value)))
+    return max(minimum, min(1.0, number))
 
 
 def _minutes(value: object, default: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+    number = _finite_number(value)
+    if number is None:
         return default
-    return max(0, min(24 * 60 - 1, int(value)))
+    return max(0, min(24 * 60 - 1, int(number)))
 
 
 def _lux(value: object, default: float) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+    number = _finite_number(value)
+    if number is None:
         return default
-    return max(0.0, min(MAX_LUX, float(value)))
+    return max(0.0, min(MAX_LUX, number))
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,33 +216,36 @@ def evaluate_auto_dim(
     available = True
     if mode == "ambient":
         try:
-            lux = ambient_reader()
+            lux = _finite_number(ambient_reader())
         except Exception:
             lux = None
-        if lux is not None and math.isfinite(float(lux)) and float(lux) >= 0.0:
-            raw = getattr(ambient_reader, "last_raw", None)
+        if lux is not None and lux >= 0.0:
+            try:
+                raw = _finite_number(getattr(ambient_reader, "last_raw", None))
+            except Exception:
+                raw = None
             return AutoDimResult(
                 "ambient",
                 "ambient",
                 ambient_factor(
-                    float(lux),
+                    lux,
                     min_fraction=settings.ambient_min_fraction,
                     lux_floor=settings.ambient_lux_floor,
                     lux_ceiling=settings.ambient_lux_ceiling,
                 ),
                 True,
-                float(lux),
-                float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else None,
+                lux,
+                raw if raw is not None and raw >= 0.0 else None,
             )
         # No sensor reading: follow the display instead, and say so.
         available = False
     try:
-        fraction = display_reader()
+        fraction = _finite_number(display_reader())
     except Exception:
         fraction = None
-    if fraction is None or not math.isfinite(float(fraction)):
+    if fraction is None:
         return AutoDimResult(mode, "display", 1.0, False, None)
-    fraction = max(0.0, min(1.0, float(fraction)))
+    fraction = max(0.0, min(1.0, fraction))
     return AutoDimResult(mode, "display", max(settings.display_min_fraction, fraction), available, fraction)
 
 
@@ -251,17 +267,29 @@ def display_brightness_fraction() -> float | None:
         return None
 
 
+#: A failed load is tried again after this long, up to this many loads in
+#: all. The hardware does not appear later, but the HID event system can
+#: answer "no service" at login before it has enumerated; a Mac that truly
+#: has no sensor stops asking after the last attempt.
+AMBIENT_RETRY_SECONDS: Final = 300.0
+AMBIENT_MAX_LOAD_ATTEMPTS: Final = 3
+
+
 class _AmbientLightSensor:
     """One IOKit HID event-system client, created lazily, reused for every
     reading. Thread-safe; a failure to load or match marks the sensor
-    unavailable for the process lifetime (the hardware does not appear
-    later)."""
+    unavailable, retried a bounded number of times a few minutes apart
+    (the event system can be slow to enumerate at login) and then left
+    alone."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, monotonic: Callable[[], float] = time.monotonic) -> None:
         self._lock = threading.Lock()
+        self._monotonic = monotonic
         self._client: int | None = None
         self._service: int | None = None
         self._failed: str | None = None
+        self._failed_at: float = 0.0
+        self._load_attempts = 0
         self._iokit: Any = None
         self._cf: Any = None
 
@@ -330,12 +358,20 @@ class _AmbientLightSensor:
     def read_lux(self) -> float:
         with self._lock:
             if self._failed is not None:
-                raise AmbientLightUnavailableError(self._failed)
+                waited = self._monotonic() - self._failed_at
+                if (
+                    self._load_attempts >= AMBIENT_MAX_LOAD_ATTEMPTS
+                    or waited < AMBIENT_RETRY_SECONDS
+                ):
+                    raise AmbientLightUnavailableError(self._failed)
+                self._failed = None
             if self._service is None:
+                self._load_attempts += 1
                 try:
                     self._load()
                 except Exception as exc:
                     self._failed = f"{exc.__class__.__name__}: {exc}"
+                    self._failed_at = self._monotonic()
                     raise AmbientLightUnavailableError(self._failed) from exc
             event = self._iokit.IOHIDServiceClientCopyEvent(self._service, kIOHIDEventTypeAmbientLightSensor, 0, 0)
             if not event:
@@ -423,8 +459,10 @@ class _SmoothedAmbientLight:
 
     def __call__(self) -> float | None:
         try:
-            raw = self._read()
-        except AmbientLightUnavailableError:
+            raw = _finite_number(self._read())
+        except Exception:
+            raw = None
+        if raw is None or raw < 0.0:
             self.smoother.reset()
             return None
         return self.smoother.update(raw)

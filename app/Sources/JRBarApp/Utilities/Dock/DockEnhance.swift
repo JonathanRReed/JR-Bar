@@ -86,6 +86,17 @@ struct DockLiveRefreshGate: Equatable {
 struct DockAXReadCadence {
     static let settleInterval: TimeInterval = 0.4
     static let restedTTL: TimeInterval = 0.5
+    /// A pointer that has sat still this long with no preview up has
+    /// nothing live to follow. Sampled on 2026-10-08 with the pointer
+    /// parked over the Dock: the tile walk was 292 of the tick's 304
+    /// main-thread milliseconds in eight seconds, one blocking
+    /// Accessibility round trip per tile twice a second, for as long as
+    /// the pointer stayed.
+    static let longRestInterval: TimeInterval = 3
+    /// The walk's lifetime for a pointer that long at rest. A tile coming
+    /// or going changes the list's frame, which is still read every
+    /// `restedTTL` and drops the cached walk by itself.
+    static let longRestedItemsTTL: TimeInterval = 2
 
     private var lastPoint: CGPoint?
     private var lastMovedAt: TimeInterval = 0
@@ -108,6 +119,11 @@ struct DockAXReadCadence {
         now - lastMovedAt >= Self.settleInterval
     }
 
+    /// Still for `longRestInterval`: nothing live is being followed.
+    func restedLong(at now: TimeInterval) -> Bool {
+        now - lastMovedAt >= Self.longRestInterval
+    }
+
     func reuseList(cachedAt: TimeInterval, inside: Bool, nearEdge: Bool,
                    force: Bool, at now: TimeInterval) -> Bool {
         guard !force, now >= cachedAt else { return false }
@@ -117,11 +133,17 @@ struct DockAXReadCadence {
         return age < ttl
     }
 
+    /// `live`: the tracker names a tile as shown. `previewUp`: a panel is
+    /// actually on screen or coming (defaults to `live`) — the tracker
+    /// calls a folder's tile shown too, though it earns no panel.
     func reuseItems(cachedAt: TimeInterval, live: Bool, force: Bool,
-                    at now: TimeInterval) -> Bool {
+                    at now: TimeInterval, previewUp: Bool? = nil) -> Bool {
         guard !force, now >= cachedAt else { return false }
         let age = now - cachedAt
-        if rested(at: now) { return age < Self.restedTTL }
+        if rested(at: now) {
+            let up = previewUp ?? live
+            return age < (restedLong(at: now) && !up ? Self.longRestedItemsTTL : Self.restedTTL)
+        }
         return !live && age < DockEnhanceController.itemsTTL
     }
 }
@@ -202,9 +224,13 @@ private enum PreviewAnswer {
     }
 }
 
-/// A show waiting on its read. Everything the landing needs stays here on
-/// main; only a pid and a stamp go to the lane.
+/// Queued reads hold this weakly so retiring the pending show prevents
+/// them from reaching another app's Accessibility API.
+private final class PreviewReadLifetime: Sendable {}
+
+/// A show waiting on its read. Its landing stays on main.
 private struct PreviewLanding {
+    let readLifetime = PreviewReadLifetime()
     let item: DockAXItem
     let tile: PreviewTile
     /// The generation the show took. The landing is dropped unless it is
@@ -249,10 +275,20 @@ final class DockEnhanceController {
     /// What the panel shows right now — the view binds to it.
     let preview = DockPreviewContent()
 
-    private(set) var running = false
+    /// Set by `start` and `stop`; the tests set it to exercise the
+    /// gestures without installing the real monitors.
+    var running = false
     /// Cached TCC answers; `refreshPermissions()` re-reads when stale.
-    private(set) var accessibilityTrusted = false
+    var accessibilityTrusted = false {
+        didSet { if !accessibilityTrusted { frontAppRequest = nil } }
+    }
     private(set) var screenCaptureGranted = false
+    var captureProbe: (Bool) -> Bool = { force in
+        force ? FoldCapturePermission.recheck() : FoldCapturePermission.granted
+    }
+    var freshThumbnail: @MainActor (CGWindowID, pid_t, String?) async -> NSImage? = {
+        await DockThumbnailer.fresh(windowID: $0, pid: $1, tag: $2)
+    }
     @ObservationIgnored private var permissionsCheckedAt = Date.distantPast
     /// Accessibility's answer — `AXIsProcessTrusted` unless a test swaps it.
     @ObservationIgnored var trustProbe: () -> Bool = { AXIsProcessTrusted() }
@@ -267,6 +303,14 @@ final class DockEnhanceController {
     /// AX walk stays TTL-bound, not poll-bound) while halving the
     /// worst-case wait before a dock-ward pointer is noticed.
     nonisolated static let farPollInterval: TimeInterval = 0.125
+    /// The beat of a pointer parked over the Dock with nothing to follow —
+    /// no preview up, no tile under it, no key held. The pointer watcher
+    /// ticks the instant the pointer moves, so the beat only has to catch
+    /// what changes under a still pointer: a tile sliding in, a Dock
+    /// unhiding. Measured 2026-10-08 with the pointer parked there for
+    /// half an hour: the app idled at 96 wakeups a second, 20 of them this
+    /// tick.
+    nonisolated static let parkedPollInterval: TimeInterval = 0.25
     /// How long a dock-list frame stays trusted while the pointer is
     /// away from it — and a much shorter trust while the pointer is
     /// near a screen edge, where an auto-hidden Dock slides in and its
@@ -312,6 +356,7 @@ final class DockEnhanceController {
     /// Bumped per show so a slow thumbnail batch can't land on a
     /// preview that has since retargeted.
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var frontAppRequest: (id: UUID, pid: pid_t)?
     /// The dock list element and its AX frame, with the time read.
     @ObservationIgnored private var cachedList: (element: AXUIElement, frame: CGRect, at: TimeInterval)?
     @ObservationIgnored private var axReadCadence = DockAXReadCadence()
@@ -397,9 +442,9 @@ final class DockEnhanceController {
     /// The preview action keys last mirrored into the tap.
     @ObservationIgnored private var mirroredChars: Set<String> = []
     /// Windows whose hovered still is being re-taken — one capture each.
-    @ObservationIgnored private var freshening = Set<CGWindowID>()
+    @ObservationIgnored private var freshening: [CGWindowID: UUID] = [:]
     /// The opt-in live card's stream — at most one window at a time.
-    @ObservationIgnored private let liveStill = DockLiveStill()
+    @ObservationIgnored let liveStill = DockLiveStill()
     /// A preview ⌥` opened from the keyboard: the pointer never rested
     /// on its tile, so the rest-and-grace rules don't close it — Esc,
     /// Return, a click away or resting on another tile do.
@@ -416,6 +461,17 @@ final class DockEnhanceController {
     @ObservationIgnored var uptime: @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     /// How a tile or a pid finds its running app. Tests pass fakes.
     @ObservationIgnored var apps = DockTileApps()
+    @ObservationIgnored var minimizedRows: @MainActor () -> [SwitcherWindowRow] = { DockSwitcherList.offScreenRows() }
+    /// The Dock's pid and the front app, as ⌥` and the gestures find them
+    /// (workspace reads, not AX). Tests pass fakes.
+    @ObservationIgnored var dockPID: @MainActor () -> pid_t? = { AppleDockReader.dockPID() }
+    /// The clock the tile caches are stamped and aged by. Tests crank it.
+    @ObservationIgnored var mediaNow: @MainActor () -> TimeInterval = { CACurrentMediaTime() }
+    @ObservationIgnored var frontApp: @MainActor () -> (pid: pid_t, bundleURL: URL?, name: String?)? = {
+        NSWorkspace.shared.frontmostApplication.map {
+            ($0.processIdentifier, $0.bundleURL, $0.localizedName)
+        }
+    }
     /// The panel's show — placement, watchers, the live observer and the
     /// side reads — once the cards have landed. nil runs `presentLanded`;
     /// a test records the call instead, so nothing orders a window front.
@@ -472,16 +528,15 @@ final class DockEnhanceController {
         self.switcher.cachedBadges = { [weak self] in self?.freshBadges() }
         windowObserver.onChange = { [weak self] in self?.refreshLiveWindows() }
         liveStill.onFrame = { [weak self] windowID, image in
-            guard let self, let row = self.preview.windows.firstIndex(where: { $0.windowID == windowID })
+            guard let self, self.screenCaptureGranted,
+                  let row = self.preview.windows.firstIndex(where: { $0.windowID == windowID })
             else { return }
             self.preview.windows[row].thumbnail = image
         }
     }
 
     isolated deinit {
-        timer?.invalidate()
-        panelWarmupTimer?.invalidate()
-        unwatchPresence()
+        stop()
     }
 
     // MARK: Lifecycle
@@ -677,8 +732,15 @@ final class DockEnhanceController {
         guard force || Date().timeIntervalSince(permissionsCheckedAt) > Self.permissionTTL else { return }
         permissionsCheckedAt = Date()
         let wasTrusted = accessibilityTrusted
+        let wasCaptureGranted = screenCaptureGranted
         accessibilityTrusted = trustProbe()
-        screenCaptureGranted = force ? FoldCapturePermission.recheck() : FoldCapturePermission.granted
+        screenCaptureGranted = captureProbe(force)
+        if wasCaptureGranted, !screenCaptureGranted {
+            liveStill.stop()
+            DockThumbnailer.invalidateCaptures()
+            freshening.removeAll()
+            for index in preview.windows.indices { preview.windows[index].thumbnail = nil }
+        }
         let dockDefaults = UserDefaults(suiteName: "com.apple.dock")
         magnificationOn = dockDefaults?.bool(forKey: "magnification") ?? false
         magnifiedSize = (dockDefaults?.object(forKey: "largesize") as? NSNumber).map { CGFloat($0.doubleValue) }
@@ -813,17 +875,36 @@ final class DockEnhanceController {
         let overDock = cachedList.map { Self.listReach(of: $0.frame).contains(axPoint) } ?? false
         let near = !watching && (Self.nearScreenEdge(axPoint) || overDock
             || tracker.shown != nil || pointerInPanel())
-        if let wait = Self.nextTickWait(watching: watching, engaged: engaged, near: near) {
+        if let wait = Self.nextTickWait(watching: watching, engaged: engaged, near: near,
+                                        parked: engaged && pointerParked()) {
             scheduleTick(after: wait)
         }
     }
 
+    /// The pointer has sat still over the Dock for longer than any dwell
+    /// (a second at most) and no panel is up, none is coming and no key
+    /// pinned one — and the trigger is not ⌥-hover, whose press changes
+    /// nothing the pointer watcher could hear. The tracker may still name
+    /// a tile as shown: a folder or the Trash earns no panel but stays
+    /// "shown" to the tracker, and that alone must not keep a 20 Hz beat.
+    private func pointerParked() -> Bool {
+        guard axReadCadence.restedLong(at: CACurrentMediaTime()) else { return false }
+        guard pendingShow == nil, !keyboardPinned,
+              preferences.previewTrigger != .optionHover else { return false }
+        return panel?.isVisible != true && !pointerInPanel()
+    }
+
     /// The wait the next tick earns, pure so a test pins it: under the
-    /// watcher, the 20 Hz beat while something is at stake and none
-    /// otherwise — the next move near the Dock picks it up again;
-    /// polling, 20 Hz near the Dock's edges and 8 Hz elsewhere.
-    nonisolated static func nextTickWait(watching: Bool, engaged: Bool, near: Bool) -> TimeInterval? {
-        if watching { return engaged ? pollInterval : nil }
+    /// watcher, the 20 Hz beat while something is at stake, a slow beat
+    /// for a parked pointer, and none otherwise — the next move near the
+    /// Dock picks it up again; polling, 20 Hz near the Dock's edges and
+    /// 8 Hz elsewhere.
+    nonisolated static func nextTickWait(watching: Bool, engaged: Bool, near: Bool,
+                                         parked: Bool = false) -> TimeInterval? {
+        if watching {
+            guard engaged else { return nil }
+            return parked ? parkedPollInterval : pollInterval
+        }
         return near ? pollInterval : farPollInterval
     }
 
@@ -940,8 +1021,10 @@ final class DockEnhanceController {
         // Movement keeps magnified icons live. A resting pointer can
         // reuse the last tile walk without making the panel drift.
         let live = tracker.shown != nil
+        let previewUp = panel?.isVisible == true || pendingShow != nil || keyboardPinned
         if let cached = cachedItems, cached.listFrame == list.frame,
-           axReadCadence.reuseItems(cachedAt: cached.at, live: live, force: force, at: now) {
+           axReadCadence.reuseItems(cachedAt: cached.at, live: live, force: force, at: now,
+                                    previewUp: previewUp) {
             return cached.items
         }
         let items = AppleDockReader.items(list: list.element)
@@ -1036,6 +1119,7 @@ final class DockEnhanceController {
     /// `keyboardOpened` is ⌥`: no pointer rests on the tile, and the walk
     /// starts on the app's next window when the list lands.
     func showPreview(for item: DockAXItem, keyboardOpened: Bool = false) {
+        frontAppRequest = nil
         generation += 1
         // A preview is at stake from here: the tick keeps its beat even
         // if the pointer never moves again.
@@ -1057,7 +1141,12 @@ final class DockEnhanceController {
             pendingShow = landing
             let read = ax.read
             let stamp = AppleDockReader.nextStamp()
-            ax.lane.run({ read(pid, stamp) }, then: { [weak self] reading in
+            let lifetime = landing.readLifetime
+            ax.lane.run({ [weak lifetime] () -> DockPreviewAX.Reading? in
+                guard lifetime != nil else { return nil }
+                return read(pid, stamp)
+            }, then: { [weak self] reading in
+                guard let reading else { return }
                 self?.windowsRead(reading, pid: pid, generation: generationAtShow)
             })
         case .minimized(let title, let rows):
@@ -1067,9 +1156,12 @@ final class DockEnhanceController {
             pendingShow = landing
             let read = ax.read
             let stamp = AppleDockReader.nextStamp()
-            ax.lane.run({
-                DockMinimizedRead.read(title: title, rows: rows, resting: resting) { read($0, stamp) }
+            let lifetime = landing.readLifetime
+            ax.lane.run({ [weak lifetime] () -> DockMinimizedRead? in
+                guard lifetime != nil else { return nil }
+                return DockMinimizedRead.read(title: title, rows: rows, resting: resting) { read($0, stamp) }
             }, then: { [weak self] found in
+                guard let found else { return }
                 self?.ownerRead(found, generation: generationAtShow)
             })
         }
@@ -1095,7 +1187,7 @@ final class DockEnhanceController {
             return .none
         case .minimizedWindow:
             guard let title = item.title, !title.isEmpty else { return .none }
-            return .minimized(title: title, rows: DockSwitcherList.offScreenRows())
+            return .minimized(title: title, rows: minimizedRows())
         case .app:
             guard !tile.excluded, let app = tile.app else { return .none }
             return .windows(app.pid)
@@ -1211,7 +1303,10 @@ final class DockEnhanceController {
         panel.apply(preview.metrics)
         let place = placement
         let target = targetFrame(item: itemFrame, edge: edge, screen: screenFrame,
-                                 size: panel.fittingSize(), placement: place)
+                                 size: panel.fittingSize(maximumSize: place.availableSize(
+                                    anchor: itemFrame, edge: edge, screen: screenFrame, title: preview.appName)),
+                                 placement: place)
+        panel.resetScrollPosition()
         panel.present(frame: target, dockedAt: edge, placement: place)
         watchers.start(escape: true, clickAway: true)
         switcher.setPreviewOpen(true)
@@ -1287,18 +1382,21 @@ final class DockEnhanceController {
             // its single still is taken even with "Capture every
             // window" off, so the card shows what's inside, not an icon.
             let offscreen = preferences.includeOffscreenWindows || item.kind == .minimizedWindow
+            let captureEpoch = DockThumbnailer.captureEpoch
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 await DockThumbnailer.attach(
                     to: preview, bundleID: bundleID, pid: pid,
                     includeOffscreen: offscreen,
-                    isStale: { [weak self] in self?.generation != generationAtShow })
+                    isStale: { [weak self] in self?.captureIsCurrent(epoch: captureEpoch, generation: generationAtShow) != true })
             }
         }
     }
 
     func hidePreview() {
+        frontAppRequest = nil
         generation += 1
+        freshening.removeAll()
         // A show still waiting on its list is dropped with the rest; its
         // answer finds the generation moved on.
         pendingShow = nil
@@ -1317,47 +1415,51 @@ final class DockEnhanceController {
 
     /// The open pop's sort — the tile's, read at show.
     @ObservationIgnored private var folderSort: DockFolderSort = .name
+    @ObservationIgnored private var folderLoadGeneration = 0
+    @ObservationIgnored var folderReader: @Sendable (URL, DockFolderSort) -> DockFolderListing = {
+        DockEnhanceController.folderListing(of: $0, sort: $1)
+    }
 
     /// List one folder into the pop. The generation check is the stale
     /// guard the thumbnails use, and the folder check drops a listing
     /// the pop has since drilled or backed away from. The sleep races
     /// the read: a TCC consent that cannot prompt (~5s auth pend) or a
     /// stuck vnode resolves to `failed` rather than an eternal spinner.
-    private func loadFolder(_ url: URL, generation generationAtLoad: Int) {
+    @discardableResult
+    private func loadFolder(_ url: URL, generation generationAtLoad: Int) -> Task<Void, Never> {
+        folderLoadGeneration &+= 1
+        let loadGeneration = folderLoadGeneration
         preview.folderState = .loading
         preview.folderEntries = []
         preview.folderLoadStarted = Date()
         let sort = folderSort
-        Task { @MainActor [weak self] in
+        let read = folderReader
+        return DockFolderLoad.start(read: {
             let work = Task.detached(priority: .userInitiated) {
-                Self.folderListing(of: url, sort: sort)
+                read(url, sort)
             }
-            let listing = await withTaskGroup(
-                of: DockFolderListing?.self,
-                returning: DockFolderListing?.self
-            ) { group in
-                group.addTask { await work.value }
-                group.addTask {
-                    try? await Task.sleep(for: .seconds(6))
-                    return nil
-                }
-                let first = await group.next() ?? nil
-                group.cancelAll()
-                return first
-            }
+            return await work.value
+        }, receive: { [weak self] listing in
             guard let self, self.generation == generationAtLoad,
+                  self.folderLoadGeneration == loadGeneration,
                   self.preview.folderShown == url else { return }
             if let listing {
                 self.preview.folderEntries = listing.entries
                 if let icon = listing.folderIcon { self.preview.icon = icon }
-                self.preview.folderState = listing.denied ? .denied : .ready
+                self.preview.folderState = listing.state
             } else {
                 self.preview.folderState = .failed
             }
             // The pointer is on the grid, not the tile, so the tick's
             // re-anchor won't refit it — the new size lands here.
             self.reframe()
-        }
+        })
+    }
+
+    @discardableResult
+    func retryFolderListing() -> Task<Void, Never>? {
+        guard previewUp, let folder = preview.folderShown, preview.folderState != .loading else { return nil }
+        return loadFolder(folder, generation: generation)
     }
 
     /// A folder chip's click: browse into it in place — Apple's Grid
@@ -1448,12 +1550,13 @@ final class DockEnhanceController {
         let generationAtRefresh = generation
         let bundleID = preview.bundleID
         let offscreen = preferences.includeOffscreenWindows
+        let captureEpoch = DockThumbnailer.captureEpoch
         Task { @MainActor [weak self] in
             guard let self else { return }
             await DockThumbnailer.attach(
                 to: self.preview, bundleID: bundleID, pid: pid,
                 includeOffscreen: offscreen,
-                isStale: { [weak self] in self?.generation != generationAtRefresh })
+                isStale: { [weak self] in self?.captureIsCurrent(epoch: captureEpoch, generation: generationAtRefresh) != true })
         }
     }
 
@@ -1483,26 +1586,37 @@ final class DockEnhanceController {
     /// its agent's current state, re-takes that one window; the other
     /// cards keep the cache. Minimized and other-Space windows only when
     /// the card captures those at all.
-    private func freshenStill(_ window: DockPreviewWindow) {
+    @discardableResult
+    func freshenStill(_ window: DockPreviewWindow) -> Task<Void, Never>? {
         guard preferences.showThumbnails, screenCaptureGranted, !preview.compact,
               let pid = preview.processIdentifier, let windowID = window.windowID,
               !window.minimized || preferences.includeOffscreenWindows,
-              !freshening.contains(windowID) else { return }
+              freshening[windowID] == nil else { return nil }
         let tag = preview.agents[window.id]?.stillTag
         let cached = DockThumbnailer.cached(pid: pid, windowID: windowID)
         guard DockThumbnailer.wantsHoverRefresh(hasStill: window.thumbnail != nil, age: cached?.age,
-                                                cachedTag: cached?.tag, tag: tag) else { return }
-        freshening.insert(windowID)
+                                                cachedTag: cached?.tag, tag: tag) else { return nil }
+        let requestID = UUID()
+        freshening[windowID] = requestID
         let generationAtHover = generation
+        let captureEpoch = DockThumbnailer.captureEpoch
         let cardID = window.id
-        Task { @MainActor [weak self] in
-            let image = await DockThumbnailer.fresh(windowID: windowID, pid: pid, tag: tag)
+        return Task { @MainActor [weak self] in
             guard let self else { return }
-            self.freshening.remove(windowID)
-            guard let image, self.generation == generationAtHover, self.preview.processIdentifier == pid,
+            defer {
+                if self.freshening[windowID] == requestID { self.freshening.removeValue(forKey: windowID) }
+            }
+            guard self.captureIsCurrent(epoch: captureEpoch, generation: generationAtHover) else { return }
+            let reader = self.freshThumbnail
+            let image = await reader(windowID, pid, tag)
+            guard let image, self.captureIsCurrent(epoch: captureEpoch, generation: generationAtHover), self.preview.processIdentifier == pid,
                   let row = self.preview.windows.firstIndex(where: { $0.id == cardID }) else { return }
             self.preview.windows[row].thumbnail = image
         }
+    }
+
+    func captureIsCurrent(epoch: Int, generation: Int) -> Bool {
+        screenCaptureGranted && DockThumbnailer.captureEpoch == epoch && self.generation == generation
     }
 
     /// Keep the visible panel on its tile: the tile's frame moves while
@@ -1515,7 +1629,9 @@ final class DockEnhanceController {
         let itemFrame = anchorFrame(for: item, edge: anchor.edge, pointer: NSEvent.mouseLocation)
         let place = placement
         let target = targetFrame(item: itemFrame, edge: anchor.edge, screen: anchor.screen,
-                                 size: panel.fittingSize(), placement: place)
+                                 size: panel.fittingSize(maximumSize: place.availableSize(
+                                    anchor: itemFrame, edge: anchor.edge, screen: anchor.screen, title: preview.appName)),
+                                 placement: place)
         panel.hold(place)
         self.anchor = (item, anchor.edge, anchor.screen)
         if abs(target.minX - panel.frame.minX) > 1 || abs(target.minY - panel.frame.minY) > 1
@@ -1563,6 +1679,7 @@ final class DockEnhanceController {
         panel.actions.onReveal = { url in NSWorkspace.shared.activateFileViewerSelecting([url]) }
         panel.actions.onDrillFolder = { [weak self] url in self?.drillFolder(url) }
         panel.actions.onFolderBack = { [weak self] in self?.folderBack() }
+        panel.actions.onRetryFolder = { [weak self] in _ = self?.retryFolderListing() }
         panel.actions.onShake = { [weak self] window in self?.shakeOthers(window) }
         panel.actions.onSwipeMinimize = { [weak self] window, minimize in
             self?.swipeMinimize(window, minimize)
@@ -1614,10 +1731,12 @@ final class DockEnhanceController {
         content.calendarFreeUntil = nil
         content.calendarNeedsAuth = false
         content.badge = item.badge
+        if let key = agentGuard.armedKey { content.clearGuardNote(key) }
         content.armedWindowID = nil
         content.armedNote = nil
         content.pulsedWindowIDs = []
         content.headerNote = nil
+        content.actionFailure = nil
         content.stillRunning = false
         agentGuard.reset()
         if item.kind == .folder {
@@ -1800,16 +1919,41 @@ final class DockEnhanceController {
     /// already walked — a visual ⌘` that needs no pointer. Return raises
     /// the walked card, the arrows walk, W/M/F act; ⌥` again closes it.
     func previewFrontApp() {
-        guard running, accessibilityTrusted,
-              let front = NSWorkspace.shared.frontmostApplication,
-              front.processIdentifier != ProcessInfo.processInfo.processIdentifier,
-              let dock = AppleDockReader.dockPID(), let list = AppleDockReader.dockList(pid: dock),
-              let frame = AppleDockReader.frame(of: list) else { return }
-        let now = CACurrentMediaTime()
-        cachedList = (list, frame, now)
-        let items = AppleDockReader.items(list: list)
+        guard running, accessibilityTrusted, let front = frontApp(),
+              front.pid != ProcessInfo.processInfo.processIdentifier,
+              let dock = dockPID() else { return }
+        if frontAppRequest?.pid == front.pid {
+            frontAppRequest = nil
+            return
+        }
+        // The Dock's list and tiles are walked on the preview lane; the
+        // keystroke returns at once and the card lands when the read does.
+        let generationAtRequest = generation
+        let requestID = UUID()
+        frontAppRequest = (requestID, front.pid)
+        let read = ax.dockTiles
+        ax.lane.run({ read(dock) }, then: { [weak self] reading in
+            guard let self, self.frontAppRequest?.id == requestID else { return }
+            self.frontAppRequest = nil
+            guard self.running, self.accessibilityTrusted,
+                  self.generation == generationAtRequest else { return }
+            guard let reading else {
+                AppleDockReader.forgetDockPID()
+                return
+            }
+            self.finishPreviewFrontApp(front, reading)
+        })
+    }
+
+    /// ⌥`'s second half, once the Dock's tiles are in hand.
+    private func finishPreviewFrontApp(_ front: (pid: pid_t, bundleURL: URL?, name: String?),
+                                       _ reading: DockTileReading) {
+        let now = mediaNow()
+        cachedList = (reading.list.element, reading.frame, now)
+        let items = reading.items
+        cachedItems = (reading.frame, items, now)
         guard let index = DockEnhanceMath.frontTileIndex(
-            bundleURL: front.bundleURL, name: front.localizedName,
+            bundleURL: front.bundleURL, name: front.name,
             tiles: items.map { ($0.url, $0.title, $0.kind == .app) }) else { return }
         let item = items[index]
         if keyboardPinned, tracker.shown == item.hoverID {
@@ -1914,7 +2058,7 @@ final class DockEnhanceController {
     private func close(_ window: DockPreviewWindow) {
         let live = preview.agents[window.id].flatMap { $0.isLive ? $0 : nil }
         let key = "close:\(window.id)"
-        guard agentGuard.confirm(key, guarded: live != nil, now: CACurrentMediaTime()) else {
+        guard confirmGuard(key, guarded: live != nil) else {
             if let live {
                 preview.armedWindowID = window.id
                 preview.armedNote = DockAgentGuard.note(for: live, again: "× again to close")
@@ -1930,7 +2074,9 @@ final class DockEnhanceController {
         let generationAtPress = generation
         let closeWindow = ax.close
         ax.lane.run({ closeWindow(window) }, then: { [weak self] closed in
-            guard let self, closed, self.cardIndex(of: window.id, at: generationAtPress) != nil else { return }
+            guard let self, self.cardIndex(of: window.id, at: generationAtPress) != nil else { return }
+            self.preview.actionFailure = closed ? nil : "Could not close this window. Try again."
+            guard closed else { self.reframe(); return }
             self.preview.windows.removeAll { $0.id == window.id }
             if self.preview.windows.isEmpty {
                 self.tracker.reset()
@@ -1956,9 +2102,13 @@ final class DockEnhanceController {
         let generationAtPress = generation
         let setMinimized = ax.setMinimized
         ax.lane.run({ setMinimized(window, target) }, then: { [weak self] done in
-            guard let self, done,
+            guard let self,
                   let index = self.cardIndex(of: window.id, at: generationAtPress) else { return }
-            self.preview.windows[index].minimized = target
+            self.preview.actionFailure = done ? nil : (target
+                ? "Could not minimize this window. Try again."
+                : "Could not restore this window. Try again.")
+            if done { self.preview.windows[index].minimized = target }
+            self.reframe()
         })
     }
 
@@ -1976,9 +2126,11 @@ final class DockEnhanceController {
             guard let now = current(window), setFullScreen(window, !now) else { return nil }
             return !now
         }, then: { [weak self] flipped in
-            guard let self, let flipped,
+            guard let self,
                   let index = self.cardIndex(of: window.id, at: generationAtPress) else { return }
-            self.preview.windows[index].fullScreen = flipped
+            self.preview.actionFailure = flipped == nil ? "Could not change full screen. Try again." : nil
+            if let flipped { self.preview.windows[index].fullScreen = flipped }
+            self.reframe()
         })
     }
 
@@ -1987,8 +2139,9 @@ final class DockEnhanceController {
     /// drag. A minimized window stands back up first, and the panel
     /// stays so the rest of the set can still be worked.
     private func tile(_ window: DockPreviewWindow, _ tile: DockTile) {
-        let screen = (NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
-                      ?? NSScreen.main ?? NSScreen.screens[0])
+        // No screen (every display gone mid-hotplug): nowhere to tile to.
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) })
+                ?? NSScreen.main ?? NSScreen.screens.first else { return }
         let visible = screen.visibleFrame
         // visibleFrame is AppKit — flip it into the Quartz space the
         // AX writes expect before carving it.
@@ -1996,12 +2149,7 @@ final class DockEnhanceController {
                             y: DockDisplays.primaryHeight() - visible.maxY,
                             width: visible.width, height: visible.height)
         let frame = DockEnhanceMath.tileFrame(tile, in: quartz)
-        let setMinimized = ax.setMinimized
-        let setFrame = ax.setFrame
-        ax.lane.run({
-            if window.minimized { _ = setMinimized(window, false) }
-            _ = setFrame(window, frame)
-        }, then: {})
+        position(window, failure: "Could not tile this window. Try again.") { _ in frame }
     }
 
     /// The context menu's Move To: the window keeps its size (clamped
@@ -2013,13 +2161,35 @@ final class DockEnhanceController {
         // The window's own frame may need one AX read; it and the writes
         // are the lane's.
         let frameOf = ax.frame
+        position(window, failure: "Could not move this window. Try again.") { window in
+            let current = frameOf(window) ?? CGRect(origin: .zero, size: visible.size)
+            return DockEnhanceMath.moveFrame(current, to: visible)
+        }
+    }
+
+    /// Restore before positioning. A refused restore stops the move;
+    /// a refused frame write still records a restore that succeeded.
+    /// Read the resulting frame instead of assuming the app used it.
+    func position(_ window: DockPreviewWindow, failure: String,
+                  target: @escaping @Sendable (DockPreviewWindow) -> CGRect) {
+        let generationAtPress = generation
         let setMinimized = ax.setMinimized
         let setFrame = ax.setFrame
-        ax.lane.run({
-            let current = frameOf(window) ?? CGRect(origin: .zero, size: visible.size)
-            if window.minimized { _ = setMinimized(window, false) }
-            _ = setFrame(window, DockEnhanceMath.moveFrame(current, to: visible))
-        }, then: {})
+        let frameOf = ax.frame
+        ax.lane.run({ () -> (restored: Bool, positioned: Bool, frame: CGRect?) in
+            let restored = !window.minimized || setMinimized(window, false)
+            guard restored else { return (false, false, nil) }
+            let positioned = setFrame(window, target(window))
+            var updated = window
+            updated.frame = nil
+            return (true, positioned, frameOf(updated))
+        }, then: { [weak self] result in
+            guard let self, let index = self.cardIndex(of: window.id, at: generationAtPress) else { return }
+            self.preview.actionFailure = result.positioned ? nil : failure
+            if result.restored { self.preview.windows[index].minimized = false }
+            if let frame = result.frame { self.preview.windows[index].frame = frame }
+            self.reframe()
+        })
     }
 
     /// The header's "New" — the app's New Window. The live list usually lands
@@ -2050,10 +2220,10 @@ final class DockEnhanceController {
     private func quitApp() {
         let key = "quit:\(preview.processIdentifier ?? 0)"
         let live = preview.appAgents.first(where: \.isLive)
-        guard agentGuard.confirm(key, guarded: live != nil, now: CACurrentMediaTime()) else {
+        guard confirmGuard(key, guarded: live != nil) else {
             if let live {
-                preview.headerNote = DockAgentGuard.note(
-                    for: live, again: "Quit again to quit \(preview.appName)")
+                preview.armQuitNote(DockAgentGuard.note(
+                    for: live, again: "Quit again to quit \(preview.appName)"))
                 disarmLater(key)
                 reframe()
             }
@@ -2092,6 +2262,16 @@ final class DockEnhanceController {
         }
     }
 
+    private func confirmGuard(_ key: String, guarded: Bool) -> Bool {
+        let previous = agentGuard.armedKey
+        let confirmed = preview.confirmGuard(key, guarded: guarded, now: CACurrentMediaTime(),
+                                             guardState: &agentGuard)
+        if let previous, previous != agentGuard.armedKey {
+            reframe()
+        }
+        return confirmed
+    }
+
     /// A guarded verb's first press lapses with the guard's window —
     /// the ring and the note go with it unless the press was repeated.
     private func disarmLater(_ key: String) {
@@ -2099,14 +2279,9 @@ final class DockEnhanceController {
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(DockAgentGuard.window))
             guard let self, self.generation == generationAtArm,
-                  !self.agentGuard.isArmed(key, now: CACurrentMediaTime()) else { return }
-            if key.hasPrefix("close:") {
-                self.preview.armedWindowID = nil
-                self.preview.armedNote = nil
-            } else {
-                self.preview.headerNote = nil
-                self.reframe()
-            }
+                  self.agentGuard.expire(key, now: CACurrentMediaTime()) else { return }
+            self.preview.clearGuardNote(key)
+            self.reframe()
         }
     }
 
@@ -2120,14 +2295,15 @@ final class DockEnhanceController {
         let generationAtPress = generation
         let setMinimized = ax.setMinimized
         ax.lane.run({ open.filter { setMinimized($0, true) }.map(\.id) }, then: { [weak self] done in
-            guard let self else { return }
-            var changed = false
+            guard let self, self.generation == generationAtPress else { return }
+            let present = Set(self.preview.windows.map(\.id))
+            let failed = Set(open.map(\.id)).subtracting(done).intersection(present)
+            self.preview.actionFailure = Self.failureNote(count: failed.count, action: "minimize")
             for id in done {
                 guard let index = self.cardIndex(of: id, at: generationAtPress) else { continue }
                 self.preview.windows[index].minimized = true
-                changed = true
             }
-            if changed { self.reframe() }
+            self.reframe()
         })
     }
 
@@ -2151,6 +2327,8 @@ final class DockEnhanceController {
             // added meanwhile was never asked to close and stays.
             let closed = Set(targets.map(\.id)).subtracting(failed)
             self.preview.windows.removeAll { closed.contains($0.id) }
+            let remainingFailures = self.preview.windows.filter { failed.contains($0.id) }.count
+            self.preview.actionFailure = Self.failureNote(count: remainingFailures, action: "close")
             if keptCount > 0 {
                 self.preview.headerNote = keptCount == 1
                     ? "Kept the window an agent is running in"
@@ -2165,6 +2343,12 @@ final class DockEnhanceController {
         })
     }
 
+    private static func failureNote(count: Int, action: String) -> String? {
+        guard count > 0 else { return nil }
+        let windows = count == 1 ? "1 window" : "\(count) windows"
+        return "Could not \(action) \(windows). Try again."
+    }
+
     /// Aero shake — minimise the rest of the app's windows, or bring
     /// them all back when the shaken card is the only one left up.
     private func shakeOthers(_ window: DockPreviewWindow) {
@@ -2174,7 +2358,10 @@ final class DockEnhanceController {
         let generationAtPress = generation
         let setMinimized = ax.setMinimized
         ax.lane.run({ targets.filter { setMinimized($0, minimize) }.map(\.id) }, then: { [weak self] done in
-            guard let self else { return }
+            guard let self, self.generation == generationAtPress else { return }
+            let present = Set(self.preview.windows.map(\.id))
+            let failed = Set(targets.map(\.id)).subtracting(done).intersection(present)
+            self.preview.actionFailure = Self.failureNote(count: failed.count, action: minimize ? "minimize" : "restore")
             var changed = Set<Int>()
             for id in done {
                 guard let index = self.cardIndex(of: id, at: generationAtPress) else { continue }
@@ -2182,7 +2369,7 @@ final class DockEnhanceController {
                 changed.insert(id)
             }
             self.acknowledge(changed)
-            if !changed.isEmpty { self.reframe() }
+            self.reframe()
         })
     }
 
@@ -2192,10 +2379,16 @@ final class DockEnhanceController {
         let generationAtPress = generation
         let setMinimized = ax.setMinimized
         ax.lane.run({ setMinimized(window, minimize) }, then: { [weak self] done in
-            guard let self, done,
+            guard let self,
                   let index = self.cardIndex(of: window.id, at: generationAtPress) else { return }
-            self.preview.windows[index].minimized = minimize
-            self.acknowledge([window.id])
+            self.preview.actionFailure = done ? nil : (minimize
+                ? "Could not minimize this window. Try again."
+                : "Could not restore this window. Try again.")
+            if done {
+                self.preview.windows[index].minimized = minimize
+                self.acknowledge([window.id])
+            }
+            self.reframe()
         })
     }
 
@@ -2313,7 +2506,8 @@ final class DockEnhanceController {
             // consent — the denial surfaces as EACCES/EPERM, or EINTR
             // when the auth upcall can't present its prompt.
             let e = errno
-            return DockFolderListing(denied: e == EACCES || e == EPERM || e == EINTR)
+            let denied = e == EACCES || e == EPERM || e == EINTR
+            return DockFolderListing(denied: denied, failed: !denied)
         }
         defer { closedir(dir) }
         var rows: [DockFolderSort.Row] = []
@@ -2393,7 +2587,7 @@ final class DockEnhanceController {
         // click twice.
         let live = agentMarks().first { $0.hosts.contains(bundleID) && $0.isLive }
         let key = "quickquit:\(app.processIdentifier)"
-        guard agentGuard.confirm(key, guarded: live != nil, now: CACurrentMediaTime()) else {
+        guard confirmGuard(key, guarded: live != nil) else {
             if let live {
                 showToast(DockAgentGuard.note(for: live, again: "⌘-right-click again to quit"),
                           over: item, duration: DockAgentGuard.window)
@@ -2416,32 +2610,63 @@ final class DockEnhanceController {
         }
     }
 
-    /// The tile under an AppKit point, when it's over the Dock. The
-    /// gesture monitors call this for every click or scroll anywhere, so
-    /// a point outside the cached reach answers at once — the tick keeps
-    /// that frame fresh wherever the pointer nears a Dock edge — and
-    /// only a point over the Dock pays the AX read.
-    private func tile(at point: NSPoint) -> DockAXItem? {
+    /// The tile under an AppKit point, when it's over the Dock, handed to
+    /// `then` — or `miss` when there is none. The gesture monitors call this
+    /// for every click or scroll anywhere, so a point outside the cached
+    /// reach answers at once and a tile read the tick just made (inside
+    /// `itemsTTL`) answers from memory. Only a point over the Dock with no
+    /// fresh read pays the AX walk, and that walk runs on the preview lane:
+    /// `then` lands on main when it answers, never a main-thread wait on the
+    /// Dock.
+    func withTile(at point: NSPoint, miss: (@MainActor () -> Void)? = nil,
+                  then: @escaping @MainActor (DockAXItem) -> Void) {
         let axPoint = DockEnhanceMath.axPoint(point, mainScreenHeight: DockDisplays.primaryHeight())
-        guard accessibilityTrusted else { return nil }
-        if let cached = cachedList, !Self.listReach(of: cached.frame).contains(axPoint) { return nil }
-        let now = CACurrentMediaTime()
-        guard let list = dockList(near: axPoint, force: true, at: now),
-              Self.listReach(of: list.frame).contains(axPoint) else { return nil }
-        return tiles(of: list, force: true, at: now).first { $0.frame.contains(axPoint) }
+        guard accessibilityTrusted else { miss?(); return }
+        if let cached = cachedList, !Self.listReach(of: cached.frame).contains(axPoint) { miss?(); return }
+        let now = mediaNow()
+        if let list = cachedList, let items = cachedItems, items.listFrame == list.frame,
+           now >= list.at, now - list.at < Self.itemsTTL, now >= items.at, now - items.at < Self.itemsTTL {
+            guard Self.listReach(of: list.frame).contains(axPoint),
+                  let item = items.items.first(where: { $0.frame.contains(axPoint) }) else { miss?(); return }
+            then(item)
+            return
+        }
+        guard let dock = dockPID() else { miss?(); return }
+        let read = ax.dockTiles
+        ax.lane.run({ read(dock) }, then: { [weak self] reading in
+            guard let self, self.running else { return }
+            guard let reading else {
+                // A Dock that relaunched unannounced answers nothing at the
+                // pid kept for it — the next read asks the workspace again.
+                AppleDockReader.forgetDockPID()
+                self.cachedList = nil
+                self.cachedItems = nil
+                miss?()
+                return
+            }
+            let landed = mediaNow()
+            self.cachedList = (reading.list.element, reading.frame, landed)
+            self.cachedItems = (reading.frame, reading.items, landed)
+            guard Self.listReach(of: reading.frame).contains(axPoint),
+                  let item = reading.items.first(where: { $0.frame.contains(axPoint) }) else { miss?(); return }
+            then(item)
+        })
     }
 
     /// The Middle Click trigger: a middle click on a tile opens its
     /// preview at once; the same click on the tile already shown closes it.
-    private func middleClick(at point: NSPoint) {
-        guard running, preferences.previewTrigger == .middleClick, let item = tile(at: point) else { return }
-        if tracker.shown == item.hoverID {
-            tracker.reset()
-            hidePreview()
-            return
-        }
-        if case .show = tracker.summon(item.hoverID, now: CACurrentMediaTime()) {
-            showPreview(for: item)
+    func middleClick(at point: NSPoint) {
+        guard running, preferences.previewTrigger == .middleClick else { return }
+        withTile(at: point) { [weak self] item in
+            guard let self, self.running, self.preferences.previewTrigger == .middleClick else { return }
+            if self.tracker.shown == item.hoverID {
+                self.tracker.reset()
+                self.hidePreview()
+                return
+            }
+            if case .show = self.tracker.summon(item.hoverID, now: CACurrentMediaTime()) {
+                self.showPreview(for: item)
+            }
         }
     }
 
@@ -2449,8 +2674,18 @@ final class DockEnhanceController {
     /// up opens that app's preview without the rest, a scroll down hides
     /// the app. The flick threshold is the cards' own, so a brush of the
     /// wheel on the way past does nothing.
-    private func scroll(at point: NSPoint, deltaY: CGFloat, inverted: Bool, now: TimeInterval) {
-        guard running, preferences.scrollGestures, let item = tile(at: point), item.kind == .app else {
+    func scroll(at point: NSPoint, deltaY: CGFloat, inverted: Bool, now: TimeInterval) {
+        guard running, preferences.scrollGestures else {
+            scrollTile = nil
+            return
+        }
+        withTile(at: point, miss: { [weak self] in self?.scrollTile = nil }) { [weak self] item in
+            self?.scroll(over: item, deltaY: deltaY, inverted: inverted, now: now)
+        }
+    }
+
+    private func scroll(over item: DockAXItem, deltaY: CGFloat, inverted: Bool, now: TimeInterval) {
+        guard running, preferences.scrollGestures, item.kind == .app else {
             scrollTile = nil
             return
         }
@@ -2483,14 +2718,24 @@ final class DockEnhanceController {
     /// use. A click on a background app is the Dock's own activation; an
     /// app with nothing visible left is the Dock's own restore; neither
     /// is touched. Only plain clicks — a modified click is the Dock's.
-    private func clickToMinimize(at point: NSPoint, clickAt: TimeInterval) {
-        guard running, preferences.clickToMinimize, let item = tile(at: point), item.kind == .app,
+    func clickToMinimize(at point: NSPoint, clickAt: TimeInterval) {
+        guard running, preferences.clickToMinimize else { return }
+        // Who was in front when the click landed — read now, before the
+        // Dock's own activation and before the tile read comes back.
+        let frontmostPID = frontApp()?.pid
+        withTile(at: point) { [weak self] item in
+            self?.minimizeFrontWindows(of: item, frontmostPID: frontmostPID, clickAt: clickAt)
+        }
+    }
+
+    private func minimizeFrontWindows(of item: DockAXItem, frontmostPID: pid_t?, clickAt: TimeInterval) {
+        guard running, preferences.clickToMinimize, item.kind == .app,
               let url = item.url, let bundleID = Bundle(url: url)?.bundleIdentifier,
               !MenuBarUtility.isOwnFamily(bundleID),
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
               DockEnhanceMath.clickMinimizes(
                 appPID: app.processIdentifier,
-                frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                frontmostPID: frontmostPID,
                 lastActivation: lastActivation, clickAt: clickAt) else { return }
         // The window read and the writes are the preview lane's; a hung
         // app is not asked while the backoff rests it.
@@ -2565,7 +2810,12 @@ final class DockEnhanceController {
     /// where it is — a live retitle usually changes nothing it sizes by.
     private func reframe(onlyIfResized: Bool = false) {
         guard let panel, panel.isVisible else { return }
-        let size = panel.fittingSize()
+        let place = placement
+        let maximumSize = anchor.map {
+            place.availableSize(anchor: anchorFrame(for: $0.item, edge: $0.edge, pointer: NSEvent.mouseLocation),
+                                edge: $0.edge, screen: $0.screen, title: preview.appName)
+        } ?? panel.frame.size
+        let size = panel.fittingSize(maximumSize: maximumSize)
         if onlyIfResized, size == panel.frame.size { return }
         guard let anchor else {
             var frame = panel.frame
@@ -2579,7 +2829,6 @@ final class DockEnhanceController {
         // the pointer, so refitting on it jumped the panel off the icon.
         let itemFrame = anchorFrame(for: anchor.item, edge: anchor.edge,
                                     pointer: NSEvent.mouseLocation)
-        let place = placement
         panel.hold(place)
         panel.setFrame(targetFrame(item: itemFrame, edge: anchor.edge, screen: anchor.screen, size: size,
                                    placement: place),

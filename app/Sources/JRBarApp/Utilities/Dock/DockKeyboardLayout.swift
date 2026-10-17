@@ -30,6 +30,17 @@ final class DockKeyboardLayout: @unchecked Sendable {
             }
     }
 
+    /// Stop re-reading on input-source switches — the switcher is off.
+    @MainActor
+    func stopWatching() {
+        if let observer { DistributedNotificationCenter.default().removeObserver(observer) }
+        observer = nil
+    }
+
+    /// Whether the input-source observer is installed.
+    @MainActor
+    var watching: Bool { observer != nil }
+
     @MainActor
     func refresh() {
         let data = Self.currentLayoutData()

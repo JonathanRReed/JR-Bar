@@ -27,18 +27,6 @@ struct ShelfGlanceTests {
         #expect(ShelfCalendarModel.upcoming([], now: now, limit: 3).isEmpty)
     }
 
-    @Test("on an empty calendar day the weather takes the calendar's place")
-    func weatherInEmptyCalendarSlot() {
-        #expect(NotchCardModel.weatherTakesCalendarSlot(calendar: .idle, hasWeather: true))
-        #expect(!NotchCardModel.weatherTakesCalendarSlot(calendar: .idle, hasWeather: false),
-                "no weather: the honest empty line stays")
-        #expect(!NotchCardModel.weatherTakesCalendarSlot(calendar: .events([event("Standup", startIn: 10)]),
-                                                         hasWeather: true),
-                "a day with events keeps both rows")
-        #expect(!NotchCardModel.weatherTakesCalendarSlot(calendar: .hidden, hasWeather: true),
-                "the calendar switched off leaves the weather where it was")
-    }
-
     @Test("the card reads who is listening as it opens and forgets it as it folds")
     func privacyOnPin() {
         let card = makeTestCardModel()
@@ -60,6 +48,38 @@ struct ShelfGlanceTests {
         let reminders = ShelfRemindersModel()
         reminders.sync(enabled: false)
         #expect(reminders.state == .hidden)
+    }
+
+    @Test("access revoked while pinned hides the rows instead of drawing an empty day")
+    func revokedWhilePinned() {
+        let calendar = ShelfCalendarModel()
+        calendar.fetchEvents = { _ in [] }
+        calendar.authorization = { .fullAccess }
+        calendar.sync(enabled: true)
+        calendar.authorization = { .denied }
+        calendar.refreshNow()
+        #expect(calendar.state == .hidden, "the tick re-checks access; an empty store is not a free day")
+        calendar.authorization = { .notDetermined }
+        calendar.refreshNow()
+        #expect(calendar.state == .needsPermission)
+        calendar.stop()
+
+        let reminders = ShelfRemindersModel()
+        reminders.authorization = { .restricted }
+        reminders.refreshNow()
+        #expect(reminders.state == .hidden)
+        reminders.authorization = { .notDetermined }
+        reminders.refreshNow()
+        #expect(reminders.state == .needsPermission)
+    }
+
+    @Test("a reminders fetch that failed keeps the last reading; an empty one is empty")
+    func failedFetchKeepsTheRow() {
+        let entry = ShelfRemindersModel.Entry(id: "a", title: "Call", due: nil)
+        let held = ShelfRemindersModel.State.items([entry])
+        #expect(ShelfRemindersModel.state(after: nil, previous: held) == held)
+        #expect(ShelfRemindersModel.state(after: [], previous: held) == .idle)
+        #expect(ShelfRemindersModel.state(after: [entry], previous: .idle) == held)
     }
 
     @Test("the Mirror opens only when summoned and folds away with the card")

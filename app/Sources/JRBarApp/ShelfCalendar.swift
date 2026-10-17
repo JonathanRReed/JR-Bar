@@ -45,6 +45,7 @@ final class ShelfCalendarModel {
     /// The EventKit read — synchronous, so it runs on `readQueue`, never
     /// on the frame the card grows on. The tests hand in their own.
     @ObservationIgnored var fetchEvents: @Sendable (Date) -> [Event] = { ShelfCalendarModel.fetchUpcoming(from: $0) }
+    @ObservationIgnored var clock: @MainActor () -> Date = { Date() }
     nonisolated let readQueue = DispatchQueue(label: "jrbar.shelf-calendar", qos: .userInitiated)
     /// Bumps on `stop` — the async permission answer can land after the
     /// card unpinned, and a grant must not restart the refresh timer
@@ -68,12 +69,23 @@ final class ShelfCalendarModel {
             state = .hidden
             return
         }
+        refreshNow()
+    }
+
+    /// Read where access stands right now: the pin's first read and every
+    /// tick of the refresh cadence. Access revoked while the card is
+    /// pinned hides the row and ends the cadence; without the check the
+    /// next tick read an empty store and drew "nothing upcoming" — the
+    /// fake free day this model exists never to show.
+    func refreshNow() {
         switch authorization() {
         case .fullAccess:
             loadNext()
         case .denied, .restricted:
+            stop()
             state = .hidden
         default:
+            stop()
             state = .needsPermission
         }
     }
@@ -84,14 +96,21 @@ final class ShelfCalendarModel {
     /// rather than hiding a stale event. A reading that lands after the
     /// card folded (`stop` bumped the epoch) is dropped.
     private func loadNext() {
+        epoch += 1
         let epoch = self.epoch
         let fetch = fetchEvents
+        let requestedAt = clock()
         readQueue.async { [weak self] in
-            let now = Date()
-            let next = ShelfCalendarModel.upcoming(fetch(now), now: now, limit: ShelfCalendarModel.eventLimit)
+            let events = fetch(requestedAt)
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, self.epoch == epoch else { return }
+                    guard self.authorization() == .fullAccess else {
+                        self.refreshNow()
+                        return
+                    }
+                    let next = ShelfCalendarModel.upcoming(events, now: self.clock(),
+                                                           limit: ShelfCalendarModel.eventLimit)
                     self.state = next.isEmpty ? .idle : .events(next)
                 }
             }
@@ -122,14 +141,16 @@ final class ShelfCalendarModel {
     /// Soonest first, ended ones out (a meeting still running stays —
     /// it is the one you would Join), capped. Pure for the tests.
     nonisolated static func upcoming(_ events: [Event], now: Date, limit: Int) -> [Event] {
-        Array(events.filter { $0.end > now }.sorted { $0.start < $1.start }.prefix(limit))
+        guard limit > 0 else { return [] }
+        return Array(events.filter { $0.end > now && $0.end > $0.start }
+            .sorted { $0.start < $1.start }.prefix(limit))
     }
 
     /// Re-read on a slow cadence while the card is pinned — events move.
     private func scheduleRefresh() {
         refreshTimer?.invalidate()
         let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.loadNext() }
+            MainActor.assumeIsolated { self?.refreshNow() }
         }
         timer.tolerance = 10
         RunLoop.main.add(timer, forMode: .common)
@@ -224,25 +245,32 @@ final class ShelfMeetingWatch {
     private var changeObserver: NSObjectProtocol?
     /// The store's fetches run here — `events(matching:)` walks the
     /// database and does not belong on main.
-    private let fetchQueue = DispatchQueue(label: "jrbar.meeting-watch", qos: .userInitiated)
+    let fetchQueue = DispatchQueue(label: "jrbar.meeting-watch", qos: .userInitiated)
+    var authorization: () -> EKAuthorizationStatus = {
+        EKEventStore.authorizationStatus(for: .event)
+    }
+    /// Tests supply a synthetic read instead of creating an EventKit store.
+    var fetchEvents: (@Sendable (Date) -> [Event])?
     /// A read in flight whose answer must be dropped — a `stop` or a
     /// newer read made it stale.
     private var readGeneration = 0
 
     /// On while the switch is on and access exists; off otherwise.
     func sync(enabled: Bool) {
-        guard enabled, EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
+        guard enabled, authorization() == .fullAccess else {
             stop()
             return
         }
         guard !running else { return }
         running = true
-        let store = self.store ?? EKEventStore()
-        self.store = store
-        changeObserver = NotificationCenter.default.addObserver(
-            forName: .EKEventStoreChanged, object: store, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.read() }
+        if fetchEvents == nil {
+            let store = self.store ?? EKEventStore()
+            self.store = store
+            changeObserver = NotificationCenter.default.addObserver(
+                forName: .EKEventStoreChanged, object: store, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.read() }
+            }
         }
         read()
     }
@@ -270,27 +298,41 @@ final class ShelfMeetingWatch {
         let store: EKEventStore
     }
 
-    private func read() {
-        guard running, let store else { return }
+    func read() {
+        guard running else { return }
+        guard authorization() == .fullAccess else {
+            stop()
+            return
+        }
+        let fetch: @Sendable (Date) -> [Event]
+        if let fetchEvents {
+            fetch = fetchEvents
+        } else if let store {
+            let box = StoreBox(store: store)
+            fetch = { now in
+                // Back far enough to catch a long meeting already running.
+                let predicate = box.store.predicateForEvents(
+                    withStart: now.addingTimeInterval(-12 * 3600),
+                    end: now.addingTimeInterval(ShelfCalendarModel.lookahead), calendars: nil)
+                return box.store.events(matching: predicate)
+                    .filter { !$0.isAllDay }.map(ShelfCalendarModel.project)
+            }
+        } else {
+            return
+        }
         readGeneration += 1
         let generation = readGeneration
-        fetchQueue.async { [weak self, store = StoreBox(store: store)] in
-            let now = Date()
-            // Back far enough to catch a long meeting already running.
-            let predicate = store.store.predicateForEvents(
-                withStart: now.addingTimeInterval(-12 * 3600),
-                end: now.addingTimeInterval(ShelfCalendarModel.lookahead),
-                calendars: nil)
-            let events = store.store.events(matching: predicate)
-                .filter { !$0.isAllDay }
-                .map(ShelfCalendarModel.project)
+        fetchQueue.async { [weak self] in
+            let events = fetch(Date())
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self, self.running,
                           self.readGeneration == generation else { return }
-                    // Due/live windows judge against now at apply time —
-                    // a fetch that queued behind a slow scan does not
-                    // shift the edges by its own latency.
+                    guard self.authorization() == .fullAccess else {
+                        self.stop()
+                        return
+                    }
+                    // Judge meeting edges at apply time, after any fetch delay.
                     self.note(events, now: Date())
                 }
             }
@@ -301,9 +343,11 @@ final class ShelfMeetingWatch {
     /// edge. Internal for the tests, which hand it events directly (a
     /// watch that is not running arms nothing).
     func note(_ events: [Event], now: Date) {
+        let generation = readGeneration
         if let soon = Self.dueSoon(events, now: now, announced: announced) {
             announced.insert(Self.key(soon))
             onSoon(soon)
+            guard readGeneration == generation else { return }
         }
         // Only keys for events still in the window are worth keeping.
         let current = Set(events.map(Self.key))
@@ -312,6 +356,7 @@ final class ShelfMeetingWatch {
         if nowLive != live {
             live = nowLive
             onLiveChange(nowLive)
+            guard readGeneration == generation else { return }
         }
         arm(Self.nextWake(events, now: now), now: now)
     }

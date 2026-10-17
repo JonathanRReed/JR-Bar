@@ -4,8 +4,18 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from jrbar.provider_usage_codex_claude import collect_claude, collect_codex
 from jrbar.provider_usage_settings import default_provider_usage_settings
+
+
+@pytest.fixture(autouse=True)
+def no_external_claude_credential_reads(monkeypatch):
+    from jrbar import claude_quota, provider_reconnect
+
+    monkeypatch.setattr(provider_reconnect, "sync_claude_credential_in_background", lambda *_a, **_k: False)
+    monkeypatch.setattr(claude_quota, "_claude_code_user_agent", lambda: "claude-code/fixture")
 
 
 class FixtureCredentials:
@@ -360,11 +370,10 @@ def _claude_failing_with(tmp_path: Path, status: int, answer: bytes = _JSON_ERRO
 def test_a_claude_403_names_the_missing_usage_permission_not_the_network(tmp_path: Path) -> None:
     result = _claude_failing_with(tmp_path, 403)
 
-    # A sign-in that may not read usage is fixed by signing in again, and it
-    # arms the terminal retry gate: asking again with the same token cannot work.
-    assert result.state.value == "needs_sign_in"
+    # Permission failure says nothing about whether the sign-in is valid.
+    assert result.state.value == "unavailable"
     assert result.reason_code == "usage_permission_missing"
-    assert result.action_label == "Reconnect Claude"
+    assert result.action_label == "Check Claude usage access"
 
 
 def test_claude_server_errors_stay_transient_and_a_401_stays_a_sign_in(tmp_path: Path) -> None:
@@ -391,7 +400,7 @@ def test_a_claude_403_with_a_web_page_body_is_a_transient_failure(tmp_path: Path
     assert result.action_label == "Retry"
 
 
-def test_a_usage_permission_refusal_arms_the_terminal_retry_gate(tmp_path: Path, monkeypatch) -> None:
+def test_a_usage_permission_refusal_uses_transient_backoff(tmp_path: Path, monkeypatch) -> None:
     from jrbar import provider_reconnect
     from jrbar.claude_quota import fetch_windows
     from jrbar.provider_usage_runtime import ProviderUsageService
@@ -430,10 +439,9 @@ def test_a_usage_permission_refusal_arms_the_terminal_retry_gate(tmp_path: Path,
 
     assert state.by_provider("claude").reason_code == "usage_permission_missing"
     gate = service._failure_gates[("claude", "default")]
-    assert gate.terminal is True
-    assert gate.terminal_fingerprint is None
-    # With the credential source unchanged the next background refresh does
-    # not ask again; a forced one (a click) still does.
+    assert gate.terminal is False
+    assert gate.retry_at == 1300.0
+    # Background requests wait for backoff; a forced request can still run.
     service.refresh_now(providers=("claude",))
     assert len(asked) == 1
     service.refresh_now(providers=("claude",), force=True)

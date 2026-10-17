@@ -214,7 +214,7 @@ public enum LightExplainer {
         }
         if let top {
             let name = SessionLabel.providerName(top.provider.id)
-            return "\(name) \(top.window.shortName) window at \(Int(top.pct.rounded()))%"
+            return "\(name) \(top.window.shortName) window at \(UsageWindowLabel.wholeUsed(top.pct))%"
         }
         let measured = providers.contains { provider in
             provider.windows.contains { window in window.bindable && window.usedPct != nil }

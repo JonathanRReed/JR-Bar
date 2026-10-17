@@ -22,7 +22,7 @@ struct SettingsWindowLifecycleTests {
             firstHostingView = host.view
             #expect(window.contentViewController === host)
             #expect(window.title == "JR-Bar Settings")
-            #expect(window.subtitle == "Utilities")
+            #expect(window.subtitle == "Utilities & Toys")
         }
         // Record the live window's effective constraints after SwiftUI has
         // supplied its own minimum content size, as production does.
@@ -53,7 +53,7 @@ struct SettingsWindowLifecycleTests {
         #expect(store.page == .utilities)
         #expect(controller.store === store)
         #expect(window.title == "JR-Bar Settings")
-        #expect(window.subtitle == "Utilities")
+        #expect(window.subtitle == "Utilities & Toys")
         #expect(window.frame == originalFrame)
         #expect(window.minSize == originalMinSize)
         #expect(window.maxSize == originalMaxSize)
@@ -62,7 +62,7 @@ struct SettingsWindowLifecycleTests {
         let secondReopenedHost = controller.attachSettingsContent(to: window)
         #expect(window.contentViewController === secondReopenedHost)
         #expect(window.title == "JR-Bar Settings")
-        #expect(window.subtitle == "Utilities")
+        #expect(window.subtitle == "Utilities & Toys")
         #expect(window.frame == originalFrame)
         #expect(window.minSize == originalMinSize)
         #expect(window.maxSize == originalMaxSize,

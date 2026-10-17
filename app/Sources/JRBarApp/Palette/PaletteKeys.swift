@@ -60,7 +60,7 @@ enum PaletteKeys {
         }
         // A chord needs ⌘ or ⌃; ⇧ and ⌥ alone type characters.
         guard modifiers.contains(.command) || modifiers.contains(.control),
-              let scalar = characters?.lowercased().unicodeScalars.first,
+              let scalar = chordScalar(keyCode: keyCode, characters: characters),
               // Arrow and function keys arrive as private-use scalars —
               // ⌘← is caret movement, not a verb.
               !(0xF700...0xF8FF).contains(scalar.value),
@@ -68,6 +68,34 @@ enum PaletteKeys {
         let chord = PaletteShortcut(.character(Character(scalar)), modifiers)
         return editingChords.contains(chord) ? .passThrough : .chord(chord)
     }
+
+    /// The character a chord is named by. On a layout whose letters are not
+    /// Latin (Cyrillic, Greek, Arabic) ⌘K arrives as that layout's letter,
+    /// and the verbs are named by the Latin one on the same key, so the
+    /// key's position decides there.
+    static func chordScalar(keyCode: UInt16, characters: String?) -> Unicode.Scalar? {
+        guard let scalar = characters?.lowercased().unicodeScalars.first else { return nil }
+        if scalar.isASCII { return scalar }
+        if let latin = latinKeys[Int(keyCode)] { return latin }
+        return scalar
+    }
+
+    /// The ANSI letters and digits by key code.
+    private static let latinKeys: [Int: Unicode.Scalar] = {
+        let pairs: [(Int, Character)] = [
+            (kVK_ANSI_A, "a"), (kVK_ANSI_B, "b"), (kVK_ANSI_C, "c"), (kVK_ANSI_D, "d"), (kVK_ANSI_E, "e"),
+            (kVK_ANSI_F, "f"), (kVK_ANSI_G, "g"), (kVK_ANSI_H, "h"), (kVK_ANSI_I, "i"), (kVK_ANSI_J, "j"),
+            (kVK_ANSI_K, "k"), (kVK_ANSI_L, "l"), (kVK_ANSI_M, "m"), (kVK_ANSI_N, "n"), (kVK_ANSI_O, "o"),
+            (kVK_ANSI_P, "p"), (kVK_ANSI_Q, "q"), (kVK_ANSI_R, "r"), (kVK_ANSI_S, "s"), (kVK_ANSI_T, "t"),
+            (kVK_ANSI_U, "u"), (kVK_ANSI_V, "v"), (kVK_ANSI_W, "w"), (kVK_ANSI_X, "x"), (kVK_ANSI_Y, "y"),
+            (kVK_ANSI_Z, "z"), (kVK_ANSI_0, "0"), (kVK_ANSI_1, "1"), (kVK_ANSI_2, "2"), (kVK_ANSI_3, "3"),
+            (kVK_ANSI_4, "4"), (kVK_ANSI_5, "5"), (kVK_ANSI_6, "6"), (kVK_ANSI_7, "7"), (kVK_ANSI_8, "8"),
+            (kVK_ANSI_9, "9"),
+        ]
+        return Dictionary(uniqueKeysWithValues: pairs.compactMap { code, letter in
+            letter.unicodeScalars.first.map { (code, $0) }
+        })
+    }()
 
     /// The four modifiers a chord is made of; Caps Lock, Fn and the
     /// numeric-pad bit arrows carry are not part of it.

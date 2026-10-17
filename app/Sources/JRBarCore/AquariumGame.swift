@@ -897,6 +897,17 @@ public struct AquariumGame: Codable, Equatable, Sendable {
 
     // MARK: Reducer
 
+    /// A stamp the clock has not reached yet (it was set back, or a wrong
+    /// date was corrected) would hold its cooldown shut for however far
+    /// ahead it sits: no treasure, visitor or sinking for a year. The
+    /// "last" stamps are pulled back to now, which is the latest they can
+    /// honestly be.
+    private mutating func pullStampsBackToNow(_ nowS: Double) {
+        if lastTreasureAt > nowS { lastTreasureAt = nowS }
+        if let find = treasure, find.buriedAt > nowS { treasure?.buriedAt = nowS }
+        for (key, stamp) in lastVisitorAt where stamp > nowS { lastVisitorAt[key] = nowS }
+    }
+
     /// Apply one event; returns the effects worth animating or
     /// surfacing. Pure apart from the receiver — the same state plus
     /// the same event always produces the same state and effects, so
@@ -905,6 +916,7 @@ public struct AquariumGame: Codable, Equatable, Sendable {
     public mutating func apply(_ event: AquariumEvent, now: Date,
                                calendar: Calendar = .current) -> [AquariumGameEffect] {
         if createdAt == 0 { createdAt = now.timeIntervalSince1970 }
+        pullStampsBackToNow(now.timeIntervalSince1970)
         var effects: [AquariumGameEffect] = []
         // Every event keeps the day's chore current before it lands.
         syncDailyGoal(now: now, calendar: calendar)
@@ -1524,42 +1536,86 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         case stored, oysterWork, oysterReady, alienShownAt
     }
 
+    /// The most a counter (pearls, a streak, a total) may read from a
+    /// file. Far past anything play reaches, and low enough that adding
+    /// to it can never overflow.
+    static let counterCeiling = 1_000_000_000
+    /// The most of one shop item a file may own.
+    static let itemCeiling = 999
+    /// The most seconds a stored clock (the pearl and goal carries) may
+    /// read from a file.
+    static let secondsCeiling = 1_000_000_000.0
+
+    private static func counter(_ value: Int?, ceiling: Int = counterCeiling) -> Int {
+        min(ceiling, max(0, value ?? 0))
+    }
+
+    private static func seconds(_ value: Double?) -> Double {
+        guard let value, value.isFinite else { return 0 }
+        return min(secondsCeiling, max(0, value))
+    }
+
+    /// One entry that fails to decode drops only itself: a newer build's
+    /// mistyped value must not empty a whole shelf.
+    private struct Lossy<Value: Decodable>: Decodable {
+        let value: Value?
+        init(from decoder: any Decoder) {
+            value = try? decoder.singleValueContainer().decode(Value.self)
+        }
+    }
+
+    private static func lossyDictionary<Value: Decodable>(
+        _ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys, as type: Value.Type = Value.self
+    ) -> [String: Value] {
+        let raw = (try? c.decodeIfPresent([String: Lossy<Value>].self, forKey: key)) ?? [:]
+        return raw.compactMapValues(\.value)
+    }
+
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        pearls = max(0, (try? c.decodeIfPresent(Int.self, forKey: .pearls)) ?? 0)
-        lifetimePearls = max(0, (try? c.decodeIfPresent(Int.self, forKey: .lifetimePearls)) ?? 0)
-        pearlProgress = max(0, (try? c.decodeIfPresent(Double.self, forKey: .pearlProgress)) ?? 0)
-        pets = (try? c.decodeIfPresent([String: FishCare].self, forKey: .pets)) ?? [:]
-        let owned = ((try? c.decodeIfPresent([String: Int].self, forKey: .inventory)) ?? [:])
+        pearls = Self.counter(try? c.decodeIfPresent(Int.self, forKey: .pearls))
+        lifetimePearls = Self.counter(try? c.decodeIfPresent(Int.self, forKey: .lifetimePearls))
+        pearlProgress = Self.seconds(try? c.decodeIfPresent(Double.self, forKey: .pearlProgress))
+        pets = Self.lossyDictionary(c, .pets)
+        let owned = Self.lossyDictionary(c, .inventory, as: Int.self)
+            .mapValues { Self.counter($0, ceiling: Self.itemCeiling) }
             .filter { $0.value > 0 }
         inventory = owned.filter { ShopItem(rawValue: $0.key) != nil }
         unknownInventory = owned.filter { ShopItem(rawValue: $0.key) == nil }
         themeID = (try? c.decodeIfPresent(String.self, forKey: .themeID)) ?? "classic"
         hats = ((try? c.decodeIfPresent([String: String].self, forKey: .hats)) ?? [:])
             .filter { ShopItem(rawValue: $0.value)?.category == .hats }
-        drops = (try? c.decodeIfPresent([PearlDrop].self, forKey: .drops)) ?? []
-        streakDays = max(0, (try? c.decodeIfPresent(Int.self, forKey: .streakDays)) ?? 0)
+        drops = ((try? c.decodeIfPresent([Lossy<PearlDrop>].self, forKey: .drops)) ?? [])
+            .compactMap(\.value)
+        streakDays = Self.counter(try? c.decodeIfPresent(Int.self, forKey: .streakDays))
         lastStreakDay = max(0, (try? c.decodeIfPresent(Double.self, forKey: .lastStreakDay)) ?? 0)
         windowOpen = (try? c.decodeIfPresent(Bool.self, forKey: .windowOpen)) ?? false
         away = (try? c.decodeIfPresent(AquariumAwaySummary.self, forKey: .away)) ?? AquariumAwaySummary()
-        totals = (try? c.decodeIfPresent(Totals.self, forKey: .totals)) ?? Totals()
-        dropSeq = max(0, (try? c.decodeIfPresent(Int.self, forKey: .dropSeq)) ?? 0)
+        var storedTotals = (try? c.decodeIfPresent(Totals.self, forKey: .totals)) ?? Totals()
+        storedTotals.feedings = Self.counter(storedTotals.feedings)
+        storedTotals.completions = Self.counter(storedTotals.completions)
+        storedTotals.purchases = Self.counter(storedTotals.purchases)
+        storedTotals.dropsCollected = Self.counter(storedTotals.dropsCollected)
+        storedTotals.treasuresFound = Self.counter(storedTotals.treasuresFound)
+        storedTotals.visitorsSeen = Self.counter(storedTotals.visitorsSeen)
+        totals = storedTotals
+        dropSeq = Self.counter(try? c.decodeIfPresent(Int.self, forKey: .dropSeq))
         createdAt = (try? c.decodeIfPresent(Double.self, forKey: .createdAt)) ?? 0
         accessories = ((try? c.decodeIfPresent([String: String].self, forKey: .accessories)) ?? [:])
             .filter { ShopItem(rawValue: $0.value)?.category == .accessories }
         substrateID = (try? c.decodeIfPresent(String.self, forKey: .substrateID)) ?? "classic"
         backdropID = (try? c.decodeIfPresent(String.self, forKey: .backdropID)) ?? "classic"
-        unlocked = (try? c.decodeIfPresent([String: Double].self, forKey: .unlocked)) ?? [:]
+        unlocked = Self.lossyDictionary(c, .unlocked, as: Double.self)
         dailyGoal = try? c.decodeIfPresent(AquariumDailyGoal.self, forKey: .dailyGoal)
-        goalCarrySeconds = max(0, (try? c.decodeIfPresent(Double.self, forKey: .goalCarrySeconds)) ?? 0)
+        goalCarrySeconds = Self.seconds(try? c.decodeIfPresent(Double.self, forKey: .goalCarrySeconds))
         treasure = try? c.decodeIfPresent(AquariumTreasure.self, forKey: .treasure)
         lastTreasureAt = max(0, (try? c.decodeIfPresent(Double.self, forKey: .lastTreasureAt)) ?? 0)
         pendingVisitors = ((try? c.decodeIfPresent([String].self, forKey: .pendingVisitors)) ?? [])
             .compactMap(AquariumVisitor.init(rawValue:))
-        lastVisitorAt = (try? c.decodeIfPresent([String: Double].self, forKey: .lastVisitorAt)) ?? [:]
+        lastVisitorAt = Self.lossyDictionary(c, .lastVisitorAt, as: Double.self)
         continuousWorkSeconds = max(0, (try? c.decodeIfPresent(Double.self, forKey: .continuousWorkSeconds)) ?? 0)
         lastWorkAt = max(0, (try? c.decodeIfPresent(Double.self, forKey: .lastWorkAt)) ?? 0)
-        completionsToday = max(0, (try? c.decodeIfPresent(Int.self, forKey: .completionsToday)) ?? 0)
+        completionsToday = Self.counter(try? c.decodeIfPresent(Int.self, forKey: .completionsToday))
         fleet = (try? c.decodeIfPresent(AquariumFleetLog.self, forKey: .fleet)) ?? AquariumFleetLog()
         var seen = Set<String>()
         stored = ((try? c.decodeIfPresent([String].self, forKey: .stored)) ?? [])

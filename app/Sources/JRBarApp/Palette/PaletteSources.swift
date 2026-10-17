@@ -166,15 +166,34 @@ enum AgentPaletteRows {
         } else {
             note = ask.isDestructive ? AskRiskMark.help : nil
         }
-        let summary = ask.summary ?? (ask.wantsTextReply ? "Wants a typed reply" : "Needs your answer")
+        var summary = ask.summary ?? (ask.wantsTextReply ? "Wants a typed reply" : "Needs your answer")
+        // A long-unanswered ask is still listed, with its age in words.
+        if let stale = ask.staleLine(now: now) { summary = "\(stale) · \(summary)" }
         let preview = ask.previewLine
         return PaletteItem(
             id: "ask.\(row.id)", title: row.label,
-            subtitle: preview.map { "\(summary) — \($0)" } ?? summary,
+            subtitle: askSubtitle(summary: summary, preview: preview),
             keywords: ["answer", "ask", row.style.name] + (ask.wantsTextReply ? ["reply"] : [])
                 + (row.cwdTail.map { [$0] } ?? []) + (preview.map { [$0] } ?? []),
             icon: .provider(row.style.id), tags: tags, kind: "Ask", section: .needsYou,
             actions: actions, urgent: true, accessibilityNote: note)
+    }
+
+    /// The row's second line: what is asked, then what it would run. A
+    /// single-line row cuts its tail, and the end of a command is the part
+    /// that says what it does ("… && rm -rf ~"), so the summary gives way
+    /// first and the command is cut in its middle, both ends kept.
+    nonisolated static func askSubtitle(summary: String, preview: String?) -> String {
+        guard let preview else { return summary }
+        let said = summary.count > 40 ? String(summary.prefix(39)) + "…" : summary
+        return "\(said) — \(middleClipped(preview, to: 72))"
+    }
+
+    nonisolated static func middleClipped(_ text: String, to limit: Int) -> String {
+        guard text.count > limit, limit > 2 else { return text }
+        let head = (limit - 1) / 2
+        let tail = limit - 1 - head
+        return String(text.prefix(head)) + "…" + String(text.suffix(tail))
     }
 
     /// A held question's verbs. Deny comes first so ⌘↩ lands on no
@@ -893,93 +912,6 @@ enum ConfettiPaletteRows {
     }
 }
 
-// MARK: - Archive (Data Hoarder)
-
-struct ArchivePaletteVerbs {
-    /// Open the archive window on this record, searched for `query`.
-    var openRecord: @MainActor (ArchiveRecord, String) -> Void
-    /// Open the archive window searched for `query`.
-    var search: @MainActor (String) -> Void
-    /// The live session a captured record still ends, if any.
-    var sessionFor: @MainActor (ArchiveRecord) -> String?
-    var openSession: @MainActor (String) -> Void
-}
-
-enum ArchivePaletteRows {
-    /// The archive answers from three typed characters on — shorter
-    /// queries match half the transcripts and cost a full-text pass
-    /// per keystroke.
-    static let minimumQuery = 3
-    static let limit = 6
-
-    /// Full-text hits for `query`, then "Search Archive for …" to take
-    /// the query into the archive window.
-    @MainActor
-    static func items(query: String, hits: [ArchiveSearchResult],
-                      verbs: ArchivePaletteVerbs) -> [PaletteItem] {
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard trimmed.count >= minimumQuery else { return [] }
-        var items = hits.prefix(limit).map { hit in
-            let record = hit.record
-            var actions = [PaletteAction(id: "open", title: "Open in Archive", symbol: "archivebox") {
-                verbs.openRecord(record, trimmed)
-                return nil
-            }]
-            if let session = verbs.sessionFor(record) {
-                actions.append(PaletteAction(id: "session", title: "Open Session", symbol: "macwindow") {
-                    verbs.openSession(session)
-                    return nil
-                })
-            }
-            actions.append(PaletteAction(id: "reveal", title: "Reveal in Finder", symbol: "folder",
-                                         shortcut: .commandShift("f")) {
-                NSWorkspace.shared.selectFile(record.sourcePath, inFileViewerRootedAtPath: "")
-                return nil
-            })
-            actions.append(PaletteAction(id: "copyPath", title: "Copy Path", symbol: "doc.on.doc",
-                                         shortcut: .commandShift("c")) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(record.sourcePath, forType: .string)
-                return "Copied the transcript's path"
-            })
-            var tags: [PaletteTag] = []
-            if let date = record.lastActivityAt ?? record.startedAt {
-                tags.append(PaletteTag(text: date.formatted(.relative(presentation: .named))))
-            }
-            return PaletteItem(
-                id: "archive.\(record.id)", title: title(of: record),
-                subtitle: hit.snippets.first.map(snippet) ?? record.project,
-                icon: record.provider.map { PaletteIcon.provider($0) } ?? .symbol("doc.text", .gray),
-                tags: tags, kind: "Archive", section: .archive, actions: actions)
-        }
-        items.append(PaletteItem(
-            id: "archive.search", title: "Search Archive for “\(trimmed)”",
-            subtitle: "Every captured transcript, full text",
-            icon: .symbol("archivebox.fill", .brown), kind: "Archive", section: .archive,
-            actions: [PaletteAction(id: "search", title: "Search Archive", symbol: "magnifyingglass") {
-                verbs.search(trimmed)
-                return nil
-            }]))
-        return items
-    }
-
-    static func title(of record: ArchiveRecord) -> String {
-        if let title = record.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
-            return String(title.prefix(80))
-        }
-        return record.name
-    }
-
-    /// A search snippet as one quiet line: the «highlight» marks the
-    /// archive view draws are dropped, whitespace folds, and the line
-    /// stops at a readable length.
-    static func snippet(_ raw: String) -> String {
-        let plain = raw.replacingOccurrences(of: "«", with: "").replacingOccurrences(of: "»", with: "")
-        let folded = plain.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        return folded.count > 96 ? String(folded.prefix(95)) + "…" : folded
-    }
-}
-
 // MARK: - Open (windows) and Settings
 
 /// The windows the palette can raise.
@@ -990,10 +922,9 @@ struct PaletteWindowVerbs {
     var effects: @MainActor () -> Void
     var deck: @MainActor () -> Void
     var replay: @MainActor () -> Void
-    var archive: (@MainActor () -> Void)?
     var panel: @MainActor () -> Void
     var checkForUpdates: @MainActor () -> Void
-    var settings: @MainActor (SettingsStore.Page) -> Void
+    var settings: @MainActor (SettingsStore.Chapter) -> Void
     var whatsNew: @MainActor () -> Void = {}
 }
 
@@ -1033,10 +964,6 @@ enum WindowPaletteRows {
             window("replay", "Event Replay", "The journaled events, read-only",
                    "play.rectangle.fill", .teal, keywords: ["events", "journal"], run: verbs.replay),
         ]
-        if let archive = verbs.archive {
-            items.append(window("archive", "Data Hoarder Archive", "Captured transcripts, full text",
-                                "archivebox.fill", .brown, keywords: ["transcripts", "search"], run: archive))
-        }
         items.append(window("whatsNew", "What's New", "What changed in this release of JR-Bar",
                             "sparkles", .yellow,
                             keywords: ["whats new", "release notes", "changelog", "new features", "tour"],
@@ -1053,8 +980,8 @@ enum WindowPaletteRows {
 
     /// One row per Settings page, with the words people search for.
     @MainActor
-    static func settingsItems(open: @escaping @MainActor (SettingsStore.Page) -> Void) -> [PaletteItem] {
-        SettingsStore.Page.allCases.map { page in
+    static func settingsItems(open: @escaping @MainActor (SettingsStore.Chapter) -> Void) -> [PaletteItem] {
+        SettingsStore.Chapter.allCases.map { page in
             PaletteItem(
                 id: "settings.\(page.rawValue)", title: "\(page.title) Settings",
                 keywords: settingsKeywords(page) + ["preferences"],
@@ -1068,13 +995,13 @@ enum WindowPaletteRows {
         }
     }
 
-    static func settingsKeywords(_ page: SettingsStore.Page) -> [String] {
+    static func settingsKeywords(_ page: SettingsStore.Chapter) -> [String] {
         switch page {
         case .general: return ["hotkey", "login", "updates", "icon", "menu bar icon"]
         case .agents: return ["hooks", "providers", "claude", "codex"]
         case .usage: return ["quota", "graphs", "providers", "accounts"]
         case .devices: return ["screen bar", "sidepulse", "leds", "strip", "dot", "calibrate"]
-        case .utilities: return ["menu bar", "dock", "data hoarder", "hide icons"]
+        case .utilities: return ["menu bar", "dock", "hide icons"]
         case .lighting: return ["colours", "colors", "scenes", "effects"]
         case .toys: return ["notch", "fold", "aquarium", "confetti", "buddy"]
         case .notifications: return ["focus", "banners", "sounds", "escalation", "quiet hours"]
@@ -1085,7 +1012,7 @@ enum WindowPaletteRows {
         }
     }
 
-    static func settingsTint(_ page: SettingsStore.Page) -> PaletteTint {
+    static func settingsTint(_ page: SettingsStore.Chapter) -> PaletteTint {
         switch page {
         case .general, .advanced: return .gray
         case .agents: return .blue

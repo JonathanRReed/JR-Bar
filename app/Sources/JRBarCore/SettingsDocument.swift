@@ -167,9 +167,12 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
         var keys: [SettingsKey] = [
             // General
             SettingsKey(.general, "menu_bar_icon_style", .string),
-            SettingsKey(.general, "global_brightness_scale", .number),
+            // The brightness cap sits on Lighting, beside the dimming rows.
+            SettingsKey(.lighting, "global_brightness_scale", .number),
             // Agents
             SettingsKey(.agents, "subagent_asks_alert", .bool),
+            SettingsKey(.agents, "ask_stale_after_hours", .number),
+            SettingsKey(.agents, "ask_expire_after_days", .number),
             SettingsKey(.agents, "session_open_preferences", .object),
             // "Update available" for the agent CLIs (registry.npmjs.org): a
             // request that leaves the Mac, so off until turned on.
@@ -219,6 +222,8 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.devices, "screen_bar_gap_width", .nullableNumber),
             SettingsKey(.devices, "screen_bar_wing_length", .nullableNumber),
             SettingsKey(.devices, "screen_bar_notch_wings", .bool),
+            SettingsKey(.devices, "screen_bar_notch_profile", .string),
+            SettingsKey(.devices, "screen_bar_notch_corner", .number),
             SettingsKey(.devices, "screen_bar_min_glow", .number),
             SettingsKey(.devices, "screen_bar_hidden_apps", .stringList),
             // Lighting
@@ -253,7 +258,9 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             // Notifications & Focus
             SettingsKey(.notifications, "completion_notification_enabled", .bool),
             SettingsKey(.notifications, "completion_sweep_enabled", .bool),
+            SettingsKey(.notifications, "silent_session_banner_enabled", .bool),
             SettingsKey(.notifications, "escalation_tier", .string),
+            SettingsKey(.notifications, "escalation_tier_by_provider", .object),
             SettingsKey(.notifications, "escalation_ramp_seconds", .number),
             SettingsKey(.notifications, "escalation_menu_bar_seconds", .number),
             SettingsKey(.notifications, "escalation_final_seconds", .number),
@@ -272,16 +279,23 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.notifications, "keep_awake_on_battery", .bool),
             SettingsKey(.notifications, "battery_monitoring.low_battery_alert_enabled", .bool),
             SettingsKey(.notifications, "battery_monitoring.low_battery_threshold_percent", .number),
+            SettingsKey(.notifications, "battery_monitoring.low_battery_threshold_minutes", .number),
             // Remote
             SettingsKey(.remote, "remote_peers.enabled", .bool),
             SettingsKey(.remote, "remote_peers.publish_enabled", .bool),
             SettingsKey(.remote, "remote_peers.remote_interrupts_muted", .bool),
             SettingsKey(.remote, "remote_peers.unmuted_machines", .stringList),
             SettingsKey(.remote, "remote_peers.muted_machines", .stringList),
+            SettingsKey(.remote, "serve_enabled", .bool),
             SettingsKey(.remote, "cloud_ingest_enabled", .bool),
             SettingsKey(.remote, "cloud_ingest_token_path", .string),
             SettingsKey(.remote, "escalation_webhook_url", .string),
             SettingsKey(.remote, "webhook_events", .stringList),
+            // The phone alert (ntfy): a request that leaves the Mac, so off
+            // until a topic is entered and the switch turned on.
+            SettingsKey(.remote, "ntfy_enabled", .bool),
+            SettingsKey(.remote, "ntfy_topic", .string),
+            SettingsKey(.remote, "ntfy_only_when_away", .bool),
         ]
         for provider in providers {
             keys.append(SettingsKey(.lighting, "colors.agent_colors.\(provider)", .string))

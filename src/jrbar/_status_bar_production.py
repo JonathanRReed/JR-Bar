@@ -26,7 +26,6 @@ from .ledger_runtime import LedgerPublishResult, RemoteLedgerPublisher
 from .local_health import LocalHealthMonitor, LocalHealthSnapshot, format_local_health
 from .performance_metrics import PerformanceRegistry, PerformanceSnapshot
 from .refresh_admission import RefreshAdmission, admit_refresh
-from .screen_bar_pipeline import DEFAULT_PRESENTATION_METRICS
 from .transcript_runtime import TranscriptFallbackBatch, TranscriptFallbackService
 from .webhook_delivery import (
     WebhookDeliveryReceipt,
@@ -124,7 +123,6 @@ else:
                     continue
 
             return monitor.observe(
-                presentation=DEFAULT_PRESENTATION_METRICS.snapshot(),
                 performance=(
                     performance
                     if type(performance) is PerformanceSnapshot
@@ -140,29 +138,13 @@ else:
             )
 
         def _why_light_context_from_health(self, health: LocalHealthSnapshot):
-            screen_bar_active = bool(
-                _legacy.SCREEN_BAR_FEATURE_ENABLED
-                and getattr(
-                    getattr(self, "settings", None),
-                    "virtual_status_device_enabled",
-                    False,
-                )
-            )
             physical_surfaces_active = bool(
                 getattr(self, "leds_enabled", False)
                 and getattr(self, "_device_inventory_candidates", ())
             )
-            timing = (
-                getattr(health, "screen_bar_renderer_latency", None)
-                if screen_bar_active
-                else None
-            )
-            timing_source = (
-                OutputTimingSource.SCREEN_BAR_RENDERER
-                if timing is not None
-                else OutputTimingSource.UNAVAILABLE
-            )
-            if timing is None and physical_surfaces_active:
+            timing = None
+            timing_source = OutputTimingSource.UNAVAILABLE
+            if physical_surfaces_active:
                 timing = getattr(health, "hardware_write_latency", None)
                 if timing is not None:
                     timing_source = OutputTimingSource.PHYSICAL_HARDWARE_WRITE
@@ -298,6 +280,11 @@ else:
             monitor = getattr(self, "transcript_monitor", None)
             if monitor is None or batch.monitor_identity != id(monitor):
                 return
+            previous = getattr(self, "_transcript_applied_revision", None)
+            revision = (batch.monitor_identity, batch.generation)
+            if previous is not None and previous[0] == revision[0] and previous[1] >= revision[1]:
+                return
+            self._transcript_applied_revision = revision
             if not batch.accepted:
                 _legacy.log_status_bar(
                     f"transcript fallback unavailable: {batch.reason}"
@@ -400,19 +387,40 @@ else:
         def _ledger_publisher(self) -> RemoteLedgerPublisher:
             publisher = getattr(self, "_production_ledger_publisher", None)
             if publisher is None:
-                publisher = RemoteLedgerPublisher(_legacy.publish_local_ledger)
+                publisher = RemoteLedgerPublisher(
+                    _legacy.publish_local_ledger,
+                    settings_supplier=lambda: self.settings.remote_peers,
+                )
                 self._production_ledger_publisher = publisher
             return publisher
 
         def publish_local_ledger_now(self, statuses, *, generated_at=None):
             """Publish the optional peer ledger off-main with latest-wins bounds."""
-            remote = self.settings.remote_peers
-            if not remote.publish_enabled:
+            remote = self.settings.remote_peers.normalized()
+            policy = (remote.publish_enabled, remote.include_messages)
+            previous_policy = getattr(self, "_ledger_publish_policy", None)
+            if previous_policy != policy:
+                self._ledger_publish_policy_generation = (
+                    getattr(self, "_ledger_publish_policy_generation", 0) + 1
+                )
+            if not remote.publish_enabled or (
+                previous_policy is not None and previous_policy != policy
+            ):
+                publisher = getattr(self, "_production_ledger_publisher", None)
+                if publisher is not None:
+                    publisher.close()
+                    self._production_ledger_publisher = None
                 self._published_ledger_signature = None
                 self._ledger_publish_pending_signature = None
+            self._ledger_publish_policy = policy
+            if not remote.publish_enabled:
                 return None
             normalized_statuses = tuple(statuses)
-            signature = _legacy.local_ledger_signature(normalized_statuses)
+            signature = (
+                self._ledger_publish_policy_generation,
+                policy,
+                _legacy.local_ledger_signature(normalized_statuses),
+            )
             now = time.monotonic()
             last_at = getattr(self, "_published_ledger_at", None)
             if (
@@ -450,6 +458,11 @@ else:
         @_legacy.objc.IBAction
         def applyLedgerPublishResult_(self, result) -> None:
             if not isinstance(result, LedgerPublishResult):
+                return
+            remote = self.settings.remote_peers.normalized()
+            if not remote.publish_enabled or (
+                result.request.settings.include_messages and not remote.include_messages
+            ):
                 return
             if getattr(self, "_ledger_publish_pending_signature", None) != (
                 result.request.signature
@@ -829,15 +842,25 @@ else:
                 or not self.webhook_effect_allowed(payload_dict)
             ):
                 return
+            event_name = str(payload_dict.get("event") or "jrbar.event")[:64]
+
+            def authorize() -> bool:
+                return bool(
+                    (self.settings.escalation_webhook_url or "").strip() == url
+                    and (
+                        event_name == "jrbar.escalation"
+                        or self.webhook_event_enabled(event_name.removeprefix("jrbar."))
+                    )
+                    and self.webhook_effect_allowed({"event": event_name})
+                )
+
             reason = self._webhook_service().submit(
                 url,
                 payload_dict,
                 callback=self._webhook_delivery_finished,
+                authorize=authorize,
             )
             if reason is not None:
-                event_name = str(
-                    payload_dict.get("event") or "jrbar.event"
-                )[:64]
                 _legacy.log_status_bar(
                     f"webhook refused ({event_name}): {reason.value}"
                 )

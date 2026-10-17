@@ -14,6 +14,7 @@ protocol FoldFrameSource: AnyObject {
     var lastError: String? { get }
     var onFullFrame: (@MainActor (CVPixelBuffer) -> Void)? { get set }
     var onFarFrame: (@MainActor (CVPixelBuffer) -> Void)? { get set }
+    var onFarFrameInvalidated: (@MainActor () -> Void)? { get set }
     var onCards: (@MainActor ([PortalDepth.Card]) -> Void)? { get set }
     var onError: (@MainActor (String) -> Void)? { get set }
     func start() async throws
@@ -50,6 +51,7 @@ final class FoldWallpaperSource: FoldFrameSource {
     private(set) var lastError: String?
     var onFullFrame: (@MainActor (CVPixelBuffer) -> Void)?
     var onFarFrame: (@MainActor (CVPixelBuffer) -> Void)?
+    var onFarFrameInvalidated: (@MainActor () -> Void)?
     var onCards: (@MainActor ([PortalDepth.Card]) -> Void)?
     var onError: (@MainActor (String) -> Void)?
     private var buffer: CVPixelBuffer?

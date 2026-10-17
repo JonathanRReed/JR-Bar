@@ -148,6 +148,10 @@ class AppOwnedHookIngressProcessor:
     # takes it without rereading the log), and its resident deduplicators.
     appended_handler: Callable[[ProviderRefreshHint, object], object] | None = field(default=None, repr=False)
     deduplicator_for: Callable[[Path], object] | None = field(default=None, repr=False)
+    # The state directory the daemon owns. The log path arrives on the wire
+    # from whoever connected, so with this set only a ``.jsonl`` directly in
+    # it is used; any other path means the provider's own log.
+    confine_to: Path | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not callable(self.refresh_hint_handler):
@@ -159,13 +163,28 @@ class AppOwnedHookIngressProcessor:
         register_shim_process(request)
         return process_hook_payload(
             request.provider,
-            Path(request.log_path),
+            confined_log_path(request.provider, request.log_path, self.confine_to),
             request.payload_text,
             refresh_hint_handler=self.refresh_hint_handler,
             appended_handler=self.appended_handler,
             deduplicator_for=self.deduplicator_for,
             **_replay_arguments(request),
         )
+
+
+def confined_log_path(provider: str, requested: str, state_dir: Path | None) -> Path:
+    """The log a hook line may be appended to: ``requested`` when it is a
+    ``.jsonl`` directly inside ``state_dir`` (compared by name, never by
+    following links), else the provider's managed log there. ``None`` keeps
+    the requested path, for a caller that owns it."""
+    path = Path(requested)
+    if state_dir is None:
+        return path
+    root = os.path.normpath(state_dir)
+    candidate = os.path.normpath(path)
+    if os.path.dirname(candidate) == root and candidate.endswith(".jsonl"):
+        return Path(candidate)
+    return Path(root) / f"{provider}.jsonl"
 
 
 class DeferredRefreshHints:
@@ -203,22 +222,15 @@ class DeferredRefreshHints:
 
 
 def _replay_arguments(request: HookIngressRequest) -> dict[str, object]:
-    """A payload the shim spooled inside the replay horizon is stamped on
-    arrival, like a live one; only one older than the horizon keeps the
-    time it was queued, and is written without the refresh hint: drained
-    hours later it is history for the log, not a live turn.
-
-    The arrival stamp is what lets a fresh replay reach live state. The
-    monitor keeps one watermark per provider source, shared by every
-    session, and skips any batch older than it. Stamped with its queued
-    time, session A's spooled prompt was older than the live hook session
-    B had just sent, so it was logged, skipped, and never read again; A
-    never appeared."""
+    """Keep queued event order; recent replays carry an in-process admission
+    capability and retain arrival-based activity age. Older replays are
+    history only and never refresh live state."""
     queued_at = request.queued_at_epoch
-    if queued_at is None or time.time() - queued_at <= PENDING_REPLAY_HORIZON_SECONDS:
+    if queued_at is None:
         return {}
     from .hook import hook_logged_at
-
+    if time.time() - queued_at <= PENDING_REPLAY_HORIZON_SECONDS:
+        return {"logged_at": hook_logged_at(queued_at), "_recent_replay": True}
     return {"logged_at": hook_logged_at(queued_at), "refresh": False}
 
 

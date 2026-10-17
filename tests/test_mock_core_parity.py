@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import socket as _socket
 import sys
+import threading as _threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -39,6 +42,18 @@ def _call(world, name, args=None):
 def _error(reply) -> dict:
     assert reply["ok"] is False
     return reply["error"]
+
+
+def test_settings_paths_use_a_synthetic_home(mock_module):
+    path = mock_module.default_settings_document()["cloud_ingest_token_path"]
+    synthetic = path == "/synthetic/jrbar-proof/.local/state/jrbar/cloud-ingest.token"
+    assert synthetic
+
+
+def test_session_paths_use_a_synthetic_home(world):
+    paths = [session["cwd"] for session in world.sessions.values()]
+    synthetic = bool(paths) and all(path.startswith("/synthetic/jrbar-proof/") for path in paths)
+    assert synthetic
 
 
 def test_auto_dim_mock_clock_covers_the_exclusive_end_minute(world) -> None:
@@ -189,3 +204,108 @@ def test_a_workers_request_is_quiet_by_default_and_counted_on_its_parent(world) 
     assert [a["session"] for a in loud["asks"]] == [worker["id"]]
     assert next(s for s in loud["sessions"] if s["id"] == parent["id"])["workers_waiting"] == 0
     assert loud["aggregate"]["needs_you"] == baseline + 1
+
+
+# --- the mock's side of the app handshake (docs/CORE-PROTOCOL.md, "Who may send what") ---
+
+_SECRET = bytes(range(32))
+
+
+@contextmanager
+def _mock_peer(mock_module, world):
+    """A mock `Client` served over a socketpair; returns the test's end."""
+    left, right = _socket.socketpair()
+    right.settimeout(5.0)
+    # The mock broadcasts state to every client, read or not: room for it.
+    for end in (left, right):
+        end.setsockopt(_socket.SOL_SOCKET, _socket.SO_SNDBUF, 1 << 20)
+        end.setsockopt(_socket.SOL_SOCKET, _socket.SO_RCVBUF, 1 << 20)
+    client = mock_module.Client(world, left, once=False, stop=_threading.Event())
+    thread = _threading.Thread(target=client.serve, daemon=True)
+    thread.start()
+    try:
+        yield right
+    finally:
+        right.close()
+        thread.join(timeout=5.0)
+        assert not thread.is_alive(), "mock peer survived test teardown"
+
+
+class _Wire:
+    def __init__(self, connection) -> None:
+        self.connection = connection
+        self.buffer = b""
+        self.count = 0
+
+    def frame(self) -> dict:
+        while b"\n" not in self.buffer:
+            chunk = self.connection.recv(65536)
+            assert chunk, "the mock closed the connection"
+            self.buffer += chunk
+        line, self.buffer = self.buffer.split(b"\n", 1)
+        return json.loads(line)
+
+    def until(self, kind: str) -> dict:
+        while True:
+            frame = self.frame()
+            if frame.get("t") == kind:
+                return frame
+
+    def call(self, name: str, args: dict | None = None) -> dict:
+        self.count += 1
+        identifier = f"w-{self.count}"
+        self.connection.sendall(
+            (json.dumps({"t": "command", "v": 1, "id": identifier, "name": name, "args": args or {}}) + "\n").encode()
+        )
+        while True:
+            frame = self.frame()
+            if frame.get("t") == "reply" and frame.get("id") == identifier:
+                return frame
+
+
+def test_a_mock_with_no_secret_takes_every_command_from_every_connection(mock_module) -> None:
+    world = mock_module.World(step_seconds=0.01, loop=False)
+    with _mock_peer(mock_module, world) as connection:
+        wire = _Wire(connection)
+        assert "auth" not in wire.until("hello")
+        assert wire.call("set_brightness", {"value": 0.4})["ok"] is True
+        assert wire.call("auth", {"proof": "0" * 64})["error"]["code"] == "auth_unavailable"
+
+
+def test_a_mock_with_a_secret_offers_a_nonce_and_refuses_strangers(mock_module) -> None:
+    world = mock_module.World(step_seconds=0.01, loop=False)
+    world.auth_secret = _SECRET
+    with _mock_peer(mock_module, world) as app, _mock_peer(mock_module, world) as stranger:
+        app_wire, stranger_wire = _Wire(app), _Wire(stranger)
+        nonce = app_wire.until("hello")["auth"]["nonce"]
+        assert stranger_wire.until("hello")["auth"]["nonce"] != nonce
+
+        refused = stranger_wire.call("answer_ask", {"session": "claude:synthetic"})
+        assert refused["error"]["code"] == "unauthenticated"
+        assert stranger_wire.call("quiet", {"mode": "dim", "seconds": 5})["ok"] is True
+
+        proved = app_wire.call("auth", {"proof": mock_module.auth_proof(_SECRET, nonce)})
+        assert proved["ok"] is True and proved["result"] == {"authenticated": True}
+        # Not "unauthenticated": the mock has no such session, which only an app may ask about.
+        assert app_wire.call("answer_ask", {"session": "claude:none"})["error"]["code"] == "not_found"
+
+
+def test_a_mock_closes_on_a_wrong_proof(mock_module) -> None:
+    world = mock_module.World(step_seconds=0.01, loop=False)
+    world.auth_secret = _SECRET
+    with _mock_peer(mock_module, world) as connection:
+        wire = _Wire(connection)
+        wire.until("hello")
+        assert wire.call("auth", {"proof": "0" * 64})["error"]["code"] == "auth_failed"
+        assert connection.recv(65536) == b""
+
+
+def test_the_mocks_proof_and_open_list_match_the_daemons(mock_module) -> None:
+    from jrbar import core_auth
+
+    assert mock_module.auth_proof(_SECRET, "a" * 32) == core_auth.auth_proof(_SECRET, "a" * 32)
+    daemon_open = {
+        name for name, kind in core_auth.COMMAND_PRIVILEGE.items()
+        if kind == "open" and name not in ("set_setting", "reset_settings")
+    }
+    assert set(mock_module.MOCK_OPEN_COMMANDS) == daemon_open

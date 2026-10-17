@@ -60,6 +60,11 @@ import Testing
     @Test func aChordRoundTripsThroughItsStorageForm() {
         #expect(HotkeyChord(storageString: Self.chordJ.storageString) == Self.chordJ)
         #expect(HotkeyChord(storageString: "banana") == nil)
+        #expect(HotkeyChord(storageString: "9999:256") == nil, "a virtual key code is under 256")
+        // ⌘⇥ with a stray caps-lock bit is still ⌘⇥, so still reserved.
+        let sneaky = HotkeyChord(storageString: "\(kVK_Tab):\(cmdKey | 1024)")
+        #expect(sneaky == HotkeyChord(keyCode: UInt32(kVK_Tab), modifiers: UInt32(cmdKey)))
+        #expect(SettingsBundle.importedChord(.string("\(kVK_Tab):\(cmdKey | 1024)")) == .refused)
         #expect(HotkeyChord(storageString: "38") == nil)
         #expect(Self.chordJ.displayString == "⌃⌥J")
     }
@@ -170,6 +175,28 @@ import Testing
     }
 
     @MainActor
+    @Test func shortcutsStayOutWhileAnyRecorderIsStillListening() {
+        let recorder = Recorder()
+        let center = HotkeyCenter(registrar: recorder)
+        center.register("panel", title: "Show the panel", chord: Self.chordJ) {}
+        // Two recorders ask for the keyboard; the first to let go must
+        // not hand the keys back while the second is still typing.
+        center.suspend()
+        center.suspend()
+        #expect(recorder.unregistered == 1)
+        center.resume()
+        #expect(center.suspended)
+        #expect(recorder.registered.count == 1)
+        center.resume()
+        #expect(!center.suspended)
+        #expect(recorder.registered.count == 2)
+        // An extra resume with nobody listening changes nothing.
+        center.resume()
+        #expect(!center.suspended)
+        #expect(recorder.registered.count == 2)
+    }
+
+    @MainActor
     @Test func aKeyTakenWhileSuspendedBecomesARefusalOnResume() {
         let recorder = Recorder()
         let center = HotkeyCenter(registrar: recorder)
@@ -182,6 +209,46 @@ import Testing
     }
 
     // MARK: The panel and menu-bar keys over one registry
+
+    @MainActor
+    @Test func releasingTheRegistryReleasesItsKeysAndHandler() {
+        let recorder = Recorder()
+        var center: HotkeyCenter? = HotkeyCenter(registrar: recorder)
+        weak var released = center
+        center?.register("panel", title: "Show the panel", chord: Self.chordJ) {}
+        center?.register("shelf", title: "Open the shelf", chord: Self.chordD) {}
+        #expect(recorder.registered.count == 2)
+        center = nil
+        #expect(released == nil)
+        #expect(recorder.unregistered == 2)
+        #expect(recorder.onHotKey == nil)
+        #expect(recorder.uninstalled == 1)
+    }
+
+    @MainActor
+    @Test func releasingASuspendedRegistryDropsItsParkedHandler() {
+        let recorder = Recorder()
+        var center: HotkeyCenter? = HotkeyCenter(registrar: recorder)
+        center?.register("panel", title: "Show the panel", chord: Self.chordJ) {}
+        center?.suspend()
+        #expect(recorder.unregistered == 1)
+        center = nil
+        #expect(recorder.unregistered == 1, "suspend already released the key")
+        #expect(recorder.onHotKey == nil)
+        #expect(recorder.uninstalled == 1)
+    }
+
+    @MainActor
+    @Test func releasingAnIdleRegistryDoesNotUninstallTwice() {
+        let recorder = Recorder()
+        var center: HotkeyCenter? = HotkeyCenter(registrar: recorder)
+        center?.register("panel", title: "Show the panel", chord: Self.chordJ) {}
+        center?.unregister("panel")
+        #expect(recorder.uninstalled == 1)
+        center = nil
+        #expect(recorder.unregistered == 1)
+        #expect(recorder.uninstalled == 1)
+    }
 
     @MainActor
     @Test func thePanelKeyReadsItsChordAtRegistration() {

@@ -11,6 +11,86 @@ import Testing
 @Suite("Screen Bar keep-awake mark")
 @MainActor
 struct ScreenBarAwakeMarkTests {
+    private final class SyntheticMediaMonitor: AlcoveMediaMonitor {
+        override func start() { markRunning(true) }
+        override func stop() { markRunning(false) }
+    }
+
+    @Test("Awake turns reuse the existing wake without hiding working providers")
+    func compactAwakeScheduling() throws {
+        let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-awake-turn-fixture.sock")
+        core.handle(.connected)
+        var clock = 100.0
+        let feed = MediaFeed(monitor: SyntheticMediaMonitor())
+        let store = PanelStore(core: core, mediaFeed: feed, screenBarShown: true)
+        store.compactAwakeEligible = true
+        store.providerClock = { clock }
+        var state = CoreState(sessions: [
+            CoreSession(id: "claude:a", provider: "claude", label: "Work", mode: "working"),
+            CoreSession(id: "codex:a", provider: "codex", label: "Work", mode: "working")],
+            usage: CoreUsage(providers: [CoreProviderUsage(id: "codex",
+                windows: [CoreUsageWindow(key: "5h", name: "5h", usedPct: 42)])]))
+        state.power = Self.lease("agents")
+        core.apply(.state(state))
+        var providers: [String] = []
+        for turn in 0..<5 {
+            clock = 100 + Double(turn * 3)
+            let wings = ScreenBarEarMarks.apply(store.screenBarEarMarks, to: store.screenBarWings)
+            let right = try #require(wings.right)
+            #expect(right.accessory?.compactTurn == !(turn / 2).isMultiple(of: 2))
+            #expect(right.provider == "codex" && right.meter == 0.42)
+            #expect(right.text.contains("Held awake"))
+            providers.append(try #require(wings.left?.provider))
+            #expect(store.nextAskAgeTick(now: clock) == clock + 3)
+            #expect(store.compactAwakeCarousel.nextChange == 100 + Double((turn / 2 + 1) * 6))
+        }
+        #expect(providers == ["claude", "codex", "claude", "codex", "claude"])
+        store.compactAwakeEligible = false
+        #expect(store.nextAskAgeTick(now: clock) == clock + 3,
+            "Provider turns retain their deadline when the awake seat is ineligible")
+        #expect(store.compactAwakeCarousel.nextChange == nil)
+        store.compactAwakeEligible = true
+        state.sessions.removeLast()
+        core.apply(.state(state))
+        #expect(store.nextAskAgeTick(now: clock) == clock + 6,
+            "A single provider still wakes for the right ear's awake turn")
+        store.compactAwakeEligible = false
+        #expect(store.nextAskAgeTick(now: clock) == nil)
+        #expect(!store.screenBarEarMarks.compactAwakeTurn)
+        #expect(store.compactAwakeCarousel.nextChange == nil)
+        store.compactAwakeEligible = true
+        #expect(store.nextAskAgeTick(now: clock) == clock + 6)
+        store.screenBarShown = false
+        #expect(store.nextAskAgeTick(now: clock) == nil,
+            "A hidden bar must not wake for an awake turn")
+        #expect(store.compactAwakeCarousel.nextChange == nil)
+        store.screenBarShown = true
+        #expect(!store.screenBarEarMarks.compactAwakeTurn)
+        #expect(store.nextAskAgeTick(now: clock) == clock + 6)
+        state.power = CorePower()
+        core.apply(.state(state))
+        #expect(store.nextAskAgeTick(now: clock) == nil)
+        #expect(store.screenBarEarMarks.awake == nil)
+        state.power = Self.lease("agents")
+        core.apply(.state(state))
+        #expect(!store.screenBarEarMarks.compactAwakeTurn)
+        #expect(store.nextAskAgeTick(now: clock) == clock + 6)
+        let usage = state.usage
+        state.usage = nil
+        core.apply(.state(state))
+        #expect(!store.screenBarEarMarks.compactAwakeTurn)
+        #expect(store.compactAwakeCarousel.nextChange == nil,
+            "An awake mark alone needs no alternating turn")
+        state.usage = usage
+        core.apply(.state(state))
+        #expect(!store.screenBarEarMarks.compactAwakeTurn)
+        #expect(store.nextAskAgeTick(now: clock) == clock + 6)
+        core.handle(.disconnected(reason: "Fixture disconnected"))
+        #expect(store.screenBarEarMarks.awake == nil)
+        #expect(!store.screenBarEarMarks.compactAwakeTurn)
+        #expect(store.compactAwakeCarousel.nextChange == nil)
+    }
+
     private static let utc: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!

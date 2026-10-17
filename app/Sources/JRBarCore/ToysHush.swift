@@ -98,9 +98,12 @@ public enum ConfettiRoom {
         return whenHeld == .later ? .hold : .drop
     }
 
-    /// Whether a burst held since `heldAt` should still play.
-    public static func stillWorthPlaying(heldAt: Date, now: Date) -> Bool {
-        now.timeIntervalSince(heldAt) <= holdLimit
+    /// Whether a burst held for `heldFor` seconds should still play. The
+    /// caller measures the age on a monotonic clock, so a wall-clock step
+    /// (a timezone change, a corrected clock) can neither keep an old
+    /// burst alive nor kill a fresh one.
+    public static func stillWorthPlaying(heldFor: TimeInterval) -> Bool {
+        heldFor <= holdLimit
     }
 
     /// Which screens a fullscreen app owns: a window that exactly covers

@@ -99,4 +99,34 @@ struct BuddyCareTests {
         #expect(settings.resolvedCharacter == .crab)
         #expect(settings.resolvedName == "Pinch")
     }
+
+    @Test("a treat stamped in the future is not fed until time catches up")
+    func futureTreatIsNotFed() {
+        var care = BuddyCare()
+        care.feed(at: t0.addingTimeInterval(2 * 3600))
+        #expect(care.mood(at: t0) == .content, "the clock was set back after the treat")
+        #expect(care.mood(at: t0.addingTimeInterval(2 * 3600 + 60)) == .fed)
+    }
+
+    @Test("an absurd counter in the file cannot trap the next pat")
+    func counterCannotOverflow() throws {
+        var care = try decode(BuddyCare.self, """
+        {"petCount": 9223372036854775807, "treatsGiven": 9223372036854775807,
+         "crumbsEaten": 9223372036854775807, "crumbsByProvider": {"claude": 9223372036854775807}}
+        """)
+        care.pet(at: t0)
+        care.feed(at: t0)
+        care.eat(at: t0, count: 3, provider: "claude")
+        #expect(care.petCount > 0 && care.crumbsEaten > 0)
+    }
+
+    @Test("a name is trimmed of newlines and cut to a reasonable length")
+    func nameIsTrimmedAndCut() {
+        var settings = NotchBuddySettings()
+        settings.buddyName = "\n \n"
+        #expect(settings.resolvedName == settings.resolvedCharacter.defaultName)
+        settings.buddyName = String(repeating: "Wiggles ", count: 60)
+        #expect(settings.resolvedName.count <= NotchBuddySettings.nameLimit)
+        #expect(settings.resolvedName.hasPrefix("Wiggles"))
+    }
 }

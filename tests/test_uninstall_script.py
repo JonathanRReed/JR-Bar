@@ -183,7 +183,9 @@ class _RealFlow:
     fixed_directories: dict[str, Path]
 
 
-def _real_flow(tmp_path: Path, *, fail_on: tuple[str, ...] = ()) -> _RealFlow:
+def _real_flow(
+    tmp_path: Path, *, fail_on: tuple[str, ...] = (), args: tuple[str, ...] = ()
+) -> _RealFlow:
     """Run the script for real against stand-in tools, all inside tmp_path.
 
     ``fail_on`` lists helper command lines (as the fake core sees "$*") for
@@ -204,6 +206,13 @@ def _real_flow(tmp_path: Path, *, fail_on: tuple[str, ...] = ()) -> _RealFlow:
         encoding="utf-8",
     )
     core.chmod(0o755)
+    login_log = tmp_path / "commands.log"
+    app_binary = app / "Contents" / "MacOS" / "JR-Bar"
+    app_binary.write_text(
+        f"#!/bin/sh\nprintf 'login-item %s\\n' \"$JRBAR_LOGIN_ITEM\" >> '{login_log}'\n",
+        encoding="utf-8",
+    )
+    app_binary.chmod(0o755)
 
     system_root = tmp_path / "system"
     fixed_paths = {
@@ -213,10 +222,14 @@ def _real_flow(tmp_path: Path, *, fail_on: tuple[str, ...] = ()) -> _RealFlow:
         / "Library/LaunchDaemons/com.jonathanreed.jrbar.sdejectguard.plist",
         "/Library/LaunchDaemons/io.sidepulse.sdejectguard.plist": system_root
         / "Library/LaunchDaemons/io.sidepulse.sdejectguard.plist",
+        "/Library/Application Support/JR-Bar/sd-eject-guard/JR-Bar SD Eject Guard": system_root
+        / "Library/Application Support/JR-Bar/sd-eject-guard/JR-Bar SD Eject Guard",
         "/Library/Application Support/JR-Bar/sd-eject-guard/SidePulse Pro Eject Prevention": system_root
         / "Library/Application Support/JR-Bar/sd-eject-guard/SidePulse Pro Eject Prevention",
         "/Library/Application Support/JR-Bar/sd-eject-guard/sd_eject_guard": system_root
         / "Library/Application Support/JR-Bar/sd-eject-guard/sd_eject_guard",
+        "/Library/Application Support/SidePulse/sd-eject-guard/JR-Bar SD Eject Guard": system_root
+        / "Library/Application Support/SidePulse/sd-eject-guard/JR-Bar SD Eject Guard",
         "/Library/Application Support/SidePulse/sd-eject-guard/SidePulse Pro Eject Prevention": system_root
         / "Library/Application Support/SidePulse/sd-eject-guard/SidePulse Pro Eject Prevention",
         "/Library/Application Support/SidePulse/sd-eject-guard/sd_eject_guard": system_root
@@ -255,6 +268,33 @@ def _real_flow(tmp_path: Path, *, fail_on: tuple[str, ...] = ()) -> _RealFlow:
     fake_rm = tool("rm", f"printf 'rm %s\\n' \"$*\" >> '{command_log}'")
     fake_rmdir = tool("rmdir", f"printf 'rmdir %s\\n' \"$*\" >> '{command_log}'")
     fake_pkgutil = tool("pkgutil", "exit 1")
+    fake_pkill = tool("pkill", f"printf 'pkill %s\\n' \"$*\" >> '{command_log}'")
+    fake_pgrep = tool("pgrep", "exit 1")
+    fake_pmset = tool("pmset", f"printf 'pmset %s\\n' \"$*\" >> '{command_log}'")
+    seen = tmp_path / "security-seen"
+    seen.mkdir()
+    fake_security = tool(
+        "security",
+        f"""
+if [ "$1" = dump-keychain ]; then
+    cat <<'DUMP'
+    "svce"<blob>="com.jonathanreed.jrbar.settings-seal"
+    "svce"<blob>="com.jonathanreed.jrbar.provider.openai"
+    "svce"<blob>="io.sidepulse.provider.openai"
+    "svce"<blob>="com.example.somebody-elses-item"
+DUMP
+    exit 0
+fi
+if [ "$1" = delete-generic-password ]; then
+    marker='{seen}/'"$3"
+    if [ -e "$marker" ]; then exit 44; fi
+    : > "$marker"
+    printf 'security delete %s\\n' "$3" >> '{command_log}'
+    exit 0
+fi
+exit 1
+""",
+    )
     fake_sudo = tool(
         "sudo",
         """
@@ -291,6 +331,10 @@ exit 0
         "/bin/rm": str(fake_rm),
         "/bin/rmdir": str(fake_rmdir),
         "/usr/sbin/pkgutil": str(fake_pkgutil),
+        "/usr/bin/pkill": str(fake_pkill),
+        "/usr/bin/pgrep": str(fake_pgrep),
+        "/usr/bin/pmset": str(fake_pmset),
+        "/usr/bin/security": str(fake_security),
     }
     tool_placeholders: dict[str, str] = {}
     for index, source in enumerate(sorted(replacements, key=len, reverse=True)):
@@ -317,7 +361,7 @@ exit 0
         "FAKE_EFFECTIVE_USER": "root",
     }
     result = subprocess.run(
-        ["/bin/bash", str(copied)],
+        ["/bin/bash", str(copied), *args],
         env=env,
         capture_output=True,
         text=True,
@@ -438,3 +482,84 @@ def test_a_dry_run_is_not_stopped_by_the_hook_guard(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "was kept" not in result.stderr
     assert "Dry run: nothing was removed" in result.stdout
+
+
+def test_the_running_app_is_quit_and_sleep_is_put_back_before_the_rule_goes(tmp_path: Path) -> None:
+    flow = _real_flow(tmp_path)
+
+    assert flow.result.returncode == 0, flow.result.stderr
+    commands = _command_log_text(flow).splitlines()
+    quits = [i for i, line in enumerate(commands) if line.startswith("pkill -TERM")]
+    assert len(quits) == 2
+    assert any(" -x JR-Bar" in commands[i] for i in quits)
+    assert any(" -x jrbar-core" in commands[i] for i in quits)
+    pmset = commands.index("pmset -a disablesleep 0")
+    sudoers = next(i for i, line in enumerate(commands) if line.startswith("rm") and "jrbar-disablesleep" in line)
+    login_item = commands.index("login-item off")
+    app_removed = commands.index(f"rm -rf {flow.app}")
+    hooks_done = len(flow.helper_log.read_text(encoding="utf-8").splitlines())
+    assert hooks_done == 3
+    # Quit first, then sleep back on while the rule still exists, then the login
+    # item while the bundle still exists, and the app last.
+    assert max(quits) < pmset < sudoers
+    assert login_item < app_removed
+
+
+def test_keychain_items_are_left_alone_without_the_purge_flag(tmp_path: Path) -> None:
+    flow = _real_flow(tmp_path)
+
+    assert flow.result.returncode == 0, flow.result.stderr
+    assert "security delete" not in _command_log_text(flow)
+
+
+def test_the_purge_flag_deletes_only_jrbars_own_keychain_items(tmp_path: Path) -> None:
+    flow = _real_flow(tmp_path, args=("--purge-keychain",))
+
+    assert flow.result.returncode == 0, flow.result.stderr
+    deleted = [
+        line for line in _command_log_text(flow).splitlines() if line.startswith("security delete")
+    ]
+    assert sorted(deleted) == [
+        "security delete com.jonathanreed.jrbar.provider.openai",
+        "security delete com.jonathanreed.jrbar.settings-seal",
+        "security delete io.sidepulse.provider.openai",
+    ]
+
+
+def test_a_kept_app_keeps_its_login_item(tmp_path: Path) -> None:
+    flow = _real_flow(tmp_path, args=("--keep-app",))
+
+    assert flow.result.returncode == 0, flow.result.stderr
+    assert "login-item" not in _command_log_text(flow)
+    assert f"rm -rf {flow.app}" not in _command_log_text(flow)
+
+
+def test_a_dry_run_names_every_copy_of_the_app_and_each_new_step(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    mine = _fake_app(home / "Applications")
+    system = _fake_app(tmp_path / "system-apps")
+
+    result = _dry_run(
+        home, "--purge-keychain", env_extra={"JRBAR_SYSTEM_APPLICATIONS": str(system.parent)}
+    )
+
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert f"JR-Bar.app: {mine}" in out and f"JR-Bar.app: {system}" in out
+    assert f"would run: /bin/rm -rf {mine}" in out
+    assert f"would run: /bin/rm -rf {system}" in out
+    assert "would run: /usr/bin/pkill -TERM" in out
+    assert "would run: /usr/bin/pmset -a disablesleep 0" in out
+    assert "JRBAR_LOGIN_ITEM=off" in out
+    assert "delete-generic-password -s com.jonathanreed.jrbar.settings-seal" in out
+    assert out.index("/usr/bin/pmset") < out.index("/bin/rm -rf " + str(mine))
+
+
+def test_a_dry_run_without_the_purge_flag_names_no_keychain_step(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _fake_app(home / "Applications")
+
+    result = _dry_run(home)
+
+    assert result.returncode == 0, result.stderr
+    assert "delete-generic-password" not in result.stdout

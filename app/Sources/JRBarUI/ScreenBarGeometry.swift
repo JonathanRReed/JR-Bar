@@ -32,6 +32,8 @@ public struct ScreenBarWingGeometry: Equatable, Sendable {
     /// `screen_bar_gap_width` override.
     public var notchWidth: CGFloat = 0
     public var notchDepth: CGFloat = 0
+    /// Physical notch width anchoring the compact menu-row caps.
+    public var menuRowStemWidth: CGFloat = 0
     /// The band's own span — the width the window would have with no
     /// content claim — so a notch-less chip hugs the band even when a
     /// manual `screen_bar_wing_length` widened it.
@@ -42,9 +44,11 @@ public struct ScreenBarWingGeometry: Equatable, Sendable {
     public var rightExtent: CGFloat = 0
 
     public init(notchWidth: CGFloat = 0, notchDepth: CGFloat = 0, bandSpan: CGFloat = 0,
-                leftExtent: CGFloat = 0, rightExtent: CGFloat = 0) {
+                leftExtent: CGFloat = 0, rightExtent: CGFloat = 0,
+                menuRowStemWidth: CGFloat? = nil) {
         self.notchWidth = notchWidth
         self.notchDepth = notchDepth
+        self.menuRowStemWidth = menuRowStemWidth ?? notchWidth
         self.bandSpan = bandSpan
         self.leftExtent = leftExtent
         self.rightExtent = rightExtent
@@ -149,7 +153,7 @@ public enum ScreenBarGeometry {
     public static let wingAutoLength: CGFloat = 14.0
     public static let wingSafetyMargin: CGFloat = 28.0
     public static let wingMinUsable: CGFloat = 24.0
-    public static let fallbackNotchDepth: CGFloat = 32.0
+    public static let fallbackNotchDepth: CGFloat = NotchHardware.simulatedDepth
     /// The Python default (`screen_bar_min_glow`), which scales the outline.
     public static let minGlow: CGFloat = 0.25
 
@@ -178,21 +182,11 @@ public enum ScreenBarGeometry {
     /// …but only draws a capsule this wide, hugging the band's end.
     public static let notchlessSlotMaxWidth: CGFloat = 84
     public static let notchlessSlotHeight: CGFloat = 18
-    /// How far the wings' tray hangs below the bezel's bottom edge:
-    /// nothing. The wrap ends exactly where the hardware ends and the
-    /// lit strip seats right under it, so the light, not a black lobe,
-    /// marks how far the wing reaches.
-    ///
-    /// This deliberately reverses 0.9.9's "back to six points" (a flush
-    /// black tray on a black bar read as no wing at all). The six points
-    /// ran under the whole wrap, notch included, and the strip seated
-    /// below them, so the band hung an 11 pt black tab over app content
-    /// (measured 2026-09-22: black 33–37.5 pt, strip 38–42, content
-    /// from 44) — the "notch grown downward" chin the owner had already
-    /// turned down on 2026-09-16. The island's notice line and card
-    /// content start right under the notch because of this zero; a
-    /// drop here would hang the tray over them again.
-    public static let wingEarDrop: CGFloat = 0
+    /// Marks sit in the native menu row; the tray keeps a two-point chin.
+    public static let wingMenuGap: CGFloat = 0
+    public static let wingSeatHeight: CGFloat = 20
+    public static let wingEarDrop: CGFloat = 2
+    public static let wingMenuRowExtent: CGFloat = 19
 
     /// The screen the Screen Bar and the notch island belong on, by the
     /// Notch card's Display pick (`displayPick`): the notched built-in
@@ -314,11 +308,12 @@ public enum ScreenBarGeometry {
     @MainActor public static var simulatedNotch = false
 
     /// The synthetic housing's width — a laptop notch's measure.
-    public static let simulatedNotchWidth: CGFloat = 200
+    public static let simulatedNotchWidth: CGFloat = NotchHardware.simulatedWidth
 
-    /// The island's slot: the real aux-area band, or — `simulated` on a
-    /// screen without one — a centered synthetic housing. Pure, so the
-    /// geometry rule is testable without an NSScreen.
+    /// The island's raw slot: the real aux-area band, or — `simulated` on
+    /// a screen without one — a centered synthetic housing, unsnapped.
+    /// The screen path is `notchHardware(of:)`, which snaps this to the
+    /// pixel grid; this stays the plain arithmetic it is tested against.
     public static func islandSlot(auxLeft: CGRect?, auxRight: CGRect?,
                                   screenFrame: CGRect, simulated: Bool)
         -> (centerX: CGFloat, width: CGFloat)? {
@@ -335,18 +330,34 @@ public enum ScreenBarGeometry {
         real > 0 ? real : (simulated ? fallbackNotchDepth : 0)
     }
 
-    /// `islandSlot` measured off the screen, honoring `simulatedNotch`.
-    @MainActor
-    public static func islandSlot(on screen: NSScreen) -> (centerX: CGFloat, width: CGFloat)? {
-        islandSlot(auxLeft: screen.auxiliaryTopLeftArea,
-                   auxRight: screen.auxiliaryTopRightArea,
-                   screenFrame: screen.frame, simulated: simulatedNotch)
+    /// One display's top-edge numbers as AppKit reports them — the input
+    /// `NotchHardware.resolve` is a pure function of.
+    public static func notchMetrics(of screen: NSScreen) -> NotchScreenMetrics {
+        NotchScreenMetrics(frame: screen.frame, safeAreaTop: screen.safeAreaInsets.top,
+                           auxLeft: screen.auxiliaryTopLeftArea,
+                           auxRight: screen.auxiliaryTopRightArea,
+                           backingScale: screen.backingScaleFactor,
+                           isBuiltIn: CGDisplayIsBuiltin(displayID(of: screen)) != 0)
     }
 
-    /// `islandDepth` measured off the screen, honoring `simulatedNotch`.
+    /// The notch of `screen`, resolved: pixel-snapped, honoring
+    /// `simulatedNotch`. Every notch surface reads this one answer.
+    @MainActor
+    public static func notchHardware(of screen: NSScreen) -> NotchHardware {
+        NotchHardware.resolve(notchMetrics(of: screen), simulated: simulatedNotch)
+    }
+
+    /// The notch's slot off the screen, honoring `simulatedNotch`.
+    @MainActor
+    public static func islandSlot(on screen: NSScreen) -> (centerX: CGFloat, width: CGFloat)? {
+        let hardware = notchHardware(of: screen)
+        return hardware.hasSlot ? (hardware.centerX, hardware.width) : nil
+    }
+
+    /// The island's depth off the screen, honoring `simulatedNotch`.
     @MainActor
     public static func islandDepth(of screen: NSScreen) -> CGFloat {
-        islandDepth(real: notchDepth(of: screen), simulated: simulatedNotch)
+        notchHardware(of: screen).depth
     }
 
     /// The screen's current space reserves no menu-bar strip — a
@@ -418,36 +429,154 @@ public enum ScreenBarGeometry {
                                  hardwareSlot: right.origin.x - left.maxX, notchWidth: notchWidth)
     }
 
+    /// Join the tray to a narrower body below the native menu row.
+    public static func shoulderConnector(tray: CGRect, body: CGRect,
+                                         trayRadius: CGFloat, bodyRadius: CGFloat) -> CGPath? {
+        let depth = tray.minY - body.minY
+        guard depth > 0, body.width < tray.width else { return nil }
+        let topRadius = max(0, min(trayRadius, tray.height, tray.width / 2))
+        let radius = max(0, min(bodyRadius, body.height / 2, body.width / 2))
+        let progress = max(0, min(1, (depth - radius) / max(1, 2 * radius)))
+        let blend = progress * progress * (3 - 2 * progress)
+        let sideBottom = max(body.minY + radius, tray.minY - 24)
+        let bottom = body.minY + (sideBottom - body.minY) * blend
+        let travel = tray.minY - bottom
+        guard travel > 0 else { return nil }
+        let path = CGMutablePath()
+        var added = false
+        for side: CGFloat in [-1, 1] {
+            let startX = side < 0 ? tray.minX + topRadius : tray.maxX - topRadius
+            let inset = radius * (1 - blend)
+            let endX = side < 0 ? body.minX + inset : body.maxX - inset
+            let gap = (startX - endX) * side
+            guard gap > 0 else { continue }
+            let bend = min(gap / 2, travel / 2)
+            path.move(to: CGPoint(x: startX, y: tray.minY))
+            let first = CGPoint(x: startX - side * bend, y: tray.minY)
+            let second = CGPoint(x: endX + side * bend * (1 - blend),
+                                 y: bottom + travel / 2 * blend)
+            path.addCurve(to: CGPoint(x: endX, y: bottom), control1: first, control2: second)
+            path.addLine(to: CGPoint(x: body.midX, y: bottom))
+            path.addLine(to: CGPoint(x: body.midX, y: tray.minY))
+            path.closeSubpath()
+            added = true
+        }
+        return added ? path : nil
+    }
+
+    /// Both notch ears keep one width, capped by the tighter measured flank.
+    public static func symmetricEarRects(in size: NSSize, geometry: ScreenBarWingGeometry,
+                                         leftLimit: CGFloat? = nil, rightLimit: CGFloat? = nil,
+                                         preferredWidth: CGFloat = wingMenuRowExtent, minimumWidth: CGFloat = 12)
+        -> (left: CGRect?, right: CGRect?) {
+        guard geometry.notchDepth > 0, size.height >= geometry.notchDepth + wingEarDrop,
+              let left = wingSlotRect(.left, in: size, geometry: geometry),
+              let right = wingSlotRect(.right, in: size, geometry: geometry) else { return (nil, nil) }
+        let leftRoom = leftLimit.map { left.maxX - $0 } ?? left.width
+        let rightRoom = rightLimit.map { $0 - right.minX } ?? right.width
+        let measuredWidth = min(left.width, right.width)
+        let clearance = min(leftRoom, rightRoom)
+        let width = min(preferredWidth, measuredWidth, clearance)
+        guard width >= minimumWidth else { return (nil, nil) }
+        let top = size.height - (geometry.notchDepth - wingSeatHeight) / 2
+        return (
+            CGRect(x: left.maxX - width, y: top - wingSeatHeight, width: width, height: wingSeatHeight),
+            CGRect(x: right.minX, y: top - wingSeatHeight, width: width, height: wingSeatHeight)
+        )
+    }
+
+    /// The connected tray reaches at most nineteen points beyond each
+    /// physical notch edge and rounds only its bottom corners.
+    public static func trayPath(_ tray: CGRect, stemWidth: CGFloat,
+                                notchDepth: CGFloat, radius: CGFloat) -> CGPath {
+        wingSurfacePath(tray, stemWidth: stemWidth, notchDepth: notchDepth, radius: radius)
+    }
+
+    /// Clip any housing or shoulder path against the actual view's menu row.
+    public static func menuSafePath(_ path: CGPath, in size: NSSize,
+                                    stemWidth: CGFloat, notchDepth: CGFloat) -> CGPath {
+        guard notchDepth > 0 else { return path }
+        let mask = CGMutablePath()
+        guard size.width > 0, size.height > 0 else { return mask }
+        let floor = max(0, size.height - notchDepth)
+        if floor > 0 {
+            mask.addRect(CGRect(x: 0, y: 0, width: size.width, height: floor))
+        }
+        let width = stemWidth > 0 ? min(stemWidth + 2 * wingMenuRowExtent, size.width) : 0
+        if width > 0 {
+            mask.addRect(CGRect(x: (size.width - width) / 2, y: floor,
+                                width: width, height: size.height - floor))
+        }
+        return path.intersection(mask)
+    }
+
+    private static func wingSurfacePath(_ rect: CGRect, stemWidth: CGFloat,
+                                        notchDepth: CGFloat, radius: CGFloat) -> CGPath {
+        let path = CGMutablePath()
+        guard rect.width > 0, rect.height > 0 else { return path }
+        guard notchDepth > 0 else {
+            let ledgeTop = max(rect.minY, rect.maxY - 1)
+            let width = max(0, min(stemWidth, rect.width))
+            if width > 0 {
+                path.addRect(CGRect(x: rect.midX - width / 2, y: ledgeTop,
+                                    width: width, height: rect.maxY - ledgeTop))
+            }
+            let ledge = CGRect(x: rect.minX, y: rect.minY, width: rect.width,
+                               height: ledgeTop - rect.minY)
+            if ledge.height > 0 {
+                let corner = max(0, min(radius, ledge.height / 2, ledge.width / 2))
+                path.addRoundedRect(in: ledge, cornerWidth: corner, cornerHeight: corner)
+            }
+            return path
+        }
+        let width = stemWidth > 0 ? min(stemWidth + 2 * wingMenuRowExtent, rect.width) : 0
+        guard width > 0 else { return path }
+        let body = CGRect(x: rect.midX - width / 2, y: rect.minY,
+                          width: width, height: rect.height)
+        let corner = max(0, min(radius, body.height / 2, body.width / 2))
+        guard corner > 0 else {
+            path.addRect(body)
+            return path
+        }
+        path.move(to: CGPoint(x: body.minX, y: body.maxY))
+        path.addLine(to: CGPoint(x: body.maxX, y: body.maxY))
+        path.addLine(to: CGPoint(x: body.maxX, y: body.minY + corner))
+        path.addArc(tangent1End: CGPoint(x: body.maxX, y: body.minY),
+                    tangent2End: CGPoint(x: body.maxX - corner, y: body.minY), radius: corner)
+        path.addLine(to: CGPoint(x: body.minX + corner, y: body.minY))
+        path.addArc(tangent1End: CGPoint(x: body.minX, y: body.minY),
+                    tangent2End: CGPoint(x: body.minX, y: body.minY + corner), radius: corner)
+        path.addLine(to: CGPoint(x: body.minX, y: body.maxY))
+        path.closeSubpath()
+        return path
+    }
+
     /// A slot's capsule rect inside a window of `size` — view coordinates
     /// (origin bottom-left). `geometry` is the claim `windowFrame` was
-    /// built with; an unclaimed side (extent 0) gets no rect, and a
-    /// measured extent that left less than `wingContentMinUsable`
-    /// collapses the same way. The chip never outgrows the measured
-    /// claim — a manual `screen_bar_wing_length` widening the window does
+    /// built with; an unclaimed side gets no rect. Notched caps need
+    /// twelve points of room and never reach past nineteen points.
+    /// The chip never outgrows the measured claim — a manual `screen_bar_wing_length` widening the window does
     /// not widen the wing into unmeasured room. On a notch-less screen
     /// the chips flank the band at its own height, hugging its ends.
     public static func wingSlotRect(_ side: ScreenBarWingSide, in size: NSSize,
                                     geometry: ScreenBarWingGeometry) -> CGRect? {
         let extent = side == .left ? geometry.leftExtent : geometry.rightExtent
         guard extent > 0 else { return nil }
-        let sideExtent = max(0, (size.width - geometry.notchWidth) / 2.0)
         if geometry.notchDepth > 0 {
-            // The claim anchors at the notch's edge and reaches outward
-            // through the measured room — the chip merges with the notch
-            // instead of floating a `wingContentInnerReserve` gap off it.
-            // It spans the notch's own depth at the window's top, flush
-            // with the screen's edge: the drawn lobe IS the notch's ear,
-            // not a pill centred in the menu-bar strip.
-            let usable = min(sideExtent, extent) - wingContentOuterInset
-            guard usable >= wingContentMinUsable else { return nil }
-            let height = geometry.notchDepth
-            let y = size.height - geometry.notchDepth
+            guard size.height >= geometry.notchDepth + wingEarDrop else { return nil }
+            let stemWidth = max(0, geometry.menuRowStemWidth)
+            guard stemWidth > 0, size.width >= stemWidth else { return nil }
+            let physicalSideExtent = (size.width - stemWidth) / 2
+            let usable = min(wingMenuRowExtent, physicalSideExtent, extent)
+            guard usable >= 12, geometry.notchDepth >= wingSeatHeight else { return nil }
+            let y = size.height - (geometry.notchDepth + wingSeatHeight) / 2
             switch side {
             case .left:
-                return CGRect(x: sideExtent - usable, y: y, width: usable, height: height)
+                return CGRect(x: physicalSideExtent - usable, y: y,
+                              width: usable, height: wingSeatHeight)
             case .right:
-                return CGRect(x: size.width - sideExtent, y: y,
-                              width: usable, height: height)
+                return CGRect(x: size.width - physicalSideExtent, y: y,
+                              width: usable, height: wingSeatHeight)
             }
         }
         let band = bandRect(in: size, preferredSpan: geometry.bandSpan > 0 ? geometry.bandSpan : nil)

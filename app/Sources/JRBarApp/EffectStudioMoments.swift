@@ -628,7 +628,7 @@ struct FinishMomentsSection: View {
     static func detail(enabled: Bool) -> String {
         enabled
             ? "How the lights celebrate a session that finishes. It plays once and goes dark."
-            : "How the lights celebrate a finish, once Settings › Lighting › Celebrate completions is on."
+            : "How the lights celebrate a finish, once Settings › Devices & Lighting › Celebrate completions is on."
     }
 
     private func finishRow(_ look: FinishLookList.Look, picked: Bool) -> some View {

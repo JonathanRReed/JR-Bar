@@ -332,11 +332,10 @@ final class PaletteController {
     /// ⌘⇧P — pin or unpin the row.
     static let favoriteChord = PaletteShortcut.commandShift("p")
 
-    /// Whether a row can be a favorite: not an ask, a session or an
-    /// archive hit — those come and go, and a pin would point at nothing
-    /// by tomorrow.
+    /// Whether a row can be a favorite: not an ask or a session — those
+    /// come and go, and a pin would point at nothing by tomorrow.
     static func canPin(_ item: PaletteItem) -> Bool {
-        !item.urgent && item.section != .sessions && item.section != .archive
+        !item.urgent && item.section != .sessions
     }
 
     /// Every pinnable row gets the pin as its last verb. It runs with the
@@ -531,6 +530,7 @@ final class PaletteController {
                 run(action, of: item)
             case .passThrough: return false
             }
+            announceSelection()
             return true
         }
         switch command {
@@ -595,8 +595,9 @@ final class PaletteController {
     /// One line for VoiceOver — the row under the highlight, or the
     /// field a verb just opened ("Reply to fix-ci…").
     private func announce(_ text: String) {
-        guard NSWorkspace.shared.isVoiceOverEnabled, !text.isEmpty else { return }
-        NSAccessibility.post(element: panel as Any, notification: .announcementRequested, userInfo: [
+        guard presentsWindow, let panel, !text.isEmpty,
+              NSWorkspace.shared.isVoiceOverEnabled else { return }
+        NSAccessibility.post(element: panel, notification: .announcementRequested, userInfo: [
             .announcement: text,
             .priority: NSAccessibilityPriorityLevel.medium.rawValue,
         ])
@@ -607,7 +608,7 @@ final class PaletteController {
     /// The query moved: re-ask the slower sources once it settles. They
     /// run side by side and each answer lands as it comes, in source
     /// order — one slow Accessibility read of the front app's menus
-    /// never holds the archive's or History's hits back.
+    /// never holds History's hits back.
     func queryChanged() {
         searchTask?.cancel()
         let query = model.query

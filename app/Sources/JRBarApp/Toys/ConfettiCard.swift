@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 /// The card's disclosure body, in three runs: Look (a live preview, Try
@@ -215,8 +216,8 @@ private struct ConfettiWhenSection: View {
     var body: some View {
         CardSectionHeader("When")
 
-        Toggle(isOn: toy.bind(\.triggers.weeklyReset)) {
-            SettingLabel(title: "Weekly reset", subtitle: "Any provider's weekly window refills.")
+        Toggle(isOn: toy.bind(\.triggers.quotaReset)) {
+            SettingLabel(title: "Quota resets", subtitle: "A connected provider's quota window refills.")
         }
 
         Toggle(isOn: toy.bind(\.triggers.sessionCompleted)) {
@@ -235,7 +236,7 @@ private struct ConfettiWhenSection: View {
             SettingLabel(title: "Milestones", subtitle: "An Aquarium achievement or a new tank level — rare on purpose.")
         }
 
-        if !providerChoices.isEmpty {
+        if !toy.settings.triggers.quotaReset, !providerChoices.isEmpty {
             Text("Every reset from")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -303,17 +304,21 @@ private struct ConfettiMannersSection: View {
 
         Toggle(isOn: toy.bind(\.sound)) {
             SettingLabel(title: "Sound",
-                         subtitle: "A soft pop and rustle with the burst, at Settings › Sounds' volume and on its device. Silent while JR-Bar is quiet.")
+                         subtitle: "A soft pop and rustle with the burst, at Settings › Alerts & Sounds' volume and on its device. Silent while JR-Bar is quiet.")
         }
 
-        Picker(selection: toy.bind(\.screens)) {
-            Text("Every screen").tag(ConfettiScreens.all)
-            Text("Main screen only").tag(ConfettiScreens.main)
-        } label: {
+        HStack(alignment: .top) {
             SettingLabel(title: "Screens",
-                         subtitle: "While the switch above is on, a screen a fullscreen app owns is skipped. Try it fires on every screen.")
+                         subtitle: "While the switch above is on, a screen a fullscreen app owns is skipped. Test burst uses this screen choice, even while quiet.")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Picker("Screens", selection: toy.bind(\.screens)) {
+                Text("Every screen").tag(ConfettiScreens.all)
+                Text("Main screen only").tag(ConfettiScreens.main)
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize(horizontal: true, vertical: false)
         }
-        .pickerStyle(.menu)
     }
 }
 
@@ -329,6 +334,9 @@ struct ConfettiPreviewTile: View {
     let settings: ConfettiSettings
     let shot: ConfettiShot
     var everyone: [(id: String, color: Color)] = []
+    /// Render proofs can select either pose without changing the Mac's setting.
+    var reduceMotionOverride: Bool? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// How big the screen is drawn in the tile.
     static let scale = 0.5
@@ -338,6 +346,12 @@ struct ConfettiPreviewTile: View {
     /// How long one replay runs.
     static let replay = 2.2
 
+    nonisolated static func clock(replaying: Bool, reduceMotion: Bool, power: PowerPolicy = .normal)
+        -> (interval: TimeInterval, paused: Bool, flash: Bool) {
+        let flash = reduceMotion || power.pauses(occluded: false)
+        return (power.interval(1.0 / 30), !replaying || flash, flash)
+    }
+
     @ViewState private var started: Date?
     @ViewState private var seed: UInt64 = 7
     @ViewState private var marks = ConfettiMarks()
@@ -345,11 +359,13 @@ struct ConfettiPreviewTile: View {
     var body: some View {
         let plan = ConfettiToy.plan(settings, shot: shot, densityScale: 1, everyone: everyone, season: nil)
         let burst = ConfettiBurst(stage: Self.stage, recipe: plan.recipe, seed: seed)
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: started == nil)) { context in
-            let time = frameTime(at: context.date)
+        let clock = Self.clock(replaying: started != nil, reduceMotion: reduceMotionOverride ?? reduceMotion,
+                               power: PowerConditions.shared.policy)
+        TimelineView(.animation(minimumInterval: clock.interval, paused: clock.paused)) { context in
+            let time = clock.flash ? ConfettiView.flashLife / 2 : frameTime(at: context.date)
             ZStack(alignment: .top) {
                 ConfettiPreviewDesk(part: .desk)
-                ConfettiView(burst: burst, look: plan.look, flash: false, marks: marks, scale: Self.scale,
+                ConfettiView(burst: burst, look: plan.look, flash: clock.flash, marks: marks, scale: Self.scale,
                              frozen: time)
                 // The notch is a hole in the screen: it goes over the burst.
                 ConfettiPreviewDesk(part: .notch)
@@ -379,7 +395,9 @@ struct ConfettiPreviewTile: View {
         guard let started else { return Self.restingFrame }
         let elapsed = now.timeIntervalSince(started)
         if elapsed >= Self.replay {
-            DispatchQueue.main.async { self.started = nil }
+            DispatchQueue.main.async {
+                if self.started == started { self.started = nil }
+            }
             return Self.restingFrame
         }
         return elapsed
@@ -398,6 +416,7 @@ extension ConfettiPreviewTile: Equatable {
     /// glyph, and the same working providers in the same colours.
     nonisolated static func == (a: Self, b: Self) -> Bool {
         a.settings == b.settings && a.shot == b.shot
+            && a.reduceMotionOverride == b.reduceMotionOverride
             && a.everyone.map(\.id) == b.everyone.map(\.id)
             && a.everyone.map(\.color) == b.everyone.map(\.color)
     }

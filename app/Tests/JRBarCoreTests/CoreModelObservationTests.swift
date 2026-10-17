@@ -57,6 +57,77 @@ struct CoreModelObservationTests {
         #expect(wakes({ _ = core.isLive }, when: { core.handle(.disconnected(reason: "gone")) }))
     }
 
+    @Test("stop keeps cached facts but reconnect waits for its own state")
+    func stoppedReconnectWaitsForState() {
+        let core = CoreModel(socketPath: "/tmp/jrbar-test-none.sock")
+        core.handle(.connected)
+        core.apply(.state(Self.state(1)))
+        core.apply(.lights(CoreLights()))
+        let retiredGeneration = core.eventGeneration
+        core.stop()
+        #expect(!core.isLive)
+        #expect(core.state?.generation == 1)
+        #expect(core.sessions.map(\.id) == ["claude:a"])
+        #expect(core.lights != nil)
+
+        core.handle(.connecting(attempt: 1))
+        core.handle(.connected)
+        #expect(!core.isLive, "a cached state cannot make the replacement connection live")
+        core.handle(.message(.state(Self.state(3))), generation: retiredGeneration)
+        #expect(!core.isLive, "a queued state from the retired client cannot prove readiness")
+        #expect(core.state?.generation == 1)
+        #expect(wakes({ _ = core.isLive }, when: {
+            core.handle(.message(.state(Self.state(2))))
+        }))
+        #expect(core.isLive)
+    }
+
+    @Test("a state received before connection does not prove readiness")
+    func idleStateDoesNotProveReadiness() {
+        let core = CoreModel(socketPath: "/tmp/jrbar-test-none.sock")
+        core.handle(.message(.state(Self.state(1))))
+        #expect(!core.isLive)
+        core.handle(.connected)
+        #expect(!core.isLive)
+        core.handle(.message(.state(Self.state(2))))
+        #expect(core.isLive)
+    }
+
+    @Test("a replacement connection invalidates its predecessor's state")
+    func replacementConnectionWaitsForState() {
+        let core = CoreModel(socketPath: "/tmp/jrbar-test-none.sock")
+        core.handle(.connected)
+        core.handle(.message(.state(Self.state(1))))
+        #expect(wakes({ _ = core.isLive }, when: { core.handle(.connected) }))
+        #expect(!core.isLive)
+        #expect(core.state?.generation == 1)
+        core.handle(.message(.state(Self.state(2))))
+        #expect(core.isLive)
+    }
+
+    @Test("rejected states wake readiness readers and keep the last good facts")
+    func rejectedStateWakesReadiness() {
+        let core = CoreModel(socketPath: "/tmp/jrbar-test-none.sock")
+        core.handle(.connected)
+        core.handle(.message(.state(Self.state(1))))
+        #expect(wakes({ _ = core.isLive }, when: {
+            core.handle(.stateRejected("unreadable state"))
+        }))
+        #expect(!core.isLive)
+        #expect(core.connection.isConnected)
+        #expect(core.state?.generation == 1)
+        #expect(core.sessions.map(\.id) == ["claude:a"])
+        #expect(wakes({ _ = core.isLive }, when: {
+            core.handle(.message(.state(Self.state(2))))
+        }))
+        #expect(core.isLive)
+        #expect(wakes({ _ = core.isLive }, when: {
+            core.handle(.message(.unknown(type: "state", version: CoreProtocol.version + 1)))
+        }))
+        #expect(!core.isLive)
+        #expect(core.state?.generation == 2)
+    }
+
     @Test("a slice is assigned only when its part of the frame changed")
     func slicesAssignOnChange() {
         let core = CoreModel(socketPath: "/tmp/jrbar-test-none.sock")
@@ -105,4 +176,53 @@ struct CoreModelObservationTests {
                 "an older daemon's age is read as sent")
         #expect(state.sourceHealth(for: "claude")?.fresh == false)
     }
+    @Test("durable reset reoffers use only the receipt callback after first arrival")
+    func durableResetReplayCallback() throws {
+        let core = CoreModel(socketPath: "/tmp/jrbar-test-none.sock")
+        var events: [String] = []
+        var reoffers: [String] = []
+        core.onEvent = { events.append($0.id) }
+        core.onResetReplay = { reoffers.append($0.id) }
+        let hello = try JSONDecoder().decode(CoreHello.self, from: Data(
+            #"{"v":1,"core_version":"test","pid":1,"capabilities":[],"stream":"synthetic-stream","cursor":"synthetic-stream:ev-0"}"#.utf8))
+        core.apply(.hello(hello))
+        let reset = CoreEvent(id: "synthetic-reset", kind: "quota_reset", notify: false,
+                              provider: "kimi", lane: "monthly", eventId: "synthetic-reset")
+        #expect(reset.isDurableResetReplay)
+        core.apply(.event(reset))
+        let sequence = core.eventSequence
+        let recent = core.recentEvents
+        core.apply(.event(reset))
+        #expect(events == ["synthetic-reset"])
+        #expect(reoffers == ["synthetic-reset"])
+        #expect(core.eventSequence == sequence && core.recentEvents == recent)
+
+        core.handle(.disconnected(reason: "synthetic reconnect"))
+        core.apply(.hello(hello))
+        core.apply(.event(reset))
+        #expect(events == ["synthetic-reset"])
+        #expect(reoffers == ["synthetic-reset", "synthetic-reset"])
+        let ordinary = CoreEvent(id: "ev-1", kind: "completed", cursor: "synthetic-stream:ev-1")
+        core.apply(.event(ordinary))
+        core.apply(.event(ordinary))
+        #expect(events == ["synthetic-reset", "ev-1"])
+        #expect(reoffers.count == 2)
+    }
+
+    @Test("only silent cursor-free stable reset facts qualify as durable reoffers")
+    func durableResetReplayShape() {
+        let reset = CoreEvent(id: "stable", kind: "quota_reset", notify: false, eventId: "stable")
+        #expect(reset.isDurableResetReplay)
+        var candidates: [CoreEvent] = []
+        var edited = reset
+        edited.cursor = "stream:ev-1"; candidates.append(edited)
+        edited = reset; edited.notify = nil; candidates.append(edited)
+        edited = reset; edited.notify = true; candidates.append(edited)
+        edited = reset; edited.eventId = " "; candidates.append(edited)
+        edited = reset; edited.eventId = nil; candidates.append(edited)
+        edited = reset; edited.id = "different"; candidates.append(edited)
+        edited = reset; edited.kind = "completed"; candidates.append(edited)
+        #expect(candidates.allSatisfy { !$0.isDurableResetReplay })
+    }
+
 }

@@ -67,6 +67,10 @@ final class DockEnhancePreferences {
         get { read().excludedBundleIDs }
         set { write?({ var s = read(); s.excludedBundleIDs = newValue; return s }()) }
     }
+    var switcherExcludedBundleIDs: [String] {
+        get { read().switcherExcludedBundleIDs }
+        set { write?({ var s = read(); s.switcherExcludedBundleIDs = newValue; return s }()) }
+    }
     /// Resting on a Dock icon opens a preview at all.
     var hoverPreviews: Bool {
         get { read().hoverPreviews }

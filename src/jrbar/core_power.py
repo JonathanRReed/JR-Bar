@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from . import keep_awake as keep_awake_module
@@ -30,9 +31,11 @@ from .keep_awake import (
     POWER_SLEPT,
     POWER_SUSPENDED,
     WORK_MODES,
+    LeasePersistenceError,
     LeaseRefusedError,
     PowerLog,
     battery_yields_hold,
+    fresh_battery_snapshot,
     lease_from_args,
     merge_history_rows,
 )
@@ -87,6 +90,30 @@ def session_facts(snapshot: object) -> tuple[frozenset[str], int]:
     return frozenset(pending), working
 
 
+def lease_pending_ids(snapshot: object, fresh_pending: frozenset[str]) -> frozenset[str] | None:
+    if snapshot is None:
+        return None
+    statuses = tuple(getattr(snapshot, "statuses", ()) or ())
+    stale_statuses = tuple(getattr(snapshot, "stale_statuses", ()) or ())
+    if not statuses and not stale_statuses and getattr(getattr(snapshot, "aggregate", None), "mode", None) is AgentMode.UNKNOWN:
+        return None
+    current_ids = {
+        str(getattr(status, "agent_id", "") or "")
+        for status in statuses
+        if not getattr(status, "stale", False) and not getattr(status, "is_subagent", False)
+        and isinstance(getattr(status, "mode", None), AgentMode)
+    }
+    uncertain = {
+        str(getattr(status, "agent_id", "") or "")
+        for status in (*statuses, *stale_statuses)
+        if getattr(status, "stale", False)
+        and not getattr(status, "is_subagent", False)
+        and isinstance(getattr(status, "mode", None), AgentMode)
+        and status.mode in LEASE_PENDING_MODES
+    }
+    return fresh_pending | (frozenset(uncertain) - current_ids - {""})
+
+
 def attach(controller: Any) -> PowerLog | None:
     """Give the holds their store, their shared log and the closed-lid
     sleep wiring, once. Returns the log (None when the controller has no
@@ -133,7 +160,11 @@ def lid_closed(controller: Any) -> bool | None:
     return reading if isinstance(reading, bool) else None
 
 
-def observe_environment(controller: Any) -> None:
+def observe_environment(
+    controller: Any,
+    *,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> None:
     """Tell the keep-awake hold what it yields to, before each sync."""
     keep = getattr(controller, "keep_awake", None)
     observe = getattr(keep, "observe_environment", None)
@@ -141,15 +172,20 @@ def observe_environment(controller: Any) -> None:
         return
     snapshot = getattr(controller, "last_snapshot", None)
     pending, working = session_facts(snapshot)
-    battery = getattr(getattr(controller, "_production_battery_observation", None), "snapshot", None)
+    # Only a recent reading may drive the low-battery yield: the service
+    # keeps the last good one when ``ioreg`` stalls, and an old one is not
+    # the Mac's power state now.
+    battery = fresh_battery_snapshot(
+        getattr(controller, "_production_battery_observation", None),
+        now=monotonic(),
+    )
     # The raw reading: the hold consults the lid only while it holds, and
     # a hold keeps the lid poll running.
     lid = getattr(controller, "last_lid_closed", None)
     observe(
-        # No snapshot yet (a restarted daemon whose first refresh failed) is
-        # no observation at all: a restored agents lease must not read the
-        # empty set as "every session finished".
-        pending_ids=None if snapshot is None else pending,
+        # Last-known pending rows protect only an existing manual lease;
+        # admission and automatic demand still use fresh sessions.
+        pending_ids=lease_pending_ids(snapshot, pending),
         working_count=working,
         battery_floor=battery_yields_hold(battery, getattr(controller, "settings", None)),
         thermal_state=keep_awake_module.read_thermal_state(),
@@ -279,7 +315,15 @@ def hold_awake(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     except ValueError as error:
         raise _command_error("invalid_args", str(error)) from error
     attach(controller)
-    keep.start_lease(lease)
+    try:
+        keep.start_lease(lease)
+    except LeasePersistenceError as error:
+        _resync(controller)
+        raise _command_error(
+            "unavailable",
+            "Manual Keep Awake could not be saved. "
+            "Check the current hold and retry before restarting the monitor.",
+        ) from error
     _resync(controller)
     return {"lease": lease.to_dict(), "hold": keep.hold_document()}
 
@@ -291,9 +335,22 @@ def release_awake(controller: Any, _args: dict[str, Any]) -> dict[str, Any]:
     if keep is None or not callable(getattr(keep, "end_lease", None)):
         raise _command_error("unsupported", "this daemon has no keep-awake hold")
     attach(controller)
+    cleanup_pending = getattr(keep, "persistence_error", None) == "clear_failed"
+    release_pending = getattr(keep, "release_failed", False)
     ended = bool(keep.end_lease(LEASE_END_CANCELLED))
-    if ended:
+    if ended or cleanup_pending or release_pending:
         _resync(controller)
+    if getattr(keep, "release_failed", False):
+        raise _command_error(
+            "unavailable",
+            "Keep Awake could not stop its hold. Try turning it off again.",
+        )
+    if getattr(keep, "persistence_error", None) == "clear_failed":
+        raise _command_error(
+            "unavailable",
+            "Manual Keep Awake stopped, but its saved data could not be cleared. "
+            "Retry cleanup before restarting the monitor.",
+        )
     return {"ended": ended, "hold": keep.hold_document()}
 
 
@@ -338,6 +395,7 @@ def augment_power_document(controller: Any, document: dict[str, Any]) -> None:
         closed_lid["sleeps_on_release"] = bool(getattr(lid, "sleeper", None) is not None)
         closed_lid["last_sleep_at"] = getattr(lid, "last_sleep_epoch", None)
         closed_lid["sleep_error"] = getattr(lid, "last_sleep_error", None)
+        closed_lid["error"] = getattr(lid, "last_error", None)
 
 
 def low_battery_by_time_left(controller: Any, snapshot: object) -> bool:

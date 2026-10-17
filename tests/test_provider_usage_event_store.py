@@ -46,3 +46,15 @@ def test_pending_reset_delivery_round_trips_across_restart__and_2_more(tmp_path:
     assert preference.reset_notification is True
     assert preference.reset_sound is True
 
+
+
+def test_a_reset_store_of_the_wrong_shape_starts_empty_instead_of_stopping_the_daemon(tmp_path: Path) -> None:
+    target = tmp_path / "events.json"
+    for text in (
+        json.dumps({"version": 1, "events": [{"nothing": "useful"}]}),
+        json.dumps({"version": 1, "events": [5]}),
+        json.dumps({"version": 1, "events": 7}),
+        "[" * 60_000,
+    ):
+        target.write_text(text)
+        assert load_reset_delivery_state(target) == ResetDeliveryState(), text[:40]

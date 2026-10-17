@@ -43,3 +43,27 @@ defined in [UPSTREAM-RESEARCH-CADENCE.md](UPSTREAM-RESEARCH-CADENCE.md).
 The first linked snapshot is the [2026-08-30 refresh](UPSTREAM-REFRESH-2026-08-30.md).
 This is a review record, not authorization to merge, push, release, deploy,
 change credentials, run an issue bot, or mutate hardware/system state.
+
+## October 7, 2026 review
+
+The latest review covers the 44 upstream commits after `0445085`, all 43 pull
+requests and 15 issues with their comments, the new firmware packages, the
+bridge and iPhone repositories, the three non-default branches and every fork
+with commits of its own. Every item has a one-line disposition in
+[the dated note](archive/UPSTREAM-REFRESH-2026-10-07.md). It is the current
+reference; the [2026-08-30 refresh](UPSTREAM-REFRESH-2026-08-30.md) is
+superseded by it.
+
+| Upstream work | JR-fork disposition |
+| --- | --- |
+| Firmware published in the repository (Pro 1.1.0, Dot 1.1.0 / 1.1.14) and `sidepulse firmware version` | Ported as `jrbar firmware version` (`device_firmware.py`) and, 2026-10-07, as a user-started update (`jrbar firmware upgrade`, Settings > Devices & Lighting; [how it works](user/firmware.md)): pinned hashes, one download only when asked, writes held while the device restarts, the new version proved by `STATUS.TXT`. Both devices here were updated by hand the same day (Pro 1.1.0, Dot 1.1.14). |
+| Keepalive as an uncached `STATUS.TXT` read | Already done first in `status_bar_legacy._keepalive_fresh_read`; `touch` is the fallback. |
+| Read-only storage transports (READ2ME, SPC2) and the raw FAT12 writer | Not applicable / rejected: no managed storage policy here, and a `sudo` raw disk write is not something JR-Bar scripts do. |
+| Pro 1.1.0 colour balance and 16-bit rounding | LED floors stay valid (conservative on 1.1.0). Owner channel gains may over-correct after the Pro is updated. See the note's LED review. |
+| #42 mount-retry timer leak, `0445085` log churn | Ported to the eject guard (`sd_eject_guard.c`), tested through its plain-C retry table. |
+| #48 tool output text read as failure | Ported (`collector._tool_response_looks_failed`). |
+| #44 subagent stop and pending approvals | Already correct here; pinned by a regression test. |
+| iPhone links, bridge, push, remote relay, Android pairing | Rejected: they send data off the Mac by default. |
+| Closed-lid display sleep (`48a04b8`) and the WindowServer crash (#51) | The crash came from private framebuffer calls JR-Bar does not make. Display behaviour under `disablesleep` with the lid shut is a hand check. |
+| Unanswered asks older than an hour | JR-Bar's monitor drops them. One owner decision across four modules; see the note's fork row for alex-fung. |
+| Trademark policy in `sidepulse-ios` | JR-Bar's references are nominative; the eject-guard name and the icon are open questions. |

@@ -26,6 +26,8 @@ setting rather than a provider name.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import io
 import json
 
@@ -200,7 +202,7 @@ def test_the_scheduler_follows_the_setting_too() -> None:
     assert row_enabled(on, "codex") is True
     assert (
         row_enabled(
-            _Probe(AgentMonitorSettings().with_codex_percent_enabled(False)),
+            _Probe(replace(AgentMonitorSettings(), codex_percent_enabled=False)),
             "codex",
         )
         is False

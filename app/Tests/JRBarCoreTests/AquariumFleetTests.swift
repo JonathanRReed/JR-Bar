@@ -17,11 +17,12 @@ struct AquariumFleetTests {
                     parent: parent, mode: mode, lifecycle: lifecycle)
     }
 
-    private static func weekly(_ used: Double?, resets: Double, provider: String = "claude") -> CoreProviderUsage {
+    private static func weekly(_ used: Double?, resets: Double, provider: String = "claude",
+                               readAt: Double? = nil) -> CoreProviderUsage {
         CoreProviderUsage(id: provider, windows: [
             CoreUsageWindow(key: "five-hour", name: "5h", usedPct: 99, resetsAt: resets - 3600),
             CoreUsageWindow(key: "weekly", name: "7d", usedPct: used, resetsAt: resets),
-        ])
+        ], observedAt: readAt ?? Self.t0.timeIntervalSince1970)
     }
 
     private static func state(sessions: [CoreSession] = [], providers: [CoreProviderUsage] = []) -> CoreState {
@@ -190,7 +191,8 @@ struct AquariumFleetTests {
         #expect(game.apply(.fleet(late), now: Self.t0).isEmpty)
         let after = Self.t0.addingTimeInterval(3 * 3600)
         let fresh = AquariumFleetFacts.read(
-            Self.state(providers: [Self.weekly(0, resets: resets + 7 * Self.day)]), now: after)
+            Self.state(providers: [Self.weekly(0, resets: resets + 7 * Self.day,
+                                             readAt: after.timeIntervalSince1970)]), now: after)
         #expect(game.apply(.fleet(fresh), now: after).contains(.achievementUnlocked(.underBudget)))
     }
 
@@ -207,6 +209,71 @@ struct AquariumFleetTests {
 }
 
 extension AquariumFleetTests {
+    @Test("session updates never refresh a weekly reading's source timestamp")
+    func keepsSourceTimestamp() {
+        let read = Self.t0.timeIntervalSince1970
+        let provider = Self.weekly(40, resets: read + 7 * Self.day)
+        let before = AquariumFleetFacts.read(Self.state(providers: [provider]), now: Self.t0)
+        let later = AquariumFleetFacts.read(Self.state(providers: [provider]),
+                                            now: Self.t0.addingTimeInterval(Self.day))
+        #expect(later.weekly == before.weekly)
+        #expect(later.weekly["claude|weekly"]?.observedAt == read)
+    }
+
+    @Test("stale, disabled and unavailable quota sources cannot earn quota or credit milestones")
+    func unavailableSources() {
+        var provider = Self.weekly(40, resets: Self.t0.timeIntervalSince1970 + Self.day,
+                                   provider: "codex")
+        provider.creditsRemaining = 100
+        var stale = provider
+        stale.state = "stale"
+        var staleFidelity = provider
+        staleFidelity.fidelity = "stale"
+        var off = provider
+        off.reason = CoreProviderUsage.usageOffReason
+        var signedOut = provider
+        signedOut.state = "not_signed_in"
+        var noSource = provider
+        noSource.quotaSource = false
+        var failed = provider
+        failed.state = "error"
+        for unavailable in [stale, staleFidelity, off, signedOut, noSource, failed] {
+            let facts = AquariumFleetFacts.read(Self.state(providers: [unavailable]), now: Self.t0)
+            #expect(facts.weekly.isEmpty)
+            #expect(facts.codexCredits.isEmpty)
+        }
+    }
+
+    @Test("unstamped, future and inapplicable weekly readings provide no reset evidence")
+    func invalidEvidence() {
+        var unstamped = Self.weekly(40, resets: Self.t0.timeIntervalSince1970 + Self.day)
+        unstamped.observedAt = nil
+        var future = unstamped
+        future.readAt = Self.t0.timeIntervalSince1970 + 1
+        var unbound = Self.weekly(40, resets: Self.t0.timeIntervalSince1970 + Self.day)
+        unbound.windows[1].bindable = false
+        for provider in [unstamped, future, unbound] {
+            #expect(AquariumFleetFacts.read(Self.state(providers: [provider]), now: Self.t0).weekly.isEmpty)
+        }
+    }
+
+    @Test("a reading made after the old reset cannot prove how that week ended")
+    func resetEvidenceMustStraddleBoundary() {
+        let reset = Self.t0.timeIntervalSince1970
+        let next = AquariumWeeklyReading(usedPct: 1, resetsAt: reset + 7 * Self.day,
+                                         observedAt: reset + 60)
+        let late = AquariumWeeklyReading(usedPct: 40, resetsAt: reset, observedAt: reset + 1)
+        #expect(!AquariumFleetLog.endedUnderBudget(last: late, next: next))
+        let last = AquariumWeeklyReading(usedPct: 40, resetsAt: reset, observedAt: reset - 60)
+        var early = next
+        early.observedAt = reset - 1
+        #expect(!AquariumFleetLog.endedUnderBudget(last: last, next: early))
+        var invalid = last
+        invalid.usedPct = -1
+        #expect(!AquariumFleetLog.endedUnderBudget(last: invalid, next: next))
+        #expect(AquariumFleetLog.endedUnderBudget(last: last, next: next))
+    }
+
     @Test("a steady weekly reading is re-stamped only now and then")
     func restamp() {
         var log = AquariumFleetLog()

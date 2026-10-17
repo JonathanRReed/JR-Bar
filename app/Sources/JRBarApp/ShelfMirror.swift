@@ -16,6 +16,8 @@ final class ShelfMirrorModel {
     enum State: Equatable {
         /// The setting is off — no session, no camera.
         case off
+        case requestingPermission
+        case starting
         /// The session is up and frames are flowing.
         case live
         /// The owner said no (or Screen Time did). The row shows the
@@ -30,16 +32,25 @@ final class ShelfMirrorModel {
     /// session across card opens.
     let preview = MirrorPreviewView()
 
-    private let queue = DispatchQueue(label: "devin.jrbar.mirror", qos: .userInitiated)
-    /// The session is the queue's object — every touch (build, start,
-    /// stop) happens inside `queue.async`. The box is what makes that
-    /// honest: `session` sits off the actor entirely, so the queue
-    /// closures never borrow main-actor state (`startRunning` can take
-    /// a second and must never reach main).
-    private final class SessionBox: @unchecked Sendable {
-        var session: AVCaptureSession?
+    nonisolated let queue: DispatchQueue
+    private let driver: any ShelfMirrorSessionDriver
+    private let runGate = ShelfMirrorRunGate()
+    @ObservationIgnored var authorization: () -> AVAuthorizationStatus
+    private let requestAccess: (@escaping @Sendable (Bool) -> Void) -> Void
+
+    init(driver: (any ShelfMirrorSessionDriver)? = nil,
+         queue: DispatchQueue = DispatchQueue(label: "devin.jrbar.mirror", qos: .userInitiated),
+         authorization: @escaping () -> AVAuthorizationStatus = {
+             AVCaptureDevice.authorizationStatus(for: .video)
+         },
+         requestAccess: @escaping (@escaping @Sendable (Bool) -> Void) -> Void = { completion in
+             AVCaptureDevice.requestAccess(for: .video, completionHandler: completion)
+         }) {
+        self.driver = driver ?? ShelfMirrorCameraDriver()
+        self.queue = queue
+        self.authorization = authorization
+        self.requestAccess = requestAccess
     }
-    private let box = SessionBox()
 
     /// The pin × setting vote as last seen — the async paths (TCC
     /// answer, queued session build) consult it before touching state
@@ -59,6 +70,7 @@ final class ShelfMirrorModel {
         guard enabled != self.enabled else { return }
         self.enabled = enabled
         generation += 1
+        runGate.update(enabled: enabled, generation: generation)
         if enabled {
             start()
         } else {
@@ -68,22 +80,32 @@ final class ShelfMirrorModel {
 
     /// A consent prompt is already up — pinning in and out while TCC
     /// waits must not stack `requestAccess` calls behind it.
-    private var authAsked = false
+    private(set) var permissionRequestPending = false
+
+    func retry() {
+        guard enabled, state == .unavailable || state == .denied else { return }
+        generation += 1
+        runGate.update(enabled: true, generation: generation)
+        start()
+    }
 
     private func start() {
-        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        switch authorization() {
         case .authorized:
             run()
         case .notDetermined:
             // The toggle on is the explicit action — ask now, once.
-            guard !authAsked else { return }
-            authAsked = true
-            AVCaptureDevice.requestAccess(for: .video) { granted in
-                Task { @MainActor in
+            state = .requestingPermission
+            guard !permissionRequestPending else { return }
+            permissionRequestPending = true
+            requestAccess { [weak self] granted in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.permissionRequestPending = false
                     // The answer can land minutes later — unpin or a
                     // toggle-off in the meantime means the lens stays
                     // shut even though the person said yes.
-                    guard self.enabled else { return }
+                    guard self.enabled, self.state == .requestingPermission else { return }
                     if granted { self.run() } else { self.state = .denied }
                 }
             }
@@ -93,46 +115,85 @@ final class ShelfMirrorModel {
     }
 
     private func run() {
-        let box = box
+        state = .starting
+        let driver = driver
+        let gate = runGate
         let gen = generation
         queue.async { [weak self] in
-            if box.session == nil {
-                let candidate = AVCaptureSession()
-                candidate.sessionPreset = .medium
-                guard let device = AVCaptureDevice.default(for: .video),
-                      let input = try? AVCaptureDeviceInput(device: device),
-                      candidate.canAddInput(input)
-                else {
-                    Task { @MainActor in
-                        guard let self, self.enabled, self.generation == gen else { return }
-                        self.state = .unavailable
-                    }
-                    return
+            guard gate.permits(gen) else { return }
+            let prepared = driver.prepare()
+            guard gate.permits(gen) else { return }
+            guard prepared else {
+                Task { @MainActor in
+                    guard let self, self.enabled, self.generation == gen else { return }
+                    self.state = .unavailable
                 }
-                candidate.addInput(input)
-                box.session = candidate
-                Task { @MainActor in self?.preview.attach(candidate) }
+                return
             }
-            box.session?.startRunning()
+            driver.start()
             Task { @MainActor in
-                guard let self else { return }
-                guard self.enabled, self.generation == gen else {
-                    // Stopped (or re-synced) while the session spun up —
-                    // the lamp is on with nobody watching. Kill it and
-                    // leave `state` where `stop()` put it.
-                    self.queue.async { box.session?.stopRunning() }
-                    return
-                }
+                guard let self, self.enabled, self.generation == gen else { return }
+                driver.attach(to: self.preview)
                 self.state = .live
             }
         }
     }
 
     private func stop() {
-        // The session is the queue's object — even its reads go there.
-        let box = box
-        queue.async { box.session?.stopRunning() }
+        let driver = driver
+        queue.async { driver.stop() }
         state = .off
+    }
+}
+
+/// Session operations stay on the model's serial queue; only the preview attaches on main.
+protocol ShelfMirrorSessionDriver: AnyObject, Sendable {
+    func prepare() -> Bool
+    func start()
+    func stop()
+    @MainActor func attach(to preview: MirrorPreviewView)
+}
+
+private final class ShelfMirrorCameraDriver: ShelfMirrorSessionDriver, @unchecked Sendable {
+    // Assigned on the serial queue, retained across opens, and handed to the preview on main.
+    private var session: AVCaptureSession?
+
+    func prepare() -> Bool {
+        if session != nil { return true }
+        let candidate = AVCaptureSession()
+        candidate.sessionPreset = .medium
+        guard let device = AVCaptureDevice.default(for: .video),
+              let input = try? AVCaptureDeviceInput(device: device),
+              candidate.canAddInput(input) else { return false }
+        candidate.addInput(input)
+        session = candidate
+        return true
+    }
+
+    func start() { session?.startRunning() }
+    func stop() { session?.stopRunning() }
+    @MainActor func attach(to preview: MirrorPreviewView) {
+        if let session { preview.attach(session) }
+    }
+}
+
+/// A fold invalidates queued camera work without waiting for a session operation.
+private final class ShelfMirrorRunGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var enabled = false
+    private var generation = 0
+
+    func update(enabled: Bool, generation: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        self.enabled = enabled
+        self.generation = generation
+    }
+
+    func permits(_ generation: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return enabled && self.generation == generation
     }
 }
 

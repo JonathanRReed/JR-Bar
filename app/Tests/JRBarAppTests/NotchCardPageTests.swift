@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Testing
 import JRBarCore
 @testable import JRBarApp
@@ -68,6 +68,32 @@ struct NotchCardPageTests {
         #expect(toy.cardModel.page == .now)
     }
 
+    @Test("a turn remembers which side the page came from")
+    func turnDirection() {
+        let card = makeTestCardModel()
+        #expect(card.flipPage(toShelf: true))
+        #expect(card.turnDirection == .fromRight, "the shelf follows Now, so it arrives from the right")
+        #expect(card.flipPage(toShelf: false))
+        #expect(card.turnDirection == .fromLeft, "back to Now arrives from the left")
+        card.show(.shelf)
+        #expect(card.turnDirection == .fromRight)
+    }
+
+    @Test("a swipe toward a page that is not there turns nothing and nudges the way the fingers went")
+    func edgeBump() {
+        let card = makeTestCardModel()
+        let start = card.edgeBump.count
+        #expect(!card.flipPage(toShelf: false), "already on Now")
+        #expect(card.page == .now)
+        #expect(card.edgeBump.count == start + 1)
+        #expect(card.edgeBump.towardRight, "fingers went right")
+        card.flipPage(toShelf: true)
+        #expect(card.edgeBump.count == start + 1, "a turn is not a bump")
+        #expect(!card.flipPage(toShelf: true), "already on the shelf")
+        #expect(card.edgeBump.count == start + 2)
+        #expect(!card.edgeBump.towardRight, "fingers went left")
+    }
+
     @Test("⌃⌥D opens onto the shelf; a drag opens on Now and its drop turns to the shelf")
     func shelfSummonsLandOnShelf() {
         let (toy, store) = makeToy()
@@ -83,8 +109,58 @@ struct NotchCardPageTests {
         #expect(toy.cardModel.page == .shelf, "the drop shows where it landed")
     }
 
+    @Test("the Shelf shortcut switches an open Now card and only its next press closes it")
+    func shelfShortcutSwitchesOpenNowCard() {
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        toy.expand(held: true)
+        #expect(toy.islandExpanded && toy.cardModel.page == .now)
+        #expect(toy.toggleShelf() == nil)
+        #expect(toy.islandExpanded && toy.cardModel.page == .shelf)
+        #expect(toy.expandHeld)
+        #expect(!toy.askKeyboardEngaged)
+        #expect(toy.toggleShelf() == nil)
+        #expect(!toy.islandExpanded)
+    }
+
+    @Test("the Shelf shortcut holds a hover-opened Now card instead of folding it")
+    func shelfShortcutPinsHoverCard() {
+        let (toy, store) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        toy.expand(held: false)
+        #expect(toy.islandExpanded && !toy.expandHeld)
+        toy.toggleShelf()
+        #expect(toy.islandExpanded && toy.expandHeld)
+        #expect(toy.cardModel.page == .shelf)
+        toy.hoverHeld = false
+        toy.pointerOnBand = { false }
+        toy.pointerLocation = { NSPoint(x: -10000, y: -10000) }
+        toy.collapseTimerFired()
+        #expect(toy.islandExpanded, "the deliberate shortcut survives hover leave")
+    }
+
+    @Test("the glass Shelf shortcut switches an open Now card and closes only Shelf")
+    func glassShelfShortcutSwitchesOpenNowCard() {
+        let idle = ScreenBarFocus(style: nil, label: "JR-Bar", word: "Idle", clickSession: nil)
+        let presenter = NotchCardPresenter(model: makeTestCardModel())
+        presenter.presentationEnabled = false
+        presenter.surface = { .glass }
+        presenter.focus = { idle }
+        presenter.anchor = { NSRect(x: 100, y: 100, width: 200, height: 20) }
+        presenter.keySource = CardEscapeWatch.Source(addLocal: { _ in nil }, addGlobal: { _ in nil }, remove: { _ in })
+        let interaction = ScreenBarInteraction(card: presenter, hitRects: { [] }, focus: { idle })
+        defer { interaction.stop(); presenter.hide() }
+        presenter.pin()
+        #expect(presenter.isShown && presenter.model.page == .now)
+        #expect(interaction.toggleShelfCard() == nil)
+        #expect(presenter.isShown && presenter.isPinned && presenter.model.page == .shelf)
+        #expect(!presenter.panel.canBecomeKey)
+        #expect(interaction.toggleShelfCard() == nil)
+        #expect(!presenter.isShown && !presenter.isPinned)
+    }
+
     @Test("jrbar://shelf opens onto the shelf, not the page the card last showed")
-    func shelfLinkLandsOnShelf() {
+    func shelfLinkLandsOnShelf() async {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
         // The router's hand is the key's own toggle, as the delegate wires it.
@@ -95,11 +171,11 @@ struct NotchCardPageTests {
         toy.expandFromBand()
         #expect(toy.cardModel.page == .now)
         toy.collapseFromBand()
-        #expect(router.open(link) == .done)
+        #expect(await router.open(link) == .done)
         #expect(toy.islandExpanded)
         #expect(toy.cardModel.page == .shelf)
         // Still a toggle: a second link folds the card it opened.
-        #expect(router.open(link) == .done)
+        #expect(await router.open(link) == .done)
         #expect(!toy.islandExpanded)
         #expect(toy.cardModel.page == .now, "the next band open starts on Now")
     }

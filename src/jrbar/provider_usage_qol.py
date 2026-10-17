@@ -16,13 +16,37 @@ RESET_TRIGGER_TIMING = "timing"
 #: jump is only a candidate until a later read confirms it.
 RESET_TRIGGER_JUMP = "jump"
 RESET_TRIGGER_EARLY_WEEKLY = "early_weekly"
+#: A LAPSED reset: the window's boundary had already passed on our clock
+#: when the previous read was taken, so that read was the ended window
+#: still being quoted (Claude's weekly lane keeps answering with the old
+#: window, boundary in the past, until the next message opens a new one --
+#: the 2026-10-06 reset was seen 6.8 hours after its boundary). The
+#: window has since advanced and remaining rose, but the timing rule
+#: cannot see it (the boundary is not BETWEEN the two reads) and a refill
+#: under 50 points is no jump. Needs a confirming read like a jump.
+RESET_TRIGGER_LAPSED = "lapsed"
+#: A window opened after a lapse starts essentially full, so a LAPSED
+#: reset needs the new reading this high: a smaller rise on a window that
+#: advanced is drift, not a refill.
+RESET_LAPSED_REFILL_REMAINING = 90.0
 RESET_TIMING_POINTS = 5.0
+#: A provider can still quote its ended window at the boundary read.
+#: An advanced, replenished window within this short update lag remains
+#: clock-backed evidence, without waiting for jump confirmation.
+RESET_PROVIDER_UPDATE_GRACE_S = 30.0
 RESET_JUMP_POINTS = 50.0
 #: A confirming read must come at least a minute after the jump (a
 #: second look, not the same answer twice) and at most half an hour
 #: after it (older evidence says nothing about this read).
 RESET_CONFIRM_MIN_S = 60.0
 RESET_CONFIRM_MAX_S = 1800.0
+#: How long a waiting candidate stays alive. The confirming read is
+#: ASKED for inside ``RESET_CONFIRM_MAX_S`` (``reset_confirm_deadline``
+#: schedules it), but a laptop that slept through that half hour must not
+#: lose the reset: a later read that still shows the same replenishment
+#: and the same boundary is better evidence, not worse. A confirmed
+#: event is stamped with the confirming read, so it is fresh news.
+RESET_CANDIDATE_LIFETIME_S = 24 * 60 * 60.0
 #: The confirming read's reset time must match the jump's within two
 #: minutes: a real new window keeps its boundary.
 RESET_BOUNDARY_TOLERANCE_S = 120.0
@@ -66,6 +90,8 @@ class ResetCandidate:
     observed_at: float
     trigger: str = RESET_TRIGGER_JUMP
     account_discriminator: str | None = None
+    source_id: str | None = None
+    account_label: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -81,6 +107,8 @@ class ResetCandidate:
             "observed_at": self.observed_at,
             "trigger": self.trigger,
             "account_discriminator": self.account_discriminator,
+            "source_id": self.source_id,
+            "account_label": self.account_label,
         }
 
     @classmethod
@@ -109,12 +137,23 @@ class ResetCandidate:
         if not all(isinstance(value, str) and value for value in words.values()):
             return None
         trigger = raw.get("trigger", RESET_TRIGGER_JUMP)
-        if trigger not in {RESET_TRIGGER_JUMP, RESET_TRIGGER_EARLY_WEEKLY}:
+        if trigger not in {
+            RESET_TRIGGER_JUMP,
+            RESET_TRIGGER_EARLY_WEEKLY,
+            RESET_TRIGGER_LAPSED,
+        }:
             return None
         account = raw.get("account_discriminator")
         if account is not None and (not isinstance(account, str) or not account):
             return None
-        return cls(**words, **numbers, trigger=trigger, account_discriminator=account)
+        source_id = raw.get("source_id")
+        account_label = raw.get("account_label")
+        if not isinstance(source_id, str) or not source_id:
+            return None
+        if account_label is not None and not isinstance(account_label, str):
+            return None
+        return cls(**words, **numbers, trigger=trigger, account_discriminator=account,
+                   source_id=source_id, account_label=account_label)
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,7 +238,7 @@ def merged_edge_baseline(previous, current):
     for snapshot in current.snapshots:
         held = before.get(snapshot.identity)
         account_changed = (
-            snapshot.provider_id == "claude"
+            snapshot.provider_id in {"claude", "grok"}
             and (
                 snapshot.account_discriminator is None
                 or held is None
@@ -236,10 +275,9 @@ def detect_reset_events(
             ProviderSourceState.STALE,
         } or before.account_label != after.account_label:
             continue
-        if after.provider_id == "claude" and (
-            after.account_discriminator is None
-            or before.account_discriminator != after.account_discriminator
-        ):
+        if before.account_discriminator != after.account_discriminator:
+            continue
+        if after.provider_id in {"claude", "grok"} and after.account_discriminator is None:
             continue
         before_lanes = _lane_map(before)
         for lane_after in after.lanes:
@@ -254,42 +292,43 @@ def detect_reset_events(
                 or lane_after.reset_at <= lane_before.reset_at
             ):
                 continue
-            # Two independent detectors, either fires:
-            #   TIMING -- the reset moment passed between our looks. One
-            #   failed poll re-stamps observed_at past the boundary
-            #   (select_authoritative_snapshot) and blinds this forever,
-            #   which is how the owner's live reset went unseen.
-            #   JUMP -- remaining leapt >= 50 points while the window
-            #   advanced: unmistakably a refill, whatever the clocks
-            #   claim (the usage-hook heuristic, promoted).
-            crossed = (
-                before.observed_at < lane_before.reset_at <= after.observed_at
-                and lane_after.remaining_percent
-                > lane_before.remaining_percent + 5.0
-            )
-            jumped = (
-                lane_after.remaining_percent
-                >= lane_before.remaining_percent + 50.0
-            )
             gain = lane_after.remaining_percent - lane_before.remaining_percent
             full_refill = (
                 lane_after.remaining_percent >= RESET_UNUSED_REMAINING
                 and gain > 0.0
             )
+            crossed = (
+                (before.observed_at < lane_before.reset_at <= after.observed_at
+                 or (lane_before.reset_at <= before.observed_at <= after.observed_at
+                     <= lane_before.reset_at + RESET_PROVIDER_UPDATE_GRACE_S
+                     and lane_after.reset_at > after.observed_at))
+                and (gain >= RESET_TIMING_POINTS or (
+                    full_refill and lane_before.remaining_percent < RESET_UNUSED_REMAINING
+                ))
+            )
+            jumped = gain >= RESET_JUMP_POINTS
             early_weekly = (
                 before.state is ProviderSourceState.READY
                 and _is_weekly_reset_lane(lane_after.lane_id)
                 and after.observed_at < lane_before.reset_at
                 and (gain >= RESET_TIMING_POINTS or full_refill)
             )
-            if not crossed and not jumped and not early_weekly:
+            lapsed = (
+                lane_before.reset_at <= before.observed_at
+                and lane_before.reset_at <= after.observed_at
+                and gain >= RESET_TIMING_POINTS
+                and lane_after.remaining_percent >= RESET_LAPSED_REFILL_REMAINING
+            )
+            if not crossed and not jumped and not early_weekly and not lapsed:
                 continue
             if crossed:
                 trigger = RESET_TRIGGER_TIMING
             elif jumped:
                 trigger = RESET_TRIGGER_JUMP
-            else:
+            elif early_weekly:
                 trigger = RESET_TRIGGER_EARLY_WEEKLY
+            else:
+                trigger = RESET_TRIGGER_LAPSED
             event_id = _event_id(
                 after.provider_id,
                 after.source_instance_id,
@@ -318,13 +357,17 @@ def detect_reset_events(
     return tuple(events)
 
 
-def _candidate_from(event: ResetEvent) -> ResetCandidate | None:
+def _candidate_from(event: ResetEvent, snapshot: ProviderUsageSnapshot | None) -> ResetCandidate | None:
     if (
         event.reset_boundary is None
         or event.after_reset_at is None
         or event.after_remaining is None
         or event.before_remaining is None
+        or snapshot is None
     ):
+        return None
+    lane = _lane_map(snapshot).get(event.lane_id)
+    if lane is None:
         return None
     return ResetCandidate(
         event.event_id,
@@ -339,6 +382,8 @@ def _candidate_from(event: ResetEvent) -> ResetCandidate | None:
         float(event.occurred_at),
         event.trigger,
         event.account_discriminator,
+        lane.source_id,
+        snapshot.account_label,
     )
 
 
@@ -368,17 +413,20 @@ def _judge_candidate(
         return "keep"
     if snapshot.account_discriminator != candidate.account_discriminator:
         return "discard"
+    if snapshot.account_label != candidate.account_label:
+        return "discard"
     if snapshot.state is not ProviderSourceState.READY:
         return "keep"
-    if snapshot.provider_id == "claude" and snapshot.account_discriminator is None:
+    if snapshot.provider_id in {"claude", "grok"} and snapshot.account_discriminator is None:
         return "discard"
     lane = _lane_map(snapshot).get(candidate.lane_id)
-    if lane is None or lane.remaining_percent is None or lane.reset_at is None:
+    if (lane is None or lane.source_id != candidate.source_id
+            or lane.remaining_percent is None or lane.reset_at is None):
         return "discard"
     age = snapshot.observed_at - candidate.observed_at
     if age <= 0.0:
         return "keep"
-    if age > RESET_CONFIRM_MAX_S:
+    if age > RESET_CANDIDATE_LIFETIME_S:
         return "discard"
     moved = lane.reset_at - candidate.after_reset_at
     # A rolling unused window: nobody has started it, so the provider
@@ -402,7 +450,7 @@ def _judge_candidate(
     else:
         required_gain = (
             RESET_TIMING_POINTS
-            if candidate.trigger == RESET_TRIGGER_EARLY_WEEKLY
+            if candidate.trigger in {RESET_TRIGGER_EARLY_WEEKLY, RESET_TRIGGER_LAPSED}
             else RESET_JUMP_POINTS
         )
         replenishment_holds = (
@@ -427,10 +475,11 @@ def confirm_reset_events(
 
     ``detected`` is ``detect_reset_events`` over the same reads. A TIMING
     reset is announced at once. A JUMP or early weekly reset becomes a
-    candidate. A later READY read confirms it when it comes 60 s to 30
-    min after the jump, keeps the replenishment, and names a reset time
-    within two minutes of the jump's. Anything else discards it, as does
-    a rolling unused window. The celebrations, the ``quota_reset`` wire
+    candidate. A later READY read confirms it when it comes at least 60 s
+    after the jump (within a day: a laptop that slept through the
+    half-hour the read is asked for still counts), keeps the replenishment,
+    and names a reset time within two minutes of the jump's. Anything else
+    discards it, as does a rolling unused window. The celebrations, the ``quota_reset`` wire
     event and the usage hooks all take the events from here, so they agree,
     and they share one ``event_id``.
     """
@@ -461,7 +510,7 @@ def confirm_reset_events(
             continue
         if event.event_id in waiting:
             continue
-        candidate = _candidate_from(event)
+        candidate = _candidate_from(event, by_identity.get((event.provider_id, event.source_instance_id)))
         if candidate is not None:
             kept.append(candidate)
             waiting.add(candidate.event_id)
@@ -592,10 +641,12 @@ def usage_totals(
 
 
 __all__ = [
+    "RESET_CANDIDATE_LIFETIME_S",
     "RESET_CONFIRM_MAX_S",
     "RESET_CONFIRM_MIN_S",
     "RESET_TRIGGER_EARLY_WEEKLY",
     "RESET_TRIGGER_JUMP",
+    "RESET_TRIGGER_LAPSED",
     "RESET_TRIGGER_TIMING",
     "ResetCandidate",
     "ResetConfirmation",

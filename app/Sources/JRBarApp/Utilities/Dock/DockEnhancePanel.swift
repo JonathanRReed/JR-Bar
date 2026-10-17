@@ -119,6 +119,7 @@ final class DockPreviewActions {
     var onDrillFolder: (@MainActor (URL) -> Void)?
     /// The drilled pop's chevron — one folder back up.
     var onFolderBack: (@MainActor () -> Void)?
+    var onRetryFolder: (@MainActor () -> Void)?
 }
 
 /// The Macs' displays as the Move To menu names them, and the screen
@@ -175,24 +176,30 @@ final class DockPreviewPanel: NSPanel {
     let actions: DockPreviewActions
 
     private let hosting: NSHostingView<DockPreviewView>
+    private let viewport: NSScrollView
     private let glass: NSGlassEffectView
     private let container: NSView
 
     init(content: DockPreviewContent) {
         actions = DockPreviewActions(content: content)
         hosting = NSHostingView(rootView: DockPreviewView(content: content, actions: actions))
-        // The panel is sized from the content's intrinsic size and the
-        // hosting view fills the glass — a hosting view left at its
-        // initial frame drew the content in the panel's bottom-left
-        // corner, which read as "the preview is off-centre".
+        // Keep the content at its natural size. On a small display the
+        // viewport scrolls, so minimum widths never hide controls.
         hosting.sizingOptions = [.intrinsicContentSize]
         let radius = content.metrics.panelRadius
         glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 240, height: 96))
         glass.cornerRadius = radius
         glass.style = .regular
-        hosting.frame = glass.bounds
-        hosting.autoresizingMask = [.width, .height]
-        glass.contentView = hosting
+        viewport = NSScrollView(frame: glass.bounds)
+        viewport.drawsBackground = false
+        viewport.borderType = .noBorder
+        viewport.hasHorizontalScroller = true
+        viewport.hasVerticalScroller = true
+        viewport.autohidesScrollers = true
+        viewport.scrollerStyle = .overlay
+        viewport.documentView = hosting
+        viewport.autoresizingMask = [.width, .height]
+        glass.contentView = viewport
         container = GlassBackdrop.rounded(glass, cornerRadius: radius)
         super.init(contentRect: NSRect(x: 0, y: 0, width: 240, height: 96),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -256,14 +263,35 @@ final class DockPreviewPanel: NSPanel {
         invalidateShadow()
     }
 
-    /// The size the content wants, clamped so a many-windowed app
-    /// can't sprawl the panel across the screen.
-    func fittingSize() -> CGSize {
+    /// Measure natural content against the room on the anchor's display.
+    /// Warm-up callers use a fixed budget without consulting a display.
+    func fittingSize(maximumSize: CGSize = CGSize(width: 720, height: 900)) -> CGSize {
         hosting.invalidateIntrinsicContentSize()
         hosting.layoutSubtreeIfNeeded()
         let fit = hosting.intrinsicContentSize
-        let limit = (NSScreen.main?.frame.width ?? 1200) - 40
-        return CGSize(width: min(fit.width, min(720, limit)), height: fit.height)
+        let natural = CGSize(width: max(1, fit.width), height: max(1, fit.height))
+        let size = CGSize(width: min(natural.width, max(1, maximumSize.width)),
+                          height: min(natural.height, max(1, maximumSize.height)))
+        let wasAtTop = hosting.isFlipped
+            ? viewport.contentView.bounds.minY <= 1
+            : viewport.contentView.bounds.maxY >= hosting.frame.height - 1
+        hosting.setFrameSize(natural)
+        viewport.setFrameSize(size)
+        if wasAtTop {
+            let top = hosting.isFlipped ? 0 : max(0, natural.height - size.height)
+            let point = CGPoint(x: viewport.contentView.bounds.minX, y: top)
+            viewport.contentView.scroll(to: point)
+            viewport.reflectScrolledClipView(viewport.contentView)
+        }
+        return size
+    }
+
+    /// A newly summoned app starts at its header, even if the previous
+    /// preview was scrolled to its last window.
+    func resetScrollPosition() {
+        let top = hosting.isFlipped ? 0 : max(0, hosting.frame.height - viewport.contentSize.height)
+        viewport.contentView.scroll(to: CGPoint(x: 0, y: top))
+        viewport.reflectScrolledClipView(viewport.contentView)
     }
 
     /// Show at `target`, animating a short springy drift up off the
@@ -421,6 +449,15 @@ struct DockPreviewView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .padding(.horizontal, 2)
+            }
+            if let failure = content.actionFailure {
+                Label(failure, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DockChrome.caution)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 2)
+                    .help(failure)
             }
             if !content.askRows.isEmpty {
                 VStack(spacing: 6) {
@@ -790,11 +827,21 @@ struct DockPreviewView: View {
                 }
                 .buttonStyle(DockCapsuleButtonStyle(prominent: true))
                 .help("Grant folder access in Privacy & Security")
+                if let retry = actions.onRetryFolder {
+                    Button("Retry", action: retry)
+                        .buttonStyle(DockCapsuleButtonStyle(prominent: false))
+                }
             }
         case .failed:
             DockFolderNotice(symbol: "exclamationmark.triangle.fill", tint: DockChrome.caution,
                              title: "Couldn't read this folder",
-                             detail: "It may be on a drive that went away.") { EmptyView() }
+                             detail: "The folder may have moved, or its drive may be unavailable.") {
+                if let retry = actions.onRetryFolder {
+                    Button("Retry", action: retry)
+                        .buttonStyle(DockCapsuleButtonStyle(prominent: true))
+                        .accessibilityLabel("Retry loading \(folderName ?? "this folder")")
+                }
+            }
         case .ready:
             if content.folderEntries.isEmpty {
                 DockFolderNotice(symbol: "tray", tint: .secondary,
@@ -809,7 +856,7 @@ struct DockPreviewView: View {
                     LazyVGrid(columns: Array(repeating: GridItem(.fixed(DockFolderChip.width), spacing: gap),
                                              count: grid.columns),
                               spacing: gap) {
-                        ForEach(content.folderEntries) { entry in
+                        ForEach(content.folderEntries, id: \.url) { entry in
                             DockFolderChip(entry: entry, actions: actions)
                         }
                     }
@@ -833,15 +880,18 @@ struct DockPreviewView: View {
         return AppNameChannel.split(content.appName)
     }
 
+    static func folderSubtitle(state: DockFolderState, count: Int) -> String {
+        switch state {
+        case .loading: return "Folder"
+        case .denied: return "No access"
+        case .failed: return "Read failed"
+        case .ready: return count == 1 ? "1 item" : "\(count) items"
+        }
+    }
+
     private var subtitle: String {
         if content.folderURL != nil {
-            switch content.folderState {
-            case .loading: return "Folder"
-            case .denied: return "No access"
-            case .failed: return "Folder"
-            case .ready:
-                return content.folderEntries.count == 1 ? "1 item" : "\(content.folderEntries.count) items"
-            }
+            return Self.folderSubtitle(state: content.folderState, count: content.folderEntries.count)
         }
         // A minimized-window tile whose owner didn't resolve still
         // carries its one card — "Not running" would misname it.
@@ -1208,6 +1258,8 @@ private struct DockFolderChip: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(entry.isDirectory ? "\(entry.name), folder" : entry.name)
+        .accessibilityHint(entry.isDirectory ? "Browse this folder. Command-click opens it in Finder." : "Open this file.")
         // DockDoor's Folder Pop drag-out: the chip carries its own
         // file URL — dropping it on Finder or another app's tile is
         // the system's copy/move, never ours. The chip snapshot is the
@@ -1228,8 +1280,11 @@ private struct DockFolderChip: View {
         .animation(.easeOut(duration: 0.12), value: hovering)
         .help(entry.url.path)
         .task(id: entry.url) {
+            thumbnail = nil
             guard !entry.isDirectory else { return }
-            thumbnail = await DockFolderThumbs.thumbnail(for: entry.url)
+            let image = await DockFolderThumbs.thumbnail(for: entry.url)
+            guard !Task.isCancelled else { return }
+            thumbnail = image
         }
     }
 
@@ -1538,9 +1593,12 @@ enum DockAskVerbSet: Equatable {
     case decided(line: String)
     /// A held question: Deny and its options.
     case choices
-    /// Deny, Always Allow where offered, Approve; disabled when the ask
-    /// cannot be answered from outside.
-    case verdicts(answerable: Bool)
+    /// Deny, Always Allow where offered, Approve.
+    case verdicts
+    /// The ask cannot be answered from JR-Bar (a view-only agent, a host
+    /// that cannot prove its focused tab, or a typed reply): the row says
+    /// where to answer it and draws no verb, not even a disabled one.
+    case elsewhere
     /// No ask or no desk: nothing to draw.
     case none
 
@@ -1553,7 +1611,7 @@ enum DockAskVerbSet: Equatable {
         if let line = ask?.decidedLine { return .decided(line: line) }
         guard let ask, hasDesk else { return .none }
         if AskVerbs.chooses(ask) { return .choices }
-        return .verdicts(answerable: ask.canAnswer && !ask.wantsTextReply)
+        return ask.canAnswer && !ask.wantsTextReply ? .verdicts : .elsewhere
     }
 }
 
@@ -1565,8 +1623,8 @@ enum DockAskVerbSet: Equatable {
 /// through the shared answer desk the panel and the notch answer
 /// through, so one pending set dims every copy of the buttons and the
 /// line under the ask is the desk's. Where the daemon says the ask can't
-/// be answered from outside, the buttons disable and say where it can
-/// be; once answered, the row shows the daemon's verdict instead of
+/// be answered from outside, the row says where to answer it and draws no
+/// verb; once answered, the row shows the daemon's verdict instead of
 /// guessing success. An ask JR-Bar already answered draws no verb at all,
 /// not even a disabled one: the row says the agent is being waited for.
 /// With no desk published the row draws no verbs.
@@ -1654,12 +1712,17 @@ private struct DockAskRow: View {
                     .disabled(busy)
                 DockAskChoices(ask: ask, desk: desk, accent: mark.accent, busy: busy)
             }
-        case .verdicts(let answerable):
+        case .elsewhere:
+            Text(AskAnswerHost.line(host: nil))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        case .verdicts:
             if let ask, let desk {
                 Button("Deny") { answer(ask, .deny, on: desk) }
                     .buttonStyle(DockCapsuleButtonStyle())
-                    .disabled(!answerable || busy)
-                if answerable, AskVerbs.alwaysAllows(ask) {
+                    .disabled(busy)
+                if AskVerbs.alwaysAllows(ask) {
                     Button("Always Allow") { answer(ask, .always, on: desk) }
                         .buttonStyle(DockCapsuleButtonStyle())
                         .disabled(busy)
@@ -1667,9 +1730,8 @@ private struct DockAskRow: View {
                 }
                 Button("Approve") { answer(ask, .approve, on: desk) }
                     .buttonStyle(DockCapsuleButtonStyle(prominent: true, tint: mark.accent))
-                    .disabled(!answerable || busy)
-                    .help(answerable ? "Approve — \(mark.providerName) carries on"
-                                     : "Answer this one in the session's window")
+                    .disabled(busy)
+                    .help("Approve — \(mark.providerName) carries on")
             }
         case .none:
             EmptyView()
@@ -1764,7 +1826,7 @@ private struct DockMediaRow: View {
                 }
             }
         }
-        .frame(minWidth: 300)
+        .frame(width: 300)
     }
 
     private var transport: some View {
@@ -1861,7 +1923,8 @@ private struct DockMediaScrubber: View {
             let fraction = dragFraction ?? min(1, max(0, elapsed / duration))
             HStack(spacing: 8) {
                 Text(DockEnhanceMath.clock(dragFraction.map { $0 * duration } ?? elapsed))
-                    .frame(width: 34, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: 34, alignment: .leading)
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule().fill(Color.primary.opacity(0.12))
@@ -1883,7 +1946,8 @@ private struct DockMediaScrubber: View {
                 }
                 .frame(height: 12)
                 Text(DockEnhanceMath.clock(duration))
-                    .frame(width: 34, alignment: .trailing)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: 34, alignment: .trailing)
             }
             .font(.system(size: 10, weight: .medium).monospacedDigit())
             .foregroundStyle(.secondary)

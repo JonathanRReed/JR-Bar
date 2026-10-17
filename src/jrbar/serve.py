@@ -12,7 +12,9 @@ lives in those timestamps).
     GET /asks.json     what is waiting and which answers each ask takes
     POST /answer       approve / deny / always / a choice, for a Stream Deck key
 
-Loopback only, no query parameters on the status route, nothing written by
+Loopback only (a request whose Host header names anything but a loopback
+address on this port is refused, so a rebound DNS name cannot reach it), no
+query parameters on the status route, nothing written by
 serve itself -- an answer is the daemon's own command, journaled there.
 The public schema is rebuilt from an allowlist and never forwards persisted
 rows. The two answering routes (serve_answers.py) exist only when the host
@@ -44,6 +46,7 @@ from .provider_usage_store import (
     default_provider_usage_state_path,
 )
 from .providers import default_state_dir
+from .request_deadline import RequestDeadlines
 
 SERVE_DEFAULT_PORT = 8737
 SERVE_SCHEMA_VERSION = 2
@@ -68,6 +71,27 @@ SERVE_HANDLER_TIMEOUT_SECONDS = 5.0
 MAX_SERVE_CONNECTIONS = 16
 
 
+_LOOPBACK_HOST_NAMES = frozenset({"127.0.0.1", "localhost", "[::1]"})
+
+
+def _is_loopback_host_header(value: str | None, port: int) -> bool:
+    """Whether a Host header names this loopback server and nothing else.
+
+    A page on a hostile name that re-resolves to 127.0.0.1 (DNS rebinding)
+    arrives with its own name in Host, so only the loopback names, on the
+    port actually bound, are ours. A request with no Host at all is an
+    HTTP/1.0 tool, not a browser, and is let through to the bearer check.
+    """
+    if value is None:
+        return True
+    name, separator, tail = value.strip().lower().rpartition(":")
+    if not separator or tail.endswith("]"):
+        name, tail = value.strip().lower(), ""
+    if name not in _LOOPBACK_HOST_NAMES:
+        return False
+    return tail == "" or (tail.isascii() and tail.isdigit() and int(tail) == port)
+
+
 def _read_json(path: Path) -> object | None:
     try:
         if path.is_symlink() or not path.is_file():
@@ -75,19 +99,20 @@ def _read_json(path: Path) -> object | None:
         if path.stat().st_size > _MAX_STATE_BYTES:
             return None
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
 
 
 def _timestamp(value: object) -> float | None:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(float(value))
-        or float(value) < 0.0
-    ):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value)
+    try:
+        timestamp = float(value)
+    except OverflowError:
+        return None
+    if not math.isfinite(timestamp) or timestamp < 0.0:
+        return None
+    return timestamp
 
 
 def _increment(counts: dict[str, int], value: str) -> None:
@@ -336,8 +361,16 @@ class ServeConfiguration:
 
 
 class _ServeServer(ThreadingHTTPServer):
-    def __init__(self, address, handler, configuration: ServeConfiguration) -> None:
+    def __init__(
+        self,
+        address,
+        handler,
+        configuration: ServeConfiguration,
+        *,
+        deadlines: RequestDeadlines | None = None,
+    ) -> None:
         self.serve_configuration = configuration
+        self.deadlines = deadlines or RequestDeadlines()
         self._connection_slots = threading.BoundedSemaphore(MAX_SERVE_CONNECTIONS)
         self._slot_lock = threading.Lock()
         self._slot_holders: set[object] = set()
@@ -349,9 +382,15 @@ class _ServeServer(ThreadingHTTPServer):
             return
         with self._slot_lock:
             self._slot_holders.add(request)
-        super().process_request(request, client_address)
+        try:
+            self.deadlines.arm(request)
+            super().process_request(request, client_address)
+        except BaseException:
+            self.shutdown_request(request)
+            raise
 
     def shutdown_request(self, request) -> None:
+        self.deadlines.disarm(request)
         try:
             super().shutdown_request(request)
         finally:
@@ -363,10 +402,35 @@ class _ServeServer(ThreadingHTTPServer):
             if held:
                 self._connection_slots.release()
 
+    def handle_error(self, request, client_address) -> None:
+        """Request exceptions can carry private body or state content."""
+
 
 class _ServeHandler(BaseHTTPRequestHandler):
     server_version = PRODUCT_DISPLAY_NAME
     timeout = SERVE_HANDLER_TIMEOUT_SECONDS
+
+    def parse_request(self) -> bool:
+        parsed = super().parse_request()
+        # The request line and headers are in: what is left is the part the
+        # route checks the token for before it reads anything.
+        self.server.deadlines.disarm(self.request)
+        if parsed and (
+            any(len(self.headers.get_all(name, [])) > 1 for name in
+                ("Host", "Authorization", "Origin", "Content-Length", "Transfer-Encoding"))
+            or "Transfer-Encoding" in self.headers
+        ):
+            self.send_error(400)
+            return False
+        if parsed and "Origin" in self.headers:
+            self.send_error(403)
+            return False
+        if parsed and not _is_loopback_host_header(
+            self.headers.get("Host"), self.server.server_address[1]
+        ):
+            self.send_error(403)
+            return False
+        return parsed
 
     def do_GET(self) -> None:
         route = self.path.split("?", 1)[0]
@@ -439,8 +503,8 @@ class _ServeHandler(BaseHTTPRequestHandler):
         except ServeAnswerRefused as refusal:
             self._send_json(refusal.http_status, refusal.document())
             return
-        except Exception as error:
-            refusal = ServeAnswerRefused("internal", f"{error.__class__.__name__}: {error}"[:300])
+        except Exception:
+            refusal = ServeAnswerRefused("internal", "the ask list could not be read")
             self._send_json(500, refusal.document())
             return
         self._send_json(200, {"ok": True, "asks": asks})
@@ -457,27 +521,36 @@ class _ServeHandler(BaseHTTPRequestHandler):
         answers = self._answer_source()
         if answers is None:
             return
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = -1
-        if not 0 <= length <= MAX_ANSWER_BODY_BYTES:
+        declared = self.headers.get("Content-Length")
+        digits = "0" if declared is None else declared.strip()
+        if not (digits.isascii() and digits.isdigit()):
+            self._send_json(400, ServeAnswerRefused("invalid_args", "invalid content length").document())
+            return
+        digits = digits.lstrip("0") or "0"
+        maximum = str(MAX_ANSWER_BODY_BYTES)
+        if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits > maximum):
             self._send_json(413, ServeAnswerRefused("invalid_args", "the body is too large").document())
             return
+        length = int(digits)
         try:
-            body = decode_answer_body(self.rfile.read(length) if length else b"")
+            raw = self.rfile.read(length) if length else b""
+            if len(raw) != length:
+                raise ServeAnswerRefused("invalid_args", "the body is incomplete")
+            body = decode_answer_body(raw)
             try:
                 query = parse_qs(self.path.partition("?")[2], keep_blank_values=True, max_num_fields=8)
             except ValueError:
                 raise ServeAnswerRefused("invalid_args", "too many query fields") from None
-            target = parse_answer_target({key: values[-1] for key, values in query.items()}, body)
+            if any(len(values) != 1 for values in query.values()):
+                raise ServeAnswerRefused("invalid_args", "query fields must appear once")
+            target = parse_answer_target({key: values[0] for key, values in query.items()}, body)
             result = answers.answer(target)
         except ServeAnswerRefused as refusal:
             self._send_json(refusal.http_status, refusal.document())
             return
-        except Exception as error:
+        except Exception:
             # The answer path's own failure: said, never a dropped socket.
-            refusal = ServeAnswerRefused("internal", f"{error.__class__.__name__}: {error}"[:300])
+            refusal = ServeAnswerRefused("internal", "the answer could not be completed")
             self._send_json(500, refusal.document())
             return
         self._send_json(200, receipt_document(result))

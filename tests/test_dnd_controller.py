@@ -744,3 +744,109 @@ def test_wake_activation_and_an_authorization_answer_drop_cached_focus_reads() -
     plain = _Harness()
     plain.controller.start()
     assert plain.controller.handle_wake().applied
+
+
+@pytest.mark.parametrize(
+    "settings, report, source",
+    [
+        (AgentMonitorSettings(), {"mic": True}, DndSource.CALL),
+        (AgentMonitorSettings(away_quiet_mode="dark"), {"locked": True}, DndSource.AWAY),
+        (AgentMonitorSettings(focus_sync_enabled=True), {"focus": True}, DndSource.MACOS_FOCUS),
+    ],
+)
+def test_presence_quiet_expires_without_an_environment_refresh(settings, report, source) -> None:
+    from jrbar.presence import PRESENCE_TTL_SECONDS, parse_presence
+
+    harness = _Harness(settings)
+    harness.controller.start()
+    harness.controller.set_presence(parse_presence(report, now=NOW))
+    assert harness.controller.projection.active_sources == (source,)
+    assert harness.controller.transition_deadline == NOW + PRESENCE_TTL_SECONDS
+    timer = harness.timer_factory.timers[-1]
+    assert timer.delay == PRESENCE_TTL_SECONDS
+
+    harness.now = NOW + PRESENCE_TTL_SECONDS
+    timer.fire()
+
+    assert harness.controller.projection.active_sources == ()
+    assert harness.controller.transition_deadline is None
+    assert harness.focus.request_count == 0
+
+
+def test_presence_renewal_fences_old_expiry_and_keeps_meeting_end() -> None:
+    from jrbar.presence import PRESENCE_TTL_SECONDS, parse_presence
+
+    harness = _Harness(AgentMonitorSettings(meeting_quiet_mode="asks_only"))
+    harness.controller.start()
+    meeting_end = NOW + 600.0
+    harness.controller.set_presence(parse_presence({"mic": True, "meeting_until": meeting_end}, now=NOW))
+    old_timer = harness.timer_factory.timers[-1]
+    harness.now = NOW + 60.0
+    harness.controller.set_presence(parse_presence({"mic": True, "meeting_until": meeting_end}, now=harness.now))
+    expiry = harness.now + PRESENCE_TTL_SECONDS
+    renewed_timer = harness.timer_factory.timers[-1]
+    assert old_timer.cancelled
+    assert harness.controller.transition_deadline == expiry
+
+    harness.now = NOW + PRESENCE_TTL_SECONDS
+    old_timer.fire()
+    assert harness.controller.projection.active_sources == (DndSource.CALL, DndSource.CALENDAR)
+    assert harness.controller.transition_deadline == expiry
+
+    harness.now = expiry
+    renewed_timer.fire()
+    assert harness.controller.projection.active_sources == (DndSource.CALENDAR,)
+    assert harness.controller.transition_deadline == meeting_end
+
+    harness.now = meeting_end
+    harness.timer_factory.timers[-1].fire()
+    assert harness.controller.projection.active_sources == ()
+
+
+def test_presence_does_not_arm_expiry_when_it_cannot_affect_quiet() -> None:
+    from jrbar.presence import parse_presence
+
+    harness = _Harness(AgentMonitorSettings(call_quiet_mode="off"))
+    harness.controller.start()
+    harness.controller.set_presence(parse_presence({"mic": True, "locked": True, "focus": True}, now=NOW))
+    assert harness.controller.transition_deadline is None
+    assert harness.timer_factory.timers == []
+
+    authoritative = _Harness(AgentMonitorSettings(focus_sync_enabled=True), focus=_FocusClient(_active_focus()))
+    authoritative.controller.start()
+    authoritative.controller.set_presence(parse_presence({"focus": True}, now=NOW))
+    assert authoritative.controller.projection.active_sources == (DndSource.MACOS_FOCUS,)
+    assert authoritative.controller.transition_deadline is None
+
+
+def test_presence_expiry_preserves_schedule_and_authoritative_focus() -> None:
+    from jrbar.presence import PRESENCE_TTL_SECONDS, parse_presence
+
+    settings = _scheduled_settings().with_focus_sync_enabled(True)
+    harness = _Harness(settings, focus=_FocusClient(_active_focus()))
+    harness.controller.start()
+    harness.controller.set_presence(parse_presence({"mic": True}, now=NOW))
+    timer = harness.timer_factory.timers[-1]
+    harness.now = NOW + PRESENCE_TTL_SECONDS
+    timer.fire()
+
+    assert harness.controller.projection.active_sources == (DndSource.SCHEDULE, DndSource.MACOS_FOCUS)
+    assert harness.controller.projection.brightness_factor == 0.0
+    assert harness.controller.projection.outbound_admission is OutboundAdmission.NONE
+    assert harness.controller.transition_deadline == datetime(2026, 8, 30, 23, 0, tzinfo=UTC).timestamp()
+
+
+def test_earlier_meeting_end_keeps_call_until_report_expiry() -> None:
+    from jrbar.presence import PRESENCE_TTL_SECONDS, parse_presence
+
+    harness = _Harness(AgentMonitorSettings(meeting_quiet_mode="mute"))
+    harness.controller.start()
+    meeting_end = NOW + 60.0
+    harness.controller.set_presence(parse_presence({"mic": True, "meeting_until": meeting_end}, now=NOW))
+    assert harness.controller.transition_deadline == meeting_end
+    harness.now = meeting_end
+    harness.timer_factory.timers[-1].fire()
+
+    assert harness.controller.projection.active_sources == (DndSource.CALL,)
+    assert harness.controller.transition_deadline == NOW + PRESENCE_TTL_SECONDS
+    assert not harness.controller.projection.audible_allowed

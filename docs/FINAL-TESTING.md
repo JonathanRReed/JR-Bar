@@ -27,7 +27,10 @@ and running, so it comes after gate 4 and after the install below.
 Ruff over `src tests packaging scripts` plus the contract tests that answer in
 seconds: the deterministic-timing contract (no wall-clock sleeps or unbounded
 joins in tests), the packaging and release-gate contracts, the provider fixture
-and settings-schema coverage checks, the Creator Micro wire conformance. It is
+and settings-schema coverage checks, the Creator Micro wire conformance, and
+the tracked-secret scan, the doc-link check, the dependency and version
+policy and diff hygiene (the full list is in
+[LOCAL-VERIFICATION.md](LOCAL-VERIFICATION.md)). It is
 the gate to run before every commit; the full suite is the gate before a push.
 
 ### 2. The full Python suite
@@ -110,15 +113,15 @@ owner's list below. Both gaps are recorded as what they are, not as passes.
 
 These need the owner, the hardware and the accounts.
 
-**Device.** Open **Control Center...** with no accessories, then with each.
+**Device.** Open the Creator Micro window (the Control Center) with no accessories, then with each.
 Session state, stable slots, explicit banks, the compact rail on each edge,
 saved across a restart. External displays, scaling, Dock placement, full-screen
 Spaces, keyboard navigation, VoiceOver, reduced motion, increased contrast.
 Before remapping a Creator Micro, close Input and every other device writer
 (JR-Bar keeps the first original keymap in a private backup); apply only the
 previewed configuration;
-storage is not activation, so reconnect if the firmware asks. Keep **Input
-check: pause device actions** on while exercising every key, encoder and
+storage is not activation, so reconnect if the firmware asks. Keep **Check
+input** on (the footer reads "Input check: device actions are paused") while exercising every key, encoder and
 joystick input. Test restore and interrupted-transfer recovery on a scratch
 device configuration before trusting it with a real one, and restore the
 original map before uninstalling.

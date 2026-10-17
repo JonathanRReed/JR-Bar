@@ -354,3 +354,9 @@ def test_confetti_from_a_hook_reads_its_session_and_never_fails_it(core, capsys,
     assert "not running" in capsys.readouterr().err
     # Outside a hook the missing monitor is an error like any other verb.
     assert run(["confetti"], socket_path=missing) == cli_control.EXIT_NO_CORE
+
+
+def test_a_superscript_is_not_a_duration() -> None:
+    with pytest.raises(ControlError) as raised:
+        parse_duration("\u00b2")
+    assert raised.value.status == 2

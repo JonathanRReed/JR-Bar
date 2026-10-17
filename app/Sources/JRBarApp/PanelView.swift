@@ -492,7 +492,7 @@ struct SessionsSection: View {
         let trailing = trailingWidth
         VStack(spacing: 0) {
             SectionLabel(text: "Sessions", trailing: sessionsTrailing)
-            if store.visibleRows.isEmpty {
+            if store.visibleRows.isEmpty, store.demoRow == nil {
                 SessionsEmptyState(store: store)
             } else {
                 SnapshotScrollView {
@@ -500,6 +500,11 @@ struct SessionsSection: View {
                     // only the rows in the viewport are built and laid out
                     // when a frame lands, not all sixty.
                     LazyVStack(spacing: CGFloat(PanelLayout.rowSpacing)) {
+                        if let demo = store.demoRow {
+                            // The Try it ask, above the real ones and not one of them.
+                            AskRow(row: demo, store: store)
+                                .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
+                        }
                         ForEach(store.visibleAskRows) { row in
                             AskRow(row: row, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
@@ -690,6 +695,7 @@ struct SessionsEmptyState: View {
     private var headline: String {
         if finding { return "Nothing matches “\(store.findQuery)”" }
         if live { return store.hiddenCount > 0 ? "All clear" : "No agents right now" }
+        if store.core.stateRejected != nil { return "Can't read the monitor" }
         return store.coreMayBeStarting ? "Starting…" : "Monitor not connected"
     }
 
@@ -708,9 +714,12 @@ struct SessionsEmptyState: View {
             // a quiet one: say what to do rather than "they will appear".
             if !store.missingHooks.isEmpty {
                 let names = store.missingHooks.prefix(3).map { SessionLabel.providerName($0) }.joined(separator: ", ")
-                return "Hooks install themselves at first launch — none for \(names) yet, so those agents cannot report in."
+                return "Install hooks for \(names)."
             }
-            return "Hooks install themselves; Claude, Codex, Gemini and friends appear the moment they start."
+            return "No sessions are reporting. Check setup in Settings › Agents & Usage."
+        }
+        if let why = store.core.stateRejected {
+            return "The monitor sent an update this app could not read (\(why)). Showing the file feeds until the next good one."
         }
         return "Showing the file feeds: \(store.fallbackDetail.lowercased())."
     }
@@ -741,7 +750,7 @@ struct SessionsEmptyState: View {
                 // The one thing this state needs is a way forward.
                 Button("Set up agents…") { store.openSettings(page: .agents) }
                     .buttonStyle(PillButtonStyle(prominent: false))
-                    .help("Install or repair agent hooks in Settings › Agents")
+                    .help("Install or repair agent hooks in Settings › Agents & Usage")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -760,6 +769,7 @@ struct SessionRowView: View {
     /// The state word, mark and elapsed time sit in one column every row
     /// in the list shares (`trailingWidth(for:)`).
     let trailingWidth: CGFloat
+    @ViewState private var hovering = false
 
     /// The trailing column: as wide as the widest state word the list
     /// shows plus its mark, and never narrower than the longest elapsed
@@ -781,6 +791,11 @@ struct SessionRowView: View {
         let quiet = rows.contains { $0.isQuiet(now: now) }
         return trailingWidth(for: rows.map(\.activity), quiet: quiet)
     }
+
+    /// The tint of a quiet row's "quiet 12m": amber-leaning, a notch softer
+    /// than an ask's, so a stuck run reads differently from a healthy one
+    /// without claiming it needs you.
+    static let quietTint = Color.orange.opacity(0.85)
 
     /// The word's HStack spacing and the mark's slot, which an orb and
     /// every mark share (`SessionRowMark.slot`).
@@ -835,12 +850,10 @@ struct SessionRowView: View {
                             Text("snoozed").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
                         }
                         if row.stale { Text("stale").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1) }
-                        if store.isWatchedForDone(row) {
-                            Image(systemName: "bell")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .help("You'll get a banner when this run ends")
-                                .accessibilityLabel("Notify when done is on")
+                        if row.canWatchForDone || store.isWatchedForDone(row) {
+                            DoneBell(watched: store.isWatchedForDone(row), revealed: hovering || store.selectedID == row.id) {
+                                store.toggleDoneWatch(row)
+                            }
                         }
                         if let quiet = store.quietFeedText(for: row) {
                             // The provider's hook feed stopped arriving
@@ -923,7 +936,9 @@ struct SessionRowView: View {
                                        reduced: store.reduceMotion, active: store.marksMove, quiet: row.isQuiet(now: store.now))
                     }
                     Text(row.elapsedText(now: store.now) ?? " ")
-                        .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
+                        .font(.system(size: 11)).monospacedDigit()
+                        .foregroundStyle(row.isQuiet(now: store.now) ? AnyShapeStyle(SessionRowView.quietTint) : AnyShapeStyle(.tertiary))
+                        .lineLimit(1)
                 }
                 .frame(width: trailingWidth, alignment: .trailing)
             }
@@ -941,9 +956,15 @@ struct SessionRowView: View {
             }
         }
         .help(row.help(now: store.now) ?? "")
+        .onHover { hovering = $0 }
         .contextMenu { SessionContextMenu(row: row, store: store) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(spokenLabel)
+        .accessibilityActions {
+            if row.canWatchForDone || store.isWatchedForDone(row) {
+                Button(DoneBell.actionName(watched: store.isWatchedForDone(row))) { store.toggleDoneWatch(row) }
+            }
+        }
         .accessibilityHint(row.isRemote
             ? "Remote session — manage it on \(row.remoteMachine ?? "the machine it runs on")"
             : "Opens the session in its terminal")
@@ -957,9 +978,53 @@ struct SessionRowView: View {
         let place: String = row.isRemote
             ? "on \(row.remoteMachine ?? "a peer")"
             : (row.cwdTail.map { "in \($0)" } ?? "no folder on record")
+        let quiet: String? = row.isQuiet(now: store.now) ? "no signal for \(elapsed)" : nil
         let parts: [String?] = [row.label, row.workersText, row.workersWaitingText, row.style.name,
-                                row.activity.word, elapsed, place]
+                                row.activity.word, quiet ?? elapsed, place,
+                                store.isWatchedForDone(row) ? DoneBell.spokenState : nil]
         return parts.compactMap { $0 }.joined(separator: ", ")
+    }
+}
+
+/// "Tell me when this finishes": the bell on a working row. Quiet until
+/// the pointer or the keyboard is on the row, filled and always shown once
+/// it is on, so a row you asked about never loses its mark. It banners that
+/// one run's ending whatever the completion setting says, then turns itself
+/// off. The room for it is kept either way, so nothing shifts on hover.
+struct DoneBell: View {
+    let watched: Bool
+    let revealed: Bool
+    let toggle: () -> Void
+
+    static let spokenState = "will notify when done"
+
+    static func actionName(watched: Bool) -> String {
+        watched ? "Stop notifying when done" : "Notify when done"
+    }
+
+    static func help(watched: Bool) -> String {
+        watched ? "You'll get a banner when this run ends. Click to cancel"
+                : "Get one banner when this run ends"
+    }
+
+    private var shown: Bool { watched || revealed }
+
+    var body: some View {
+        Button(action: toggle) {
+            Image(systemName: watched ? "bell.fill" : "bell")
+                .font(.system(size: 9, weight: .medium))
+                // Never the accent: a red accent would read as a failure.
+                .foregroundStyle(watched ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .frame(width: 14, height: 14)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(shown ? 1 : 0)
+        .allowsHitTesting(shown)
+        .help(Self.help(watched: watched))
+        .accessibilityLabel(Self.actionName(watched: watched))
+        .accessibilityValue(watched ? "on" : "off")
+        .accessibilityHidden(!shown)
     }
 }
 
@@ -1077,10 +1142,15 @@ struct SessionContextMenu: View {
 struct AskCardPlate: View {
     let selected: Bool
     var quiet = false
+    /// The Try it ask wears violet, never the asks' amber.
+    var demo = false
 
     static let radius: CGFloat = 10
 
-    private var tint: Color { quiet ? .secondary : SessionActivity.waiting.tint }
+    private var tint: Color {
+        if demo { return DemoAskLook.tint }
+        return quiet ? .secondary : SessionActivity.waiting.tint
+    }
     private var top: Color { tint.opacity(selected ? 0.20 : 0.13) }
     private var bottom: Color { tint.opacity(selected ? 0.12 : 0.06) }
 
@@ -1112,6 +1182,14 @@ struct AskRow: View {
     /// dim, still, and stamped "snoozed until", never dressed as a fresh ask.
     private var snoozed: Bool { row.isSnoozed(now: store.now) }
 
+    /// The person opened this ask's chevron: its command, plan or edit
+    /// summary sits under the question, and the card is that much taller
+    /// (`PanelLayout.askDetailHeight`).
+    private var showsDetail: Bool { AskExpansion.shared.isShowing(row.ask) }
+
+    /// The Try it ask: violet, labelled "Demo", answering nothing.
+    private var isDemo: Bool { row.ask?.isDemo == true }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 9) {
@@ -1125,16 +1203,20 @@ struct AskRow: View {
                     AskWaitMark(since: store.answerPendingSince(row.ask), accent: row.style.accent,
                                 reduced: store.reduceMotion, active: store.marksMove && !snoozed)
                         .padding(.top, 3)
-                    Text(PanelStore.elapsed(since: row.ask?.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since, now: store.now) ?? " ")
+                    Text(ageText)
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
                 }
+            }
+            if showsDetail, let ask = row.ask {
+                AskDetailView(ask: ask, height: CGFloat(PanelLayout.askDetailHeight) - 6,
+                              onOpenSession: row.isRemote || ask.session == nil ? nil : { store.open(row) })
             }
             verbRow
         }
         .opacity(snoozed ? 0.55 : 1)
         .padding(.horizontal, 8)
-        .frame(height: CGFloat(PanelLayout.askRowHeight))
-        .background(AskCardPlate(selected: store.selectedID == row.id, quiet: snoozed))
+        .frame(height: CGFloat(PanelLayout.askRowHeight) + (showsDetail ? CGFloat(PanelLayout.askDetailHeight) : 0))
+        .background(AskCardPlate(selected: store.selectedID == row.id, quiet: snoozed, demo: isDemo))
         .overlay(
             RoundedRectangle(cornerRadius: AskCardPlate.radius, style: .continuous)
                 .inset(by: 1)
@@ -1149,7 +1231,13 @@ struct AskRow: View {
         .contentShape(Rectangle())
         .onTapGesture { store.open(row) }
         .help(row.help(now: store.now) ?? "")
-        .contextMenu { SessionContextMenu(row: row, store: store) }
+        .contextMenu {
+            if isDemo {
+                Button("Put the Demo Away") { store.dismissDemo() }
+            } else {
+                SessionContextMenu(row: row, store: store)
+            }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(accessibilityHint)
@@ -1160,9 +1248,11 @@ struct AskRow: View {
     /// modifier chain — inline, the concatenation of optionals left a
     /// slower CI runner's type checker timing out on the whole body.
     private var accessibilityLabel: String {
-        var label = "\(row.label) asks: \(row.ask?.summary ?? "")"
+        var label = "\(isDemo ? "Demo, not a real ask," : row.label) asks: \(row.ask?.summary ?? "")"
+        if let stale = row.ask?.staleLine(now: store.now) { label += ", \(stale)" }
         if let preview = row.ask?.previewLine { label += ", runs \(preview)" }
         if row.ask?.isDestructive == true { label += ", destructive" }
+        if let detail = row.ask?.detail { label += ", \(AskDetailCopy.noun(detail)) available" }
         return label
     }
 
@@ -1170,13 +1260,18 @@ struct AskRow: View {
     /// row's quiet states.
     private var titleLine: some View {
         HStack(spacing: 6) {
-            Text(row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-            Text(row.ask?.kind?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Ask")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.orange)
-                .lineLimit(1)
-                .padding(.horizontal, 5).padding(.vertical, 1.5)
-                .background(Capsule().fill(Color.orange.opacity(0.14)))
+            Text(isDemo ? DemoAsk.label : row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
+            if isDemo {
+                DemoAskBadge()
+            } else {
+                Text(row.ask?.kind?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Ask")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.orange)
+                    .lineLimit(1)
+                    .padding(.horizontal, 5).padding(.vertical, 1.5)
+                    .background(Capsule().fill(Color.orange.opacity(0.14)))
+            }
+            staleCapsule
             if row.ask?.isDestructive == true {
                 AskRiskMark(size: 10)
             }
@@ -1203,11 +1298,16 @@ struct AskRow: View {
             Text(row.ask?.summary ?? "Needs your answer")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-                .lineLimit(row.ask?.previewLine == nil ? 2 : 1)
-            if let preview = row.ask?.previewLine {
-                AskPreviewLine(text: preview, size: 10.5,
-                               tint: row.ask?.isDestructive == true ? Color.red.opacity(0.9) : Color.primary.opacity(0.75),
-                               well: true)
+                .lineLimit(row.ask?.previewLine == nil && row.ask?.hasDetail != true ? 2 : 1)
+            if let preview = row.ask?.previewLine, let ask = row.ask {
+                HStack(spacing: 2) {
+                    AskPreviewLine(text: preview, size: 10.5,
+                                   tint: ask.isDestructive ? Color.red.opacity(0.9) : Color.primary.opacity(0.75),
+                                   well: true)
+                    AskDetailToggle(ask: ask)
+                }
+            } else if let ask = row.ask, ask.hasDetail {
+                AskDetailToggle(ask: ask, labelled: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1239,6 +1339,7 @@ struct AskRow: View {
     private func verbs(now: Date) -> some View {
         HStack(spacing: 6) {
             Spacer()
+            staleDismiss
             if let ask = row.ask, !row.isRemote, let left = AskHold.remaining(ask, at: now) {
                 AskHoldRing(fraction: left, reduced: store.reduceMotion)
                     .help(AskHold.help(ask, at: now) ?? "")
@@ -1310,9 +1411,14 @@ struct AskRow: View {
                     .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
             } else if row.ask?.session != nil {
                 // Not answerable from the panel (the daemon said so, or
-                // it wants a reply this core will not take): the honest
-                // action is the session's own window.
-                Button(row.terminalApp.map { "Open in \($0)" } ?? "Open session") { store.open(row) }
+                // it wants a reply this core will not take): a view-only
+                // agent, or a host that cannot prove its focused tab. Say
+                // where to answer, plainly, and open that app. No verb is
+                // drawn for what no daemon could deliver.
+                Text(AskAnswerHost.line(host: row.answerHost))
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    .truncationMode(.tail)
+                Button(AskAnswerHost.buttonTitle(host: row.answerHost)) { store.open(row) }
                     .buttonStyle(PillButtonStyle(prominent: false))
                     .help(row.ask?.wantsTextReply == true
                           ? "This ask wants a typed reply — answer it in the session's window"
@@ -1322,6 +1428,56 @@ struct AskRow: View {
                 Text("answer it in its own window")
                     .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
             }
+        }
+    }
+
+    /// "may be stale": a long-unanswered ask is still an ask, and says so
+    /// beside its kind. The whole sentence with its age ("may be stale ·
+    /// asked 9 hours ago") is the capsule's tooltip and the row's spoken
+    /// label; the age in words is the column on the right.
+    @ViewBuilder
+    private var staleCapsule: some View {
+        if row.ask?.isStale == true {
+            Text("may be stale")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 5).padding(.vertical, 1.5)
+                .background(Capsule().fill(Color.primary.opacity(0.08)))
+                .help(staleHelp)
+        }
+    }
+
+    /// The capsule's tooltip: the whole sentence with the ask's age.
+    private var staleHelp: String {
+        let sentence = row.ask?.staleLine(now: store.now) ?? "may be stale"
+        return sentence + ". Nothing has been heard from this session for a long while, "
+            + "so the ask may already be settled. It stays here until you answer it, "
+            + "it ends, or you dismiss it."
+    }
+
+    /// The age column: a plain age normally, in words ("9 hours") once the
+    /// ask may be stale.
+    private var ageText: String {
+        let opened = row.ask?.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since
+        if row.ask?.isStale == true, let opened {
+            return CoreAsk.ageWords(store.now.timeIntervalSince(opened))
+        }
+        return PanelStore.elapsed(since: opened, now: store.now) ?? " "
+    }
+
+    /// One click to clear a stale ask from this Mac. Not an answer: the
+    /// agent is told nothing.
+    @ViewBuilder
+    private var staleDismiss: some View {
+        if isDemo {
+            Button("Put Away") { store.dismissDemo() }
+                .buttonStyle(PillButtonStyle(prominent: false))
+                .help("Take the demo down. Nothing was ever sent to an agent.")
+        } else if let ask = row.ask, ask.isDismissible, !row.isRemote {
+            Button("Dismiss") { store.dismissStaleAsk(ask) }
+                .buttonStyle(PillButtonStyle(prominent: false))
+                .help("Hide this ask on this Mac. \(row.style.name) is not told anything and its own prompt is unchanged.")
         }
     }
 
@@ -1513,7 +1669,9 @@ struct UsageQuietRow: View {
     @ViewState private var hovering = false
 
     private var providerNames: [String] {
-        providers.map { ProviderStyle.style(for: $0.id, document: store.settingsDocument).name }
+        providers.map {
+            UsageSourceNotes.displayName(ProviderStyle.style(for: $0.id, document: store.settingsDocument).name, instance: $0.instance)
+        }
     }
 
     var body: some View {
@@ -1561,7 +1719,7 @@ struct UsageQuietRow: View {
         )
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { store.openUsageCenter(provider: providers.count == 1 ? providers.first?.id : nil) }
+        .onTapGesture { store.openUsageCenter(provider: providers.count == 1 ? providers.first?.identity : nil) }
         .help(tooltip(names))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(tooltip(names))
@@ -1604,7 +1762,8 @@ struct UsageRow: View {
                 .alignmentGuide(.top) { $0[.top] + Self.tileLift }
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(style.name).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
+                    Text(UsageSourceNotes.displayName(style.name, instance: usage.instance))
+                        .fontWeight(.medium).lineLimit(1).truncationMode(.tail)
                     if let tag {
                         UsageTagText(tag: tag)
                             .help(tagHelp(tag))
@@ -1650,7 +1809,7 @@ struct UsageRow: View {
         )
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { store.openUsageCenter(provider: usage.id) }
+        .onTapGesture { store.openUsageCenter(provider: usage.identity) }
         .help("Open \(style.name) in the Usage Center")
         .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: primary?.usedPct)
         .accessibilityElement(children: .combine)
@@ -1741,7 +1900,7 @@ struct UsageSparklineView: View {
         }
         .frame(width: Self.width, height: Self.height)
         .help(Self.summary(self.values))
-        .accessibilityLabel("Last 7 days of tokens")
+        .accessibilityLabel("Last \(values.count) days of tokens")
         .accessibilityValue(Self.summary(self.values))
     }
 
@@ -1757,11 +1916,11 @@ struct UsageSparklineView: View {
         }
     }
 
-    /// "7 days · 41.2M tokens · today 6.1M".
+    /// "Last 7 days · 41.2M tokens · today 6.1M".
     static func summary(_ values: [Double]) -> String {
         let total = values.reduce(0, +)
         let today = values.last ?? 0
-        return "Last 7 days · \(UsageFormat.tokens(Int(total))) tokens · today \(UsageFormat.tokens(Int(today)))"
+        return "Last \(values.count) days · \(UsageFormat.tokens(Int(saturating: total))) tokens · today \(UsageFormat.tokens(Int(saturating: today)))"
     }
 }
 
@@ -2115,12 +2274,13 @@ struct PanelFooterLeading: View {
             } label: {
                 // "Quiet…" idle; "Paused 42m" while the daemon's focus
                 // says a quiet is in effect, in the waiting amber.
-                Text(store.quietLabel ?? "Quiet…")
+                Text(store.isQuietChanging ? "Changing…" : store.quietLabel ?? "Quiet…")
                     .lineLimit(1)
                     .foregroundStyle(store.quiet != nil ? SessionActivity.waiting.tint : .primary)
             }
             .menuStyle(.button)
             .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen, horizontalPadding: padding))
+            .disabled(!store.isLive || store.isQuietChanging)
             .menuIndicator(.hidden)
             .fixedSize()
             .help(quietHelp)
@@ -2148,7 +2308,7 @@ struct PanelFooterTrailing: View {
             if let hold = store.awakeHold {
                 // The hold on sleep is a mark, not a sentence: the words
                 // live in the tooltip, and a click opens the Power rows.
-                Button { store.openSettings(page: .notifications) } label: {
+                Button { store.openSettings(page: .alerts) } label: {
                     Image(systemName: hold.symbol).font(.system(size: 11, weight: .medium))
                 }
                 .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen, horizontalPadding: padding))
@@ -2263,20 +2423,17 @@ struct ToastView: View {
     let reduced: Bool
     var armed: Bool = true
 
-    /// One line's height of rounding: a capsule on one line, a soft
-    /// card when a toast with a button wraps to two.
+    /// A capsule on one line, a soft card when the message wraps.
     static let cornerRadius: CGFloat = 12
 
     var body: some View {
         ZStack {
             if let text {
                 HStack(spacing: 8) {
-                    // A toast with a button says why the button is there;
-                    // it wraps to a second line rather than cut the why.
                     Text(text)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.primary)
-                        .lineLimit(action == nil ? 1 : 2)
+                        .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let action {
                         Button(action.title) { action.run() }
@@ -2290,6 +2447,8 @@ struct ToastView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous).fill(.regularMaterial))
+                .background(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.96)))
                 .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
                     .strokeBorder(.primary.opacity(0.10), lineWidth: 0.5))
                 .padding(.horizontal, 14)
@@ -2299,6 +2458,11 @@ struct ToastView: View {
             }
         }
         .animation(PanelMotion.contents(reduced: reduced, armed: armed), value: text)
+        // The toast is the only report of an Approve, a refusal or a failed
+        // clear; VoiceOver hears it said, since nothing moves focus to it.
+        .onChange(of: text) {
+            if let text { AccessibilityNotification.Announcement(text).post() }
+        }
         // Click-through unless a button is on the capsule to click.
         .allowsHitTesting(action != nil)
     }

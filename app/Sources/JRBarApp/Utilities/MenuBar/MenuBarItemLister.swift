@@ -34,12 +34,13 @@ struct MenuBarItem: Equatable, Sendable {
     /// an item stacked under it from one on the row; never covered,
     /// never pressed.
     var isNativeOverflowControl: Bool = false
-    /// The owning app's bundle identifier — the concealer's key. nil
-    /// for a bare helper process, which the agent can never conceal.
+    /// The owning app's bundle identifier. nil
+    /// for a bare helper process.
     /// Resolved once, when the listing is taken, from the workspace's
     /// own snapshot: read through `owner` it was a fresh LaunchServices
     /// lookup per access (26 µs), about 150 of them a reconcile pass.
     var bundleID: String? = nil
+    var searchName: String? = nil
 
     /// The owning app, for the tile's icon and the always-hidden tile's
     /// raise — a LaunchServices lookup per read, so never on a pass.
@@ -74,6 +75,14 @@ enum MenuBarItemLister {
 
     nonisolated static func isProtected(ownerName: String) -> Bool {
         protectedOwnerNames.contains(ownerName)
+    }
+
+    /// The owners of the system's own items — the clock, Control Center,
+    /// Wi-Fi, battery: the protected owners minus our own family. Every
+    /// scan asks them, owners or not, and the icon's probe reads them on
+    /// their own: a seat that stood on one is the worst way to be wrong.
+    nonisolated static func isSystemOwner(ownerName: String) -> Bool {
+        isProtected(ownerName: ownerName) && !["JR-Bar", "JRBarApp"].contains(ownerName)
     }
 
     /// Whether the owner is a pinned system item — the clock, Control
@@ -153,35 +162,43 @@ enum MenuBarItemLister {
         Int(CGWindowLevelForKey(.popUpMenuWindow))
     }
 
-    /// Whether any of `pids` owns a menu-layer window — a status item's
-    /// menu currently open. A reveal must not fold the run out from
-    /// under a menu the person is reading.
+    /// Whether any of `pids` owns an onscreen menu-layer window.
+    /// The all-window snapshot also contains retained, closed menus.
+    /// Those must not keep the reveal open.
     nonisolated static func menuOpen(ownerPIDs: Set<pid_t>,
                                      infos: [[String: Any]]) -> Bool {
         infos.contains { info in
-            guard (info[kCGWindowLayer as String] as? NSNumber)?.intValue == menuWindowLayer,
+            guard (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true,
+                  (info[kCGWindowLayer as String] as? NSNumber)?.intValue == menuWindowLayer,
                   let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
             else { return false }
             return ownerPIDs.contains(pid)
         }
     }
 
-    /// The menu bar row in Quartz coordinates: the top of the main
-    /// display, `NSStatusBar.system.thickness` deep — or the notch's
-    /// depth where one reaches below it.
+    /// The screen whose row the divider measures. `NSScreen.main` follows
+    /// the key window and may belong to another display.
+    @MainActor
+    static var managedScreen: NSScreen? {
+        let display = CGMainDisplayID()
+        return NSScreen.screens.first {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display
+        } ?? NSScreen.screens.first
+    }
+
+    /// The menu bar row in Quartz coordinates, including the notch depth.
     @MainActor
     static func menuBarRow() -> CGRect {
         let main = CGDisplayBounds(CGMainDisplayID())
         let depth = max(NSStatusBar.system.thickness,
-                        NSScreen.main.map { ScreenBarGeometry.notchDepth(of: $0) } ?? 0)
+                        managedScreen.map { ScreenBarGeometry.notchDepth(of: $0) } ?? 0)
         return CGRect(x: main.minX, y: main.minY, width: main.width, height: max(depth, 1))
     }
 
     /// Every display's menu bar row — each screen carries its own strip
     /// in Quartz space, and an extras item reports the frame on the bar
     /// it actually stands on. A single main-display row misclassifies a
-    /// secondary-bar item as parked, which is how it would read to a
-    /// conceal sweep. Not a union rect: the dead space between two
+    /// secondary-bar item as parked. Not a union rect: the dead space between two
     /// displays' bars must not count as on-row.
     @MainActor
     static func menuBarRows() -> [CGRect] {
@@ -196,12 +213,6 @@ enum MenuBarItemLister {
                                width: bounds.width, height: max(depth, 1)))
         }
         return rows.isEmpty ? [menuBarRow()] : rows
-    }
-
-    /// Does `bounds` stand on any display's menu bar row.
-    @MainActor
-    static func onAnyMenuBarRow(_ bounds: CGRect) -> Bool {
-        menuBarRows().contains { $0.intersects(bounds) }
     }
 
     /// One window-list snapshot shared by `list` and the open-menu
@@ -237,6 +248,10 @@ enum MenuBarItemLister {
     /// after the write.
     @MainActor
     private(set) static var axGeneration = 0
+    /// The latest attempt answered every known or patiently probed owner.
+    /// Retained items remain useful for identity, but are not fresh geometry.
+    @MainActor
+    private(set) static var axInventoryComplete = false
 
     /// A scan is in flight — a second caller waits rather than piling
     /// another AX round trip onto tccd.
@@ -251,6 +266,7 @@ enum MenuBarItemLister {
     static func invalidateGeometry() {
         environmentGeneration &+= 1
         axItems = []
+        axInventoryComplete = false
         infosCache = nil
         trustCache = nil
         lastFullScanAt = .distantPast
@@ -261,13 +277,70 @@ enum MenuBarItemLister {
     static func invalidateMenuEdge() {
         menuEdgeGeneration += 1
         appMenuEdge = nil
+        noteBarActivity()
+    }
+
+    /// Bumped whenever something that can move the bar's items happened —
+    /// an app launched or quit, the screens changed, a reveal or a hide,
+    /// another app took the menu bar. The listing loops watch it: a
+    /// number that moved ends a long wait between scans and restarts the
+    /// quick pace.
+    @MainActor private(set) static var barActivity: UInt64 = 0
+
+    @MainActor
+    static func noteBarActivity() {
+        barActivity &+= 1
+    }
+
+    /// Whether anybody can see the bar: false while the displays sleep,
+    /// the screen is locked or the session is switched away. The listing
+    /// loops do not scan while it is false — their answers would go to a
+    /// bar nobody is looking at, and each scan is a round of Accessibility
+    /// calls into other apps.
+    @MainActor private(set) static var presence = DockTickPark()
+
+    /// Apply a display, lock or session notice; true when it ended the
+    /// parked stretch (the caller restarts whatever it paused).
+    @MainActor
+    @discardableResult
+    static func notePresence(_ event: DockTickPark.Event) -> Bool {
+        let change = presence.note(event)
+        if change == .resume { noteBarActivity() }
+        return change == .resume
+    }
+
+    /// A fresh start: nothing is asleep as far as this run knows.
+    @MainActor
+    static func resetPresence() {
+        presence = DockTickPark()
+    }
+
+    /// Whether the bar can be seen at all right now.
+    @MainActor
+    static var barIsVisible: Bool { !presence.parked }
+
+    /// Two scans of the same bar: the same items, owned by the same apps,
+    /// each within `tolerance` points of where it stood. The clock's
+    /// width, and with it everything left of it, moves a point or two
+    /// when its digits change, and its title is the time: neither is news.
+    nonisolated static func sameListing(_ a: [MenuBarItem], _ b: [MenuBarItem],
+                                        tolerance: CGFloat = 4) -> Bool {
+        guard a.count == b.count else { return false }
+        for (left, right) in zip(a, b) {
+            guard left.id == right.id, left.ownerPID == right.ownerPID,
+                  left.isNativeOverflowControl == right.isNativeOverflowControl,
+                  abs(left.bounds.minX - right.bounds.minX) <= tolerance,
+                  abs(left.bounds.maxX - right.bounds.maxX) <= tolerance,
+                  abs(left.bounds.minY - right.bounds.minY) <= tolerance else { return false }
+        }
+        return true
     }
 
     /// The right edge of the menus on the bar — the menu-bar owner's
     /// (`menuBarOwnerApp`) — refilled by each AX scan and, when the
     /// menu bar changes hands, by `refreshMenuEdge`. Items left of it
-    /// draw under menu text and are unreachable; the icon's mirror and
-    /// the concealer's reveal zone start right of it. nil when the
+    /// draw under menu text and are unreachable; the obscured frames
+    /// start right of it. nil when the
     /// owner did not answer its AXMenuBar.
     @MainActor
     private(set) static var appMenuEdge: CGFloat?
@@ -375,6 +448,11 @@ enum MenuBarItemLister {
     @MainActor
     static func noteLaunch(pids: [pid_t], at now: Date = Date()) {
         for pid in pids { launchProbes.noteLaunch(pid, at: now) }
+        if !pids.isEmpty {
+            axInventoryComplete = false
+            environmentGeneration += 1
+            noteBarActivity()
+        }
     }
 
     /// Apps quit: they are nobody's owner any more, and nothing is left
@@ -385,6 +463,11 @@ enum MenuBarItemLister {
             axOwnerPIDs.remove(pid)
             slowPIDs.remove(pid)
             launchProbes.noteQuit(pid)
+        }
+        if !pids.isEmpty {
+            axInventoryComplete = false
+            environmentGeneration += 1
+            noteBarActivity()
         }
     }
 
@@ -404,7 +487,15 @@ enum MenuBarItemLister {
                                         launched: Set<pid_t>, slow: Set<pid_t>) -> [MenuBarAX.Target] {
         apps.compactMap { app in
             let pid = app.pid
-            let owner = owners.contains(pid) || slow.contains(pid)
+            // The system's own owners are asked on every scan with the
+            // owners' long wait, whether or not a full walk found them
+            // last time: the walk replaces the owner set with whoever
+            // answered inside its short wait, and a MenuBarAgent that
+            // missed it once would drop out of every quick scan for two
+            // minutes — its battery and Wi-Fi unlisted, and the icon's
+            // seat free to stand on them.
+            let system = app.name.map { isSystemOwner(ownerName: $0) } ?? false
+            let owner = owners.contains(pid) || slow.contains(pid) || system
             let fresh = launched.contains(pid)
             guard walkAll || owner || fresh else { return nil }
             guard let name = app.name, !name.isEmpty else { return nil }
@@ -412,6 +503,40 @@ enum MenuBarItemLister {
             return MenuBarAX.Target(pid: pid, name: name, bundleID: app.bundleID,
                                     timeout: patient ? MenuBarAX.messagingTimeout : MenuBarAX.quickTimeout)
         }
+    }
+
+    struct AXPublication: Sendable {
+        var items: [MenuBarItem]
+        var owners: Set<pid_t>
+        var complete: Bool
+    }
+
+    @MainActor
+    static func publishAXInventory(_ publication: AXPublication) {
+        axItems = publication.items
+        axOwnerPIDs = publication.owners
+        axInventoryComplete = publication.complete
+    }
+
+    /// Incomplete owners keep their previous inventory, never a mixture
+    /// of old and partially read geometry. Complete empty answers remove it.
+    nonisolated static func mergeAXInventory(previous: [MenuBarItem], owners: Set<pid_t>,
+        scanned: [MenuBarItem], targeted: Set<pid_t>, incomplete: Set<pid_t>,
+        critical: Set<pid_t>, running: Set<pid_t>) -> AXPublication {
+        let retained = previous.filter {
+            running.contains($0.ownerPID) && (!targeted.contains($0.ownerPID) || incomplete.contains($0.ownerPID))
+        }
+        let answered = scanned.filter { running.contains($0.ownerPID) && !incomplete.contains($0.ownerPID) }
+        let found = Set(scanned.map(\.ownerPID)).intersection(running)
+        let keptOwners = owners.intersection(running).filter {
+            !targeted.contains($0) || incomplete.contains($0)
+        }
+        let nextOwners = Set(keptOwners).union(found)
+        let relevant = critical.union(owners).union(found)
+        let items = retained.isEmpty ? answered : (retained + answered).sorted { $0.bounds.minX < $1.bounds.minX }
+        return AXPublication(items: items,
+            owners: nextOwners,
+            complete: retained.isEmpty && incomplete.intersection(running).isDisjoint(with: relevant))
     }
 
     /// Re-run the AX scan off the main actor and refill `axItems`.
@@ -427,9 +552,8 @@ enum MenuBarItemLister {
         let rows = menuBarRows()
         let now = Date()
         let walkAll = full || walksAll(now: now, lastFull: lastFullScanAt, ownersKnown: !axOwnerPIDs.isEmpty)
-        // Our own app stays in the scan: its extras (spacers, the agent
-        // item, the combined item) list as protected, so they split
-        // cover runs instead of disappearing under a merged one.
+        // Our own app stays in the scan: its icon lists as protected, so
+        // it splits cover runs instead of disappearing under a merged one.
         let launched = launchProbes.pids(dueAt: now)
         let targets = scanTargets(apps: RunningApps.shared.apps, walkAll: walkAll, owners: axOwnerPIDs,
                                   launched: launched, slow: slowPIDs)
@@ -442,31 +566,32 @@ enum MenuBarItemLister {
         }.value
         guard !Task.isCancelled, environment == environmentGeneration,
               rows == menuBarRows() else { return axItems }
-        axItems = scanned.0.items
+        let running = Set(RunningApps.shared.apps.map(\.pid))
+        let targeted = Set(targets.map(\.pid))
+        // Unknown apps that exhausted a discovery probe remain retryable,
+        // but cannot freeze the bar without evidence that they own an item.
+        let critical = Set(targets.filter {
+            axOwnerPIDs.contains($0.pid) || launched.contains($0.pid) || isSystemOwner(ownerName: $0.name)
+        }.map(\.pid))
+        let publication = mergeAXInventory(previous: axItems, owners: axOwnerPIDs,
+            scanned: scanned.0.items, targeted: targeted, incomplete: scanned.0.incomplete,
+            critical: critical, running: running)
+        publishAXInventory(publication)
         // An edge re-read that started after this scan (the menu bar
         // changed hands mid-scan) saw the newer owner and stands.
         if edgeToken == menuEdgeGeneration { appMenuEdge = scanned.1 }
         axGeneration += 1
-        // A pid that quit mid-scan is nobody to ask again — `noteQuit`
-        // already struck it, so the answers it left stand only as items.
+        // Owners that quit mid-scan leave both the inventory and retry set.
         let found = Set(scanned.0.items.map(\.ownerPID))
-        let stillRunning = found.filter { RunningApps.shared.app(pid: $0) != nil }
         if walkAll {
-            axOwnerPIDs = Set(stillRunning)
             lastFullScanAt = now
-        } else {
-            // A launched or retried app that answered with items is an
-            // owner from now on.
-            axOwnerPIDs.formUnion(stillRunning)
         }
-        // Only a quick wait that ran out earns a retry; an app that
-        // outlasted the long one is left to the next full walk. A pid
-        // gone mid-scan outlasted nothing — it is not asked again.
+        // Incomplete discovery probes get the longer wait next time;
+        // known owners remain targets even when their longer read fails.
         let quick = Set(targets.lazy.filter { $0.timeout < MenuBarAX.messagingTimeout }.map(\.pid))
-        slowPIDs = scanned.0.timedOut.intersection(quick).subtracting(found)
-            .filter { RunningApps.shared.app(pid: $0) != nil }
+        slowPIDs = scanned.0.incomplete.intersection(quick).subtracting(found).intersection(running)
         launchProbes.spend(dueAt: now)
-        return scanned.0.items
+        return axItems
     }
 
     /// A listing begun after this call — never the snapshot a scan
@@ -491,7 +616,7 @@ enum MenuBarItemLister {
                   ProcessInfo.processInfo.systemUptime < deadline else { return nil }
             do { try await Task.sleep(nanoseconds: 20_000_000) } catch { return nil }
         }
-        guard environment == environmentGeneration else { return nil }
+        guard environment == environmentGeneration, axInventoryComplete else { return nil }
         return axItems
     }
 

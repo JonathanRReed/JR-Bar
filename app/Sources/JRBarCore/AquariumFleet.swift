@@ -27,8 +27,8 @@ public struct AquariumFleetFacts: Equatable, Sendable {
         self.codexCredits = codexCredits
     }
 
-    /// The facts in one applied document, stamped `now` — the moment the
-    /// tank saw each weekly reading.
+    /// The facts in one applied document. Weekly evidence keeps the source's
+    /// reading time; an unrelated session update cannot make it newer.
     public static func read(_ state: CoreState, now: Date) -> AquariumFleetFacts {
         var schools: [String: Int] = [:]
         var failed: [String] = []
@@ -44,11 +44,19 @@ public struct AquariumFleetFacts: Equatable, Sendable {
         var credits: [String: Double] = [:]
         let seen = now.timeIntervalSince1970
         for provider in state.usage?.providers ?? [] {
-            for window in provider.windows where window.shortName == "7d" {
+            guard provider.quotaSource, !provider.usageIsOff, !provider.isSignedOut,
+                  !provider.isStale else { continue }
+            switch provider.state?.lowercased() {
+            case nil, "ready", "ok": break
+            default: continue
+            }
+            for window in provider.windows where window.shortName == "7d" && window.bindable {
                 guard let used = window.usedPct, let resets = window.resetsAt,
-                      used.isFinite, resets.isFinite else { continue }
+                      let read = provider.readingAt,
+                      used.isFinite, (0...100).contains(used), resets.isFinite,
+                      read.isFinite, read > 0, read <= seen else { continue }
                 weekly["\(provider.identity)|\(window.id)"] =
-                    AquariumWeeklyReading(usedPct: used, resetsAt: resets, observedAt: seen)
+                    AquariumWeeklyReading(usedPct: used, resetsAt: resets, observedAt: read)
             }
             if provider.id == "codex", let balance = provider.creditsRemaining, balance.isFinite {
                 credits[provider.identity] = balance
@@ -66,8 +74,8 @@ public struct AquariumFleetFacts: Equatable, Sendable {
 public struct AquariumWeeklyReading: Codable, Equatable, Sendable {
     public var usedPct: Double
     public var resetsAt: Double
-    /// When the tank read it — a reset only counts as "under budget" if
-    /// the tank watched the window's last hours.
+    /// When the source read it. A reset only counts as "under budget" if
+    /// that reading came during the window's last hours.
     public var observedAt: Double
 
     public init(usedPct: Double, resetsAt: Double, observedAt: Double) {
@@ -168,9 +176,15 @@ public struct AquariumFleetLog: Codable, Equatable, Sendable {
     /// last reading was under the line.
     public static func endedUnderBudget(last: AquariumWeeklyReading,
                                         next: AquariumWeeklyReading) -> Bool {
-        next.resetsAt - last.resetsAt > 86_400
+        guard last.usedPct.isFinite, (0..<budgetPct).contains(last.usedPct),
+              next.usedPct.isFinite, (0...100).contains(next.usedPct),
+              last.resetsAt.isFinite, next.resetsAt.isFinite,
+              last.observedAt.isFinite, next.observedAt.isFinite,
+              last.observedAt > 0, last.observedAt <= last.resetsAt,
+              next.observedAt >= last.resetsAt, next.observedAt > last.observedAt,
+              next.observedAt <= next.resetsAt else { return false }
+        return next.resetsAt - last.resetsAt > 86_400
             && last.resetsAt - last.observedAt <= budgetWatchWindow
-            && last.usedPct < budgetPct
     }
 
     private enum CodingKeys: String, CodingKey {

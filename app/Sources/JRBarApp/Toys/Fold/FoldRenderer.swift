@@ -80,6 +80,76 @@ private func foldLogThrottled(_ message: String) {
 /// compiler, so the library is built at runtime and cached in the
 /// pipeline. A compile failure throws from `init`, which the toy
 /// reports once as "Fold can't start its renderer".
+/// The compiled shaders, built once per process and kept. Compiling the
+/// Metal source takes long enough to drop frames, so the toy asks for it
+/// off the main thread the moment it is on (`prewarm`); a renderer made
+/// later takes the finished pipelines instead of compiling on the first
+/// gesture. A failed compile is not kept, so the renderer's own retry
+/// still has something to retry.
+final class FoldShaderCache: @unchecked Sendable {
+    static let shared = FoldShaderCache()
+
+    struct Compiled {
+        let device: MTLDevice
+        let pipeline: MTLRenderPipelineState
+        let duoPipeline: MTLRenderPipelineState
+    }
+
+    private let lock = NSLock()
+    private var compiledByFormat: [UInt: Compiled] = [:]
+    private var warming: Set<UInt> = []
+    /// How many times the source was compiled — the tests prove a second
+    /// ask is free.
+    private(set) var compileCount = 0
+    /// What a compile is: swapped by the tests, which have no GPU.
+    var compile: @Sendable (MTLPixelFormat) throws -> Compiled = { format in
+        try FoldShaderCache.compileShaders(pixelFormat: format)
+    }
+
+    /// The pipelines for `pixelFormat`, compiling here if nobody has —
+    /// the caller waits out a compile that is already running.
+    func compiled(pixelFormat: MTLPixelFormat) throws -> Compiled {
+        lock.lock()
+        defer { lock.unlock() }
+        if let done = compiledByFormat[pixelFormat.rawValue] { return done }
+        let built = try compile(pixelFormat)
+        compileCount += 1
+        compiledByFormat[pixelFormat.rawValue] = built
+        return built
+    }
+
+    /// Starts the compile on a utility queue, once per format.
+    func prewarm(pixelFormat: MTLPixelFormat) {
+        lock.lock()
+        let wanted = compiledByFormat[pixelFormat.rawValue] == nil
+            && warming.insert(pixelFormat.rawValue).inserted
+        lock.unlock()
+        guard wanted else { return }
+        DispatchQueue.global(qos: .utility).async { [self] in
+            _ = try? compiled(pixelFormat: pixelFormat)
+            lock.lock()
+            warming.remove(pixelFormat.rawValue)
+            lock.unlock()
+        }
+    }
+
+    fileprivate static func compileShaders(pixelFormat: MTLPixelFormat) throws -> Compiled {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw FoldRendererError.noDevice }
+        let library = try device.makeLibrary(source: FoldRenderer.shaderSource, options: nil)
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = library.makeFunction(name: "foldVertex")
+        descriptor.fragmentFunction = library.makeFunction(name: "foldFragment")
+        descriptor.colorAttachments[0].pixelFormat = pixelFormat
+        let pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        let duoDescriptor = MTLRenderPipelineDescriptor()
+        duoDescriptor.vertexFunction = library.makeFunction(name: "foldVertex")
+        duoDescriptor.fragmentFunction = library.makeFunction(name: "duoFragment")
+        duoDescriptor.colorAttachments[0].pixelFormat = pixelFormat
+        let duoPipeline = try device.makeRenderPipelineState(descriptor: duoDescriptor)
+        return Compiled(device: device, pipeline: pipeline, duoPipeline: duoPipeline)
+    }
+}
+
 final class FoldRenderer: NSObject, @unchecked Sendable {
     /// Per-draw uniforms. `delta` is the lid's travel past the reference
     /// angle in radians (0 at activation, clamped at 1.25). `depths` is
@@ -87,7 +157,7 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
     /// `roomDepth` the far wall); `mode` 1 is the Reduce-Motion flat
     /// dimmed desktop. The Swift layout must match `FoldParams` in the
     /// shader source field-for-field.
-    struct Params {
+    struct Params: Equatable {
         var depths: SIMD4<Float> = .zero
         var cover: SIMD2<Float> = .init(1, 1)
         var imageSize: SIMD2<Float> = .init(1, 1)
@@ -179,24 +249,43 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
     /// sample it.
     private(set) var hasTexture = false
     private var textureGeneration: UInt64 = 0
-    /// Frames in flight past two drop instead of piling up GPU work.
-    private let inFlight = DispatchSemaphore(value: 2)
+    /// Frames in flight past two are not dropped: the newest wanted frame
+    /// is owed and drawn, from the latest params, the moment one lands.
+    private var gate = FoldDrawGate()
+    private let gateLock = NSLock()
+    /// What the last draw put on screen, so an unchanged frame is not
+    /// drawn again; nil forces the next one.
+    private var drawnParams: Params?
+    private var drawnGeneration: UInt64?
+    /// Called on the main queue when a frame was owed and the GPU has
+    /// room: the owner draws once, from the latest params.
+    var onRedrawNeeded: (@MainActor () -> Void)?
     var params = Params()
 
+    /// True when drawing now would put something new on screen: the
+    /// params moved, a picture landed or went, or a frame is owed.
+    var needsDraw: Bool {
+        drawnParams != params || drawnGeneration != textureGeneration
+    }
+
+    /// Forgets what is on screen: the next `needsDraw` is true. For a
+    /// window that was just ordered in or resized.
+    func invalidateDrawn() {
+        drawnParams = nil
+        drawnGeneration = nil
+    }
+
+    func noteDrawnFrame() {
+        drawnParams = params
+        drawnGeneration = textureGeneration
+    }
+
     init(pixelFormat: MTLPixelFormat) throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw FoldRendererError.noDevice }
+        let compiled = try FoldShaderCache.shared.compiled(pixelFormat: pixelFormat)
+        let device = compiled.device
         self.device = device
-        let library = try device.makeLibrary(source: Self.shaderSource, options: nil)
-        let descriptor = MTLRenderPipelineDescriptor()
-        descriptor.vertexFunction = library.makeFunction(name: "foldVertex")
-        descriptor.fragmentFunction = library.makeFunction(name: "foldFragment")
-        descriptor.colorAttachments[0].pixelFormat = pixelFormat
-        pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
-        let duoDescriptor = MTLRenderPipelineDescriptor()
-        duoDescriptor.vertexFunction = library.makeFunction(name: "foldVertex")
-        duoDescriptor.fragmentFunction = library.makeFunction(name: "duoFragment")
-        duoDescriptor.colorAttachments[0].pixelFormat = pixelFormat
-        duoPipeline = try device.makeRenderPipelineState(descriptor: duoDescriptor)
+        pipeline = compiled.pipeline
+        duoPipeline = compiled.duoPipeline
         gaussianPyramid = MPSSupportsMTLDevice(device) ? MPSImageGaussianPyramid(device: device) : nil
         guard let queue = device.makeCommandQueue() else { throw FoldRendererError.noDevice }
         self.queue = queue
@@ -385,10 +474,16 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         let generation = textureGeneration
         let ready = SendBox(texture)
         let width = texture.width, height = texture.height
-        command.addCompletedHandler { [weak self] _ in
+        command.addCompletedHandler { [weak self] completed in
             let keepAlive = retained
+            let succeeded = completed.status == .completed
+            let status = completed.status.rawValue
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.textureGeneration == generation else { return }
+                guard succeeded else {
+                    foldLogThrottled("texture upload did not complete: status=\(status)")
+                    return
+                }
                 if !self.hasTexture {
                     FoldLog.log.notice("renderer: first texture published \(width)x\(height)")
                 }
@@ -489,7 +584,15 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         let retained = RetainedFrame(buffer: pixelBuffer, texture: wrapped)
         command.addCompletedHandler { _ in withExtendedLifetime(retained) {} }
         command.commit()
+        invalidateDrawn()
         return true
+    }
+
+    /// A dead far stream falls back to the full picture immediately.
+    func invalidateFarFrame() {
+        guard farTexture != nil else { return }
+        farTexture = nil
+        invalidateDrawn()
     }
 
     /// The portal shader: a fullscreen triangle plus a fragment that
@@ -895,10 +998,19 @@ fragment float4 duoFragment(FoldOut in [[stage_in]],
 }
 
 extension FoldRenderer: MTKViewDelegate {
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        invalidateDrawn()
+    }
 
+    /// One frame, drawn only when the owner asks (`FoldOverlayWindow.drawFrame`
+    /// from the display-link tick, the same tick that wrote the params).
+    /// When two frames are already on the GPU the request is remembered
+    /// rather than lost, and met from the newest params when one lands.
     func draw(in view: MTKView) {
-        guard inFlight.wait(timeout: .now()) == .success else { return }
+        gateLock.lock()
+        let admitted = gate.request()
+        gateLock.unlock()
+        guard admitted else { return }
         autoreleasepool {
             view.clearColor = clearColor
             guard canDraw,
@@ -906,7 +1018,7 @@ extension FoldRenderer: MTKViewDelegate {
                   let drawable = view.currentDrawable,
                   let command = queue.makeCommandBuffer(),
                   let encoder = command.makeRenderCommandEncoder(descriptor: pass) else {
-                inFlight.signal()
+                frameFinished(redraw: false)
                 if !canDraw {
                     foldLogThrottled("draw: no texture for the look — overlay would paint clear")
                 }
@@ -916,10 +1028,54 @@ extension FoldRenderer: MTKViewDelegate {
                        aspect: view.drawableSize.width / max(1, view.drawableSize.height))
             encoder.endEncoding()
             command.present(drawable)
-            command.addCompletedHandler { [inFlight] _ in
-                inFlight.signal()
+            command.addCompletedHandler { [weak self] _ in
+                self?.frameFinished(redraw: true)
             }
             command.commit()
+            noteDrawnFrame()
         }
+    }
+
+    /// A frame left the GPU (or never made it there). If one was owed,
+    /// ask the owner to draw again on the main queue.
+    private func frameFinished(redraw: Bool) {
+        gateLock.lock()
+        let owed = gate.finished()
+        gateLock.unlock()
+        guard owed, redraw else { return }
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.onRedrawNeeded?() }
+        }
+    }
+}
+
+/// How many frames the GPU may hold, and the one request that waits.
+/// A request past the limit is not dropped: it is owed, and the next
+/// frame to finish hands it back, so the picture on screen is never
+/// older than the latest params by more than one frame in flight.
+struct FoldDrawGate: Sendable {
+    let limit: Int
+    private(set) var inFlight = 0
+    private(set) var owed = false
+
+    init(limit: Int = 2) { self.limit = max(1, limit) }
+
+    /// True: draw now. False: the GPU is full; the request is owed.
+    mutating func request() -> Bool {
+        guard inFlight < limit else {
+            owed = true
+            return false
+        }
+        inFlight += 1
+        return true
+    }
+
+    /// A drawn frame finished. True when a request is owed and there is
+    /// room for it now.
+    mutating func finished() -> Bool {
+        inFlight = max(0, inFlight - 1)
+        guard owed, inFlight < limit else { return false }
+        owed = false
+        return true
     }
 }

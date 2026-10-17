@@ -35,12 +35,19 @@ public struct KeepAwakeReading: Equatable, Sendable {
     public var suspended: String?
     /// Prevent idle display sleep too; this does not override lock policy.
     public var display: Bool
+    public var persistenceError: String?
     /// When the agents' post-work grace ends (`hold.grace_until`).
     public var graceUntil: Date?
     /// Will the run outlast the battery (`battery.runway`).
     public var runway: CoreBatteryRunway?
     /// The newest release worth reading (`power.last_release`).
     public var lastRelease: CorePowerRelease?
+    /// A hold is asked for (the agents' or the person's lease) and the
+    /// daemon says nothing is holding the Mac: its keep-awake process did
+    /// not start. `hold.active` false with no yield to explain it. The
+    /// chip and the footer say so instead of reading "Awake".
+    public var holdFailed = false
+    public var releaseFailed = false
     /// The closed-lid hold is up (`power.closed_lid.holding`): something
     /// holds the Mac even while the hold itself is off.
     public var lidHolding = false
@@ -53,13 +60,15 @@ public struct KeepAwakeReading: Equatable, Sendable {
     public static let releaseNewsFor: TimeInterval = 30 * 60
 
     public init(state: State, suspended: String? = nil, display: Bool = false, graceUntil: Date? = nil,
-                runway: CoreBatteryRunway? = nil, lastRelease: CorePowerRelease? = nil) {
+                runway: CoreBatteryRunway? = nil, lastRelease: CorePowerRelease? = nil,
+                persistenceError: String? = nil) {
         self.state = state
         self.suspended = suspended
         self.display = display
         self.graceUntil = graceUntil
         self.runway = runway
         self.lastRelease = lastRelease
+        self.persistenceError = persistenceError
     }
 
     /// The whole of `state.power`: the hold and the facts around it.
@@ -96,6 +105,11 @@ public struct KeepAwakeReading: Equatable, Sendable {
         self.init(state: state, suspended: suspended?.isEmpty == false ? suspended : nil,
                   display: hold.display == true,
                   graceUntil: hold.graceUntil.map { Date(timeIntervalSince1970: $0) })
+        if hold.persistenceError == "save_failed" || hold.persistenceError == "clear_failed" {
+            persistenceError = hold.persistenceError
+        }
+        holdFailed = state != .off && self.suspended == nil && hold.active == false
+        releaseFailed = hold.releaseFailed == true && hold.active == true
     }
 
     /// The app's own assertion, the fallback while the daemon is away: a
@@ -111,29 +125,48 @@ public struct KeepAwakeReading: Equatable, Sendable {
     /// The person's lease is in force: the chip's light, and what a tap
     /// on it ends. The agents' hold is theirs, said in the chip's word.
     public var leaseInForce: Bool {
+        if releaseFailed && state == .off { return true }
         if case .lease = state { return true }
         return false
     }
 
     /// The Mac is held awake right now — by the agents or the lease, and
     /// not stood aside for heat or the battery floor.
-    public var holding: Bool { state != .off && suspended == nil }
+    public var holding: Bool { releaseFailed || (state != .off && suspended == nil && !holdFailed) }
 
     /// A countdown is on show, so the chip's word needs a clock.
     public var showsCountdown: Bool {
+        if releaseFailed { return false }
         if case .lease(.until) = state { return suspended == nil }
         return false
     }
 
     /// Shared by the card and chip so neither promises to bypass security policy.
     public static let displaySleepHelp = "Prevents idle display sleep. Manual locking and system security policies still apply."
+    public static let agentSleepHelp = "Prevents idle system sleep while agents run. Power and thermal safeguards can pause the hold."
     public static let manualSessionHelp = "Turning this off ends only your manual session. Automatic agent holds and other apps may still keep the Mac awake."
+
+    public var persistenceWarning: String? {
+        switch persistenceError {
+        case "save_failed":
+            return "Keep Awake saved data could not be confirmed. The current hold is unchanged. Retry before restarting the monitor."
+        case "clear_failed":
+            if releaseFailed {
+                return "Saved Keep Awake data could not be cleared. Retry cleanup before restarting the monitor."
+            }
+            return "Saved Keep Awake data could not be cleared. The manual hold is stopped. Retry cleanup before restarting the monitor."
+        default:
+            return nil
+        }
+    }
 
     // MARK: The chip
 
     /// The chip's word under the cup — short enough for a chip.
     public func chipTitle(now: Date) -> String {
+        if releaseFailed { return "Still held" }
         if suspended != nil { return "Paused" }
+        if holdFailed { return "Not held" }
         switch state {
         case .off, .lease(.indefinite):
             return "Awake"
@@ -155,6 +188,13 @@ public struct KeepAwakeReading: Equatable, Sendable {
 
     private func holdHelp(now: Date) -> String {
         var text: String
+        if releaseFailed {
+            return "Keep Awake could not stop its hold. It is still preventing idle sleep. Try turning it off again."
+        }
+        if holdFailed {
+            let said = "Keep Awake could not start: the monitor asked for the hold but nothing is keeping the Mac awake."
+            return leaseInForce ? said + " Click to end your manual session and try again." : said
+        }
         switch state {
         case .off:
             return display
@@ -162,7 +202,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
                 : "Keep the Mac awake (the display may still sleep and lock)."
         case .agents(let count):
             if count > 0 {
-                text = "Held awake while \(Self.agents(count)) work — their own switch, under Settings › Notifications › Power. It lets go a few minutes after they stop. Click to keep it awake after that too."
+                text = "Held awake while \(Self.agents(count)) work — their own switch, under Settings › General › Power. It lets go a few minutes after they stop. Click to keep it awake after that too."
             } else if let end = graceEnd(now: now) {
                 text = "Held awake until \(clock(end)), a few minutes after the agents stopped. Click to keep it awake."
             } else {
@@ -191,7 +231,9 @@ public struct KeepAwakeReading: Equatable, Sendable {
     /// The panel footer's quiet line, and the shorter one for a crowded
     /// footer; nil while nothing holds the Mac or waits to.
     public func footerLine(now: Date) -> (full: String, short: String)? {
+        if releaseFailed { return ("Keep Awake could not stop its hold", "Still held") }
         if let why = suspendedWords { return ("Awake paused · \(why)", "Paused") }
+        if holdFailed { return ("Awake hold didn't start", "Not held") }
         // A run the battery or the charger will not carry outranks the
         // hold's own words: it is the one thing to act on. Only while
         // something holds the Mac, though — the daemon's charger verdict
@@ -203,6 +245,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
             }
             if runway?.adapterShort == true { return ("Awake · the charger can't keep up", "Charger short") }
         }
+        if persistenceWarning != nil { return ("Keep Awake change not saved", "Not saved") }
         switch state {
         case .off:
             return releaseNews(now: now)
@@ -240,6 +283,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
             lines.append(line)
         }
         if let release = releaseLine() { lines.append(release) }
+        if let persistenceWarning { lines.append(persistenceWarning) }
         return lines
     }
 
@@ -309,6 +353,7 @@ public struct KeepAwakeReading: Equatable, Sendable {
 
     /// Why the hold stepped aside, in the reader's words.
     public var suspendedWords: String? {
+        if releaseFailed { return nil }
         switch suspended {
         case nil: return nil
         case "thermal": return "too warm"

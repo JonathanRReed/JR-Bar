@@ -46,9 +46,7 @@ def test_codex_windows_keep_five_hour_seven_day_and_additional_limits__and_2_mor
     assert [window.percent_used for window in view.windows] == [22.0, 43.0, 68.0]
     assert view.windows[0].reset_at == "2026-08-12T05:00:00Z"
     assert view.windows[1].reset_at == 1_777_777_777
-    assert "5h 78% left" in view.menu_line
-    assert "7d 57% left" in view.menu_line
-    assert "weekly" not in view.menu_line.lower()
+    assert [window.percent_remaining for window in view.windows] == [78.0, 57.0, 32.0]
 
     # --- scenario: non_seven_day_primary_is_never_called_weekly
     view = build_provider_usage_view(
@@ -59,8 +57,8 @@ def test_codex_windows_keep_five_hour_seven_day_and_additional_limits__and_2_mor
         now=1_000.0,
     )
 
-    assert "24h" in view.settings_text
-    assert "weekly" not in view.settings_text.lower()
+    assert [window.duration_text for window in view.windows] == ["24h"]
+    assert view.windows[0].label == "primary"
 
     # --- scenario: claude_known_and_additional_windows_keep_duration_and_reset_values
     windows = claude_quota.windows_from_payload(
@@ -117,7 +115,6 @@ def test_malformed_percent_is_ignored_and_numeric_percent_is_clamped__and_2_more
     )
 
     assert [window.percent_used for window in view.windows] == [0.0, 100.0]
-    assert "lots" not in view.menu_line
 
     # --- scenario: capacity_remaining_is_clamped_and_usage_knowledge_is_explicit
     view = build_provider_usage_view(
@@ -156,9 +153,7 @@ def test_malformed_percent_is_ignored_and_numeric_percent_is_clamped__and_2_more
     assert window.reset_known is True
     assert window.percent_remaining is None
     assert window.reset_epoch == 1_767_225_600.0
-    assert window.reset_text(1_767_225_500.0) == "in 2m"
-    assert "0%" not in window.compact_text
-    assert "0%" not in view.menu_line
+    assert window.percent_used is None
 
 
 
@@ -182,8 +177,7 @@ def test_malformed_reset_is_omitted_without_hiding_valid_usage__and_2_more() -> 
     assert len(view.windows) == 1
     assert view.windows[0].usage_known is True
     assert view.windows[0].reset_known is False
-    assert view.windows[0].reset_text(1_000.0) is None
-    assert "75% left" in view.menu_line
+    assert view.windows[0].percent_remaining == 75.0
 
     # --- scenario: stale_last_known_good_data_remains_visible_with_provider_error
     view = build_provider_usage_view(
@@ -197,9 +191,8 @@ def test_malformed_reset_is_omitted_without_hiding_valid_usage__and_2_more() -> 
 
     assert view.stale is True
     assert view.missing is False
-    assert "5h 63% left" in view.menu_line
-    assert "stale" in view.menu_line.lower()
-    assert "temporarily unavailable" in view.settings_text
+    assert (view.windows[0].duration_text, view.windows[0].percent_remaining) == ("5h", 63.0)
+    assert view.error_text == "temporarily unavailable"
 
     # --- scenario: stale_last_known_good_keeps_remaining_but_withholds_reset_authority
     view = build_provider_usage_view(
@@ -224,7 +217,6 @@ def test_malformed_reset_is_omitted_without_hiding_valid_usage__and_2_more() -> 
     assert window.reset_epoch == 1_040.0
     assert window.reset_state is ResetState.STALE
     assert window.reset_known is False
-    assert window.reset_text(1_000.0) is None
 
 
 
@@ -263,21 +255,24 @@ def test_missing_refreshing_fresh_and_error_states_are_distinct__and_2_more() ->
     )
 
     states = {
-        missing.menu_line,
-        loading.menu_line,
-        fresh.menu_line,
-        partial.menu_line,
-        stale.menu_line,
-        error.menu_line,
+        (
+            view.missing,
+            view.refreshing,
+            view.stale,
+            view.partial,
+            view.error_text,
+            tuple(window.percent_remaining for window in view.windows),
+        )
+        for view in (missing, loading, fresh, partial, stale, error)
     }
     assert len(states) == 6
-    assert "not loaded" in missing.menu_line.lower()
-    assert "loading" in loading.menu_line.lower()
-    assert fresh.menu_line == "Codex · 5h 80% left"
-    assert "partial" in partial.menu_line.lower()
-    assert "18 files" in partial.menu_line
-    assert "stale" in stale.menu_line.lower()
-    assert "unavailable" in error.menu_line.lower()
+    assert missing.missing and not missing.refreshing and missing.error_text is None
+    assert loading.missing and loading.refreshing
+    assert not fresh.missing and not fresh.stale and not fresh.partial
+    assert fresh.windows[0].percent_remaining == 80.0
+    assert partial.partial and partial.source_text == "18 files"
+    assert stale.stale and not stale.missing
+    assert error.missing and error.error_text == "unavailable"
 
     # --- scenario: source_text_is_bounded_and_does_not_expose_absolute_paths
     view = build_provider_usage_view(
@@ -311,12 +306,12 @@ def test_missing_refreshing_fresh_and_error_states_are_distinct__and_2_more() ->
     assert view.windows == ()
     assert view.missing is False
     assert view.stale is False
-    assert "No usage yet" in view.menu_line
+    assert view.summary_text is None
 
 
 
-def test_settings_text_keeps_local_summary_alongside_rate_windows__and_2_more() -> None:
-    # --- scenario: settings_text_keeps_local_summary_alongside_rate_windows
+def test_local_summary_stays_beside_rate_windows__and_2_more() -> None:
+    # --- scenario: local_summary_stays_beside_rate_windows
     view = build_provider_usage_view(
         "codex",
         "Codex",
@@ -326,8 +321,8 @@ def test_settings_text_keeps_local_summary_alongside_rate_windows__and_2_more() 
         summary_text="Codex today: 3 sessions · 2M tokens",
     )
 
-    assert "Codex today: 3 sessions" in view.settings_text
-    assert "5h 80% left" in view.settings_text
+    assert view.summary_text == "Codex today: 3 sessions · 2M tokens"
+    assert (view.windows[0].duration_text, view.windows[0].percent_remaining) == ("5h", 80.0)
 
     # --- scenario: named_legacy_adapter_normalizes_used_first_once_and_preserves_null_zero
     windows = adapt_legacy_usage_windows(
@@ -352,7 +347,7 @@ def test_settings_text_keeps_local_summary_alongside_rate_windows__and_2_more() 
     ]
     assert [window.percent_used for window in windows] == [100.0, None]
 
-    # --- scenario: compact_capacity_copy_is_remaining_first_after_legacy_adaptation
+    # --- scenario: capacity_is_remaining_first_after_legacy_adaptation
     window = adapt_legacy_usage_windows(
         "codex",
         "Codex",
@@ -360,8 +355,9 @@ def test_settings_text_keeps_local_summary_alongside_rate_windows__and_2_more() 
         now=1_000.0,
     )[0]
 
-    assert window.compact_text == "5h 75% left"
-    assert "25%" not in window.compact_text
+    assert window.duration_text == "5h"
+    assert window.percent_remaining == 75.0
+    assert window.capacity.remaining == 75.0
 
 
 
@@ -389,9 +385,9 @@ def test_local_activity_and_cost_estimate_are_typed_sections_not_quota_lanes__an
     assert view.cost_estimate == estimate
     assert view.windows[0].percent_remaining == 80.0
     assert view.windows[0].capacity.state is ObservationState.OBSERVED
-    assert "3 sessions" in view.settings_text
-    assert "Estimated local cost" in view.settings_text
-    assert "partial" in view.menu_line.lower()
+    assert view.partial is True
+    assert view.summary_text == "Codex today: 3 sessions · 2M tokens"
+    assert view.cost_estimate.text == "Estimated local cost: $1.20"
 
     # --- scenario: claude_normalization_ignores_boolean_utilization_and_accepts_reset_alias
     windows = claude_quota.windows_from_payload(

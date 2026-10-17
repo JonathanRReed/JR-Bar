@@ -15,6 +15,7 @@ each of which alone is enough to freeze the dropdown:
 from __future__ import annotations
 
 import json
+import time
 
 from jrbar import ipc
 from jrbar.capacity_types import SourceKey
@@ -49,7 +50,9 @@ from jrbar.provider_facts import (
 
 def _trip_breaker(directory) -> None:
     (directory / "hook-send-breaker.json").write_text(
-        json.dumps({"failures": ipc.HOOK_BREAKER_TRIP_AFTER, "since": 2_000_000_000.0}),
+        # Tripped just now: inside the cooldown whatever day the test runs
+        # (a fixed epoch stopped meaning "now" in May 2033).
+        json.dumps({"failures": ipc.HOOK_BREAKER_TRIP_AFTER, "since": time.time()}),
         encoding="utf-8",
     )
 
@@ -311,6 +314,7 @@ def test_a_source_still_losing_is_not_released_by_the_lease__and_1_more() -> Non
     that shape -- so the app's own latest.json failed its own validator
     and every restart lost its warm start."""
     from jrbar.collector import (
+        _operator_state_from_document,
         _state_to_document,
         _v2_state_from_document,
     )
@@ -328,13 +332,16 @@ def test_a_source_still_losing_is_not_released_by_the_lease__and_1_more() -> Non
     assert jumped.timing_uncertain_sources
 
     document = _state_to_document(jumped)
-    restored = _v2_state_from_document(document)
+    restored, _ = _operator_state_from_document(document, restore_work_keys=())
     assert restored.timing_uncertain_sources == jumped.timing_uncertain_sources
     assert restored._source_timing == jumped._source_timing
 
     # And a document from the broken window (no source_timing, STABLE
     # clock, uncertain sources listed) HEALS instead of failing restore.
     legacy = dict(document)
+    legacy["version"] = 2
+    for field in ("work_order_marks", "request_order_marks", "source_order_floors"):
+        legacy.pop(field)
     legacy.pop("source_timing")
     legacy["clock_continuity"] = {
         "status": "stable",

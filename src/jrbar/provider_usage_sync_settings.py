@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+
+from .private_io import document_digest
 
 PROVIDER_SYNC_SETTINGS_SCHEMA_VERSION = 1
 _ALLOWED_CATEGORIES = ("quota", "token_usage", "agent_activity")
@@ -159,17 +160,6 @@ def default_provider_sync_settings_path(home: Path | None = None) -> Path:
     return base / ".config" / "jrbar" / "provider-sync.json"
 
 
-def _document_digest(document: dict[str, object]) -> str:
-    encoded = json.dumps(
-        document,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def _read_real_document(target: Path) -> dict[str, object]:
     from .private_io import read_private_text
 
@@ -226,7 +216,13 @@ def load_provider_sync_settings(
             None,
             target if real_path else None,
         )
-    source_revision = _document_digest(document)
+    try:
+        source_revision = document_digest(document)
+    except (ValueError, RecursionError):
+        return LoadedProviderSyncSettings(
+            defaults, True, tuple(document.items()), None,
+            target if real_path else None,
+        )
     version = document.get("settings_schema_version")
     if type(version) is not int or version > PROVIDER_SYNC_SETTINGS_SCHEMA_VERSION:
         return LoadedProviderSyncSettings(
@@ -245,7 +241,7 @@ def load_provider_sync_settings(
                 peers.append(peer)
     raw_categories = document.get("categories", defaults.categories)
     categories = (
-        tuple(value for value in raw_categories if value in _ALLOWED_CATEGORIES)
+        tuple(dict.fromkeys(value for value in raw_categories if value in _ALLOWED_CATEGORIES))
         if isinstance(raw_categories, list)
         else defaults.categories
     )
@@ -321,7 +317,7 @@ def save_provider_sync_settings(
     target = (default_provider_sync_settings_path() if path is None else Path(path)).expanduser().absolute()
     if loaded is not None and loaded.source_path == target:
         try:
-            current_revision = _document_digest(_read_real_document(target))
+            current_revision = document_digest(_read_real_document(target))
         except FileNotFoundError:
             current_revision = None
         except (OSError, UnicodeError, ValueError) as exc:

@@ -1,7 +1,7 @@
 import Foundation
 import JRBarCore
 
-/// Settings › Advanced › "Copy diagnostics": one plain-text block for a
+/// Settings › General › Advanced › "Copy diagnostics": one plain-text block for a
 /// bug report or a paste into a Claude session — the app's version,
 /// build and commit beside the daemon's (a mismatch said out loud), the
 /// Doctor's checks, every Setup permission and the core log's tail.
@@ -118,7 +118,7 @@ enum DiagnosticsReport {
     private nonisolated static func scalar(_ value: JSONValue) -> String? {
         switch value {
         case .bool(let on): return on ? "true" : "false"
-        case .number(let number): return number == number.rounded() ? "\(Int(number))" : "\(number)"
+        case .number(let number): return number == number.rounded() ? "\(Int(saturating: number))" : "\(number)"
         case .string(let text): return text
         case .null: return "null"
         case .array, .object: return nil
@@ -128,9 +128,10 @@ enum DiagnosticsReport {
     // MARK: Redaction
 
     /// `serve_token: abc…`, `"password": "…"`, `api_key=…` — the value
-    /// after a secret-sounding key.
+    /// after a secret-sounding key, also inside a JSON string that was
+    /// itself logged (`{\"serve_token\":\"abc…\"}`).
     private static let secretPair = try! NSRegularExpression(
-        pattern: #"(?i)(\w*(?:token|secret|password|passwd|api[_-]?key|cookie)\w*)(["']?\s*[:=]\s*["']?)([^\s"',;}]{6,})"#)
+        pattern: #"(?i)(\w*(?:token|secret|password|passwd|api[_-]?key|cookie)\w*)(\\*["']?\s*[:=]\s*\\*["']?)([^\s"',;}\\]{6,})"#)
     /// `Bearer abc…` / `Authorization: Basic abc…`.
     private static let scheme = try! NSRegularExpression(
         pattern: #"(?i)\b(bearer|basic)(\s+)([A-Za-z0-9._~+/=-]{8,})"#)

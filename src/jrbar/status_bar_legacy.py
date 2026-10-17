@@ -57,6 +57,8 @@ from . import (
 )
 
 from . import colors as colors_module
+from . import firmware_hold
+from . import ntfy_alert as ntfy_alert_module
 from . import signals as signals_module
 from .accessibility_display import (
     AccessibilityDisplayPreferences,
@@ -92,12 +94,21 @@ from .animation import (
     problems_for_program,
 )
 from .product_identity import PRODUCT_DISPLAY_NAME
+from .ask_dismissals import (
+    AskDismissals,
+    default_ask_dismissals_path,
+    load_ask_dismissals,
+    save_ask_dismissals,
+)
+from .ask_lifetime import expire_after_seconds_for, stale_after_seconds_for
 from .attention import (
     AttentionProjection,
     LifecycleMode,
+    mark_stale_asks,
     project_attention,
     quiet_worker_request_keys,
     regate_actionable_attention,
+    settle_completed_for_lights,
 )
 from .audit import (
     remove_orphaned_state_files,
@@ -139,6 +150,7 @@ from .brightness_policy import (
 )
 from .dnd_controller import DndChangeResult, DndController
 from .dnd_policy import (
+    MAX_DND_OVERRIDE_SECONDS,
     DisplayAdmission,
     DndMode,
     DndOverride,
@@ -206,8 +218,8 @@ from .completion_visibility import (
     select_clearable_completions,
     select_unseen_completions,
 )
+from .capacity_limit_feedback import is_capacity_terminal
 from .clear_agents import (
-    ClearAgentsCommitPlan,
     ClearAgentsPreview,
     ClearAgentsState,
     completion_presentation_key,
@@ -243,6 +255,7 @@ from .device_writer import (
     validate_led_text,
     write_led_program,
 )
+from .finish_summary import summaries_for_finished
 from .freshness import bounded_age_seconds, is_recent
 from .installed_agent_inventory import (
     InstalledAgentInventoryResult,
@@ -271,7 +284,12 @@ from .ipc import (
     default_event_socket_path,
     default_latest_state_path,
 )
-from .keep_awake import battery_yields_hold, KEEPALIVE_FILE_NAME, KeepAwakeController
+from .keep_awake import (
+    KEEPALIVE_FILE_NAME,
+    KeepAwakeController,
+    battery_yields_hold,
+    fresh_battery_snapshot,
+)
 from .celebrations import reset_celebration_program
 from .hardware_write_policy import hardware_coalesce_key, hardware_write_policy
 from .hardware_write_contract import validate_hardware_write_metadata
@@ -436,6 +454,7 @@ from .remote_peers import (
     local_machine_name,
     merge_ledger,
     publish_local_ledger,
+    quiet_ticks_to_skip,
 )
 from .render_policy import runtime_render_environment
 from .reset_policy import (
@@ -869,26 +888,25 @@ class CalendarObservationRequest:
 @dataclass(frozen=True, slots=True)
 class CalendarObservationResult:
     available: bool
-    starts_in_seconds: float | None
+    starts_at_monotonic: float | None
 
     def __post_init__(self) -> None:
         if type(self.available) is not bool:
             raise ValueError("invalid calendar availability")
-        starts_in_seconds = self.starts_in_seconds
+        starts_at_monotonic = self.starts_at_monotonic
         if not self.available:
-            if starts_in_seconds is not None:
+            if starts_at_monotonic is not None:
                 raise ValueError("unavailable calendar cannot contain an event")
             return
-        if starts_in_seconds is None:
+        if starts_at_monotonic is None:
             return
         if (
-            not isinstance(starts_in_seconds, (int, float))
-            or isinstance(starts_in_seconds, bool)
-            or not math.isfinite(float(starts_in_seconds))
-            or not 0.0 <= float(starts_in_seconds) <= 3600.0
+            not isinstance(starts_at_monotonic, (int, float))
+            or isinstance(starts_at_monotonic, bool)
+            or not math.isfinite(float(starts_at_monotonic))
         ):
-            raise ValueError("invalid calendar event offset")
-        object.__setattr__(self, "starts_in_seconds", float(starts_in_seconds))
+            raise ValueError("invalid calendar event deadline")
+        object.__setattr__(self, "starts_at_monotonic", float(starts_at_monotonic))
 
 
 MAX_REMINDER_OBSERVATION_IDENTIFIERS = 256
@@ -1156,7 +1174,6 @@ ATTENDED_COMPLETION_QUIET_SECONDS = 120.0
 PRESENTATION_TIMER_BINDINGS: tuple = (
     (RuntimeFeature.PRESENTATION_FRAME_FALLBACK, "_presentation_frame_fallback_fired"),
     (RuntimeFeature.PRESENTATION_STATIC_DEADLINE, "_presentation_static_deadline_fired"),
-    (RuntimeFeature.ALCOVE_OBSERVATION, "_presentation_alcove_observation_fired"),
     (RuntimeFeature.POINTER_PEEK, "_presentation_pointer_peek_fired"),
     (RuntimeFeature.LID_OBSERVATION, "_lid_observation_timer_fired"),
     (RuntimeFeature.DEVICE_INVENTORY, "_device_inventory_timer_fired"),
@@ -1236,12 +1253,6 @@ LID_OBSERVATION_ANIMATION_SECONDS = 4.0
 # Event-driven refreshes run at most this often; bursts coalesce into
 # one trailing refresh. Direct refresh_(None) calls stay synchronous.
 EVENT_REFRESH_FLOOR_SECONDS = 0.25
-# Display kinds that are MOMENTS demanding attention -- they render at
-# the device's configured brightness, not the auto/idle/Focus-dimmed
-# ambient level ("the flashing light is very dim even though its
-# brightness should be 100%"). An explicit per-Focus "Turn off" (scale
-# exactly 0) still silences them.
-SIGNAL_DISPLAY_KINDS = frozenset({LED_DISPLAY_FAILURE})
 # Ledger edges that double as opt-in webhook moments. ``COMPLETED`` is
 # absent on purpose: ``track_completions`` owns the completion edge (its
 # "whole family finished" rule is stricter than a per-row mode change)
@@ -1259,7 +1270,6 @@ DEVICE_DISCOVERY_CACHE_SECONDS = 1.0
 # Green unseen-done tip: shorter than the menu badge's window.
 GAUGE_UNSEEN_COMPLETION_SECONDS = 300.0
 SCREEN_BAR_FEATURE_ENABLED = True
-STATUS_BAR_MAX_LINES_PER_SOURCE = 500
 STATUS_BAR_STARTUP_REPLAY_LINES = 200
 LID_ANIMATION_RESTORE_FUDGE_SECONDS = 0.15
 LID_ANIMATION_LABELS = {
@@ -1720,8 +1730,12 @@ class StatusBarController(NSObject):
         self.clear_agents_state = ClearAgentsState()
         self.clear_agents_restore_health = ClearAgentsRestoreHealth.MISSING
         self.clear_agents_path = default_clear_agents_path()
+        # The asks the person dismissed, and the sessions whose ask expired
+        # (``ask_dismissals``). Empty until ``load_operator_local_state``
+        # reads the file; no path means nothing is written.
+        self.ask_dismissals = AskDismissals()
+        self.ask_dismissals_path: Path | None = None
         self._clear_agents_preview: ClearAgentsPreview | None = None
-        self._clear_agents_commit_plan: ClearAgentsCommitPlan | None = None
         self._clear_agents_operation_pending = False
         self.failure_signal_coordinator = FiniteSignalCoordinator()
         self.failure_signal_watermark_established = False
@@ -1963,6 +1977,7 @@ class StatusBarController(NSObject):
             "reminders_glow_until",
             "calendar_glow_until",
             "quota_blink_until",
+            "_capacity_notice_until",
             "quota_reset_celebration_until",
             "battery_preview_until",
             "test_signal_until",
@@ -2247,6 +2262,7 @@ class StatusBarController(NSObject):
         # A fresh snapshot is not required to restore the underlying
         # projection. This explicit timer invalidation repaints at the
         # exact end of the second visible pulse.
+        self._production_force_refresh = True
         self.refresh_(None)
 
     def update_attention_projection(
@@ -2274,7 +2290,21 @@ class StatusBarController(NSObject):
         live_request_keys = self._live_actionable_request_keys()
         if live_request_keys is not None:
             projection = regate_actionable_attention(projection, live_request_keys)
+        # An ask that has waited past the "may be stale" mark stays an ask,
+        # flagged so the strip pulses it more calmly (``ask_lifetime``).
+        projection = mark_stale_asks(
+            projection,
+            now_epoch=time.time(),
+            stale_after_seconds=stale_after_seconds_for(self.settings),
+        )
         self.current_attention_projection = projection
+        from .capacity_limit_feedback import update_capacity_limit_alert
+
+        update_capacity_limit_alert(
+            self, projection, wall_now=time.time(), monotonic_now=observed_at,
+            signal_kind=signals_module.SIGNAL_QUOTA,
+            operator_events=getattr(snapshot, "operator_events", ()),
+        )
         # Light-row flight recorder: one line whenever the set of rows
         # allowed to paint the strip changes. Diagnosing "why is the
         # strip that color" from outside the process is impossible
@@ -2418,7 +2448,8 @@ class StatusBarController(NSObject):
                 ):
                     actionable_episode_key += ":stage2"
         failure = next(
-            (event for event in operator_events if event.kind is TransitionKind.FAILED),
+            (event for event in operator_events
+             if event.kind is TransitionKind.FAILED and not is_capacity_terminal(event)),
             None,
         )
         completion = next(
@@ -2837,16 +2868,29 @@ class StatusBarController(NSObject):
                 False,
             )
 
-        threading.Thread(
-            target=_fetch,
-            daemon=True,
-            name="jrbar-remote-peers",
-        ).start()
+        try:
+            threading.Thread(
+                target=_fetch,
+                daemon=True,
+                name="jrbar-remote-peers",
+            ).start()
+        except Exception:
+            self._remote_peers_refresh_running = False
+            log_status_bar("remote_peers refresh could not start")
 
     @objc.IBAction
     def applyRemotePeerRefresh_(self, result) -> None:
         self._remote_peers_refresh_running = False
         if type(result) is not PeerRefreshResult:
+            return
+        active = self.settings.remote_peers.normalized()
+        if not active.enabled:
+            had_peers = bool(self._remote_refresh.ledgers or self._remote_refresh.health)
+            self._remote_refresh = PeerRefreshResult()
+            if had_peers:
+                self.refresh_(None)
+            return
+        if result.request_settings is not None and result.request_settings != active:
             return
         changed = remote_refresh_signature(result) != remote_refresh_signature(
             self._remote_refresh
@@ -2868,6 +2912,17 @@ class StatusBarController(NSObject):
                 publish("peer_departed", label=machine)
         self._remote_refresh_ever_applied = True
         self._remote_refresh = result
+        # A round that found no machine at all says the same next minute:
+        # the minute-timer lets ticks pass until one finds somebody.
+        if result.ledgers or result.health:
+            self._remote_peers_quiet_rounds = 0
+        else:
+            self._remote_peers_quiet_rounds = (
+                getattr(self, "_remote_peers_quiet_rounds", 0) + 1
+            )
+        self._remote_peers_ticks_to_skip = quiet_ticks_to_skip(
+            self._remote_peers_quiet_rounds
+        )
         # A refresh per minute that changes nothing is a rebuild of the
         # whole dropdown for no reason; only a real change re-renders.
         if changed:
@@ -2875,6 +2930,10 @@ class StatusBarController(NSObject):
 
     @objc.IBAction
     def refreshRemotePeers_(self, _sender):
+        skip = getattr(self, "_remote_peers_ticks_to_skip", 0)
+        if skip > 0:
+            self._remote_peers_ticks_to_skip = skip - 1
+            return
         self.start_remote_peer_refresh()
 
     def start_remote_peer_timer(self) -> None:
@@ -4323,7 +4382,7 @@ class StatusBarController(NSObject):
 
     def _set_dnd_for_duration(self, mode: DndMode, seconds: float) -> bool:
         now = time.time()
-        duration = min(7 * 24 * 60 * 60.0, max(60.0, float(seconds)))
+        duration = min(MAX_DND_OVERRIDE_SECONDS, max(60.0, float(seconds)))
         override = DndOverride.for_mode(
             mode,
             created_epoch=now,
@@ -4346,9 +4405,8 @@ class StatusBarController(NSObject):
             success_message=f"DND {label} for {duration_text}.",
         )
 
-    @objc.IBAction
-    def endDndOverride_(self, _sender):
-        self._finish_dnd_change(
+    def _end_dnd_override(self) -> bool:
+        return self._finish_dnd_change(
             self.dnd_controller.set_override(None),
             success_message="Temporary DND override ended.",
         )
@@ -4562,10 +4620,14 @@ class StatusBarController(NSObject):
         if not isinstance(projection, AttentionProjection):
             projection = projection_for_statuses(projection, self.settings)
         acknowledged = self._acknowledged_request_keys()
+        # An ask that may be stale (``ask_lifetime``) is still shown, but it
+        # earns no escalation: no ramp, no chime, no webhook, no new episode
+        # when the daemon restarts. The person left it a long time ago.
         current = {
             row.agent_id
             for row in projection.actionable_attention
             if row.agent_id
+            and not getattr(row, "ask_may_be_stale", False)
             and (
                 row.request_key is None
                 or row.request_key not in acknowledged
@@ -4672,6 +4734,10 @@ class StatusBarController(NSObject):
             return
         self._store_activity_ledger(updated)
         for entry in entries:
+            if entry.kind is ActivityKind.ASKED:
+                self.post_phone_alert(
+                    ntfy_alert_module.KIND_NEEDS_YOU, entry.provider
+                )
             event_key = _WEBHOOK_EVENT_BY_ACTIVITY_KIND.get(entry.kind)
             if event_key is None or not self.webhook_event_enabled(event_key):
                 continue
@@ -4809,15 +4875,18 @@ class StatusBarController(NSObject):
             if state in FALLBACK_OBSERVATION_STATES
         }
         current: dict[str, float] = {}
-        labels: dict[str, tuple[str, str]] = {}
+        labels: dict[str, tuple[str, str, str]] = {}
         for lane in getattr(authorised, "lanes", ()):
             remaining = lane.value.remaining
             if remaining is None or lane.semantic_name in forgiven:
                 continue
             provider = lane.key.source.provider_id
-            key = f"{provider}:{lane.semantic_name}"
+            source_instance = lane.key.source.source_instance_id
+            instance = "default" if source_instance == "global" else source_instance
+            key = (f"{provider}:{lane.semantic_name}" if instance == "default"
+                   else f"{provider}:{instance}:{lane.semantic_name}")
             current[key] = max(0.0, min(100.0, 100.0 - float(remaining)))
-            labels[key] = (provider, lane.semantic_name)
+            labels[key] = (provider, lane.semantic_name, instance)
         if not current:
             return ()
         previous = getattr(self, "_activity_quota_percents", {})
@@ -4829,7 +4898,9 @@ class StatusBarController(NSObject):
         self._activity_quota_percents = previous
         entries: list[ActivityEntry] = []
         for key, threshold in crossings:
-            provider, semantic_name = labels[key]
+            provider, semantic_name, instance = labels[key]
+            from .provider_event_identity import controller_event_identity, instance_event_label
+            visual, privacy = controller_event_identity(self)
             label = safe_activity_text(
                 f"{provider_label(provider)} {semantic_name}",
                 MAX_ACTIVITY_LABEL_LENGTH,
@@ -4845,6 +4916,8 @@ class StatusBarController(NSObject):
                         safe_activity_text(provider, 32) or "unknown",
                         None,
                         f"{threshold:g}%",
+                        source_instance_id=instance,
+                        instance_label=instance_event_label(visual, provider, instance, privacy_mode=privacy),
                     )
                 )
             except (ActivityValidationError, ValueError):
@@ -4983,6 +5056,10 @@ class StatusBarController(NSObject):
             tuple(statuses_by_id.values()),
             observed_at,
         )
+        # What each finishing session last said, as one scrubbed line. It
+        # rides the live ``completed`` event only (the ledger row stays
+        # metadata) and is replaced by the next tick's batch.
+        self._completion_summaries = summaries_for_finished(batch.statuses)
         # The ledger records BEFORE the early return below: an ask and an
         # error are news whether or not anything completed on the same tick,
         # and this is the one place that still holds the previous modes.
@@ -5003,6 +5080,8 @@ class StatusBarController(NSObject):
                         (status,),
                         ActivityKind.ASKED
                         if status.mode == AgentMode.WAITING_FOR_INPUT
+                        else ActivityKind.CAPACITY_LIMITED
+                        if status.is_capacity_limited
                         else ActivityKind.BLOCKED,
                     )
                 ),
@@ -5060,6 +5139,9 @@ class StatusBarController(NSObject):
                         "completion notification routing failed "
                         f"({status.agent_id[:60]}): {exc}"
                     )
+
+        for status in batch.statuses:
+            self.post_phone_alert(ntfy_alert_module.KIND_FINISHED, status.provider)
 
         if self.webhook_event_enabled("completion"):
             for status in batch.statuses:
@@ -5373,6 +5455,41 @@ class StatusBarController(NSObject):
         return bool(
             kind is not None and self.interrupt_grant(kind).webhook_allowed
         )
+
+    def phone_alerts_service(self) -> ntfy_alert_module.PhoneAlerts:
+        service = getattr(self, "_jrbar_phone_alerts", None)
+        if service is None:
+            service = ntfy_alert_module.PhoneAlerts(log=log_status_bar)
+            self._jrbar_phone_alerts = service
+        return service
+
+    def post_phone_alert(self, kind: str, provider_id: object) -> None:
+        """The phone alert (ntfy_alert.py): "<Agent> needs you" or "<Agent>
+        finished", only when the person turned it on with a topic, only while
+        they are away by default, and only where the quiet policy lets a
+        notification-webhook effect through. A fixed line: nothing about the
+        session, prompt or project rides along. Never raises into AppKit."""
+        if getattr(self.settings, "ntfy_enabled", False) is not True:
+            return
+        try:
+            event = (
+                "jrbar.ask_opened"
+                if kind == ntfy_alert_module.KIND_NEEDS_YOU
+                else "jrbar.completion"
+            )
+            if not self.webhook_effect_allowed({"event": event}):
+                return
+            facts = getattr(self, "_core_presence", None)
+            away = bool(
+                facts is not None
+                and callable(getattr(facts, "away", None))
+                and facts.away(time.time())
+            )
+            self.phone_alerts_service().alert(
+                self.settings, kind, provider_id, presence_away=away
+            )
+        except Exception as exc:
+            log_status_bar(f"phone alert routing failed: {exc}")
 
     def post_webhook(self, payload_dict: dict) -> None:
         """The outbound bridge: one JSON POST on a daemon thread to the
@@ -5934,12 +6051,18 @@ class StatusBarController(NSObject):
 
     def build_monitor(self) -> LiveAgentMonitor:
         socket_path = default_event_socket_path()
-        return LiveAgentMonitor(
+        monitor = LiveAgentMonitor(
             sources=(SourceSpec("event-bus", socket_path),),
             stale_after_seconds=3600,
             latest_state_path=default_latest_state_path(),
             acknowledged_requests_supplier=self._acknowledged_request_keys,
         )
+        monitor.dismissed_asks_supplier = self._dismissed_ask_keys
+        return monitor
+
+    def _dismissed_ask_keys(self) -> frozenset:
+        """The asks the person dismissed locally (``ask_dismissals``)."""
+        return self.ask_dismissals.keys()
 
     def build_transcript_monitor(self) -> AgentMonitor | None:
         """The transcript-fallback scanner behind the Agents pane's
@@ -6071,6 +6194,7 @@ class StatusBarController(NSObject):
                 self.handle_hook_event_message,
                 appended_handler=self.handle_appended_hook_line,
                 deduplicator_for=self.resident_hook_deduplicators(),
+                confine_to=default_state_dir(),
             ),
             receipt_handler=self._record_hook_ingress_receipt,
             statusline_enabled=lambda: bool(getattr(self.settings, "claude_statusline_source", False)),
@@ -6168,7 +6292,10 @@ class StatusBarController(NSObject):
             sweeper = ProcessSweeper()
             self._process_sweeper = sweeper
         try:
-            statuses = tuple(self.monitor.current_statuses_by_key().values())
+            candidates = getattr(self.monitor, "liveness_statuses_by_key", None)
+            if not callable(candidates):
+                candidates = self.monitor.current_statuses_by_key
+            statuses = tuple(candidates().values())
         except Exception as exc:
             log_status_bar(f"liveness sweep skipped: {exc}")
             return False
@@ -6184,6 +6311,9 @@ class StatusBarController(NSObject):
                 statuses,
                 sweeper=sweeper,
                 refresh_hint_handler=_reconcile,
+                now=time.time(),
+                ask_stale_after_seconds=stale_after_seconds_for(self.settings),
+                ask_expire_after_seconds=expire_after_seconds_for(self.settings),
             )
         except Exception as exc:
             log_status_bar(f"liveness sweep error: {exc}")
@@ -6191,10 +6321,12 @@ class StatusBarController(NSObject):
         # The live half of the same answer. The silence timer would
         # otherwise call a long, quiet tool run "ended (unconfirmed)" while
         # its process is right there in the table.
+        live_changed = False
         try:
-            self.monitor.note_live_sessions(result.live_sessions)
+            live_changed = bool(self.monitor.note_live_sessions(result.live_sessions))
         except Exception as exc:
             log_status_bar(f"liveness sweep live set skipped: {exc}")
+        self._record_expired_asks(result)
         for dead in result.ended_sessions:
             log_status_bar(
                 "liveness: ended "
@@ -6206,15 +6338,51 @@ class StatusBarController(NSObject):
                 f"liveness: {result.failed_sends} end event write(s) failed; "
                 "sessions still looking live will be re-ended"
             )
-        return bool(result.ended_sessions)
+        idled = getattr(result, "idled_sessions", 0)
+        if idled:
+            log_status_bar(
+                f"liveness: ended {idled} Claude turn(s) the session file reports idle"
+            )
+        return live_changed or bool(result.ended_sessions) or bool(idled) or bool(result.expired_asks)
+
+    def _record_expired_asks(self, result) -> None:
+        """Say out loud that an ask expired unanswered.
+
+        The sweep already ended each such session through the ordinary hook
+        pipeline. Here the Mac remembers that the end was its own (so the row
+        reads "ended", never "done") and writes the History row, so an ask
+        never silently vanishes (``ask_lifetime``).
+        """
+        expired = tuple(getattr(result, "expired_asks", ()) or ())
+        if not expired:
+            return
+        store = self.ask_dismissals
+        now = time.time()
+        for status in expired:
+            store.mark_expired(status.provider, status.session_id, at=now)
+        store.prune(now=now)
+        if self.ask_dismissals_path is not None:
+            try:
+                save_ask_dismissals(self.ask_dismissals_path, store)
+            except (OSError, TypeError, ValueError) as exc:
+                log_status_bar(f"asks: could not save the expired-ask record: {exc}")
+        entries = tuple(
+            dataclass_replace(entry, occurred_at_epoch=now)
+            for entry in self.activity_entries_for_statuses(expired, ActivityKind.EXPIRED)
+        )
+        self.record_activity_entries(entries)
+        for status in expired:
+            log_status_bar(
+                f"asks: expired unanswered {status.provider} {str(status.session_id)[:8]}"
+            )
 
     @objc.IBAction
     def pollLiveness_(self, _timer):
         """Five-second liveness check, off the main thread.
 
         The monitor is lock-protected, so the sweep and its synthetic
-        SessionEnd ingest are safe from a worker. Only a death schedules a
-        refresh; a quiet sweep costs nothing on the main thread.
+        SessionEnd ingest are safe from a worker. A death or changed process proof schedules a
+        refresh; stable sweeps cost nothing on the main thread.
         """
         if getattr(self, "_liveness_sweep_running", False):
             return
@@ -6638,6 +6806,8 @@ class StatusBarController(NSObject):
         clear_restore = load_clear_agents_state(self.clear_agents_path)
         self.clear_agents_state = clear_restore.state
         self.clear_agents_restore_health = clear_restore.health
+        self.ask_dismissals_path = default_ask_dismissals_path(state_dir)
+        self.ask_dismissals = load_ask_dismissals(self.ask_dismissals_path)
 
     def _operator_history_timezone_offset_minutes(self) -> int:
         offset = datetime.now().astimezone().utcoffset()
@@ -7196,13 +7366,9 @@ class StatusBarController(NSObject):
     def ambient_brightness_plan_for_device(self, device: StatusBarDevice):
         """The full brightness policy result (with its trace) for one
         device; effective_brightness_for_device is its ``.brightness``."""
-        # The Screen Bar IS the display: its pixels already ride the
-        # backlight, which macOS dims with the room. Following the
-        # backlight again (auto brightness) or the lux / display auto-dim
-        # squares that dim -- measured 2026-09-22: the bar played a
-        # working pulse at brightness 72 of 255 in a dim room and read as
-        # brown paint. Deliberate dims (idle, sleep, Focus, the night
-        # schedule, the master dial) still apply.
+        # Screen Bar pixels already follow the display backlight. Skip
+        # ambient/display auto-dim, but honor its explicit auto-brightness
+        # setting and deliberate idle, sleep, Focus and schedule dimming.
         is_screen_bar = device.device_id == VIRTUAL_DEVICE_ID
         auto_dim = self.auto_dim_result()
         night_factor = (
@@ -7210,7 +7376,7 @@ class StatusBarController(NSObject):
             if is_screen_bar and auto_dim.mode in ("ambient", "display")
             else auto_dim.factor
         )
-        if is_screen_bar or not device.auto_brightness_enabled:
+        if not device.auto_brightness_enabled:
             base = device.brightness
         else:
             try:
@@ -7658,6 +7824,11 @@ class StatusBarController(NSObject):
         )
         return selected if selected is not None else LED_DISPLAY_DND_DARK
 
+    def _lights_now(self) -> datetime:
+        """The wall clock the lights age a completion against. A seam, so a
+        test can hold it still."""
+        return datetime.now(timezone.utc)
+
     def sync_leds(
         self,
         mode: AgentMode,
@@ -7676,6 +7847,14 @@ class StatusBarController(NSObject):
 
         if resolved_glance is not None and type(resolved_glance) is not ResolvedGlance:
             raise ValueError("invalid resolved presentation")
+        if projection is not None:
+            # The lights give a completion COMPLETED_GLOW_SECONDS, not the
+            # two minutes the rows keep: every path that paints the strip or
+            # the Screen Bar passes through here, so none of them can hold a
+            # finished session's done green past the glow.
+            projection = settle_completed_for_lights(
+                projection, now=self._lights_now()
+            )
         if projection is not None and resolved_glance is None:
             if presentation_time is None:
                 presentation_time = self._presentation_monotonic()
@@ -8558,21 +8737,28 @@ class StatusBarController(NSObject):
                 if upcoming is None:
                     return CalendarObservationResult(
                         available=True,
-                        starts_in_seconds=None,
+                        starts_at_monotonic=None,
                     )
                 _private_title, starts_at = upcoming
+                observed_monotonic = self._runtime_worker_monotonic()
+                observed_wall = datetime.now(timezone.utc)
                 starts_in_seconds = max(
                     0.0,
-                    (starts_at - datetime.now(timezone.utc)).total_seconds(),
+                    (starts_at - observed_wall).total_seconds(),
                 )
+                if (
+                    not math.isfinite(starts_in_seconds)
+                    or not 0.0 <= starts_in_seconds <= 3600.0
+                ):
+                    raise ValueError("invalid calendar event offset")
                 return CalendarObservationResult(
                     available=True,
-                    starts_in_seconds=starts_in_seconds,
+                    starts_at_monotonic=observed_monotonic + starts_in_seconds,
                 )
             except Exception:
                 return CalendarObservationResult(
                     available=False,
-                    starts_in_seconds=None,
+                    starts_at_monotonic=None,
                 )
         if (
             command.key == "reminders-observation"
@@ -8748,21 +8934,19 @@ class StatusBarController(NSObject):
         result: CalendarObservationResult,
     ) -> None:
         now = self._runtime_worker_monotonic()
-        was_active = now < self.calendar_glow_until
+        previous_deadline = self.calendar_glow_until
+        was_active = now < previous_deadline
         self.calendar_event_title = None
         if not result.available:
             self.calendar_watch_retry_at = now + CALENDAR_WATCH_RETRY_SECONDS
-            self.calendar_glow_until = 0.0
-            if was_active:
-                self.refresh_(None)
-            return
-        if result.starts_in_seconds is None:
-            self.calendar_glow_until = 0.0
-            if was_active:
-                self.refresh_(None)
-            return
-        self.calendar_glow_until = now + result.starts_in_seconds
-        if not was_active:
+        deadline = result.starts_at_monotonic
+        self.calendar_glow_until = (
+            deadline if deadline is not None and deadline > now else 0.0
+        )
+        if self.calendar_glow_until != previous_deadline:
+            self._reconcile_current_presentation_inputs()
+        cleared_previous = previous_deadline > 0.0 and self.calendar_glow_until == 0.0
+        if cleared_previous or was_active != (now < self.calendar_glow_until):
             self.refresh_(None)
 
     def _apply_display_environment_result(
@@ -9222,10 +9406,13 @@ class StatusBarController(NSObject):
         # policy holds the machine up for agents, the bar now keeps
         # saying what they are doing. (The on-screen bar keeps its own
         # display gate -- a dark screen still has nothing to show.)
+        # A firmware update holds every device's writes until the new version
+        # is confirmed (firmware_hold); the worker is paused, not just refused.
         return bool(
             self._runtime_started
             and self.leds_enabled
             and not inputs.app_terminating
+            and not firmware_hold.any_held()
         )
 
     def _display_environment_should_run(
@@ -9309,8 +9496,10 @@ class StatusBarController(NSObject):
             "completion_sweep_until",
             "all_clear_until",
             "quota_blink_until",
+            "_capacity_notice_until",
             "battery_preview_until",
             "reminders_glow_until",
+            "calendar_glow_until",
         ):
             deadline = getattr(self, field_name, 0.0)
             if isinstance(deadline, (int, float)) and not isinstance(deadline, bool):
@@ -9348,11 +9537,14 @@ class StatusBarController(NSObject):
             self.completion_sweep_until,
             self.all_clear_until,
             self.quota_blink_until,
+            getattr(self, "_capacity_notice_until", 0.0),
             self.battery_preview_until,
             self._status_cue_deadline,
         ]
         if self.settings.reminder_alerts_enabled and not self._reminders_permission_failed:
             deadlines.append(self.reminders_glow_until)
+        if self.settings.calendar_alerts_enabled:
+            deadlines.append(self.calendar_glow_until)
         valid = (
             float(deadline)
             for deadline in deadlines
@@ -9444,6 +9636,8 @@ class StatusBarController(NSObject):
             return
         previous_generation = self._os_poll_generation
         self._calendar_observation_active = desired
+        if not desired:
+            self.calendar_glow_until = 0.0
         self._calendar_observation_fire_at = (
             (self._presentation_monotonic() if now is None else float(now))
             + CALENDAR_WATCH_SECONDS
@@ -9716,9 +9910,6 @@ class StatusBarController(NSObject):
     def _presentation_static_deadline_fired(self) -> None:
         self.virtual_status_device.presentationStaticDeadline()
 
-    def _presentation_alcove_observation_fired(self) -> None:
-        self.virtual_status_device.presentationAlcoveObservation()
-
     def _presentation_pointer_peek_fired(self) -> None:
         self.peekTick_(None)
 
@@ -9848,6 +10039,7 @@ class StatusBarController(NSObject):
             self._apply_status_accessibility_text(glance, finite_cues)
         self._reconcile_current_presentation_inputs()
         if changed:
+            self._production_force_refresh = True
             self.refresh_(None)
 
     def _escalation_deadline_fired(self) -> None:
@@ -10303,7 +10495,9 @@ class StatusBarController(NSObject):
         # instead of needing a restart.
         self.keep_awake.set_grace_seconds(self.settings.closed_lid_grace_minutes * 60.0)
         battery = getattr(self, "_production_battery_observation", None)
-        battery_snapshot = getattr(battery, "snapshot", None)
+        # A reading the observation service kept through a stalled probe
+        # is not the Mac's power state now: unknown, which never yields.
+        battery_snapshot = fresh_battery_snapshot(battery, now=time.monotonic())
         on_battery = (
             None
             if battery_snapshot is None or not battery_snapshot.battery_present
@@ -10407,7 +10601,16 @@ class StatusBarController(NSObject):
             finally:
                 self._keepalive_poke_in_flight = False
 
-        threading.Thread(target=_poke, daemon=True).start()
+        try:
+            threading.Thread(target=_poke, daemon=True).start()
+        except Exception as exc:
+            self._keepalive_poke_in_flight = False
+            message = f"sd_keepalive worker unavailable: {exc}"
+            if getattr(self, "_keepalive_start_error", None) != message:
+                self._keepalive_start_error = message
+                log_status_bar(message)
+        else:
+            self._keepalive_start_error = None
 
     def sync_closed_lid_awake(self) -> None:
         was_active = self.closed_lid_awake.active()
@@ -10489,122 +10692,6 @@ class StatusBarController(NSObject):
 # re-adapt them as legacy windows. Nothing needs it now -- a failed refresh
 # keeps the typed model and marks it stale -- and keeping it would leave a
 # ready-made way to turn authorised lanes back into raw ones.
-
-
-def _capacity_age_text(model: ProviderUsageViewModel, *, monotonic_now: float) -> str | None:
-    if model.last_success_at is None:
-        return None
-    age = max(0.0, float(monotonic_now) - float(model.last_success_at))
-    if age < 60.0:
-        return "updated just now"
-    if age < 3_600.0:
-        return f"updated {max(1, int(age // 60.0))}m ago"
-    if age < 24 * 3_600.0:
-        return f"updated {max(1, int(age // 3_600.0))}h ago"
-    return f"updated {max(1, int(age // (24 * 3_600.0)))}d ago"
-
-
-_GENERIC_WINDOW_LABELS = frozenset(
-    {"", "primary", "secondary", "five_hour", "seven_day", "limit"}
-)
-# What a capacity rung says when it has no capacity fact. It is one string
-# because there is one rule behind it: a ceiling with no attested balance and a
-# provider with no ceiling at all are both "we do not know", and neither is
-# allowed to borrow a number from a different rung to look like it does.
-NO_CAPACITY_READING_TEXT = "no reading"
-
-
-def _capacity_window_line(window, *, epoch_now: float) -> str:
-    """Render one window as its own honest ledger row.
-
-    Rows past the first are named by their semantic label, not their
-    duration: Claude's weekly window and its weekly Opus and Sonnet sub-caps
-    are all "7d", and three identical rows would hide the one sub-cap that
-    actually stops work.
-    """
-    label = window.label.strip()
-    head = window.duration_text if label.lower() in _GENERIC_WINDOW_LABELS else label
-    text = f"{head} {NO_CAPACITY_READING_TEXT}"
-    remaining = window.percent_remaining
-    if remaining is not None:
-        text = f"{head} {remaining:.0f}% left"
-    reset = window.reset_text(epoch_now)
-    return f"{text} · resets {reset}" if reset else text
-
-
-def capacity_window_lines(
-    model: ProviderUsageViewModel,
-    *,
-    epoch_now: float,
-) -> tuple[str, ...]:
-    """Return one line per window the provider reports beyond the first.
-
-    The first window is already carried by `capacity_menu_lines`; every
-    remaining one gets a row here so a provider that publishes several
-    ceilings at once has all of them visible, not just the soonest.
-    """
-    if model.missing:
-        return ()
-    return tuple(
-        _capacity_window_line(window, epoch_now=epoch_now)
-        for window in model.windows[1:]
-    )
-
-
-def capacity_menu_lines(
-    model: ProviderUsageViewModel,
-    *,
-    monotonic_now: float,
-    epoch_now: float,
-) -> tuple[str, str]:
-    """Return concise primary capacity and secondary reset/freshness copy.
-
-    The Capacity rung carries plan ceilings and nothing else. It used to fall
-    back to `model.menu_line` when a provider reported no window, and
-    `menu_line` falls back in turn to the local transcript aggregate -- so a
-    Claude account with no OAuth token, and therefore no ceiling at all, showed
-    "Claude · Claude, last 365 days: 2508 sessions" in the slot reserved for a
-    plan limit. A session count is a different fact of a different kind from a
-    different source; it belongs on the activity rung, and the doubled title
-    was the seam between the two owners showing. A provider with no reading
-    says it has no reading.
-
-    For the same reason the local scan's `partial` flag and its
-    `Local transcripts · N files` provenance are gone from here: they describe
-    the transcript scan's coverage, not the quota source's, and a disclaimer
-    that belongs to a different fact cannot qualify this one.
-    """
-    if model.missing:
-        return model.menu_line, ""
-
-    primary_window = model.windows[0] if model.windows else None
-    if primary_window is None:
-        primary = f"{model.provider_title} · {NO_CAPACITY_READING_TEXT}"
-    else:
-        semantic = primary_window.duration_text
-        remaining = primary_window.percent_remaining
-        amount = (
-            f" {remaining:.0f}% left"
-            if remaining is not None
-            else f" {NO_CAPACITY_READING_TEXT}"
-        )
-        primary = f"{model.provider_title} · {semantic}{amount}"
-
-    secondary_parts: list[str] = []
-    if primary_window is not None:
-        reset = primary_window.reset_text(epoch_now)
-        if reset:
-            secondary_parts.append(f"resets {reset}")
-    age = _capacity_age_text(model, monotonic_now=monotonic_now)
-    if age:
-        secondary_parts.append(age)
-    if model.refreshing:
-        secondary_parts.append("refreshing")
-    if model.stale:
-        secondary_parts.append("stale")
-    if model.error_text:
-        secondary_parts.append(model.error_text)
-    return primary, " · ".join(secondary_parts)
 
 
 def mailbox_projection_rows(

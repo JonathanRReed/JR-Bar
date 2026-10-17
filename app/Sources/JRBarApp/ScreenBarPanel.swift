@@ -22,7 +22,7 @@ final class ScreenBarPanel: NSPanel {
         // Set last: `isFloatingPanel` and friends rewrite the level. Two above
         // NSStatusWindowLevel: one for the Python Screen Bar while both are
         // alive during the migration, and one so the wings stand over the
-        // concealer's covers (+1) when a hidden item's slot is the wing's —
+        // menu bar's covers (+1) when a hidden item's slot is the wing's —
         // a covered item is already invisible, the wing is what should show.
         level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
     }

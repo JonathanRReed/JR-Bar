@@ -373,7 +373,14 @@ def test_list_focuses_names_the_configured_focuses_or_says_why_not(
 
     monkeypatch.setattr(focus_sync, "configured_focus_modes", locked)
     reply = core_runtime._cmd_list_focuses(daemon, {})
-    assert reply == {"available": False, "reason": "Operation not permitted", "focuses": [], "active": []}
+    assert reply == {
+        "available": False,
+        "reason": "Operation not permitted",
+        "focuses": [],
+        "active": [],
+        "active_available": False,
+        "active_reason": "Active Focus mode names unavailable",
+    }
 
 
 def test_a_blend_mode_previews_against_a_mixed_fleet() -> None:
@@ -458,3 +465,95 @@ def test_the_fleet_desk_stays_out_of_the_legacy_picker_but_renders_on_every_devi
             palette = colors_module.ColorSettings.defaults().with_blend_mode(blend)
             _state, program = colors_module.program_for_snapshot(statuses, led_count=led_count, colors=palette)
             assert len(program.encode()) <= 512
+
+
+@pytest.mark.parametrize("active_document", [
+    {"storeAssertionRecords": [{"unrecognizedModeIdentifier": "synthetic.work"}]},
+    {"storeAssertionRecords": [
+        {"assertionDetailsModeIdentifier": "synthetic.work"},
+        {"unrecognizedModeIdentifier": "synthetic.sleep"},
+    ]},
+    {"storeAssertionRecords": [{"assertionDetailsModeIdentifier": "x" * 257}]},
+    {"storeAssertionRecords": [{"assertionDetailsModeIdentifier": "é" * 129}]},
+    {"storeAssertionRecords": [{"assertionDetailsModeIdentifier": "\ud800"}]},
+    {"storeAssertionRecords": [
+        {"assertionDetailsModeIdentifier": f"synthetic.mode.{index:02d}"}
+        for index in range(65)
+    ]},
+    {"storeAssertionRecords": None},
+])
+def test_list_focuses_keeps_roster_when_active_reading_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, active_document: object,
+) -> None:
+    import json
+
+    assertions = tmp_path / "Assertions.json"
+    configurations = tmp_path / "ModeConfigurations.json"
+    assertions.write_text(json.dumps(active_document))
+    configurations.write_text(json.dumps({"modeIdentifier": "synthetic.work", "name": "Work"}))
+    monkeypatch.setattr(focus_sync, "ASSERTIONS_PATH", assertions)
+    monkeypatch.setattr(focus_sync, "MODE_CONFIGURATIONS_PATH", configurations)
+    reply = core_runtime._cmd_list_focuses(SimpleNamespace(), {})
+    assert reply["available"] is True
+    assert reply["reason"] is None
+    assert reply["focuses"] == [{"id": "synthetic.work", "name": "Work"}]
+    assert reply["active"] == []
+    assert reply["active_available"] is False
+    assert isinstance(reply["active_reason"], str) and 0 < len(reply["active_reason"]) <= 200
+    assert str(tmp_path) not in reply["active_reason"]
+    assert "synthetic" not in reply["active_reason"]
+
+
+@pytest.mark.parametrize("records, expected", [
+    ([], []),
+    ([{"assertionDetailsModeIdentifier": "synthetic.work"}], ["synthetic.work"]),
+])
+def test_list_focuses_reports_successful_active_reading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, records: list, expected: list,
+) -> None:
+    import json
+
+    assertions = tmp_path / "Assertions.json"
+    configurations = tmp_path / "ModeConfigurations.json"
+    assertions.write_text(json.dumps({"storeAssertionRecords": records}))
+    configurations.write_text(json.dumps({"modeIdentifier": "synthetic.work", "name": "Work"}))
+    monkeypatch.setattr(focus_sync, "ASSERTIONS_PATH", assertions)
+    monkeypatch.setattr(focus_sync, "MODE_CONFIGURATIONS_PATH", configurations)
+    reply = core_runtime._cmd_list_focuses(SimpleNamespace(), {})
+    assert reply["available"] is True
+    assert reply["active"] == expected
+    assert reply["active_available"] is True
+    assert reply["active_reason"] is None
+
+
+def test_list_focuses_configuration_failure_marks_both_readings_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable():
+        raise focus_sync.FocusSyncUnavailableError("Operation not permitted")
+
+    monkeypatch.setattr(focus_sync, "configured_focus_modes", unavailable)
+    reply = core_runtime._cmd_list_focuses(SimpleNamespace(), {})
+    assert reply["available"] is False
+    assert reply["reason"] == "Operation not permitted"
+    assert reply["focuses"] == [] and reply["active"] == []
+    assert reply["active_available"] is False
+    assert isinstance(reply["active_reason"], str) and 0 < len(reply["active_reason"]) <= 200
+
+
+def test_list_focuses_invalid_unicode_configuration_marks_both_readings_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assertions = tmp_path / "Assertions.json"
+    configurations = tmp_path / "ModeConfigurations.json"
+    assertions.write_text('{"storeAssertionRecords": []}')
+    configurations.write_bytes(b"\xff\xfe")
+    monkeypatch.setattr(focus_sync, "ASSERTIONS_PATH", assertions)
+    monkeypatch.setattr(focus_sync, "MODE_CONFIGURATIONS_PATH", configurations)
+    reply = core_runtime._cmd_list_focuses(SimpleNamespace(), {})
+    assert reply["available"] is False
+    assert isinstance(reply["reason"], str) and 0 < len(reply["reason"]) <= 200
+    assert "decode" in reply["reason"]
+    assert reply["focuses"] == [] and reply["active"] == []
+    assert reply["active_available"] is False
+    assert reply["active_reason"] == "Active Focus mode names unavailable"

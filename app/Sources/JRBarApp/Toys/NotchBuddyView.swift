@@ -33,6 +33,15 @@ struct NotchBuddyView: View {
     /// in the band's colour, never a second light keeping its time.
     var docked = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var motionStill: Bool {
+        reduceMotion || PowerConditions.shared.policy.pauses(occluded: false)
+    }
+
+    nonisolated static func clock(interval: TimeInterval, visible: Bool, reduceMotion: Bool,
+                                  power: PowerPolicy = .normal)
+        -> (interval: TimeInterval, paused: Bool) {
+        (power.interval(interval), reduceMotion || power.pauses(occluded: !visible))
+    }
     /// False while the panel is fully covered (a fullscreen Space, a
     /// window over the floating pet): nothing on screen, nothing to draw.
     @ViewState private var visible = true
@@ -48,11 +57,11 @@ struct NotchBuddyView: View {
         // here, off observable state, so the schedule changes the
         // moment the fleet wakes or a beat starts. The Mac asking for
         // restraint (Low Power Mode, a hot machine) halves the rate
-        // (`PowerPolicy`); the pose, the badge and the care mood still
-        // read the same state every frame.
-        let interval = PowerConditions.shared.policy.interval(toy.frameInterval(scale: scale))
-        TimelineView(.animation(minimumInterval: interval,
-                                paused: reduceMotion || !visible)) { context in
+        // (`PowerPolicy`). Critical heat pauses the decorative poses;
+        // state changes still update the badge and the care mood.
+        let clock = Self.clock(interval: toy.frameInterval(scale: scale), visible: visible,
+                               reduceMotion: reduceMotion, power: PowerConditions.shared.policy)
+        TimelineView(.animation(minimumInterval: clock.interval, paused: clock.paused)) { context in
             // One reduce per tick: the pose, the badge, the tints, the
             // care mood and the hover line all read the same summary.
             // The tick is also the card's measured frame rate.
@@ -71,7 +80,7 @@ struct NotchBuddyView: View {
                         tint: tint,
                         waiting: summary.waiting,
                         working: summary.working,
-                        still: reduceMotion,
+                        still: motionStill,
                         phase: context.date.timeIntervalSince1970
                     )
                     .help(summary.statusLine)
@@ -103,6 +112,7 @@ struct NotchBuddyView: View {
         // anywhere else stays a pat.
         .onTapGesture { point in toy.tapped(point: point, scale: scale) }
         .accessibilityLabel("Notch Buddy, \(toy.buddyName)")
+        .accessibilityValue(toy.accessibilityStatus)
         .accessibilityHint("Tap for a trick, drag to park it anywhere, right-click for the menu. While an ask is open, a tap on the \"!\" opens the session asking.")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { toy.accessibilityActivate() }
@@ -126,7 +136,7 @@ struct NotchBuddyView: View {
             waveAge: waveAge(at: now, mood: summary.mood),
             slumpAge: slumpAge(at: now, mood: summary.mood),
             leans: toy.waveOrdinal % 2 == 0,
-            still: reduceMotion,
+            still: motionStill,
             askCount: summary.waiting,
             care: summary.care,
             trick: trick(at: now),
@@ -135,15 +145,15 @@ struct NotchBuddyView: View {
             stride: toy.walkPhase(at: now),
             stage: toy.stage,
             wearing: toy.wearing,
-            turn: toy.turnFrame(at: now, still: reduceMotion),
-            handoff: reduceMotion ? nil : toy.handoff(at: now)
+            turn: toy.turnFrame(at: now, still: motionStill),
+            handoff: motionStill ? nil : toy.handoff(at: now)
         )
     }
 
     /// Where the whole buddy stands in its home at `now`.
     private func presence(at now: Date) -> Presence {
         Self.presence(tuck: toy.tuckProgress(at: now), arrival: toy.arrival(at: now),
-                      docked: docked, scale: scale, reduceMotion: reduceMotion)
+                      docked: docked, scale: scale, reduceMotion: motionStill)
     }
 
     /// How the whole buddy sits in its home for one frame.
@@ -187,7 +197,7 @@ struct NotchBuddyView: View {
     /// go of whatever lean and lift it still had over the same beat.
     /// Reduce Motion gets a plain reposition.
     private func dragDress(at now: Date) -> (tilt: Double, lift: Double, squash: CGSize) {
-        guard !reduceMotion else { return (0, 0, CGSize(width: 1, height: 1)) }
+        guard !motionStill else { return (0, 0, CGSize(width: 1, height: 1)) }
         var tilt = 0.0
         var lift = toy.carryLift(at: now)
         var squash = CGSize(width: 1, height: 1)
@@ -239,7 +249,7 @@ struct NotchBuddyView: View {
         guard let hopUntil = toy.hopUntil else { return nil }
         let remaining = hopUntil.timeIntervalSince(now)
         guard remaining > 0 else { return nil }
-        return 1.0 - remaining / Self.hopDuration
+        return min(1, max(0, 1.0 - remaining / Self.hopDuration))
     }
 
     /// Seconds into the wave; nil unless the mood is waving. The entrance
@@ -259,7 +269,7 @@ struct NotchBuddyView: View {
     /// The tap trick mid-flight, or nil. Reduce Motion gets no tricks —
     /// the pet still counts, the pose just stays put.
     private func trick(at now: Date) -> BuddyTrick? {
-        guard !reduceMotion, let start = toy.trickStartedAt else { return nil }
+        guard !motionStill, let start = toy.trickStartedAt else { return nil }
         let age = now.timeIntervalSince(start)
         guard age >= 0, age < BuddyTrick.duration else { return nil }
         return BuddyTrick(kind: toy.trickKind, age: age)

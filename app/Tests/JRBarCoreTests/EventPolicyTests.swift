@@ -33,9 +33,9 @@ struct EventPolicyTests {
         let off = EventPolicy.delivery(for: event, state: Self.state(), settings: Self.settings(["completion_notification_enabled": .bool(false)]))
         #expect(off.sound == "Glass")
         #expect(off.notification == nil)
-        // The daemon's own default is off, so a settings document that
-        // simply never mentions the key must read the same as `false` —
-        // or a fresh install banners every completion.
+        // The daemon's document always carries the key, so a document that
+        // never mentions it is not the daemon's: the app cannot know the
+        // person's choice and reads it as `false`.
         let absent = EventPolicy.delivery(for: event, state: Self.state(), settings: Self.settings(["alert_burst": .number(2)]))
         #expect(absent.sound == "Glass")
         #expect(absent.notification == nil)
@@ -413,6 +413,26 @@ struct EventPolicyTests {
         #expect(device.notification == nil && device.sound == nil)
         let unknown = EventPolicy.delivery(for: CoreEvent(id: "16", kind: "something_new", notify: true), state: Self.state(), settings: nil)
         #expect(unknown == .nothing)
+    }
+
+    @Test("named account quota notifications replace only the same account's alert")
+    func quotaNotificationsAreInstanceScoped() {
+        let settings = Self.settings(["quota_alerts_enabled": .bool(true)])
+        for kind in ["quota_crossed", "quota_pace", "quota_reset"] {
+            func delivery(_ instance: String?) -> EventDelivery {
+                EventPolicy.delivery(for: CoreEvent(id: "quota", kind: kind, label: "5-hour",
+                                                    notify: true, provider: "codex", instance: instance),
+                                     state: Self.state(), settings: settings)
+            }
+            #expect(delivery(nil).notification?.identifier == "quota:codex")
+            #expect(delivery("default").notification?.identifier == "quota:codex")
+            #expect(delivery("  ").notification?.identifier == "quota:codex")
+            #expect(delivery(" work ").notification?.identifier == "quota:codex:work")
+            #expect(delivery("personal").notification?.identifier == "quota:codex:personal")
+            #expect(delivery("work").notification?.identifier != delivery("personal").notification?.identifier)
+            #expect(delivery("work").notification?.title == delivery(nil).notification?.title)
+            #expect(delivery("work").notification?.body == delivery(nil).notification?.body)
+        }
     }
 
     @Test("stage decodes from a number or a name")

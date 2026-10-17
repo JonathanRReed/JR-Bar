@@ -392,21 +392,19 @@ struct MenuBarGlyphCacheTests {
         let row = CGRect(x: 0, y: 0, width: 2000, height: 24)
         let a = item("a", bundle: "com.example.a", x: 100)
         let b = item("b", bundle: "com.example.b", x: 140)
-        #expect(MenuBarUtility.photographable(a, among: [a, b], rows: [row], concealed: []))
-        #expect(!MenuBarUtility.photographable(a, among: [a, b], rows: [row], concealed: ["com.example.a"]),
-                "a concealed app's frame is a ghost")
+        #expect(MenuBarUtility.photographable(a, among: [a, b], rows: [row]))
         let ghost = item("g", bundle: "com.example.g", x: 106)
-        #expect(!MenuBarUtility.photographable(a, among: [a, ghost], rows: [row], concealed: []),
+        #expect(!MenuBarUtility.photographable(a, among: [a, ghost], rows: [row]),
                 "a ghost over the item makes its rect ambiguous")
         let parked = item("p", bundle: "com.example.p", x: 100)
         let offRow = MenuBarItem(id: "p", ownerPID: 1, ownerName: "Example",
                                  bounds: CGRect(x: 100, y: -40, width: 16, height: 16),
                                  title: nil, windowID: 1, bundleID: parked.bundleID)
-        #expect(!MenuBarUtility.photographable(offRow, among: [offRow], rows: [row], concealed: []))
+        #expect(!MenuBarUtility.photographable(offRow, among: [offRow], rows: [row]))
         let clock = MenuBarItem(id: "Control Center·Clock", ownerPID: 1, ownerName: "Control Center",
                                 bounds: CGRect(x: 400, y: 0, width: 60, height: 24), title: "Clock",
                                 windowID: 1, bundleID: "com.apple.controlcenter")
-        #expect(!MenuBarUtility.photographable(clock, among: [clock], rows: [row], concealed: []))
+        #expect(!MenuBarUtility.photographable(clock, among: [clock], rows: [row]))
     }
 
     @MainActor

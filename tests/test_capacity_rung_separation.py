@@ -29,8 +29,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from jrbar import usage_stats
 from jrbar.capacity_types import ObservationState
 from jrbar.provider_capacity import negotiate_provider_capacity_policies
@@ -39,9 +37,6 @@ from jrbar.usage_view import (
     LocalActivitySection,
     build_provider_usage_view,
 )
-
-status_bar = pytest.importorskip("jrbar.status_bar")
-
 
 _NOW = 1_800_000_000.0
 
@@ -62,14 +57,6 @@ def _model(**kwargs):
     return build_provider_usage_view(provider_id, provider_title, windows, **defaults)
 
 
-def _lines(model):
-    return status_bar.capacity_menu_lines(
-        model,
-        monotonic_now=500.0,
-        epoch_now=_NOW,
-    )
-
-
 # --------------------------------------------------------------------------
 # A capacity row shows a capacity fact, or says it has none.
 # --------------------------------------------------------------------------
@@ -86,15 +73,13 @@ def test_a_provider_with_no_ceiling_says_so_instead_of_borrowing_one__and_2_more
             source_text="Local transcripts · 2707 files · partial",
         ),
     )
-    primary, secondary = _lines(model)
-
-    assert primary == "Claude · no reading"
-    assert "2508" not in primary
-    assert "session" not in primary.lower()
-    assert "365" not in primary
+    # The capacity rung has no ceiling to show and borrows none from the
+    # activity rung.
+    assert model.windows == ()
+    assert model.missing is False
     # The local aggregate is not lost -- it is on its own rung, where the
     # Settings pane reads it.
-    assert "2508 sessions" in model.settings_text
+    assert "2508 sessions" in model.summary_text
 
     # --- scenario: the_transcript_scans_coverage_never_qualifies_a_plan_limit
     """`partial` and the file count belong to the scan, not to the ceiling."""
@@ -109,45 +94,13 @@ def test_a_provider_with_no_ceiling_says_so_instead_of_borrowing_one__and_2_more
             source_text="Local transcripts · 2895 files · partial",
         ),
     )
-    primary, secondary = _lines(model)
-
-    assert primary == "Codex · 5h 62% left"
-    assert "partial" not in secondary
-    assert "Local transcripts" not in secondary
-    assert "2895" not in secondary
-    assert "updated just now" in secondary
+    assert [(w.duration_text, w.percent_remaining) for w in model.windows] == [("5h", 62.0)]
     assert model.partial is True
     assert "2895 files" in model.source_text
 
-    # --- scenario: no_fact_is_printed_on_both_rows_of_one_provider
-    """The card's two rows must not restate each other."""
-    model = _model(
-        provider_id="codex",
-        provider_title="Codex",
-        windows=(
-            {
-                "label": "5-hour",
-                "used_percent": 38.0,
-                "window_minutes": 300,
-                "resets_at": _NOW + 3_600.0,
-            },
-        ),
-        local_activity=LocalActivitySection(
-            partial=True,
-            source_text="Local transcripts · 12 files · partial",
-        ),
-    )
-    primary, secondary = _lines(model)
 
-    shared = {part.strip() for part in primary.split("·")} & {
-        part.strip() for part in secondary.split("·")
-    }
-    assert shared == set()
-
-
-
-def test_a_window_with_no_usable_percentage_says_no_reading__and_2_more() -> None:
-    # --- scenario: a_window_with_no_usable_percentage_says_no_reading
+def test_a_window_with_no_usable_percentage_carries_no_reading__and_2_more() -> None:
+    # --- scenario: a_window_with_no_usable_percentage_carries_no_reading
     model = _model(
         provider_id="codex",
         provider_title="Codex",
@@ -160,12 +113,13 @@ def test_a_window_with_no_usable_percentage_says_no_reading__and_2_more() -> Non
             },
         ),
     )
-    primary, _secondary = _lines(model)
+    window = model.windows[0]
+    assert window.duration_text == "5h"
+    assert window.usage_known is False
+    assert window.percent_remaining is None
+    assert window.percent_used is None
 
-    assert primary == "Codex · 5h no reading"
-    assert "%" not in primary
-
-    # --- scenario: extra_window_rows_follow_the_same_rule
+    # --- scenario: extra_windows_follow_the_same_rule
     model = _model(
         windows=(
             {"label": "5-hour", "used_percent": 10.0, "window_minutes": 300},
@@ -174,10 +128,10 @@ def test_a_window_with_no_usable_percentage_says_no_reading__and_2_more() -> Non
              "resets_at": _NOW + 600.0},
         ),
     )
-    rows = status_bar.capacity_window_lines(model, epoch_now=_NOW)
-
-    assert rows[0] == "Weekly Opus 12% left"
-    assert rows[1].startswith("Weekly Sonnet no reading")
+    assert [(w.label, w.percent_remaining) for w in model.windows[1:]] == [
+        ("Weekly Opus", 12.0),
+        ("Weekly Sonnet", None),
+    ]
 
     # --- scenario: the_summary_line_names_the_period_and_never_the_provider
     totals = usage_stats.UsageTotals()
@@ -193,24 +147,6 @@ def test_a_window_with_no_usable_percentage_says_no_reading__and_2_more() -> Non
     assert line == "Last 365 days: 1 session"
     assert "Claude" not in line
 
-
-
-def test_the_view_adds_exactly_one_provider_title() -> None:
-    """"Claude · Claude, last 365 days: ..." had two owners for one fact."""
-    totals = usage_stats.UsageTotals()
-    totals.sessions.add("s1")
-    model = _model(
-        local_activity=LocalActivitySection(
-            summary_text=usage_stats.usage_summary_line(
-                totals,
-                "sessions",
-                period_label="Last 365 days",
-            ),
-        ),
-    )
-
-    assert model.menu_line.count("Claude") == 1
-    assert model.menu_line == "Claude · Last 365 days: 1 session"
 
 
 # --------------------------------------------------------------------------
@@ -292,8 +228,8 @@ def test_a_window_that_only_says_it_just_opened_reports_no_balance__and_2_more()
 
 
 
-def test_the_card_never_prints_a_percentage_for_the_suppressed_window__and_2_more() -> None:
-    # --- scenario: the_card_never_prints_a_percentage_for_the_suppressed_window
+def test_the_model_carries_no_percentage_for_the_suppressed_window__and_2_more() -> None:
+    # --- scenario: the_model_carries_no_percentage_for_the_suppressed_window
     """End to end: the placeholder reaches the dropdown as "no reading"."""
     model = _model(
         provider_id="codex",
@@ -307,11 +243,10 @@ def test_the_card_never_prints_a_percentage_for_the_suppressed_window__and_2_mor
             },
         ),
     )
-    primary, _secondary = _lines(model)
-
-    assert "100%" not in primary
-    assert "%" not in primary
-    assert primary == "Codex · 7d no reading"
+    window = model.windows[0]
+    assert window.duration_text == "7d"
+    assert window.percent_remaining is None
+    assert window.percent_used is None
 
     # --- scenario: a_weekly_window_under_the_primary_key_binds_to_the_weekly_lane
     """`primary` carrying 10,080 minutes is the WEEKLY ceiling, renamed.

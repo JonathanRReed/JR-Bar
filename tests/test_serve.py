@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -423,6 +424,103 @@ def test_symlinked_state_files_fail_closed(tmp_path: Path) -> None:
     assert document["usage"] is None
 
 
+@pytest.mark.parametrize("section", ["agents", "usage"])
+def test_deeply_nested_saved_state_preserves_the_other_section_and_recovers(
+    tmp_path: Path, section: str
+) -> None:
+    _write_private_state(tmp_path)
+    baseline = build_serve_document(tmp_path)
+    path = (default_state_dir(tmp_path) / "latest.json" if section == "agents"
+            else default_provider_usage_state_path(tmp_path))
+    original = path.read_bytes()
+    depth = 10_000
+    path.write_text("[" * depth + "0" + "]" * depth, encoding="utf-8")
+
+    document = build_serve_document(tmp_path)
+
+    assert document[section] is None
+    other = "usage" if section == "agents" else "agents"
+    assert document[other] == baseline[other]
+    path.write_bytes(original)
+    assert build_serve_document(tmp_path) == baseline
+
+
+@pytest.mark.parametrize("field", [
+    "refreshed_at", "next_refresh_at", "observed_at", "remaining_percent", "reset_at",
+])
+def test_unrepresentable_saved_numbers_do_not_discard_valid_status(
+    tmp_path: Path, field: str
+) -> None:
+    _write_private_state(tmp_path)
+    baseline = build_serve_document(tmp_path)
+    path = default_provider_usage_state_path(tmp_path)
+    usage = json.loads(path.read_text(encoding="utf-8"))
+    target = usage
+    if field == "observed_at":
+        target = usage["snapshots"][0]
+    elif field in {"remaining_percent", "reset_at"}:
+        target = usage["snapshots"][0]["lanes"][0]
+    target[field] = 10 ** 400
+    path.write_text(json.dumps(usage), encoding="utf-8")
+
+    document = build_serve_document(tmp_path)
+
+    assert document["agents"] == baseline["agents"]
+    if field in {"refreshed_at", "next_refresh_at"}:
+        assert document["usage"][field] is None
+        assert document["usage"]["providers"] == baseline["usage"]["providers"]
+    elif field == "observed_at":
+        assert document["usage"]["providers"] == []
+    else:
+        assert document["usage"]["providers"][0]["quota"] == {
+            "window_count": 1, "remaining_percent": 80.0, "next_reset_at": 1500.0,
+        }
+
+
+@pytest.mark.parametrize("corruption", ["deep_json", "huge_timestamp"])
+def test_authenticated_status_survives_unusable_state_and_recovers(
+    tmp_path: Path, corruption: str
+) -> None:
+    _write_private_state(tmp_path)
+    baseline = build_serve_document(tmp_path)
+    path = default_provider_usage_state_path(tmp_path)
+    original = path.read_bytes()
+    if corruption == "deep_json":
+        depth = 10_000
+        path.write_text("[" * depth + "0" + "]" * depth, encoding="utf-8")
+    else:
+        usage = json.loads(original)
+        usage["snapshots"][0]["observed_at"] = 10 ** 400
+        path.write_text(json.dumps(usage), encoding="utf-8")
+    token = b"synthetic-status-recovery-token"
+    server = create_serve_server(port=0, home=tmp_path, status_access_token=token)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{server.server_address[1]}/status.json",
+        headers={"Authorization": f"Bearer {token.decode('ascii')}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            assert response.status == 200
+            document = json.load(response)
+        assert document["agents"] == baseline["agents"]
+        if corruption == "deep_json":
+            assert document["usage"] is None
+        else:
+            assert document["usage"]["providers"] == []
+        assert all(sentinel not in json.dumps(document) for sentinel in PRIVATE_SENTINELS)
+        path.write_bytes(original)
+        with urllib.request.urlopen(request, timeout=5) as response:
+            assert response.status == 200
+            assert json.load(response) == baseline
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
 def test_endpoint_serves_json_and_404s_elsewhere__and_2_more() -> None:
     # --- scenario: endpoint_serves_json_and_404s_elsewhere
     server = create_serve_server(port=0, allow_anonymous_status=True)
@@ -491,6 +589,47 @@ def test_endpoint_serves_json_and_404s_elsewhere__and_2_more() -> None:
         server.shutdown()
         server.server_close()
 
+
+
+@pytest.mark.parametrize(
+    ("host_header", "expected"),
+    [
+        ("evil.example", 403),
+        ("evil.example:{port}", 403),
+        ("127.0.0.1.evil.example:{port}", 403),
+        ("192.168.1.20:{port}", 403),
+        ("127.0.0.1:{port}", 200),
+        ("localhost:{port}", 200),
+        ("[::1]:{port}", 200),
+        ("localhost", 200),
+    ],
+)
+def test_a_foreign_host_header_is_refused_before_anything_is_served(
+    host_header: str, expected: int
+) -> None:
+    """DNS rebinding: a page on a hostile name that resolves to 127.0.0.1
+    reaches this socket with its own name in Host. Only the loopback names
+    are ours, whatever the route and whether or not the status is anonymous."""
+    import http.client
+
+    server = create_serve_server(port=0, allow_anonymous_status=True)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.putrequest("GET", "/status.json", skip_host=True)
+        connection.putheader("Host", host_header.format(port=port))
+        connection.endheaders()
+        response = connection.getresponse()
+        body = response.read()
+        connection.close()
+        assert response.status == expected
+        if expected == 403:
+            assert b"schema_version" not in body
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_cli_status_requires_token_unless_anonymous_compatibility_is_explicit(
@@ -566,3 +705,99 @@ def test_a_peer_cannot_pin_serve_threads__and_1_more(monkeypatch) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_serve_command_refuses_a_bad_or_taken_port_without_a_traceback(monkeypatch, capsys) -> None:
+    import socket
+
+    import pytest
+
+    from jrbar import cli
+
+    parser = cli.build_parser()
+    with pytest.raises(SystemExit) as refused:
+        parser.parse_args(["serve", "--port", "99999"])
+    assert refused.value.code == 2
+    assert "0-65535" in capsys.readouterr().err
+
+    monkeypatch.setenv(cli.SERVE_ACCESS_TOKEN_ENV, "synthetic-token-" + "x" * 24)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        port = taken.getsockname()[1]
+        args = parser.parse_args(["serve", "--port", str(port)])
+        assert cli.cmd_serve(args) == 1
+    err = capsys.readouterr().err
+    assert f"port {port}" in err and "--port" in err
+
+
+def test_serve_command_says_how_long_the_access_token_must_be(monkeypatch, capsys) -> None:
+    from jrbar import cli
+
+    monkeypatch.setenv(cli.SERVE_ACCESS_TOKEN_ENV, "short")
+    args = cli.build_parser().parse_args(["serve", "--port", "0"])
+    assert cli.cmd_serve(args) == 2
+    assert "at least 24 characters" in capsys.readouterr().err
+
+
+class _ManualTimer:
+    """A timer that fires when the test says so."""
+
+    created: ClassVar[list[_ManualTimer]] = []
+    armed: ClassVar[threading.Event] = threading.Event()
+
+    def __init__(self, seconds, function, args=()):
+        self.seconds, self.function, self.args = seconds, function, args
+        self.daemon = False
+        self.cancelled = False
+        _ManualTimer.created.append(self)
+
+    def start(self) -> None:
+        _ManualTimer.armed.set()
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+    def fire(self) -> None:
+        if not self.cancelled:
+            self.function(*self.args)
+
+
+def test_a_client_that_never_finishes_its_headers_is_hung_up_on_at_the_deadline() -> None:
+    import socket
+    import threading
+
+    from jrbar.request_deadline import RequestDeadlines
+    from jrbar.serve import ServeConfiguration, _ServeHandler, _ServeServer
+
+    _ManualTimer.created = []
+    _ManualTimer.armed.clear()
+    server = _ServeServer(
+        ("127.0.0.1", 0),
+        _ServeHandler,
+        ServeConfiguration(status_access_token=b"t" * 32),
+        deadlines=RequestDeadlines(timer_factory=_ManualTimer),
+    )
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+    thread.start()
+    try:
+        slow = socket.create_connection(server.server_address, timeout=10.0)
+        slow.sendall(b"GET /status.json HTTP/1.1\r\nHost: x\r\n")  # headers never end
+        assert _ManualTimer.armed.wait(timeout=5.0), "the connection armed a deadline"
+        _ManualTimer.created[0].fire()
+        slow.settimeout(5.0)
+        assert slow.recv(4096) == b"", "the server closed the connection"
+        slow.close()
+
+        # A normal request disarms its deadline once the headers are read.
+        _ManualTimer.created.clear()
+        quick = socket.create_connection(server.server_address, timeout=10.0)
+        quick.sendall(b"GET /nope HTTP/1.0\r\n\r\n")
+        quick.settimeout(5.0)
+        assert quick.recv(4096).startswith(b"HTTP/1.")
+        quick.close()
+        assert _ManualTimer.created and _ManualTimer.created[0].cancelled
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5.0)

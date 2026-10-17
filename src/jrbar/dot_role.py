@@ -201,6 +201,9 @@ class DotBeaconFacts:
     in_meeting: bool = False
     #: The lid is shut: an ``extend`` Dot has nothing in view to continue.
     lid_closed: bool = False
+    #: A newly observed failure still owns its finite attention cue.
+    failure_active: bool = False
+    capacity_active: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "ask_count", max(0, int(self.ask_count)))
@@ -210,6 +213,8 @@ class DotBeaconFacts:
         object.__setattr__(self, "on_call", bool(self.on_call))
         object.__setattr__(self, "in_meeting", bool(self.in_meeting))
         object.__setattr__(self, "lid_closed", bool(self.lid_closed))
+        object.__setattr__(self, "failure_active", bool(self.failure_active))
+        object.__setattr__(self, "capacity_active", bool(self.capacity_active))
 
 
 @dataclass(frozen=True, slots=True)
@@ -823,11 +828,10 @@ def beacon_program(
 ) -> tuple[str, str, bool]:
     """``(program, why, animated)`` for the ``asks`` role.
 
-    Precedence is the person's, not the machine's: something that is stuck
-    outranks something that is waiting, which outranks something that
-    merely finished. Nothing else lights this surface at all.
+    A new failure gets a finite cue. Answerable asks then outrank standing
+    failures, which remain visible without repeating an alarm.
     """
-    if facts.blocked:
+    if facts.failure_active:
         return (
             _pulse(colors.blocked, _BLOCKED_CADENCE_STAGE),
             "failed",
@@ -839,6 +843,10 @@ def beacon_program(
             "waiting",
             True,
         )
+    if facts.capacity_active:
+        return _pulse(colors.ask, _COMPLETION_CADENCE_STAGE), "capacity", True
+    if facts.blocked:
+        return colors.blocked, "failed", False
     if include_completions and facts.unseen_completions > 0:
         return (
             _pulse(colors.completion, _COMPLETION_CADENCE_STAGE),

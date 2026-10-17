@@ -10,7 +10,7 @@ import SwiftUI
 /// pull does, so the flick rules are identical on both surfaces. Only a
 /// pinned card takes mouse events at all, so the pull exists exactly
 /// while the card is interactive.
-private final class NotchCardHostingView: NSHostingView<NotchCardView> {
+final class NotchCardHostingView: NSHostingView<NotchCardView> {
     /// The pull's signed slide offset — upward positive, like the finger.
     var onPullSlide: (CGFloat) -> Void = { _ in }
     /// The release verdict — true when the pull committed.
@@ -19,34 +19,46 @@ private final class NotchCardHostingView: NSHostingView<NotchCardView> {
     private var pullStart: NSPoint?
     private var pull = NotchPullGesture()
     private var pullLive = false
+    var isPulling: Bool { pullLive }
 
     override func mouseDown(with event: NSEvent) {
-        pullStart = NSEvent.mouseLocation
-        pull = NotchPullGesture()
-        pull.move(translation: 0, at: event.timestamp)
+        beginPull(at: NSEvent.mouseLocation, time: event.timestamp)
         super.mouseDown(with: event)
     }
 
+    func beginPull(at point: NSPoint, time: TimeInterval) {
+        pullLive = false
+        pullStart = point
+        pull = NotchPullGesture()
+        pull.move(translation: 0, at: time)
+    }
+
     override func mouseDragged(with event: NSEvent) {
-        if let start = pullStart {
-            pull.move(translation: NSEvent.mouseLocation.y - start.y, at: event.timestamp)
-            if pull.engaged { pullLive = true }
-            if pullLive { onPullSlide(pull.offset(for: .card)) }
-        }
+        movePull(to: NSEvent.mouseLocation, time: event.timestamp)
         super.mouseDragged(with: event)
     }
 
-    override func mouseUp(with event: NSEvent) {
-        if pullLive {
-            onPullEnd(pull.release(at: event.timestamp, surface: .card) == .commit)
+    func movePull(to point: NSPoint, time: TimeInterval) {
+        if let start = pullStart {
+            pull.move(translation: point.y - start.y, at: time)
+            if pull.engaged { pullLive = true }
+            if pullLive { onPullSlide(pull.offset(for: .card)) }
         }
-        pullLive = false
-        pullStart = nil
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        endPull(at: event.timestamp)
         super.mouseUp(with: event)
     }
 
-    /// A re-present or a dismiss mid-pull owns the frame — the pull
-    /// lets go silently, no verdict.
+    func endPull(at time: TimeInterval) {
+        let committed = pullLive ? pull.release(at: time, surface: .card) == .commit : nil
+        pullLive = false
+        pullStart = nil
+        if let committed { onPullEnd(committed) }
+    }
+
+    /// Dismissal or unpinning cancels a pull without a release verdict.
     func abortPull() {
         pullLive = false
         pullStart = nil
@@ -57,7 +69,7 @@ private final class NotchCardHostingView: NSHostingView<NotchCardView> {
 /// The glass card under the notch — the band's peek and pinned card.
 /// It is the fallback surface: while the Notch island is drawn the
 /// island itself grows into the card instead, and this panel stays
-/// dark. Click-through until pinned, never key.
+/// dark. Click-through until pinned; keyboard focus requires the Shelf command.
 ///
 /// Material rule: Liquid Glass (`NSGlassEffectView`) is only for
 /// surfaces that visibly float off the notch — this one hangs 8 points
@@ -66,8 +78,10 @@ private final class NotchCardHostingView: NSHostingView<NotchCardView> {
 /// swaps the glass for a plain `NSVisualEffectView`, same as the panel.
 @MainActor
 final class NotchCardPanel: NSPanel {
-    private let hosting: NotchCardHostingView
+    let hosting: NotchCardHostingView
     private let backdrop: NSView
+    var presentationEnabled = true
+    private var pendingPresentation: (anchor: NSRect, clearance: CGFloat)?
 
     /// Rounder than the island's shoulder — a surface, not a capsule —
     /// and as round as the system's own glass panels.
@@ -146,12 +160,16 @@ final class NotchCardPanel: NSPanel {
                 // the finger left it, `onClose` runs the same let-go as
                 // the card's own ✕.
                 self.restFrame = nil
+                self.pendingPresentation = nil
                 self.model.onClose?()
+            } else if let pending = self.pendingPresentation {
+                self.pendingPresentation = nil
+                self.present(under: pending.anchor, clearance: pending.clearance)
             } else {
                 // Short or slow — the card springs back onto its anchor.
                 let reduced = NotchSurfaceMotion.reduceMotion
                 NSAnimationContext.runAnimationGroup { context in
-                    context.duration = reduced ? 0.08 : 0.24
+                    context.duration = reduced ? NotchMotion.panelReducedOut : NotchMotion.glassSpringBack
                     context.timingFunction = NotchSurfaceMotion.panelCurve
                     self.animator().setFrameOrigin(restFrame.origin)
                 }
@@ -159,16 +177,65 @@ final class NotchCardPanel: NSPanel {
         }
     }
 
-    override var canBecomeKey: Bool { false }
+    private var keyboardWanted = false
+    var onKeyboardKey: (UInt16, Bool) -> Void = { _, _ in }
+    var onKeyboardLost: () -> Void = {}
+    override var canBecomeKey: Bool { keyboardWanted }
+    override var acceptsFirstResponder: Bool { keyboardWanted }
     override var canBecomeMain: Bool { false }
 
-    /// The pinned state: the card holds open and takes mouse events so
-    /// its Open/close buttons work — still `.nonactivatingPanel`, still
-    /// never key, so nothing steals focus.
+    func takeKeyboard() {
+        keyboardWanted = true
+        if presentationEnabled {
+            makeFirstResponder(self)
+            makeKey()
+        }
+    }
+
+    func returnKeyboard() {
+        guard keyboardWanted else { return }
+        keyboardWanted = false
+        guard presentationEnabled, isKeyWindow else { return }
+        super.orderOut(nil)
+        super.orderFrontRegardless()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard keyboardWanted, ShelfKeyboardInput.claims(modifiers: event.modifierFlags) else {
+            super.keyDown(with: event)
+            return
+        }
+        onKeyboardKey(event.keyCode, event.modifierFlags.contains(.shift))
+    }
+
+    override func resignKey() {
+        super.resignKey()
+        guard keyboardWanted else { return }
+        keyboardWanted = false
+        onKeyboardLost()
+    }
+
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        let changed = super.makeFirstResponder(responder)
+        if changed, keyboardWanted, responder !== self {
+            keyboardWanted = false
+            onKeyboardLost()
+        }
+        return changed
+    }
+
+    /// Pinning enables mouse controls. Keyboard focus requires the
+    /// separate Shelf command; the panel remains non-activating.
     private(set) var isPinned = false
     let model: NotchCardModel
 
     func setPinned(_ pinned: Bool) {
+        if !pinned {
+            returnKeyboard()
+            onKeyboardLost()
+            hosting.abortPull()
+            pendingPresentation = nil
+        }
         isPinned = pinned
         ignoresMouseEvents = !pinned
         model.pinned = pinned
@@ -180,7 +247,12 @@ final class NotchCardPanel: NSPanel {
     /// else the band, else the notch itself — dropped `clearance` more
     /// when the buddy's HUD panel claims the room first.
     func present(under anchor: NSRect, clearance: CGFloat = 0) {
-        // A re-present owns the frame — a pull in flight lets go first.
+        // Live geometry waits for the gesture; only the latest anchor matters.
+        if hosting.isPulling {
+            pendingPresentation = (anchor, clearance)
+            return
+        }
+        pendingPresentation = nil
         hosting.abortPull()
         hosting.rootView = NotchCardView(model: model)
         hosting.layoutSubtreeIfNeeded()
@@ -191,11 +263,13 @@ final class NotchCardPanel: NSPanel {
                              y: (anchor.minY - Self.anchorGap - height - clearance).rounded())
         let frame = NSRect(origin: origin, size: NSSize(width: width, height: height))
         restFrame = frame
-        // The card settles 4 pt down into place — it arrives from the
+        // The card settles `glassSettle` pt down into place — it arrives from the
         // notch, it does not pop.
         let enters = !(isVisible && alphaValue > 0.01)
         if enters { setFrame(frame, display: true) }
-        NotchSurfaceMotion.present(self, settle: enters ? 4 : 0, duration: 0.18, reducedDuration: 0.1) { target in
+        guard presentationEnabled else { return }
+        NotchSurfaceMotion.present(self, settle: enters ? NotchMotion.glassSettle : 0,
+                                   duration: NotchMotion.glassIn, reducedDuration: NotchMotion.glassReducedIn) { target in
             // A live card resizing under new rows eases to the new frame
             // inside the same group — one coalesced setFrame, never a
             // snap per refresh.
@@ -204,8 +278,12 @@ final class NotchCardPanel: NSPanel {
     }
 
     func dismiss() {
+        returnKeyboard()
+        onKeyboardLost()
         hosting.abortPull()
+        pendingPresentation = nil
         restFrame = nil
-        NotchSurfaceMotion.dismiss(self, duration: 0.12, reducedDuration: 0.06)
+        NotchSurfaceMotion.dismiss(self, duration: NotchMotion.glassOut,
+                                   reducedDuration: NotchMotion.glassReducedOut)
     }
 }

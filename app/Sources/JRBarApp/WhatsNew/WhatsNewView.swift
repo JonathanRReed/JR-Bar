@@ -8,7 +8,7 @@ import SwiftUI
 struct WhatsNewView: View {
     let entries: [WhatsNewEntry]
     /// Runs a row's Try it; a line back is the refusal to show on the row.
-    let tryIt: @MainActor (AppCommand) -> String?
+    let tryIt: @MainActor (AppCommand) async -> String?
     let onDone: @MainActor () -> Void
 
     static let width: CGFloat = 480
@@ -21,6 +21,8 @@ struct WhatsNewView: View {
     @ViewState private var arrived = false
     /// A Try it the router refused, said on its row for a few seconds.
     @ViewState private var refusals: [String: String] = [:]
+    /// Rows whose Try it command is still waiting for the router.
+    @ViewState private var pending: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -30,7 +32,7 @@ struct WhatsNewView: View {
                 .padding(.bottom, 22)
             VStack(alignment: .leading, spacing: 16) {
                 ForEach(Array(entries.prefix(WhatsNewCatalog.maximumRows).enumerated()), id: \.element.id) { index, entry in
-                    WhatsNewRow(entry: entry, refusal: refusals[entry.id]) { command in
+                    WhatsNewRow(entry: entry, refusal: refusals[entry.id], isRunning: pending.contains(entry.id)) { command in
                         run(command, for: entry)
                     }
                     .opacity(arrived || reduceMotion ? 1 : 0)
@@ -95,12 +97,12 @@ struct WhatsNewView: View {
     }
 
     private func run(_ command: AppCommand, for entry: WhatsNewEntry) {
-        guard let refusal = tryIt(command) else {
-            refusals[entry.id] = nil
-            return
-        }
-        refusals[entry.id] = refusal
+        guard pending.insert(entry.id).inserted else { return }
         Task { @MainActor in
+            let refusal = await tryIt(command)
+            pending.remove(entry.id)
+            refusals[entry.id] = refusal
+            guard let refusal else { return }
             try? await Task.sleep(for: .seconds(4))
             if refusals[entry.id] == refusal { refusals[entry.id] = nil }
         }
@@ -121,6 +123,7 @@ struct WhatsNewView: View {
 struct WhatsNewRow: View {
     let entry: WhatsNewEntry
     let refusal: String?
+    let isRunning: Bool
     let tryIt: (AppCommand) -> Void
 
     var body: some View {
@@ -154,6 +157,7 @@ struct WhatsNewRow: View {
                     .buttonBorderShape(.capsule)
                     .tint(WhatsNewView.tint)
                     .controlSize(.small)
+                    .disabled(isRunning)
                     .help(entry.opens ?? "Opens it now")
                     .accessibilityLabel("Try \(entry.title)")
                     .accessibilityHint(entry.opens ?? "")

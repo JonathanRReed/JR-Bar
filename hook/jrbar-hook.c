@@ -9,7 +9,9 @@
  * refused_full or refused_closed, the payload is appended to
  * <state>/<provider>.pending.jsonl with the time it was queued and the
  * daemon drains that file later (src/jrbar/hook_pending.py). The
- * file rotates to <provider>.overflow.jsonl at MAX_SPOOL_BYTES. Nothing here
+ * file rotates to <provider>.overflow.jsonl at MAX_SPOOL_BYTES. If its lock
+ * cannot be obtained, a complete private *.pending.jsonl file is published.
+ * Nothing here
  * can block an agent: everything after the payload is read is bounded by
  * HARD_BUDGET_MS -- by DECIDE_WAIT_MS for the verdict wait of --decide,
  * below -- timed on a monotonic clock, and every failure path exits 0.
@@ -432,8 +434,18 @@ static int deliver(const char *dir, const char *frame, size_t frame_len, uint64_
     return refused;
 }
 
+/* Only a regular file is a spool. O_NONBLOCK keeps a named pipe planted at
+ * the path from holding the agent's hook in open(2) until the agent's own
+ * timeout: the open fails, or is closed again below, and the hook fails open. */
 static int open_spool(const char *path) {
-    return open(path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0600);
+    int fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_NONBLOCK, 0600);
+    if (fd < 0) return -1;
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        close(fd);
+        return -1;
+    }
+    return fd;
 }
 
 /* Whether `path` still names the file `st` describes. */
@@ -481,18 +493,18 @@ static int lock_spool(int fd, const char *path, const struct stat *st, uint64_t 
  * on the renamed file, so an append already under way lands before the
  * read, and a shim that locks later finds the file moved and reopens
  * `path`. A file only moves when a drain or a rotation made progress, so
- * the shim reopens until its deadline; past it the line is appended
- * without the lock to the file `path` names, past the cap if need be. Only
- * then can a drain or rotation at that same moment still take it. */
+ * the shim reopens until its deadline. Failure returns no descriptor;
+ * the caller publishes a complete private record instead. */
 static int open_spool_with_room(const char *path, const char *overflow, size_t need,
                                 uint64_t deadline, int *locked_out) {
     *locked_out = 0;
     for (;;) {
         int fd = open_spool(path);
         struct stat st;
-        if (fd < 0 || fstat(fd, &st) != 0) return fd;
+        if (fd < 0) return -1;
+        if (fstat(fd, &st) != 0) { close(fd); return -1; }
         int locked = lock_spool(fd, path, &st, deadline);
-        if (locked == -2) return fd;
+        if (locked == -2) { close(fd); return -1; }
         if (locked == 0) {
             /* The size is read under the lock: every earlier append has landed. */
             if (fstat(fd, &st) != 0 || st.st_size == 0
@@ -510,12 +522,13 @@ static int open_spool_with_room(const char *path, const char *overflow, size_t n
         /* The file moved or was rotated. Every pass that goes round again
          * comes through here, so the loop ends at the deadline. */
         close(fd);
-        if (now_ms() >= deadline) return open_spool(path);
+        if (now_ms() >= deadline) return -1;
     }
 }
 
-static void write_spool_line(int fd, const char *line, size_t length, int locked,
+static int write_spool_line(int fd, const char *line, size_t length, int locked,
                              uint64_t deadline) {
+    if (!locked) return 0;
     struct stat before;
     off_t original_size = -1;
     if (locked && fstat(fd, &before) == 0) original_size = before.st_size;
@@ -540,7 +553,7 @@ static void write_spool_line(int fd, const char *line, size_t length, int locked
         }
         break;
     }
-    if (written == length) return;
+    if (written == length) return 1;
     if (written && original_size >= 0) {
         struct stat after;
         if (fstat(fd, &after) == 0
@@ -548,6 +561,29 @@ static void write_spool_line(int fd, const char *line, size_t length, int locked
             (void)ftruncate(fd, original_size);
         }
     }
+    return 0;
+}
+
+/* The incomplete staging name is never discoverable by pending_hook_files.
+ * mkstemp creates a private O_EXCL regular file. A hard link publishes it
+ * without replacing any existing path, only after its whole record landed. */
+static void write_private_pending(const char *dir, const char *provider,
+                                  const char *line, size_t length, uint64_t deadline) {
+    char staging[4096], published[4096];
+    if ((size_t)snprintf(staging, sizeof staging, "%s/.%s.pending-stage-XXXXXX", dir, provider)
+        >= sizeof staging) return;
+    int fd = mkstemp(staging);
+    if (fd < 0) return;
+    struct stat st;
+    int identified = fstat(fd, &st) == 0;
+    int complete = identified && S_ISREG(st.st_mode)
+        && write_spool_line(fd, line, length, 1, deadline);
+    if (close(fd) != 0) complete = 0;
+    if (complete && (size_t)snprintf(published, sizeof published, "%s.pending.jsonl", staging)
+        < sizeof published && spool_still_at(staging, &st)) {
+        (void)link(staging, published);
+    }
+    if (identified && spool_still_at(staging, &st)) (void)unlink(staging);
 }
 
 static void queue_pending(const char *dir, const char *provider, pid_t ppid, double ppid_start,
@@ -569,8 +605,11 @@ static void queue_pending(const char *dir, const char *provider, pid_t ppid, dou
         int locked = 0;
         int fd = open_spool_with_room(path, overflow, (size_t)n, deadline, &locked);
         if (fd >= 0) {
-            write_spool_line(fd, line, (size_t)n, locked, deadline);
+            int complete = write_spool_line(fd, line, (size_t)n, locked, deadline);
             close(fd);
+            if (!complete) write_private_pending(dir, provider, line, (size_t)n, deadline);
+        } else {
+            write_private_pending(dir, provider, line, (size_t)n, deadline);
         }
     }
     free(line);
@@ -582,7 +621,7 @@ static void queue_pending(const char *dir, const char *provider, pid_t ppid, dou
 static void print_statusline_text(const char *dir) {
     char path[4096];
     if ((size_t)snprintf(path, sizeof path, "%s/statusline.txt", dir) >= sizeof path) return;
-    int fd = open(path, O_RDONLY | O_NOFOLLOW);
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0) return;
     char text[STATUSLINE_TEXT_BYTES + 1];
     ssize_t n = read(fd, text, STATUSLINE_TEXT_BYTES);

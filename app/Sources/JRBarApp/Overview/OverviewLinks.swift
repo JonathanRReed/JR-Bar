@@ -18,7 +18,7 @@ struct OverviewLinkFact: Hashable, Sendable {
 /// could disagree with the rows.
 struct OverviewLink: Identifiable, Hashable, Sendable {
     enum Group: String, Sendable, CaseIterable {
-        case core, nodes, devices, providers, archive
+        case core, nodes, devices, providers
 
         var title: String {
             switch self {
@@ -26,7 +26,6 @@ struct OverviewLink: Identifiable, Hashable, Sendable {
             case .nodes: "Nodes"
             case .devices: "Devices"
             case .providers: "Providers"
-            case .archive: "Archive"
             }
         }
     }
@@ -67,6 +66,9 @@ enum OverviewLinkage {
     /// node that exists whether or not the daemon is connected.
     struct Snapshot: Sendable {
         var connected = false
+        var usableState: Bool?
+        var stateRejected: String?
+        var stateUsable: Bool { usableState ?? connected }
         var connecting = false
         var offlineReason: String?
         var coreVersion: String?
@@ -84,20 +86,6 @@ enum OverviewLinkage {
         var devices: [CoreDevice] = []
         var providers: [CoreProviderUsage] = []
         var deck: DeckDevice?
-        /// The Data Hoarder's capture, while the utility is on; nil draws
-        /// no archive chip.
-        var hoarder: HoarderHealth?
-    }
-
-    /// The Data Hoarder's live capture as the strip reads it: the dials
-    /// the utility holds and what the archive itself last recorded.
-    struct HoarderHealth: Hashable, Sendable {
-        var paused = false
-        /// Capture sources switched on, and how many the engine watches.
-        var sources = 0
-        var watching = 0
-        var fullContent = false
-        var archive = ArchiveCaptureHealth()
     }
 
     static func links(_ s: Snapshot, now: Date = Date()) -> [OverviewLink] {
@@ -106,47 +94,13 @@ enum OverviewLinkage {
         out.append(contentsOf: s.devices.map(deviceLink))
         if let deck = s.deck { out.append(deckLink(deck)) }
         out.append(contentsOf: s.providers.map(providerLink))
-        if let hoarder = s.hoarder { out.append(hoarderLink(hoarder, now: now)) }
-        return out
-    }
-
-    // MARK: Archive
-
-    /// A stalled capture shows where the connections are checked: failures
-    /// and gaps warn, a pause or no live source is quiet, and a watching
-    /// capture says how long ago a segment last landed.
-    static func hoarderLink(_ h: HoarderHealth, now: Date) -> OverviewLink {
-        var facts: [OverviewLinkFact] = [
-            .init("Capture", h.paused ? "paused" : (h.watching > 0 ? "watching" : "not watching")),
-            .init("Live sources", h.sources == 0 ? "none switched on" : "\(h.watching) of \(h.sources) watched"),
-            .init("Content", h.fullContent ? "full transcripts" : "structure only (text withheld)"),
-        ]
-        let age = h.archive.lastCapturedAt.map { AgentMonitorFeed.ageText(max(0, now.timeIntervalSince($0))) }
-        if let age { facts.append(.init("Last capture", "\(age) ago")) }
-        if h.archive.liveRecords > 0 { facts.append(.init("Open records", "\(h.archive.liveRecords)")) }
-        if h.archive.failures > 0 { facts.append(.init("Failures", "\(h.archive.failures)")) }
-        if h.archive.gapRecords > 0 { facts.append(.init("Gaps", "\(h.archive.gapRecords) record\(h.archive.gapRecords == 1 ? "" : "s")")) }
-
-        let tone: OverviewLink.Tone
-        let subtitle: String
-        if h.archive.failures > 0 {
-            tone = .warn
-            subtitle = "\(h.archive.failures) failure\(h.archive.failures == 1 ? "" : "s")"
-        } else if h.paused {
-            tone = .idle
-            subtitle = "paused"
-        } else if h.sources == 0 || h.watching == 0 {
-            tone = .idle
-            subtitle = h.sources == 0 ? "no live sources" : "not watching"
-        } else if h.archive.gapRecords > 0 {
-            tone = .warn
-            subtitle = "\(h.archive.gapRecords) gap\(h.archive.gapRecords == 1 ? "" : "s")"
-        } else {
-            tone = .good
-            subtitle = age.map { "captured \($0) ago" } ?? "capturing"
+        if s.usableState == false {
+            for index in out.indices where out[index].group != .core {
+                if out[index].tone == .good { out[index].tone = .warn }
+                out[index].facts.append(.init("Reading", "on record; monitor state unavailable"))
+            }
         }
-        return OverviewLink(id: "archive:data-hoarder", group: .archive, symbol: "archivebox",
-                            title: "Data Hoarder", subtitle: subtitle, tone: tone, facts: facts)
+        return out
     }
 
     // MARK: Core
@@ -166,16 +120,27 @@ enum OverviewLinkage {
         if let reason = s.offlineReason, !reason.isEmpty, !s.connected {
             facts.append(.init("Last error", reason))
         }
-        let tone: OverviewLink.Tone = s.connected
-            ? (s.stateStale ? .warn : .good)
-            : (s.connecting ? .busy : .down)
+        if let reason = s.stateRejected { facts.append(.init("Update rejected", reason)) }
+        if s.connected, !s.stateUsable {
+            facts.append(.init("State", s.stateRejected == nil ? "waiting for an update" : "last update unreadable"))
+        }
+        let tone: OverviewLink.Tone
+        let subtitle: String
+        if s.connected, !s.stateUsable {
+            tone = s.stateRejected == nil ? .busy : .warn
+            subtitle = s.stateRejected == nil ? "connected · waiting for state" : "connected · update unreadable"
+        } else if s.connected {
+            tone = s.stateStale ? .warn : .good
+            subtitle = s.stateStale ? "connected · quiet" : "connected"
+        } else {
+            tone = s.connecting ? .busy : .down
+            subtitle = s.connecting ? "connecting" : "offline"
+        }
         return OverviewLink(
             id: "core", group: .core,
             symbol: "bolt.horizontal.circle.fill",
             title: s.coreVersion.map { "Core \($0)" } ?? "Core",
-            subtitle: s.connected
-                ? (s.stateStale ? "connected · quiet" : "connected")
-                : (s.connecting ? "connecting" : "offline"),
+            subtitle: subtitle,
             tone: tone, facts: facts)
     }
 
@@ -186,8 +151,8 @@ enum OverviewLinkage {
             id: "node:local", group: .nodes,
             symbol: "desktopcomputer",
             title: s.localName,
-            subtitle: s.localSessions == 1 ? "1 session" : "\(s.localSessions) sessions",
-            tone: s.connected ? .good : .idle,
+            subtitle: s.stateUsable ? (s.localSessions == 1 ? "1 session" : "\(s.localSessions) sessions") : "\(s.localSessions) sessions on record",
+            tone: s.stateUsable ? .good : .idle,
             facts: [
                 .init("Role", "this Mac"),
                 .init("Sessions", "\(s.localSessions) on record"),
@@ -279,12 +244,12 @@ enum OverviewLinkage {
         }
         if let fidelity = provider.fidelity { facts.append(.init("Fidelity", fidelity)) }
         if let window = provider.headlineWindow, let pct = window.usedPct {
-            var word = "\(Int(pct.rounded()))% used"
+            var word = "\(UsageWindowLabel.wholeUsed(pct))% used"
             if !window.name.isEmpty { word += " · \(window.name)" }
             facts.append(.init("Headline", word))
         }
         if let credits = provider.creditsRemaining {
-            facts.append(.init("Credits", "\(Int(credits.rounded()))"))
+            facts.append(.init("Credits", "\(Int(saturating: credits.rounded()))"))
         }
         if let incident = provider.incident, !incident.isEmpty {
             facts.append(.init("Incident", incident))
@@ -303,13 +268,24 @@ enum OverviewLinkage {
         let style = ProviderStyle.style(for: provider.id)
         var subtitle = provider.state?.replacingOccurrences(of: "_", with: " ")
         if let pct = provider.headlineWindow?.usedPct {
-            subtitle = "\(Int(pct.rounded()))% used"
+            subtitle = "\(UsageWindowLabel.wholeUsed(pct))% used"
+            // The last good reading stays, marked: an old figure never
+            // reads as a live one.
+            if provider.isStale {
+                subtitle? += " · stale"
+                if tone == .good { tone = .warn }
+            }
+        } else if !provider.quotaSource {
+            subtitle = "no quota source"
+            facts.append(.init("Quota", "no quota source"))
         }
         if provider.incident?.isEmpty == false { subtitle = "incident" }
+        // Two accounts of one provider are two chips; the tag says which.
+        let title = UsageSourceNotes.rowTag(provider.instance).map { "\(style.name) · \($0)" } ?? style.name
         return OverviewLink(
             id: "provider:\(provider.identity)", group: .providers,
             symbol: "gauge.with.dots.needle.67percent",
-            title: style.name,
+            title: title,
             subtitle: subtitle,
             tone: tone, facts: facts)
     }

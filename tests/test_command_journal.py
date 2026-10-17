@@ -76,3 +76,16 @@ def test_settle_needs_outcome(tmp_path):
 
 def test_command_ids_are_unique():
     assert new_command_id() != new_command_id()
+
+
+def test_a_client_cannot_make_the_journal_store_an_oversized_command_id(tmp_path):
+    journal = CommandJournal.load(tmp_path)
+    huge = "x" * (1024 * 1024)
+    record = journal.begin("answer_ask", {"session": "s1"}, command_id=huge, now=100.0)
+    assert record.command_id != huge
+    assert record.command_id.startswith("cmd-")
+    assert (tmp_path / "command-journal.json").stat().st_size < 4096
+    # An id a client could reasonably mint keeps its identity, so a retry replays.
+    kept = journal.begin("answer_ask", {"session": "s1"}, command_id="client-retry-0001", now=101.0)
+    assert kept.command_id == "client-retry-0001"
+    assert journal.begin("answer_ask", {"session": "s1"}, command_id="client-retry-0001").command_id == kept.command_id

@@ -31,18 +31,18 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
     /// Opened by hand — Run Setup Again, the link, the permission
     /// notice's Open Setup: in front and key (`WindowFront`).
     func show() {
-        open(fallback: .live)
+        open(fallback: .live, launch: false)
     }
 
     /// The launch gate's showing: asks to come active, as the first run
     /// always has, but with no Launch Services fallback, so a login
     /// launch never forces JR-Bar past the app you're in.
     func showOnLaunch() {
-        open(fallback: nil)
+        open(fallback: nil, launch: true)
     }
 
-    private func open(fallback: WindowFront.Fallback?) {
-        store.present()
+    private func open(fallback: WindowFront.Fallback?, launch: Bool) {
+        store.present(launch: launch, restart: !isVisible)
         let window = self.window ?? makeWindow()
         self.window = window
         attachContent(to: window)

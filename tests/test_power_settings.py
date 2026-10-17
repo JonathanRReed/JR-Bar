@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
@@ -19,8 +20,8 @@ def test_power_hold_defaults_keep_system_and_display_awake__and_1_more() -> None
 
     # --- scenario: agent_and_display_choices_are_immutable_and_independent
     defaults = AgentMonitorSettings()
-    no_agent_hold = defaults.with_agent_keep_awake_enabled(False)
-    display_hold = no_agent_hold.with_keep_display_awake(False)
+    no_agent_hold = replace(defaults, agent_keep_awake_enabled=False)
+    display_hold = replace(no_agent_hold, keep_display_awake=False)
 
     assert defaults.agent_keep_awake_enabled is True
     assert defaults.keep_display_awake is True
@@ -36,10 +37,10 @@ def test_power_hold_defaults_keep_system_and_display_awake__and_1_more() -> None
 def test_agent_and_display_choices_round_trip_independently__and_2_more(tmp_path: Path) -> None:
     # --- scenario: agent_and_display_choices_round_trip_independently
     target = tmp_path / "settings.json"
-    expected = (
-        AgentMonitorSettings()
-        .with_agent_keep_awake_enabled(False)
-        .with_keep_display_awake(True)
+    expected = replace(
+        AgentMonitorSettings(),
+        agent_keep_awake_enabled=False,
+        keep_display_awake=True,
     )
 
     save_settings(expected, target)
@@ -54,9 +55,11 @@ def test_agent_and_display_choices_round_trip_independently__and_2_more(tmp_path
     # --- scenario: absent_power_choice_keys_use_safe_defaults
     target = tmp_path / "settings.json"
     save_settings(
-        AgentMonitorSettings()
-        .with_agent_keep_awake_enabled(False)
-        .with_keep_display_awake(True),
+        replace(
+            AgentMonitorSettings(),
+            agent_keep_awake_enabled=False,
+            keep_display_awake=True,
+        ),
         target,
     )
     document = json.loads(target.read_text())
@@ -89,9 +92,11 @@ def test_unrelated_save_retains_power_choices_and_readable_extension(
 ) -> None:
     target = tmp_path / "settings.json"
     save_settings(
-        AgentMonitorSettings()
-        .with_agent_keep_awake_enabled(False)
-        .with_keep_display_awake(True),
+        replace(
+            AgentMonitorSettings(),
+            agent_keep_awake_enabled=False,
+            keep_display_awake=True,
+        ),
         target,
     )
     document = json.loads(target.read_text())

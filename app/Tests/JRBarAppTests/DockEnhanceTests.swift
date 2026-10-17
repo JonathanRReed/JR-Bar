@@ -14,6 +14,39 @@ import Testing
 
     // MARK: Hover debounce
 
+    private final class CountingPointerWatch: PointerWatching {
+        var subscriptions = 0
+        var released: [Int] = []
+
+        func subscribe(_ onMove: @escaping @MainActor () -> Void,
+                       onLost: @escaping @MainActor () -> Void) -> Int? {
+            subscriptions += 1
+            return subscriptions
+        }
+
+        func unsubscribe(_ token: Int) { released.append(token) }
+    }
+
+    @Test func releasingTheControllerStopsItsPointerSubscription() throws {
+        let suite = ScratchDefaults.suiteName("DockEnhanceLifetime")
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let watch = CountingPointerWatch()
+        var controller: DockEnhanceController? = DockEnhanceController(
+            autohideHold: DockAutohideHold(driver: nil, persistence: defaults,
+                                           fallbackWrite: { _ in Issue.record("no Dock write") }))
+        controller?.pointerWatch = watch
+        // Resume the watch without starting permissions or input monitors.
+        controller?.running = true
+        controller?.notePresence(.displaysSlept)
+        controller?.notePresence(.displaysWoke)
+        #expect(watch.subscriptions == 1)
+        weak var releasedController = controller
+        controller = nil
+        #expect(releasedController == nil)
+        #expect(watch.released == [1])
+    }
+
     @Test func aRestedIconOpensThePanel() {
         var tracker = DockHoverTracker()
         #expect(tracker.note(hovered: "Safari", pointerInPanel: false,
@@ -55,6 +88,19 @@ import Testing
                              now: 1.0, delay: 0.1) == .none,
                 "hovering the preview is not leaving")
         #expect(tracker.shown == "Safari")
+    }
+
+    @Test func leavingThePanelStartsANewGrace() {
+        var tracker = DockHoverTracker()
+        _ = tracker.summon("Safari", now: 0)
+        _ = tracker.note(hovered: nil, pointerInPanel: false, now: 0.1, delay: 0.1)
+        _ = tracker.note(hovered: nil, pointerInPanel: true, now: 0.2, delay: 0.1)
+        _ = tracker.note(hovered: nil, pointerInPanel: true, now: 2, delay: 0.1)
+        #expect(tracker.note(hovered: nil, pointerInPanel: false,
+                             now: 2.1, delay: 0.1) == .none)
+        #expect(tracker.shown == "Safari")
+        #expect(tracker.note(hovered: nil, pointerInPanel: false,
+                             now: 2.1 + DockHoverTracker.grace + 0.01, delay: 0.1) == .hide)
     }
 
     @Test func movingToAnotherIconRetargets() {
@@ -120,6 +166,17 @@ import Testing
         #expect(flick.note(deltaY: notch, inverted: false, now: 0.05) == nil)
         #expect(flick.note(deltaY: notch, inverted: false, now: 0.1) == .up,
                 "three wheel-up notches are a deliberate scroll up")
+    }
+
+    @Test("an event with no direction does not restart a flick, either way")
+    func zeroDeltaKeepsTheFlick() {
+        for sign: CGFloat in [1, -1] {
+            var flick = DockEnhanceMath.SwipeAccumulator()
+            #expect(flick.note(deltaY: 30 * sign, inverted: true, now: 0) == nil)
+            #expect(flick.note(deltaY: 0, inverted: true, now: 0.05) == nil)
+            let finished = flick.note(deltaY: 30 * sign, inverted: true, now: 0.1)
+            #expect(finished == (sign > 0 ? .down : .up))
+        }
     }
 
     // MARK: Geometry
@@ -614,36 +671,42 @@ import Testing
                 "an out-of-range delay clamps through the settings write")
     }
 
-    @Test func legacyEnhanceDefaultsMigrateIntoTheSettings() {
-        // The migration reads `.standard`, so plant the keys there and
-        // always clean up after.
-        defer {
-            UserDefaults.standard.removeObject(forKey: DockEnhancePreferences.legacyDelayKey)
-            UserDefaults.standard.removeObject(forKey: DockEnhancePreferences.legacyThumbnailsKey)
-        }
-        UserDefaults.standard.set(0.7, forKey: DockEnhancePreferences.legacyDelayKey)
-        UserDefaults.standard.set(false, forKey: DockEnhancePreferences.legacyThumbnailsKey)
+    @Test func legacyEnhanceDefaultsMigrateIntoTheSettings() throws {
+        let suiteName = ScratchDefaults.suiteName("DockEnhanceMigration")
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(0.7, forKey: DockEnhancePreferences.legacyDelayKey)
+        defaults.set(false, forKey: DockEnhancePreferences.legacyThumbnailsKey)
         var stored = DockSettings()
-        let utility = DockUtility()
+        let utility = isolatedUtility(defaults: defaults)
         utility.settings = { stored }
         utility.onSettingsChange = { stored = $0 }
         utility.applySettings()
         #expect(stored.enhance.previewDelay == 0.7)
         #expect(stored.enhance.showThumbnails == false)
-        #expect(UserDefaults.standard.object(forKey: DockEnhancePreferences.legacyDelayKey) == nil,
+        #expect(defaults.object(forKey: DockEnhancePreferences.legacyDelayKey) == nil,
                 "the legacy key is removed after the fold")
+        #expect(defaults.object(forKey: DockEnhancePreferences.legacyThumbnailsKey) == nil)
     }
 
-    @Test func legacyMigrationLeavesCleanSettingsAlone() {
-        UserDefaults.standard.removeObject(forKey: DockEnhancePreferences.legacyDelayKey)
-        UserDefaults.standard.removeObject(forKey: DockEnhancePreferences.legacyThumbnailsKey)
+    @Test func legacyMigrationLeavesCleanSettingsAlone() throws {
+        let suiteName = ScratchDefaults.suiteName("DockEnhanceCleanMigration")
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         var stored = DockSettings()
         var writes = 0
-        let utility = DockUtility()
+        let utility = isolatedUtility(defaults: defaults)
         utility.settings = { stored }
         utility.onSettingsChange = { stored = $0; writes += 1 }
         utility.applySettings()
         #expect(writes == 0, "no legacy keys, no write")
+    }
+
+    private func isolatedUtility(defaults: UserDefaults, hold: DockAutohideHold? = nil) -> DockUtility {
+        let control = AppleDockControl(defaults: FakeDefaults(), persistence: defaults)
+        control.restartDock = {}
+        let hold = hold ?? DockAutohideHold(driver: FakeAutohideDriver(), persistence: defaults)
+        return DockUtility(appleDock: control, autohideHold: hold, legacyEnhanceDefaults: defaults)
     }
 
     // MARK: Thumbnail matching
@@ -830,6 +893,34 @@ import Testing
         #expect(!cadence.reuseItems(cachedAt: 10.6, live: false, force: true, at: 10.7))
     }
 
+    @Test func aPointerLongAtRestWalksTheTilesLessOften() {
+        var cadence = DockAXReadCadence()
+        let point = CGPoint(x: 500, y: 900)
+        cadence.observe(pointer: point, at: 10)
+
+        // Rested for a moment: the walk lives half a second.
+        cadence.observe(pointer: point, at: 11)
+        #expect(!cadence.reuseItems(cachedAt: 10.4, live: false, force: false, at: 11))
+
+        // Rested for the long interval with no preview up: it lives two seconds.
+        cadence.observe(pointer: point, at: 14)
+        #expect(cadence.reuseItems(cachedAt: 12.5, live: false, force: false, at: 14))
+        #expect(!cadence.reuseItems(cachedAt: 11.9, live: false, force: false, at: 14))
+        #expect(!cadence.reuseItems(cachedAt: 12.5, live: false, force: true, at: 14))
+
+        // A preview up keeps the half-second walk. A tile the tracker calls
+        // shown that earned no panel (a folder, the Trash) does not.
+        #expect(!cadence.reuseItems(cachedAt: 12.5, live: true, force: false, at: 14))
+        #expect(!cadence.reuseItems(cachedAt: 12.5, live: true, force: false, at: 14, previewUp: true))
+        #expect(cadence.reuseItems(cachedAt: 12.5, live: true, force: false, at: 14, previewUp: false))
+        #expect(cadence.restedLong(at: 14))
+        #expect(!cadence.restedLong(at: 12.9))
+
+        // A move ends the rest.
+        cadence.observe(pointer: CGPoint(x: 520, y: 900), at: 14.1)
+        #expect(!cadence.reuseItems(cachedAt: 12.5, live: false, force: false, at: 14.2))
+    }
+
     @Test func aRestingPointerStillChecksAnAutoHiddenDockNearTheEdge() {
         var cadence = DockAXReadCadence()
         cadence.observe(pointer: CGPoint(x: 500, y: 900), at: 0)
@@ -937,7 +1028,7 @@ import Testing
         DockAutohideHold(driver: driver, persistence: suite).hold()
         // …the next life boots with the marker still set.
         let hold = DockAutohideHold(driver: driver, persistence: suite)
-        let utility = DockUtility(autohideHold: hold)
+        let utility = isolatedUtility(defaults: suite, hold: hold)
         var stored = DockSettings()
         utility.settings = { stored }
         utility.onSettingsChange = { stored = $0 }

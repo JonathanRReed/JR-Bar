@@ -33,6 +33,9 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     /// posted for is no longer the session's live one.
     static let replacedLine = "That ask was replaced"
 
+    /// Said when a banner's action arrives with no request to pin it to.
+    static let unpinnedLine = "That banner cannot tell which ask it was for — open the session"
+
     /// The live ask a banner's Approve or Deny may answer: the session's
     /// open ask, and when the banner carries a request, only that same
     /// request. nil means the banner's ask was answered or replaced.
@@ -43,6 +46,28 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     private var center: UNUserNotificationCenter?
     private var authorization: UNAuthorizationStatus = .notDetermined
     private var categoriesRegistered = false
+    private var pendingDeliveries = PendingDeliveries()
+
+    /// Authorization can finish after an ask was withdrawn or replaced.
+    struct PendingDeliveries {
+        private var tokens: [String: UUID] = [:]
+
+        mutating func begin(_ identifier: String) -> UUID {
+            let token = UUID()
+            tokens[identifier] = token
+            return token
+        }
+
+        mutating func finish(_ identifier: String, token: UUID) -> Bool {
+            guard tokens[identifier] == token else { return false }
+            tokens[identifier] = nil
+            return true
+        }
+
+        mutating func withdraw(_ identifier: String) {
+            tokens[identifier] = nil
+        }
+    }
 
     var isAvailable: Bool { Bundle.main.bundleIdentifier != nil }
 
@@ -95,8 +120,10 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
             return
         }
         registerCategories()
+        let token = pendingDeliveries.begin(notification.identifier)
         ensureAuthorized { [weak self] granted in
-            guard granted else { self?.onLog?("notification skipped: permission denied"); return }
+            guard let self, self.pendingDeliveries.finish(notification.identifier, token: token) else { return }
+            guard granted else { self.onLog?("notification skipped: permission denied"); return }
             let content = UNMutableNotificationContent()
             content.title = notification.title
             content.body = notification.body
@@ -116,6 +143,7 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func withdraw(identifier: String) {
+        pendingDeliveries.withdraw(identifier)
         center?.removeDeliveredNotifications(withIdentifiers: [identifier])
         center?.removePendingNotificationRequests(withIdentifiers: [identifier])
     }

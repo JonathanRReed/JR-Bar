@@ -489,21 +489,7 @@ def test_a_refresh_publishes_contract_stamped_observations(controller) -> None:
     assert len(state.last_known_good.lanes) == 4
 
 
-def _capacity_copy(target, status_bar, provider_id: str = "claude"):
-    """The capacity row's primary line, its secondary line and one line per
-    further window, as the copy rules write them for the current model."""
-    model = target._usage_provider_models[provider_id]
-    now = time.monotonic()
-    epoch = time.time()
-    primary, secondary = status_bar.capacity_menu_lines(
-        model,
-        monotonic_now=now,
-        epoch_now=epoch,
-    )
-    return primary, secondary, status_bar.capacity_window_lines(model, epoch_now=epoch)
-
-
-def test_every_window_reaches_the_capacity_copy_with_usage_and_reset(controller) -> None:
+def test_every_window_reaches_the_capacity_model_with_usage_and_reset(controller) -> None:
     """The ledger showed windows[0] and dropped the rest -- including Opus."""
     target, status_bar = controller
 
@@ -512,20 +498,18 @@ def test_every_window_reaches_the_capacity_copy_with_usage_and_reset(controller)
     model = target._usage_provider_models["claude"]
     assert len(model.windows) == 4
 
-    primary, secondary, rows = _capacity_copy(target, status_bar)
-
-    assert primary == "Claude · 5h 90% left"
+    # The sub-cap that actually stops the owner's work is present, named, and
+    # carries its number. Three "7d" windows with no names would hide it.
+    assert [(window.label, window.percent_remaining) for window in model.windows[1:]] == [
+        ("Weekly", 80.0),
+        ("Weekly Opus", 12.0),
+        ("Weekly Sonnet", 60.0),
+    ]
+    assert (model.windows[0].duration_text, model.windows[0].percent_remaining) == ("5h", 90.0)
     # The isolated controller has no Claude account metadata. The number is
     # live, but reset continuity is intentionally unbound rather than shared
     # across every Claude account.
-    assert secondary == "updated just now"
-    # The sub-cap that actually stops the owner's work is visible, named, and
-    # carries both numbers. Three "7d" rows would have hidden it.
-    assert rows == (
-        "Weekly 80% left",
-        "Weekly Opus 12% left",
-        "Weekly Sonnet 60% left",
-    )
+    assert model.windows[0].reset_known is False
 
 
 def test_the_publish_path_still_refuses_untyped_observations(controller) -> None:
@@ -590,13 +574,6 @@ def _drifted_windows():
     ]
 
 
-def _rendered_capacity_text(target, status_bar) -> str:
-    """Every string the capacity copy rules can produce for this model."""
-    primary, secondary, rows = _capacity_copy(target, status_bar)
-    model = target._usage_provider_models["claude"]
-    return " | ".join((primary, secondary, *rows, model.menu_line, model.settings_text))
-
-
 def test_a_totally_drifted_payload_renders_nothing_rather_than_raw_percentages(
     controller,
 ) -> None:
@@ -623,16 +600,8 @@ def test_a_totally_drifted_payload_renders_nothing_rather_than_raw_percentages(
     assert model.missing is True
     assert model.error_text == status_bar.CAPACITY_UNAUTHORISED_COPY
 
-    rendered = _rendered_capacity_text(target, status_bar)
-    primary, _secondary, rows = _capacity_copy(target, status_bar)
-    assert primary == "Claude · Capacity reading unavailable"
-    assert rows == ()
-    assert model.settings_text == status_bar.CAPACITY_UNAUTHORISED_COPY
-    # No number, no label the contract never declared, no invented countdown.
-    assert "%" not in rendered
-    assert "Fable" not in rendered
-    assert "Daily Routines" not in rendered
-    assert "resets in" not in rendered.lower()
+    # No number, no label the contract never declared, no invented countdown:
+    # the model carries no window at all.
 
 
 def _lane_evidence(descriptor, key, *, state, percent=40.0):

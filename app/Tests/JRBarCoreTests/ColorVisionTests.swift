@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import JRBarCore
 
-/// The colour-vision check behind Settings › Lighting: pairs that
+/// The colour-vision check behind Settings › Devices & Lighting: pairs that
 /// collapse for a dichromat are named, and the nudge pulls one colour
 /// apart by lightness alone until every vision tells them apart.
 @Suite("Colour vision check")

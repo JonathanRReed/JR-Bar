@@ -67,7 +67,7 @@ struct KeepAwakeReadingTests {
         #expect(KeepAwakeReading(state: .off, display: true).chipHelp(now: now).contains("Manual locking and system security policies still apply"))
         let agents = KeepAwakeReading(state: .agents(count: 2)).chipHelp(now: now)
         #expect(agents.contains("2 agents"))
-        #expect(agents.contains("Settings › Notifications › Power"))
+        #expect(agents.contains("Settings › General › Power"))
         #expect(agents.contains("Click to keep it awake"))
         let countdown = KeepAwakeReading(state: .lease(.until(now.addingTimeInterval(90 * 60))), display: true)
             .chipHelp(now: now)
@@ -104,6 +104,29 @@ struct KeepAwakeReadingTests {
         #expect(timed.state == .lease(.until(end)))
         #expect(timed.showsCountdown)
         #expect(!KeepAwakeReading(state: .lease(.until(end)), suspended: "thermal").showsCountdown)
+    }
+
+    @Test("a lease the daemon could not start is not a hold, and the chip says so")
+    func holdThatDidNotStart() throws {
+        let failed = KeepAwakeReading(hold: try hold(
+            #"{"state":"manual","active":false,"lease":{"kind":"indefinite"}}"#))
+        #expect(failed.holdFailed)
+        #expect(!failed.holding, "nothing is keeping the Mac awake")
+        #expect(failed.leaseInForce, "the person's demand still stands, and a tap still ends it")
+        #expect(failed.chipTitle(now: now) == "Not held")
+        #expect(failed.chipHelp(now: now).contains("could not start"))
+        #expect(failed.footerLine(now: now)?.full == "Awake hold didn't start")
+        // Agents' hold with no process behind it reads the same way.
+        let agents = KeepAwakeReading(hold: try hold(#"{"state":"agents","agents":2,"active":false}"#))
+        #expect(agents.holdFailed && !agents.holding)
+        // Only an explicit false counts: an older daemon sends no word, a
+        // running process is a hold, a yield has its own explanation, and
+        // nothing asked for is nothing failed.
+        #expect(!KeepAwakeReading(hold: try hold(#"{"state":"manual","lease":{"kind":"indefinite"}}"#)).holdFailed)
+        #expect(!KeepAwakeReading(hold: try hold(#"{"state":"manual","active":true,"lease":{"kind":"indefinite"}}"#)).holdFailed)
+        #expect(!KeepAwakeReading(hold: try hold(#"{"state":"manual","active":false,"suspended":"thermal","lease":{"kind":"indefinite"}}"#)).holdFailed)
+        #expect(!KeepAwakeReading(hold: try hold(#"{"state":"off","active":false}"#)).holdFailed)
+        #expect(KeepAwakeReading(hold: try hold(#"{"state":"off","active":false}"#)).chipTitle(now: now) == "Awake")
     }
 
     // MARK: The power facts

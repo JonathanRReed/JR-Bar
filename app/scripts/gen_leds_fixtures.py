@@ -15,8 +15,8 @@ to the rows built here and fails when one is stale.
 
 What is called, and why
 -----------------------
-The Python app never samples LED colours itself. Its Screen Bar pipeline
-(``screen_bar_pipeline.ScreenBarSampler``) drives the firmware's own parser
+The Python app never samples LED colours itself. Its Screen Bar renderer
+drives the firmware's own parser
 and renderer, ``jrbar/resources/sdled.wasm``, through JavaScriptCore via
 ``jrbar.led_wasm.RawSdLedWasmController``:
 

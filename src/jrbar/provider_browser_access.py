@@ -329,7 +329,7 @@ def handle_provider_usage_action(
             f"'Import {title} browser session'."
             + (_signed_out_hint(title, url) if url is not None else "")
         )
-    if label in ("Run grok login", "Reconnect Grok"):
+    if provider_id == "grok" and label in ("Run grok login", "Reconnect Grok"):
         # Grok's sign-in belongs to the grok CLI, but "run grok login"
         # was being said to users whose CLI was ALREADY signed in --
         # the collector was wedged on a stale stored token instead.
@@ -349,9 +349,12 @@ def handle_provider_usage_action(
                 # the file token the repair is about to bless is the
                 # very token the server just rejected.
                 server_rejected=reason_code == "authentication_required",
+                source_instance_id=source_instance_id,
             )
             return result.message
         except Exception:
+            if source_instance_id != "default":
+                return "Couldn't read this Grok profile's sign-in. Check its credential in Settings, then refresh."
             return (
                 f"Run `grok login` in a terminal — {PRODUCT_DISPLAY_NAME} reads the "
                 "CLI's sign-in automatically on the next refresh."

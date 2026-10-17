@@ -13,9 +13,9 @@ before the code; the code follows it.
 - Settings sidebar page `.toys`, title "Toys", symbol `party.popper.fill`,
   tint a warm magenta (`Color(red: 0.93, green: 0.30, blue: 0.62)`), placed
   right after Lighting and before Notifications & Focus.
-- Page header: the JR monogram (`JRMonogram` view, drawn in SwiftUI, no
-  asset: the letters "JR" set tight in the page tint's rounded square, 44pt)
-  beside a one-line intro in Jonathan's voice. No paragraphs of preamble.
+- Page header: the shared `SettingsPageHeader` (the page's `party.popper.fill`
+  tile at 44pt, the title, and a one-line intro in Jonathan's voice). No
+  paragraphs of preamble.
 - Below the header, one `ToyCard` per toy, in this order: Fold, Aquarium,
   Notch Buddy, Confetti. (Notch is a utility — it lives on the Utilities
   page. The external-app rows and "Add an app…" were removed entirely —
@@ -43,6 +43,7 @@ public struct ToysState {
     public var notchBuddy: NotchBuddySettings
     public var confetti: ConfettiSettings
     public var notch: NotchSettings       // also decodes the legacy `alcove` key
+    public var hushDuringQuiet: Bool = true   // "Quiet the toys during Focus, quiet hours and calls"
 }
 public struct FoldSettings { enabled: Bool = false; anchor: FoldAnchor = .movement;
                              activationAngle: Double = 65;
@@ -50,7 +51,12 @@ public struct FoldSettings { enabled: Bool = false; anchor: FoldAnchor = .moveme
                              jitterTolerance: Double = 1.5; provider: FoldProvider = .jrbar;
                              frost: Double = 0; holdStrength: Double = 1;
                              dwellTimeout: Double = 0; restoreSound: Bool = false;
-                             look: FoldLook = .duo; fadeLength: Double = 0.55 /* 0.2…1 */ }
+                             look: FoldLook = .duo; fadeLength: Double = 0.55 /* 0.2…1 */;
+                             wallpaperFallback: Bool = true; hingeVoice: HingeVoice = .off }
+// (the decoder keeps every slider-backed field inside its slider: activation angle
+//  60…160, perspective / blur / shade / frost / hold strength 0…1, jitter 0…5,
+//  release when parked 0…10 s, goes dark over 0.2…1; a value that is not a
+//  finite number falls back to its default)
 // (`holdPicture` is read once to seed `holdStrength`: on → 1, off → 0; a
 //  file with no `look` moves to Duo and anchor `.movement`, keeping its
 //  blur, shade and activation angle)
@@ -59,10 +65,18 @@ public struct FoldSettings { enabled: Bool = false; anchor: FoldAnchor = .moveme
 public enum FoldProvider: String { case jrbar, bendy, lidPlane }  // who renders the fold
 public enum FoldAnchor: String { case angle, movement }  // fixed angle, or wherever the lid rests
 public enum FoldLook: String { case duo, room }  // the iPhone Duo's held picture, or the portal room
-public enum DayNightMode: String { case realTime, cycle }  // the clock / the four-minute breathe
+public enum HingeVoice: String { case off, creak, rustle }  // the lid's speed plays a creak or a paper rustle
+public enum DayNightMode: String { case realTime, cycle, sun, appearance, alwaysDay, alwaysNight }
+// the clock / the four-minute breathe / sunrise and sunset for the zone's city /
+// macOS Dark mode / always the bright tank / always the night tank
 public struct AquariumSettings { enabled: Bool = false; showLabels: Bool = true; density: Double = 1.0;
                                  speciesOverrides: [String: String] = [:]  /* provider id → species */;
-                                 dayNight: DayNightMode = .realTime }
+                                 dayNight: DayNightMode = .realTime;
+                                 /* and the card's own settings: swimPace (calm, natural, lively), swimSpeed 0.5…1.6,
+                                    fishScale 0.6…1.6, labelStyle (always, hover, never), sound = false,
+                                    maxFish (0 = all, 6, 10, 16, 24), keepResidents = true, bubbles 0…2,
+                                    scenery (full, light, bare), visitors = true, idleFillMinutes,
+                                    ambientDisplay, saverClock = true */ }
 public struct NotchBuddySettings { enabled: Bool = false; character: String = "dot";
                                    presentation: String = "character" /* or "mini" */;
                                    buddyName: String = ""; care: BuddyCare;
@@ -76,19 +90,24 @@ public enum BuddyCharacter: String { case dot, cat, ghost, robot, owl, slime,
                                      axolotl, crab, mushroom, ufo }
 public struct BuddyCare { lastInteractionAt: Double; lastTreatAt: Double; lastCrumbAt: Double;
                           /* epoch seconds; 0 = never */
-                          petCount: Int; treatsGiven: Int; crumbsEaten: Int }
+                          petCount: Int; treatsGiven: Int; crumbsEaten: Int;
+                          firstMetAt: Double; firstMetIsFloor: Bool;
+                          crumbsByProvider: [String: Int]; longestAskSeconds: Double }
 public struct ConfettiSettings { enabled: Bool = false; landing: ConfettiLanding = .rest;
                                  density: Double = 1.0 /* Amount, 0.5…2 */;
                                  duration: Double = 1.0 /* Hang time, 0.7…1.5 */;
                                  palette: ConfettiPalette = .provider; shapes: ConfettiShapes = .mixed;
                                  triggers: ConfettiTriggers; firedKeys: [String] /* dedup ring, 64 deep */;
+                                 settledResets: [String: Double] /* reset settlement times, 24 hours, at most 4096 */;
                                  whenHeld: ConfettiHeldBurst = .later; sound: Bool = false;
                                  origin: ConfettiOrigin = .notch; intensity: ConfettiIntensity = .standard;
                                  seasonal: Bool = false; screens: ConfettiScreens = .all;
                                  momentStyles: Bool = false }
-public struct ConfettiTriggers { sessionCompleted: Bool = false; weeklyReset: Bool = true;
+public struct ConfettiTriggers { sessionCompleted: Bool = false; quotaReset: Bool = true;
                                  perProviderReset: Set<String> /* provider ids, lowercase */;
-                                 codexBankedReset: Bool = false; allClear: Bool = false }
+                                 codexBankedReset: Bool = false; allClear: Bool = false;
+                                 milestones: Bool = false /* an Aquarium achievement or tank level, or the daemon's odometer */ }
+public enum ConfettiHeldBurst: String { case later, drop }     // replay it smaller when the room clears, or let it go
 public enum ConfettiLanding: String { case rest, fall, fade }   // lie on window tops & the Dock / shower off the bottom / dissolve mid-air
 public enum ConfettiPalette: String { case provider, toys, party, gold, pastel, mono, everyone }  // "rainbow" decodes as party
 public enum ConfettiShapes: String { case mixed, streamers, flecks, glyphs, stars }
@@ -101,10 +120,15 @@ public struct NotchSettings { enabled: Bool = false; provider: NotchProvider = .
                               mediaEnabled: Bool = true; capsuleKinds: AlcoveCapsuleKinds;
                               pullGestures: Bool = true; hapticTick: Bool = true;
                               mediaHUD: Bool = true; alerts: Bool = true;
-                              soundEffects: Bool = true; weather: Bool = false;
-                              weatherCity: String = ""; simulateNotch: Bool = false;
+                              soundEffects: Bool = true; simulateNotch: Bool = false;
                               mirror: Bool = false; audioVisualizer: Bool = false;
-                              replaceSystemHUD: Bool = false; shelfShakeToSummon: Bool = true }
+                              replaceSystemHUD: Bool = false; shelfShakeToSummon: Bool = true;
+                              /* and the rest of the notch's own settings: hudDuration 1…6 s (2), calendar,
+                                 reminders, lyrics (opt-in), holdNewsWhileQuiet, meetingAlerts, timerLights,
+                                 hoverOpenDelay 0…1 s (0.12), notchDisplay (builtIn, main, pointer), and the
+                                 shelf's own switches (shelfEnabled, shelfDragOut, shelfRemoveAfterDragOut,
+                                 shelfNewestFirst, shelfShakeSensitivity, shelfShakeExcludedBundleIDs,
+                                 shelfYieldToRivals) */ }
 public struct AlcoveCapsuleKinds { ask: Bool = true; completed: Bool = true;
                                    failed: Bool = true; quotaReset: Bool = true;
                                    charging: Bool = true }
@@ -120,22 +144,27 @@ cases a toy:
 @MainActor protocol Toy: AnyObject, Observable {
     var id: String { get }                 // "fold", "aquarium", …
     var name: String { get }
+    var switchLabel: String { get }        // the switch's outcome when it differs from `name`
     var blurb: String { get }              // one line, Jonathan's voice
     var symbol: String { get }             // SF Symbol
     var isOn: Bool { get set }
     var status: ToyStatus { get }          // what the chip says
     @ViewBuilder var controls: AnyView { get }   // the card's disclosure body
+    func cost(at now: TimeInterval) -> String?   // "Drawing 30 fps · none when covered"; nil hides the line
+    var searchRows: [ToySearchRow] { get }       // the titled rows Settings search can land on
 }
-enum ToyStatus: Equatable { case off, on, paused(String), needsPermission(String), external(String), unavailable(String) }
+enum ToyStatus: Equatable { case off, on, paused(String), needsPermission(String), external(String),
+                            unavailable(String), limited(String), note(String) }
 ```
 
-`ToyCard` shows: symbol tile in the page tint, name, blurb, status chip,
+`ToyCard` shows: symbol tile (each toy has its own hue: Fold orange,
+Aquarium cyan, Notch Buddy green, Confetti red), name, blurb, status chip,
 toggle, and a disclosure with `controls`. Status copy is a fact, never a
-promise ("Needs Screen Recording", "Paused: lid closed", "Bendy is
+promise ("Needs Screen Recording", "lid closed" under Paused, "Bendy is
 rendering it", "No lid-angle sensor on this Mac").
 
 `ToysStore` (`@Observable`, app target) owns the toy objects, reads/writes
-`AppState.toys`, and is created once in `AppDelegate` next to
+`AppState.toys` (saves are debounced by 300 ms), and is created once in `AppDelegate` next to
 `SettingsStore`. `SettingsStore` gets `weak var toys: ToysStore?` so the
 page can reach it.
 
@@ -182,8 +211,10 @@ study of Apple's own model (MIT).
   degrees — 9–13° per update on a moderate close, dead steady at rest),
   and each read costs ~0.5 ms. So the poll runs at just two rates:
   10 Hz — the sensor's own cadence — above the arming band
-  (`activation + 12°`), and 120 Hz inside it, where a dense poll
-  timestamps each sensor edge to ±8 ms. A shut lid (≤ 5° or clamshell)
+  (`activation + 12°`, with a set angle), and 120 Hz inside it, where a
+  dense poll timestamps each sensor edge to ±8 ms. Wherever the lid
+  rests has no band: it idles at 10 Hz and steps up to 120 Hz while the
+  capture is armed, in both looks. A shut lid (≤ 5° or clamshell)
   and any pause hold the parked 10 Hz, at utility QoS with a 15 ms
   leeway: the fold cannot draw there. A reopen steps back up when the
   reconcile that lifts the pause restores the band, as the 0.5 s resume
@@ -191,28 +222,67 @@ study of Apple's own model (MIT).
   `AppleClamshellState` once a second and rides it out on each
   `Sample{angle, at, clamshell}` so no per-frame path ever touches IOKit.
   Missing device → `status = .unavailable("No lid-angle sensor on this Mac")`
-  and the Simulate slider still works. The Duo's movement fold is the
-  one exception to the 10 Hz idle: while it is armed the poll runs at
-  120 Hz so the edge interpolator gets each edge to ±8 ms.
-- **Motion** `SlewTracker` (`FoldPortal.swift`): a slew-limited
-  critically-damped tracker — semi-implicit Euler, velocity hard-capped at
-  `maxRate` 150°/s so a slammed lid glides shut in ~300 ms instead of
-  lurching between the sensor's 10 Hz integer-degree samples. A crossing
-  guard makes overshoot structurally impossible, an arrival epsilon snaps
-  to the target so it can truly rest, and a `maxDt` clamp means a slept
-  display is a stall, never a teleport. The tracker IS the motion — no
-  second spring, no velocity smear; opening is the exact reverse.
-  `DeltaChase` carries the retrace guarantee: instant while the target
-  grows, a slew-limited unwind (3 rad/s — just over the tracker's own
-  cap) when it drops, so a real opening is followed exactly and only a
-  gate snap ever sees the easing. The same angle always draws the same
-  image. The Duo feeds the tracker through `EdgeInterpolator` instead of
-  the raw staircase: the lid is drawn one sensor period (100 ms) in the
-  past, straight between the edges already seen, into a stiffer tracker
-  (ω 40). The latency stays ~150 ms but the ±25 % ten-times-a-second
-  speed pulse is gone (under 5 % at 40–140°/s, `FoldSmoothingTests`). A
-  lid leaving rest back-dates its first segment so motion starts at once;
-  the simulate slider and Try it bypass it, being smooth already.
+  and the Simulate slider still works. A Mac without the sensor stops
+  polling for it: after 50 failed reads in a row (about 5 s at 10 Hz)
+  the pump rests and looks for the device again once a minute
+  (`SensorProbePolicy`). A raised fold lets go of its last reading after
+  3 s without a sample (`FoldSensorSilence`), and a reading outside
+  0–180° is thrown away as corrupt.
+- **Motion** `FoldMotion` (`FoldMotion.swift`): one path from the sensor
+  to the angle that is drawn, replacing the jitter filter, the edge
+  interpolator, the slew tracker and the delta chase that used to be
+  stacked (about 150 ms of added lag between them, and a slow close that
+  stalled and lurched: the filter dropped the first edges, then released a
+  2° jump the interpolator played in 100 ms). The sensor is a 10 Hz
+  sample-and-hold of whole degrees, so each change of the reading is read
+  as a timed measurement: a one-degree step means the true angle just
+  crossed the half-degree between the two readings.
+  - `FoldLidTracker` keeps a speed estimate from those edges and carries
+    the angle forward on it until the next reading is due (a sensor period
+    at speed; up to 1.3° of travel when slow). Its gain follows the size of
+    the surprise, as the one-euro filter's cutoff follows speed: small
+    residuals are trusted lightly (0.3 position, 0.1 speed), a real change
+    of pace fully (0.9, 0.9), and the carry is trimmed to a fifth after a
+    surprise so a lid that is slowing into a stop is not carried past it.
+    The first edges after a rest trust the readings more and fade to the
+    calm gains. A first step of 3° or more is a fast start and begins
+    moving at once; a one-degree first step guesses nothing and waits for
+    the second edge. A plain one-euro filter (1 Hz min cutoff, β 0.05) into
+    the spring was simulated first and could not meet the bar: 22–97 %
+    speed ripple at 5–90°/s with 100–180 ms of lag.
+  - `FoldAngleSpring` is one critically damped spring (ω 25 rad/s) on that
+    target, solved exactly in the target's own moving frame: a steady close
+    is followed with no lag, a stop settles without overshoot, any frame
+    time is stable, and a `maxDt` clamp makes a slept display a stall, never
+    a teleport. The visible speed is capped at 240°/s.
+  - The rest guard lives in `FoldMotion.feed`: after 0.6 s inside one
+    spot's window the lid counts as parked, and readings inside the range it
+    flickered over (plus the Jitter setting's slack beyond one degree) are
+    held at the door. The first reading outside the range ends the rest
+    and nothing is dropped from there on, so a slow close streams every
+    edge (a crawl under ~3°/s steps by a degree at a time: the second
+    reading outside the parked range is the one that moves it). A
+    Jitter of 0 holds nothing.
+  - Measured on recorded-style traces replayed through it (`FoldMotionTests`,
+    120 Hz ticks, steady stretch of a close): 5°/s ripples 2 % peak to
+    peak with no plateau and trails 60 ms (0.3°); 10°/s trails 110 ms
+    (about a degree), the slowest case; 20°/s ripples 10 % and is 8 ms
+    ahead; 40°/s ripples 5 % and trails 15 ms; a 90°/s slam ripples under
+    1 % and trails 8 ms. The cost is at the ends: a slam that stops dead
+    carries up to ~5° past the stop before the next reading says so (a
+    hand's own deceleration stays under 3°), and the first 0.8 s of a fast
+    close trails by up to 6°, the sensor's first edges not yet saying how
+    fast.
+  - `FoldGateEase` is the one other stage. The displayed delta is the lid's
+    exactly while the fold deepens or the lid opens (a falling target no
+    faster than 5 rad/s is followed exactly, so a real reopen retraces the
+    close and the same angle always draws the same image); only a gate
+    that snaps shut under a fold in flight — the anchor re-seated, the
+    dwell pause handing the desktop back — makes the target leap, and that
+    eases out over a quarter second (smoothstep). `FoldEntryFade` is the
+    last: see Gesture.
+  - The simulate slider and Try it go straight to the spring
+    (`feedDirect`), being smooth already.
 - **Gesture** `FoldMath.deltaRadians`: the fold is the real lid travel —
   `(activationAngle − angle)` in radians, clamped at 1.25 rad (~72°),
   the arc the projection is stable over. It is not a normalized
@@ -228,50 +298,88 @@ study of Apple's own model (MIT).
   back through the anchor is 0). Parked mid-fold never re-seats — that
   would collapse a held fold — but the dwell pause re-seats it at the
   parked angle when it hands the desktop back, and so does a reopen that
-  stops short of the old rest: back up more than 3° from the lowest
+  stops short of the old rest: back up more than 3° (more at a high Jitter
+  setting: twice the tolerance) from the lowest
   point of the close and still for 1 s, that spot is the new anchor and
   the fold unwinds from the reference it was drawing (a lid that rested
   at 110°, dipped to 80° and came back to 104° used to keep a 6° fold,
   and the capture, until it opened past 107°). Movement mode arms the
   streams on the first move off the anchor and holds the delta at 0
   until the first complete frame — the warm-up keeps the room from
-  opening black. Both looks arm the capture on 3° of travel down (a
-  nudge, or tilting the screen back wider, never flashes the Screen
-  Recording indicator: neither look folds on the way up). In the Duo
-  the first frame of a gesture eases the delta up from 0 over 150 ms
-  instead of popping to a close that is already 15° in, and the
-  overlay's first 120 ms on screen fade it in. The Duo's travel is not clamped: its geometry goes
-  to black on its own.
+  opening black. Both looks arm the capture on the first move down that cannot be
+  flicker: a parked lid's one-degree flicker is absorbed into the anchor
+  and never arms, the second whole degree of a close does (about 2° of
+  travel, where it used to take about 5°; a wider Jitter setting waits
+  for as much more), a fast close arms on its first reading, and tilting
+  the screen back arms nothing: neither look folds on the way up. The
+  capture's first frame still lands a quarter second later. When it
+  lands with the lid already well down, the delta is the lid's real
+  delta, never a timed catch-up from 0: the overlay's opacity fades in
+  over the lid's next 8° of travel, or a fifth of a second for a lid
+  parked right there, whichever finishes first (`FoldEntryFade`; a fold
+  under 2° in needs none, the opacity's own two-degree ramp covers it).
+  The Duo's travel is not clamped: its geometry goes to black on its own.
 - **Capture** `FoldCapture`: the Duo runs ONE stream (`dual: false`), the
   whole desktop minus JR-Bar, except JR-Bar's own menu-bar windows (the
-  icon mirror, the Screen Bar, kept through `exceptingWindows`) so the
+  Screen Bar, kept through `exceptingWindows`) so the
   whole bar folds together; no far stream and no window-list poll. The
   Room runs TWO ScreenCaptureKit streams on the
   built-in display (`CGDisplayIsBuiltin`), 60 fps, BGRA sRGB, no audio,
   no cursor, complete frames only, capped at 2560 px: a near stream
   (`excludingApplications` JR-Bar itself) for the window cards, and a
-  wallpaper-only stream (filter = `desktopWindows` + excluded apps +
-  excluded windows — a static layer rate-limited to 2 fps) for the
-  portal's far wall. Between them a `CGWindowList` poll (4 Hz, inside
-  the arming band only) gives each window card its on-screen rect; cards
+  wallpaper-only stream (the display with every application excluded,
+  on the same 60 fps configuration) for the
+  portal's far wall. Between them a `CGWindowList` poll (4 Hz, only
+  while the Room's two streams are alive) gives each window card its on-screen rect; cards
   crop their pixels out of the near frame and sort by front-to-back
   window order (`PortalDepth`). `FoldArming` owns the lifecycle: armed
   inside `activation + 12°` (`FoldArming.margin`) — or, in movement
-  mode, from the first deviation off the `MoveAnchor` — disarmed 1°
-  above the activation edge (`hysteresis`), a 2 s linger on disarm so
-  lingering at the edge doesn't flap the purple indicator — outside the
-  band everything is stopped and nothing is captured. Both SCStreams
+  mode, from the first deviation off the `MoveAnchor` — and a 2 s linger
+  once the lid rises above that band, so lingering at the edge doesn't
+  flap the purple indicator — outside the
+  band everything is stopped and nothing is captured. (The 1°
+  `hysteresis` belongs to the fold gate that lets the overlay draw, not
+  to the capture.) A capture that lands no frame in 5 s is recycled, and
+  failed starts back off 1, 2, 4, 8, 16 then 30 s (`FoldCaptureRetry`).
+  **Still capture (hidden, off):** `defaults write com.jonathanreed.jrbar jrbar.foldStillCapture -bool YES`
+  makes the Duo take one `SCScreenshotManager` still when the fold arms
+  instead of a 60 fps stream, so the renderer uploads and builds the blur
+  pyramid once instead of on every captured frame (`FoldCaptureMode`). The
+  fold then folds a held picture, so live video behind it stops. It is off
+  because whether a one-shot still lights the purple Screen Recording
+  indicator on macOS 27, how long the still takes to land, and whether its
+  buffer is the kind the renderer can wrap have not been checked on
+  hardware. The Room ignores it.
+  The permission check is cached for 30 s. Both SCStreams
   are stopped and released when the machine idles. Permission via
   `CGPreflightScreenCaptureAccess()`; request with
   `CGRequestScreenCaptureAccess()`; deep link
   `x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture`.
   Denied → `.needsPermission("Needs Screen Recording")` and nothing else
-  runs.
+  runs, but only when "Wallpaper without Screen Recording" is switched
+  off. It is on by default, so a Mac without the grant folds the
+  wallpaper alone (no window cards, `FoldWallpaperSource`) and the chip
+  reads "Wallpaper only".
 - **Render** `FoldOverlayWindow` + `FoldRenderer`:
-  borderless `NSWindow`, `.screenSaver` level, `ignoresMouseEvents =
+  borderless non-activating `NSPanel`, `.screenSaver` level, `ignoresMouseEvents =
   true`, `sharingType = .none`, covers the built-in screen only, `MTKView`
-  (`framebufferOnly`, capped at `min(120, screen.maximumFramesPerSecond)`),
-  one pipeline per look in one runtime-compiled library.
+  (`framebufferOnly`, paused for good: it has no clock of its own),
+  one pipeline per look in one runtime-compiled library. **One draw
+  clock**: a `CADisplayLink` on the built-in screen
+  (`FoldTickDriver`) ticks at the time the frame will be shown, and that
+  one tick moves the motion, writes the uniforms and calls
+  `FoldOverlayWindow.drawFrame`, so the params and the pixels are one frame
+  and nothing draws on a second timer. The link exists only while the fold
+  is armed and something moves or shows (`FoldTickPolicy.wantsTick`); at rest
+  there is no link, no timer and no draw, and a recorded close and reopen
+  followed by ten seconds of rest is a test (`FoldDrawClockTests`). A frame
+  asked for while two are on the GPU is owed, not dropped
+  (`FoldDrawGate`): the next to finish draws once from the newest params,
+  and a frame that would change nothing on screen is not drawn. The
+  window's alpha (the opacity ramp and the entry fade) is still the
+  window's own, written in that same tick. The library
+  compiles once per launch, off the main thread, as soon as the toy is
+  on (`FoldShaderCache`), so the first fold never waits on it.
   - **Duo** (`duoFragment`, `FoldDuoModel`): each captured frame lands
     in an 8-level Gaussian pyramid (`MPSImageGaussianPyramid`; plain
     mipmaps where MPS can't run). Units are screen heights in the lid's
@@ -314,7 +422,10 @@ study of Apple's own model (MIT).
   assertion, NOT lid state, and it arrives cached on the sensor's 1 Hz
   beat — when the built-in display is missing or mirrored (cached,
   refreshed on the screen-parameters notification plus a 2 s backstop),
-  or on screen sleep; resume 0.5 s after all clear. Never pick an
+  on screen sleep, when the screen is locked, or while another user is
+  signed in (the chip says which: "lid closed", "no built-in display",
+  "display is mirrored", "screen asleep", "screen locked", "another user
+  is signed in"); resume 0.5 s after all clear. Never pick an
   external display. Reduce Motion: the fold still follows the lid (it's
   a function of angle, not an animation) but the blur is skipped, and
   the Duo drops its warp too. **Duo closed hold** (`FoldBlackout`): a
@@ -323,17 +434,21 @@ study of Apple's own model (MIT).
   anchor kept — instead of ordering it out onto the sharp desktop. It
   lets go on a 3 s watchdog (restarted once when the lid reopens), on
   screen sleep, lock, a session switch or a lost/mirrored built-in
-  screen, or when the lid is back past 15° with a frame captured after
-  the close. A watchdog that fires on a lid reopened under 15° with a
-  frame in hand hands over to the fold the same way, with the overlay
-  kept up (the fold draws black there too), so the desktop never shows
-  through a fresh order-in. The reopen films at once, wherever the lid is, and the fold
-  then unfolds from black: the glass starts at the last angle that still
-  draws all black (edge-on + 2°) and the chase unwinds it to the live lid
-  in under half a second, so a quick reopen never cuts straight to a
-  half-lit desktop. One reference holds for as long as the overlay is up,
-  so the unfold, and the dwell pause's unwind, draw from the lid they
-  started from. The card reads "Holding black across the close" for the
+  screen, or when the lid is back past 15° with a picture to fold. The
+  last picture stays in the renderer's memory across the hold (it is
+  released the moment the hold ends or the fold stands down, and nothing
+  is captured meanwhile), so a reopen needs no new capture and no
+  resume quiet: the fold takes over from the black at the lid's real
+  angle and follows it up to full open, black until the glass passes
+  edge-on, coming up with the lid, gone as the lid reaches its rest,
+  with no clock in it (`FoldBlackout.releases(angle:pictureReady:)`). A
+  watchdog that fires on a lid reopened under 15° with a picture in hand
+  hands over to the fold the same way, with the overlay kept up (the fold
+  draws black there too), so the desktop never shows through a fresh
+  order-in. The capture still starts on a reopen, and a fresh frame
+  replaces the held one when it lands. One reference holds for as long as
+  the overlay is up, so the reopen, and the dwell pause's unwind, draw
+  from the lid they started from. The card reads "Holding black across the close" for the
   whole hold. It sits at the overlay's own level, so never above the
   lock screen, and uses no private SkyLight spaces.
 - **Swap**: `FoldProvider.bendy` / `.lidPlane`: detect via
@@ -345,7 +460,9 @@ study of Apple's own model (MIT).
   chosen app isn't installed the picker row says so and links to it.
 - **Controls**: On/Off, Look (Duo / Room), Fold from (Set angle /
   Wherever the lid rests), Starts folding at 60–160° (Set angle only; in
-  the Duo set it near where your lid rests), Release when parked, Jitter
+  the Duo set it near where your lid rests), Release when parked (0–10 s;
+  at 0 it reads "Auto", a one-second release, when the fold starts from
+  wherever the lid rests, and "Off" with a set angle), Jitter
   0–5°, Perspective / Shade / Blur, Goes dark over 20–100 % (Duo) or
   Frost (Room; a Settings search that lands on the other look's row draws
   it switched off, saying which look has it), Hold picture in place
@@ -353,7 +470,10 @@ study of Apple's own model (MIT).
   voice, "Simulate a fold" slider (drives the angle while held), Try it
   (a close and reopen 50° below the fold's own reference), live angle
   readout ("104°" or "no sensor"), Render with (JR-Bar / Bendy / Lid
-  Plane).
+  Plane), Wallpaper without Screen Recording (on by default), and the
+  Allow Screen Recording and Open Settings buttons while the grant is
+  missing. The lid readout shows "—" before the first reading. The card's cost
+  line quotes the sensor's reads per second and whether it is capturing.
 
 ## Aquarium (native)
 
@@ -376,13 +496,14 @@ It's also a small idle game (`JRBarCore/AquariumGame.swift`, the
 `GameStore` on `AquariumStore`): while sessions work, the tank earns
 **pearls**; a completion drops a bonus. Lifetime pearls raise the
 **tank level** (`AquariumProgression`), and the Shop's pricier shelves
-unlock by tier as it climbs — the sheet shows the level, progress to
+unlock by tier as it climbs — the shop shows the level, progress to
 the next, and what each locked row wants. Pearls spend in the Shop
-sheet on decor (kelp, coral, pebbles, shells, chests, jellyfish,
-snail — plus a shipwreck, ruins, a volcano, driftwood, an anemone
-bed, a bubble wall, a moon-jelly lamp, a statue, an amphora and a
-coral garden), **pets** (a sea turtle, an octopus, a cleaner shrimp,
-a tetra school, an axolotl, the occasional manta), hats and a second
+(a popover from the bag button) on decor (a leafy plant, a rock, a
+treasure chest, a little castle, a shipwreck, ruins, a volcano,
+driftwood, an anemone bed, a bubble wall, a moon-jelly lamp, a statue,
+an amphora and a coral garden), **pets** (a snail, a jellyfish, a
+hermit crab, a sea turtle, an octopus, a cleaner shrimp, a tetra
+school, an axolotl, the occasional manta), hats and a second
 wearables slot of **accessories** (sunglasses, a monocle, a top hat,
 headphones, a bow tie, a scarf, and a tiny laptop that only shows
 while its fish's session is working), alternate **substrates**
@@ -391,21 +512,33 @@ more **themes** — dawn, kelp forest, abyss, sunset and blackwater —
 alongside the original five. A day with a finished session keeps the
 **streak**; a daily **goal** (three completions, ten feedings, ninety
 work minutes or five collected pearls — a different chore each day)
-pays fifteen pearls when met; sixteen **achievements** pay out once
-each, from first pearl to tank level 9; and every ninety minutes or
+pays fifteen pearls when met; twenty **achievements** pay out once
+each, sixteen from first pearl to tank level 9 and four from the
+fleet's own facts (a school of sub-agents, a clean week, under budget,
+banked credits); and every ninety minutes or
 so a **treasure chest** surfaces half-buried in the sand — three taps
 dig it up for a payout. Patient work occasionally draws a **visitor**
 across the back layer: two unbroken hours brings the whale, ten
 completions in a day brings the diver, and a quota reset brings the
 submarine. Big moments land as a small card top-right rather than the
 quiet toast. Everything the game owns lives in
-a separate `aquarium-save.json` (`AquariumSave`) — resetting settings
+a separate `aquarium-save.json` (`AquariumSave`, beside the app state in
+`~/.local/state/jrbar`) — resetting settings
 never wipes your tank — while the tank's own toggles stay in
-`app-state.json` like every toy. Feeding is the active toy: tap to
+`app-state.json` like every toy. A damaged save never costs the launch:
+a bad value loads clamped (counters, owned counts and stored seconds are
+capped, a stage stays within its range) and a single mistyped entry drops
+only itself. A file the app cannot read starts a fresh tank, and the first
+write over it, or over one this build would drop anything from, keeps the
+old bytes beside it as `aquarium-save.recovery-<id>.json` (private, 0600).
+A clock set back is tolerated too: a treasure, a visitor or a buried-chest
+stamp in the future is pulled back to now, so nothing waits out the
+difference. Feeding is the active toy: tap to
 drop pellets and the nearest fish dart over — and now and then a
 tapped fish answers with a trick, a barrel roll or a blown bubble
-ring. Nothing in the game ever
-touches your agents.
+ring. Ten pellets a fish a day count toward its growth, the pearls and
+the day's feeding goal; past that a pellet still feeds it. Nothing in the
+game ever touches your agents.
 
 Sessions stay fish. A fish you have raised to stage 1 or beyond keeps
 swimming after its session leaves the roster — a **resident**, idling
@@ -466,7 +599,7 @@ you watch and keeps its rounds while the window is closed, so dropped
 pearls it has picked up land in the "while you were away" card on
 reopen. Behind it all: a
 multi-stop gradient from a bright green surface band to a deep
-blue-green floor, five soft god rays breathing a couple of degrees
+blue-green floor, seven soft god rays (fewer in some themes) breathing a couple of degrees
 and pooling as wandering caustic light on the dune crest, a slow
 sheen drift through the column, animated caustic bands and a bright
 meniscus at the waterline, plankton motes in two parallax layers,
@@ -495,12 +628,14 @@ which is how a worker's name shows. A slow day/night wash deepens the
 water — following the local clock by default (dark from nine to six,
 dawn and dusk blending the edges, which is also when the volcano glows)
 or breathing on the old four-minute cycle if you pick it. The tank is a resizable window
-(`AquariumWindowController`) drawn in three passes: the still bed
-(water, sand, every decor piece that doesn't sway) renders on a slow
-tick into a `.drawingGroup` bitmap, an additive `Canvas` carries the
-rays, caustic pools & sheen, and a `TimelineView(.animation)` capped
-at 30 fps + `Canvas` draws only what moves — fish labels resolve once
-and are cached. It reads `core.state.sessions` (mains AND workers) and
+(`AquariumWindowController`) drawn in five passes
+(`AquariumFrameRates`): the still bed (water, sand, every decor piece
+that doesn't sway) renders on a slow tick into `.drawingGroup` bitmaps,
+far and near; the plants sway on their own 20 fps pass; an additive
+`Canvas` carries the rays, caustic pools & sheen at 12 fps; and a
+`TimelineView(.animation)` capped at 30 fps + `Canvas` draws only what
+moves — fish labels resolve once and are cached. Under Low Power Mode or
+a serious thermal state every rate halves (see "Power and heat"). It reads `core.state.sessions` (mains AND workers) and
 stops its timelines while occluded. Controls: see "The card" below.
 Reduce Motion:
 rays, shimmer & kelp hold still, tails don't wag, the jellyfish
@@ -533,7 +668,7 @@ The turn itself (`AquariumTurn`) is a U-turn in depth, after the classic
 2D turn strip: the fish stays level, drifts forward about a fifth of a
 body and comes back, its head swings round ahead of its tail (a
 per-point warp along the body that can never fold), and for four or five
-frames in the middle it is drawn head-on (`AquariumFishFront`) — a
+frames in the middle it is drawn head-on (`AquariumFishFront.swift`) — a
 proper face built from each species' kit, both eyes on you, the
 pectorals out, the tail tips sweeping behind, a white collar on a banded
 fish, a translucent fan for the betta's veil, spines on the puffer. The
@@ -690,6 +825,12 @@ hat to.
   fish or a resident. Nothing is pruned until the core has sent its
   session list: before that every live session would look gone.
 
+- Importing a settings file that turns the tank on or off does what its
+  switch does: the window opens or closes and the game timer follows.
+- The shop names itself for VoiceOver: the pearl count ("12 pearls"),
+  each buy button ("Buy <item> for <price> pearls"), and the In tank and Wear
+  controls.
+
 ## Notch Buddy (native)
 
 A tiny creature in the `NotchHUD` panel that lives by the agent state:
@@ -701,8 +842,9 @@ in SwiftUI shapes; `BuddyCharacter` is the roster — `dot`, `cat`,
 `ghost`, `robot`, `owl`, `slime`, `axolotl`, `crab`, `mushroom`, `ufo`
 — and every member shares the one
 skeleton (pose, blink, effects) and differs only in the body. The card's
-Character picker lists them by name over a live strip that paces each
-one, tap-to-pick.
+Character picker is a menu that lists them by name, over a strip of tiles
+(tap one to pick it; the tile under the pointer paces, the rest stand in
+their patrol pose). Under Mini the picker is off and the strip is hidden.
 
 The bodies: Dot is the original soft blob, gradient-lit with eyes and
 mouth punched through to the capsule. Cat adds ears that prick for asks
@@ -729,10 +871,15 @@ glass dome over a small green pilot whose almond eyes track and blink,
 and a beam that brightens while an ask is up.
 
 It's not just cute: while two or more sessions are working a pill badge
-by its feet carries the count in the busiest provider's colour, an open
+by its feet carries the count in the busiest provider's colour (in Mini,
+a plain number beside the dot), an open
 ask's "!" wears the count past one ("!2"), and hovering the buddy reads
-the state back — "3 working · 1 waiting · Codex, Claude". All of it
-comes from `core.sessions`; the daemon is never asked for more.
+the state back — "Dot is watching · 3 working · 1 waiting · Codex,
+Claude", then the caption line, with "· misses you" when it has not been
+petted in a while (asleep, it reads "Dot is asleep."). The providers appear only when there is more than one. In the
+character body the "!" is a one-shot, popped on odd asks and gone after
+about a second; in Mini the "!N" capsule stays up while the ask does. All
+of it comes from `core.sessions`; the daemon is never asked for more.
 
 It is also a small pet. The pill takes taps while the buddy holds it
 (toasts stay click-through): a tap counts as a pet and cycles a trick —
@@ -742,9 +889,26 @@ anywhere else stays a pat, so petting can't pull the front app away
 mid-ask. The card can name it (blank keeps the
 character's own name) and feed it ("Give treat" → hearts off the crown,
 a hop, and a `fed` glow for a while); each completed session lands as a
-crumb it "eats" with a "+1". A day without a pat droops it — the
-`BuddyCare` log in `app-state.json` is the whole mechanism; `mood(at:)`
-is the only read.
+crumb it "eats" with a "+1" (while JR-Bar is quiet or a Focus is on the
+crumb still counts, but the hop stays put). When the Fold's lid sensor
+reads the lid on its way down (between 5° and 60°) it pulls its nightcap
+on, unless something asks or failed. A day without a pat droops it (only a buddy
+that has been petted at least once) — the
+`BuddyCare` log in `app-state.json` is the whole mechanism. `mood(at:)`
+reads it for the droop and the fed glow; the About card and the growth
+stage read it too. "About <name>…" opens a small card with how it
+feels, "Together since" the day you met, the pets, treats and crumbs, the
+agent whose crumbs it likes most and the longest ask it sat through. The
+crumbs also grow it: a hatchling (under 30 crumbs, a touch smaller),
+grown from 30, an elder from 400 (a longer nightcap with a gold pom). A
+clock set back is read as a step, not as time that never passed: its
+wave, slump, hop and treat timers move back by the same amount, and a
+treat stamped in the future counts as neither fed nor missed. Turning
+the buddy off, tucking it, or importing settings that turn it off
+closes the rename field and the About card with it. To VoiceOver it is
+"Notch Buddy, <name>", with its value reading the waiting, failed and
+working counts, a default action that pats it, and an "Open asking
+session" action while an ask is open.
 
 And it is not nailed to the notch. Click-hold past ~4pt on the pill
 lifts it out of the slot — it dangles from the cursor, tipped toward
@@ -756,10 +920,10 @@ so it stays draggable). The parked point persists as
 frame on restore; a drop back on the notch slot, or the menu's "Dock at
 the notch", sends it home. Toasts never fight it: docked, the buddy
 still steps aside for a toast; parked, the toast keeps the notch panel
-to itself. Right-click (or a long press) opens its menu — Pet it, Give
-treat, Rename…, Change character →, About…, Wear → (once the tank's
-shop has sold a buddy piece), Feed the tank (while the tank has fish),
-Open the asking session while one is up, Dock/Float free, Caption on
+to itself. Right-click (or a long press, 0.55 s) opens its menu — Pet it, Give
+treat, Rename…, Change character →, About <name>…, Wear → (once the tank's
+shop has sold a buddy piece: Beanie, Bow or Flower), Feed the tank (while the tank has fish),
+Open “<session>” while an ask is up, Dock at the notch / Float free, Caption on
 hover, Take walks (floating only), Tuck away. Tucked is a nap: off the
 screen until the next session event or a card re-enable. Under the
 pointer, docked or floating, it wears a quiet one-line caption naming
@@ -796,8 +960,9 @@ bottom of the screen), walks along it, turns round on the spot at the
 far end — the edge's end when the edge is short — wanders half the way
 back, and hops home to where you parked it. "Take walks" turns it off;
 "Time between walks" (`walkEvery`, 3–40 minutes, 12 by default, the
-cadence it always had) sets roughly how many minutes of work pass
-between one walk and the next, so further right is rarer. It only ever
+cadence it always had) sets roughly how many minutes pass between one
+walk and the next while agents are working (two thirds of that must pass
+first, then each minute carries a chance), so further right is rarer. It only ever
 moves its own panel. A press on it holds it still under the pointer
 (the walk picks up on release), its menu holds it too, a carry ends the
 walk, and an ask, a failure, idle agents, a window that moved or "Take
@@ -860,8 +1025,8 @@ carry: no dangle, no landing squash. Off by default.
 
 ## Confetti (native)
 
-When one of the person's triggers lands — by default a provider's
-**weekly** quota reset — the notch pops: light spills out of its lower
+When a selected trigger arrives, including any confirmed provider quota
+reset by default, the notch pops. Light spills out of its lower
 lip, a puff flares at each lower corner, and a burst of confetti in that
 provider's colours sprays out from under it, wide and fast, then
 flutters down. Nothing is fired up into the notch, so the burst is seen
@@ -944,19 +1109,64 @@ shrink; a rising piece always shows in full. A Standard burst is gone
 within 5 s in every landing on screens 900–1329 pt tall.
 
 **Triggers** are judged by `ConfettiTriggerPolicy` in JRBarCore: a
-session completing (`completed` events), any provider's weekly lane
-resetting (`quota_reset` on a `weekly` / `*-weekly` lane — on by
-default), picked providers' EVERY lane resetting (the five-hour window
-included), Codex's banked-credit balance growing, the last open ask
+session completing (`completed` events), any connected provider's confirmed
+quota window resetting (`quota_reset`, on by default), selected providers'
+resets when the main reset trigger is off, Codex's banked-credit balance growing, the last open ask
 clearing, and Milestones (an Aquarium achievement or tank level, or the
 daemon's odometer). Event triggers dedup on `event:<cursor or id>`
-against the persisted `firedKeys` ring (64 deep); state edges are folded
-by `ConfettiEdgeTracker`, whose first document only seeds the baseline.
+against the persisted `firedKeys` ring (64 deep); a `quota_reset` dedups
+on `event:<event_id>` instead, the daemon's own fact id, which survives a
+restart where a journal cursor does not. State edges are folded by
+`ConfettiEdgeTracker`, whose first document only seeds the baseline. A
+daemon reconnect reseeds it the same way, so the banked-credit and
+all-clear edges never fire on what changed while the link was down.
+
+The legacy `weeklyReset` choice seeds `quotaReset` on upgrade. Explicitly
+disabled choices stay disabled. Settled reset IDs have a separate persisted
+24-hour record, capped at 4096 entries, so completion events cannot evict
+them while the daemon might replay a lost receipt. Cursor-free durable
+reoffers carry `notify: false`; duplicates go directly to Confetti for a
+receipt check without repeating other event effects.
+
+Up to 64 held facts merge into one burst. Each keeps its own hold age and
+is checked against the current trigger choices before playing. An expired
+or overflowed fact stays replayable. Turning off its trigger closes it.
+
+A reset is never lost quietly. The key is written only when the burst is
+on screen or let go for good, never while the room is only holding it, so
+a quit during a call leaves the reset owed. The daemon offers every
+confirmed reset of the last 24 hours again on connect until the toy has
+delivered or dropped it (a held or expired answer leaves it on offer), so
+a reset missed while the app was away celebrates once, on connect. A reset
+older than that (`eventFreshnessWindow`) is
+history that a restart never re-fires. Every verdict — delivered
+(`presented`, or `after_hold`), held (with the hush reason), dropped
+(with the word: `toy_off`, `trigger_off`, `already_celebrated`, `stale`,
+`no_lane`, `room_hushed`, `replaced`) or expired (`held_too_long`) — is one
+line on the unified log's `confetti` category (`log show --info
+--predicate 'subsystem == "devin.jrbar" AND category == "confetti"'`; the
+line is at info level, so the system may not keep it) and in the app's
+log tail, which is the lasting copy,
+and goes back to the daemon as `reset_receipt`, which records it on the
+event in `provider-reset-events.json`. That file stays small: finished
+deliveries are trimmed to the newest 48, while a delivery still inside its
+window and one the app has not closed are always kept, waiting
+candidates are held to the newest 64, the file is held under about 96 KB
+on write, and a file from an older build that outgrew the old 128 KB read cap is
+read and trimmed rather than dropped. A reset the daemon saw late (the
+source kept quoting the ended window, so the new window was noticed hours
+after its boundary) is stamped when it is confirmed, so it still
+celebrates, and so does a weekly refill smaller than 50 points: when the
+old window had already ended on the daemon's clock, a new reading of 90 %
+remaining or more counts once a second read, at least a minute later and
+naming the same reset time, confirms it.
 A burst no provider owns — All caught up, a completed event without one,
 an unknown provider — wears the Toys tint (`burstTint`), never the
 unknown-provider grey; a colour set in `colors.agent_colors` wins. From
 outside, `jrbar confetti` (a daemon `confetti` event: the toy must be
-on, one per 3 s) and `jrbar://confetti?provider=|session=` (an explicit
+on, one per 3 s; `--provider` or `--session` picks the colours, never
+both, `--from-hook` reads the session from a Stop hook's JSON and never
+fails the hook, `--why` says what earned it for History) and `jrbar://confetti?provider=|session=` (an explicit
 ask, like Try it and the palette's Fire Confetti) both fire a burst.
 `jrbar confetti` minds the room like a trigger; an explicit ask fires at
 once on every screen the Screens pick allows, a fullscreen one included.
@@ -969,13 +1179,13 @@ screen a fullscreen app owns is skipped (both only while the page's
 quiet switch is on). The overlay is invisible to
 screen capture and sharing. Reduce Motion gets one soft glow at the lip
 (or the icon) and nothing moving. The optional pop and rustle is
-synthesized once, cached as a WAV in the caches folder and played
+synthesized once per pitch step (seven, ±6% in 2% steps), cached as WAVs in the caches folder and played
 through `SoundPlayer.playSynthesized` on the app's one player (the event
-sounds' own): Settings › Sounds' volume, the
+sounds' own): Settings › Alerts & Sounds' volume, the
 alert device when that's picked (on an alert-device player of its own,
 so it plays beside a session's completion sound instead of cutting it
 off), held while another app has the
-microphone, a touch higher or lower each burst (±6%), and panned toward
+microphone (when the Sounds page keeps quiet on calls), a touch higher or lower each burst (±6%), and panned toward
 the icon when it fires from there. The card's cost line quotes the last
 burst's measured frame time (an `os_signpost` interval wraps each draw).
 Off by default; every key decodes tolerantly to its default.
@@ -997,7 +1207,7 @@ travels. The card's content is the shared `NotchCardView` in its
 precedence, media, battery, tray, timers, calendar, the providers'
 headline usage meters when `showUsage` is on, and the Agent Overview
 button; its width is the notch slot plus shoulders, clamped to
-300–380 pt. The glass card — `NotchCardView` in a `NotchCardPanel`,
+320–380 pt. The glass card — `NotchCardView` in a `NotchCardPanel`,
 owned by `NotchCardPresenter` — is the fallback: it shows under the
 band only while the toy is off or an external provider owns the notch,
 driven by the band's peek and pin as before. There is never both: the
@@ -1015,12 +1225,14 @@ underHousing:)` and centres above `NotchIslandLayout.housingClimb`
 `NotchCardView.islandBottomContentInset`. The bar's click-through
 window never steals a hover. `sharingType = .none` so Fold's desktop
 capture never sees it (the `JRBAR_CAPTURE_CARD` env var is a dev-only
-escape so screenshots can), and its frame is always exactly the drawn shape — nothing
-invisible swallows a menu-bar click; while Fold's overlay is up, the
-island lets clicks fall through it.
+escape so screenshots can). At rest its frame is exactly the drawn
+shape, so nothing invisible swallows a menu-bar click; while it moves the
+window is a stage around the shape for a fraction of a second
+([docs/TOP-OF-SCREEN.md](TOP-OF-SCREEN.md), "Motion"). While Fold's
+overlay is up, the island lets clicks fall through it.
 
 "Render with" picks who owns the notch, Fold-style: **JR-Bar** draws
-the island itself (settings: Show the island, Grow on hover, Usage
+the island itself (settings: Show the island, Card on hover, Usage
 meters), or an external app — **Alcove** (bundle
 `com.henrikruscon.Alcove`, detected via `NSWorkspace`) or **Boring
 Notch** (no pinnable bundle id — read off the app's own Info.plist in
@@ -1039,7 +1251,8 @@ Three Alcove-parity behaviours ride the same window. **Event capsules**
 island into a compact notice capsule — the kind's glyph and tint
 (amber ask, green done, red failed, the provider's accent for a reset)
 and one truncating "Claude · rename-the-fish needs you" line — for
-~2.4 s, then the island settles back. `AlcoveEventPolicy` shapes the notice and
+~2.4 s, then the island settles back (an ask is the exception: it stays
+until it is answered, opened or swiped away). `AlcoveEventPolicy` shapes the notice and
 `AlcoveCapsuleQueue` owns the pipeline — one showing, at most one
 waiting (newest wins), a 30 s cooldown per kind+session, a 1.2 s
 minimum gap — all pure and covered by `AlcoveEventsTests`; the toy only
@@ -1047,8 +1260,9 @@ runs the timers. A capsule outranks a closed card, but while the card
 is open its rows already tell the story, so events then earn nothing;
 a hover during a capsule still lands its expand when it steps down.
 A fifth kind, `charging`, is synthesized locally: `AlcovePowerMonitor`
-polls IOKit's power-source list every 5 s (only while the island is
-shown and both capsule switches are on) and `AlcovePower.notice` turns
+watches the shared `AlcovePowerFeed`, which polls IOKit's power-source
+list every 5 s (only while the island is shown and both capsule switches
+are on) and `AlcovePower.notice` turns
 a real transition — charger in, on battery, fully charged — into a
 bolt-tinted "Power · Charging · 84%" capsule. The first poll is a
 baseline and percent drift never speaks.
@@ -1077,8 +1291,10 @@ a 429 or a 5xx, or a page that is not LRCLIB's) is not remembered as no
 lyrics: the next play, pause or seek after a two-minute cool-down asks
 again.
 **Swipes**: a horizontal two-finger swipe on the capsule is
-next/previous while media shows; a downward swipe dismisses the capsule
-or folds the card — read off the hosting view's scroll phases,
+next/previous while media shows (on the grown card it turns the page); a
+downward swipe dismisses the capsule or folds the card, and on the plain
+island it opens the card, while an upward swipe folds or dismisses —
+all of it behind the "Pull & swipe gestures" switch, read off the hosting view's scroll phases,
 normalised for the user's scroll-direction setting so it means the same
 flick either way. Reduce Motion swaps the morph for a quiet crossfade;
 a parked island holds no listener and runs no clock.
@@ -1089,8 +1305,8 @@ draw it instead."
 ## Copy
 
 Every string on the page is in Jonathan's voice (see the jr-writing
-skill): plain, short, a bit informal, `&` is fine, no em dashes, no
-marketing words. Examples:
+skill): plain, short, a bit informal, `&` is fine, no em dashes in new
+copy (a few older card strings still carry them), no marketing words. Examples:
 
 - Page intro: "Stuff that's just fun. None of it touches your agents or
   your usage, & every bit of it can be turned off."
@@ -1125,18 +1341,32 @@ marketing words. Examples:
   travel per 1/60 s frame through a reversal; ≤ 2 pt a frame at 3× for
   the rest); the frame budget, falling asleep's full-rate beat included,
   is `JRBarAppTests/BuddyPacingTests.swift`.
-- Fold math: `deltaRadians(angle:reference:)` clamps, jitter filter
-  accepts/rejects, pause predicate on each safety input (pure functions
-  in `JRBarCore/FoldMath.swift`, tests in `FoldMathTests.swift`). The
-  Duo: `FoldDuoModelTests` (identity at rest, pinned hinge row, the
-  observer round trip at 100/90/75/60°, 79.4 % top-row width at 70°,
-  motion, darkening, end fade, blackout and catch-up),
-  `FoldSmoothingTests` (a simulated 10 Hz lid: ripple, lag, stop,
-  reversal, flicker, plus a pin that the old path fails),
+- Fold math: `deltaRadians(angle:reference:)` clamps, pause predicate on
+  each safety input (pure functions in `JRBarCore/FoldMath.swift`, tests
+  in `FoldMathTests.swift`). The Duo: `FoldDuoModelTests` (identity at
+  rest, pinned hinge row, the observer round trip at 100/90/75/60°,
+  79.4 % top-row width at 70°, motion, darkening, end fade, blackout and
+  the reopen's release),
+  `FoldMotionTests` (recorded-style 10 Hz traces replayed on an injected
+  clock: 5, 20 and 90°/s closes for ripple, lag and plateaus, an
+  open-close-open reversal, stops, a parked lid's flicker and its rest,
+  the spring, the gate ease and the entry fade) and `FoldDrawClockTests`
+  (no display link while the lid rests, one link per gesture, the draw
+  gate that owes a frame instead of dropping it),
   `FoldRendererTests` (GPU: identity at rest, sharp hinge against a soft
   far band, black far edge, the pyramid read against a Gaussian, the
   blackout) and `FoldRenderProofTests` (the seated eye's Dock and window
   corner hold within 2 px from 110° to 75°; `JRBAR_RENDER_PROOF=1` writes
-  `fold-duo-strip.png` and `fold-room-strip.png`).
+  `fold-duo-strip.png`, `fold-room-strip.png`, and the motion strips
+  `fold-duo-slow-close-strip.png`, `fold-duo-entry-strip.png`,
+  `fold-duo-reopen-strip.png` and `fold-duo-reopen-settle-strip.png`).
+- Confetti: the trigger policy and edge tracker
+  (`JRBarCoreTests/ConfettiTriggerPolicyTests.swift`), the toy's verdicts,
+  holds and receipts (`ConfettiToyTests.swift`, `ConfettiRoomTests.swift`,
+  `ConfettiDaemonEventsTests.swift`), and the burst's 5 s bound
+  (`ConfettiEmitterTests.swift`), all in `JRBarAppTests`. The notch island
+  is `NotchIslandTests`, `AlcoveEventsTests` and `AlcoveQuietHoldTests`
+  in `JRBarCoreTests`, with `NotchCapsuleTests` and `AlcovePowerFeedTests`
+  in `JRBarAppTests`.
 - Aquarium: session → fish state reducer (`AquariumModel.swift` in
   JRBarCore, pure), tests for ask/failed/completed transitions.

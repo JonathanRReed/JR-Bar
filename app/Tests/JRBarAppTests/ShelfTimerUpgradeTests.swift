@@ -50,6 +50,8 @@ struct ShelfTimerUpgradeTests {
                                           fired: false)
         try JSONEncoder().encode([due, later]).write(to: url)
         let model = ShelfTimerModel(storeURL: url)
+        #expect(model.entries.first { $0.id == "due" }?.fired == false, "nothing fires before the app is listening")
+        model.sweep()
         #expect(model.entries.first { $0.id == "due" }?.fired == true, "the recovery sweep fired it once")
         #expect(model.armedFor == later.deadline)
         #expect(ShelfTimerModel.nextDeadline([due]) == due.deadline)
@@ -72,7 +74,7 @@ struct ShelfTimerUpgradeTests {
     }
 
     @Test("+1 and +5 extend a running timer and re-arm a done one")
-    func extend() async throws {
+    func extend() throws {
         let model = makeModel()
         let running = model.add(label: "Build", duration: 60)
         model.extend(running, by: 300)
@@ -81,8 +83,8 @@ struct ShelfTimerUpgradeTests {
         let done = makeModel()
         var fired = 0
         done.onFire = { _ in fired += 1 }
-        let entry = done.add(label: "Quick", duration: 1)
-        try await Task.sleep(for: .seconds(1.2))
+        // Added as if five seconds ago, so the one-second timer is already due.
+        let entry = done.add(label: "Quick", duration: 1, now: Date().addingTimeInterval(-5))
         done.sweep()
         #expect(fired == 1)
         #expect(done.entries.first?.fired == true)
@@ -103,15 +105,15 @@ struct ShelfTimerUpgradeTests {
     }
 
     @Test("a nudge whose run finished retires without a word; one still running speaks")
-    func nudge() async throws {
+    func nudge() {
         let model = makeModel()
         var spoken: [String] = []
         model.onFire = { spoken.append($0.label) }
         model.onFireNotice = { spoken.append("island:" + $0.label) }
         model.firePredicate = { entry in entry.watchSession == "claude:busy" }
-        model.add(label: "busy", duration: 1, watchSession: "claude:busy")
-        model.add(label: "done", duration: 1, watchSession: "claude:done")
-        try await Task.sleep(for: .seconds(1.2))
+        let longAgo = Date().addingTimeInterval(-5)
+        model.add(label: "busy", duration: 1, watchSession: "claude:busy", now: longAgo)
+        model.add(label: "done", duration: 1, watchSession: "claude:done", now: longAgo)
         model.sweep()
         #expect(spoken.sorted() == ["busy", "island:busy"])
         #expect(model.entries.map(\.label) == ["busy"], "the finished run's nudge is gone")

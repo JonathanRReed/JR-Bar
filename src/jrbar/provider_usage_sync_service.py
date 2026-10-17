@@ -94,14 +94,36 @@ class ProviderSyncService:
                 return self._state
             self._pending_usage_state = usage_state
             self._state = replace(self._state, refreshing=True, reason=None)
-            self._worker = threading.Thread(
-                target=self._worker_main,
-                name="JRBarProviderSync",
-                daemon=True,
-            )
-            self._worker.start()
+            try:
+                self._worker = threading.Thread(
+                    target=self._worker_main,
+                    name="JRBarProviderSync",
+                    daemon=True,
+                )
+                self._worker.start()
+            except Exception:
+                self._worker = None
+                self._pending_usage_state = None
+                self._inflight_usage_state = None
+                self._state = replace(
+                    self._state, refreshing=False, reason="sync_refresh_failed"
+                )
+                result = self._state
+                callbacks = tuple(self._callbacks)
+                self._callbacks.clear()
+            else:
+                self._condition.notify_all()
+                return self._state
             self._condition.notify_all()
-            return self._state
+        for accepted_callback in callbacks:
+            with self._condition:
+                if self._state.closed:
+                    break
+            try:
+                accepted_callback(result)
+            except Exception:
+                continue
+        return result
 
     def _worker_main(self) -> None:
         while True:
@@ -132,6 +154,9 @@ class ProviderSyncService:
                 callbacks = tuple(self._callbacks)
                 self._callbacks.clear()
             for callback in callbacks:
+                with self._condition:
+                    if self._state.closed:
+                        break
                 try:
                     callback(result)
                 except Exception:

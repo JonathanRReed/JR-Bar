@@ -49,6 +49,6 @@ import Testing
         #expect(source.contains("subtitle: ProviderStatusPagesCopy.subtitle"))
         let row = SettingsSearch.rows.first { $0.title == "Provider status pages" }
         #expect(row?.subtitle == ProviderStatusPagesCopy.subtitle)
-        #expect(row?.page == .usage)
+        #expect(row?.chapter == .usage)
     }
 }

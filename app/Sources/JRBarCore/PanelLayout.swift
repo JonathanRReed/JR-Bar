@@ -30,6 +30,9 @@ public struct PanelLayout: Hashable, Sendable {
     // Rows.
     public static let sessionRowHeight: Double = 44
     public static let askRowHeight: Double = 92
+    /// What an ask the person has expanded adds under its question: a
+    /// fixed well, so the window is still sized by arithmetic, never measured.
+    public static let askDetailHeight: Double = 128
     public static let rowSpacing: Double = 1
     public static let listBottomPadding: Double = 6
     public static let emptySessionsHeight: Double = 60
@@ -47,14 +50,18 @@ public struct PanelLayout: Hashable, Sendable {
     /// What the panel is about to show.
     public struct Content: Hashable, Sendable {
         public var asks: Int
+        /// How many of those asks are expanded (`askDetailHeight` each).
+        public var expandedAsks: Int
         public var sessions: Int
         public var hasWhyRow: Bool
         public var usageProviders: Int
         /// `state.hidden_count > 0`: the History footer row is shown.
         public var hasHiddenFooter: Bool
 
-        public init(asks: Int = 0, sessions: Int = 0, hasWhyRow: Bool = false, usageProviders: Int = 0, hasHiddenFooter: Bool = false) {
+        public init(asks: Int = 0, sessions: Int = 0, hasWhyRow: Bool = false, usageProviders: Int = 0,
+                    hasHiddenFooter: Bool = false, expandedAsks: Int = 0) {
             self.asks = asks
+            self.expandedAsks = min(max(0, expandedAsks), max(0, asks))
             self.sessions = sessions
             self.hasWhyRow = hasWhyRow
             self.usageProviders = usageProviders
@@ -77,7 +84,8 @@ public struct PanelLayout: Hashable, Sendable {
     public static func sessionsContentHeight(_ content: Content) -> Double {
         if content.sessionsEmpty { return emptySessionsHeight }
         let rows = Double(content.asks + content.sessions)
-        return Double(content.asks) * askRowHeight + Double(content.sessions) * sessionRowHeight
+        return Double(content.asks) * askRowHeight + Double(content.expandedAsks) * askDetailHeight
+            + Double(content.sessions) * sessionRowHeight
             + max(0, rows - 1) * rowSpacing + listBottomPadding
     }
 
@@ -126,7 +134,12 @@ public struct PanelLayout: Hashable, Sendable {
             // Asks are taller than rows: a whole list is its content; a cut
             // list is measured in session rows from the top.
             if Double(content.asks + content.sessions) <= sessionRows { return sessionsContent }
-            return min(sessionsContent, viewport(rows: sessionRows, rowHeight: sessionRowHeight, spacing: rowSpacing))
+            // An ask the person opened keeps its whole card in view, with
+            // half a row under it so the list still reads as scrollable.
+            let opened = content.expandedAsks > 0
+                ? askRowHeight + askDetailHeight + rowSpacing + sessionRowHeight / 2 : 0
+            return min(sessionsContent,
+                       max(opened, viewport(rows: sessionRows, rowHeight: sessionRowHeight, spacing: rowSpacing)))
         }
         func usageHeight() -> Double {
             if content.usageProviders == 0 { return emptyUsageHeight }

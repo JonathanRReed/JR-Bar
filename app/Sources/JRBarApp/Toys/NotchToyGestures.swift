@@ -36,7 +36,7 @@ extension NotchToy {
     }
 
     /// ⌃⌥D and `jrbar://shelf`: the card opens straight onto the shelf,
-    /// or folds when it is already up — the Yoink key, which is about
+    /// or folds when Shelf is already up — the Yoink key, which is about
     /// the shelf, not the sessions. The island's card while the island
     /// is drawn, else the band's glass card, which has the same two
     /// pages. nil once it acted, else the sentence a link says instead
@@ -44,7 +44,12 @@ extension NotchToy {
     @discardableResult
     func toggleShelf() -> String? {
         if islandExpanded {
-            collapseFromBand()
+            if cardModel.page == .shelf {
+                collapseFromBand()
+            } else {
+                cardModel.show(.shelf)
+                expand(held: true)
+            }
             return nil
         }
         switch notchSurface {
@@ -149,13 +154,13 @@ extension NotchToy {
             // Across the grown card a sideways swipe turns its page; on
             // the resting island it is the transport.
             if islandExpanded {
-                cardModel.flipPage(toShelf: true)
+                if cardModel.flipPage(toShelf: true) { feel(.pageTurn) }
             } else if islandMedia != nil {
                 mediaNextTrack()
             }
         case .right:
             if islandExpanded {
-                cardModel.flipPage(toShelf: false)
+                if cardModel.flipPage(toShelf: false) { feel(.pageTurn) }
             } else if islandMedia != nil {
                 mediaPreviousTrack()
             }
@@ -247,6 +252,8 @@ extension NotchToy {
     /// would only replay the shelf as a fresh notice where the card
     /// just was.
     private func foldExpandedCard() {
+        // Every caller is a hand on the trackpad (swipe, pull, pinch).
+        feel(.gestureFold)
         if capsuleQueue.current != nil || shelvedCapsule != nil {
             capsuleWork?.cancel()
             capsuleWork = nil

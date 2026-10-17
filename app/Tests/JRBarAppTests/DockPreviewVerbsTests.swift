@@ -94,6 +94,8 @@ struct DockPreviewVerbsTests {
         #expect(DockEnhanceMath.clock(187.9) == "3:07")
         #expect(DockEnhanceMath.clock(3765) == "1:02:45")
         #expect(DockEnhanceMath.clock(.nan) == "0:00")
+        #expect(DockEnhanceMath.clock(1e30) == "99:59:59", "a garbage playhead cannot trap")
+        #expect(DockEnhanceMath.clock(-1e30) == "0:00")
     }
 
     @Test("Move To keeps the size, clamps it to the target, and centres it there")

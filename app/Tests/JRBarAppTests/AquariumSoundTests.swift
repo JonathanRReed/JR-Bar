@@ -64,7 +64,7 @@ struct AquariumSoundTests {
                                 until: now.timeIntervalSince1970 - 1)), "an expired quiet has lifted")
     }
 
-    @Test("a live microphone holds the voice only while Settings › Sounds keeps quiet on calls")
+    @Test("a live microphone holds the voice only while Settings › Alerts & Sounds keeps quiet on calls")
     func heldByTheMicrophone() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         var reads = 0

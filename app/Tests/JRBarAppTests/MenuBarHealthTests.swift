@@ -4,56 +4,23 @@ import Testing
 @testable import JRBarApp
 import JRBarCore
 
-/// Which engine hides the bar and whether it is healthy, the rival
-/// managers that fight ours, and the spacer engine's diagnostics.
+/// Whether the divider is hiding the bar, the rival managers that fight
+/// ours, and the divider's diagnostics.
 @Suite("Menu Bar — engine health and rivals")
 struct MenuBarHealthTests {
-    private func inputs(running: Bool = true, framework: Bool = true, forced: Bool = false,
-                        notarized: Bool? = true, unnotarizedOK: Bool = false,
-                        engineUp: Bool = false, live: Bool = false, failing: Bool = false,
-                        grace: Bool = false, concealed: Int = 0) -> MenuBarEngineHealth.Inputs {
-        .init(running: running, frameworkAvailable: framework, forced: forced,
-              notarized: notarized, concealUnnotarized: unnotarizedOK, engineUp: engineUp,
-              assertionLive: live, activationFailing: failing, inStartGrace: grace,
-              concealedCount: concealed)
+    @Test("the engine is the divider while the utility runs, parked otherwise")
+    func states() {
+        #expect(MenuBarEngineHealth.assess(running: true) == .divider)
+        #expect(MenuBarEngineHealth.assess(running: false) == .parked)
     }
 
-    @Test("the concealer's states: live with a count, starting, failing, nothing to hide")
-    func concealerStates() {
-        #expect(MenuBarEngineHealth.assess(inputs(engineUp: true, live: true, concealed: 6))
-                == .concealer(hidden: 6))
-        #expect(MenuBarEngineHealth.assess(inputs(engineUp: true, grace: true, concealed: 3))
-                == .concealerStarting)
-        #expect(MenuBarEngineHealth.assess(inputs(engineUp: true, failing: true, concealed: 3))
-                == .concealerFailing)
-        #expect(MenuBarEngineHealth.assess(inputs(engineUp: true, live: true, failing: true,
-                                                  concealed: 2)) == .concealer(hidden: 2),
-                "a failed swap leaves the old assertion concealing — not an alert")
-        #expect(MenuBarEngineHealth.assess(inputs(engineUp: true)) == .concealer(hidden: 0))
-        #expect(MenuBarEngineHealth.assess(inputs(running: false, engineUp: true)) == .parked)
-    }
-
-    @Test("the spacer engine says why it stands in")
-    func spacerReasons() {
-        #expect(MenuBarEngineHealth.assess(inputs(framework: false)) == .spacer(.frameworkMissing))
-        #expect(MenuBarEngineHealth.assess(inputs(forced: true)) == .spacer(.forced))
-        #expect(MenuBarEngineHealth.assess(inputs(notarized: false)) == .spacer(.notNotarized))
-        #expect(MenuBarEngineHealth.assess(inputs(notarized: false, unnotarizedOK: true))
-                == .spacer(.pending))
-        #expect(MenuBarEngineHealth.assess(inputs(notarized: nil)) == .spacer(.pending))
-    }
-
-    @Test("the lines read plainly, the spacer's with its edge, and only failure is an alert")
+    @Test("the lines read plainly, the divider's with its edge")
     func lines() {
-        #expect(MenuBarEngineHealth.concealer(hidden: 1).line() == "macOS concealer · 1 app hidden")
-        #expect(MenuBarEngineHealth.concealer(hidden: 6).line() == "macOS concealer · 6 apps hidden")
-        #expect(MenuBarEngineHealth.concealer(hidden: 0).line() == "macOS concealer · nothing hidden")
-        #expect(MenuBarEngineHealth.spacer(.frameworkMissing).line(fitEdge: 901.6)
-                == "Spacer engine · macOS's concealer isn't available on this system · edge at 902 pt")
-        #expect(MenuBarEngineHealth.spacer(.forced).line() == "Spacer engine · forced in Advanced")
-        #expect(MenuBarEngineHealth.concealerFailing.isAlert)
-        #expect(!MenuBarEngineHealth.concealer(hidden: 3).isAlert)
-        #expect(!MenuBarEngineHealth.spacer(.notNotarized).isAlert)
+        #expect(MenuBarEngineHealth.parked.line() == "Parked")
+        #expect(MenuBarEngineHealth.divider.line()
+                == "Divider · the icon is the divider, position is the setting")
+        #expect(MenuBarEngineHealth.divider.line(fitEdge: 901.6)
+                == "Divider · the icon is the divider, position is the setting · edge at 902 pt")
     }
 
     @Test("rivals match by bundle id, or by name where the id is not pinned — each once")
@@ -110,17 +77,5 @@ struct MenuBarHealthTests {
         hider.forgetFitEdge()
         #expect(hider.fitEdge == 900)
         #expect(store.edges["screen"] == nil)
-    }
-
-    @Test("forcing the spacer engine persists; older files read as not forced")
-    func forcedPersists() throws {
-        var settings = MenuBarSettings()
-        #expect(!settings.curation.forceSpacerEngine)
-        settings.curation.forceSpacerEngine = true
-        let back = try JSONDecoder().decode(MenuBarSettings.self,
-                                            from: JSONEncoder().encode(settings))
-        #expect(back.curation.forceSpacerEngine)
-        let old = try JSONDecoder().decode(MenuBarCuration.self, from: Data("{}".utf8))
-        #expect(!old.forceSpacerEngine)
     }
 }

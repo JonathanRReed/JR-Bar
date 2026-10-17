@@ -23,7 +23,7 @@ struct UnseenDotTests {
 
     @Test("History, the Overview and the timeline's live tail draw the dot, not an accent circle",
           arguments: ["HistoryView.swift", "Overview/OverviewView.swift",
-                      "Utilities/DataHoarder/ReconstructedTimelineView.swift"])
+                      "Overview/ReconstructedTimelineView.swift"])
     func adopted(file: String) throws {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

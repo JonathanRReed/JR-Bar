@@ -17,6 +17,14 @@ _MAX_LANES: Final = 64
 DEFAULT_SOURCE_INSTANCE_ID: Final = "default"
 
 
+#: The reason a snapshot carries while a provider's usage read is off: a
+#: ``needs_consent`` state with nothing to retry, so it is never "degraded".
+USAGE_OFF_REASON: Final = "usage_not_turned_on"
+
+#: What `jrbar providers status` and the menu say for it.
+USAGE_OFF_WORDS: Final = "off (not turned on)"
+
+
 class ProviderSourceState(str, Enum):
     DISABLED = "disabled"
     READY = "ready"
@@ -140,12 +148,29 @@ _PROVIDER_DESCRIPTORS: Final = (
         True,
     ),
     ProviderDescriptor(
+        "factory",
+        "Factory",
+        ("factory-web-session", "factory-api-key", "factory-billing-limits", "factory-subscription-usage"),
+        False,
+        False,
+        True,
+    ),
+    ProviderDescriptor(
         "openai-api",
         "OpenAI API",
         ("openai-admin-key", "openai-usage-api"),
         False,
         True,
         True,
+    ),
+    ProviderDescriptor(
+        "kimi", "Kimi Code", ("kimi-code-api", "kimi-web", "kimi-cli"), False, False, True,
+    ),
+    ProviderDescriptor(
+        "kilo", "Kilo", ("kilo-cli", "kilo-api"), False, False, True,
+    ),
+    ProviderDescriptor(
+        "kiro", "Kiro", ("kiro-cli-api",), False, False, True,
     ),
 )
 
@@ -519,6 +544,8 @@ def provider_status_line(snapshot: ProviderUsageSnapshot) -> str:
         ProviderSourceState.ERROR: "error",
         ProviderSourceState.UNSUPPORTED: "unsupported",
     }[snapshot.state]
+    if snapshot.reason_code == USAGE_OFF_REASON:
+        state_text = USAGE_OFF_WORDS
     if snapshot.state in {ProviderSourceState.READY, ProviderSourceState.STALE}:
         lane = most_constrained_lane(snapshot)
         if lane is not None:
@@ -528,12 +555,43 @@ def provider_status_line(snapshot: ProviderUsageSnapshot) -> str:
     return f"{label} · {state_text}"
 
 
+def failure_snapshot(
+    provider_id: str,
+    *,
+    observed_at: float,
+    state: ProviderSourceState,
+    reason: str,
+    action: str,
+) -> ProviderUsageSnapshot:
+    """A snapshot that carries a reason and a fix and no reading."""
+    return ProviderUsageSnapshot(
+        provider_id=provider_id,
+        account_label=None,
+        observed_at=observed_at,
+        state=state,
+        reason_code=reason,
+        action_label=action,
+        lanes=(),
+        input_tokens=0,
+        cached_input_tokens=0,
+        output_tokens=0,
+        model_count=0,
+        estimated_cost_usd=None,
+        cache_savings_usd=None,
+        credits_remaining=None,
+        incident=None,
+    )
+
+
 __all__ = [
     "DEFAULT_SOURCE_INSTANCE_ID",
+    "USAGE_OFF_REASON",
+    "USAGE_OFF_WORDS",
     "ProviderDescriptor",
     "ProviderSourceState",
     "ProviderUsageSnapshot",
     "UsageLane",
+    "failure_snapshot",
     "is_invented_antigravity_lane",
     "is_invented_antigravity_reading",
     "most_constrained_lane",

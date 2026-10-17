@@ -87,7 +87,6 @@ def test_default_language_and_lifetimes_match_the_glance_light_contract__and_2_m
     assert plan.selected_notification_id == "gl:failure"
     assert plan.notification_count == 3
     assert plan.count_summary == "3 notifications"
-    assert plan.announcer_summary == plan.count_summary
     assert tuple(item.destination for item in plan.surface_plans) == GLANCE_LIGHT_DESTINATIONS
     assert all(item.notification_count == 3 for item in plan.surface_plans)
     assert all(item.pattern is GlancePattern.TRIPLE_FAILURE for item in plan.surface_plans)

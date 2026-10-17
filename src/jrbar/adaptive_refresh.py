@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from enum import Enum
 
-from .provider_usage_platform import ProviderSourceState, most_constrained_lane
+from .provider_usage_platform import USAGE_OFF_REASON, ProviderSourceState, most_constrained_lane
 
 MENU_AGE_LADDER: tuple[tuple[float, float, str], ...] = (
     (300.0, 120.0, "recent_menu"),
@@ -14,11 +14,24 @@ MENU_AGE_LADDER: tuple[tuple[float, float, str], ...] = (
     (14400.0, 900.0, "aging_menu"),
 )
 IDLE_INTERVAL_SECONDS = 1800.0
+ACTIVE_WORK_INTERVAL_SECONDS = 120.0
 CONSTRAINED_INTERVAL_SECONDS = 1800.0
 RESET_WATCH_WINDOW_SECONDS = 600.0
 RESET_WATCH_INTERVAL_SECONDS = 120.0
 AMBIENT_VISIBLE_CEILING_SECONDS = 300.0
 DEGRADED_INTERVAL_SECONDS = 120.0
+#: A source that stays degraded the same way is not fixed by asking it again
+#: every two minutes: its fix is the person's (sign in, grant access, import a
+#: session), and doing that asks for a refresh itself. The quick retry covers
+#: the first minutes; a source still broken the same way after that is asked
+#: less and less often, never so rarely that the usage pace (whose samples go
+#: stale after fifteen minutes) loses its footing. A change in what is
+#: degraded starts the ladder over.
+DEGRADED_BACKOFF_LADDER: tuple[tuple[float, float], ...] = (
+    (600.0, DEGRADED_INTERVAL_SECONDS),
+    (3600.0, 300.0),
+)
+DEGRADED_SETTLED_INTERVAL_SECONDS = 600.0
 
 _DEGRADED_STATES = frozenset(
     {
@@ -31,12 +44,47 @@ _DEGRADED_STATES = frozenset(
 )
 
 
+# A provider whose usage the person has not turned on has nothing to retry,
+# so it is not degraded.
+def _is_degraded(snapshot) -> bool:
+    return (
+        getattr(snapshot, "state", None) in _DEGRADED_STATES
+        and getattr(snapshot, "reason_code", None) != USAGE_OFF_REASON
+    )
+
+
+def degraded_signature(snapshots) -> frozenset[tuple[str, str, str]]:
+    """What is degraded, and how, in a set of snapshots: (source, state,
+    reason). Two reads that are broken the same way share a signature."""
+    return frozenset(
+        (
+            str(getattr(snapshot, "identity", None) or getattr(snapshot, "provider_id", "")),
+            str(getattr(getattr(snapshot, "state", None), "value", "")),
+            str(getattr(snapshot, "reason_code", None) or ""),
+        )
+        for snapshot in snapshots
+        if _is_degraded(snapshot)
+    )
+
+
+def degraded_interval_seconds(degraded_for_seconds: float | None) -> float:
+    """How soon to ask again when a source has been degraded the same way for
+    this long. ``None`` (not known) is the quick retry."""
+    if degraded_for_seconds is None:
+        return DEGRADED_INTERVAL_SECONDS
+    for ceiling, interval in DEGRADED_BACKOFF_LADDER:
+        if degraded_for_seconds <= ceiling:
+            return interval
+    return DEGRADED_SETTLED_INTERVAL_SECONDS
+
+
 class AdaptiveRefreshReason(str, Enum):
     CONSTRAINED = "constrained"
     RECENT_MENU = "recent_menu"
     WARM_MENU = "warm_menu"
     AGING_MENU = "aging_menu"
     IDLE = "idle"
+    ACTIVE_WORK = "active_work"
     AMBIENT_USAGE = "ambient_usage"
     DEGRADED_SOURCE = "degraded_source"
     RESET_WATCH = "reset_watch"
@@ -81,9 +129,15 @@ def plan_adaptive_refresh_cadence(
     menu_last_opened_at: float | None = None,
     constrained: bool = False,
     ambient_usage_visible: bool = False,
+    active_work: bool = False,
     reset_confirm_until: float | None = None,
+    degraded_for_seconds: float | None = None,
 ) -> AdaptiveRefreshPlan:
     """Explain the existing cadence without reading clocks or system state.
+
+    ``degraded_for_seconds`` is how long the same sources have been degraded
+    the same way (``degraded_signature``); a source that stays broken is
+    retried on a widening ladder instead of every two minutes forever.
 
     ``reset_confirm_until`` is the last moment a waiting reset candidate
     can still be confirmed. Until then the next read comes within
@@ -131,6 +185,10 @@ def plan_adaptive_refresh_cadence(
                 reason = AdaptiveRefreshReason(reason_value)
                 break
 
+    if active_work and interval > ACTIVE_WORK_INTERVAL_SECONDS:
+        interval = ACTIVE_WORK_INTERVAL_SECONDS
+        reason = AdaptiveRefreshReason.ACTIVE_WORK
+
     if ambient_usage_visible and interval > AMBIENT_VISIBLE_CEILING_SECONDS:
         interval = AMBIENT_VISIBLE_CEILING_SECONDS
         reason = AdaptiveRefreshReason.AMBIENT_USAGE
@@ -138,9 +196,7 @@ def plan_adaptive_refresh_cadence(
     degraded_source = False
     reset_watch = False
     for snapshot in snapshots:
-        degraded_source = degraded_source or (
-            getattr(snapshot, "state", None) in _DEGRADED_STATES
-        )
+        degraded_source = degraded_source or _is_degraded(snapshot)
         lane = most_constrained_lane(snapshot)
         if lane is None or lane.reset_at is None:
             continue
@@ -157,8 +213,10 @@ def plan_adaptive_refresh_cadence(
             interval = RESET_WATCH_INTERVAL_SECONDS
             reason = AdaptiveRefreshReason.RESET_WATCH
         elif degraded_source:
-            interval = DEGRADED_INTERVAL_SECONDS
-            reason = AdaptiveRefreshReason.DEGRADED_SOURCE
+            degraded_interval = degraded_interval_seconds(degraded_for_seconds)
+            if degraded_interval < interval:
+                interval = degraded_interval
+                reason = AdaptiveRefreshReason.DEGRADED_SOURCE
 
     return AdaptiveRefreshPlan(
         interval,
@@ -172,5 +230,7 @@ def plan_adaptive_refresh_cadence(
 __all__ = [
     "AdaptiveRefreshPlan",
     "AdaptiveRefreshReason",
+    "degraded_interval_seconds",
+    "degraded_signature",
     "plan_adaptive_refresh_cadence",
 ]

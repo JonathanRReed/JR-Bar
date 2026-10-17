@@ -1,4 +1,4 @@
-"""Settings > Agents' T3 Code switch: presence, the opt-in write, the
+"""Settings > Agents & Usage' T3 Code switch: presence, the opt-in write, the
 reader's last look, and the daemon command that wraps them."""
 
 from __future__ import annotations

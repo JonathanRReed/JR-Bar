@@ -235,8 +235,6 @@ def test_one_exact_batch_keeps_transcript_and_capacity_truth_independent(
     # "Claude · Claude, last 365 days: ...".
     assert "Codex" not in codex.summary_text
     assert "Claude" not in claude.summary_text
-    assert codex.menu_line.count("Codex") == 1
-    assert claude.menu_line.count("Claude") == 1
 
     transcript_states = target._usage_transcript_states
     assert transcript_states[CODEX_TRANSCRIPTS].last_success_at is not None

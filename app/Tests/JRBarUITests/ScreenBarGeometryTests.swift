@@ -152,35 +152,122 @@ import Testing
         #expect(followed.width == 320)
     }
 
-    @Test func wingSlotRectsSitAtMenuBarHeight() {
-        let size = NSSize(width: 185 + 2 * 132, height: 38)
+    @Test func compactWingSeatsCenterInTheNativeMenuRow() {
+        let size = NSSize(width: 449, height: 40)
         let geometry = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
                                              leftExtent: 132, rightExtent: 132)
-        let left = ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: geometry)
-        let right = ScreenBarGeometry.wingSlotRect(.right, in: size, geometry: geometry)
-        // The claim anchors at the notch's edge (x 132) and reaches
-        // outward through the measured room: 132 - 6 outer inset = 126,
-        // and spans the notch's full 32 pt depth at the window's top —
-        // the lobe is flush with the screen edge, like the bezel's ear.
-        #expect(left == CGRect(x: 6, y: 6, width: 126, height: 32))
-        #expect(right == CGRect(x: 449 - 132, y: 6, width: 126, height: 32))
-        // Unclaimed sides draw nothing.
+        #expect(ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: geometry)
+                == CGRect(x: 113, y: 14, width: 19, height: 20))
+        #expect(ScreenBarGeometry.wingSlotRect(.right, in: size, geometry: geometry)
+                == CGRect(x: 317, y: 14, width: 19, height: 20))
         let none = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32)
         #expect(ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: none) == nil)
-        // A claim too small for the minimum collapses.
-        let tight = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
-                                          leftExtent: 38)
-        let tightSize = NSSize(width: 185 + 2 * 38, height: 38)
-        #expect(ScreenBarGeometry.wingSlotRect(.left, in: tightSize, geometry: tight) == nil)
-        // A manual wing length widening the window past the measured
-        // claim does not widen the chip into unmeasured menu-bar room —
-        // the claim still anchors at the notch edge (x 200) and reaches
-        // 62 - 6 = 56 outward.
-        let oversized = NSSize(width: 185 + 2 * 200, height: 38)
-        let measured = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
-                                             leftExtent: 62)
-        #expect(ScreenBarGeometry.wingSlotRect(.left, in: oversized, geometry: measured)
-            == CGRect(x: 144, y: 6, width: 56, height: 32))
+        let narrow = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32, leftExtent: 11)
+        #expect(ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: narrow) == nil)
+    }
+
+    @Test func symmetricEarsKeepEqualCompactWidths() throws {
+        let size = NSSize(width: 449, height: 40)
+        let geometry = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
+                                             leftExtent: 132, rightExtent: 96)
+        let ears = ScreenBarGeometry.symmetricEarRects(in: size, geometry: geometry)
+        #expect(ears.left == CGRect(x: 113, y: 14, width: 19, height: 20))
+        #expect(ears.right == CGRect(x: 317, y: 14, width: 19, height: 20))
+        let capped = ScreenBarGeometry.symmetricEarRects(in: size, geometry: geometry,
+                                                         leftLimit: 117, rightLimit: 367)
+        #expect(try #require(capped.left).width == 15)
+        #expect(try #require(capped.right).width == 15)
+        let oversized = ScreenBarGeometry.symmetricEarRects(in: size, geometry: geometry,
+                                                            preferredWidth: 74)
+        #expect(oversized.left?.width == 19 && oversized.right?.width == 19)
+    }
+
+    @Test func symmetricEarsCollapseTogetherWhenEitherFlankIsUnsafe() {
+        let size = NSSize(width: 449, height: 40)
+        let geometry = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
+                                             leftExtent: 132, rightExtent: 132)
+        let ears = ScreenBarGeometry.symmetricEarRects(in: size, geometry: geometry, rightLimit: 328)
+        #expect(ears.left == nil && ears.right == nil)
+        let missing = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32, rightExtent: 132)
+        let absent = ScreenBarGeometry.symmetricEarRects(in: size, geometry: missing)
+        #expect(absent.left == nil && absent.right == nil)
+    }
+
+    @Test func manualGapOverridesKeepSeatsAtThePhysicalNotchEdges() throws {
+        let size = NSSize(width: 500, height: 40)
+        for gap: CGFloat in [120, 185, 300] {
+            let geometry = ScreenBarWingGeometry(notchWidth: gap, notchDepth: 32,
+                                                 leftExtent: 100, rightExtent: 100, menuRowStemWidth: 185)
+            let ears = ScreenBarGeometry.symmetricEarRects(in: size, geometry: geometry)
+            let left = try #require(ears.left)
+            let right = try #require(ears.right)
+            #expect(left == CGRect(x: 138.5, y: 14, width: 19, height: 20))
+            #expect(right == CGRect(x: 342.5, y: 14, width: 19, height: 20))
+            #expect(left.midY == size.height - geometry.notchDepth / 2)
+            #expect(right.midY == left.midY)
+            #expect(right.maxX < 342.5 + 21, "the native overflow starts twenty-one points past the notch")
+        }
+        #expect(ScreenBarWingGeometry(notchWidth: 185).menuRowStemWidth == 185)
+    }
+
+    @Test func notchedWingSeatsStayInsideTheirCanvas() {
+        let geometry = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
+                                             leftExtent: 132, rightExtent: 132)
+        for height: CGFloat in [0, 20, 31, 33] {
+            let size = NSSize(width: 449, height: height)
+            #expect(ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: geometry) == nil)
+            #expect(ScreenBarGeometry.wingSlotRect(.right, in: size, geometry: geometry) == nil)
+        }
+        let size = NSSize(width: 449, height: 34)
+        let ears = ScreenBarGeometry.symmetricEarRects(in: size, geometry: geometry)
+        #expect(ears.left?.minY == 8 && ears.right?.minY == 8)
+        #expect(ears.left?.maxY == 28 && ears.right?.maxY == 28)
+        let tooNarrow = NSSize(width: 200, height: 40)
+        #expect(ScreenBarGeometry.symmetricEarRects(in: tooNarrow, geometry: geometry).left == nil)
+    }
+
+    @Test func trayPathConnectsTheCompactCapsAndRoundsItsFoot() {
+        let tray = CGRect(x: 26, y: 6, width: 448, height: 34)
+        let path = ScreenBarGeometry.trayPath(tray, stemWidth: 185, notchDepth: 32, radius: 8)
+        #expect(path.boundingBoxOfPath == CGRect(x: 138.5, y: 6, width: 223, height: 34))
+        for y: CGFloat in [7, 18, 24, 39] {
+            #expect(path.contains(CGPoint(x: 250, y: y)))
+            #expect(!path.contains(CGPoint(x: 342.5 + 21, y: y)), "the native overflow stays clear")
+            #expect(!path.contains(CGPoint(x: 157.5 - 21, y: y)))
+            #expect(!path.contains(CGPoint(x: 63, y: y)), "no long lower ledge")
+        }
+        #expect(path.contains(CGPoint(x: 140, y: 24)))
+        #expect(path.contains(CGPoint(x: 360, y: 24)))
+        #expect(!path.contains(CGPoint(x: 138.6, y: 6.1)))
+        #expect(!path.contains(CGPoint(x: 361.4, y: 6.1)))
+    }
+
+    @Test func menuSafeHousingUsesTheViewTopAndTheSameCapAllowance() {
+        let size = NSSize(width: 500, height: 64)
+        let housing = CGPath(rect: CGRect(x: 26, y: 1, width: 448, height: 35), transform: nil)
+        let path = ScreenBarGeometry.menuSafePath(housing, in: size, stemWidth: 185, notchDepth: 32)
+        #expect(path.contains(CGPoint(x: 63, y: 18)), "the housing below the menu row survives")
+        #expect(path.contains(CGPoint(x: 140, y: 34)))
+        #expect(path.contains(CGPoint(x: 360, y: 34)))
+        #expect(!path.contains(CGPoint(x: 342.5 + 21, y: 34)))
+        #expect(!path.contains(CGPoint(x: 157.5 - 21, y: 34)))
+        let bounds = path.boundingBoxOfPath
+        #expect(abs(bounds.minX - 26) < 1e-5 && abs(bounds.minY - 1) < 1e-5)
+        #expect(abs(bounds.width - 448) < 1e-5 && abs(bounds.height - 35) < 1e-5)
+    }
+
+    @Test func trayStemClampsToItsBoundsAndNotchlessClippingIsUnchanged() {
+        let tray = CGRect(x: 30, y: 6, width: 200, height: 34)
+        let wide = ScreenBarGeometry.trayPath(tray, stemWidth: 400, notchDepth: 32, radius: 8)
+        #expect(wide.boundingBoxOfPath == tray)
+        #expect(!wide.contains(CGPoint(x: 29, y: 24)))
+        let emptyStem = ScreenBarGeometry.trayPath(tray, stemWidth: -1, notchDepth: 32, radius: 8)
+        #expect(emptyStem.isEmpty)
+        let original = CGPath(rect: tray, transform: nil)
+        let notchless = ScreenBarGeometry.menuSafePath(original, in: NSSize(width: 500, height: 64),
+                                                      stemWidth: 185, notchDepth: 0)
+        #expect(notchless.boundingBoxOfPath == original.boundingBoxOfPath)
+        #expect(notchless.contains(CGPoint(x: 31, y: 24)))
     }
 
     // MARK: Island coupling (the band reads as part of the notch island)
@@ -333,7 +420,7 @@ import Testing
             auxiliaryLeft: 300, auxiliaryRight: 300, hardwareSlot: 185,
             wrapMenuBar: true, contentExtent: 60, chin: ScreenBarGeometry.wingEarDrop,
             coupledIsland: island)
-        #expect(frame.height == ScreenBarGeometry.coupledWindowHeight(islandBottom: 32))
+        #expect(frame.height == ScreenBarGeometry.coupledWindowHeight(islandBottom: 32 + ScreenBarGeometry.wingEarDrop))
     }
 
     @Test func standaloneWindowLeavesRoomForTheWingUnderlight() {
@@ -345,8 +432,8 @@ import Testing
             screenFrame: Self.screen, slotWidth: 185, notchDepth: 32,
             auxiliaryLeft: 300, auxiliaryRight: 300, hardwareSlot: 185,
             wrapMenuBar: true, contentExtent: 60, chin: ScreenBarGeometry.wingEarDrop)
-        #expect(frame.height == ScreenBarGeometry.coupledWindowHeight(islandBottom: 32))
-        #expect(frame.height == 38)
+        #expect(frame.height == ScreenBarGeometry.coupledWindowHeight(islandBottom: 32 + ScreenBarGeometry.wingEarDrop))
+        #expect(frame.height == 40)
         #expect(frame.maxY == 982)
         // No claim, no housing: the plain band keeps the classic height.
         #expect(Self.wingedFrame(contentExtent: 0).height == 36)
@@ -358,19 +445,15 @@ import Testing
         #expect(dropped.height == ScreenBarGeometry.coupledWindowHeight(islandBottom: 38))
     }
 
-    @Test func theRestingWrapEndsFivePointsUnderTheBezel() {
-        // The whole flush seat in one place: the tray ends at the bezel,
-        // the strip runs 32…36 below the screen's top, the housing's
-        // chin ends at 37 — not the 11 pt black tab the 6 pt drop hung
-        // over app content (black to 37.5, strip 38–42, content at 44).
-        #expect(ScreenBarGeometry.wingEarDrop == 0)
-        let size = NSSize(width: 213, height: ScreenBarGeometry.coupledWindowHeight(islandBottom: 32))
-        let tray = CGRect(x: 0, y: size.height - 32, width: 213, height: 32)
+    @Test func theTwoPointChinAndUnderlightFitBelowTheNativeRow() {
+        #expect(ScreenBarGeometry.wingEarDrop == 2)
+        let size = NSSize(width: 223, height: ScreenBarGeometry.coupledWindowHeight(islandBottom: 34))
+        let tray = CGRect(x: 0, y: size.height - 34, width: 223, height: 34)
         let coupling = ScreenBarGeometry.coupledBand(in: size, island: tray, cornerRadius: 8)
-        #expect(size.height - coupling.band.maxY == 32)
-        #expect(size.height - coupling.band.minY == 36)
-        #expect(size.height - coupling.housing.minY == 37)
-        #expect(coupling.housing.minY >= 0, "the window holds the housing")
+        #expect(size.height - coupling.band.maxY == 34)
+        #expect(size.height - coupling.band.minY == 38)
+        #expect(size.height - coupling.housing.minY == 39)
+        #expect(coupling.housing.minY >= 0)
     }
 
     // MARK: Ear limits (status items and app menu titles)
@@ -401,7 +484,7 @@ import Testing
 
     @Test func titlesOnAnotherScreenDoNotLimitTheEars() {
         // An external above the built-in: same x range, different y.
-        let external = [CGRect(x: 600, y: 2000, width: 60, height: 24)]
+        let external = [CGRect(x: 600, y: 2000, width: 60, height: 20)]
         let limits = ScreenBarGeometry.earLimits(itemLeft: nil, itemRight: nil, menuTitles: external,
                                                  screen: Self.screen, notchMidX: 756)
         #expect(limits.left == nil && limits.right == nil)

@@ -20,7 +20,7 @@ final class ShelfRemindersModel {
         case items([Entry])
     }
 
-    struct Entry: Equatable, Identifiable {
+    struct Entry: Equatable, Identifiable, Sendable {
         /// `calendarItemIdentifier` — the re-resolve key for complete().
         let id: String
         let title: String
@@ -29,18 +29,54 @@ final class ShelfRemindersModel {
     }
 
     private(set) var state: State = .needsPermission
+    /// Why the last write to Reminders did not happen, in words, until the
+    /// next one that does. A reminder that silently never saved is worse
+    /// than one that says so.
+    private(set) var writeNotice: String?
+    /// The permission as it stands; the tests hand in their own.
+    @ObservationIgnored var authorization: () -> EKAuthorizationStatus = {
+        EKEventStore.authorizationStatus(for: .reminder)
+    }
+    typealias Fetch = (@escaping @MainActor @Sendable ([Entry]?) -> Void) -> (() -> Void)
+    /// Tests supply held replies without opening an EventKit store.
+    @ObservationIgnored var fetchEntries: Fetch?
+    /// Tests observe scheduling without running a timer.
+    @ObservationIgnored var scheduleRefreshOverride: (() -> Void)?
     private var store: EKEventStore?
     private var refreshTimer: Timer?
-    /// Bumps on `stop` — async hops (the permission answer, the fetch)
-    /// can land after unpin, and landing must not restart the refresh
-    /// timer the stop just killed.
+    private var cancelFetch: (() -> Void)?
+    private var fetchInFlight = false
+    /// A new read or stop makes earlier replies stale, including replies
+    /// delivered during cancellation.
     private var epoch = 0
 
     /// How many rows the card shows before the "+N more" tail.
     nonisolated static let rowLimit = 3
 
+    /// The outcome of a write, as the card says it: success clears any
+    /// earlier complaint, a failure names what was being done and why.
+    func recordWrite(_ result: Result<Void, any Error>, action: String) {
+        switch result {
+        case .success:
+            writeNotice = nil
+        case .failure(let error):
+            writeNotice = Self.failureWords(action, error)
+        }
+    }
+
+    /// "Couldn't add the reminder: <the system's reason>".
+    nonisolated static func failureWords(_ action: String, _ error: any Error) -> String {
+        let reason = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        return reason.isEmpty ? "Couldn't \(action)." : "Couldn't \(action): \(reason)"
+    }
+
     func stop() {
+        writeNotice = nil
         epoch += 1
+        fetchInFlight = false
+        let cancel = cancelFetch
+        cancelFetch = nil
+        cancel?()
         refreshTimer?.invalidate()
         refreshTimer = nil
     }
@@ -56,44 +92,93 @@ final class ShelfRemindersModel {
             state = .hidden
             return
         }
-        switch EKEventStore.authorizationStatus(for: .reminder) {
+        refreshNow()
+    }
+
+    /// Read where access stands right now: the pin's first read and every
+    /// tick of the refresh cadence. Access revoked while the card is
+    /// pinned hides the row and ends the cadence, rather than drawing
+    /// "No reminders due" from a store that now answers nothing.
+    func refreshNow() {
+        switch authorization() {
         case .fullAccess:
-            let store = self.store ?? EKEventStore()
-            self.store = store
-            load(from: store)
+            loadNext()
         case .denied, .restricted:
+            stop()
             state = .hidden
         default:
+            stop()
             state = .needsPermission
         }
+    }
+
+    /// What a finished fetch means for the row. A fetch that failed
+    /// (`nil`) keeps the last good reading: an error is not an empty
+    /// list, and "No reminders due" over a failed read would lie.
+    nonisolated static func state(after fetched: [Entry]?, previous: State) -> State {
+        guard let fetched else { return previous }
+        return fetched.isEmpty ? .idle : .items(fetched)
     }
 
     /// Incomplete reminders due by the end of tomorrow — overdue ones
     /// count, since a missed reminder is exactly the row's job. Dueless
     /// reminders follow the dated ones.
-    private func load(from store: EKEventStore) {
+    private func loadNext() {
+        epoch += 1
+        let epoch = self.epoch
+        let cancel = cancelFetch
+        cancelFetch = nil
+        fetchInFlight = false
+        cancel?()
+        fetchInFlight = true
+        let fetch = fetchEntries ?? startFetch
+        let nextCancel = fetch { [weak self] entries in
+            guard let self, self.epoch == epoch, self.fetchInFlight else { return }
+            self.fetchInFlight = false
+            self.cancelFetch = nil
+            guard self.authorization() == .fullAccess else {
+                self.refreshNow()
+                return
+            }
+            let items = entries?.sorted { lhs, rhs in
+                switch (lhs.due, rhs.due) {
+                case let (l?, r?): return l < r
+                case (nil, _?): return false
+                case (_?, nil): return true
+                case (nil, nil): return lhs.title < rhs.title
+                }
+            }
+            self.state = Self.state(after: items, previous: self.state)
+            self.scheduleRefresh()
+        }
+        if self.epoch != epoch {
+            nextCancel()
+        } else if fetchInFlight {
+            cancelFetch = nextCancel
+        }
+    }
+
+    private func startFetch(_ completion: @escaping @MainActor @Sendable ([Entry]?) -> Void) -> (() -> Void) {
+        let store = self.store ?? EKEventStore()
+        self.store = store
         let horizon = Calendar.current.date(
             byAdding: .day, value: 2, to: Calendar.current.startOfDay(for: Date()))
         let predicate = store.predicateForIncompleteReminders(
             withDueDateStarting: nil, ending: horizon, calendars: nil)
-        let epoch = self.epoch
-        store.fetchReminders(matching: predicate) { [weak self] reminders in
-            Task { @MainActor [weak self] in
-                guard let self, self.epoch == epoch else { return }
-                let items = (reminders ?? [])
-                    .map { Entry(id: $0.calendarItemIdentifier,
-                                 title: $0.title?.isEmpty == false ? $0.title! : "Reminder",
-                                 due: $0.dueDateComponents?.date) }
-                    .sorted { lhs, rhs in
-                        switch (lhs.due, rhs.due) {
-                        case let (l?, r?): return l < r
-                        case (nil, _?): return false
-                        case (_?, nil): return true
-                        case (nil, nil): return lhs.title < rhs.title
-                        }
-                    }
-                self.state = items.isEmpty ? .idle : .items(items)
-                self.scheduleRefresh()
+        let request = store.fetchReminders(matching: predicate, completion: Self.reminderCallback(completion))
+        return { store.cancelFetchRequest(request) }
+    }
+
+    /// Read EventKit objects on its callback queue; only value rows cross to the main actor.
+    nonisolated static func reminderCallback(
+        _ completion: @escaping @MainActor @Sendable ([Entry]?) -> Void
+    ) -> @Sendable ([EKReminder]?) -> Void {
+        { reminders in
+            let entries = reminders?.map { Entry(id: $0.calendarItemIdentifier,
+                                                title: $0.title?.isEmpty == false ? $0.title! : "Reminder",
+                                                due: $0.dueDateComponents?.date) }
+            Task { @MainActor in
+                completion(entries)
             }
         }
     }
@@ -101,11 +186,14 @@ final class ShelfRemindersModel {
     /// Re-read on a slow cadence while the card is pinned — the list
     /// changes in Reminders.app too.
     private func scheduleRefresh() {
+        if let scheduleRefreshOverride {
+            scheduleRefreshOverride()
+            return
+        }
         refreshTimer?.invalidate()
         let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, let store = self.store else { return }
-                self.load(from: store)
+                self?.refreshNow()
             }
         }
         timer.tolerance = 10
@@ -124,9 +212,11 @@ final class ShelfRemindersModel {
         do {
             try store.save(reminder, commit: true)
         } catch {
+            recordWrite(.failure(error), action: "mark that reminder done")
             return
         }
-        load(from: store)
+        recordWrite(.success(()), action: "mark that reminder done")
+        refreshNow()
     }
 
     // MARK: Quick add
@@ -157,7 +247,15 @@ final class ShelfRemindersModel {
             let fields: Set<Calendar.Component> = hasTime(phrase)
                 ? [.year, .month, .day, .hour, .minute] : [.year, .month, .day]
             due = calendar.dateComponents(fields, from: date)
-            title.removeSubrange(found)
+            var beforeDate = title[..<found.lowerBound].split(whereSeparator: \.isWhitespace).map(String.init)
+            let afterDate = String(title[found.upperBound...])
+            let connectors: Set<String> = ["at", "by", "on", "due"]
+            let beginsWithConnector = phrase.split(whereSeparator: \.isWhitespace).first
+                .map { connectors.contains($0.lowercased()) } ?? false
+            if !beginsWithConnector, let last = beforeDate.last, connectors.contains(last.lowercased()) {
+                beforeDate.removeLast()
+            }
+            title = beforeDate.joined(separator: " ") + " " + afterDate
         }
         title = cleanTitle(title)
         guard !title.isEmpty else { return nil }
@@ -180,16 +278,15 @@ final class ShelfRemindersModel {
     }
 
     nonisolated static func hasTime(_ phrase: String) -> Bool {
-        let lower = phrase.lowercased()
-        if lower.contains(where: \.isNumber) { return true }
-        return ["noon", "midnight", "morning", "afternoon", "evening", "tonight", "hour", "minute"]
-            .contains { lower.contains($0) }
+        let clock = #"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?!\d)|\b(?:0?[1-9]|1[0-2])\s*[ap]\.?m\.?(?!\w)|\b(?:at|by)\s+(?:[01]?\d|2[0-3])\b"#
+        let words = #"\b(?:noon|midnight|morning|afternoon|evening|tonight|hours?|minutes?)\b"#
+        return [clock, words].contains {
+            phrase.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil
+        }
     }
 
     private nonisolated static func cleanTitle(_ raw: String) -> String {
-        var words = raw.split(whereSeparator: \.isWhitespace).map(String.init)
-        let connectors: Set<String> = ["at", "by", "on", "due"]
-        while let last = words.last, connectors.contains(last.lowercased()) { words.removeLast() }
+        let words = raw.split(whereSeparator: \.isWhitespace).map(String.init)
         var title = words.joined(separator: " ")
         for lead in ["remind me to ", "remind me "] where title.lowercased().hasPrefix(lead) {
             title = String(title.dropFirst(lead.count))
@@ -205,8 +302,11 @@ final class ShelfRemindersModel {
     /// nothing to add, no access, or the save failed.
     @discardableResult
     func add(_ text: String) -> Bool {
-        guard let store, let parsed = Self.quickAdd(text),
-              let list = store.defaultCalendarForNewReminders() else { return false }
+        guard let store, let parsed = Self.quickAdd(text) else { return false }
+        guard let list = store.defaultCalendarForNewReminders() else {
+            writeNotice = "Couldn't add the reminder: Reminders has no default list."
+            return false
+        }
         let reminder = EKReminder(eventStore: store)
         reminder.title = parsed.title
         reminder.calendar = list
@@ -219,9 +319,11 @@ final class ShelfRemindersModel {
         do {
             try store.save(reminder, commit: true)
         } catch {
+            recordWrite(.failure(error), action: "add the reminder")
             return false
         }
-        load(from: store)
+        recordWrite(.success(()), action: "add the reminder")
+        refreshNow()
         return true
     }
 
@@ -292,7 +394,11 @@ final class ShelfRemindersModel {
     @discardableResult
     func remind(about label: String, session id: String, provider: String, cwd: String?,
                 later: Later, now: Date = Date()) -> Bool {
-        guard let store, let list = store.defaultCalendarForNewReminders() else { return false }
+        guard let store else { return false }
+        guard let list = store.defaultCalendarForNewReminders() else {
+            writeNotice = "Couldn't set the reminder: Reminders has no default list."
+            return false
+        }
         let made = Self.sessionReminder(label: label, provider: provider, cwd: cwd)
         let due = Self.due(later, now: now)
         let reminder = EKReminder(eventStore: store)
@@ -305,9 +411,11 @@ final class ShelfRemindersModel {
         do {
             try store.save(reminder, commit: true)
         } catch {
+            recordWrite(.failure(error), action: "set the reminder")
             return false
         }
-        load(from: store)
+        recordWrite(.success(()), action: "set the reminder")
+        refreshNow()
         return true
     }
 

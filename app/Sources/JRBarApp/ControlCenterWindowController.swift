@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The Creator Micro window: the pad drawn as it is, its session keys,
 /// banks and bindings. Opened from the panel's More menu, the status
-/// menu, the app menu, Settings › Devices, the rail's "…" key and
+/// menu, the app menu, Settings › Devices & Lighting, the rail's "…" key and
 /// `jrbar://window/creator-micro` (`control-center` still works). It is
 /// named for the pad it drives; it has no chord of its own.
 @MainActor

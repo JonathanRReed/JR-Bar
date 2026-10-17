@@ -9,6 +9,50 @@ import JRBarCore
 @Suite("Aquarium tank toy")
 @MainActor
 struct AquariumTankToyTests {
+    @Test("terminal shutdown saves current state and ignores later events or reactivation")
+    func shutdownRetiresToy() throws {
+        let file = scratch()
+        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        let core = CoreModel()
+        let toys = store(core)
+        let tank = AquariumToy(core: core, store: toys, saveFile: file)
+        tank.shutdown()
+        let saved = try Data(contentsOf: file.url)
+        let game = tank.game
+        #expect(tank.isShutdown)
+        #expect(!tank.isOn && !tank.economyRunning)
+        tank.noteEvent(CoreEvent(id: "after-shutdown", kind: "quota_reset", provider: "claude"))
+        tank.isOn = true
+        tank.stateReplaced()
+        tank.syncGameTimer()
+        tank.shutdown()
+        #expect(tank.game == game)
+        #expect(!tank.isOn && !tank.economyRunning)
+        let persisted = try Data(contentsOf: file.url)
+        #expect(persisted == saved)
+        withExtendedLifetime(toys) {}
+    }
+
+    @Test("shutdown also retires observation changes already queued by the core", .timeLimit(.minutes(1)))
+    func shutdownRejectsQueuedRoster() async {
+        let file = scratch()
+        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        let core = CoreModel()
+        let toys = store(core)
+        let tank = AquariumToy(core: core, store: toys, saveFile: file)
+        core.apply(.state(CoreState(sessions: [CoreSession(id: "queued", provider: "claude", mode: "working")],
+                                   asks: [])))
+        tank.shutdown()
+        let fish = tank.fish
+        let game = tank.game
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { done.resume() }
+        }
+        #expect(tank.fish == fish)
+        #expect(tank.game == game)
+        #expect(!tank.economyRunning)
+        withExtendedLifetime(toys) {}
+    }
     private func scratch() -> AquariumSaveFile {
         AquariumSaveFile(url: FileManager.default.temporaryDirectory
             .appending(path: "jrbar-tank-\(UUID().uuidString)")
@@ -102,6 +146,37 @@ struct AquariumTankToyTests {
         // A batch without the oyster still counts its pearls.
         tank.note([.pearlsEarned(3)], now: now)
         #expect(tank.toast?.text == "+3 pearls")
+        withExtendedLifetime(toys) {}
+    }
+
+    @Test("a settings import that turns the tank off stops its economy")
+    func importedOffStopsTheEconomy() throws {
+        let toys = store(CoreModel())
+        let tank = try #require(toys.aquarium)
+        // On without a window: the tick runs, as it does after the switch.
+        toys.state.aquarium.enabled = true
+        tank.syncGameTimer()
+        #expect(tank.economyRunning)
+        var imported = toys.state
+        imported.aquarium.enabled = false
+        toys.replaceState(imported)
+        #expect(!tank.isOn)
+        #expect(!tank.economyRunning, "the imported off reached the toy, not just the state")
+    }
+
+    @Test("a toast's own timer clears that toast and never a newer one")
+    func toastTimerClearsOnlyItsToast() throws {
+        let file = scratch()
+        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        let toys = store(CoreModel())
+        let tank = AquariumToy(core: CoreModel(), store: toys, saveFile: file)
+        let first = Date(timeIntervalSince1970: 1_800_000_000)
+        tank.note([.pearlsEarned(1)], now: first)
+        tank.note([.pearlsEarned(2)], now: first.addingTimeInterval(4))
+        tank.dismissToast(shownAt: first)
+        #expect(tank.toast?.text == "+2 pearls", "the first toast's timer must not take the newer one")
+        tank.dismissToast(shownAt: first.addingTimeInterval(4))
+        #expect(tank.toast == nil)
         withExtendedLifetime(toys) {}
     }
 }

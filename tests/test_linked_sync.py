@@ -303,6 +303,68 @@ def test_the_period_lock_steps_down_rather_than_change_the_period() -> None:
     assert locked.lap_ms == strip_lap == dot_lap
 
 
+@pytest.mark.parametrize("previous_read", [False, True], ids=["first_read", "after_successful_read"])
+def test_linked_read_retries_after_spawn_failure(previous_read: bool) -> None:
+    clock = [100.0]
+    queued = []
+    fail_next_spawn = [False]
+    reads = []
+
+    def spawn(work):
+        if fail_next_spawn[0]:
+            fail_next_spawn[0] = False
+            raise RuntimeError("cannot start worker")
+        queued.append(work)
+
+    def reader(root):
+        assert root is None
+        reads.append(clock[0])
+        return DeviceStatus(clock[0], {"ticks": str(clock[0] * 1000.0 * DOT_RATE)})
+
+    clocks = DeviceClocks(None)
+    link = LinkedSync(clocks, reader=reader, spawn=spawn, now=lambda: clock[0])
+    estimator = clocks.estimator("dot", dot=True)
+    if previous_read:
+        assert link.start_read("dot", None) is True
+        queued.pop()()
+        link.consume()
+        assert list(estimator.samples) == [(100.0, 100_000.0 * DOT_RATE)]
+        clock[0] = 130.0
+
+    previous_timestamp = link.last_read_at
+    previous_samples = list(estimator.samples)
+    fail_next_spawn[0] = True
+    assert link.read_due(clock[0]) is True
+    assert link.start_read("dot", None) is False
+    assert link.last_read_at == previous_timestamp
+    assert link.read_due(clock[0]) is True
+    assert queued == []
+    assert list(estimator.samples) == previous_samples
+
+    assert link.start_read("dot", None) is True
+    assert link.last_read_at == clock[0]
+    assert link.start_read("dot", None) is False
+    assert len(queued) == 1
+    assert list(estimator.samples) == previous_samples
+    queued.pop()()
+    assert list(estimator.samples) == previous_samples
+    link.consume()
+    expected_sample = (clock[0], clock[0] * 1000.0 * DOT_RATE)
+    assert list(estimator.samples) == [*previous_samples, expected_sample]
+    link.consume()
+    assert list(estimator.samples) == [*previous_samples, expected_sample]
+
+    clock[0] += 30.0
+    assert link.read_due(clock[0]) is True
+    assert link.start_read("dot", None) is True
+    queued.pop()()
+    link.consume()
+    assert list(estimator.samples)[-1] == (clock[0], clock[0] * 1000.0 * DOT_RATE)
+    assert len(estimator.samples) == len(previous_samples) + 2
+    assert len(reads) == len(previous_samples) + 2
+    assert link.read_failures == 0
+
+
 # --- Continue: the light runs on into the Dot ------------------------------------
 
 

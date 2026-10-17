@@ -33,18 +33,22 @@ rebuilding it, and it never touches the system Python.
 | Full source gate | `./scripts/verify.sh` | minutes |
 
 `make fast` (`scripts/verify_fast.py`) is the pre-commit gate, in order: Ruff,
-an import smoke, the contract tests, a tracked-secret scan, fixture validation,
-the focused tests, bytecode compilation, the dependency policy, the version
-contract, and diff hygiene. It stops at the first failure and preserves that
+an import smoke, the contract tests, a tracked-secret scan, the doc-link check,
+fixture validation, the focused tests, bytecode compilation, the dependency
+policy, the version contract, and diff hygiene (`scripts/verify_fast.py --list`
+prints the exact commands without running them). It stops at the first failure and preserves that
 step's exit status. It deliberately contains nothing expensive or mutating — no
 pip, no build, no packaging, no notarization, no publication — so it can be run
 on every change. `make fast-fix` prepends Ruff's safe fixes.
 
-`./scripts/verify.sh` is the complete source gate: Ruff, bytecode and version
-validation, the whole pytest suite, wheel and sdist builds with Twine metadata
-checks, a clean-wheel install into a temporary virtual environment, and console
-script, compatibility module, resource and repository hygiene checks. Useful
-flags: `--no-bootstrap`, `--skip-build`, `--skip-clean-install`, `--portable`.
+`./scripts/verify.sh` is the complete source gate: `pip check`, the dependency
+policy, the secret scan, Ruff, bytecode and version validation, the whole pytest
+suite, wheel and sdist builds with Twine metadata checks, a clean-wheel install
+into a temporary virtual environment, an SBOM, and repository hygiene checks.
+Useful flags: `--fix`, `--no-bootstrap`, `--skip-build`, `--skip-clean-install`,
+`--portable`. `make test` runs the Python suite in parallel (`-n auto --dist
+loadfile`); `make test-serial` runs it in one process, for a failure that only
+shows there.
 
 `swift test` covers the app's own model and the protocol round trips, which
 spawn `app/scripts/mock-core.py` on a socket of their own. It does not need a
@@ -69,11 +73,14 @@ the deterministic subset:
 ## Hosted CI is informational
 
 `.github/workflows/tests.yml` runs `make fast`, the full pytest suite and the
-Swift build and tests on `macos-latest` for every push and pull request. A
-hosted runner has no logged-in window session, no Screen Recording grant, no
-`bun`, and shared-tenant timing, so a set of environment-coupled tests can fail
-there while the same commit passes on a real Mac. The full Python suite job is
-`continue-on-error` for exactly that reason.
+Swift build and tests on `macos-latest` (macOS 26) for every push and pull
+request. A hosted runner has no logged-in window session, no Screen Recording
+grant, no Codex CLI, a 1x main screen and shared-tenant timing, so a test that
+leans on any of those can pass on a real Mac and fail there. The suite job
+prints the runner's screen scale, Reduce Motion state and Codex CLI (a
+diagnostic step that never fails the job) so the next CI-only failure starts
+from facts. All three jobs gate; only that diagnostic step is
+`continue-on-error`.
 
 There is no CI release path. The self-hosted macOS workflow was retired on
 2026-09-10: its runner label never existed, and the only Mac that could have
@@ -100,9 +107,11 @@ CORE=~/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jr
 `Contents/MacOS/JR-Bar` is the Swift app and takes no arguments — it opens the
 menu bar. Every command line is a subcommand of the bundled daemon. `hooks
 doctor` is the one that catches the most common packaging mistake: it prints the
-shim each provider's hook actually runs, which must be
+shim the daemon resolves, which must be
 `~/Applications/JR-Bar.app/Contents/Helpers/jrbar-hook` and not a path inside a
-developer checkout.
+developer checkout. The provider configs themselves run the launcher at
+`~/.local/share/jrbar/hook/jrbar-hook`, whose `target=` line must name that
+same shim.
 
 The app must be supervising `jrbar-core core`, the panel must show live
 sessions, the Screen Bar must show the daemon's program (the status menu's
@@ -115,14 +124,14 @@ log show --last 5m --predicate 'process == "JR-Bar"' | grep "login item"
 ## Hardware
 
 ```sh
-.venv/bin/python scripts/verify_hardware_release.py --require any            # discovery only
 .venv/bin/python scripts/verify_hardware_release.py --require any --confirm-write
 ```
 
-Without `--confirm-write` the script refuses to write. With it, it backs the
-device's `LEDS.LED` up, writes one bounded program, and restores the original
-bytes — and if the restore fails it says so rather than leaving the device
-changed. Creator Micro 2 checks are in
+`--require` takes `any`, `pro`, `dot` or `both`. Without `--confirm-write` the
+script exits 2 and touches nothing. With it, it backs each mounted device's
+`LEDS.LED` up, writes one bounded program, and restores the original bytes —
+and if the restore fails it says so rather than leaving the device changed.
+Run it only when you mean to write to the devices. Creator Micro 2 checks are in
 [CONTROL-CENTER.md](CONTROL-CENTER.md#owner-acceptance-before-a-release).
 
 ## The release gate

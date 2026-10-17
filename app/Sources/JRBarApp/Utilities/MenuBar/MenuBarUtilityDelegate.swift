@@ -13,9 +13,8 @@ extension MenuBarUtility: MenuBarActionsDelegate {
     func menuBarItems(for _: MenuBarActions) -> [MenuBarItem] { listedItems }
 
     func menuBarSections(for _: MenuBarActions) -> [String: MenuBarItemSection] {
-        // The palette's truth is the effective section: under the
-        // concealer a concealed item reads hidden, so its row offers
-        // "Show" and "Open" — never "Hide".
+        // The palette's truth is the effective section: an item with a
+        // cover reads hidden, so its row offers "Show" and "Open".
         var map: [String: MenuBarItemSection] = [:]
         for item in listedItems { map[item.id] = effectiveSection(for: item) }
         return map
@@ -54,14 +53,12 @@ extension MenuBarUtility: MenuBarActionsDelegate {
     /// Awake card's and `jrbar://awake`'s — so a rule and a click never
     /// hold two different things.
     func menuBarActions(_: MenuBarActions, holdAwake seconds: Int?) {
-        MenuBarAssessmentBackend.log.notice("rule: keep awake \(seconds.map { $0 == 0 ? "released" : "for \($0) s" } ?? "until released", privacy: .public)")
+        MenuBarUtility.log.notice("rule: keep awake \(seconds.map { $0 == 0 ? "released" : "for \($0) s" } ?? "until released", privacy: .public)")
         holdAwake(seconds)
     }
 
     /// The dedicated always-hidden gesture: drop that run's covers on
-    /// the rehide clock. Under the concealer the reveal set narrows
-    /// the assertion the same way — the deeper apps stand back on the
-    /// row for the window.
+    /// the rehide clock.
     func menuBarActionsRevealAlwaysHidden(_: MenuBarActions) {
         hider.reveal([.alwaysHidden])
         reveal.rearm()
@@ -81,9 +78,11 @@ extension MenuBarUtility: MenuBarActionsDelegate {
     }
 
     func menuBarActions(_: MenuBarActions, applyProfile name: String) {
-        if name == MenuBarProfiles.noneName {
+        if name.caseInsensitiveCompare(MenuBarProfiles.noneName) == .orderedSame {
             applyProfile(id: MenuBarProfiles.noneID)
-        } else if let profile = settings().profiles.first(where: { $0.name == name }) {
+        } else if let profile = settings().profiles.first(where: {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) {
             applyProfile(id: profile.id)
         }
         // An unknown name is a no-op, not a clear — never fall through

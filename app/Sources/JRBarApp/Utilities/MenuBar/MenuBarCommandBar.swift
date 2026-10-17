@@ -9,8 +9,7 @@ enum MenuBarCommandAction: Equatable, Sendable {
     /// item id.
     case setSection(itemID: String, MenuBarItemSection)
     /// Assign an app's whole row a section: every item id the row
-    /// stands for. Under the concealer the first write already hides
-    /// the app; the rest keep an Apple extra's per-item cover in step.
+    /// stands for.
     case setAppSection(itemIDs: [String], MenuBarItemSection)
     /// Press the item through (`AXPress`, the tile click's path).
     case openItem(itemID: String)
@@ -213,10 +212,8 @@ enum MenuBarCommands {
     /// Every row, in list order: one per app (left→right, the bar's
     /// order), then the bar-wide commands, then profiles and rules.
     ///
-    /// An app is one row however many items it owns — the concealer
-    /// hides whole apps, so a row per item promised a choice the
-    /// engine cannot make. Items of one app in different sections (the
-    /// spacer engine's per-item covers) split into one row per
+    /// An app is one row however many items it owns. Items of one app in
+    /// different sections (per-item covers) split into one row per
     /// section, so a row's Hide or Show is always true of everything
     /// it stands for. Protected items (clock, Control Center) and our
     /// own family get no row: the palette can no more hide the clock
@@ -301,7 +298,7 @@ enum MenuBarCommands {
         }
         // An app with several items: each one's own menu, by name.
         for (index, item) in items.enumerated().dropFirst() {
-            let label = item.title?.isEmpty == false ? item.title! : "Item \(index + 1)"
+            let label = item.searchName ?? (item.title?.isEmpty == false ? item.title! : "Item \(index + 1)")
             verbs.append(MenuBarCommandVerb(id: "open.\(item.id)", title: "Open \(label)",
                                             symbol: "filemenu.and.selection",
                                             action: .openItem(itemID: item.id)))
@@ -310,7 +307,8 @@ enum MenuBarCommands {
             id: "menubar.app.\(key)" + (split ? ".\(section.rawValue)" : ""),
             kind: .app, title: name, subtitle: subtitle, section: section,
             ownerPID: first.ownerPID, bundleID: first.bundleID,
-            keywords: first.bundleID.map { [$0] } ?? [], verbs: verbs)
+            keywords: (first.bundleID.map { [$0] } ?? []) + (first.searchName.map { [$0] } ?? []),
+            verbs: verbs)
     }
 
     /// The bar-wide commands.
@@ -464,7 +462,7 @@ extension MenuBarCommand {
     /// Menu Bar, profiles and rules under Profiles & Rules. Every verb
     /// lands in `perform`.
     @MainActor
-    func paletteItem(perform: @escaping @MainActor (MenuBarCommandAction) -> Void) -> PaletteItem {
+    func paletteItem(perform: @escaping @MainActor (MenuBarCommandAction) -> String?) -> PaletteItem {
         var tags: [PaletteTag] = []
         switch section {
         case .hidden: tags.append(PaletteTag(text: "Hidden"))
@@ -490,8 +488,7 @@ extension MenuBarCommand {
                 guard let input = verb.input else {
                     return PaletteAction(id: verb.id, title: verb.title, symbol: verb.symbol,
                                          shortcut: verb.shortcut) {
-                        perform(verb.action)
-                        return verb.confirmation
+                        return perform(verb.action) ?? verb.confirmation
                     }
                 }
                 return PaletteAction(
@@ -502,8 +499,7 @@ extension MenuBarCommand {
                         accepts: { MenuBarCommands.accepts($0, for: verb.action) },
                         submit: { words in
                             let filled = verb.action.filled(with: words)
-                            perform(filled)
-                            return MenuBarCommands.confirmation(for: filled, existingNames: input.existingNames)
+                            return perform(filled) ?? MenuBarCommands.confirmation(for: filled, existingNames: input.existingNames)
                         }))
             })
     }
@@ -530,7 +526,7 @@ final class MenuBarCommandBar {
     var activeProfileID: @MainActor () -> String? = { nil }
     var rules: @MainActor () -> [MenuBarTriggerRule] = { [] }
     /// Every menu-bar verb lands here.
-    var onAction: @MainActor (MenuBarCommandAction) -> Void = { _ in }
+    var onAction: @MainActor (MenuBarCommandAction) -> String? = { _ in nil }
     /// The Utilities settings page, as the app delegate opens it.
     var openSettings: @MainActor () -> Void = {}
     /// The rest of JR-Bar's rows, registered once by the app delegate.

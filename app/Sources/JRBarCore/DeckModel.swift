@@ -99,6 +99,7 @@ public enum DeckReceiptMessages {
         "recovery_required", "device_conflict", "connection_changed", "connection_required", "approved_device_changed",
         "previous_owner_stopping", "keymap_changed", "backup_failed", "backup_invalid", "backup_conflict",
         "readback_mismatch", "readback_failed", "unsupported_file_protocol", "invalid_plan", "setup_failed",
+        "rpc_error", "capability_probe_failed",
     ]
 
     public static func message(for code: String) -> String {

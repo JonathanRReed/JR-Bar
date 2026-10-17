@@ -7,6 +7,7 @@ import plistlib
 import stat
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import replace as dataclass_replace
 from pathlib import Path
@@ -23,6 +24,12 @@ DISKUTIL = Path("/usr/sbin/diskutil")
 DISKUTIL_TIMEOUT_SECONDS = 1.5
 DISKUTIL_MAX_BYTES = 1024 * 1024
 MAX_MOUNT_CANDIDATES = 16
+#: A mounted volume's ``diskutil`` facts (volume and disk UUIDs, bus) do not
+#: change while it stays mounted, and each probe is a fork of this process
+#: plus a ``diskutil`` run. A mount whose device and inode are unchanged
+#: reuses its facts for this long before they are asked for again. The
+#: firmware's own STATUS.TXT serial is still read on every round.
+DISKUTIL_FACTS_REUSE_SECONDS = 900.0
 
 
 def _clean_string(value: object) -> str | None:
@@ -180,6 +187,8 @@ def inventory_mounts(
     *,
     runner=subprocess.run,
     carried: dict[str, tuple[tuple[int, int], StableDeviceIdentity]] | None = None,
+    carried_facts: dict[str, tuple[tuple[int, int], float, DeviceHardwareFacts]] | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> tuple[StableDeviceIdentity, ...]:
     """Every mounted SidePulse volume's stable identity.
 
@@ -189,7 +198,11 @@ def inventory_mounts(
     -- is unchanged. Without it the device fell back to its path id for a
     round, which read as a disconnect and a reconnect and rewrote both
     strips about six times an hour. An unmounted or remounted volume loses
-    what was carried."""
+    what was carried.
+
+    ``carried_facts`` is the same memory for the ``diskutil`` answer itself:
+    a mount that has not changed is not probed again for
+    ``DISKUTIL_FACTS_REUSE_SECONDS``."""
     root = Path(mount_root)
     try:
         candidates = sorted(
@@ -212,7 +225,14 @@ def inventory_mounts(
             continue
         mount = (before.st_dev, before.st_ino)
         present.add(str(candidate))
-        facts = diskutil_facts(candidate, runner=runner)
+        facts = None
+        held_facts = carried_facts.get(str(candidate)) if carried_facts is not None else None
+        if held_facts is not None and held_facts[0] == mount and clock() - held_facts[1] < DISKUTIL_FACTS_REUSE_SECONDS:
+            facts = held_facts[2]
+        else:
+            facts = diskutil_facts(candidate, runner=runner)
+            if facts is not None and carried_facts is not None:
+                carried_facts[str(candidate)] = (mount, clock(), facts)
         if facts is None:
             held = carried.get(str(candidate)) if carried is not None else None
             if held is not None and held[0] == mount:
@@ -233,6 +253,9 @@ def inventory_mounts(
     if carried is not None:
         for gone in [path for path in carried if path not in present]:
             del carried[gone]
+    if carried_facts is not None:
+        for gone in [path for path in carried_facts if path not in present]:
+            del carried_facts[gone]
     return tuple(sorted(identities.values(), key=lambda row: (row.label, row.key)))
 
 
@@ -248,7 +271,10 @@ class DeviceIdentityCache:
         # probe of the same mount (inventory_mounts). Only the worker reads
         # and writes it, one round at a time.
         self._carried: dict[str, tuple[tuple[int, int], StableDeviceIdentity]] = {}
-        self._inventory = inventory or (lambda: inventory_mounts(carried=self._carried))
+        self._carried_facts: dict[str, tuple[tuple[int, int], float, DeviceHardwareFacts]] = {}
+        self._inventory = inventory or (
+            lambda: inventory_mounts(carried=self._carried, carried_facts=self._carried_facts)
+        )
         self._condition = threading.Condition()
         self._snapshot: tuple[StableDeviceIdentity, ...] = ()
         self._thread: threading.Thread | None = None

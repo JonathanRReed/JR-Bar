@@ -84,6 +84,9 @@ struct ShortcutRecorderField: View {
     /// Moving a chord away from its holder: unbind that id first.
     var onTakeOver: ((String) -> Void)?
 
+    /// Posted (with the field's id) when a field starts listening.
+    static let didStartRecording = Notification.Name("jrbar.shortcutRecorder.didStart")
+
     @ViewState private var recording = false
     @ViewState private var held = ""
     @ViewState private var problem: String?
@@ -146,6 +149,12 @@ struct ShortcutRecorderField: View {
             }
         }
         .onDisappear { stopRecording() }
+        // One recorder listens at a time: starting another stops this one,
+        // or two monitors would both be live and the first would take
+        // every key meant for the second.
+        .onReceive(NotificationCenter.default.publisher(for: Self.didStartRecording)) { note in
+            if (note.object as? String) != id { stopRecording() }
+        }
         // A local monitor hears nothing once the app is in the
         // background; leaving it listening would keep every shortcut
         // suspended until the person came back.
@@ -179,6 +188,7 @@ struct ShortcutRecorderField: View {
         held = ""
         problem = nil
         takeover = nil
+        NotificationCenter.default.post(name: Self.didStartRecording, object: id)
         center.suspend()
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             handle(event)

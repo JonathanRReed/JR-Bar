@@ -209,10 +209,6 @@ class CourtesySignaturePlan:
     accessibility_label: str
 
     @property
-    def reduce_motion_substituted(self) -> bool:
-        return self.presentation is CourtesyPresentation.STATIC
-
-    @property
     def has_motion(self) -> bool:
         return self.presentation is CourtesyPresentation.FINITE
 

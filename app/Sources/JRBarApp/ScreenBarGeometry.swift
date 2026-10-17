@@ -19,36 +19,52 @@ extension ScreenBarGeometry {
     /// while the flank is free. Written by `MenuBarUtility` on every
     /// reconcile, read by `ScreenBarController`'s reposition.
     @MainActor static var earItemLimitLeft: CGFloat? {
-        didSet { if earItemLimitLeft != oldValue { earLimitsChanged?() } }
+        didSet { if !updatingEarItemLimits, earItemLimitLeft != oldValue { earLimitsChanged?() } }
     }
     @MainActor static var earItemLimitRight: CGFloat? {
-        didSet { if earItemLimitRight != oldValue { earLimitsChanged?() } }
+        didSet { if !updatingEarItemLimits, earItemLimitRight != oldValue { earLimitsChanged?() } }
     }
+    @MainActor private static var updatingEarItemLimits = false
+
+    @MainActor static func setEarItemLimits(left: CGFloat?, right: CGFloat?) {
+        guard left != earItemLimitLeft || right != earItemLimitRight else { return }
+        updatingEarItemLimits = true
+        earItemLimitLeft = left
+        earItemLimitRight = right
+        updatingEarItemLimits = false
+        earLimitsChanged?()
+    }
+
     /// Called whenever either limit changes, and by `MenuBarUtility`
     /// whenever the ear's ‹ handle flips, so the band re-sizes its ears
     /// at once instead of on its slow safety poll. Set by
     /// `ScreenBarController`.
     @MainActor static var earLimitsChanged: (@MainActor () -> Void)?
 
-    /// The island ‹ handle's live frame in screen coordinates — the
-    /// hidden run's fallback affordance drawn on our own surface while
-    /// the concealer runs and no mirror carries the icon (the Hidden
-    /// style, or an empty target). `MenuBarReveal` adds it to its hot
-    /// frames so hovering the glyph reveals the run exactly like
-    /// Bartender's chevron. nil whenever the handle is not drawn.
-    /// Written by `ScreenBarController`.
-    @MainActor static var menuHandleScreenRect: NSRect?
-
-    /// The notch island's live frame in screen coordinates while it is
+    /// The notch island's live shape in screen coordinates while it is
     /// ours and on screen — the same answer `NotchToy.islandScreenRect`
-    /// gives, read off the window itself so a morph's in-flight frame is
-    /// what the band couples to. nil while the island is parked, ordered
+    /// gives, read off the window itself so a morph's in-flight shape is
+    /// what the band couples to. The shape, not the window: while a move
+    /// runs the window is a stage around it (`NotchIslandWindow
+    /// .presentedFrame`). nil while the island is parked, ordered
     /// out, or another provider owns the notch — the standalone band.
     @MainActor static var islandScreenRect: NSRect? {
         // NSApp is nil in a test process — optional-chained, not unwrapped.
-        for window in NSApp?.windows ?? [] where window is NotchIslandWindow {
-            guard window.isVisible else { continue }
-            return window.frame
+        for window in NSApp?.windows ?? [] {
+            guard let island = window as? NotchIslandWindow, island.isVisible else { continue }
+            return island.presentedFrame
+        }
+        return nil
+    }
+
+    /// Reserve the island's fixed animation canvas while its shape moves.
+    /// The light still follows `islandScreenRect`, not this outer frame.
+    @MainActor static var islandStageScreenRect: NSRect? {
+        guard NotchIslandWindow.stagedMotion else { return nil }
+        for window in NSApp?.windows ?? [] {
+            guard let island = window as? NotchIslandWindow,
+                  island.isVisible, island.isAnimating else { continue }
+            return island.frame
         }
         return nil
     }
@@ -64,13 +80,5 @@ extension ScreenBarGeometry {
             return window.frame
         }
         return nil
-    }
-
-    /// The x-span our own bar surfaces paint over — the band window,
-    /// falling back to the island. An item whose centre lands inside it
-    /// composites under black glass: visible to AX, invisible to the
-    /// person. nil while neither surface is on screen.
-    @MainActor static var coveringScreenRect: NSRect? {
-        bandScreenRect ?? islandScreenRect
     }
 }

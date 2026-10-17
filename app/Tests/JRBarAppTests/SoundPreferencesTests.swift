@@ -5,7 +5,7 @@ import JRBarCore
 import Testing
 @testable import JRBarApp
 
-/// Settings › Sounds: a role's default name plays the person's choice
+/// Settings › Alerts & Sounds: a role's default name plays the person's choice
 /// for that moment (or nothing), any other name plays as asked, and the
 /// choices survive a relaunch. Nothing here plays a sound.
 @Suite struct SoundPreferencesTests {
@@ -80,6 +80,35 @@ import Testing
         player.onHeldForCall = { held.append($0) }
         player.play(EventPolicy.completionSound)
         #expect(held == [EventPolicy.completionSound])
+    }
+
+    @MainActor @Test func aChimeStopsWhenQuietBeginsMidEscalation() {
+        let player = SoundPlayer()
+        var preferences = SoundPreferences()
+        preferences.choices[.chime] = SoundPreferences.silent
+        player.preferences = { preferences }
+        player.microphoneLive = { false }
+        player.startChime(EventPolicy.chimeSound, interval: 3600)
+        #expect(player.isChiming)
+        player.ringChime(EventPolicy.chimeSound)
+        #expect(player.isChiming, "nothing holds sounds yet")
+        player.isHeld = { true }
+        player.ringChime(EventPolicy.chimeSound)
+        #expect(!player.isChiming, "a Mute that began after the stage started ends the ringing")
+    }
+
+    @MainActor @Test func volumeZeroPlaysNothingAndTouchesNothing() {
+        let player = SoundPlayer()
+        var preferences = SoundPreferences()
+        preferences.volume = 0
+        player.preferences = { preferences }
+        player.microphoneLive = { true }
+        var held = 0
+        var missing = 0
+        player.onHeldForCall = { _ in held += 1 }
+        player.onMissing = { _ in missing += 1 }
+        player.play(EventPolicy.completionSound)
+        #expect(held == 0 && missing == 0, "volume zero is silence, not a call's hold or a missing file")
     }
 
     @Test func onlyAnotherAppsMicrophoneInputIsACall() {

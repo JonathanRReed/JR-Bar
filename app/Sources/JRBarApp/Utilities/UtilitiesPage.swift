@@ -3,13 +3,13 @@ import JRBarCore
 import SwiftUI
 
 /// The Utilities page (docs/UTILITIES.md): one card per utility in
-/// contract order — Menu Bar, Dock, Keep Awake, Agent Overview, Data
-/// Hoarder, Notch — each its own group under the page header the container
+/// contract order — Menu Bar, Dock, Keep Awake, Agent Overview, Notch —
+/// each its own group under the page header the container
 /// draws. The cards reuse `ToyCard`'s shape so the page reads like
 /// Toys: same tile, name, pill, blurb, switch and disclosure body.
 struct UtilitiesPage: View {
     let store: SettingsStore
-    private var tint: Color { SettingsStore.Page.utilities.tint }
+    private var tint: Color { SettingsStore.Chapter.utilities.tint }
 
     private func tint(_ id: String) -> Color { ToyCard.tint(for: id, page: tint) }
 
@@ -23,16 +23,13 @@ struct UtilitiesPage: View {
             }
             Section {
                 // The person's own hold, beside the utilities it keeps
-                // running; Settings › Notifications › Power keeps its rows.
+                // running; Settings › General › Power keeps its rows.
                 ToyCard(toy: KeepAwakeUtility.shared, tint: tint(KeepAwakeUtility.shared.id))
             }
             Section {
                 // The roster's management seat — the compact list and
                 // the session verbs; the Overview window stays the canvas.
                 AgentUtilityCard(utility: utilities.agents, tint: tint(utilities.agents.id))
-            }
-            Section {
-                ToyCard(toy: utilities.dataHoarder, tint: tint(utilities.dataHoarder.id))
             }
             // Notch lives in ToysStore but reads as a utility — it
             // manages the notch itself, not something playful.

@@ -37,7 +37,9 @@ class AgentBrowserActionPayload:
             and type(self.kind) is OperatorActionKind
             and (
                 self.snooze_preset is None
-                or (self.kind is OperatorActionKind.SNOOZE and self.snooze_preset in _SNOOZE_PRESET_KEYS)
+                or (self.kind is OperatorActionKind.SNOOZE
+                    and type(self.snooze_preset) is str
+                    and self.snooze_preset in _SNOOZE_PRESET_KEYS)
             )
         ):
             raise ValueError("invalid agent browser action payload")

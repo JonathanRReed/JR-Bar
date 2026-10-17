@@ -58,6 +58,7 @@ struct CardPopoverHoldTests {
                               state: state, cardModel: makeTestCardModel(),
                               notchRuntimeEnabled: false)
         let toy: NotchToy = store.notch
+        toy.pointerLocation = { CGPoint(x: -10_000, y: -10_000) }
         toy.islandVisible = true
         return (toy, store)
     }

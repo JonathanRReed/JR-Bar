@@ -1,6 +1,13 @@
 import AppKit
 import JRBarCore
 
+enum MediaTransportSubmission: Equatable {
+    case unavailable
+    case submitted
+    /// A write failed after it began; some bytes may have reached the helper.
+    case uncertain
+}
+
 /// The private MediaRemote.framework — what every notch app (Alcove,
 /// boring.notch) reads Now Playing through — loaded with dlopen and
 /// every symbol resolved through dlsym. There is no framework link and
@@ -180,6 +187,7 @@ class AlcoveMediaMonitor {
     private var retryWork: DispatchWorkItem?
     private var adapterFirstLineAt: Date?
     private var runGeneration = 0
+    private var bridgeReadGeneration = 0
     /// The clock the helper's life is measured on; a test moves it.
     var now: () -> Date = { Date() }
 
@@ -194,9 +202,8 @@ class AlcoveMediaMonitor {
     func start() {
         guard !running else { return }
         running = true
-        // The bridge is built either way: `send` rides it in-process
-        // whenever the framework resolves, reads only ever run while
-        // the adapter is dead.
+        // Keep the bridge ready for helper failure. Reads run while the
+        // adapter is dead; commands use it only when the helper is unavailable.
         bridge = MediaRemoteBridge()
         bridge?.registerNotifications(on: .main)
         let center = DistributedNotificationCenter.default()
@@ -226,6 +233,7 @@ class AlcoveMediaMonitor {
     /// `adapterDidFail`) brings the helper back. Internal so a test
     /// double can stand the adapter down without spawning perl.
     func startAdapter() {
+        bridgeReadGeneration &+= 1
         let adapter = AlcoveMediaAdapter()
         adapterFirstLineAt = nil
         adapter.onChange = { [weak self] media in self?.adapterDidReport(media) }
@@ -241,6 +249,7 @@ class AlcoveMediaMonitor {
     /// A line from the helper. The first one marks when it began to
     /// live, which the restart pace weighs against a later death.
     func adapterDidReport(_ media: AlcoveMedia?) {
+        bridgeReadGeneration &+= 1
         if adapterFirstLineAt == nil { adapterFirstLineAt = now() }
         noteMedia(media)
     }
@@ -337,21 +346,25 @@ class AlcoveMediaMonitor {
     /// usually arrives on its own, but the re-read keeps the capsule
     /// honest on a player that never posts one.
     func send(_ command: MediaRemoteBridge.Command) {
-        if adapterLive, let adapter {
-            adapter.send(command)
-        }
-        bridge?.send(command)
+        Self.routeCommand(adapter: {
+            guard adapterLive, let adapter else { return .unavailable }
+            return adapter.send(command)
+        }, fallback: { bridge?.send(command) })
         scheduleRefresh(after: 0.5)
     }
 
-    /// A scrub — both live paths take it; the one that lands is the
-    /// one mediaremoted is answering. The follow-up refresh reports
-    /// the playhead where it settled.
+    /// Only definite non-delivery permits another transport. Retrying an
+    /// uncertain toggle or skip could execute it twice.
+    static func routeCommand(adapter: () -> MediaTransportSubmission, fallback: () -> Void) {
+        if adapter() == .unavailable { fallback() }
+    }
+
+    /// A scrub uses one transport; the follow-up reports its landed playhead.
     func seek(to seconds: Double) {
-        if adapterLive, let adapter {
-            adapter.seek(to: seconds)
-        }
-        bridge?.seek(to: seconds)
+        Self.routeCommand(adapter: {
+            guard adapterLive, let adapter else { return .unavailable }
+            return adapter.seek(to: seconds)
+        }, fallback: { bridge?.seek(to: seconds) })
         scheduleRefresh(after: 0.4)
     }
 
@@ -387,23 +400,31 @@ class AlcoveMediaMonitor {
             return
         }
         let queue = answerQueue
-        bridge.isPlaying(on: queue) { [weak self] playing in
-            bridge.nowPlayingInfo(on: queue) { [weak self] info in
+        let publish = beginBridgeRead()
+        bridge.isPlaying(on: queue) { playing in
+            bridge.nowPlayingInfo(on: queue) { info in
                 let media = AlcoveMedia.summarize(info, isPlaying: playing)
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    // The bridge's empty read on a gated release is not
-                    // "nothing playing" — Music's own note is fresher
-                    // truth when it arrived recently.
-                    if let media {
-                        self.noteMedia(media)
-                    } else if let held = self.musicMedia,
-                              Date().timeIntervalSince(held.at) < Self.musicPayloadLife {
-                        self.noteMedia(held.media)
-                    } else {
-                        self.noteMedia(nil)
-                    }
-                }
+                Task { @MainActor in publish(media) }
+            }
+        }
+    }
+
+    /// A deferred bridge answer belongs to this run and this read only.
+    /// Internal so tests can complete a read without loading MediaRemote.
+    func beginBridgeRead() -> @MainActor (AlcoveMedia?) -> Void {
+        bridgeReadGeneration &+= 1
+        let read = bridgeReadGeneration
+        let run = runGeneration
+        return { [weak self] media in
+            guard let self, self.running, !self.adapterLive,
+                  self.runGeneration == run, self.bridgeReadGeneration == read else { return }
+            if let media {
+                self.noteMedia(media)
+            } else if let held = self.musicMedia,
+                      Date().timeIntervalSince(held.at) < Self.musicPayloadLife {
+                self.noteMedia(held.media)
+            } else {
+                self.noteMedia(nil)
             }
         }
     }
@@ -422,6 +443,7 @@ final class MediaFeed {
 
     private let monitor: AlcoveMediaMonitor
     private var readers: [UUID: @MainActor (AlcoveMedia?) -> Void] = [:]
+    private var deliveryGeneration = 0
     /// The latest reduce — a new reader gets it on subscribe.
     private(set) var media: AlcoveMedia?
 
@@ -430,7 +452,12 @@ final class MediaFeed {
         self.monitor.onChange = { [weak self] media in
             guard let self else { return }
             self.media = media
-            for reader in self.readers.values { reader(media) }
+            self.deliveryGeneration &+= 1
+            let generation = self.deliveryGeneration
+            for (token, reader) in self.readers {
+                guard generation == self.deliveryGeneration else { break }
+                if self.readers[token] != nil { reader(media) }
+            }
         }
     }
 

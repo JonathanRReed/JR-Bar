@@ -127,7 +127,18 @@ else:
             if type(service) is ProviderUsageService:
                 return service
             from .cliproxy_hub import HubSource
+            from .provider_usage_consent import migrate_usage_consent
 
+            # Once per install: a provider that was on and already returning
+            # usage keeps working; everything else waits for the person.
+            try:
+                migrate_usage_consent(
+                    None,
+                    load_provider_usage_state,
+                    log=self._provider_usage_log,
+                )
+            except Exception as exc:
+                self._provider_usage_log(f"usage consent migration failed: {exc}")
             service = ProviderUsageService(
                 settings_loader=load_provider_usage_settings,
                 credentials=ProviderCredentialStore(),
@@ -137,7 +148,7 @@ else:
                 # The CLIProxyAPI hub's accounts (off unless cliproxy_hub
                 # is enabled; loopback only, every 5 min at most).
                 extra_source=HubSource(settings_loader=lambda: self.settings),
-                # Provider status pages: off until Settings > Usage turns
+                # Provider status pages: off until Settings > Agents & Usage turns
                 # them on, and read live on every refresh.
                 incident_lookup=status_feed_incident_lookup(
                     settings_loader=lambda: self.settings
@@ -147,6 +158,16 @@ else:
             self._jrbar_provider_usage_state = service.snapshot()
             return service
 
+        def _note_provider_usage_activity(self, service) -> None:
+            snapshot = getattr(self, "last_snapshot", None)
+            busy = {_legacy.AgentMode.WORKING, _legacy.AgentMode.TOOL_RUNNING, _legacy.AgentMode.LONG_TASK_PROGRESS}
+            active = any(
+                status.mode in busy and not status.is_subagent and not status.stale
+                for status in getattr(snapshot, "statuses", ())
+            )
+            service.note_active_work(active)
+            self._jrbar_provider_usage_state = service.snapshot()
+
         def _request_provider_usage(
             self,
             *,
@@ -154,6 +175,7 @@ else:
             providers: tuple[str | tuple[str, str], ...] | None = None,
         ) -> None:
             service = self._provider_usage_service()
+            self._note_provider_usage_activity(service)
             current = service.request(
                 callback=self._provider_usage_ready,
                 force=force,
@@ -247,6 +269,25 @@ else:
                 seen_event_ids=frozenset(seen),
             )
             reset_events = confirmation.events
+            # A reset the person was owed confetti for must never vanish
+            # silently: say when one is waiting for its confirming read, and
+            # when one is announced (the app logs what it did with it).
+            waiting_before = {candidate.event_id for candidate in delivery_state.candidates}
+            for candidate in confirmation.candidates:
+                if candidate.event_id not in waiting_before:
+                    self._provider_usage_log(
+                        f"reset candidate {candidate.provider_id} {candidate.lane_id} "
+                        f"({candidate.trigger}) waits for a confirming read"
+                    )
+            for event in reset_events:
+                self._provider_usage_log(
+                    f"reset confirmed {event.provider_id} {event.lane_id} "
+                    f"({event.trigger}) {event.event_id}"
+                )
+            for gone in waiting_before - {c.event_id for c in confirmation.candidates} - {
+                event.event_id for event in reset_events
+            }:
+                self._provider_usage_log(f"reset candidate {gone} discarded")
             if confirmation.candidates != delivery_state.candidates:
                 delivery_state = with_reset_candidates(delivery_state, confirmation.candidates)
                 self._jrbar_reset_delivery_state = delivery_state
@@ -354,7 +395,7 @@ else:
         def screen_bar_quota_ember_level(self) -> float:
             """The base's 0.0 answered with the real reading: how far
             the tightest visible lane has sunk below its provider's
-            threshold, 0 at-threshold to 1 fully out."""
+            threshold. Exhausted windows use a finite notice instead."""
             from .provider_usage_status_projection import screen_bar_quota_ember_level
 
             return screen_bar_quota_ember_level(self)
@@ -460,12 +501,13 @@ else:
             self._deliver_pending_reset_events()
             self._request_provider_usage(force=False)
             result = _BaseStatusBarController.refresh_(self, sender)
+            self._note_provider_usage_activity(self._provider_usage_service())
             runtime = getattr(self, "_jrbar_optional_integration_runtime", None)
             snapshot = getattr(self, "last_snapshot", None)
             if runtime is not None and snapshot is not None:
                 signal = (
                     "quota_exhausted"
-                    if self.screen_bar_quota_ember_level() >= 1.0
+                    if time.monotonic() < getattr(self, "_capacity_notice_until", 0.0)
                     else None
                 )
                 runtime.publish_creator_output(

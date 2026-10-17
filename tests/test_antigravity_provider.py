@@ -562,3 +562,71 @@ def test_hook_event_round_trip_keeps_the_declared_provider() -> None:
     assert type(parsed) is HookEvent
     assert parsed.provider == "antigravity"
     assert parsed.logged_at == parse_datetime("2026-08-14T12:00:00Z")
+
+
+@pytest.mark.parametrize("reason,fully_idle", [
+    ("future_stop_reason", True),
+    ("model_stop", False),
+])
+def test_a_short_turn_with_an_unknown_stop_reason_does_not_stay_active(
+    reason: str, fully_idle: bool,
+) -> None:
+    from dataclasses import replace
+
+    from jrbar.collector import agent_status_from_canonical_work
+    from jrbar.core_projection import SessionExtras, session_document
+    from jrbar.models import AgentMode
+    from jrbar.operator_state import (
+        BootIdentifier,
+        ClockSample,
+        empty_operator_state,
+        reduce_operator_state,
+    )
+    from jrbar.provider_facts import NextActor
+
+    source = _hook_source()
+    state = empty_operator_state()
+    epoch = 1_786_708_800.0
+    for index, (event, payload) in enumerate((
+        ("UserPromptSubmit", {"conversationId": _CONVERSATION}),
+        ("Stop", {"conversationId": _CONVERSATION,
+                  "terminationReason": reason, "fullyIdle": fully_idle}),
+    )):
+        record = _record(payload, event=event)
+        batch = provider_facts_for_record(
+            record, contract=source.contract,
+            observation_authority=source.registration.observation_authority,
+            observed_at_epoch=epoch + index * 0.01,
+        )
+        state = reduce_operator_state(
+            state, batch,
+            clock=ClockSample(epoch + index * 0.01, 100.0 + index * 0.01,
+                              BootIdentifier("boot:test")),
+        ).state
+
+    assert state.works[0].lifecycle is WorkLifecycle.UNKNOWN
+    status = agent_status_from_canonical_work(state.works[0])
+    assert status.mode is AgentMode.ENDED_UNCONFIRMED
+    for process_alive in (None, False, True):
+        extras = SessionExtras(
+            pid=4242 if process_alive else None, process_alive=process_alive,
+        )
+        row = session_document(status, operator_state=state, ask_ids=frozenset(),
+                               extras=extras, workers=0, now=epoch + 0.02)
+        assert row["lifecycle"] == "ended", process_alive
+        assert row["mode"] == "ended_unconfirmed", process_alive
+        assert row["next_actor"] == "none", process_alive
+    assert state.works[0].next_actor is NextActor.NONE
+
+    unknown = replace(state.works[0], next_actor=NextActor.UNKNOWN)
+    assert agent_status_from_canonical_work(unknown).mode is AgentMode.UNKNOWN
+    active = replace(state.works[0], lifecycle=WorkLifecycle.ACTIVE,
+                     next_actor=NextActor.PROVIDER)
+    assert agent_status_from_canonical_work(active).mode is AgentMode.WORKING
+    for lifecycle, expected in (
+        (WorkLifecycle.COMPLETED, AgentMode.COMPLETED),
+        (WorkLifecycle.FAILED, AgentMode.BLOCKED_ERROR),
+    ):
+        assert agent_status_from_canonical_work(
+            replace(state.works[0], lifecycle=lifecycle)
+        ).mode is expected

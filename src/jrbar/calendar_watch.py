@@ -12,6 +12,7 @@ callers treat that as "no calendar signal", never as an app error.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from math import isfinite
 
 AUTH_AUTHORIZED = "authorized"
 AUTH_DENIED = "denied"
@@ -101,14 +102,24 @@ def adopt_app_calendar_facts(next_start: float | None, *, now: float) -> None:
     """Record the app's next event start (an epoch, or None for "nothing
     coming"). ``ValueError`` for a start that is not a plausible epoch."""
     global _app_facts
+    try:
+        now = float(now)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("calendar report time must be finite") from exc
+    if not isfinite(now):
+        raise ValueError("calendar report time must be finite")
     if next_start is not None:
         if isinstance(next_start, bool) or not isinstance(next_start, (int, float)):
             raise ValueError("next_event_start must be an epoch")
-        value = float(next_start)
-        if value != value or value - now > MAX_APP_EVENT_AHEAD_SECONDS:
+        try:
+            value = float(next_start)
+            datetime.fromtimestamp(value, tz=timezone.utc)
+        except (ValueError, OverflowError, OSError) as exc:
+            raise ValueError("next_event_start is not a plausible epoch") from exc
+        if not isfinite(value) or value - now > MAX_APP_EVENT_AHEAD_SECONDS:
             raise ValueError("next_event_start is not a plausible epoch")
         next_start = value
-    _app_facts = (float(now), next_start)
+    _app_facts = (now, next_start)
 
 
 def forget_app_calendar_facts() -> None:
@@ -135,24 +146,37 @@ def next_event_start(within_minutes: float):
     aware (UTC). The app's recent reading wins over EventKit here."""
     import time
 
+    try:
+        window_seconds = max(0.0, float(within_minutes)) * 60.0
+        if not isfinite(float(within_minutes)) or not isfinite(window_seconds):
+            raise ValueError("calendar lead time must be finite")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise CalendarUnavailableError("invalid calendar lead time") from exc
     reported = app_next_event_start(within_minutes, now=time.time())
     if reported is not ...:
         return reported
-    from Foundation import NSDate
-
     if authorization_status() != AUTH_AUTHORIZED:
         raise CalendarUnavailableError("calendar access not granted")
-    store = _shared_store()
-    now = NSDate.date()
-    now_timestamp = float(now.timeIntervalSince1970())
-    window_end = NSDate.dateWithTimeIntervalSinceNow_(max(0.0, float(within_minutes)) * 60.0)
     try:
+        from Foundation import NSDate
+
+        store = _shared_store()
+        now = NSDate.date()
+        now_timestamp = float(now.timeIntervalSince1970())
+        window_end_timestamp = now_timestamp + window_seconds
+        window_end = NSDate.dateWithTimeIntervalSince1970_(window_end_timestamp)
         predicate = store.predicateForEventsWithStartDate_endDate_calendars_(
             now, window_end, None
         )
         events = store.eventsMatchingPredicate_(predicate) or []
     except Exception as exc:
         raise CalendarUnavailableError(str(exc)) from exc
+
+    reported = app_next_event_start(within_minutes, now=time.time())
+    if reported is not ...:
+        return reported
+    if authorization_status() != AUTH_AUTHORIZED:
+        raise CalendarUnavailableError("calendar access not granted")
 
     best = None
     for event in events:
@@ -165,13 +189,14 @@ def next_event_start(within_minutes: float):
             start_timestamp = float(start.timeIntervalSince1970())
             # The predicate also returns events already in progress;
             # the glow is a WARNING, so only future starts count.
-            if start_timestamp < now_timestamp - 30.0:
+            if not isfinite(start_timestamp) or not now_timestamp - 30.0 <= start_timestamp <= window_end_timestamp:
                 continue
+            starts_at = datetime.fromtimestamp(start_timestamp, tz=timezone.utc)
             title = str(event.title() or "Event")
         except Exception:
             continue
         if best is None or start_timestamp < best[1]:
-            best = (title, start_timestamp)
+            best = (title, start_timestamp, starts_at)
     if best is None:
         return None
-    return best[0], datetime.fromtimestamp(best[1], tz=timezone.utc)
+    return best[0], best[2]

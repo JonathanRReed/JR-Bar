@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import errno
 import json
+import math
 import os
 import select
 import socket
@@ -17,8 +18,36 @@ from pathlib import Path
 
 from .capacity_types import SourceKey
 from .private_io import ensure_private_directory
-from .provider_facts import EventToken
+from .provider_facts import EventToken, ProviderWatermark
 from .providers import candidate_state_dirs, default_state_dir
+
+_REPLAY_AUTHORITY = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _ReplayAdmission:
+    watermark: ProviderWatermark
+    observed_at_epoch: float
+    _authority: object
+
+
+def _replay_admission(watermark: ProviderWatermark, observed_at_epoch: float) -> _ReplayAdmission:
+    return _ReplayAdmission(watermark, observed_at_epoch, _REPLAY_AUTHORITY)
+
+
+def _admits_replay(admission: object, watermark: ProviderWatermark,
+                   *, now_epoch: float | None = None) -> bool:
+    valid = (type(admission) is _ReplayAdmission
+            and admission._authority is _REPLAY_AUTHORITY
+            and admission.watermark == watermark
+            and type(admission.observed_at_epoch) in {int, float}
+            and math.isfinite(admission.observed_at_epoch)
+            and 0 <= admission.observed_at_epoch - watermark.occurred_at_epoch <= 1800)
+    if not valid or now_epoch is None:
+        return valid
+    return (type(now_epoch) in {int, float} and math.isfinite(now_epoch)
+            and 0 <= now_epoch - admission.observed_at_epoch <= 1800
+            and 0 <= now_epoch - watermark.occurred_at_epoch <= 1800)
 
 MAX_HINT_BYTES = 512
 MAX_EVENT_BYTES = MAX_HINT_BYTES
@@ -106,6 +135,7 @@ _RAW_EVENT_REJECT = b"no"
 class ProviderRefreshHint:
     source_key: SourceKey
     event_token: EventToken
+    _replay: _ReplayAdmission | None = None
 
     def __post_init__(self) -> None:
         if not (

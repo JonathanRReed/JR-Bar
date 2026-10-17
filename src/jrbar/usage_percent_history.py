@@ -13,6 +13,7 @@ the file into the same graph-model shape the settings chart already draws.
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from dataclasses import dataclass
@@ -40,6 +41,15 @@ def default_percent_history_path(home: Path | None = None) -> Path:
     return default_state_dir(home) / PERCENT_HISTORY_FILE_NAME
 
 
+def _valid_epoch(value: object) -> bool:
+    if type(value) not in (int, float):
+        return False
+    try:
+        return value >= 0 and math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def filter_new_observations(
     last_recorded: dict[tuple[str, str, str], tuple[float, float]],
     observations: list[tuple[str, str, str, float]],
@@ -54,6 +64,8 @@ def filter_new_observations(
     """
     updated = dict(last_recorded)
     fresh: list[dict] = []
+    if not _valid_epoch(now_epoch):
+        return fresh, updated
     for provider_id, source_instance_id, lane_id, remaining_percent in observations:
         if not provider_id or not source_instance_id or not lane_id:
             continue
@@ -224,9 +236,11 @@ def _parse_history_lines(text: str) -> list[tuple[str, str, str, float, float]]:
             or type(source_instance_id) is not str
             or not source_instance_id
             or type(lane_id) is not str
+            or not lane_id
             or type(percent) not in (int, float)
             or type(epoch) not in (int, float)
-            or not (0.0 <= float(percent) <= 100.0)
+            or not (0.0 <= percent <= 100.0)
+            or not _valid_epoch(epoch)
         ):
             continue
         parsed.append(
@@ -273,7 +287,10 @@ def percent_graph_model(
     ):
         if provider_id not in provider_ids:
             continue
-        day = datetime.fromtimestamp(epoch).date().isoformat()
+        try:
+            day = datetime.fromtimestamp(epoch).date().isoformat()
+        except (OverflowError, OSError, ValueError):
+            continue
         identity = (provider_id, source_instance_id)
         per_day = worst_by_identity_day.setdefault(identity, {})
         existing = per_day.get(day)
@@ -293,7 +310,8 @@ def percent_graph_model(
             _provider_id, source_instance_id = identity
             per_day = worst_by_identity_day[identity]
             values: list[float] = []
-            carried: float | None = None
+            prior_day = max((day for day in per_day if day_keys and day < day_keys[0]), default=None)
+            carried: float | None = per_day[prior_day] if prior_day is not None else None
             for day in day_keys:
                 observed = per_day.get(day)
                 if observed is not None:
@@ -356,6 +374,11 @@ def _controller_retention_projection(
     )
 
 
+def _is_live_reading(snapshot) -> bool:
+    state = getattr(snapshot, "state", None)
+    return state is None or getattr(state, "value", state) == "ready"
+
+
 def record_state_observations(
     controller,
     snapshots,
@@ -381,6 +404,9 @@ def record_state_observations(
             lane.remaining_percent,
         )
         for snapshot in snapshots
+        # A stale snapshot carries numbers read earlier; stamping them now
+        # would record an observation nobody made.
+        if _is_live_reading(snapshot)
         for lane in snapshot.lanes
         if lane.remaining_percent is not None
         and (
@@ -430,12 +456,18 @@ def record_state_observations(
             "_jrbar_percent_history_retention_signature",
             None,
         )
+        observed_epoch = time.time()
+        last_retention_epoch = getattr(
+            controller, "_jrbar_percent_history_retention_epoch", 0.0
+        )
         needs_retention = (
             signature is not None
-            and signature != committed_signature
+            and (
+                signature != committed_signature
+                or observed_epoch - last_retention_epoch >= PERCENT_RECORD_MIN_SECONDS
+            )
             and signature not in pending_signatures
         )
-        observed_epoch = time.time()
         fresh, _updated = filter_new_observations(
             planned,
             observations,
@@ -473,6 +505,7 @@ def record_state_observations(
                     controller._jrbar_percent_history_retention_signature = (
                         completed.retention_signature
                     )
+                    controller._jrbar_percent_history_retention_epoch = observed_epoch
                 for record in completed.records:
                     committed_now[
                         (

@@ -31,6 +31,7 @@ from .ask_heartbeat_sync import (
     plan_ask_heartbeat_sync,
 )
 from .attention import quiet_worker_request_keys
+from .capacity_limit_feedback import is_capacity_terminal
 from .clear_agents import CompletionPresentationKey
 from .completion_meniscus import (
     CompletionMeniscusGeometry,
@@ -138,6 +139,7 @@ from .recovery_grace_note import (
     RecoveryGracePlan,
     plan_recovery_grace_note,
 )
+from .scene_leases import effective_scene
 from .scenes import DEFAULT_SCENE, Scene, ScenePolicy, scene_from_value
 from .semantic_effect_router import (
     DEFAULT_SEMANTIC_EFFECT_MAP,
@@ -283,6 +285,8 @@ def _merge_runtime_dispatch(
     )
     outputs = []
     started_at_by_surface = {}
+    disabled = disabled_cue_families(getattr(controller, "settings", None))
+    ask_plan = _typed_plan(getattr(controller, "_ask_heartbeat_plan", None), AskHeartbeatPlan)
     for surface in AmbientEffectSurface:
         candidate = proposed.for_surface(surface)
         prior = (
@@ -297,6 +301,11 @@ def _merge_runtime_dispatch(
         )
         prior_active = (
             prior is not None
+            and prior.family not in disabled
+            and (
+                prior.family is not AmbientEffectFamily.ASK_HEARTBEAT
+                or (ask_plan is not None and ask_plan.request_count > 0)
+            )
             and type(prior_started_at) in {int, float}
             and max(0.0, (now - float(prior_started_at)) * 1_000.0)
             < prior.expires_after_ms
@@ -935,7 +944,7 @@ def _record_delivery(
     notification_id = _notification_id(event_key, prefix)
     semantic = _semantic_kind(event_key, interruption_class, prefix)
     settings = getattr(controller, "settings", None)
-    scene = scene_from_value(getattr(settings, "active_scene", None)) or DEFAULT_SCENE
+    scene = scene_from_value(effective_scene(controller)) or DEFAULT_SCENE
     admission, glance_environment = _scene_pack_environment(controller, settings, scene)
     accessibility = getattr(controller, "_accessibility_display_preferences", None)
     reduce_motion = bool(getattr(accessibility, "reduce_motion", False))
@@ -1564,6 +1573,8 @@ def _observe_courtesy_signature(
     reduce_motion: bool,
     quiet_requests: frozenset[RequestKey],
 ) -> None:
+    if is_capacity_terminal(event):
+        return
     semantic = _COURTESY_BY_TRANSITION.get(event.kind)
     if semantic is None:
         return
@@ -1593,6 +1604,8 @@ def _active_semantics(
     ):
         semantics.add(SemanticEventKind.ASK)
     for work in state.works:
+        if is_capacity_terminal(work):
+            continue
         if (
             workers_quiet
             and work.parent_key is not None
@@ -1610,6 +1623,8 @@ def _active_semantics(
         if semantic is not None:
             semantics.add(semantic)
     for event in events:
+        if is_capacity_terminal(event):
+            continue
         semantic = {
             TransitionKind.COMPLETED: SemanticEventKind.COMPLETION,
             TransitionKind.FAILED: SemanticEventKind.FAILURE,
@@ -1665,7 +1680,7 @@ def _observe_dot_and_rainstick(
         ),
     )
 
-    scene = scene_from_value(getattr(settings, "active_scene", None)) or DEFAULT_SCENE
+    scene = scene_from_value(effective_scene(controller)) or DEFAULT_SCENE
     admission, _environment_plan = _scene_pack_environment(controller, settings, scene)
     thermal = (
         RainstickThermalState.SERIOUS
@@ -1775,7 +1790,8 @@ def _observe_operator_events(
     if type(state) is not CanonicalOperatorState or type(events) is not tuple:
         return
     canonical_events = tuple(
-        event for event in events if type(event) is CanonicalOperatorEvent
+        event for event in events
+        if type(event) is CanonicalOperatorEvent and not is_capacity_terminal(event)
     )
     preferences = _accessibility_preferences(controller)
     previous_health = dict(getattr(controller, "_ambient_source_health", {}))

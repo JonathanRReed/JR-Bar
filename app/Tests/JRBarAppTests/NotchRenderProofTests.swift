@@ -46,8 +46,8 @@ struct NotchRenderProofTests {
             right: right)
         view.islandFrame = CGRect(x: 157.5, y: 28, width: 185, height: 32)
         view.relayout()
-        #expect(view.rightWingRect?.width == ScreenBarView.contentWidth(right),
-                "the black ear includes the cup's measured slice")
+        #expect(view.rightWingRect?.width == 54)
+        #expect(view.leftWingRect?.width == 54, "both ears yield to the tighter measured claim")
         view.display(colors: Array(repeating: RGB(r: 1, g: 0.25, b: 0.25), count: 8))
         view.layoutSubtreeIfNeeded()
         let context = try #require(CGContext(
@@ -71,6 +71,50 @@ struct NotchRenderProofTests {
         let directory = URL(fileURLWithPath: "/tmp/notch-proof", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try png.write(to: directory.appendingPathComponent("combined-underlight.png"))
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
+    func wingSilhouetteStaysFixedAcrossSensorAndAccessoryChanges() throws {
+        let directory = URL(fileURLWithPath: "/tmp/notch-proof", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let mark = ScreenBarWingSlot(text: "Working", provider: "claude")
+        var dressed = ScreenBarWingSlot(text: "Codex", provider: "codex", meter: 0.5)
+        dressed.accessory = ScreenBarWingAccessory(symbol: ScreenBarEarMarks.leaseSymbol)
+        dressed.sensors = NotchSensorState(microphoneInUse: true, cameraInUse: true)
+        var baseline: CGRect?
+        for (name, wings) in [
+            ("quiet", ScreenBarWings(left: mark, right: ScreenBarWingSlot(text: "Codex", provider: "codex"))),
+            ("accessory-sensors", ScreenBarWings(left: nil, right: dressed))
+        ] {
+            let view = ScreenBarView(frame: CGRect(x: 0, y: 0, width: 500, height: 60))
+            view.wingGeometry = ScreenBarWingGeometry(
+                notchWidth: 185, notchDepth: 32, bandSpan: 213,
+                leftExtent: 132, rightExtent: 132)
+            view.wings = wings
+            view.islandFrame = CGRect(x: 157.5, y: 28, width: 185, height: 32)
+            view.relayout()
+            #expect(view.leftWingRect?.width == 74 && view.rightWingRect?.width == 74)
+            let tray = try #require(view.trayRect)
+            if let baseline { #expect(tray == baseline) } else { baseline = tray }
+            view.display(colors: Array(repeating: RGB(r: 0.25, g: 0.65, b: 1), count: 8))
+            view.layoutSubtreeIfNeeded()
+            let context = try #require(CGContext(
+                data: nil, width: 2000, height: 240, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.scaleBy(x: 4, y: 4)
+            context.setFillColor(CGColor(gray: 0.24, alpha: 1))
+            context.fill(view.bounds)
+            view.layer?.render(in: context)
+            let hosting = try #require(view.subviews.compactMap {
+                $0 as? NSHostingView<ScreenBarWingsView>
+            }.first)
+            let renderer = ImageRenderer(content: hosting.rootView.frame(width: 500, height: 60))
+            renderer.scale = 4
+            context.draw(try #require(renderer.cgImage), in: view.bounds)
+            let rep = NSBitmapImageRep(cgImage: try #require(context.makeImage()))
+            let png = try #require(rep.representation(using: .png, properties: [:]))
+            try png.write(to: directory.appendingPathComponent("symmetric-wings-\(name).png"))
+        }
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
@@ -135,7 +179,10 @@ struct NotchRenderProofTests {
 
         let housing = try #require(screenBar.housingRect)
         let overlap = housing.maxY - islandFrame.minY
-        #expect(overlap == NotchSilhouetteGeometry.maximumExpandedRadius)
+        // The corner grows with the body (`radiusRamp`): this near-empty card is a little under a
+        // full card's, and the footer's clearance below is held to the full 28 either way.
+        #expect(overlap <= NotchSilhouetteGeometry.maximumExpandedRadius && overlap > 24,
+                "the housing climbs the corner of a card this tall: \(overlap)")
         #expect(NotchCardView.islandBottomContentInset >= overlap + 2,
                 "the real Agent Overview footer ink clears the higher Screen Bar housing")
         #expect(renderedFooterClearance >= overlap + 1.5,
@@ -186,7 +233,6 @@ struct NotchRenderProofTests {
         model.pinned = true
         model.focus = ScreenBarFocus(style: nil, label: "Codex", word: "Working",
                                      clickSession: nil)
-        model.contentRevealed = true
 
         let scale: CGFloat = 2
         let width: CGFloat = 380
@@ -205,7 +251,7 @@ struct NotchRenderProofTests {
         var inks: [Double] = []
         for t in [0.0, 0.1, 0.2, 0.3, 0.5] {
             var spring = NotchFrameSpring(at: idle)
-            spring.retarget(grown, motion: NotchMotion.expand)
+            spring.retarget(grown, motion: NotchMotion.open)
             _ = spring.integrate(dt: t)
             let frame = spring.frame
             heights.append(frame.height)

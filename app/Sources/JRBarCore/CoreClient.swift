@@ -67,7 +67,17 @@ public final class CoreClient: @unchecked Sendable {
         case connected
         case message(CoreMessage)
         case decodeFailure(String)
+        /// A `state` frame could not be used: too big, broken, or from a
+        /// protocol this app does not speak. The model it replaces is no
+        /// longer current; the next good frame clears this.
+        case stateRejected(String)
         case disconnected(reason: String)
+        /// The daemon accepted this connection's proof: privileged commands
+        /// (`answer_ask`, `set_setting` for a consent key, ...) now work on it.
+        case authenticated
+        /// This connection could not be authenticated. It stays open for the
+        /// reads the daemon gives every client, and the app decides what to do.
+        case authRefused(CoreAuthRefusal)
     }
 
     public let socketPath: String
@@ -81,7 +91,13 @@ public final class CoreClient: @unchecked Sendable {
     /// Kernel-level per-send bound (SO_SNDTIMEO): a daemon that stops
     /// draining the socket can never block a write past this.
     public let writeTimeout: TimeInterval
+    /// Probe a quiet connection with the protocol's existing ping command.
+    /// Busy connections already have command deadlines and are left alone.
+    public let idleProbeInterval: TimeInterval
     private let handler: @Sendable (Event) -> Void
+    /// The app's secret and the pid of the daemon it started. Nil: this client
+    /// never authenticates (a client of a daemon the app did not start).
+    private let auth: CoreAuthSecret?
 
     private let lock = NSLock()
     private let wakeup = NSCondition()
@@ -95,6 +111,14 @@ public final class CoreClient: @unchecked Sendable {
     private var commandCounter = 0
     private var pending: [String: CheckedContinuation<CoreReply, Error>] = [:]
     private var _isConnected = false
+    // Authentication, per connection (guarded by `lock`). A client holding a
+    // secret sends nothing else until the `auth` exchange has settled, one way
+    // or the other, so a privileged command is never the first to arrive.
+    private var authExpected = false
+    private var authSettled = true
+    private var _isAuthenticated = false
+    private var authReplyID: String?
+    private var authWaiters: [String: CheckedContinuation<Void, Error>] = [:]
     /// Decoded-frame counter, bumped on the read thread. A reply timeout
     /// that watched frames arrive knows the daemon is alive — the command
     /// is queued behind a slow sibling (dispatch serializes per socket),
@@ -118,6 +142,9 @@ public final class CoreClient: @unchecked Sendable {
     /// The in-flight `replay_events` command id; its reply is consumed
     /// here (replayed frames) instead of reaching the handler as a reply.
     private var replayReplyID: String?
+    /// A lost replay reply must not suppress transport checks forever.
+    /// Keep its id after this deadline so a late replay still lands.
+    private var replayBusyUntil: ContinuousClock.Instant?
     /// Bounded id ring for dedupe: replayed events overlap live ones —
     /// the journal answers with events the socket may already have fanned
     /// out — so an id delivered once is never delivered twice.
@@ -127,13 +154,16 @@ public final class CoreClient: @unchecked Sendable {
 
     public init(socketPath: String = CoreSocketPath.resolve(), replyTimeout: TimeInterval = 10,
                 helloTimeout: TimeInterval = 10, connectTimeout: TimeInterval = 5,
-                writeTimeout: TimeInterval = 5,
+                writeTimeout: TimeInterval = 5, idleProbeInterval: TimeInterval = 30,
+                auth: CoreAuthSecret? = nil,
                 handler: @escaping @Sendable (Event) -> Void) {
+        self.auth = auth
         self.socketPath = socketPath
         self.replyTimeout = replyTimeout
         self.helloTimeout = helloTimeout
         self.connectTimeout = connectTimeout
         self.writeTimeout = writeTimeout
+        self.idleProbeInterval = idleProbeInterval.isFinite && idleProbeInterval > 0 ? idleProbeInterval : 30
         self.handler = handler
     }
 
@@ -142,6 +172,12 @@ public final class CoreClient: @unchecked Sendable {
     public var isConnected: Bool {
         lock.lock(); defer { lock.unlock() }
         return _isConnected
+    }
+
+    /// Whether the daemon has accepted this connection's proof.
+    public var isAuthenticated: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _isAuthenticated
     }
 
     // MARK: Lifecycle
@@ -180,6 +216,7 @@ public final class CoreClient: @unchecked Sendable {
         }
         lock.unlock()
         for (_, continuation) in waiting { continuation.resume(throwing: CoreClientError.stopped) }
+        settleAuth()
         wakeup.lock()
         wakeup.broadcast()
         wakeup.unlock()
@@ -205,46 +242,75 @@ public final class CoreClient: @unchecked Sendable {
     /// reply is returned, not thrown). Throws when the socket is down.
     /// `timeout` overrides `replyTimeout` for one command (a cold
     /// `usage_history` scan can take tens of seconds).
+    /// Cancellation retires queued commands and pending replies. It cannot
+    /// undo a write already admitted, and never closes the shared socket.
     public func send(name: String, args: [String: JSONValue] = [:], timeout: TimeInterval? = nil) async throws -> CoreReply {
+        try await send(name: name, args: args, timeout: timeout, idleGeneration: nil)
+    }
+
+    private func send(name: String, args: [String: JSONValue] = [:], timeout: TimeInterval? = nil,
+                      idleGeneration: UInt64?) async throws -> CoreReply {
+        try Task.checkCancellation()
         let command = CoreCommand(id: nextCommandID(), name: name, args: args)
         let bytes = try CoreCodec.encode(command: command)
-        let reply: CoreReply = try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            guard _isConnected, fd >= 0 else {
-                lock.unlock()
-                continuation.resume(throwing: CoreClientError.notConnected)
-                return
-            }
-            pending[command.id] = continuation
-            let socket = fd
-            let generation = connectionGeneration
-            lock.unlock()
-            // Arm the deadline BEFORE the write: it covers the whole
-            // operation (a blocked write, a lost reply), not just the
-            // wait for the reply frame.
-            let timeout = timeout ?? replyTimeout
-            let id = command.id
-            lock.lock()
-            let framesAtSend = framesSeen
-            lock.unlock()
-            Task.detached { [weak self] in
-                try? await Task.sleep(for: .seconds(timeout))
-                guard let self, let waiting = self.takePending(id) else { return }
-                waiting.resume(throwing: CoreClientError.timeout)
-                // Frames arriving during the wait prove the daemon is
-                // alive and the socket healthy — commands serialize per
-                // connection, so a slow sibling (a cold usage scan) is
-                // what delayed this reply. Dropping here would kill the
-                // in-flight command too; only a silent socket is dropped.
-                if self.framesSeenCount() == framesAtSend { self.dropConnection(socket, generation: generation) }
-            }
-            if let errno = writeAll(socket, bytes, generation: generation) {
-                if let waiting = takePending(command.id) {
-                    waiting.resume(throwing: CoreClientError.writeFailed(errno))
+        if idleGeneration == nil { try await waitUntilAuthSettled(id: command.id) }
+        try Task.checkCancellation()
+        let reply: CoreReply = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                guard !Task.isCancelled else {
+                    lock.unlock()
+                    continuation.resume(throwing: CancellationError())
+                    return
                 }
-                dropConnection(socket, generation: generation)
-                return
+                guard _isConnected, fd >= 0 else {
+                    lock.unlock()
+                    continuation.resume(throwing: CoreClientError.notConnected)
+                    return
+                }
+                if let idleGeneration,
+                   !Self.idleProbeEligible(connected: _isConnected, stopped: stopped,
+                                           authSettled: authSettled, pendingCount: pending.count,
+                                           replayPending: replayIsBusy(),
+                                           generation: connectionGeneration, expectedGeneration: idleGeneration) {
+                    lock.unlock()
+                    continuation.resume(throwing: CoreClientError.notConnected)
+                    return
+                }
+                pending[command.id] = continuation
+                let socket = fd
+                let generation = connectionGeneration
+                let framesAtSend = framesSeen
+                lock.unlock()
+                // Arm the deadline BEFORE the write: it covers the whole
+                // operation (a blocked write, a lost reply), not just the
+                // wait for the reply frame.
+                let timeout = timeout ?? replyTimeout
+                let id = command.id
+                Task.detached { [weak self] in
+                    try? await Task.sleep(for: .seconds(timeout))
+                    guard let self, let waiting = self.takePending(id) else { return }
+                    waiting.resume(throwing: CoreClientError.timeout)
+                    // Frames arriving during the wait prove the daemon is
+                    // alive and the socket healthy — commands serialize per
+                    // connection, so a slow sibling (a cold usage scan) is
+                    // what delayed this reply. Dropping here would kill the
+                    // in-flight command too; only a silent socket is dropped.
+                    if self.framesSeenCount() == framesAtSend {
+                        if idleGeneration != nil { self.dropIdleConnection(socket, generation: generation) }
+                        else { self.dropConnection(socket, generation: generation) }
+                    }
+                }
+                if let errno = writeAll(socket, bytes, generation: generation, commandID: command.id) {
+                    if let waiting = takePending(command.id) {
+                        waiting.resume(throwing: CoreClientError.writeFailed(errno))
+                    }
+                    dropConnection(socket, generation: generation)
+                    return
+                }
             }
+        } onCancel: {
+            self.takePending(command.id)?.resume(throwing: CancellationError())
         }
         return reply
     }
@@ -256,6 +322,20 @@ public final class CoreClient: @unchecked Sendable {
     private func dropConnection(_ socket: Int32, generation: UInt64) {
         lock.lock()
         if fd == socket && connectionGeneration == generation { shutdown(socket, SHUT_RDWR) }
+        lock.unlock()
+    }
+
+    /// A real command admitted after the probe owns its own deadline.
+    /// Check and shut down atomically so a slow usage scan is not cut off.
+    private func dropIdleConnection(_ socket: Int32, generation: UInt64) {
+        lock.lock()
+        if fd == socket,
+           Self.idleProbeEligible(connected: _isConnected, stopped: stopped,
+                                  authSettled: authSettled, pendingCount: pending.count,
+                                  replayPending: replayIsBusy(),
+                                  generation: connectionGeneration, expectedGeneration: generation) {
+            shutdown(socket, SHUT_RDWR)
+        }
         lock.unlock()
     }
 
@@ -271,12 +351,36 @@ public final class CoreClient: @unchecked Sendable {
         return pending.removeValue(forKey: id)
     }
 
-    private let writeLock = NSLock()
+    // Internal so tests can hold writes until a queued command expires.
+    let writeLock = NSLock()
+
+    var pendingCommandCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return pending.count
+    }
+
+    var pendingReplayCommandID: String? {
+        lock.lock(); defer { lock.unlock() }
+        return replayReplyID
+    }
+
+    var authenticationWaiterCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return authWaiters.count
+    }
 
     /// Returns errno on failure.
-    private func writeAll(_ socket: Int32, _ data: Data, generation: UInt64? = nil) -> Int32? {
+    private func writeAll(_ socket: Int32, _ data: Data, generation: UInt64? = nil,
+                          commandID: String? = nil) -> Int32? {
         writeLock.lock(); defer { writeLock.unlock() }
         lock.lock()
+        // Admission and timeout removal share this lock. A command that
+        // expired while waiting for the writer must never reach the daemon.
+        // Once admitted, its write may already be in progress at its deadline.
+        if let commandID, pending[commandID] == nil {
+            lock.unlock()
+            return nil
+        }
         guard !stopped, _isConnected, fd == socket,
               generation == nil || generation == connectionGeneration else {
             lock.unlock()
@@ -307,6 +411,41 @@ public final class CoreClient: @unchecked Sendable {
 
     // MARK: Thread
 
+    static func idleProbeEligible(connected: Bool, stopped: Bool, authSettled: Bool,
+                                  pendingCount: Int, replayPending: Bool,
+                                  generation: UInt64, expectedGeneration: UInt64) -> Bool {
+        connected && !stopped && authSettled && pendingCount == 0 && !replayPending
+            && generation == expectedGeneration
+    }
+
+    // Caller holds lock. ContinuousClock includes time spent asleep.
+    private func replayIsBusy() -> Bool {
+        Self.replayIsBusy(replyPending: replayReplyID != nil,
+                          deadline: replayBusyUntil, now: ContinuousClock.now)
+    }
+
+    static func replayIsBusy(replyPending: Bool, deadline: ContinuousClock.Instant?,
+                             now: ContinuousClock.Instant) -> Bool {
+        replyPending && deadline.map { now < $0 } == true
+    }
+
+    private func beginIdleProbes() -> Task<Void, Never> {
+        lock.lock()
+        let generation = connectionGeneration
+        lock.unlock()
+        let interval = idleProbeInterval
+        return Task.detached { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(interval)) }
+                catch { return }
+                guard let self else { return }
+                // Admission is checked under the same lock that inserts a
+                // command. An old loop cannot send into a new connection.
+                _ = try? await self.send(name: "ping", idleGeneration: generation)
+            }
+        }
+    }
+
     private func run() {
         defer { runDidFinish() }
         var failures = 0
@@ -327,6 +466,12 @@ public final class CoreClient: @unchecked Sendable {
             fd = socket
             connectionGeneration &+= 1
             _isConnected = true
+            authExpected = auth?.current != nil
+            authSettled = !authExpected
+            _isAuthenticated = false
+            authReplyID = nil
+            replayReplyID = nil
+            replayBusyUntil = nil
             lock.unlock()
             handler(.connected)
             let (reason, sawHello) = readLoop(socket)
@@ -337,10 +482,14 @@ public final class CoreClient: @unchecked Sendable {
             // so a borrowed descriptor cannot be reused by another thread.
             close(socket)
             _isConnected = false
+            _isAuthenticated = false
+            replayReplyID = nil
+            replayBusyUntil = nil
             let waiting = pending
             pending.removeAll()
             lock.unlock()
             for (_, continuation) in waiting { continuation.resume(throwing: CoreClientError.disconnected) }
+            settleAuth()
             handler(.disconnected(reason: reason))
             if wasStopped { break }
             // A connection that got as far as hello resets the schedule.
@@ -447,6 +596,8 @@ public final class CoreClient: @unchecked Sendable {
     private func readLoop(_ socket: Int32) -> (String, Bool) {
         var splitter = NDJSONSplitter()
         var sawHello = false
+        var idleProbes: Task<Void, Never>?
+        defer { idleProbes?.cancel() }
         // A daemon that accepts but never speaks must not park the app at
         // "connected, waiting for state" forever: until hello lands, every
         // read is preceded by a poll bounded by the hello deadline.
@@ -478,7 +629,14 @@ public final class CoreClient: @unchecked Sendable {
                 if isStopped { return ("stopped", sawHello) }
                 return (String(cString: strerror(errno)), sawHello)
             }
-            for frame in splitter.feed(Data(buffer[0..<count])) {
+            let droppedBefore = splitter.droppedOversizedFrames
+            let frames = splitter.feed(Data(buffer[0..<count]))
+            if splitter.droppedOversizedFrames > droppedBefore {
+                let why = "a frame over \(CoreCodec.maxFrameBytes) bytes was dropped"
+                handler(.decodeFailure(why))
+                if splitter.lastDroppedOversizedType == "state" { handler(.stateRejected(why)) }
+            }
+            for frame in frames {
                 lock.lock()
                 framesSeen &+= 1
                 lock.unlock()
@@ -486,15 +644,26 @@ public final class CoreClient: @unchecked Sendable {
                     let message = try CoreCodec.decode(frame: frame)
                     if case .hello(let hello) = message {
                         sawHello = true
+                        beginAuthentication(hello: hello, socket: socket)
                         beginResumableStream(hello: hello, socket: socket)
+                        if idleProbes == nil { idleProbes = beginIdleProbes() }
                     }
                     if case .reply(let reply) = message {
                         lock.lock()
                         let isReplay = reply.id == replayReplyID
-                        if isReplay { replayReplyID = nil }
+                        if isReplay {
+                            replayReplyID = nil
+                            replayBusyUntil = nil
+                        }
+                        let isAuth = reply.id == authReplyID
+                        if isAuth { authReplyID = nil }
                         lock.unlock()
                         if isReplay {
                             deliverReplayedEvents(reply)
+                            continue
+                        }
+                        if isAuth {
+                            finishAuthentication(reply, socket: socket)
                             continue
                         }
                         if let waiting = takePending(reply.id) {
@@ -502,15 +671,133 @@ public final class CoreClient: @unchecked Sendable {
                         }
                     }
                     if case .event(let event) = message {
-                        if markEventDelivered(event.id) { continue }
+                        if markEventDelivered(event.id), !event.isDurableResetReplay { continue }
                         noteEventCursor(event.cursor)
                     }
                     handler(.message(message))
                 } catch {
-                    handler(.decodeFailure(String(describing: error)))
+                    let why = String(describing: error)
+                    handler(.decodeFailure(why))
+                    if CoreCodec.declaredType(ofFrame: frame) == "state" { handler(.stateRejected(why)) }
                 }
             }
         }
+    }
+
+    // MARK: Authentication (read thread, except `waitUntilAuthSettled`)
+
+    /// Called when `hello` lands. With a secret, answers the daemon's nonce
+    /// with the `auth` command before anything else is written; without
+    /// one, there is nothing to do. Commands wait on `waitUntilAuthSettled`.
+    private func beginAuthentication(hello: CoreHello, socket: Int32) {
+        lock.lock()
+        let expected = authExpected
+        lock.unlock()
+        guard expected, let keeper = auth, let secret = keeper.current else {
+            settleAuth()
+            return
+        }
+        // Whoever answers on the socket must be the daemon this app started
+        // (or a child of it): a proof is never sent to anything else.
+        guard CoreSocketPeer.isSupervised(peer: CoreSocketPeer.pid(of: socket), supervised: keeper.supervisedPID) else {
+            refuseAuthentication(.peerIsNotOurDaemon)
+            return
+        }
+        guard let challenge = hello.auth else {
+            refuseAuthentication(.daemonOffersNoChallenge)
+            return
+        }
+        let proof = CoreAuthSecret.proof(secret: secret, nonce: challenge.nonce)
+        let command = CoreCommand(id: nextCommandID(), name: "auth", args: ["proof": .string(proof)])
+        guard let bytes = try? CoreCodec.encode(command: command) else {
+            refuseAuthentication(.noReply)
+            return
+        }
+        lock.lock()
+        authReplyID = command.id
+        let generation = connectionGeneration
+        lock.unlock()
+        if writeAll(socket, bytes) != nil {
+            // The socket is half-dead; the read below fails and reconnects.
+            lock.lock()
+            authReplyID = nil
+            lock.unlock()
+            settleAuth()
+            return
+        }
+        let id = command.id
+        let deadline = replyTimeout
+        Task.detached { [weak self] in
+            try? await Task.sleep(for: .seconds(deadline))
+            guard let self, self.takeAuthReplyIfPending(id) else { return }
+            self.refuseAuthentication(.noReply)
+            self.dropConnection(socket, generation: generation)
+        }
+    }
+
+    private func takeAuthReplyIfPending(_ id: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard authReplyID == id else { return false }
+        authReplyID = nil
+        return true
+    }
+
+    private func finishAuthentication(_ reply: CoreReply, socket: Int32) {
+        if reply.ok {
+            lock.lock()
+            _isAuthenticated = true
+            lock.unlock()
+            settleAuth()
+            handler(.authenticated)
+            return
+        }
+        // The daemon closes a connection whose proof it refused.
+        refuseAuthentication(.proofRejected(reply.error?.code ?? "refused"))
+    }
+
+    private func refuseAuthentication(_ reason: CoreAuthRefusal) {
+        settleAuth()
+        handler(.authRefused(reason))
+    }
+
+    /// Lets the commands parked behind the exchange go. Idempotent.
+    private func settleAuth() {
+        lock.lock()
+        authSettled = true
+        let waiters = authWaiters
+        authWaiters.removeAll()
+        lock.unlock()
+        for waiter in waiters.values { waiter.resume() }
+    }
+
+    /// Returns at once unless a secret is held and the exchange on the current
+    /// connection has not finished. Ends with the connection, so a command
+    /// parked here never outlives the socket it was waiting on.
+    private func waitUntilAuthSettled(id: String) async throws {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                lock.lock()
+                guard !Task.isCancelled else {
+                    lock.unlock()
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                if authSettled || !_isConnected {
+                    lock.unlock()
+                    continuation.resume()
+                    return
+                }
+                authWaiters[id] = continuation
+                lock.unlock()
+            }
+        } onCancel: {
+            self.takeAuthWaiter(id)?.resume(throwing: CancellationError())
+        }
+    }
+
+    private func takeAuthWaiter(_ id: String) -> CheckedContinuation<Void, Error>? {
+        lock.lock(); defer { lock.unlock() }
+        return authWaiters.removeValue(forKey: id)
     }
 
     // MARK: Replay (read thread only)
@@ -542,6 +829,7 @@ public final class CoreClient: @unchecked Sendable {
             guard let bytes = try? CoreCodec.encode(command: command) else { return }
             lock.lock()
             replayReplyID = command.id
+            replayBusyUntil = ContinuousClock.now.advanced(by: .seconds(replyTimeout))
             lock.unlock()
             // A failed write leaves the socket half-dead; the read below
             // fails, the loop reconnects, and the next hello retries the
@@ -549,6 +837,7 @@ public final class CoreClient: @unchecked Sendable {
             if writeAll(socket, bytes) != nil {
                 lock.lock()
                 replayReplyID = nil
+                replayBusyUntil = nil
                 lock.unlock()
             }
             return
@@ -559,9 +848,12 @@ public final class CoreClient: @unchecked Sendable {
         lastEventSeq = hello.cursor.flatMap { Self.splitCursor($0)?.seq } ?? nil
         // Ids restart with the stream; keeping the old ring would let a
         // new incarnation's `ev-1` look like a duplicate.
-        deliveredEventIDs.removeAll()
-        deliveredEventIDSet.removeAll()
+        if !sameStream {
+            deliveredEventIDs.removeAll()
+            deliveredEventIDSet.removeAll()
+        }
         replayReplyID = nil
+        replayBusyUntil = nil
         lock.unlock()
     }
 
@@ -610,7 +902,7 @@ public final class CoreClient: @unchecked Sendable {
         for value in events {
             guard let data = try? JSONEncoder().encode(value),
                   let event = try? JSONDecoder().decode(CoreEvent.self, from: data) else { continue }
-            if markEventDelivered(event.id) { continue }
+            if markEventDelivered(event.id), !event.isDurableResetReplay { continue }
             handler(.message(.event(event)))
         }
         // The reply's cursor is the last RETURNED event's position —

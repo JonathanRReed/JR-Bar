@@ -10,8 +10,8 @@ set aside instead of destroyed.
 
 from __future__ import annotations
 
-import hashlib
 import json
+import logging
 import os
 import re
 import threading
@@ -53,6 +53,7 @@ from .presence import (
 )
 from .private_io import (
     atomic_private_write,
+    document_digest,
     ensure_private_directory,
     quarantine_private_file,
     read_private_text,
@@ -75,6 +76,8 @@ from .signals import (
     normalize_provider_escalation_tiers,
     normalize_quota_thresholds,
 )
+
+_log = logging.getLogger(__name__)
 
 LED_DISPLAY_AGENT = "agent"
 LED_DISPLAY_BATTERY = "battery"
@@ -145,7 +148,7 @@ MENU_BAR_ICON_STYLES = (
     "orbit",
     "hidden",
 )
-DEFAULT_MENU_BAR_ICON_STYLE = "glyph"
+DEFAULT_MENU_BAR_ICON_STYLE = "agents"
 # The consent generation the Claude plan-limits opt-in was granted under.
 # 0.2.1 shipped a build that PERSISTED `claude_plan_limits_enabled` while the
 # code documented the flag as inert, so a `true` sitting in a settings file
@@ -564,14 +567,14 @@ class AgentMonitorSettings:
     # serve. Off by default and separate from serve_enabled -- reading the
     # fleet and answering for the owner are different grants.
     serve_answer_enabled: bool = False
-    # Settings > Usage's "Provider status pages" switch: when on, the daemon
+    # Settings > Agents & Usage's "Provider status pages" switch: when on, the daemon
     # asks status.anthropic.com, status.openai.com and status.cursor.com
     # (status_feeds.py) every 10 minutes, for each of those providers found
     # on this Mac, so "the provider is down" is not read as "your fetch broke".
     # Off by default -- it is a request that leaves the Mac, so nothing is
     # contacted until the person turns it on.
     provider_status_feeds_enabled: bool = False
-    # Settings > Agents' "Check for agent updates" switch: when on, the daemon asks
+    # Settings > Agents & Usage' "Check for agent updates" switch: when on, the daemon asks
     # registry.npmjs.org for the latest version of each installed agent CLI that
     # has an npm package (provider_updates.py), every 6 hours and when the Agents
     # page is refreshed, so a row can say "2.1.290 available". Off by default --
@@ -579,6 +582,16 @@ class AgentMonitorSettings:
     # person turns it on. The Update button never needs it: it runs the CLI's own
     # updater, and only when clicked.
     provider_update_checks_enabled: bool = False
+    # Settings > Remote's "Phone alert": a short line to a phone through ntfy
+    # (ntfy_alert.py) when an agent needs the person or finishes. Off by
+    # default -- it is a request that leaves the Mac, so nothing is sent
+    # until the person enters a topic AND turns it on. ``ntfy_topic`` is a
+    # topic name (sent to ntfy.sh) or a full https URL for their own server.
+    # ``ntfy_only_when_away`` keeps it quiet while they are at the Mac: a line
+    # goes out only when the screen is locked or the Mac has been idle.
+    ntfy_enabled: bool = False
+    ntfy_topic: str = ""
+    ntfy_only_when_away: bool = True
     # Scenes are presentation policy only. Calm is the compatibility default:
     # until a runtime owner consumes this policy, existing display behavior is
     # unchanged, while every settings document has one valid active scene.
@@ -669,9 +682,11 @@ class AgentMonitorSettings:
     # "no consent this build recognises" -- the state a settings file written
     # by an older build is in, and the state a hand-forged dataclass is in.
     claude_plan_limits_consent_version: int = 0
-    # Still legacy and still inert: threshold alerts are an outbound effect
-    # and have no authority-fed producer yet.
-    quota_alerts_enabled: bool = False
+    # Local quota moments: the threshold crossing, the pace warning and the
+    # reset. They are banners and lights on this Mac and send nothing off it
+    # (the webhook is its own sealed opt-in). On for a settings file that
+    # has never written the key; a file that holds a value keeps it.
+    quota_alerts_enabled: bool = True
     # Opt-in ambient cues, consumed by ambient_effect_runtime's observer.
     # Rainstick Idle parks one dim pixel that advances every 30 s while no
     # higher-priority signal owns the strip -- a content-free "JR-Bar is
@@ -723,11 +738,11 @@ class AgentMonitorSettings:
     # per-device brightness, auto-brightness, idle and Focus dimming.
     global_brightness_scale: float = 1.0
     focus_signal_policy: dict[str, str] = field(default_factory=dict)
-    # A macOS notification banner when a main session finishes. New
-    # installations remain off until the user opts in and explicitly
-    # handles the macOS permission action. Existing settings files that
-    # predate this policy preserve their prior effective choice once.
-    completion_notification_enabled: bool = False
+    # A macOS notification banner when a main session finishes. On for a
+    # new installation and for a settings file that has never written the
+    # key (macOS asks for its permission the first time a banner is due); a
+    # file that holds a value, true or false, keeps that choice.
+    completion_notification_enabled: bool = True
     notification_policy_version: int = 1
     # Webhook bridge: which non-capacity moment events (beyond stage-3
     # escalation, which always fires when the URL is set) also POST.
@@ -741,6 +756,18 @@ class AgentMonitorSettings:
     # answer card, and the sub-agent's own agent still shows its prompt.
     # Turning this on lets them alert like a main session's ask does.
     subagent_asks_alert: bool = False
+    # One local banner when a working session has said nothing for ten
+    # minutes with no tool call open ("jr-bar has been quiet for 12m"). Off
+    # until asked for; the Loud alerts profile turns it on. The app counts
+    # the silence and posts the banner; nothing leaves the Mac.
+    silent_session_banner_enabled: bool = False
+    # An unanswered ask never hides because of its age (``ask_lifetime``). Once
+    # it is this many hours old, from a session silent for as long, it says
+    # "may be stale" with its age and offers Dismiss.
+    ask_stale_after_hours: float = 6.0
+    # And a stale ask this many days old, with no running process behind it, is
+    # archived into History as "expired unanswered". A running process keeps it.
+    ask_expire_after_days: float = 7.0
     # The owner's defaults: a nudge at 90, a real warning at 95.
     quota_alert_thresholds: tuple[float, ...] = DEFAULT_QUOTA_THRESHOLDS
     # The interrupt budget's one dial: how many repetitions a COURTESY
@@ -808,6 +835,9 @@ class AgentMonitorSettings:
     pricing_overrides: dict[str, dict[str, float]] = field(default_factory=dict)
     # Keep-awake lets go while macOS Low Power Mode is on (keep_awake).
     keep_awake_yield_low_power_mode: bool = True
+    # File name -> HMAC of the consent each companion file held when the
+    # daemon last wrote it (companion_seal.py). Sealed; never set by a person.
+    companion_seals: dict[str, str] = field(default_factory=dict)
 
     def transcript_enabled(self, provider: str) -> bool:
         if provider == "codex":
@@ -1084,22 +1114,6 @@ class AgentMonitorSettings:
         preferences[key] = action
         return replace(self, session_open_preferences=preferences)
 
-    def with_provider_session_open_action(
-        self, provider: str, action: str
-    ) -> AgentMonitorSettings:
-        """Set the provider-wide opener and discard older per-origin overrides."""
-        if action not in SESSION_OPEN_CHOICES:
-            raise ValueError(f"Unknown session open action: {action}")
-        provider_key = provider.lower()
-        prefix = f"origin:{provider_key}:"
-        preferences = {
-            key: value
-            for key, value in self.session_open_preferences.items()
-            if not key.startswith(prefix)
-        }
-        preferences[provider_key] = action
-        return replace(self, session_open_preferences=preferences)
-
     def with_battery_full_charge_watts(self, watts: float | None) -> AgentMonitorSettings:
         if watts is not None and watts <= 0:
             watts = None
@@ -1121,9 +1135,6 @@ class AgentMonitorSettings:
             ),
             battery_power_change_preview_seconds=preview_seconds,
         )
-
-    def with_battery_charging_idle(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, battery_charging_idle_enabled=bool(enabled))
 
     def lid_animation(self, kind: str) -> LedAnimationSetting:
         if kind == LID_ANIMATION_CLOSED:
@@ -1151,15 +1162,6 @@ class AgentMonitorSettings:
     def with_closed_lid_grace_minutes(self, minutes: float) -> AgentMonitorSettings:
         return replace(self, closed_lid_grace_minutes=normalize_closed_lid_grace_minutes(minutes))
 
-    def with_agent_keep_awake_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, agent_keep_awake_enabled=bool(enabled))
-
-    def with_keep_display_awake(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, keep_display_awake=bool(enabled))
-
-    def with_keep_awake_on_battery(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, keep_awake_on_battery=bool(enabled))
-
     def with_lid_animation(
         self,
         kind: str,
@@ -1183,29 +1185,14 @@ class AgentMonitorSettings:
             return replace(self, lid_open_animation=animation)
         raise ValueError(f"Unknown lid animation: {kind}")
 
-    def with_setup_screen_completed(self, completed: bool = True) -> AgentMonitorSettings:
-        return replace(self, setup_screen_completed=bool(completed))
-
-    def with_virtual_status_device(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, virtual_status_device_enabled=bool(enabled))
-
-    def with_virtual_status_device_wraps_menu_bar(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, virtual_status_device_wraps_menu_bar=bool(enabled))
-
     def with_colors(self, colors: ColorSettings) -> AgentMonitorSettings:
         return replace(self, colors=colors)
-
-    def with_idle_dim_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, idle_dim_enabled=bool(enabled))
 
     def with_idle_dim_after_minutes(self, minutes: float) -> AgentMonitorSettings:
         return replace(self, idle_dim_after_minutes=normalize_idle_dim_after_minutes(minutes))
 
     def with_idle_dim_fraction(self, fraction: float) -> AgentMonitorSettings:
         return replace(self, idle_dim_fraction=normalize_idle_dim_fraction(fraction))
-
-    def with_sleep_dim_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, sleep_dim_enabled=bool(enabled))
 
     def with_sleep_dim_fraction(self, fraction: float) -> AgentMonitorSettings:
         return replace(self, sleep_dim_fraction=normalize_sleep_dim_fraction(fraction))
@@ -1215,17 +1202,11 @@ class AgentMonitorSettings:
             raise TypeError("auto_dim must be AutoDimSettings")
         return replace(self, auto_dim=auto_dim)
 
-    def with_idle_auto_off_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, idle_auto_off_enabled=bool(enabled))
-
     def with_idle_auto_off_after_minutes(self, minutes: float) -> AgentMonitorSettings:
         return replace(
             self,
             idle_auto_off_after_minutes=normalize_idle_auto_off_after_minutes(minutes),
         )
-
-    def with_subagent_asks_alert(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, subagent_asks_alert=bool(enabled))
 
     def with_completion_notification_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(
@@ -1284,21 +1265,6 @@ class AgentMonitorSettings:
     def with_escalation_webhook_url(self, url: str) -> AgentMonitorSettings:
         return replace(self, escalation_webhook_url=str(url).strip())
 
-    def with_usage_event_hook_path(self, path: str) -> AgentMonitorSettings:
-        """The legacy window's one hook path, kept in step with the
-        ``legacy`` usage-hook rule it now stands for."""
-        from .usage_source_settings import legacy_usage_hook_rule, normalize_usage_hooks
-
-        cleaned = str(path).strip()
-        hooks = normalize_usage_hooks(self.usage_hooks)
-        rules = [rule for rule in hooks["rules"] if rule["id"] != "legacy"]
-        if cleaned:
-            rules.insert(0, legacy_usage_hook_rule(cleaned))
-            hooks = {"enabled": True, "rules": rules}
-        else:
-            hooks = {"enabled": hooks["enabled"] and bool(rules), "rules": rules}
-        return replace(self, usage_event_hook_path=cleaned, usage_hooks=hooks)
-
     def with_usage_hooks(self, hooks: object) -> AgentMonitorSettings:
         """The rules as written. Without a ``legacy`` rule the first
         version's path goes too, or the next load would add the rule back."""
@@ -1338,9 +1304,6 @@ class AgentMonitorSettings:
         ):
             raise ValueError("usage graph providers must be selected and supported")
         return replace(self, usage_graph_providers=provider_ids)
-
-    def with_codex_percent_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, codex_percent_enabled=bool(enabled))
 
     def with_usage_graph_days(self, days: int) -> AgentMonitorSettings:
         if int(days) not in (7, 30, 90, 365):
@@ -1439,17 +1402,6 @@ class AgentMonitorSettings:
             ),
         )
 
-    def with_screen_bar_gauges_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, screen_bar_gauges_enabled=bool(enabled))
-
-    def with_screen_bar_follow_alcove(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, screen_bar_follow_alcove=bool(enabled))
-
-    def with_screen_bar_show_in_full_screen(
-        self, enabled: bool
-    ) -> AgentMonitorSettings:
-        return replace(self, screen_bar_show_in_full_screen=bool(enabled))
-
     def with_screen_bar_min_glow(self, fraction: float) -> AgentMonitorSettings:
         return replace(
             self, screen_bar_min_glow=max(0.0, min(1.0, float(fraction)))
@@ -1488,23 +1440,11 @@ class AgentMonitorSettings:
                 return device.resting_glow
         return 0.0
 
-    def with_menu_bar_label_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, menu_bar_label_enabled=bool(enabled))
-
     def with_tips_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, tips_enabled=bool(enabled))
 
     def with_focus_sync_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, focus_sync_enabled=bool(enabled))
-
-    def with_serve_answer_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, serve_answer_enabled=bool(enabled))
-
-    def with_provider_status_feeds_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, provider_status_feeds_enabled=bool(enabled))
-
-    def with_provider_update_checks_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, provider_update_checks_enabled=bool(enabled))
 
     def with_active_scene(self, scene: object) -> AgentMonitorSettings:
         selected = scene_from_value(scene)
@@ -1524,15 +1464,6 @@ class AgentMonitorSettings:
         if type(pack_id) is not str or not pack_id.strip():
             raise ValueError("invalid scene pack")
         return replace(self, active_scene_pack=pack_id.strip())
-
-    def with_rainstick_idle_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, rainstick_idle_enabled=bool(enabled))
-
-    def with_rainstick_night_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, rainstick_night_enabled=bool(enabled))
-
-    def with_milestone_odometer_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, milestone_odometer_enabled=bool(enabled))
 
     def with_milestone_odometer_steps(self, steps: object) -> AgentMonitorSettings:
         return replace(self, milestone_odometer_steps=_milestone_steps_setting(steps))
@@ -1621,16 +1552,6 @@ class AgentMonitorSettings:
             dnd_focus_mode=mode.value,
             dnd_persisted_refusals=(),
         )
-
-    def with_screen_bar_gap_width(self, width: float | None) -> AgentMonitorSettings:
-        if width is not None:
-            width = max(120.0, min(1200.0, float(width)))
-        return replace(self, screen_bar_gap_width=width)
-
-    def with_screen_bar_wing_length(self, length: float | None) -> AgentMonitorSettings:
-        if length is not None:
-            length = max(0.0, min(400.0, float(length)))
-        return replace(self, screen_bar_wing_length=length)
 
     def with_screen_bar_notch_profile(self, profile: object) -> AgentMonitorSettings:
         normalized = (
@@ -1767,9 +1688,6 @@ class AgentMonitorSettings:
             devices.append(device)
         return replace(self, devices=tuple(devices))
 
-    def with_low_battery_alert_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, low_battery_alert_enabled=bool(enabled))
-
     def with_low_battery_threshold_percent(self, percent: float) -> AgentMonitorSettings:
         return replace(self, low_battery_threshold_percent=max(1.0, min(50.0, float(percent))))
 
@@ -1781,9 +1699,6 @@ class AgentMonitorSettings:
 
     def with_reminder_alerts_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, reminder_alerts_enabled=bool(enabled))
-
-    def with_capacity_history_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, capacity_history_enabled=bool(enabled))
 
     def with_capacity_history_retention_days(self, days: int) -> AgentMonitorSettings:
         """Only the three retentions the store will actually accept.
@@ -2003,6 +1918,9 @@ class AgentMonitorSettings:
             "serve_answer_enabled": self.serve_answer_enabled,
             "provider_status_feeds_enabled": self.provider_status_feeds_enabled,
             "provider_update_checks_enabled": self.provider_update_checks_enabled,
+            "ntfy_enabled": self.ntfy_enabled,
+            "ntfy_topic": self.ntfy_topic,
+            "ntfy_only_when_away": self.ntfy_only_when_away,
             "active_scene": _scene_setting(self.active_scene),
             "active_scene_pack": (
                 self.active_scene_pack
@@ -2084,6 +2002,11 @@ class AgentMonitorSettings:
                 if isinstance(key, str) and isinstance(value, dict)
             },
             "subagent_asks_alert": self.subagent_asks_alert,
+            "silent_session_banner_enabled": self.silent_session_banner_enabled,
+            "ask_stale_after_hours": _ask_stale_hours(self.ask_stale_after_hours),
+            "ask_expire_after_days": _ask_expire_days(
+                self.ask_expire_after_days, self.ask_stale_after_hours
+            ),
             "alert_burst": normalize_alert_burst(self.alert_burst),
             "dismissed_tips": list(self.dismissed_tips),
             "focus_dim_rules": dict(sorted(self.focus_dim_rules.items())),
@@ -2099,6 +2022,7 @@ class AgentMonitorSettings:
 
 def _usage_source_settings_document(settings: AgentMonitorSettings) -> dict[str, Any]:
     """The usage-hook and usage-source keys, each through its normaliser."""
+    from .companion_seal import normalize_companion_seals
     from .usage_source_settings import (
         normalize_cliproxy_hub,
         normalize_pricing_overrides,
@@ -2114,6 +2038,7 @@ def _usage_source_settings_document(settings: AgentMonitorSettings) -> dict[str,
         "provider_extra_homes": normalize_provider_extra_homes(settings.provider_extra_homes),
         "pricing_overrides": normalize_pricing_overrides(settings.pricing_overrides),
         "keep_awake_yield_low_power_mode": bool(settings.keep_awake_yield_low_power_mode),
+        "companion_seals": normalize_companion_seals(settings.companion_seals),
     }
 
 
@@ -2270,7 +2195,7 @@ def _load_settings_file(path: Path | None = None) -> AgentMonitorSettings:
     if not isinstance(data, dict):
         _preserve_corrupt_settings(target)
         return AgentMonitorSettings()
-    return settings_from_data(data)
+    return settings_from_data(_sealed_view(data, target))
 
 
 def settings_from_data(data: dict) -> AgentMonitorSettings:
@@ -2438,6 +2363,13 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
         provider_update_checks_enabled=_bool_setting(
             data.get("provider_update_checks_enabled"), False
         ),
+        ntfy_enabled=_bool_setting(data.get("ntfy_enabled"), False),
+        ntfy_topic=(
+            data["ntfy_topic"].strip()[:300]
+            if isinstance(data.get("ntfy_topic"), str)
+            else ""
+        ),
+        ntfy_only_when_away=_bool_setting(data.get("ntfy_only_when_away"), True),
         active_scene=_scene_setting(data.get("active_scene")),
         active_scene_pack=(
             # Tolerant decode: anything that is not a non-empty string is
@@ -2502,7 +2434,7 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
             if _claude_plan_limits_consented(data)
             else 0
         ),
-        quota_alerts_enabled=_bool_setting(data.get("quota_alerts_enabled"), False),
+        quota_alerts_enabled=_bool_setting(data.get("quota_alerts_enabled"), True),
         rainstick_idle_enabled=_bool_setting(
             data.get("rainstick_idle_enabled"), False
         ),
@@ -2537,6 +2469,13 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
             else 0
         ),
         subagent_asks_alert=_bool_setting(data.get("subagent_asks_alert"), False),
+        silent_session_banner_enabled=_bool_setting(
+            data.get("silent_session_banner_enabled"), False
+        ),
+        ask_stale_after_hours=_ask_stale_hours(data.get("ask_stale_after_hours")),
+        ask_expire_after_days=_ask_expire_days(
+            data.get("ask_expire_after_days"), data.get("ask_stale_after_hours")
+        ),
         # "percent" is a legal, UI-offered mode: the loader used to
         # accept only the transcript metrics, so picking Percent left
         # silently reverted to tokens on relaunch (audit, 2026-08-26).
@@ -2577,8 +2516,7 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
             data.get("away_quiet_mode"), DEFAULT_AWAY_QUIET_MODE
         ),
         completion_notification_enabled=_bool_setting(
-            data.get("completion_notification_enabled"),
-            "notification_policy_version" not in data,
+            data.get("completion_notification_enabled"), True
         ),
         notification_policy_version=1,
         webhook_events=tuple(
@@ -2636,6 +2574,7 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
 def _usage_source_settings_from(data: dict) -> dict[str, Any]:
     """Tolerant decode of the usage-hook and usage-source keys: missing or
     mistyped values fall back to their defaults (usage_source_settings)."""
+    from .companion_seal import normalize_companion_seals
     from .usage_source_settings import (
         normalize_cliproxy_hub,
         normalize_pricing_overrides,
@@ -2662,6 +2601,7 @@ def _usage_source_settings_from(data: dict) -> dict[str, Any]:
         "keep_awake_yield_low_power_mode": _bool_setting(
             data.get("keep_awake_yield_low_power_mode"), True
         ),
+        "companion_seals": normalize_companion_seals(data.get("companion_seals")),
     }
 
 
@@ -2678,7 +2618,7 @@ def _bool_setting(value: object, default: bool) -> bool:
 
 
 def normalize_menu_bar_icon_style(value: object) -> str:
-    """One of MENU_BAR_ICON_STYLES; anything else is the plain glyph."""
+    """One of MENU_BAR_ICON_STYLES; anything else is the default, ``agents``."""
     if isinstance(value, str):
         lowered = value.strip().lower()
         if lowered in MENU_BAR_ICON_STYLES:
@@ -2919,6 +2859,26 @@ def _optional_float_setting(value: object) -> float | None:
     return None
 
 
+def _ask_stale_hours(value: object) -> float:
+    """The "may be stale" mark in hours, held to ``ask_lifetime``'s bounds."""
+    from .ask_lifetime import stale_after_seconds_from
+
+    return round(stale_after_seconds_from(value) / 3600.0, 4)
+
+
+def _ask_expire_days(value: object, stale_hours: object) -> float:
+    """The expiry in days, never before the stale mark."""
+    from .ask_lifetime import expire_after_seconds_from, stale_after_seconds_from
+
+    return round(
+        expire_after_seconds_from(
+            value, stale_after_seconds=stale_after_seconds_from(stale_hours)
+        )
+        / 86_400.0,
+        4,
+    )
+
+
 def _float_setting(value: object, default: float) -> float:
     if isinstance(value, (int, float)):
         return float(value)
@@ -3035,15 +2995,36 @@ def _settings_path(path: Path | None) -> Path:
     return (path or default_settings_path()).expanduser().absolute()
 
 
-def _document_digest(document: dict[str, object]) -> str:
-    payload = json.dumps(
-        document,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+# The daemon seals the settings that grant a capability (settings_seal.py): a
+# file's protected values are used only when the seal vouches for them. Every
+# read of the file in the daemon's process goes through ``_sealed_view`` and
+# every save through ``_DOCUMENT_SEAL.stamp``, so no reader sees a value the
+# seal rejected. Without an installed seal both are the identity.
+_DOCUMENT_SEAL: Any = None
+
+
+def install_document_seal(seal: Any) -> None:
+    """Install (or with None, remove) the process-wide settings seal."""
+    global _DOCUMENT_SEAL
+    _DOCUMENT_SEAL = seal
+
+
+def _sealed_view(data: dict[str, object], target: Path) -> dict[str, object]:
+    seal = _DOCUMENT_SEAL
+    if seal is None:
+        return data
+    try:
+        return seal.view(data, target)
+    except Exception:
+        # A seal that cannot be checked must not become a way in: fall back
+        # to what the daemon would use with no file at all for those keys.
+        _log.warning("settings seal check failed; protected settings ignored", exc_info=True)
+        stripped = dict(data)
+        from .settings_seal import SEALED_KEYS
+
+        for name in SEALED_KEYS:
+            stripped.pop(name, None)
+        return stripped
 
 
 def _read_document(target: Path) -> tuple[dict[str, object], str]:
@@ -3063,7 +3044,7 @@ def _read_document(target: Path) -> tuple[dict[str, object], str]:
     )
     if not isinstance(value, dict):
         raise ValueError("settings document must be an object")
-    return value, _document_digest(value)
+    return value, document_digest(value)
 
 
 def _settings_schema_version(data: dict[str, object]) -> int:
@@ -3153,7 +3134,7 @@ def _lost_to_an_outside_edit(target: Path, message: str) -> SettingsConcurrentWr
         try:
             observer(target, error)
         except Exception:
-            pass
+            _log.warning("settings outside-edit observer failed", exc_info=True)
     return error
 
 
@@ -3485,7 +3466,7 @@ def adopt_outside_edit(
             source_version,
             migrated=source_version != CURRENT_SETTINGS_SCHEMA_VERSION,
         )
-    adopted = settings_from_mapping(data)
+    adopted = settings_from_mapping(_sealed_view(data, target))
     # Judged against exactly the bytes just read, so a later outside edit is
     # still caught by the next save.
     _remember_document(target, compatibility, document, source_digest=digest)
@@ -3568,6 +3549,9 @@ def save_settings(
         document = _merge_unknown_fields(source_document, encoded)
         if not isinstance(document, dict):
             raise SettingsWriteRefusedError("settings encoder returned invalid data")
+        seal = _DOCUMENT_SEAL
+        if seal is not None and seal.applies_to(target):
+            seal.stamp(document, encoded)
         payload = json.dumps(
             document,
             indent=2,
@@ -3581,6 +3565,6 @@ def save_settings(
             target,
             current,
             document,
-            source_digest=_document_digest(document),
+            source_digest=document_digest(document),
         )
         return written

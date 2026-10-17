@@ -15,6 +15,10 @@ final class NotchCardPresenter {
     var model: NotchCardModel { panel.model }
 
     private(set) var isShown = false
+    private var presentationGeneration = 0
+    private var openRequestGeneration = 0
+    var presentationEnabled = true
+    private(set) var shelfKeyboardEngaged = false
     var isPinned: Bool { panel.isPinned }
     /// Whether Esc is listened for — only while the card is pinned.
     var listensForEscape: Bool { pinnedEscape?.isListening == true }
@@ -28,8 +32,8 @@ final class NotchCardPresenter {
 
     /// The focus the header names (`PanelStore.screenBarFocus`).
     var focus: @MainActor () -> ScreenBarFocus? = { nil }
-    /// The live session rows (`NotchIsland.summarize`); the focus's own
-    /// session is dropped here so it is never listed twice.
+    /// Live session rows (`NotchIsland.summarize`). A working focus is
+    /// omitted; a waiting focus keeps its answer and detail controls.
     var sessionRows: @MainActor () -> [NotchIslandRow] = { [] }
     /// The headline meters — `NotchIsland.meters` while `showUsage`.
     var meters: @MainActor () -> [NotchIslandMeter] = { [] }
@@ -72,6 +76,13 @@ final class NotchCardPresenter {
 
     init(model: NotchCardModel) {
         panel = NotchCardPanel(model: model)
+        panel.onKeyboardKey = { [weak self] code, shift in
+            self?.shelfKey(ShelfKeyboardInput.key(code: code, shift: shift))
+        }
+        panel.onKeyboardLost = { [weak self] in self?.releaseShelfKeyboard() }
+        model.onPageChanged = { [weak self] page in
+            if page != .shelf { self?.releaseShelfKeyboard() }
+        }
         model.onOpenSession = { [weak self] in
             guard let self, let session = self.model.focus.clickSession else { return }
             self.open(session)
@@ -89,9 +100,17 @@ final class NotchCardPresenter {
     /// The returned task is the open in flight — tests await it.
     @discardableResult
     func open(_ session: String) -> Task<Void, Never> {
-        Task { [weak self] in
-            guard let self else { return }
-            if let refusal = await self.openSession(session) {
+        openRequestGeneration &+= 1
+        let request = openRequestGeneration
+        let presentation = presentationGeneration
+        let open = openSession
+        return Task { [weak self] in
+            guard !Task.isCancelled, self?.openRequestGeneration == request,
+                  self?.presentationGeneration == presentation else { return }
+            let refusal = await open(session)
+            guard !Task.isCancelled, let self, self.openRequestGeneration == request,
+                  self.presentationGeneration == presentation else { return }
+            if let refusal {
                 self.model.noteOpenRefused(refusal, session: session)
             } else {
                 self.hide()
@@ -115,6 +134,8 @@ final class NotchCardPresenter {
     }
 
     func hide() {
+        presentationGeneration &+= 1
+        releaseShelfKeyboard()
         setPinned(false)
         guard isShown else { return }
         isShown = false
@@ -128,6 +149,7 @@ final class NotchCardPresenter {
     }
 
     private func setPinned(_ pinned: Bool) {
+        if !pinned { releaseShelfKeyboard() }
         panel.setPinned(pinned)
         pinnedEscape?.stop()
         pinnedEscape = nil
@@ -135,7 +157,11 @@ final class NotchCardPresenter {
         let watch = CardEscapeWatch(
             source: keySource,
             ownWindows: { [weak self] in [self?.panel] },
-            onEscape: { [weak self] in self?.hide() })
+            onEscape: { [weak self] in
+                guard let self else { return }
+                if self.shelfKeyboardEngaged { self.releaseShelfKeyboard() }
+                else { self.hide() }
+            })
         pinnedEscape = watch
         watch.start()
     }
@@ -149,17 +175,51 @@ final class NotchCardPresenter {
             hide()
             return
         }
-        guard let focus = focus() ?? lastFocus else { return }
+        guard let focus = focus() ?? lastFocus ?? (model.page == .shelf ? model.focus : nil) else { return }
         guard let anchor = anchor() else { return }
-        lastFocus = focus
-        model.focus = focus
-        // The focus's own session is the header, not a row.
         let rows = sessionRows()
-        model.rows = rows.filter { $0.id != focus.focusSession }
+        model.adoptFocus(focus, rows: rows)
+        lastFocus = model.focus
+        model.rows = NotchCardModel.rowsForCard(rows, focusSession: model.focus.focusSession)
         model.workingCount = rows.filter { $0.activity == .working }.count
         model.meters = meters()
-        panel.present(under: anchor, clearance: clearance())
+        if presentationEnabled { panel.present(under: anchor, clearance: clearance()) }
+        if !isShown { presentationGeneration &+= 1 }
         isShown = true
+    }
+
+    func useShelfKeyboard() -> String? {
+        guard model.tray.shelfEnabled() else { return "Turn on Shelf in Notch settings first." }
+        guard surface() == .glass else { return "The Shelf card is not available here." }
+        model.show(.shelf)
+        pin()
+        guard isShown else {
+            setPinned(false)
+            return "The Shelf card has nowhere to open right now."
+        }
+        model.tray.beginKeyboardSelection()
+        shelfKeyboardEngaged = true
+        panel.presentationEnabled = presentationEnabled
+        panel.takeKeyboard()
+        return nil
+    }
+
+    func releaseShelfKeyboard() {
+        guard shelfKeyboardEngaged else { return }
+        shelfKeyboardEngaged = false
+        model.tray.endKeyboardSelection()
+        panel.returnKeyboard()
+    }
+
+    func shelfKey(_ key: NotchAskFocus.Key) {
+        guard shelfKeyboardEngaged else { return }
+        guard isShown, isPinned, model.page == .shelf, surface() == .glass,
+              model.tray.shelfEnabled() else {
+            releaseShelfKeyboard()
+            return
+        }
+        if key == .escape { releaseShelfKeyboard(); return }
+        ShelfKeyboardInput.handle(key, tray: model.tray)
     }
 
     /// Nothing to hang from: the notch's own slot on the main screen —

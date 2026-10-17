@@ -1,3 +1,4 @@
+import AppKit
 import Charts
 import JRBarCore
 import SwiftUI
@@ -9,18 +10,26 @@ struct UsageCenterView: View {
 
     var body: some View {
         Group {
-            if !store.isLive {
+            if !store.isLive, store.providers.isEmpty {
                 WindowEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
-                                 text: "Usage comes from the monitor. The cards fill in as soon as the socket is live.",
+                                 text: "Your usage will appear when JR-Bar reconnects.",
                                  tint: .orange)
             } else if store.providers.isEmpty {
                 WindowEmptyState(symbol: "chart.xyaxis.line", title: "No usage yet",
-                                 text: "No provider has reported a quota window. Metering is turned on from Settings › Usage.",
+                                 text: "No provider has reported a quota window. Metering is turned on from Settings › Agents & Usage.",
                                  actionTitle: "Open Usage settings…", action: { store.openUsageSettings() })
             } else {
                 ScrollViewReader { proxy in
                     SnapshotScrollView {
                         LazyVStack(spacing: 16) {
+                            if !store.isLive {
+                                Label("Monitor not connected. These are the last readings; they may be out of date.",
+                                      systemImage: "bolt.horizontal.circle")
+                                    .font(.callout)
+                                    .foregroundStyle(.orange)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .windowCard(padding: 14)
+                            }
                             statusLine
                             if store.providers.count > 1 {
                                 CombinedUsageCard(providers: store.providers, store: store)
@@ -71,14 +80,16 @@ struct UsageCenterView: View {
                     ForEach(UsageHistoryRange.allCases) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .help("How far back the graph and the cost estimate reach")
+                .help("Graph range: 7d ⌘⌥1, 30d ⌘⌥2, 90d ⌘⌥3, 365d ⌘⌥4")
+                .disabled(!store.isLive)
             }
             ToolbarItem(placement: .automatic) {
                 Picker("Metric", selection: $store.metric) {
                     ForEach(UsageCenterStore.Metric.allCases) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .help("Graph tokens or the estimated cost")
+                .help("Graph tokens (⌘⌥T) or estimated cost (⌘⌥C)")
+                .disabled(!store.isLive)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -95,12 +106,17 @@ struct UsageCenterView: View {
                 .keyboardShortcut("r", modifiers: .command)
             }
         }
-        .overlay(alignment: .bottom) {
-            if let error = store.lastError {
-                WindowStatusCapsule(text: error, isError: true)
+        .background(UsageCenterShortcutReader { command in
+            command.handle(on: store)
+        })
+        .safeAreaInset(edge: .bottom) {
+            if let notice = store.notice {
+                UsageCenterNoticeView(notice: notice, copy: store.copyNotice, dismiss: store.dismissNotice)
+                    .padding(.horizontal, WindowMetrics.margin)
+                    .padding(.bottom, 12)
             }
         }
-        .animation(.easeInOut(duration: 0.15), value: store.lastError == nil)
+        .animation(.easeInOut(duration: 0.15), value: store.notice == nil)
     }
 
     private var statusLine: some View {
@@ -108,17 +124,39 @@ struct UsageCenterView: View {
             Image(systemName: "arrow.clockwise")
                 .font(.system(size: 9, weight: .semibold))
             if let at = store.refreshedAt, let elapsed = PanelStore.elapsed(since: at, now: store.now) {
-                Text("Updated \(elapsed) ago")
+                Text("Quota checked \(elapsed) ago")
             } else {
-                Text("Waiting for the first usage read")
+                Text("No quota reading yet")
             }
             Spacer()
             Text("Costs are estimates from list prices, not invoices")
         }
         .font(.caption)
-        .foregroundStyle(.tertiary)
+        .foregroundStyle(.secondary)
         .monospacedDigit()
         .padding(.horizontal, 4)
+    }
+}
+
+struct UsageCenterNoticeView: View {
+    let notice: UsageCenterStore.Notice
+    let copy: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: notice.isFailure ? "exclamationmark.triangle" : "checkmark.circle")
+                .foregroundStyle(notice.isFailure ? Color.orange : Color.secondary)
+            Text(notice.text)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Copy", action: copy)
+                .help("Copy this message")
+            Button("Dismiss", action: dismiss)
+                .help("Dismiss this message")
+        }
+        .font(.callout)
+        .windowCard(padding: 12)
     }
 }
 
@@ -130,7 +168,7 @@ struct ProviderUsageCard: View {
 
     private var style: ProviderStyle { ProviderStyle.style(for: provider.id, document: store.document) }
     private var history: UsageHistory? { store.history(for: provider) }
-    private var celebrating: Bool { store.isCelebrating(provider.id) }
+    private var celebrating: Bool { store.isCelebrating(provider.identity) }
     /// The panel drilled straight here: the same accent flash as
     /// `quota_reset`, without the "Window reset" badge.
     private var focused: Bool { store.isFocused(provider) }
@@ -149,39 +187,65 @@ struct ProviderUsageCard: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             if provider.isSignedOut {
-                SignedOutRow(provider: provider, name: style.name, store: store)
+                if provider.id == "factory" {
+                    Text("Connect your Factory browser session below, then refresh usage. An API key is optional.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    SignedOutRow(provider: provider, name: style.name, store: store)
+                        .disabled(!store.isLive)
+                }
+            } else if provider.usageIsOff || (provider.id == "factory" && provider.state == "disabled") {
+                UsageOffRow(provider: provider, name: style.name, store: store)
+                    .disabled(!store.isLive)
             } else if provider.windows.isEmpty {
                 Text(noWindowsLine).font(.callout).foregroundStyle(.secondary)
             } else {
-                // Rings on the left, the reading on the right, so the card
-                // does not leave half its width empty.
-                HStack(alignment: .top, spacing: 18) {
-                    windows
-                    forecastLine
-                        .frame(maxWidth: 320, alignment: .leading)
-                        .padding(.top, 6)
+                if orderedWindows.count >= 4 {
+                    VStack(alignment: .leading, spacing: 14) {
+                        windows
+                        forecastSummary
+                    }
+                } else {
+                    HStack(alignment: .top, spacing: 18) {
+                        windows
+                        forecastSummary
+                            .frame(maxWidth: 320, alignment: .leading)
+                            .padding(.top, 6)
+                    }
                 }
                 let detail = UsageSourceNotes.detailWindows(provider.windows)
                 if !detail.isEmpty {
                     UsageDetailWindowsLine(windows: detail, now: store.now, fix: provider.staleFix)
                 }
             }
+            if let headroom = headroomLine {
+                Text(headroom)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let readings = readingsLine {
                 Text(readings)
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .monospacedDigit()
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let row = store.row(for: provider.identity) {
                 Divider().opacity(0.6)
                 connectionSection(row)
+                    .disabled(!store.isLive)
             }
-            // A hub account's card has no graph: the token history is this
-            // Mac's own transcripts, which belong to the local card.
-            if !provider.isSignedOut && !UsageSourceNotes.isHubInstance(provider.instance) {
+            if store.ownsLocalHistory(provider) {
                 Divider().opacity(0.6)
                 historySection
+            } else if store.supportsLocalHistory(provider) && !provider.isSignedOut && !UsageSourceNotes.isHubInstance(provider.instance) {
+                Text("Local history is combined across this Mac's configured \(style.name) homes and shown once per provider.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         // The quota_reset / focus flourish: a brief wash of the accent
@@ -210,6 +274,13 @@ struct ProviderUsageCard: View {
     @ViewBuilder
     private func connectionSection(_ row: ProviderRow) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let consent = row.usageConsent {
+                UsageConsentSwitch(row: row, consent: consent, store: store)
+            }
+            if ["factory", "kimi", "kilo"].contains(row.id) {
+                ProviderCredentialControls(row: row, core: store.core) { _ = store.loadProviderRows() }
+                    .id(row.identity)
+            }
             HStack(spacing: 10) {
                 Toggle(
                     "Metering",
@@ -236,7 +307,7 @@ struct ProviderUsageCard: View {
             if let note = store.signInNotes[provider.identity] {
                 SignInNoteLine(note: note)
             }
-            if !row.consents.isEmpty {
+            if !row.consents.isEmpty && row.id != "factory" {
                 ForEach(Array(row.consents.enumerated()), id: \.offset) { _, consent in
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.shield")
@@ -307,7 +378,7 @@ struct ProviderUsageCard: View {
                         .help(primary.isUnknown ? "\(style.name) reports this window without a number" : "")
                     Text(UsageCenterStore.headlineResetLine(primary, of: provider, now: store.now))
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                         .monospacedDigit()
                     // The pick explains itself when it is not the window
                     // the 5h convention would have led with (S6.4).
@@ -320,6 +391,18 @@ struct ProviderUsageCard: View {
                 .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: primary.usedPct)
             }
         }
+    }
+
+    /// When this card's window is nearly spent and another provider has
+    /// plenty left of the same window: one plain line of numbers. A fact,
+    /// never a suggestion to switch.
+    private var headroomLine: String? {
+        guard store.isLive, !provider.isSignedOut,
+              let found = HeadroomElsewhere.find(for: provider, among: store.providers, now: store.now)
+        else { return nil }
+        let name = ProviderStyle.style(for: found.providerID, document: store.document).name
+        let readAt = found.readAt.map { Date(timeIntervalSince1970: $0) }
+        return found.line(providerName: name, ago: PanelStore.elapsed(since: readAt, now: store.now))
     }
 
     /// Whether the header carries the instance badge: only when two cards
@@ -341,12 +424,14 @@ struct ProviderUsageCard: View {
     }
 
     private var stateBadge: (text: String, color: Color)? {
+        if !store.isLive { return ("Last reading", .secondary) }
         if provider.isSignedOut { return ("Not signed in", .secondary) }
         switch provider.state?.lowercased() {
         case "warning": return ("Near limit", .orange)
         case "exhausted", "blocked", "limited": return ("Limited", .red)
         case "stale": return ("Stale", .secondary)
         case "disabled", "off": return ("Off", .secondary)
+        case _ where provider.usageIsOff: return ("Usage off", .secondary)
         case "source_not_found", "error", "unavailable": return ("Needs setup", .orange)
         default: return nil
         }
@@ -397,6 +482,7 @@ struct ProviderUsageCard: View {
     /// What stands in for the rings when the daemon reports no window: the
     /// state word's own sentence, not a flat "nothing here".
     private var noWindowsLine: String {
+        if provider.usageIsOff { return UsageOffRow.headline }
         if let line = UsageSourceNotes.noQuotaLine(provider, name: style.name) { return line }
         switch provider.state?.lowercased() {
         case "disabled", "off":
@@ -420,11 +506,33 @@ struct ProviderUsageCard: View {
     }
 
     private var windows: some View {
-        HStack(alignment: .top, spacing: 14) {
-            ForEach(orderedWindows) { window in
-                QuotaRing(window: window, forecast: store.forecast(for: provider, window: window), accent: style.accent,
-                          now: store.now, reduced: store.reduceMotion,
-                          reset: UsageCenterStore.resetText(window, of: provider, now: store.now))
+        VStack(alignment: .leading, spacing: 8) {
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    ForEach(orderedWindows) { window in
+                        UsageWindowInspectButton(provider: provider, window: window, store: store, accent: style.accent)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            Text("Click a quota for details")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize()
+        }
+    }
+
+    private var forecastSummary: some View {
+        Group {
+            if store.isLive {
+                forecastLine
+            } else {
+                Text("Forecasts resume when the monitor reconnects.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -432,6 +540,8 @@ struct ProviderUsageCard: View {
     private var forecastLine: some View {
         let window = primary ?? provider.windows[0]
         let forecast = store.forecast(for: provider, window: window)
+        let budget = UsageResetBudget.make(provider: provider, window: window, forecast: forecast,
+                                          isLive: store.isLive, now: store.now.timeIntervalSince1970)
         return HStack(alignment: .top, spacing: 8) {
             Image(systemName: forecast.isCritical ? "exclamationmark.triangle.fill" : (isQuiet(forecast.verdict) ? "questionmark.circle" : "checkmark.circle"))
                 .foregroundStyle(forecast.isCritical ? Color.orange : Color.secondary)
@@ -449,10 +559,13 @@ struct ProviderUsageCard: View {
                     .font(.callout.weight(forecast.isCritical ? .medium : .regular))
                     .foregroundStyle(forecast.isCritical ? .primary : .secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(forecastSource(forecast))
+                Text(forecastSource(forecast, showsBudget: budget != nil))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let budget {
+                    UsageResetBudgetView(budget: budget).padding(.top, 4)
+                }
                 burnersList(window: window)
             }
         }
@@ -517,19 +630,22 @@ struct ProviderUsageCard: View {
         }
     }
 
-    private func forecastSource(_ forecast: UsageForecast) -> String {
+    private func forecastSource(_ forecast: UsageForecast, showsBudget: Bool) -> String {
         var parts: [String] = []
         if forecast.verdict == .unmeasured {
             // Nothing to pace: the window is real and its balance was never
             // stated, which is a fact about the provider, not a wait.
             return "\(ProviderStyle.style(for: provider.id, document: store.document).name) reports this window without a number"
         }
+        if case .guarded = forecast.verdict, forecast.source == .none {
+            return "Pace resumes when a fresh quota reading arrives"
+        }
         switch forecast.source {
         case .daemon: parts.append("Monitor forecast")
         case .local: parts.append("Estimated from the last 45 minutes")
         case .none: parts.append("A pace needs two readings a minute apart")
         }
-        if let rate = forecast.rateText { parts.append("burning \(rate)") }
+        if !showsBudget, let rate = forecast.rateText { parts.append("burning \(rate)") }
         if let hint = PanelStore.paceHint(forecast.pace), !forecast.heldIdle { parts.append(hint) }
         if let working = forecast.workingAgents, working > 0 {
             parts.append("\(working) agent\(working == 1 ? "" : "s") working here")
@@ -549,16 +665,47 @@ struct ProviderUsageCard: View {
                 Text(totalsLine(history))
             }
         }
+        Text("This Mac, all configured \(style.name) homes. These totals are not attributed to individual accounts.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         let scanning = store.isScanning(provider)
-        if let error = store.error(for: provider), history == nil {
+        let historyError = store.error(for: provider)
+        let refreshing = history.map { $0.stale && !$0.partial } ?? false
+        let previousEmpty = history.map {
+            $0.isEmpty || ($0.records == 0 && $0.totalTokens == 0 && $0.totalCost == 0)
+        } ?? false
+        if let historyError {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-                Text(error).font(.callout).foregroundStyle(.secondary)
+                Text(historyError).font(.callout).foregroundStyle(.secondary)
                 Spacer()
                 Button("Retry") { store.load(provider: provider, force: true) }.controlSize(.small)
+                    .disabled(!store.isLive || store.isLoading(provider))
             }
             .padding(.vertical, 12)
-        } else if store.hasNoLocalRecords(provider) {
+            if history != nil {
+                Text("Showing the previous local reading.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        if historyError == nil, refreshing, !previousEmpty {
+            Text(store.isLive ? "Refreshing the previous local reading." : "Showing the previous local reading.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        if !store.isLive, history == nil {
+            Text("History will load when the monitor reconnects.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 80)
+        } else if historyError == nil, refreshing, previousEmpty {
+            Text(store.isLive ? "Refreshing local history. Showing the previous empty reading." : "Showing the previous empty local reading.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 80)
+        } else if historyError == nil, store.hasNoLocalRecords(provider) {
             // The scan finished and found nothing to read on this Mac: say
             // so, rather than drawing thirty days of zero. (The daemon pads
             // its answer with a row per day either way, so this has to be
@@ -567,7 +714,7 @@ struct ProviderUsageCard: View {
         } else if let history, !history.isEmpty {
             UsageChart(history: history, range: store.range, metric: store.metric, accent: style.accent)
                 .frame(height: 170)
-            if scanning { ScanningNote() }
+            if scanning, store.isLive { ScanningNote(files: history.readingFiles) }
             costRow(history)
             if !history.models.isEmpty {
                 UsageModelBreakdown(history: history, metric: store.metric, accent: style.accent)
@@ -578,9 +725,9 @@ struct ProviderUsageCard: View {
             if !history.activeDaysNewestFirst.isEmpty {
                 UsageDailyTable(history: history)
             }
-        } else if store.isLoading(provider) || scanning || history == nil {
+        } else if historyError == nil, store.isLive, (store.isLoading(provider) || scanning || history == nil) {
             UsageSkeleton(scanning: scanning)
-        } else {
+        } else if historyError == nil {
             Text("Nothing recorded in this range.")
                 .font(.callout)
                 .foregroundStyle(.tertiary)
@@ -597,29 +744,32 @@ struct ProviderUsageCard: View {
 
     private func totalsLine(_ history: UsageHistory) -> String {
         let tokens = UsageFormat.tokens(history.totalTokens)
-        let cost = UsageFormat.cost(history.totalCost, currency: history.pricing?.currency ?? "USD")
-        return "\(tokens) tokens · \(approxPrefix(history))\(cost)"
+        return "\(tokens) tokens · \(history.costHeadline)"
     }
 
     private func costRow(_ history: UsageHistory) -> some View {
         let currency = history.pricing?.currency ?? "USD"
         return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("\(approxPrefix(history))\(UsageFormat.cost(history.totalCost, currency: currency))")
+                Text(history.costHeadline)
                     .font(.system(.title3, design: .rounded).weight(.semibold))
                     .monospacedDigit()
                 Text("over \(store.range.days) days")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if let savings = history.cacheSavings, savings > 0, let share = history.cacheShare {
+                if let share = history.cacheShare {
                     HStack(spacing: 5) {
                         Image(systemName: "leaf.fill").foregroundStyle(.green)
-                        Text("Cache saved \(approxPrefix(history))\(UsageFormat.cost(savings, currency: currency)) · \(Int((share * 100).rounded()))% of input from cache")
+                        if let savings = history.cacheSavings, savings > 0 {
+                            Text("Cache saved \(approxPrefix(history))\(UsageFormat.cost(savings, currency: currency)) · \(Int((share * 100).rounded()))% of input from cache")
+                        } else {
+                            Text("\(Int((share * 100).rounded()))% of input from cache")
+                        }
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .help("What the cache reads would have cost at the input price, minus what they cost at the cache price")
+                    .help(history.cacheSavings == nil ? "Share of input served from cache. Dollar savings need prices for each model." : "What the cache reads would have cost at the input price, minus what they cost at the cache price")
                 }
             }
             Text(Self.pricingDisclosure(history))
@@ -689,7 +839,7 @@ struct SignedOutRow: View {
                     FixSignInButton(provider: provider, store: store)
                     Button("Usage settings…") { store.openUsageSettings() }
                         .controlSize(.small)
-                        .help("Opens Settings › Usage, where metering per provider lives")
+                        .help("Opens Settings › Agents & Usage, where metering per provider lives")
                 }
                 if let note = store.signInNotes[provider.identity] {
                     SignInNoteLine(note: note)
@@ -775,6 +925,7 @@ struct CombinedUsageCard: View {
     /// daemon's state word.
     static func emptyRowWord(_ provider: CoreProviderUsage) -> String {
         guard provider.quotaSource else { return "no quota source" }
+        if provider.usageIsOff { return "usage off" }
         return provider.state?.replacingOccurrences(of: "_", with: " ") ?? "no quota windows"
     }
 
@@ -935,7 +1086,15 @@ struct ProviderFixControls: View {
     @Bindable var store: UsageCenterStore
 
     var body: some View {
-        if provider.offersSignInFix {
+        if ["factory", "kimi", "kilo"].contains(provider.id) {
+            if !provider.usageIsOff && provider.state != "disabled" {
+                Button("Refresh usage") { store.runProviderAction(provider) }
+                    .controlSize(.small)
+            }
+        } else if provider.usageIsOff {
+            // Nothing to fix: the card's own "Turn on" is the one button.
+            EmptyView()
+        } else if provider.offersSignInFix {
             FixSignInButton(provider: provider, store: store)
             if let action = provider.action, !action.isEmpty {
                 Text(action)
@@ -951,6 +1110,70 @@ struct ProviderFixControls: View {
                     .help(provider.reason?.replacingOccurrences(of: "_", with: " ") ?? action)
             }
             ResignInButton(provider: provider, store: store)
+        }
+    }
+}
+
+/// The card of a provider whose usage the person has not turned on. It says
+/// so in plain words, says exactly what turning it on asks of whom, and
+/// offers the one button. Nothing was asked or read to draw it.
+struct UsageOffRow: View {
+    static let headline = "Usage off. Turn on to show quota."
+
+    let provider: CoreProviderUsage
+    let name: String
+    @Bindable var store: UsageCenterStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(Self.headline, systemImage: "power")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.secondary)
+            if let row = store.row(for: provider.identity), let consent = row.usageConsent {
+                Text(consent.summary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button("Turn on") { store.setUsageConsent(row, true) }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(!store.isLive)
+                        .accessibilityLabel("Turn on \(name) usage")
+                        .accessibilityHint(consent.detail)
+                    Text("Off by default. Local token counts stay on either way.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// The per-provider usage switch on a card's manage row, with the one line
+/// that says what the request is, to which host and with which sign-in.
+struct UsageConsentSwitch: View {
+    let row: ProviderRow
+    let consent: ProviderUsageConsent
+    @Bindable var store: UsageCenterStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle(
+                "Show usage",
+                isOn: Binding(
+                    get: { consent.granted },
+                    set: { store.setUsageConsent(row, $0) }
+                )
+            )
+            .controlSize(.small)
+            .toggleStyle(.checkbox)
+            .help(consent.detail)
+            Text(consent.detail)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -1175,11 +1398,19 @@ struct QuotaRing: View {
                     .contentTransition(.numericText())
             }
             .frame(width: 66, height: 66)
-            Text(window.shortName)
+            Text(UsageWindowLabel.ringTitle(id: window.key, name: window.name))
                 .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .fixedSize()
+            if let cadence = UsageWindowLabel.cadence(id: window.key, name: window.name) {
+                Text(cadence)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+            }
             Text(reset ?? "no reset time")
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .monospacedDigit()
             if window.isUnknown {
                 Text("no reading").font(.caption2).foregroundStyle(.secondary)
@@ -1215,13 +1446,6 @@ enum UsageColors {
 
 // MARK: - Chart
 
-struct UsagePoint: Identifiable {
-    let date: Date
-    let kind: String
-    let value: Double
-    var id: String { "\(kind)|\(date.timeIntervalSince1970)" }
-}
-
 struct UsageChart: View {
     let history: UsageHistory
     let range: UsageHistoryRange
@@ -1230,42 +1454,17 @@ struct UsageChart: View {
 
     @ViewState private var selected: Date?
 
-    private var hourly: Bool { range == .week && !history.hours.isEmpty }
+    private var hourly: Bool { UsageChartPreparation.usesHours(history, range: range) }
     private var unit: Calendar.Component { hourly ? .hour : .day }
 
     /// The series, bottom of the stack first: cache reads under the
     /// words the model read and wrote, so the accent rides on top.
-    static let tokenKinds = ["Cache reads", "Input", "Output"]
+    static let tokenKinds = UsageChartPreparation.tokenKinds
 
-    private var points: [UsagePoint] {
-        if hourly {
-            return history.hours.flatMap { hour -> [UsagePoint] in
-                guard let date = hour.date else { return [] }
-                return rows(date: date, input: hour.tokensIn, output: hour.tokensOut, cache: hour.cacheRead, cost: hour.costUsd)
-            }
-        }
-        return history.days.flatMap { day -> [UsagePoint] in
-            guard let date = day.day else { return [] }
-            return rows(date: date, input: day.tokensIn, output: day.tokensOut, cache: day.cacheRead, cost: day.costUsd)
-        }
-    }
-
-    /// One point per bucket for the line along the top of the stack.
-    private var totals: [UsagePoint] {
-        let sums = Dictionary(grouping: points, by: \.date).mapValues { $0.reduce(0) { $0 + $1.value } }
-        return sums.map { UsagePoint(date: $0.key, kind: "Total", value: $0.value) }.sorted { $0.date < $1.date }
-    }
-
-    private func rows(date: Date, input: Int, output: Int, cache: Int, cost: Double) -> [UsagePoint] {
+    private var chartMetric: UsageChartPreparation.Metric {
         switch metric {
-        case .tokens:
-            return [
-                UsagePoint(date: date, kind: "Cache reads", value: Double(cache)),
-                UsagePoint(date: date, kind: "Input", value: Double(input)),
-                UsagePoint(date: date, kind: "Output", value: Double(output)),
-            ]
-        case .cost:
-            return [UsagePoint(date: date, kind: "Cost", value: cost)]
+        case .tokens: return .tokens
+        case .cost: return .cost
         }
     }
 
@@ -1301,38 +1500,17 @@ struct UsageChart: View {
         return formatter
     }()
 
-    /// The bucket the selection landed on, matched at the chart's own
-    /// granularity (an hour's point and a day's point both exist for
-    /// Tuesday).
-    private func bucket(at date: Date) -> (input: Int, output: Int, cache: Int, cost: Double)? {
-        let calendar = Calendar.current
-        if hourly {
-            return history.hours.first { hour in
-                hour.date.map { calendar.isDate($0, equalTo: date, toGranularity: .hour) } ?? false
-            }.map { ($0.tokensIn, $0.tokensOut, $0.cacheRead, $0.costUsd) }
-        }
-        return history.days.first { day in
-            day.day.map { calendar.isDate($0, equalTo: date, toGranularity: .day) } ?? false
-        }.map { ($0.tokensIn, $0.tokensOut, $0.cacheRead, $0.costUsd) }
-    }
-
-    /// The selected bucket's total, where the rule meets the line.
-    private func total(at date: Date) -> Double? {
-        guard let bucket = bucket(at: date) else { return nil }
-        return metric == .tokens ? Double(bucket.input + bucket.output + bucket.cache) : bucket.cost
-    }
-
     /// The selection snapped to the bucket it falls in.
     private func snapped(_ date: Date) -> Date {
         Calendar.current.dateInterval(of: unit, for: date)?.start ?? date
     }
 
     @ViewBuilder
-    private func annotation(for date: Date) -> some View {
+    private func annotation(for date: Date, bucket: UsageChartPreparation.Bucket?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text((hourly ? Self.hourTitle : Self.dayTitle).string(from: date))
                 .font(.caption.weight(.semibold))
-            if let bucket = bucket(at: date) {
+            if let bucket {
                 if metric == .tokens {
                     line("Input", UsageFormat.tokens(bucket.input), swatch: accent)
                     line("Output", UsageFormat.tokens(bucket.output), swatch: accent.opacity(0.6))
@@ -1366,73 +1544,120 @@ struct UsageChart: View {
     }
 
     var body: some View {
-        Chart {
-            ForEach(points) { point in
-                AreaMark(
-                    x: .value("Time", point.date, unit: unit),
-                    y: .value(metric == .tokens ? "Tokens" : "Cost", point.value),
-                    stacking: .standard
-                )
-                .foregroundStyle(by: .value("Kind", point.kind))
-                .interpolationMethod(.monotone)
-            }
-            ForEach(totals) { point in
-                LineMark(
-                    x: .value("Time", point.date, unit: unit),
-                    y: .value("Total", point.value)
-                )
-                .foregroundStyle(accent)
-                .lineStyle(StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
-                .interpolationMethod(.monotone)
-            }
-            // Hover a bucket: a rule at the bucket's start, a dot where it
-            // meets the line and a card with its figures. No selection, no
-            // overlay. Drawn, never animated — nothing to gate on Reduce
-            // Motion.
-            if let selected {
-                let bucket = snapped(selected)
-                RuleMark(x: .value("Selected", bucket, unit: unit))
-                    .foregroundStyle(Color.primary.opacity(0.25))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    .annotation(position: .top, overflowResolution: .init(x: .fit, y: .disabled)) {
-                        annotation(for: bucket)
-                    }
-                if let total = total(at: bucket) {
-                    PointMark(x: .value("Selected", bucket, unit: unit), y: .value("Total", total))
+        let selectionDate = selected.map { snapped($0) }
+        let prepared = UsageChartPreparation.prepare(history, range: range, metric: chartMetric,
+                                                     selected: selectionDate)
+        let singleton = prepared.totals.count == 1 ? prepared.totals.first : nil
+        let observedZero = !prepared.totals.isEmpty && prepared.totals.allSatisfy { $0.value == 0 }
+        let calendar = Calendar.current
+        let firstDate = prepared.totals.first?.date
+        let lastDate = prepared.totals.last?.date
+        let spans: (days: Int, hours: Int) = {
+            guard let firstDate, let lastDate else { return (0, 0) }
+            let firstDay = calendar.startOfDay(for: firstDate)
+            let lastDay = calendar.startOfDay(for: lastDate)
+            let days = calendar.dateComponents([.day], from: firstDay, to: lastDay).day ?? 0
+            let hours = calendar.dateComponents([.hour], from: firstDate, to: lastDate).hour ?? 0
+            return (days, hours)
+        }()
+        let showHours = hourly && spans.hours < 24
+        let tickUnit: Calendar.Component = showHours ? .hour : .day
+        let tickSpan = showHours ? spans.hours : spans.days
+        let tickIntervals = showHours ? 6 : 5
+        let tickStride = max(1, Int(ceil(Double(tickSpan) / Double(tickIntervals))))
+        if metric == .cost && history.costIsUnpriced {
+            Text("No price for this usage")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            Chart {
+                ForEach(prepared.points) { point in
+                    AreaMark(
+                        x: .value("Time", point.date, unit: unit),
+                        y: .value(metric == .tokens ? "Tokens" : "Cost", point.value),
+                        stacking: .standard
+                    )
+                    .foregroundStyle(by: .value("Kind", point.kind))
+                    .interpolationMethod(.monotone)
+                }
+                ForEach(prepared.totals) { point in
+                    LineMark(
+                        x: .value("Time", point.date, unit: unit),
+                        y: .value("Total", point.value)
+                    )
+                    .foregroundStyle(accent)
+                    .lineStyle(StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+                    .interpolationMethod(.monotone)
+                }
+                if let point = singleton, prepared.selectedBucket == nil {
+                    PointMark(x: .value("Time", point.date, unit: unit), y: .value("Total", point.value))
                         .symbolSize(38)
                         .foregroundStyle(accent)
                 }
+                // Hover a bucket: a rule at the bucket's start, a dot where it
+                // meets the line and a card with its figures. No selection, no
+                // overlay. Drawn, never animated — nothing to gate on Reduce
+                // Motion.
+                if let date = selectionDate {
+                    RuleMark(x: .value("Selected", date, unit: unit))
+                        .foregroundStyle(Color.primary.opacity(0.25))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                        .annotation(position: .top, overflowResolution: .init(x: .fit, y: .disabled)) {
+                            annotation(for: date, bucket: prepared.selectedBucket)
+                        }
+                    if let bucket = prepared.selectedBucket {
+                        let total = metric == .tokens ? Double(bucket.input + bucket.output + bucket.cache) : bucket.cost
+                        PointMark(x: .value("Selected", date, unit: unit), y: .value("Total", total))
+                            .symbolSize(38)
+                            .foregroundStyle(accent)
+                    }
+                }
             }
-        }
-        .chartXSelection(value: $selected)
-        .chartForegroundStyleScale(domain: domain, range: fills)
-        .chartLegend(metric == .tokens ? .visible : .hidden)
-        .chartLegend(position: .top, alignment: .leading, spacing: 8)
-        .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: hourly ? 7 : 6)) { _ in
-                AxisGridLine().foregroundStyle(Color.primary.opacity(0.05))
-                AxisValueLabel(format: hourly ? .dateTime.weekday(.abbreviated) : (range == .year ? .dateTime.month(.abbreviated) : .dateTime.month(.abbreviated).day()))
-                    .font(.caption2)
-                    .foregroundStyle(Color.secondary)
-            }
-        }
-        .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3])).foregroundStyle(Color.primary.opacity(0.12))
-                AxisValueLabel {
-                    if let number = value.as(Double.self) {
-                        Text(metric == .tokens ? UsageFormat.tokens(Int(number)) : UsageFormat.cost(number, currency: history.pricing?.currency ?? "USD"))
+            .chartXSelection(value: $selected)
+            .chartYScale(domain: .automatic(includesZero: true, dataType: Double.self) { values in
+                if observedZero { values = [0, metric == .tokens ? 2 : 1] }
+            }, range: .plotDimension(startPadding: 4, endPadding: 4))
+            .chartForegroundStyleScale(domain: domain, range: fills)
+            .chartLegend(metric == .tokens ? .visible : .hidden)
+            .chartLegend(position: .top, alignment: .leading, spacing: 8)
+            .chartXAxis {
+                if let point = singleton {
+                    let interval = calendar.dateInterval(of: unit, for: point.date)
+                    let tick = interval.map { $0.start.addingTimeInterval($0.duration / 2) } ?? point.date
+                    AxisMarks(values: [tick]) { _ in
+                        AxisGridLine().foregroundStyle(Color.primary.opacity(0.05))
+                        AxisValueLabel(format: hourly ? .dateTime.weekday(.abbreviated).hour() : .dateTime.month(.abbreviated).day())
                             .font(.caption2)
-                            .monospacedDigit()
+                            .foregroundStyle(Color.secondary)
+                    }
+                } else {
+                    AxisMarks(values: .stride(by: tickUnit, count: tickStride, calendar: calendar)) { _ in
+                        AxisGridLine().foregroundStyle(Color.primary.opacity(0.05))
+                        AxisValueLabel(format: showHours ? .dateTime.weekday(.abbreviated).hour() : (hourly ? .dateTime.weekday(.abbreviated) : .dateTime.month(.abbreviated).day()))
+                            .font(.caption2)
                             .foregroundStyle(Color.secondary)
                     }
                 }
             }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3])).foregroundStyle(Color.primary.opacity(0.12))
+                    AxisValueLabel {
+                        if let number = value.as(Double.self) {
+                            Text(metric == .tokens ? UsageFormat.tokens(Int(number)) : UsageFormat.cost(number, currency: history.pricing?.currency ?? "USD"))
+                                .font(.caption2)
+                                .monospacedDigit()
+                                .foregroundStyle(Color.secondary)
+                        }
+                    }
+                }
+            }
+            .chartPlotStyle { plot in
+                plot.clipped()
+            }
+            .accessibilityLabel("\(metric == .tokens ? "Tokens" : "Cost") over the last \(range.days) days")
         }
-        .chartPlotStyle { plot in
-            plot.clipped()
-        }
-        .accessibilityLabel("\(metric == .tokens ? "Tokens" : "Cost") over the last \(range.days) days")
     }
 }
 
@@ -1623,10 +1848,19 @@ struct UsageDailyTable: View {
 
 /// The scan is still running behind a graph that is already drawn.
 struct ScanningNote: View {
+    /// Transcripts the scan has left to read; 0 when it cannot say.
+    var files: Int = 0
+
+    private var message: String {
+        guard files > 0 else { return "Still reading transcripts — this will fill in." }
+        let noun = files == 1 ? "file" : "files"
+        return "Still reading \(files) \(noun) — this will fill in."
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             DelayedWait(size: 12)
-            Text("Still reading transcripts — this will fill in.")
+            Text(message)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

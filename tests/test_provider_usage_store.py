@@ -179,3 +179,31 @@ def test_a_junk_read_time_is_dropped_and_the_snapshot_kept(tmp_path: Path) -> No
         assert len(loaded.snapshots) == 1, junk
         assert loaded.snapshots[0].read_at is None, junk
         assert loaded.snapshots[0].lanes == _stale_retained().snapshots[0].lanes
+
+
+def test_every_instance_a_hub_adds_survives_a_restart(tmp_path: Path) -> None:
+    # Twelve providers and sixteen hub accounts: the file the daemon wrote
+    # must come back whole, not cut at an arbitrary count.
+    base = state().snapshots[0]
+    snapshots = tuple(
+        replace(base, lanes=(), source_instance_id=f"cliproxy:{index:012x}", provider_id="claude")
+        for index in range(28)
+    )
+    target = tmp_path / "usage.json"
+    save_provider_usage_state(ProviderUsageState(snapshots, 1000, 1060, False), target)
+    loaded = load_provider_usage_state(target)
+    assert [item.source_instance_id for item in loaded.snapshots] == [item.source_instance_id for item in snapshots]
+
+
+def test_a_saved_file_with_hostile_numbers_or_nesting_loads_empty_not_fatal(tmp_path: Path) -> None:
+    target = tmp_path / "usage.json"
+    version = PROVIDER_USAGE_STORE_SCHEMA_VERSION
+    for text in (
+        '{"schema_version":' + str(version) + ',"refreshed_at":1' + "0" * 400 + ',"snapshots":[]}',
+        '{"schema_version":' + str(version) + ',"refreshed_at":NaN,"next_refresh_at":Infinity,"snapshots":[]}',
+        "[" * 60_000,
+    ):
+        target.write_text(text)
+        loaded = load_provider_usage_state(target)
+        assert loaded.snapshots == ()
+        assert loaded.refreshed_at is None and loaded.next_refresh_at is None

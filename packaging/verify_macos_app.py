@@ -27,8 +27,7 @@ EXPECTED_EXECUTABLE_NAME = "JR-Bar"
 CORE_HELPER_ROOT = Path("Contents/Helpers/jrbar-core.app")
 CORE_HELPER = CORE_HELPER_ROOT / "Contents/MacOS/jrbar-core"
 HOOK_SHIM = Path("Contents/Helpers/jrbar-hook")
-ASSERTER = Path("Contents/Helpers/jrbar-asserter.app/Contents/MacOS/jrbar-asserter")
-HELPER_EXECUTABLES = (CORE_HELPER, HOOK_SHIM, ASSERTER)
+HELPER_EXECUTABLES = (CORE_HELPER, HOOK_SHIM)
 APPLE_LIBRARY_ROOTS = (Path("/System/Library"), Path("/usr/lib"))
 DANGEROUS_ENVIRONMENT_PREFIXES = ("PYTHON", "DYLD_")
 DANGEROUS_ENVIRONMENT_NAMES = {"LD_LIBRARY_PATH"}
@@ -358,7 +357,7 @@ def _executable_for(loader: Path, *, bundle: Path, executable: Path | None) -> P
     core_root = bundle / CORE_HELPER_ROOT
     if core_root in loader.parents:
         return bundle / CORE_HELPER
-    if loader == bundle / HOOK_SHIM or loader == bundle / ASSERTER:
+    if loader == bundle / HOOK_SHIM:
         return loader
     if executable is not None:
         return executable

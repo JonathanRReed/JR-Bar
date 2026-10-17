@@ -642,7 +642,7 @@ def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused__and_2_mor
 class _DndOverrideSink:
     """A DND controller that records each override and answers with a fixed
     result, so the daemon's ``quiet`` command runs against the real legacy
-    handlers (``_set_dnd_for_duration``, ``endDndOverride_`` and
+    handlers (``_set_dnd_for_duration``, ``_end_dnd_override`` and
     ``_finish_dnd_change``) without touching the system's Focus state."""
 
     def __init__(self, *, applied: bool) -> None:
@@ -688,14 +688,133 @@ def test_quiet_starts_and_ends_an_override_through_the_real_handlers__and_1_more
     assert refused.value.code == "refused"
 
 
+def test_quiet_cancel_reports_a_refused_save(headless) -> None:
+    headless.applicationDidFinishLaunching_(None)
+    sink = _DndOverrideSink(applied=False)
+    headless.dnd_controller = sink
+    with pytest.raises(CommandError) as refused:
+        core_runtime._cmd_quiet(headless, {"mode": "pause", "seconds": 0})
+    assert refused.value.code == "refused"
+    assert sink.overrides == [None]
+
+
+@pytest.mark.parametrize("seconds", [float("nan"), float("inf"), -float("inf"), "NaN", "inf", True, False, 10 ** 1000],
+                         ids=["nan", "infinity", "negative-infinity", "nan-text", "infinity-text", "true", "false", "overflow"])
+def test_quiet_rejects_nonfinite_boolean_and_overflowing_durations(headless, seconds) -> None:
+    headless.applicationDidFinishLaunching_(None)
+    sink = _DndOverrideSink(applied=True)
+    headless.dnd_controller = sink
+    with pytest.raises(CommandError) as invalid:
+        core_runtime._cmd_quiet(headless, {"mode": "pause", "seconds": seconds})
+    assert invalid.value.code == "invalid_args"
+    assert sink.overrides == []
+
+
+@pytest.mark.parametrize(("seconds", "duration"), [(1, 60), ("120", 120), (1e100, 7 * 86400)])
+def test_quiet_reply_uses_the_applied_duration(headless, monkeypatch, seconds, duration) -> None:
+    now = time.time()
+    monkeypatch.setattr(core_runtime.time, "time", lambda: now)
+    headless.applicationDidFinishLaunching_(None)
+    sink = _DndOverrideSink(applied=True)
+    headless.dnd_controller = sink
+    headless.settings = headless.settings.with_dnd_override(None)
+    result = core_runtime._cmd_quiet(headless, {"mode": "dim", "seconds": seconds})
+    (override,) = sink.overrides
+    assert override.until_epoch - override.created_epoch == duration
+    assert result == {"mode": "dim", "until": now + duration}
+
+
+@pytest.mark.parametrize("scheduled", [False, True])
+def test_quiet_cancel_save_failure_preserves_durable_settings_and_retries(headless, tmp_path, monkeypatch, scheduled) -> None:
+    from datetime import datetime, timezone
+
+    from jrbar.dnd_controller import DndController
+    from jrbar.dnd_policy import DndMode, DndOverride
+    from jrbar.focus_status import FocusActivity, FocusAuthorization, FocusStatusObservation
+    from jrbar.settings import SettingsWriteRefusedError, load_settings, save_settings
+
+    now = datetime(2026, 10, 15, 22, 30, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr(core_runtime.time, "time", lambda: now)
+    headless.applicationDidFinishLaunching_(None)
+    settings = headless.settings.with_dnd_schedule(enabled=scheduled, start_minutes=22 * 60, end_minutes=23 * 60, mode=DndMode.DARK)
+    override = DndOverride.for_mode(DndMode.DIM, created_epoch=now, until_epoch=now + 600)
+    headless.settings = settings.with_dnd_override(override)
+    path = tmp_path / "quiet-settings.json"
+    save_settings(headless.settings, path)
+    before = path.read_bytes()
+    refuse = True
+
+    def save(candidate):
+        if refuse:
+            raise SettingsWriteRefusedError("synthetic save refusal")
+        save_settings(candidate, path)
+
+    focus = SimpleNamespace(
+        observe=lambda: FocusStatusObservation(FocusAuthorization.UNAVAILABLE, FocusActivity.UNAVAILABLE),
+        request_authorization=lambda _completion: False,
+    )
+    dnd = DndController(
+        settings_getter=lambda: headless.settings,
+        settings_setter=lambda candidate: setattr(headless, "settings", candidate),
+        settings_saver=save,
+        on_projection=lambda _projection: None,
+        focus_client=focus,
+        wall_clock=lambda: now,
+        timezone_getter=lambda _now: timezone.utc,
+        timer_factory=lambda _delay, _callback: SimpleNamespace(start=lambda: None, cancel=lambda: None),
+    )
+    headless.dnd_controller = dnd
+    try:
+        assert dnd.start().applied
+        retained_settings, retained_projection = headless.settings, dnd.projection
+        with pytest.raises(CommandError) as failure:
+            core_runtime._cmd_quiet(headless, {"seconds": 0})
+        assert failure.value.code == "refused"
+        assert headless.settings is retained_settings
+        assert dnd.projection is retained_projection
+        assert path.read_bytes() == before
+        refuse = False
+        assert core_runtime._cmd_quiet(headless, {"seconds": 0}) == {"until": None}
+        assert headless.settings.dnd_settings().override is None
+        assert load_settings(path, track=False).dnd_settings().override is None
+        assert dnd.projection.mode is (DndMode.DARK if scheduled else None)
+    finally:
+        dnd.close()
+
+
+def test_quiet_reply_names_the_committed_deadline_after_delayed_save(headless) -> None:
+    from unittest.mock import patch
+
+    clock = [time.time()]
+    headless.applicationDidFinishLaunching_(None)
+    captured = []
+
+    def apply(override):
+        captured.append(override)
+        headless.settings = headless.settings.with_dnd_override(override)
+        clock[0] += 5
+        return SimpleNamespace(applied=True, projection=None, failure=None)
+
+    headless.dnd_controller = SimpleNamespace(set_override=apply)
+    with patch.object(core_runtime.time, "time", lambda: clock[0]):
+        result = core_runtime._cmd_quiet(headless, {"mode": "dim", "seconds": 600})
+    assert result["until"] == captured[0].until_epoch
+    assert result["until"] == headless.settings.dnd_settings().override.until_epoch
+
+
 def test_peer_arrive_depart_events_fire_on_reachability_edges(headless) -> None:
     """``peer_arrived``/``peer_departed`` are emitted on the reachable-set
     diff — and NOT on the first refresh, which is a baseline, not a fleet
     of simultaneous arrivals."""
+    from dataclasses import replace
+
     from jrbar.remote_peers import PeerHealth, PeerRefreshResult
 
     controller = headless
     controller.applicationDidFinishLaunching_(None)
+    controller.settings = controller.settings.with_remote_peers(
+        replace(controller.settings.remote_peers, enabled=True)
+    )
 
     def refresh(*machines: str) -> PeerRefreshResult:
         return PeerRefreshResult(
@@ -856,7 +975,7 @@ def test_reset_settings_reaches_per_device_leaves__and_1_more(headless) -> None:
     controller.applicationDidFinishLaunching_(None)
     server = controller._core
     document = next(payload for kind, payload in server.published if kind == "settings")["document"]
-    assert document["menu_bar_icon_style"] == "glyph"
+    assert document["menu_bar_icon_style"] == "agents"
     assert document["quota_alert_thresholds"] == [90.0, 95.0]
     assert document["cloud_ingest_token_path"] == str(default_token_path())
 
@@ -869,8 +988,8 @@ def test_reset_settings_reaches_per_device_leaves__and_1_more(headless) -> None:
     # document must carry it or a sync would normalize it away.
     reply = controller._core_dispatch("set_setting", {"path": "menu_bar_icon_style", "value": "hidden"})
     assert reply["value"] == "hidden" and controller.settings.menu_bar_icon_style == "hidden"
-    # An unknown style falls back to the glyph rather than failing.
-    assert controller._core_dispatch("set_setting", {"path": "menu_bar_icon_style", "value": "neon"})["value"] == "glyph"
+    # An unknown style falls back to the default (agents) rather than failing.
+    assert controller._core_dispatch("set_setting", {"path": "menu_bar_icon_style", "value": "neon"})["value"] == "agents"
     reply = controller._core_dispatch("set_setting", {"path": "quota_alert_thresholds", "value": [95, 80.5, 95]})
     assert reply["value"] == [80.5, 95.0] and controller.settings.quota_alert_thresholds == (80.5, 95.0)
     assert controller._core_dispatch("set_setting", {"path": "quota_alert_thresholds", "value": []})["value"] == [90.0, 95.0]
@@ -1426,7 +1545,7 @@ def test_effect_commands_read_and_write_the_real_stores__and_2_more(headless, mo
     # state carries the same number, so the app sees catalog changes on
     # the state channel without a second request.
     assert controller._core_build_state()["catalog_generation"] == catalog["generation"]
-    # ``health.detected`` is the Settings > Agents install gate.
+    # ``health.detected`` is the Settings > Agents & Usage install gate.
     detected = controller._core_build_state()["health"]["detected"]
     assert isinstance(detected, dict) and all(
         type(value) is bool for value in detected.values()
@@ -1537,6 +1656,121 @@ def test_effect_commands_read_and_write_the_real_stores__and_2_more(headless, mo
 
 
 
+@pytest.fixture
+def provider_motion_assignment(headless, monkeypatch, tmp_path):
+    from jrbar import core_effects, effect_assignment_store, effect_pack_store
+    from jrbar import status_bar_legacy as legacy
+    from jrbar.effect_assignment_store import EffectAssignmentCache
+    from jrbar.effect_registry import EFFECT_REGISTRY
+    from jrbar.settings import save_settings
+
+    target = tmp_path / "motion-settings.json"
+    monkeypatch.setattr(effect_assignment_store, "default_effect_assignment_path", lambda home=None: tmp_path / "assignments.json")
+    monkeypatch.setattr(effect_pack_store, "default_effect_pack_store_path", lambda home=None: tmp_path / "packs")
+    monkeypatch.setattr(core_effects, "default_state_dir", lambda *_: tmp_path)
+    monkeypatch.setattr(legacy, "save_settings", lambda settings: save_settings(settings, target))
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    monkeypatch.setattr(type(controller), "_effect_assignment_cache", EffectAssignmentCache(registry=EFFECT_REGISTRY), raising=False)
+    controller._core_dispatch("set_assignment", {"effect_id": "pendulum", "scope": "provider", "target_id": "devin"})
+    return controller, target
+
+
+def test_failed_provider_motion_save_keeps_the_warning_truthful(provider_motion_assignment, monkeypatch):
+    from jrbar import status_bar_legacy as legacy
+    from jrbar.settings import load_settings, save_settings
+
+    controller, target = provider_motion_assignment
+    previous = controller.settings
+    before = target.read_bytes()
+
+    def refuse(_settings):
+        raise OSError("synthetic motion settings refusal")
+
+    monkeypatch.setattr(legacy, "save_settings", refuse)
+    args = {"effect_id": "kitt", "scope": "provider", "target_id": "devin"}
+    reply = controller._core_dispatch("set_assignment", args)
+    assert reply["assignment"]["effect_id"] == "kitt"
+    assert reply["motion_warning"]
+    assert controller.settings == previous
+    assert target.read_bytes() == before
+
+    monkeypatch.setattr(legacy, "save_settings", lambda settings: save_settings(settings, target))
+    retry = controller._core_dispatch("set_assignment", args)
+    assert "motion_warning" not in retry
+    assert load_settings(target).colors.provider_animation["devin"] == "kitt"
+    assert controller.settings.colors.provider_animation["devin"] == "kitt"
+
+
+def test_failed_motion_reset_keeps_its_assignment_for_retry(provider_motion_assignment, monkeypatch):
+    from jrbar import status_bar_legacy as legacy
+    from jrbar.settings import load_settings, save_settings
+
+    controller, target = provider_motion_assignment
+    previous = controller.settings
+    assignments = controller._core_dispatch("list_assignments", {})["assignments"]
+
+    def refuse(_settings):
+        raise OSError("synthetic motion reset refusal")
+
+    monkeypatch.setattr(legacy, "save_settings", refuse)
+    args = {"scope": "provider", "target_id": "devin"}
+    with pytest.raises(CommandError) as refused:
+        controller._core_dispatch("clear_assignment", args)
+    assert refused.value.code == "refused"
+    assert controller.settings == previous
+    assert load_settings(target) == previous
+    assert controller._core_dispatch("list_assignments", {})["assignments"] == assignments
+
+    monkeypatch.setattr(legacy, "save_settings", lambda settings: save_settings(settings, target))
+    retry = controller._core_dispatch("clear_assignment", args)
+    assert retry["removed"] is True
+    assert retry["assignments"] == []
+    assert "devin" not in controller.settings.colors.provider_animation
+    assert "devin" not in load_settings(target).colors.provider_animation
+
+
+def test_motion_removal_retries_after_assignment_file_failure(provider_motion_assignment, monkeypatch):
+    from jrbar import effect_assignment_store
+    from jrbar.settings import load_settings
+
+    controller, target = provider_motion_assignment
+    assignments = controller._core_dispatch("list_assignments", {})["assignments"]
+    save = effect_assignment_store.save_effect_assignments
+
+    def refuse(*_args):
+        raise OSError("synthetic assignment file refusal")
+
+    monkeypatch.setattr(effect_assignment_store, "save_effect_assignments", refuse)
+    args = {"scope": "provider", "target_id": "devin"}
+    with pytest.raises(CommandError) as refused:
+        controller._core_dispatch("clear_assignment", args)
+    assert refused.value.code == "refused"
+    assert controller._core_dispatch("list_assignments", {})["assignments"] == assignments
+
+    monkeypatch.setattr(effect_assignment_store, "save_effect_assignments", save)
+    retry = controller._core_dispatch("clear_assignment", args)
+    assert retry["removed"] is True
+    assert retry["assignments"] == []
+    assert "devin" not in controller.settings.colors.provider_animation
+    assert "devin" not in load_settings(target).colors.provider_animation
+
+
+def test_missing_assignment_removal_preserves_a_manual_motion(provider_motion_assignment):
+    from jrbar.settings import load_settings
+
+    controller, target = provider_motion_assignment
+    args = {"scope": "provider", "target_id": "devin"}
+    controller._core_dispatch("clear_assignment", args)
+    colors = controller.settings.colors.with_agent_animation("devin", "kitt")
+    controller.settings = controller.settings.with_colors(colors)
+    controller._core_legacy().save_settings(controller.settings)
+    reply = controller._core_dispatch("clear_assignment", args)
+    assert reply["removed"] is False
+    assert controller.settings.colors.provider_animation["devin"] == "kitt"
+    assert load_settings(target).colors.provider_animation["devin"] == "kitt"
+
+
 def test_remove_effect_pack_uninstalls__and_1_more(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # --- scenario: remove_effect_pack_uninstalls
     """The Studio calls ``remove_effect_pack``; a missing handler used to
@@ -1641,13 +1875,24 @@ def test_serve_server_tracks_serve_enabled_and_the_token__and_2_more(headless, m
     # Only this one: the fixture's inert Thread stands in for every other
     # daemon thread, and turning them all on would start the HID probe and
     # the start-up warm-up as a side effect of a usage test.
+    history_scan_threads = []
+
+    def history_scan_thread(**kwargs):
+        thread = REAL_THREAD(**kwargs)
+        history_scan_threads.append(thread)
+        return thread
+
     controller._core_usage_history_service = core_usage_history.UsageHistoryService(
         lambda provider, days: core_usage_history.scan_provider_records(provider, days=days),
         controller._core_publish_event,
         log=controller._core_log,
-        thread_factory=REAL_THREAD,
+        thread_factory=history_scan_thread,
     )
-    document = controller._core_dispatch("usage_history", {"provider": "claude", "range": "7d"})
+    controller._core_dispatch("usage_history", {"provider": "claude", "range": "7d"})
+    for thread in history_scan_threads:
+        thread.join(5.0)
+        assert not thread.is_alive()
+    document = controller._core_dispatch("usage_history", {"provider": "claude", "range": "7d", "observe": True})
     assert calls == [("claude", 7)]
     assert document["days"][-1]["tokens_in"] == 10 and len(document["days"]) == 7
     with pytest.raises(CommandError) as bad_range:
@@ -1655,6 +1900,9 @@ def test_serve_server_tracks_serve_enabled_and_the_token__and_2_more(headless, m
     assert bad_range.value.code == "invalid_range"
     # Grok has its own session files now: it is scanned like Claude.
     controller._core_dispatch("usage_history", {"provider": "grok", "range": "7d"})
+    for thread in history_scan_threads:
+        thread.join(5.0)
+        assert not thread.is_alive()
     assert calls[-1] == ("grok", 7)
     with pytest.raises(CommandError) as unknown:
         controller._core_dispatch("usage_history", {"provider": "cursor", "range": "7d"})
@@ -1662,7 +1910,11 @@ def test_serve_server_tracks_serve_enabled_and_the_token__and_2_more(headless, m
     # Gemini has no configured account and no transcripts to scan here, but
     # it has a price table: the window still gets a rate card, marked
     # estimated, instead of a not_found the Usage window cannot render.
-    gemini = controller._core_dispatch("usage_history", {"provider": "gemini", "range": "7d"})
+    controller._core_dispatch("usage_history", {"provider": "gemini", "range": "7d"})
+    for thread in history_scan_threads:
+        thread.join(5.0)
+        assert not thread.is_alive()
+    gemini = controller._core_dispatch("usage_history", {"provider": "gemini", "range": "7d", "observe": True})
     assert gemini["records"] == 0 and gemini["pending"] is False
     assert gemini["pricing"]["estimated"] is True
     assert gemini["pricing"]["model"] == core_usage_history.REFERENCE_MODEL["gemini"]
@@ -2411,22 +2663,12 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     ``program_for_display_state`` render from the virtual device -- same
     shape, different palette, and the pair read as "blink different".
 
-    Linked, the bar now presents the strip's program: the NOMINAL text the
-    strip was asked to play (never the written bytes -- the strip's die
-    gains and light-domain brightness decode belong to its PWM), with dark
-    colour tokens lifted on a continuous curve toward the legibility knee so
-    codes the bezel reads as faint light stay faint -- not clamped to one
-    flat glow the hardware does not have.
+    Linked, the bar samples the delivered drive program with transfer
+    metadata. Its own brightness line may differ; timing stays shared.
     """
     import re
     import time as _time
 
-    from jrbar.colors import (
-        IDENTITY_LUMINANCE_FLOOR,
-        MIRROR_LIFT_EXPONENT,
-        lift_program_luminance,
-        relative_luminance,
-    )
     from jrbar.dot_role import replace_brightness_line as apply_brightness_line
     from jrbar.led_status import (
         apply_strip_transform_to_program,
@@ -2458,17 +2700,18 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
 
     nominal = (
         "brightness 200\n"
-        "#8899AA #22456C #122438 #08111A #000000 #03060A #08111A #122438 250ms cosine\n"
+        "#8899AA #22456C #122438 #08111A #000000 #000510 #08111A #122438 250ms cosine\n"
         "roll right 2s\n"
+        "off 100ms\n"
         "repeat"
     )
     pro_controller = controller.agent_led_controllers_by_device[pro.device_id]
-    # What the surface reports is the written (drive) text; the bar must
-    # mirror what that text MEANS, which is the nominal program.
+    # Sample delivered drive colors, then remove source calibration in the display.
     pro_controller.last_program = apply_strip_transform_to_program(
         nominal, resting_glow=0.0, gains=(1.0, 0.38, 1.0)
     )
     pro_controller.last_nominal_program = nominal
+    pro_controller.channel_gains = (1.0, 0.38, 1.0)
     assert pro_controller.last_program != nominal  # the drive bytes really differ
 
     virtual_program = "#FF3A00 1.6s pulse\nrepeat"
@@ -2482,48 +2725,17 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     bar = lights["surfaces"]["screen_bar"]
     assert strip["program"] == pro_controller.last_program
 
-    # Same program: the timing, the directives and every non-colour byte
-    # are the strip's; the colour literals moved, only upward, and the one
-    # ``brightness N`` is the bar's own.
-    assert bar["program"] == apply_brightness_line(lift_program_luminance(nominal), bar_code)
+    # Only the global brightness changes. The dark cells, low-level colors,
+    # animation timing and directives remain exactly as on the strip.
+    assert bar["program"] == apply_brightness_line(pro_controller.last_program, bar_code)
     assert bar["program"] != virtual_program
     assert bar["program"].splitlines()[0] == f"brightness {bar_code}"
     hex_re = r"#[0-9A-Fa-f]{6}"
-    assert re.sub(hex_re, "@", bar["program"]).splitlines()[1:] == re.sub(hex_re, "@", nominal).splitlines()[1:]
-    sources = re.findall(hex_re, nominal)
     outputs = re.findall(hex_re, bar["program"])
-    assert len(sources) == len(outputs)
-    for source, out in zip(sources, outputs):
-        source_y = relative_luminance(source)
-        out_y = relative_luminance(out)
-        if source_y <= 0.0:
-            # ``#000000`` stays exactly black -- no resting glow is invented
-            # over a dark beat, whatever ``screen_bar_min_glow`` is set to.
-            assert out == "#000000"
-        elif source_y >= IDENTITY_LUMINANCE_FLOOR:
-            assert out == source  # at/above the knee: untouched
-        else:
-            # Below the knee the lift is the power curve, not the floor:
-            # brighter than the source but still well short of the knee.
-            target = IDENTITY_LUMINANCE_FLOOR * (
-                source_y / IDENTITY_LUMINANCE_FLOOR
-            ) ** MIRROR_LIFT_EXPONENT
-            assert out_y == pytest.approx(target, abs=0.005)
-            assert source_y < out_y < IDENTITY_LUMINANCE_FLOOR
-    # The fade's ordering survives: each step lands strictly dimmer than
-    # the one before it, where the flat floor used to crush them to one.
-    lit = [
-        relative_luminance(token)
-        for token in dict.fromkeys(outputs)
-        if relative_luminance(token) > 0.0
-    ]
-    assert len(set(lit)) == len(lit)
-    assert lit == sorted(lit, reverse=True)
-    # Codes already at or above the knee pass through untouched.
-    assert "#8899AA" in bar["program"]
-    # Near-black stays near-black: the strip's `#000000` positions are not
-    # a glow on the display.
-    assert "#000000" in bar["program"]
+    assert outputs == re.findall(hex_re, pro_controller.last_program)
+    assert "#000000" in outputs
+    assert bar["strip_transfer"]["channel_gains"] == [1.0, 0.38, 1.0]
+    assert bar["strip_transfer"]["display_channel_gains"] == [1.0, 1.0, 1.0]
 
     # Brightness is what the mirrored program drives the bar at -- the
     # bar's own floored plan, not the strip's ``brightness 200`` -- and it
@@ -2543,13 +2755,14 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     controller.settings = controller.settings.with_link_screen_bar_to_hardware(False)
     lights = controller._core_build_lights()
     assert lights["surfaces"]["screen_bar"]["program"] == virtual_program
+    assert "strip_transfer" not in lights["surfaces"]["screen_bar"]
     controller.settings = controller.settings.with_link_screen_bar_to_hardware(True)
 
     # With no live call the mirror surface tells the same story.
     controller.virtual_status_device._live_program_call = None
     lights = controller._core_build_lights()
     fallback_bar = lights["surfaces"]["screen_bar"]
-    assert fallback_bar["program"] == apply_brightness_line(lift_program_luminance(nominal), bar_code)
+    assert fallback_bar["program"] == apply_brightness_line(pro_controller.last_program, bar_code)
     assert fallback_bar["brightness"] == pytest.approx(bar_code / 255.0)
     assert fallback_bar["brightness_policy"] == pytest.approx(bar_plan)
     assert fallback_bar["anchor"] == 1000.0
@@ -2571,6 +2784,7 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     lights = controller._core_build_lights()
     assert lights["surfaces"]["screen_bar"]["program"] == preview_program
     assert lights["surfaces"]["screen_bar"]["why"] == "preview"
+    assert "strip_transfer" not in lights["surfaces"]["screen_bar"]
     controller._core_previews.pop("screen_bar", None)
 
 
@@ -2585,7 +2799,6 @@ def test_linked_screen_bar_keeps_a_signals_cut_through(headless) -> None:
     ambient code."""
     import time as _time
 
-    from jrbar.colors import lift_program_luminance
     from jrbar.dot_role import replace_brightness_line as apply_brightness_line
     from jrbar.led_status import style_to_program
     from jrbar.signals import PATTERN_BREATHE, SignalStyle
@@ -2631,13 +2844,13 @@ def test_linked_screen_bar_keeps_a_signals_cut_through(headless) -> None:
     ):
         controller.virtual_status_device._live_program_call = call
         bar = controller._core_build_lights()["surfaces"]["screen_bar"]
-        assert bar["program"] == apply_brightness_line(lift_program_luminance(nominal), signal_code)
+        assert bar["program"] == apply_brightness_line(nominal, signal_code)
         assert bar["brightness"] == pytest.approx(signal_code / 255.0)
 
     # The same program under an ambient kind takes the bar's idle-dimmed code.
     controller.last_led_display_kind_by_device = {pro.device_id: LED_DISPLAY_AGENT}
     bar = controller._core_build_lights()["surfaces"]["screen_bar"]
-    assert bar["program"] == apply_brightness_line(lift_program_luminance(nominal), ambient_code)
+    assert bar["program"] == apply_brightness_line(nominal, ambient_code)
 
     # A strip preview plays at the strip's ambient brightness, whatever kind
     # was recorded under it, so the bar takes its ambient code.
@@ -2663,7 +2876,6 @@ def test_linked_screen_bar_mirrors_a_lone_dot(headless) -> None:
     render -- the Screen Bar "in sync" did nothing without a strip."""
     import time as _time
 
-    from jrbar.colors import lift_program_luminance
     from jrbar.dot_role import upsample_program
 
     controller = headless
@@ -2672,22 +2884,21 @@ def test_linked_screen_bar_mirrors_a_lone_dot(headless) -> None:
     controller.agent_led_controllers_by_device.pop(pro.device_id)
     nominal = "#FF0000 #00FF00 500ms pulse\nrepeat"
     dot_controller = controller.agent_led_controllers_by_device[dot.device_id]
-    # The surface reports the written (drive) text; the mirror replays the
-    # nominal program the Dot was asked to run.
+    # The mirror widens the delivered program without changing its colors.
     dot_controller.last_nominal_program = nominal
     dot_controller.last_program = "0:#FF0000 1:#00FF00 500ms pulse\nrepeat"
     controller._core_hardware_anchor[dot.device_id] = 1000.0
     controller.settings = controller.settings.with_link_screen_bar_to_hardware(True)
     controller.settings = controller.settings.with_dot_role("status")
 
-    widened = upsample_program(nominal, source_leds=2, led_count=8)
+    widened = upsample_program(dot_controller.last_program, source_leds=2, led_count=8)
     assert widened is not None
 
     # a. The bar mirrors the Dot: widened program, the Dot's anchor, the
     #    Dot's why -- and always at the bar's own LED count.
     lights = controller._core_build_lights()
     bar = lights["surfaces"]["screen_bar"]
-    assert bar["program"] == lift_program_luminance(widened)
+    assert bar["program"] == widened
     assert bar["led_count"] == 8
     assert bar["anchor"] == 1000.0
     assert bar["why"] == lights["surfaces"]["dot"]["why"]
@@ -2704,7 +2915,7 @@ def test_linked_screen_bar_mirrors_a_lone_dot(headless) -> None:
     )
     lights = controller._core_build_lights()
     bar = lights["surfaces"]["screen_bar"]
-    assert bar["program"] == lift_program_luminance(widened)
+    assert bar["program"] == widened
     assert bar["anchor"] == pytest.approx(1000.25)
 
     # d. ``asks`` is a beacon: deliberately dark until needed, and the bar
@@ -2725,7 +2936,7 @@ def test_linked_screen_bar_mirrors_a_lone_dot(headless) -> None:
     lights = controller._core_build_lights()
     bar = lights["surfaces"]["screen_bar"]
     assert bar["anchor"] == 2000.0
-    assert bar["program"] == lift_program_luminance("#112233 500ms pulse\nrepeat")
+    assert bar["program"] == "#112233 500ms pulse\nrepeat"
 
     # f. Unlinked, the bar has no program of its own to claim.
     controller.status_bar_devices = lambda *, remember=True: [dot]
@@ -2733,91 +2944,6 @@ def test_linked_screen_bar_mirrors_a_lone_dot(headless) -> None:
     controller.settings = controller.settings.with_link_screen_bar_to_hardware(False)
     lights = controller._core_build_lights()
     assert "screen_bar" not in lights["surfaces"]
-
-
-def test_lift_program_luminance_lifts_only_colour_literals__and_1_more() -> None:
-    # --- scenario: lift_program_luminance_lifts_only_colour_literals
-    """The mirror transform: hue kept, the lift a continuous curve below
-    the knee, everything that is not a colour left byte-identical."""
-    from jrbar.colors import (
-        IDENTITY_LUMINANCE_FLOOR,
-        MIRROR_LIFT_EXPONENT,
-        lift_program_luminance,
-        relative_luminance,
-    )
-
-    program = "brightness 90\n#000510 #8899AA 250ms cosine\noff 100ms\nrepeat"
-    lifted = lift_program_luminance(program)
-    lines = lifted.splitlines()
-    assert lines[0] == "brightness 90"
-    assert lines[2] == "off 100ms"
-    assert lines[3] == "repeat"
-    dim, bright = lines[1].split(" ")[0], lines[1].split(" ")[1]
-    # The near-black token gets a small lift, not the whole floor: the
-    # curve target is ~0.011, far under the old 0.08 resting glow.
-    source_y = relative_luminance("#000510")
-    target = IDENTITY_LUMINANCE_FLOOR * (
-        source_y / IDENTITY_LUMINANCE_FLOOR
-    ) ** MIRROR_LIFT_EXPONENT
-    assert relative_luminance(dim) == pytest.approx(target, abs=0.005)
-    assert source_y < relative_luminance(dim) < IDENTITY_LUMINANCE_FLOOR / 4
-    assert bright == "#8899AA"  # already above the knee: untouched
-    # Hue is preserved: the lifted colour is the dim one scaled, so the
-    # channel ordering survives (blue still dominates, red still zero).
-    assert dim != "#000510"
-    assert int(dim[5:7], 16) > int(dim[3:5], 16) > int(dim[1:3], 16)
-    # Black stays black -- a dark beat is meant to be dark, and it has no
-    # hue to preserve anyway.
-    assert lift_program_luminance("#000000 1s\nrepeat").startswith("#000000")
-    # Not a program: handed back as-is.
-    assert lift_program_luminance("") == ""
-
-    # --- scenario: lift_program_luminance_curve_is_continuous_and_monotone
-    """The lift fades to zero at black and meets the pass-through region
-    without a seam: a token a hair below the knee lands a hair below the
-    knee, and darker tokens always land darker."""
-    from jrbar.colors import (
-        IDENTITY_LUMINANCE_FLOOR,
-        lift_program_luminance,
-        luminance_matched_hex,
-        relative_luminance,
-    )
-
-    floor = IDENTITY_LUMINANCE_FLOOR
-    # A token just below the knee lifts to just below it; just above, the
-    # literal passes through -- no jump at the seam.
-    just_below = luminance_matched_hex("#8899AA", floor * 0.99)
-    just_above = luminance_matched_hex("#8899AA", floor * 1.01)
-    lifted_below = lift_program_luminance(f"{just_below} 1s\nrepeat")
-    assert relative_luminance(lifted_below.split()[0]) == pytest.approx(
-        floor * 0.99, abs=0.01
-    )
-    assert lift_program_luminance(just_above) == just_above
-
-    # Monotone through the whole sub-knee range, and strictly below the
-    # knee everywhere a lift applies.
-    greys = ["#000000", "#050505", "#0A0A0A", "#141414", "#242424", "#404040"]
-    lifted_ys = [
-        relative_luminance(lift_program_luminance(g)) for g in greys
-    ]
-    assert lifted_ys == sorted(lifted_ys)
-    for grey, out_y in zip(greys, lifted_ys):
-        source_y = relative_luminance(grey)
-        if source_y <= 0.0:
-            assert out_y == 0.0
-        elif source_y < floor:
-            assert source_y < out_y < floor
-
-    # A colour at the calibration target from the live report: Y ~= 0.004
-    # lifts to ~0.018, not 0.08.
-    assert relative_luminance("#060D18") == pytest.approx(0.004, abs=0.001)
-    lifted = lift_program_luminance("#060D18")
-    assert 0.015 <= relative_luminance(lifted) <= 0.022
-
-    # floor=0 disables the transform entirely.
-    program = "#000510 1s\nrepeat"
-    assert lift_program_luminance(program, floor=0.0) == program
-
 
 
 # --- calibration previews ----------------------------------------------------
@@ -2856,6 +2982,116 @@ def _calibration_devices(controller, *, stored_gains=(1.0, 0.38, 1.0), with_dot=
     controller.agent_controller_for_device = make
     controller.agent_led_controllers_by_device = controllers
     return devices
+
+
+@pytest.mark.parametrize("failure", ["io", "refused"])
+def test_failed_calibration_apply_keeps_the_previous_profile_and_preview(headless, monkeypatch, tmp_path, failure):
+    from jrbar import status_bar_legacy as legacy
+    from jrbar.settings import SettingsWriteRefusedError, load_settings, save_settings
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, _dot = _calibration_devices(controller)
+    previous = controller.settings
+    target = tmp_path / "calibration-settings.json"
+    save_settings(previous, target)
+    before = target.read_bytes()
+    controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id, "gains": {"red": 0.8, "green": 0.7, "blue": 0.9},
+    })
+    held = controller._core_previews["hardware"]
+
+    def refuse(_settings):
+        if failure == "io":
+            raise OSError("synthetic unwritable settings")
+        raise SettingsWriteRefusedError("synthetic newer settings schema")
+
+    monkeypatch.setattr(legacy, "save_settings", refuse)
+    with pytest.raises(CommandError):
+        controller._core_dispatch("apply_calibration", {
+            "device": pro.device_id, "profile": {"red_gain": 0.8, "brightness": 120},
+        })
+    assert controller.settings == previous
+    assert target.read_bytes() == before
+    assert controller._core_previews["hardware"] is held
+
+    monkeypatch.setattr(legacy, "save_settings", lambda settings: save_settings(settings, target))
+    reply = controller._core_dispatch("apply_calibration", {
+        "device": pro.device_id, "profile": {"red_gain": 0.8, "brightness": 120},
+    })
+    persisted = load_settings(target)
+    assert reply["profile"] == {"red_gain": 0.8, "brightness": 120.0}
+    assert persisted == controller.settings
+    assert persisted.channel_gains_for_device(pro.device_id) == (0.8, 1.0, 1.0)
+    assert persisted.brightness_for_device(pro.device_id) == 120
+    assert "hardware" not in controller._core_previews
+
+
+def test_calibration_apply_waits_for_an_older_settings_write(headless, monkeypatch, tmp_path):
+    from jrbar import status_bar_legacy as legacy
+    from jrbar.settings import load_settings, save_settings
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, _dot = _calibration_devices(controller)
+    previous = controller.settings
+    target = tmp_path / "calibration-settings.json"
+    save_settings(previous, target)
+    older_started = threading.Event()
+    release_older = threading.Event()
+    release_apply = threading.Event()
+    apply_reached_write = threading.Event()
+    original_lock = controller._core_settings_save_lock
+    errors = []
+
+    class ObservedLock:
+        def __enter__(self):
+            if threading.current_thread().name == "synthetic-calibration-apply":
+                apply_reached_write.set()
+            original_lock.acquire()
+
+        def __exit__(self, *_args):
+            original_lock.release()
+
+    def save(settings):
+        if threading.current_thread().name == "synthetic-settings-writer":
+            older_started.set()
+            assert release_older.wait(5)
+        save_settings(settings, target)
+        if threading.current_thread().name == "synthetic-calibration-apply":
+            apply_reached_write.set()
+            assert release_apply.wait(5)
+
+    def apply():
+        try:
+            core_runtime._cmd_apply_calibration(controller, {
+                "device": pro.device_id, "profile": {"red_gain": 0.8, "brightness": 120},
+            })
+        except Exception as error:
+            errors.append(error)
+
+    controller._core_settings_save_lock = ObservedLock()
+    controller._core_settings_dirty = True
+    monkeypatch.setattr(legacy, "save_settings", save)
+    writer = REAL_THREAD(target=controller._core_flush_settings, name="synthetic-settings-writer")
+    applying = REAL_THREAD(target=apply, name="synthetic-calibration-apply")
+    writer.start()
+    try:
+        assert older_started.wait(5)
+        applying.start()
+        assert apply_reached_write.wait(5)
+    finally:
+        release_older.set()
+        writer.join(timeout=5)
+        release_apply.set()
+        if applying.ident is not None:
+            applying.join(timeout=5)
+    assert not writer.is_alive() and not applying.is_alive()
+    assert errors == []
+    persisted = load_settings(target)
+    assert persisted.channel_gains_for_device(pro.device_id) == (0.8, 1.0, 1.0)
+    assert persisted.brightness_for_device(pro.device_id) == 120
+    assert persisted == controller.settings
 
 
 def test_calibration_preview_drives_the_given_gains_once__and_2_more(headless) -> None:
@@ -3425,6 +3661,132 @@ def test_clear_completed_leaves_only_live_sessions_and_undo_puts_them_back__and_
         controller._core_dispatch("clear_completed", {"sessions": "some"})
     assert bad.value.code == "invalid_args"
 
+
+
+def _restore_clear_controller(controller):
+    from jrbar.clear_agents_store import ClearAgentsRestoreHealth, load_clear_agents_state
+
+    fresh = type(controller).alloc().init()
+    fresh._core = _FakeServer()
+    fresh.clear_agents_path = controller.clear_agents_path
+    restored = load_clear_agents_state(fresh.clear_agents_path)
+    assert restored.health is ClearAgentsRestoreHealth.HEALTHY
+    fresh.clear_agents_state = restored.state
+    fresh.clear_agents_restore_health = restored.health
+    fresh.last_snapshot = controller.last_snapshot
+    assert getattr(fresh, "_clear_agents_commit_plan", None) is None
+    fresh._core_publish_state()
+    return fresh
+
+
+def test_undo_clear_restores_persisted_batch_without_an_in_memory_plan(cleared) -> None:
+    original = cleared
+    before = _listed(original)
+    reply = original._core_dispatch("clear_completed", {"sessions": "all"})
+    restarted = _restore_clear_controller(original)
+    assert _listed(restarted) == ["claude:session:live"]
+
+    undone = restarted._core_dispatch("undo_clear", {"batch": reply["batch"]})
+
+    assert undone == {"batch": reply["batch"], "restored": reply["cleared"]}
+    assert _listed(restarted) == before
+    restored_again = _restore_clear_controller(restarted)
+    assert _listed(restored_again) == before
+    with pytest.raises(CommandError) as repeated:
+        restored_again._core_dispatch("undo_clear", {"batch": reply["batch"]})
+    assert repeated.value.code == "refused"
+
+
+def test_undo_clear_uses_the_saved_latest_batch_when_omitted(cleared) -> None:
+    reply = cleared._core_dispatch("clear_completed", {"sessions": "all"})
+    restarted = _restore_clear_controller(cleared)
+    assert restarted._core_dispatch("undo_clear", {}) == {
+        "batch": reply["batch"], "restored": reply["cleared"],
+    }
+
+
+def test_undo_clear_of_a_restored_batch_preserves_newer_activity(cleared) -> None:
+    from dataclasses import replace
+
+    from jrbar.models import AgentMode
+
+    reply = cleared._core_dispatch("clear_completed", {"sessions": "all"})
+    restarted = _restore_clear_controller(cleared)
+    snapshot = restarted.last_snapshot
+    previous = snapshot.stale_statuses[0]
+    newer = replace(previous, mode=AgentMode.WORKING, event_name="UserPromptSubmit",
+                    updated_at=snapshot.collected_at, stale=False)
+    restarted.last_snapshot = SimpleNamespace(
+        aggregate=snapshot.aggregate,
+        statuses=(*snapshot.statuses, newer),
+        stale_statuses=tuple(status for status in snapshot.stale_statuses if status.agent_id != previous.agent_id),
+        collected_at=snapshot.collected_at,
+    )
+    restarted._core_publish_state()
+    assert newer.agent_id in _listed(restarted)
+    undone = restarted._core_dispatch("undo_clear", {"batch": reply["batch"]})
+    assert undone["restored"] == reply["cleared"]
+    assert set(_listed(restarted)) == {status.agent_id for status in (*snapshot.statuses, *snapshot.stale_statuses)}
+    row = next(row for row in restarted._core_documents["state"]["sessions"] if row["id"] == newer.agent_id)
+    assert row["mode"] == "working"
+    assert row["updated_at"] == newer.updated_at.timestamp()
+    assert restarted.last_snapshot.statuses[-1] is newer
+
+
+@pytest.mark.parametrize("invalid", ["expired", "clock_backwards", "newer_generation", "unknown"])
+def test_undo_clear_of_restored_batch_keeps_all_receipt_guards(cleared, monkeypatch, invalid) -> None:
+    from dataclasses import replace
+
+    from jrbar.clear_agents_store import save_clear_agents_state
+
+    reply = cleared._core_dispatch("clear_completed", {"sessions": "all"})
+    if invalid == "newer_generation":
+        state = cleared.clear_agents_state
+        save_clear_agents_state(cleared.clear_agents_path, replace(state, generation=state.generation + 1))
+    restarted = _restore_clear_controller(cleared)
+    state = restarted.clear_agents_state
+    before = restarted.clear_agents_path.read_bytes()
+    if invalid == "expired":
+        monkeypatch.setattr(core_runtime.time, "time", lambda: state.latest_batch.undo_deadline_epoch + 1)
+    elif invalid == "clock_backwards":
+        monkeypatch.setattr(core_runtime.time, "time", lambda: state.latest_batch.committed_at_epoch - 1)
+    batch = "synthetic-unknown" if invalid == "unknown" else reply["batch"]
+    with pytest.raises(CommandError) as refused:
+        restarted._core_dispatch("undo_clear", {"batch": batch})
+    expected = "expired" if invalid == "expired" else "not_found" if invalid == "unknown" else "refused"
+    assert refused.value.code == expected
+    assert restarted.clear_agents_state is state
+    assert restarted.clear_agents_path.read_bytes() == before
+    assert _listed(restarted) == ["claude:session:live"]
+
+
+def test_undo_clear_restore_failure_to_save_keeps_receipts_and_allows_retry(cleared, monkeypatch) -> None:
+    from jrbar import clear_agents_store
+
+    reply = cleared._core_dispatch("clear_completed", {"sessions": "all"})
+    restarted = _restore_clear_controller(cleared)
+    state = restarted.clear_agents_state
+    before = restarted.clear_agents_path.read_bytes()
+
+    def fail_save(*_args):
+        raise OSError("synthetic save failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(clear_agents_store, "save_clear_agents_state", fail_save)
+        with pytest.raises(CommandError) as refused:
+            restarted._core_dispatch("undo_clear", {"batch": reply["batch"]})
+    assert refused.value.code == "refused"
+    assert restarted.clear_agents_state is state
+    assert restarted.clear_agents_path.read_bytes() == before
+    assert _listed(restarted) == ["claude:session:live"]
+    assert restarted._core_dispatch("undo_clear", {"batch": reply["batch"]})["restored"] == reply["cleared"]
+
+
+def test_undo_clear_without_saved_batch_is_not_found(cleared) -> None:
+    with pytest.raises(CommandError) as missing:
+        cleared._core_dispatch("undo_clear", {})
+    assert missing.value.code == "not_found"
+    assert not cleared.clear_agents_path.exists()
 
 
 def test_undo_clear_expires_after_its_window(cleared, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3997,6 +4359,41 @@ def test_set_setting_replies_before_its_save_and_its_refresh__and_2_more(headles
     assert saved[-1] == 7 and not controller._core_settings_dirty
 
 
+
+def test_failed_settings_save_retries_the_latest_change_and_flushes_at_quit(headless, monkeypatch) -> None:
+    from jrbar import status_bar_legacy as legacy
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    attempts = []
+    saved = []
+
+    def save(settings):
+        attempts.append(settings.alert_burst)
+        if len(attempts) in {1, 3}:
+            raise OSError("synthetic temporary save failure")
+        saved.append(settings.alert_burst)
+
+    monkeypatch.setattr(legacy, "save_settings", save)
+    controller._core_dispatch("set_setting", {"path": "alert_burst", "value": 3})
+    assert controller._core_flush_settings() is False
+    assert controller._core_settings_dirty
+    assert saved == []
+
+    controller._core_dispatch("set_setting", {"path": "alert_burst", "value": 4})
+    assert controller._core_flush_settings() is True
+    assert not controller._core_settings_dirty
+    assert saved == [4]
+
+    controller._core_dispatch("set_setting", {"path": "alert_burst", "value": 5})
+    assert controller._core_flush_settings() is False
+    assert controller._core_settings_dirty
+    controller._core_quit_flush()
+    assert not controller._core_settings_dirty
+    assert saved == [4, 5]
+    assert attempts == [3, 4, 5, 5]
+
+
 def test_the_run_loop_watchdog_starts_with_the_daemon_and_sees_the_command(headless) -> None:
     """A stall is named with the command the run loop was running; the
     watchdog's no-op comes back through its own selector."""
@@ -4020,23 +4417,13 @@ def test_the_run_loop_watchdog_starts_with_the_daemon_and_sees_the_command(headl
     assert controller._core_watchdog is None
 
 
-def test_the_daemon_doctor_never_asks_tccd_about_alcove(headless, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Alcove following and its Screen Recording permission are the app's;
-    the daemon's doctor says it does not run following rather than spend a
-    tccd round trip on a line that is healthy by design."""
-    from jrbar import alcove_observation
-
-    asked: list[bool] = []
-    monkeypatch.setattr(
-        alcove_observation, "_preflight_screen_capture_access", lambda: asked.append(True) or True
-    )
-    alcove_observation.reset_screen_recording_cache()
+def test_the_daemon_doctor_has_no_alcove_line(headless) -> None:
+    """Alcove following and its Screen Recording permission are the app's, so
+    the daemon's doctor does not list a line for them."""
     controller = headless
     controller.applicationDidFinishLaunching_(None)
-    checks = {check["name"]: check for check in controller._core_doctor_document()["checks"]}
-    assert asked == []
-    assert checks["alcove_follow_state"]["ok"] is True
-    assert checks["alcove_follow_state"]["detail"].startswith("not_running")
+    names = {check["name"] for check in controller._core_doctor_document()["checks"]}
+    assert "alcove_follow_state" not in names
 
 
 def test_every_hid_probe_runs_on_the_same_thread(headless, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4311,7 +4698,8 @@ def test_usage_graph_command_routes_and_validates(headless, monkeypatch) -> None
 
     seen = {}
 
-    def document(settings, *, days=None, metric=None, provider_ids=None, t3_policy=None):
+    def document(settings, *, days=None, metric=None, provider_ids=None, t3_policy=None, native_reuse=None):
+        assert native_reuse is controller._core_native_graph_reuse
         seen.update(days=days, metric=metric, provider_ids=provider_ids)
         return {"graph": {"days": 30, "metric": "tokens", "series": []},
                 "summary": "Last 30 days: nothing"}
@@ -4342,6 +4730,25 @@ def test_usage_graph_command_routes_and_validates(headless, monkeypatch) -> None
     with pytest.raises(CommandError) as invalid:
         controller._core_dispatch("usage_graph", {"days": 14})
     assert invalid.value.code == "invalid_args"
+
+
+def test_native_graph_reuse_belongs_to_controller_and_closes_at_quit(headless, monkeypatch):
+    from jrbar import usage_graph_worker
+    owners = []
+    def document(_settings, **kwargs):
+        owners.append(kwargs["native_reuse"])
+        return {"graph": {}, "summary": ""}
+    monkeypatch.setattr(usage_graph_worker, "usage_graph_document", document)
+    headless.applicationDidFinishLaunching_(None)
+    core_runtime._cmd_usage_graph(headless, {})
+    core_runtime._cmd_usage_graph(headless, {})
+    other = SimpleNamespace(settings=headless.settings)
+    core_runtime._cmd_usage_graph(other, {})
+    assert owners[0] is owners[1] and owners[0] is not owners[2]
+    headless._core_lights_off = lambda: []
+    headless._core_quit_flush()
+    assert owners[0]._closed and owners[0]._slot is None
+    assert not owners[2]._closed
 
 
 def test_confetti_journals_one_burst_in_the_sessions_colours(headless, monkeypatch) -> None:
@@ -4377,6 +4784,26 @@ def test_confetti_journals_one_burst_in_the_sessions_colours(headless, monkeypat
     with pytest.raises(CommandError) as invalid:
         controller._core_dispatch("confetti", {"provider": "not a provider"})
     assert invalid.value.code == "invalid_args"
+
+
+
+def test_confetti_unavailable_stream_does_not_consume_cooldown(headless, monkeypatch) -> None:
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    server = controller._core
+    server.published.clear()
+    monkeypatch.setattr(core_runtime.time, "monotonic", lambda: 1_000.0)
+    controller._core = None
+
+    with pytest.raises(CommandError) as unavailable:
+        controller._core_dispatch("confetti", {})
+    assert unavailable.value.code == "unavailable"
+
+    controller._core = server
+    reply = controller._core_dispatch("confetti", {})
+    assert reply["sent"] is True
+    assert reply["coalesced"] is False
+    assert server.published == [("event", {"kind": "confetti"})]
 
 
 def test_quiet_this_run_snoozes_one_row_not_its_family(headless) -> None:
@@ -4760,3 +5187,159 @@ def test_the_keepalive_touches_only_sd_reader_devices(headless, tmp_path: Path) 
     assert controller.status_keepalive_targets() == [pro.target]
     controller.current_led_targets = lambda: []
     assert controller.status_keepalive_targets() == [pro.target]
+
+
+def test_the_daemon_starts_its_socket_with_the_authority_it_was_given__and_a_closed_one_otherwise(headless) -> None:
+    from jrbar.core_auth import CoreAuthority
+
+    headless.applicationDidFinishLaunching_(None)
+    unset = headless._core.kwargs["authority"]
+    assert isinstance(unset, CoreAuthority)
+    assert unset.has_secret is False and unset.dev_allow_unauth is False
+    assert unset.requires_app("answer_ask", {}) is True
+
+    given = CoreAuthority(bytes(32))
+    headless._core_authority = given
+    headless._core_start_server()
+    assert headless._core.kwargs["authority"] is given
+
+
+def test_a_completed_event_carries_how_long_and_what_it_last_said(headless) -> None:
+    """The finish banner's two facts ride the live event; the ledger row
+    stays metadata, so the agent's words are never written to disk."""
+    from jrbar.activity_ledger import ActivityEntry, ActivityKind
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    server = controller._core
+    server.published.clear()
+    entry = ActivityEntry(
+        ActivityKind.COMPLETED, time.time(), "jr-bar", "claude", "claude:session:one", None, 252.4
+    )
+    other = ActivityEntry(
+        ActivityKind.COMPLETED, time.time(), "other", "claude", "claude:session:two", None, None
+    )
+    controller._completion_summaries = {"claude:session:one": "All tests pass."}
+
+    controller.record_activity_entries((entry, other))
+
+    events = {e["session"]: e for kind, e in server.published if kind == "event"}
+    assert events["claude:session:one"]["summary"] == "All tests pass."
+    assert events["claude:session:one"]["duration"] == 252.4
+    # A session first seen already finished has neither fact; absent, not guessed.
+    assert "summary" not in events["claude:session:two"]
+    assert "duration" not in events["claude:session:two"]
+    ledger = controller.ensure_activity_ledger()
+    assert "All tests pass." not in repr(ledger.entries)
+
+
+@pytest.mark.parametrize("source_gains", [(1.0, 1.0, 1.0), (1.0, 0.38, 1.0)])
+def test_linked_screen_bar_carries_delivered_morning_palette(headless, source_gains):
+    from jrbar.dot_role import replace_brightness_line
+    from jrbar.led_status import apply_strip_transfer_to_program
+    from jrbar.status_bar_legacy import StatusBarDevice
+
+    controller = headless
+    pro, dot = _pro_and_dot(controller)
+    virtual = StatusBarDevice(
+        status_bar.VIRTUAL_DEVICE_ID, "Screen Bar", Path("/virtual"),
+        Path("/virtual/LEDS.LED"), True, "agent", brightness=128,
+        channel_gains=(0.9, 1.0, 1.1),
+    )
+    controller.status_bar_devices = lambda *, remember=True: [pro, dot, virtual]
+    nominal = "brightness 200\n#464C62 #242833 #111218 #07080A #020203 #010101 #000000 #000000 250ms cosine\nroll right 2s\noff 100ms\nrepeat"
+    delivered = apply_strip_transfer_to_program(nominal, source_gains)
+    led = controller.agent_led_controllers_by_device[pro.device_id]
+    led.last_program = delivered
+    led.last_nominal_program = nominal
+    led.channel_gains = source_gains
+    controller._core_hardware_anchor[pro.device_id] = 1000.0
+    controller.settings = controller.settings.with_link_screen_bar_to_hardware(True)
+    controller.settings = controller.settings.with_screen_bar_phase_offset_ms(250)
+    bar = controller._core_build_lights()["surfaces"]["screen_bar"]
+    assert bar["program"] == replace_brightness_line(delivered, controller._core_brightness_code(virtual))
+    assert bar["strip_transfer"] == {
+        "channel_gains": list(source_gains),
+        "display_channel_gains": [0.9, 1.0, 1.1],
+        "code_to_light_exponent": 1.0,
+    }
+    assert bar["anchor"] == 1000.25
+    assert bar["program"].count("#000000") == 5
+    if source_gains == (1.0, 1.0, 1.0):
+        assert "#10121F #07090E #09090E #000000" in bar["program"]
+    controller._core_brightness_code = lambda device: 0
+    dark = controller._core_build_lights()["surfaces"]["screen_bar"]
+    assert dark["program"].startswith("brightness 0\n")
+    assert dark["brightness"] == 0
+    assert dark["strip_transfer"] == bar["strip_transfer"]
+
+
+def test_linked_screen_bar_preview_uses_delivered_colors_and_temporary_gains(headless):
+    from jrbar.dot_role import replace_brightness_line
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, _dot = _calibration_devices(controller)
+    controller.settings = controller.settings.with_link_screen_bar_to_hardware(True)
+    reply = controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id,
+        "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+        "resting_glow": 0.0, "patch": "#242833",
+    })
+    lights = controller._core_build_lights()
+    bar = lights["surfaces"]["screen_bar"]
+    assert lights["surfaces"]["hardware"]["program"] == reply["program"]
+    assert bar["strip_transfer"]["channel_gains"] == [1.0, 1.0, 1.0]
+    assert bar["program"] == replace_brightness_line(reply["program"], round(bar["brightness"] * 255))
+    controller._core_previews.clear()
+    controller._core_dispatch("preview_program", {
+        "surface": "hardware", "program": "#242833 500ms\nrepeat",
+    })
+    led = controller.agent_led_controllers_by_device[pro.device_id]
+    lights = controller._core_build_lights()
+    bar = lights["surfaces"]["screen_bar"]
+    assert lights["surfaces"]["hardware"]["program"] == led.last_program
+    assert bar["program"] == replace_brightness_line(led.last_program, round(bar["brightness"] * 255))
+    assert bar["strip_transfer"]["channel_gains"] == [1.0, 0.38, 1.0]
+
+
+
+def test_dot_failure_cue_expires_to_steady_and_startup_failures_do_not_pulse(headless, monkeypatch):
+    from jrbar.attention import AttentionProjection, LifecycleMode, SignalKind, TransientSignal
+    from jrbar.dot_role import beacon_program
+    from jrbar.signal_coordinator import FiniteSignalCoordinator
+
+    controller = headless
+    controller._core_documents["state"] = {"aggregate": {"failed": 7, "mode": "failed"}}
+    clock = [100.0]
+    monkeypatch.setattr(core_runtime.time, "monotonic", lambda: clock[0])
+    signal = TransientSignal("synthetic-failure", SignalKind.FAILURE, 2, "claude:session:fixture")
+    projection = AttentionProjection(LifecycleMode.FAILED_VISIBLE, (), (), (signal,), "claude", None)
+    coordinator = FiniteSignalCoordinator()
+    controller.failure_signal_coordinator = coordinator
+    coordinator.establish_watermark(projection, now=clock[0])
+    restored = controller._core_dot_beacon_facts()
+    assert restored.blocked and not restored.failure_active
+    assert beacon_program(restored)[2] is False
+    # An unrelated new failure earns its finite cue without re-alerting old rows.
+    fresh = TransientSignal("synthetic-new-error", SignalKind.FAILURE, 2, "codex:session:fixture")
+    projection = AttentionProjection(LifecycleMode.FAILED_VISIBLE, (), (), (fresh,), "codex", None)
+    coordinator.observe(projection, now=clock[0])
+    assert controller._core_dot_beacon_facts().failure_active
+    assert beacon_program(controller._core_dot_beacon_facts())[2] is True
+    deadline = coordinator.next_deadline
+    assert deadline is not None
+    scheduled = []
+    controller.schedule_failure_signal_refresh = lambda now: scheduled.append(now)
+    repainted = []
+    controller.refresh_ = lambda _sender: repainted.append((controller._production_force_refresh, beacon_program(controller._core_dot_beacon_facts())))
+    clock[0] = deadline
+    controller.failureSignalExpired_(None)
+    assert scheduled == [deadline]
+    assert repainted[0][0] is True, "expiry must bypass unchanged-document refresh admission"
+    assert repainted[0][1][1:] == ("failed", False)
+    assert coordinator.next_deadline is None
+    coordinator.observe(projection, now=clock[0] + 10)
+    assert not controller._core_dot_beacon_facts().failure_active
+    controller._core_documents["state"]["aggregate"]["needs_you"] = 1
+    assert beacon_program(controller._core_dot_beacon_facts())[1] == "waiting"

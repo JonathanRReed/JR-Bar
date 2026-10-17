@@ -19,35 +19,35 @@ struct MenuBarNativeTriggerTests {
         let rules = [rule(.agentsStartedWorking, id: "w"), rule(.agentNeedsYou, id: "a"),
                      rule(.agentsFinished, id: "f")]
         // Already working at start: a baseline, nothing fires.
-        #expect(engine.actions(for: .agentState(.working), rules: rules).isEmpty)
-        #expect(engine.actions(for: .agentState(.working), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .agentState(.working), rules: rules).map(\.action).isEmpty)
+        #expect(engine.matchedRules(for: .agentState(.working), rules: rules).map(\.action).isEmpty)
         // An ask opens.
-        #expect(engine.actions(for: .agentState(.needsInput), rules: rules) == [.hideAll])
+        #expect(engine.matchedRules(for: .agentState(.needsInput), rules: rules).map(\.action) == [.hideAll])
         // Answered back into work: started-working fires, finished does not.
-        #expect(engine.actions(for: .agentState(.working), rules: [rules[0]]) == [.hideAll])
+        #expect(engine.matchedRules(for: .agentState(.working), rules: [rules[0]]).map(\.action) == [.hideAll])
         // Done.
-        #expect(engine.actions(for: .agentState(.completed), rules: [rules[2]]) == [.hideAll])
+        #expect(engine.matchedRules(for: .agentState(.completed), rules: [rules[2]]).map(\.action) == [.hideAll])
         // Completed → idle is not another finish.
-        #expect(engine.actions(for: .agentState(.idle), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .agentState(.idle), rules: rules).map(\.action).isEmpty)
     }
 
     @Test("an ask answered back into work is not a finish; a failed run is")
     func finishedMeansRest() {
         var engine = MenuBarTriggerEngine()
         let rules = [rule(.agentsFinished)]
-        _ = engine.actions(for: .agentState(.needsInput), rules: rules)
-        #expect(engine.actions(for: .agentState(.working), rules: rules).isEmpty)
-        #expect(engine.actions(for: .agentState(.failed), rules: rules) == [.hideAll])
+        _ = engine.matchedRules(for: .agentState(.needsInput), rules: rules).map(\.action)
+        #expect(engine.matchedRules(for: .agentState(.working), rules: rules).map(\.action).isEmpty)
+        #expect(engine.matchedRules(for: .agentState(.failed), rules: rules).map(\.action) == [.hideAll])
     }
 
     @Test("usage headroom fires on the downward crossing only, like the battery")
     func quotaCrossing() {
         var engine = MenuBarTriggerEngine()
         let rules = [rule(.quotaBelow(percent: 20))]
-        #expect(engine.actions(for: .quotaRemaining(10), rules: rules).isEmpty, "baseline")
-        #expect(engine.actions(for: .quotaRemaining(60), rules: rules).isEmpty)
-        #expect(engine.actions(for: .quotaRemaining(20), rules: rules) == [.hideAll])
-        #expect(engine.actions(for: .quotaRemaining(15), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .quotaRemaining(10), rules: rules).map(\.action).isEmpty, "baseline")
+        #expect(engine.matchedRules(for: .quotaRemaining(60), rules: rules).map(\.action).isEmpty)
+        #expect(engine.matchedRules(for: .quotaRemaining(20), rules: rules).map(\.action) == [.hideAll])
+        #expect(engine.matchedRules(for: .quotaRemaining(15), rules: rules).map(\.action).isEmpty)
     }
 
     @Test("SidePulse, the lid and the display count edge off their baselines")
@@ -56,15 +56,15 @@ struct MenuBarNativeTriggerTests {
         let rules = [rule(.sidePulseConnected, id: "on"), rule(.sidePulseDisconnected, id: "off"),
                      rule(.lidClosed, id: "shut"), rule(.lidOpened, id: "open"),
                      rule(.displayConnected, id: "d+"), rule(.displayDisconnected, id: "d-")]
-        #expect(engine.actions(for: .sidePulsePresent(false), rules: rules).isEmpty)
-        #expect(engine.actions(for: .sidePulsePresent(true), rules: [rules[0], rules[1]]) == [.hideAll])
-        #expect(engine.actions(for: .sidePulsePresent(true), rules: rules).isEmpty)
-        #expect(engine.actions(for: .clamshell(true), rules: rules).isEmpty, "baseline")
-        #expect(engine.actions(for: .clamshell(false), rules: [rules[2], rules[3]]) == [.hideAll])
-        #expect(engine.actions(for: .displayCount(1), rules: rules).isEmpty, "baseline")
-        #expect(engine.actions(for: .displayCount(2), rules: [rules[4], rules[5]]) == [.hideAll])
-        #expect(engine.actions(for: .displayCount(1), rules: [rules[5]]) == [.hideAll])
-        #expect(engine.actions(for: .displayCount(1), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .sidePulsePresent(false), rules: rules).map(\.action).isEmpty)
+        #expect(engine.matchedRules(for: .sidePulsePresent(true), rules: [rules[0], rules[1]]).map(\.action) == [.hideAll])
+        #expect(engine.matchedRules(for: .sidePulsePresent(true), rules: rules).map(\.action).isEmpty)
+        #expect(engine.matchedRules(for: .clamshell(true), rules: rules).map(\.action).isEmpty, "baseline")
+        #expect(engine.matchedRules(for: .clamshell(false), rules: [rules[2], rules[3]]).map(\.action) == [.hideAll])
+        #expect(engine.matchedRules(for: .displayCount(1), rules: rules).map(\.action).isEmpty, "baseline")
+        #expect(engine.matchedRules(for: .displayCount(2), rules: [rules[4], rules[5]]).map(\.action) == [.hideAll])
+        #expect(engine.matchedRules(for: .displayCount(1), rules: [rules[5]]).map(\.action) == [.hideAll])
+        #expect(engine.matchedRules(for: .displayCount(1), rules: rules).map(\.action).isEmpty)
     }
 
     @Test("app launch and quit match the bundle id case-insensitively and are events, not samples")
@@ -72,10 +72,10 @@ struct MenuBarNativeTriggerTests {
         var engine = MenuBarTriggerEngine()
         let rules = [rule(.appLaunched(bundleID: "us.zoom.xos"), id: "l"),
                      rule(.appQuit(bundleID: "us.zoom.xos"), id: "q")]
-        #expect(engine.actions(for: .appLaunched(bundleID: "US.Zoom.xos"), rules: [rules[0]]) == [.hideAll])
-        #expect(engine.actions(for: .appLaunched(bundleID: "us.zoom.xos"), rules: [rules[1]]).isEmpty)
-        #expect(engine.actions(for: .appTerminated(bundleID: "us.zoom.xos"), rules: rules) == [.hideAll])
-        #expect(engine.actions(for: .appTerminated(bundleID: "com.other"), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .appLaunched(bundleID: "US.Zoom.xos"), rules: [rules[0]]).map(\.action) == [.hideAll])
+        #expect(engine.matchedRules(for: .appLaunched(bundleID: "us.zoom.xos"), rules: [rules[1]]).map(\.action).isEmpty)
+        #expect(engine.matchedRules(for: .appTerminated(bundleID: "us.zoom.xos"), rules: rules).map(\.action) == [.hideAll])
+        #expect(engine.matchedRules(for: .appTerminated(bundleID: "com.other"), rules: rules).map(\.action).isEmpty)
     }
 
     @Test("the new triggers round-trip through the settings file and read as one line")
@@ -170,14 +170,19 @@ struct MenuBarNativeTriggerTests {
                                                       effects: [.ledScene(scene: "focus")])]
         utility.settings = { state }
         utility.onSettingsChange = { state = $0 }
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [] }
         utility.hider.onPlan = nil
         var scenes: [String] = []
-        var quiet: [Int] = []
-        utility.stateRules.currentScene = { "calm" }
-        utility.stateRules.setScene = { scenes.append($0) }
-        utility.stateRules.quietAgents = { quiet.append($0) }
-        var facts = MenuBarCoreFacts(live: true, agent: .idle, askPending: true)
+        var quiet: [MenuBarQuietLease.Action] = []
+        utility.stateRules.sceneLease.currentState = { .init(stream: "synthetic", revision: "manual-0") }
+        utility.stateRules.sceneLease.send = { _, _, _, scene in
+            if let scene { scenes.append(scene) }
+            return .superseded
+        }
+        utility.stateRules.quietLease.currentRevision = { "synthetic" }
+        utility.stateRules.quietLease.send = { action, _, _ in quiet.append(action); return .superseded }
+        @Captured var facts = MenuBarCoreFacts(live: true, agent: .idle, askPending: true)
         utility.coreFacts = { facts }
         utility.coreFactsChanged()
         facts.agent = .working

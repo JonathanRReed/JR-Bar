@@ -212,6 +212,8 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     /// Bundle ids that never earn a preview — DockDoor's app filters.
     /// A tile whose app is listed here rests and opens nothing.
     public var excludedBundleIDs: [String]
+    /// Apps omitted from both switcher strips. Preview filters stay separate.
+    public var switcherExcludedBundleIDs: [String]
     /// Resting on a Dock icon opens its preview. Off keeps the card on
     /// for the switcher alone — ⌥⇥ without hover panels.
     public var hoverPreviews: Bool
@@ -287,6 +289,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
                 windowSwitcher: Bool = true,
                 appSwitcher: Bool = false,
                 excludedBundleIDs: [String] = [],
+                switcherExcludedBundleIDs: [String] = [],
                 hoverPreviews: Bool = true,
                 switcherThisDisplay: Bool = false,
                 previewThisDisplay: Bool = false,
@@ -312,6 +315,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         self.windowSwitcher = windowSwitcher
         self.appSwitcher = appSwitcher
         self.excludedBundleIDs = excludedBundleIDs
+        self.switcherExcludedBundleIDs = switcherExcludedBundleIDs
         self.hoverPreviews = hoverPreviews
         self.switcherThisDisplay = switcherThisDisplay
         self.previewThisDisplay = previewThisDisplay
@@ -354,6 +358,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case previewDelay, showThumbnails, largePreviews, includeOffscreenWindows
         case holdDockOpen, compactListLimit, windowSwitcher, appSwitcher, excludedBundleIDs
+        case switcherExcludedBundleIDs
         case hoverPreviews, switcherThisDisplay, previewThisDisplay
         case previewTrigger, scrollGestures, clickToMinimize, learnedPicks, liveCard
         case frontAppChord
@@ -375,6 +380,7 @@ public struct DockEnhanceSettings: Codable, Equatable, Sendable {
         windowSwitcher = (try? c.decodeIfPresent(Bool.self, forKey: .windowSwitcher)) ?? true
         appSwitcher = (try? c.decodeIfPresent(Bool.self, forKey: .appSwitcher)) ?? false
         excludedBundleIDs = (try? c.decodeIfPresent([String].self, forKey: .excludedBundleIDs)) ?? []
+        switcherExcludedBundleIDs = (try? c.decodeIfPresent([String].self, forKey: .switcherExcludedBundleIDs)) ?? []
         hoverPreviews = (try? c.decodeIfPresent(Bool.self, forKey: .hoverPreviews)) ?? true
         switcherThisDisplay = (try? c.decodeIfPresent(Bool.self, forKey: .switcherThisDisplay)) ?? false
         previewThisDisplay = (try? c.decodeIfPresent(Bool.self, forKey: .previewThisDisplay)) ?? false

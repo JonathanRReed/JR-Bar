@@ -367,13 +367,13 @@ def test_exact_deletion_clears_disk_pending_calibration_and_summary_cache(
     provider_settings.write_text("provider stays")
     live_snapshot.write_text("live stays")
     store.summarize(HistoryInterval.DAY, now=NOW)
-    assert store.calibration_inputs == (_capacity(),)
+    assert store.state.capacity_samples == (_capacity(),)
     assert store.cached_summaries
 
     assert store.delete_capacity_history()
 
     assert store.state == CapacityHistoryState()
-    assert store.calibration_inputs == ()
+    assert store.state.capacity_samples == ()
     assert store.cached_summaries == {}
     reopened = CapacityHistoryStore(target, retention_days=7)
     assert reopened.restore().state == CapacityHistoryState()

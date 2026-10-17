@@ -366,13 +366,16 @@ def test_state_document_carries_the_deck_when_given__and_2_more() -> None:
     # is for input asks only.
     assert codex["ask"] == {
         "kind": "permission", "opened_at": 1788982800.0, "summary": "Run: rm -rf build",
+        # Asked 92 seconds ago by a session that spoke then: not stale, so
+        # there is nothing to dismiss.
+        "last_activity_at": 1788982800.0, "stale": False, "dismissible": False,
         "answerable": True, "replyable": False,
         # The fixture's request key is a namespace stub, not a real
         # RequestKey -- the episode identity is honestly absent.
         "request": None,
         # No PermissionRequest hook is holding it for JR-Bar, so the decide
         # lane has nothing to say about it.
-        "decision": None, "preview": None, "risk": None,
+        "decision": None, "preview": None, "risk": None, "detail": None,
     }
     assert codex["next_actor"] == "user"
     # The origin comes from the hook annotation when the registry has none.
@@ -384,8 +387,9 @@ def test_state_document_carries_the_deck_when_given__and_2_more() -> None:
     assert document["asks"] == [
         {
             "session": CODEX_ID, "kind": "permission", "opened_at": 1788982800.0,
+            "last_activity_at": 1788982800.0, "stale": False, "dismissible": False,
             "summary": "Run: rm -rf build", "answerable": True, "replyable": False,
-            "request": None, "decision": None, "preview": None, "risk": None,
+            "request": None, "decision": None, "preview": None, "risk": None, "detail": None,
         }
     ]
     assert document["aggregate"] == {
@@ -1695,6 +1699,27 @@ def _usage_state_with(*lanes: SimpleNamespace) -> SimpleNamespace:
     )
 
 
+@pytest.mark.parametrize("instance", ["default", "work"])
+def test_forecast_projection_uses_current_account_history(instance: str) -> None:
+    buffer = UsageSampleBuffer()
+    for offset in range(60, -1, -5):
+        for account in (None, "account-A"):
+            buffer.record("claude", "five_hour", 40.0 - offset / 6.0,
+                          at=NOW - offset * 60.0, instance=instance,
+                          account_discriminator=account)
+    state = _usage_state_with(_measured_lane("five_hour", "5h", 60.0, NOW + 3600))
+    snapshot = state.snapshots[0]
+    snapshot.source_instance_id = instance
+    snapshot.account_discriminator = "account-B"
+    fresh = usage_document(state, usage_samples=buffer, now=NOW)["providers"][0]
+    assert fresh["forecast"]["pace"] == "guarded"
+    assert fresh["forecast"]["samples"] == 0
+    snapshot.account_discriminator = "account-A"
+    stable = usage_document(state, usage_samples=buffer, now=NOW)["providers"][0]
+    assert stable["forecast"]["rate_pct_per_hour"] == pytest.approx(10.0)
+    assert stable["forecast"]["samples"] == 13
+
+
 def _measured_lane(lane_id: str, label: str, remaining: float, reset_at: float | None):
     return SimpleNamespace(
         lane_id=lane_id, label=label, remaining_percent=remaining, reset_at=reset_at,
@@ -1969,3 +1994,65 @@ def test_a_read_time_after_the_attempt_is_clamped_to_the_attempt() -> None:
 
     junk = SimpleNamespace(**{**vars(later), "read_at": float("nan")})
     assert _usage_with(junk)["read_at"] == NOW - 30.0
+
+
+def test_lights_strip_transfer_is_optional_and_gains_are_bounded():
+    from jrbar.led_status import strip_transfer_metadata
+
+    transfer = strip_transfer_metadata((float("nan"), -2, 8), (float("inf"), 0.8, 1.2))
+    assert transfer == {
+        "channel_gains": [1.0, 0.3, 1.5],
+        "display_channel_gains": [1.0, 0.8, 1.2],
+        "code_to_light_exponent": 1.0,
+    }
+    lights = build_lights_document({
+        "screen_bar": SurfaceFacts("#10121F", strip_transfer=transfer),
+        "hardware": SurfaceFacts("#10121F"),
+    }, linked=True)
+    assert lights["surfaces"]["screen_bar"]["strip_transfer"] == transfer
+    assert "strip_transfer" not in lights["surfaces"]["hardware"]
+
+
+def test_old_terminal_failures_leave_live_surfaces_but_keep_history_outcome() -> None:
+    failed = _status(provider="claude", agent_id=CLAUDE_ID, session_id=CLAUDE_SID,
+                     mode=AgentMode.BLOCKED_ERROR, event_name="StopFailure",
+                     updated_at=datetime.fromtimestamp(NOW - 35 * 60, tz=timezone.utc))
+    working = _status(provider="codex", agent_id=CODEX_ID, mode=AgentMode.WORKING,
+                      event_name="UserPromptSubmit", updated_at=datetime.fromtimestamp(NOW, tz=timezone.utc))
+    snapshot = SimpleNamespace(statuses=(failed, working), stale_statuses=(),
+                               collected_at=datetime.fromtimestamp(NOW, tz=timezone.utc))
+    state = build_state_document(generation=1, now=NOW, snapshot=snapshot, ask_statuses=[],
+                                 unseen_completion_ids=frozenset())
+    assert [row["id"] for row in state["sessions"]] == [CODEX_ID]
+    assert state["aggregate"]["mode"] == "working"
+    assert state["aggregate"]["failed"] == 0
+    assert state["hidden_count"] == 1
+    history = session_document(failed, now=NOW, operator_state=None, ask_ids=frozenset(),
+                               extras=None, workers=0)
+    assert history["lifecycle"] == "failed"
+    assert history["axes"]["outcome"] == "failed"
+
+
+@pytest.mark.parametrize("actor", ["none", "unknown"])
+def test_session_preserves_explicit_canonical_next_actor(actor):
+    status = _status(mode=AgentMode.ENDED_UNCONFIRMED, event_name="StopUnconfirmed")
+    state = SimpleNamespace(works=(SimpleNamespace(
+        key=status.work_key, next_actor=SimpleNamespace(value=actor),
+    ),))
+    row = session_document(status, operator_state=state, ask_ids=frozenset(),
+                           extras=None, workers=0)
+    assert row["next_actor"] == actor
+
+
+@pytest.mark.parametrize("mode,actor", [
+    (AgentMode.WORKING, "provider"),
+    (AgentMode.UNKNOWN, "provider"),
+    (AgentMode.ENDED_UNCONFIRMED, "provider"),
+    (AgentMode.WAITING_FOR_INPUT, "user"),
+    (AgentMode.COMPLETED, "user"),
+    (AgentMode.BLOCKED_ERROR, "user"),
+])
+def test_session_without_canonical_work_keeps_legacy_next_actor(mode, actor):
+    row = session_document(_status(mode=mode), operator_state=None,
+                           ask_ids=frozenset(), extras=None, workers=0)
+    assert row["next_actor"] == actor

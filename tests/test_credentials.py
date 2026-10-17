@@ -28,6 +28,49 @@ def _completed(returncode: int, stdout: str = "") -> subprocess.CompletedProcess
     return subprocess.CompletedProcess(args=["security"], returncode=returncode, stdout=stdout, stderr="")
 
 
+def test_foreground_and_background_use_the_same_isolated_reader(tmp_path, monkeypatch):
+    from jrbar import credentials as module
+
+    calls = []
+
+    def run(arguments, **kwargs):
+        calls.append((arguments, kwargs))
+        return _completed(0, "synthetic-secret")
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    ledger = KeychainConsentLedger(tmp_path / "consent.json")
+    assert read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=True, ledger=ledger).ok
+    assert read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger).ok
+    foreground, background = calls
+    assert foreground[0][:3] == background[0][:3]
+    assert foreground[0][1:3] == ["-m", "jrbar.keychain_read"]
+    assert "--allow-prompt" in foreground[0]
+    assert "--allow-prompt" not in background[0]
+    assert background[1]["timeout"] <= 5
+
+
+@pytest.mark.parametrize("code, outcome", [(3, CredentialOutcome.PROMPT_NOT_ALLOWED), (2, CredentialOutcome.UNAVAILABLE)])
+def test_background_reader_refusal_has_no_prompt_fallback(tmp_path, monkeypatch, code, outcome):
+    from jrbar import credentials as module
+
+    ledger = KeychainConsentLedger(tmp_path / "consent.json")
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1_000)
+    calls = []
+
+    def run(arguments, **kwargs):
+        calls.append(arguments)
+        return _completed(code)
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    result = read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger)
+    assert result.outcome is outcome
+    assert result.secret is None
+    assert len(calls) == 1
+    assert "--allow-prompt" not in calls[0]
+    assert ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service)
+    assert ledger.retry_at(CLAUDE_CODE_KEYCHAIN.service, 1_001) is None
+
+
 def test_background_reads_never_reach_the_keychain__and_2_more(tmp_path: Path) -> None:
     # --- scenario: background_reads_never_reach_the_keychain
     """The property that keeps this app off the 'why is it asking' list."""
@@ -251,7 +294,7 @@ def test_a_background_read_cannot_park_a_worker_thread_for_half_a_minute(tmp_pat
 
     seen = {}
 
-    def runner(item, *, timeout):
+    def runner(item, *, timeout, allow_prompt):
         seen["timeout"] = timeout
         import subprocess
 
@@ -259,8 +302,8 @@ def test_a_background_read_cannot_park_a_worker_thread_for_half_a_minute(tmp_pat
 
     ledger = KeychainConsentLedger(tmp_path / "consent.json")
     ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1_000.0)
-    original = module._run_security
-    module._run_security = runner
+    original = module._run_keychain_reader
+    module._run_keychain_reader = runner
     try:
         read_keychain_secret(
             CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger
@@ -269,7 +312,7 @@ def test_a_background_read_cannot_park_a_worker_thread_for_half_a_minute(tmp_pat
         read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=True)
         foreground = seen["timeout"]
     finally:
-        module._run_security = original
+        module._run_keychain_reader = original
 
     assert background <= 5.0, "no dialog is expected, so do not wait for one"
     assert foreground >= background, "a real prompt gets room to be answered"

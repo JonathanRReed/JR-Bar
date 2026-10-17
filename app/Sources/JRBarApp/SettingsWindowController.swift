@@ -21,14 +21,37 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     func show(page: SettingsStore.Page? = nil) {
         if let page { store.page = page }
+        present()
+    }
+
+    /// Opens the window on the page that holds a chapter, scrolled to it.
+    func show(chapter: SettingsStore.Chapter) {
+        store.open(chapter: chapter)
+        present()
+    }
+
+    /// Opens whatever a link, a script or an older build named: a page,
+    /// a chapter of one, or (when nobody holds the name) General.
+    func show(named name: String?) {
+        store.open(named: name)
+        present()
+    }
+
+    private func present() {
         let window = self.window ?? makeWindow()
         self.window = window
         attachSettingsContent(to: window)
-        WindowFront.bring(window)
         // Focus starts on the sidebar, as in System Settings, not on whichever
-        // text field happens to come first in the key loop.
-        DispatchQueue.main.async {
-            window.makeFirstResponder(Self.sidebarTable(in: window.contentView) ?? nil)
+        // text field happens to come first in the key loop. A window the
+        // person is already working in keeps its focus: ⌘, or a link while
+        // typing in a field must not pull the cursor away.
+        let alreadyKey = window.isKeyWindow
+        WindowFront.bring(window)
+        if !alreadyKey {
+            DispatchQueue.main.async {
+                guard let table = Self.sidebarTable(in: window.contentView) else { return }
+                window.makeFirstResponder(table)
+            }
         }
         noteOcclusion(of: window)
     }

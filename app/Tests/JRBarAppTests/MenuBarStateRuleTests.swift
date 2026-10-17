@@ -132,309 +132,139 @@ struct MenuBarStateRuleTests {
 
     // MARK: The runner's effects
 
+    // MARK: Through the utility
+
     @MainActor
-    private final class Recorder {
-        var scene: String? = "calm"
-        var before: String?
-        var quiet: [Int] = []
-        /// The daemon's override slot as the rule reads it, and the
-        /// quiets put back ("mode:seconds").
-        var current: MenuBarQuiet?
-        var restored: [String] = []
-        var layers = 0
-        func wire(_ runner: MenuBarStateRunner, rules: [MenuBarStateRule]) {
-            runner.rules = { rules }
-            runner.currentScene = { [unowned self] in self.scene }
-            runner.setScene = { [unowned self] in self.scene = $0 }
-            runner.sceneBeforeRule = { [unowned self] in self.before }
-            runner.setSceneBeforeRule = { [unowned self] in self.before = $0 }
-            runner.quietAgents = { [unowned self] in self.quiet.append($0) }
-            runner.currentQuiet = { [unowned self] in self.current }
-            runner.restoreQuiet = { [unowned self] in self.restored.append("\($0):\($1)") }
-            runner.onLayersChange = { [unowned self] in self.layers += 1 }
+    @Test("renaming an active holding profile preserves its layer and acquisition time")
+    func renameHoldingProfile() {
+        let utility = MenuBarUtility()
+        var state = MenuBarSettings(enabled: false)
+        state.concealedApps = ["base-app": .shown]
+        state.profiles = [MenuBarSettings.Profile(id: "work", name: "Work",
+                                                  concealedApps: ["base-app": .alwaysHidden]),
+                          MenuBarSettings.Profile(id: "other", name: "Travel")]
+        state.curation.stateRules = [rule(.microphoneLive, [.useProfile(name: "work")], id: "hold")]
+        utility.settings = { state }
+        utility.stateRules.rules = { state.curation.stateRules }
+        let acquired = Date(timeIntervalSince1970: 100)
+        var reconcileTime = acquired.addingTimeInterval(1)
+        var writes = 0
+        utility.onSettingsChange = { [weak utility] in
+            state = $0
+            writes += 1
+            #expect(utility != nil)
+            utility?.stateRules.evaluate(now: reconcileTime)
+            #expect(utility?.stateRules.profileSince == acquired)
+        }
+        utility.stateRules.absorb(.micInUse(true), now: acquired)
+        #expect(utility.liveSettings().concealedApps == ["base-app": .alwaysHidden])
+
+        let before = state
+        for name in ["Travel", "None", ""] {
+            utility.renameProfile(id: "work", to: name)
+            #expect(state == before)
+            #expect(utility.stateRules.outcome.profileName == "work")
+            #expect(utility.stateRules.profileSince == acquired)
+        }
+        #expect(writes == 0)
+        utility.renameProfile(id: "work", to: "Office")
+        #expect(writes == 1)
+        utility.stateRules.evaluate(now: acquired.addingTimeInterval(1))
+        #expect(utility.stateRules.outcome.profileName == "Office")
+        #expect(utility.stateRules.profileSince == acquired)
+        #expect(utility.liveSettings().concealedApps == ["base-app": .alwaysHidden])
+
+        utility.applyProfile(id: MenuBarProfiles.noneID)
+        #expect(writes == 2)
+        #expect(utility.liveSettings().concealedApps == ["base-app": .shown])
+        reconcileTime = Date.distantFuture
+        utility.renameProfile(id: "work", to: "Studio")
+        #expect(writes == 3)
+        utility.stateRules.evaluate(now: Date.distantFuture)
+        #expect(utility.stateRules.outcome.profileName == "Studio")
+        #expect(utility.stateRules.profileSince == acquired)
+        #expect(utility.liveSettings().concealedApps == ["base-app": .shown],
+                "renaming a held profile must not override a later manual choice")
+        utility.stateRules.absorb(.micInUse(false), now: Date.distantFuture)
+        #expect(utility.stateRules.profileSince == nil)
+    }
+
+    @MainActor
+    @Test("a duplicate profile rename keeps the held layer with its original owner")
+    func duplicateRenameHeldOwner() {
+        for renamedID in ["first", "second"] {
+            let utility = MenuBarUtility()
+            var state = MenuBarSettings(enabled: false)
+            state.profiles = [
+                MenuBarSettings.Profile(id: "first", name: "Work", concealedApps: ["app": .hidden]),
+                MenuBarSettings.Profile(id: "second", name: "work", concealedApps: ["app": .alwaysHidden]),
+            ]
+            state.curation.stateRules = [rule(.microphoneLive, [.useProfile(name: "WORK")], id: "hold")]
+            state.triggerRules = [MenuBarTriggerRule(trigger: .focusEnabled,
+                                                    action: .applyProfile(name: "work"))]
+            utility.settings = { state }
+            utility.stateRules.rules = { state.curation.stateRules }
+            let acquired = Date(timeIntervalSince1970: 100)
+            utility.stateRules.absorb(.micInUse(true), now: acquired)
+            #expect(utility.liveSettings().concealedApps == ["app": .hidden])
+            var writes = 0
+            utility.onSettingsChange = { [weak utility] in
+                state = $0
+                writes += 1
+                #expect(utility != nil)
+                guard let utility else { return }
+                utility.stateRules.evaluate(now: acquired.addingTimeInterval(1))
+                #expect(utility.stateRules.profileSince == acquired)
+                #expect(utility.liveSettings().concealedApps == ["app": .hidden])
+            }
+            utility.renameProfile(id: renamedID, to: "Office")
+            #expect(writes == 1)
+            let expectedName = renamedID == "first" ? "Office" : "WORK"
+            #expect(utility.stateRules.outcome.profileName == expectedName)
+            #expect(utility.stateRules.profileSince == acquired)
+            #expect(utility.liveSettings().concealedApps == ["app": .hidden])
+            let owner = state.profiles.first {
+                $0.name.caseInsensitiveCompare(expectedName) == .orderedSame
+            }
+            #expect(owner?.id == "first")
+            if case .applyProfile(let name) = state.triggerRules[0].action {
+                utility.menuBarActions(utility.actions, applyProfile: name)
+            }
+            #expect(state.curation.activeProfileID == "first")
         }
     }
 
     @MainActor
-    @Test("a scene held while the rule lasts puts yours back after")
-    func sceneRestores() {
+    @Test("changing a rule's profile effect takes a new acquisition time")
+    func editedProfileEffectReacquires() {
         let runner = MenuBarStateRunner()
-        let recorder = Recorder()
-        recorder.wire(runner, rules: [rule(.microphoneLive, [.ledScene(scene: "focus")])])
-        runner.absorb(.micInUse(false))
-        #expect(recorder.scene == "calm")
-        runner.absorb(.micInUse(true))
-        #expect(recorder.scene == "focus")
-        #expect(recorder.before == "calm")
-        runner.absorb(.micInUse(false))
-        #expect(recorder.scene == "calm")
-        #expect(recorder.before == nil)
-        #expect(recorder.layers == 0, "a scene-only rule never re-plans the bar")
+        var rules = [rule(.microphoneLive, [.useProfile(name: "Work")], id: "hold")]
+        runner.rules = { rules }
+        let acquired = Date(timeIntervalSince1970: 100)
+        let edited = acquired.addingTimeInterval(1)
+        runner.absorb(.micInUse(true), now: acquired)
+        rules[0].effects = [.useProfile(name: "Office")]
+        runner.evaluate(now: edited)
+        #expect(runner.outcome.profileName == "Office")
+        #expect(runner.profileSince == edited)
     }
 
     @MainActor
-    @Test("a scene you changed yourself mid-rule is left alone")
-    func sceneUserWins() {
-        let runner = MenuBarStateRunner()
-        let recorder = Recorder()
-        recorder.wire(runner, rules: [rule(.microphoneLive, [.ledScene(scene: "focus")])])
-        runner.absorb(.micInUse(true))
-        recorder.scene = "night"
-        runner.absorb(.micInUse(false))
-        #expect(recorder.scene == "night")
-        #expect(recorder.before == nil)
+    @Test("a profile rename without a settings writer leaves the held profile alone")
+    func renameWithoutWriter() {
+        let utility = MenuBarUtility()
+        var state = MenuBarSettings(enabled: false)
+        state.profiles = [MenuBarSettings.Profile(id: "work", name: "Work")]
+        state.curation.stateRules = [rule(.microphoneLive, [.useProfile(name: "Work")])]
+        utility.settings = { state }
+        utility.stateRules.rules = { state.curation.stateRules }
+        let acquired = Date(timeIntervalSince1970: 100)
+        utility.stateRules.absorb(.micInUse(true), now: acquired)
+        utility.renameProfile(id: "work", to: "Office")
+        #expect(state.profiles[0].name == "Work")
+        #expect(utility.stateRules.outcome.profileName == "Work")
+        #expect(utility.stateRules.profileSince == acquired)
     }
-
-    @MainActor
-    @Test("a relaunch mid-rule keeps the scene remembered before it, not the rule's own")
-    func sceneRelaunch() {
-        let runner = MenuBarStateRunner()
-        let recorder = Recorder()
-        recorder.scene = "focus"
-        recorder.before = "calm"
-        recorder.wire(runner, rules: [rule(.microphoneLive, [.ledScene(scene: "focus")])])
-        runner.absorb(.micInUse(true))
-        #expect(recorder.before == "calm")
-        runner.absorb(.micInUse(false))
-        #expect(recorder.scene == "calm")
-    }
-
-    @MainActor
-    @Test("after a quit mid-rule, yours comes back once the rule no longer holds; a holding rule keeps both")
-    func sceneAfterQuit() {
-        let rules = [rule(.microphoneLive, [.ledScene(scene: "focus")])]
-        // The quit left the rule's scene on the strip and yours saved.
-        let holding = MenuBarStateRunner()
-        let kept = Recorder()
-        kept.scene = "focus"
-        kept.before = "calm"
-        kept.wire(holding, rules: rules)
-        holding.absorb(.micInUse(true))
-        holding.restoreSceneAfterRelaunch()
-        #expect(kept.scene == "focus", "the rule holds again: its scene stays")
-        #expect(kept.before == "calm")
-        holding.absorb(.micInUse(false))
-        #expect(kept.scene == "calm")
-
-        let lapsed = MenuBarStateRunner()
-        let stale = Recorder()
-        stale.scene = "focus"
-        stale.before = "calm"
-        stale.wire(lapsed, rules: rules)
-        lapsed.absorb(.micInUse(false))
-        #expect(stale.scene == "focus", "a rule that no longer holds never moves on its own")
-        lapsed.restoreSceneAfterRelaunch()
-        #expect(stale.scene == "calm")
-        #expect(stale.before == nil)
-        stale.scene = "night"
-        lapsed.absorb(.micInUse(true))
-        lapsed.absorb(.micInUse(false))
-        #expect(stale.scene == "night", "the next rule to let go puts back what you picked, not the stale scene")
-    }
-
-    @MainActor
-    @Test("the agents' quiet is leased on entry and ended on exit; stop lets everything go")
-    func quietLease() {
-        let runner = MenuBarStateRunner()
-        let recorder = Recorder()
-        recorder.wire(runner, rules: [rule(.agentsWorking, [.quietAgents, .quietBar])])
-        runner.absorb(.agentState(.working))
-        #expect(recorder.quiet == [MenuBarStateRunner.quietLeaseSeconds])
-        #expect(recorder.layers == 1)
-        runner.absorb(.agentState(.working))
-        #expect(recorder.quiet.count == 1, "a repeat sample changes nothing")
-        runner.stop()
-        #expect(recorder.quiet == [MenuBarStateRunner.quietLeaseSeconds, 0])
-        #expect(recorder.layers == 2)
-        #expect(runner.outcome == MenuBarStateOutcome())
-    }
-
-    /// The daemon's echo of a lease taken at `at`.
-    private func leaseEcho(at date: Date) -> MenuBarQuiet {
-        MenuBarQuiet(mode: "pause",
-                     until: date.timeIntervalSince1970 + Double(MenuBarStateRunner.quietLeaseSeconds) + 0.4)
-    }
-
-    @MainActor
-    @Test("a quiet of yours that outlasts the lease runs on; a shorter one comes back after the rule")
-    func quietKeepsYours() {
-        let t0 = Date(timeIntervalSince1970: 10_000)
-        let epoch = t0.timeIntervalSince1970
-        let rules = [rule(.microphoneLive, [.quietAgents])]
-        // Two hours of Dim set by hand: no lease, and nothing ended.
-        let long = MenuBarStateRunner()
-        let yours = Recorder()
-        yours.wire(long, rules: rules)
-        yours.current = MenuBarQuiet(mode: "dim", until: epoch + 7200)
-        long.absorb(.micInUse(true), now: t0)
-        long.holdQuiet(now: t0.addingTimeInterval(600))
-        long.absorb(.micInUse(false), now: t0.addingTimeInterval(700))
-        #expect(yours.quiet.isEmpty && yours.restored.isEmpty)
-        // Five minutes of Mute: the lease replaces it, and it comes back
-        // with the time it had left — no 0 in between.
-        let short = MenuBarStateRunner()
-        let mute = Recorder()
-        mute.wire(short, rules: rules)
-        mute.current = MenuBarQuiet(mode: "mute", until: epoch + 300)
-        short.absorb(.micInUse(true), now: t0)
-        #expect(mute.quiet == [MenuBarStateRunner.quietLeaseSeconds])
-        mute.current = leaseEcho(at: t0)
-        short.absorb(.micInUse(false), now: t0.addingTimeInterval(60))
-        #expect(mute.restored == ["mute:240"])
-        #expect(mute.quiet == [MenuBarStateRunner.quietLeaseSeconds])
-        // Twenty minutes of Dim runs down under the rule: the renewal
-        // takes the lease before it ends, and puts the rest back after.
-        let fading = MenuBarStateRunner()
-        let dim = Recorder()
-        dim.wire(fading, rules: rules)
-        dim.current = MenuBarQuiet(mode: "dim", until: epoch + 1200)
-        fading.absorb(.micInUse(true), now: t0)
-        #expect(dim.quiet.isEmpty)
-        fading.holdQuiet(now: t0.addingTimeInterval(600))
-        #expect(dim.quiet == [MenuBarStateRunner.quietLeaseSeconds])
-        dim.current = leaseEcho(at: t0.addingTimeInterval(600))
-        fading.absorb(.micInUse(false), now: t0.addingTimeInterval(700))
-        #expect(dim.restored == ["dim:500"])
-        // A rule that ends before the daemon's echo lands still puts
-        // yours back.
-        let quick = MenuBarStateRunner()
-        let blink = Recorder()
-        blink.wire(quick, rules: rules)
-        blink.current = MenuBarQuiet(mode: "mute", until: epoch + 300)
-        quick.absorb(.micInUse(true), now: t0)
-        quick.absorb(.micInUse(false), now: t0.addingTimeInterval(0.2))
-        #expect(blink.restored == ["mute:300"])
-    }
-
-    @MainActor
-    @Test("a quiet changed or ended by hand mid-rule is yours: no renewal, nothing ended after")
-    func quietChangedByHand() {
-        let t0 = Date(timeIntervalSince1970: 10_000)
-        let epoch = t0.timeIntervalSince1970
-        let rules = [rule(.microphoneLive, [.quietAgents])]
-        let lease = MenuBarStateRunner.quietLeaseSeconds
-        // The lease renews while it is the quiet in force, and ends after.
-        let steady = MenuBarStateRunner()
-        let ours = Recorder()
-        ours.wire(steady, rules: rules)
-        steady.absorb(.micInUse(true), now: t0)
-        ours.current = leaseEcho(at: t0)
-        steady.holdQuiet(now: t0.addingTimeInterval(600))
-        #expect(ours.quiet == [lease, lease])
-        ours.current = leaseEcho(at: t0.addingTimeInterval(600))
-        steady.absorb(.micInUse(false), now: t0.addingTimeInterval(700))
-        #expect(ours.quiet == [lease, lease, 0])
-        // An hour of Dim set mid-rule: the renewal stands down and the
-        // rule's end leaves it.
-        let changed = MenuBarStateRunner()
-        let dim = Recorder()
-        dim.wire(changed, rules: rules)
-        changed.absorb(.micInUse(true), now: t0)
-        dim.current = MenuBarQuiet(mode: "dim", until: epoch + 100 + 3600)
-        changed.holdQuiet(now: t0.addingTimeInterval(600))
-        changed.absorb(.micInUse(false), now: t0.addingTimeInterval(700))
-        #expect(dim.quiet == [lease])
-        #expect(dim.restored.isEmpty)
-        // The quiet ended by hand mid-rule stays ended.
-        let ended = MenuBarStateRunner()
-        let off = Recorder()
-        off.wire(ended, rules: rules)
-        off.current = MenuBarQuiet(mode: "mute", until: epoch + 300)
-        ended.absorb(.micInUse(true), now: t0)
-        off.current = nil
-        ended.holdQuiet(now: t0.addingTimeInterval(600))
-        ended.absorb(.micInUse(false), now: t0.addingTimeInterval(700))
-        #expect(off.quiet == [lease])
-        #expect(off.restored.isEmpty, "the Mute the lease replaced is not revived")
-    }
-
-    @MainActor
-    @Test("a lease that ran out on the daemon's clock is renewed; a quiet ended or set by hand still yields")
-    func quietLapsedIsRenewed() {
-        let t0 = Date(timeIntervalSince1970: 10_000)
-        let epoch = t0.timeIntervalSince1970
-        let rules = [rule(.microphoneLive, [.quietAgents])]
-        let lease = MenuBarStateRunner.quietLeaseSeconds
-        func later(_ seconds: Double) -> Date { t0.addingTimeInterval(seconds) }
-
-        // A. A Mac that slept past the lease reads no quiet at the next
-        // renewal: the lease ran out, so the rule takes it again — and
-        // the renewed lease ends with the rule.
-        let slept = MenuBarStateRunner()
-        let sleeper = Recorder()
-        sleeper.wire(slept, rules: rules)
-        slept.absorb(.micInUse(true), now: t0)
-        sleeper.current = nil
-        slept.holdQuiet(now: later(1000))
-        #expect(sleeper.quiet == [lease, lease])
-        sleeper.current = leaseEcho(at: later(1000))
-        slept.absorb(.micInUse(false), now: later(1100))
-        #expect(sleeper.quiet == [lease, lease, 0])
-
-        // B. The boundary: one second before the lease's end a nil read is
-        // a hand; at the end it is the lease running out.
-        let early = MenuBarStateRunner()
-        let justBefore = Recorder()
-        justBefore.wire(early, rules: rules)
-        early.absorb(.micInUse(true), now: t0)
-        justBefore.current = nil
-        early.holdQuiet(now: later(899))
-        #expect(justBefore.quiet == [lease])
-        let edge = MenuBarStateRunner()
-        let atEnd = Recorder()
-        atEnd.wire(edge, rules: rules)
-        edge.absorb(.micInUse(true), now: t0)
-        atEnd.current = nil
-        edge.holdQuiet(now: later(900))
-        #expect(atEnd.quiet == [lease, lease])
-
-        // C. A quiet of somebody else's standing after the lease's end is
-        // theirs, never renewed over.
-        let foreign = MenuBarStateRunner()
-        let hand = Recorder()
-        hand.wire(foreign, rules: rules)
-        foreign.absorb(.micInUse(true), now: t0)
-        hand.current = MenuBarQuiet(mode: "dim", until: epoch + 100 + 3600)
-        foreign.holdQuiet(now: later(2000))
-        #expect(hand.quiet == [lease])
-        foreign.absorb(.micInUse(false), now: later(2100))
-        #expect(hand.quiet == [lease], "no 0: the Dim is left as it stands")
-        #expect(hand.restored.isEmpty)
-
-        // D. Two leases in the window: the newest end is the one that
-        // counts, so a nil before it is a hand and one after it a lapse.
-        let renewed = MenuBarStateRunner()
-        let pair = Recorder()
-        pair.wire(renewed, rules: rules)
-        renewed.absorb(.micInUse(true), now: t0)
-        pair.current = leaseEcho(at: t0)
-        renewed.holdQuiet(now: later(600))
-        #expect(pair.quiet == [lease, lease])
-        pair.current = nil
-        renewed.holdQuiet(now: later(1200))
-        #expect(pair.quiet == [lease, lease], "before the newest end at t0+1500: yours")
-        let overdue = MenuBarStateRunner()
-        let stalled = Recorder()
-        stalled.wire(overdue, rules: rules)
-        overdue.absorb(.micInUse(true), now: t0)
-        stalled.current = leaseEcho(at: t0)
-        overdue.holdQuiet(now: later(600))
-        stalled.current = nil
-        overdue.holdQuiet(now: later(2500))
-        #expect(stalled.quiet == [lease, lease, lease])
-
-        // E. A rule that yielded stays yielded until it enters again.
-        let stood = MenuBarStateRunner()
-        let yielded = Recorder()
-        yielded.wire(stood, rules: rules)
-        stood.absorb(.micInUse(true), now: t0)
-        yielded.current = nil
-        stood.holdQuiet(now: later(899))
-        stood.holdQuiet(now: later(3000))
-        #expect(yielded.quiet == [lease], "yielded at t0+899, still yielded at t0+3000")
-    }
-
-    // MARK: Through the utility
 
     @MainActor
     @Test("a while rule's quiet bar and profile are layers — the map is never written")
@@ -448,6 +278,7 @@ struct MenuBarStateRuleTests {
         state.curation.stateRules = [rule(.microphoneLive, [.useProfile(name: "meeting")])]
         utility.settings = { state }
         utility.onSettingsChange = { state = $0 }
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [] }
         utility.hider.onPlan = nil
         utility.stateRules.rules = { state.curation.stateRules }
@@ -474,6 +305,7 @@ struct MenuBarStateRuleTests {
         state.curation.stateRules = [rule(.microphoneLive, [.quietBar])]
         utility.settings = { state }
         utility.onSettingsChange = { state = $0 }
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [] }
         utility.hider.onPlan = nil
         utility.stateRules.rules = { state.curation.stateRules }
@@ -497,6 +329,7 @@ struct MenuBarStateRuleTests {
         state.curation.stateRules = [rule(.microphoneLive, [.quietBar])]
         utility.settings = { state }
         utility.onSettingsChange = { state = $0 }
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [] }
         utility.hider.onPlan = nil
         utility.stateRules.rules = { state.curation.stateRules }
@@ -520,31 +353,23 @@ struct MenuBarStateRuleTests {
     }
 
     @MainActor
-    @Test("a relaunch puts the saved scene back at the core's first live facts, once — parked, no rule on")
-    func utilitySceneAfterQuit() {
+    @Test("legacy saved scene names are discarded without changing the daemon")
+    func utilityDiscardsLegacyScene() {
         let utility = MenuBarUtility()
         var state = MenuBarSettings(enabled: false)
         state.curation.sceneBeforeRule = "calm"
         utility.settings = { state }
         utility.onSettingsChange = { state = $0 }
-        let recorder = Recorder()
-        recorder.scene = "focus"
-        utility.stateRules.currentScene = { [unowned recorder] in recorder.scene }
-        utility.stateRules.setScene = { [unowned recorder] in recorder.scene = $0 }
+        var writes = 0
+        utility.stateRules.sceneLease.send = { _, _, _, _ in writes += 1; return .superseded }
         let feed = Feed()
         utility.coreFacts = { [unowned feed] in feed.facts }
         utility.coreFactsChanged()
-        #expect(recorder.scene == "focus", "a dead feed can't take the write: nothing yet")
         #expect(state.curation.sceneBeforeRule == "calm")
         feed.facts.live = true
         utility.coreFactsChanged()
-        #expect(recorder.scene == "calm")
         #expect(state.curation.sceneBeforeRule == nil)
-        state.curation.sceneBeforeRule = "dusk"
-        recorder.scene = "night"
-        feed.facts.askPending = true
-        utility.coreFactsChanged()
-        #expect(recorder.scene == "night", "once a launch")
+        #expect(writes == 0)
     }
 
     // MARK: The file

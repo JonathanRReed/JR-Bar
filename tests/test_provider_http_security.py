@@ -13,8 +13,10 @@ from jrbar.provider_usage_collectors import ProviderHttpError, _default_http_jso
 class _RedirectHandler(BaseHTTPRequestHandler):
     redirect_target = ""
     received_headers: ClassVar[dict[str, str]] = {}
+    hits: ClassVar[list[int]] = []
 
     def do_GET(self):
+        type(self).hits.append(self.server.server_port)
         if self.path == "/redirect":
             self.send_response(302)
             self.send_header("Location", self.redirect_target)
@@ -83,3 +85,27 @@ def test_credential_headers_are_refused_on_cross_origin_redirect__and_1_more() -
     finally:
         server.shutdown()
 
+
+
+def test_a_loopback_request_never_goes_through_a_configured_proxy(monkeypatch) -> None:
+    """The Antigravity language server's CSRF token rides on a loopback
+    request. A proxy from the environment or the system settings is a third
+    party; the request goes to the local port directly."""
+    proxy = _server()
+    target = _server()
+    try:
+        for name in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "no_proxy", "NO_PROXY"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("http_proxy", f"http://127.0.0.1:{proxy.server_port}")
+        _RedirectHandler.received_headers = {}
+        result = _default_http_json(
+            "GET",
+            f"http://127.0.0.1:{target.server_port}/status",
+            headers={"x-codeium-csrf-token": "fixture-csrf"},
+        )
+        assert result == {"ok": True}
+        assert _RedirectHandler.hits[-1] == target.server_port
+        assert proxy.server_port not in _RedirectHandler.hits
+    finally:
+        proxy.shutdown()
+        target.shutdown()

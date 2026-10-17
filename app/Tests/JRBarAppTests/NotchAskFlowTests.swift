@@ -268,6 +268,67 @@ struct NotchAskFlowTests {
         #expect(!toy.islandExpanded)
     }
 
+    @Test("a delayed open cannot fold a reopened card or attach an old refusal",
+          arguments: [false, true])
+    func reopenedCardRetiresOpen(_ refused: Bool) async throws {
+        let (toy, store, _) = makeToy(state: liveState())
+        defer { withExtendedLifetime(store) {} }
+        var completion: CheckedContinuation<String?, Never>?
+        toy.openSession = { _ in
+            await withCheckedContinuation { completion = $0 }
+        }
+        toy.expandFromBand()
+        toy.cardModel.onOpenRow?(Self.session)
+        let oldTask = try #require(toy.openInFlight)
+        while completion == nil { await Task.yield() }
+        toy.collapseIsland()
+        toy.expandFromBand()
+        completion?.resume(returning: refused ? "Old refusal" : nil)
+        await oldTask.value
+        #expect(toy.islandExpanded)
+        #expect(toy.cardModel.openRefusals[Self.session] == nil)
+    }
+
+    @Test("a newer card open owns the result even when the older one finishes last")
+    func newerOpenRetiresOldRefusal() async throws {
+        let (toy, store, _) = makeToy(state: liveState())
+        defer { withExtendedLifetime(store) {} }
+        var completions: [CheckedContinuation<String?, Never>] = []
+        toy.openSession = { _ in
+            await withCheckedContinuation { completions.append($0) }
+        }
+        toy.expandFromBand()
+        toy.cardModel.onOpenRow?(Self.session)
+        let oldTask = try #require(toy.openInFlight)
+        while completions.count < 1 { await Task.yield() }
+        toy.cardModel.onOpenRow?(Self.session)
+        let newTask = try #require(toy.openInFlight)
+        while completions.count < 2 { await Task.yield() }
+        completions[1].resume(returning: "Current refusal")
+        await newTask.value
+        completions[0].resume(returning: "Old refusal")
+        await oldTask.value
+        #expect(toy.islandExpanded)
+        #expect(toy.cardModel.openRefusals[Self.session] == "Current refusal")
+    }
+
+    @Test("a dismissed capsule does not acquire a delayed open refusal")
+    func dismissedCapsuleRetiresOpen() async throws {
+        let (toy, store, _) = makeToy(state: liveState())
+        defer { withExtendedLifetime(store) {} }
+        var completion: CheckedContinuation<String?, Never>?
+        toy.openSession = { _ in
+            await withCheckedContinuation { completion = $0 }
+        }
+        toy.offer(askNotice())
+        let task = try #require(toy.openCapsuleSession())
+        while completion == nil { await Task.yield() }
+        toy.dismissCapsule()
+        completion?.resume(returning: "Old refusal")
+        await task.value
+        #expect(toy.cardModel.openRefusals[Self.session] == nil)
+    }
+
     @Test("a tap on news about a session opens it; news about nothing just goes")
     func tapOnNews() async {
         let (toy, store, _) = makeToy()

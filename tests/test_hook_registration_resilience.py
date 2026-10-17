@@ -237,13 +237,10 @@ def test_probe_leaves_no_pending_spool_in_the_real_state_dir(
     assert not (tmp_path / "xdg-state" / "jrbar" / "claude.pending.jsonl").exists()
 
 
-def test_probe_env_is_left_alone_for_the_python_client(
+def test_probe_isolates_all_state_locations_for_the_python_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Only the compiled shim honours JRBAR_STATE_DIR. The Python client reads
-    XDG_STATE_HOME and always also tries ~/.local/state/jrbar, so it cannot
-    be isolated this way, and with the daemon down it writes the scratch log,
-    not the spool. Pinned as deliberate."""
+    """The Python fallback checks both XDG state and HOME's fallback."""
     from unittest.mock import patch
 
     from jrbar.install import _probe_registration_command
@@ -260,4 +257,46 @@ def test_probe_env_is_left_alone_for_the_python_client(
         _probe_registration_command("claude", None)
 
     assert len(recorded) == 2
-    assert [kwargs.get("env") for kwargs in recorded] == [None, None]
+    for kwargs in recorded:
+        env = kwargs["env"]
+        scratch = Path(env["JRBAR_STATE_DIR"])
+        assert Path(env["HOME"]) == scratch
+        assert Path(env["XDG_STATE_HOME"]) == scratch / "state"
+        assert Path(env["XDG_CONFIG_HOME"]) == scratch / "config"
+        assert Path(env["XDG_CACHE_HOME"]) == scratch / "cache"
+        assert not scratch.exists()
+
+
+def test_python_registration_probe_never_connects_to_caller_ingress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import select
+    import socket
+    import tempfile
+
+    from jrbar.install import _probe_registration_command
+
+    # macOS Unix socket paths cannot fit pytest's full temporary path.
+    with tempfile.TemporaryDirectory(prefix="jrbar-probe-", dir="/tmp") as scratch:
+        fake_home = Path(scratch) / "home"
+        xdg_state = Path(scratch) / "xdg"
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setenv("XDG_STATE_HOME", str(xdg_state))
+        monkeypatch.setenv("JRBAR_HOOK_EXEC", "")
+        listeners = []
+        try:
+            for root in [xdg_state / "jrbar", fake_home / ".local" / "state" / "jrbar"]:
+                root.mkdir(parents=True, mode=0o700)
+                listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                listeners.append(listener)
+                listener.bind(str(root / "hook-ingress.sock"))
+                listener.listen(1)
+
+            _probe_registration_command("claude", sys.executable)
+
+            assert select.select(listeners, [], [], 0)[0] == []
+            assert not list(xdg_state.rglob("*.json*"))
+            assert not list(fake_home.rglob("*.json*"))
+        finally:
+            for listener in listeners:
+                listener.close()

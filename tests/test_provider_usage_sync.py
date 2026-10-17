@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+from dataclasses import replace
+
 import pytest
 
 from jrbar.provider_usage_platform import (
@@ -319,4 +324,60 @@ def test_sync_merge_preserves_two_same_provider_instances__and_1_more() -> None:
         "work",
     }
     assert merged.total_input_tokens == 100
+
+
+@pytest.mark.parametrize("signature", ["é" * 64, "z" * 64])
+def test_signature_rejects_non_hex_text_as_value_error(signature):
+    encoded = json.dumps({"payload": {}, "signature": signature}).encode("utf-8")
+    with pytest.raises(ValueError, match="signature"):
+        decode_signed_packet(encoded, b"x" * 32, now=1000)
+
+
+@pytest.mark.parametrize("field,value", [("categories", [["quota"]]), ("schema_version", True)])
+def test_authenticated_malformed_payload_is_value_error(field, value):
+    packet = ProviderSyncPacket(1, "fixture-mac", 1000, (), (), ("quota",))
+    secret = b"x" * 32
+    envelope = json.loads(encode_signed_packet(packet, secret))
+    envelope["payload"][field] = value
+    canonical = json.dumps(envelope["payload"], ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+    envelope["signature"] = hmac.new(secret, canonical, hashlib.sha256).hexdigest()
+    with pytest.raises(ValueError):
+        decode_signed_packet(json.dumps(envelope).encode(), secret, now=1000)
+
+
+def test_deeply_nested_envelope_is_value_error():
+    encoded = b'{"payload":' + b"[" * 10_000 + b"0" + b"]" * 10_000 + b',"signature":"' + b"0" * 64 + b'"}'
+    with pytest.raises(ValueError, match="envelope"):
+        decode_signed_packet(encoded, b"x" * 32, now=1000)
+
+
+def test_envelope_rejects_duplicate_keys_before_authentication():
+    encoded = b'{"payload":{},"payload":{},"signature":"' + b"0" * 64 + b'"}'
+    with pytest.raises(ValueError, match="envelope"):
+        decode_signed_packet(encoded, b"x" * 32, now=1000)
+
+
+def test_sync_preserves_read_time_and_merges_by_last_successful_read():
+    fresh = snapshot("claude", 1000, 20)
+    retried = replace(
+        snapshot("claude", 1100, 75),
+        state=ProviderSourceState.STALE, read_at=900,
+    )
+    local = ProviderSyncPacket(1, "local-mac", 1000, (fresh,), (), ("quota",))
+    remote = ProviderSyncPacket(1, "remote-mac", 1100, (retried,), (), ("quota",))
+    decoded = decode_signed_packet(encode_signed_packet(remote, b"x" * 32), b"x" * 32, now=1100)
+    assert decoded.quota_snapshots[0].read_at == 900
+    merged = merge_provider_sync(local, (decoded,))
+    assert merged.quota_snapshots == (fresh,)
+
+
+def test_recent_packet_cannot_refresh_an_expired_stale_quota_reading():
+    generated = SYNC_OBSERVATION_MAX_PACKET_DELTA_SECONDS + 1000
+    stale = replace(
+        snapshot("claude", generated, 75),
+        state=ProviderSourceState.STALE, read_at=999,
+    )
+    packet = ProviderSyncPacket(1, "fixture-mac", generated, (stale,), (), ("quota",))
+    with pytest.raises(StaleSyncPacketError, match="observation"):
+        decode_signed_packet(encode_signed_packet(packet, b"x" * 32), b"x" * 32, now=generated)
 

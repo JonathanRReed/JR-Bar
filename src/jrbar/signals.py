@@ -468,17 +468,6 @@ class InterruptGrant:
     outbound_reason: str
 
     @property
-    def outbound_allowed(self) -> bool:
-        return self.banner_allowed or self.audible or self.webhook_allowed
-
-    @property
-    def stands_until_dealt_with(self) -> bool:
-        """The ratified critical shape: finite arrival taps, then a
-        steady anchor that holds (hold_seconds=None) until resolved --
-        never perpetual blinking."""
-        return self.allowed and self.hold_seconds is None
-
-    @property
     def hertz(self) -> float:
         """How fast this grant actually repeats. Never above
         MAX_INTERRUPT_HZ -- that is the law, and a test asserts it over

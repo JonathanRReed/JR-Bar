@@ -94,7 +94,7 @@ extension DelayedWait where Quiet == EmptyView {
 /// What a `DelayedWait` draws once it shows: the system spinner at the
 /// control size nearest `size`, or an orb that runs only while shown and
 /// only while its window is on screen — a window kept alive but ordered
-/// out (the Dock's preview, the Data Hoarder after its close) runs no
+/// out (the Dock's preview, say) runs no
 /// clock for it.
 struct WaitIndicator: View {
     let activity: AgentActivity?

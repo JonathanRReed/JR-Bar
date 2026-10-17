@@ -21,9 +21,7 @@ struct ExternalAppProbe {
                 return found
             }
         }
-        let apps = (try? FileManager.default.contentsOfDirectory(
-            at: URL(fileURLWithPath: "/Applications"),
-            includingPropertiesForKeys: nil)) ?? []
+        let apps = ApplicationsFolderIndex.shared.entries()
         for name in appNames {
             if let found = apps.first(where: { $0.lastPathComponent == name }) {
                 return found
@@ -37,14 +35,14 @@ struct ExternalAppProbe {
     /// Running means a live process — a registered bundle id answers
     /// through the running-apps index, an unregistered app falls back to
     /// matching on its bundle path (the rare path: boring.notch ships no
-    /// id, so only then is the workspace scanned). Main-actor: the index
-    /// is main-actor, and every caller reads this from a card body.
+    /// id). Both answer from the running-apps index, which read each app
+    /// once; walking `NSWorkspace.runningApplications` here cost a Launch
+    /// Services trip per running app on every card body. Main-actor: the
+    /// index is main-actor, and every caller reads this from a card body.
     @MainActor var running: Bool {
         if bundleIDs.contains(where: { RunningApps.shared.isRunning(bundleID: $0) }) { return true }
         guard let url else { return false }
-        return NSWorkspace.shared.runningApplications.contains {
-            $0.bundleURL?.standardizedFileURL == url.standardizedFileURL
-        }
+        return RunningApps.shared.isRunning(bundleURL: url)
     }
 
     /// Launch it — the card's "Open" for a picked-but-not-running
@@ -52,6 +50,50 @@ struct ExternalAppProbe {
     func open() {
         guard let url else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+/// What is in /Applications, listed once and kept for a short while. Every
+/// `ExternalAppProbe.url` that Launch Services cannot place asks for it, from
+/// a view body; the listing is the same each time.
+final class ApplicationsFolderIndex: @unchecked Sendable {
+    static let shared = ApplicationsFolderIndex()
+
+    /// How long a listing stands. An app installed a moment ago shows up
+    /// within this; a person installing a counterpart and flipping back to
+    /// the card reads a fresh listing at most this late.
+    static let lifetime: TimeInterval = 30
+
+    private let lock = NSLock()
+    private var cached: (at: TimeInterval, urls: [URL])?
+    /// How the folder is listed and what time it is — the tests' seams.
+    private let list: @Sendable () -> [URL]
+    private let now: @Sendable () -> TimeInterval
+
+    init(list: @escaping @Sendable () -> [URL] = {
+            (try? FileManager.default.contentsOfDirectory(
+                at: URL(fileURLWithPath: "/Applications"), includingPropertiesForKeys: nil)) ?? []
+        },
+         now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.list = list
+        self.now = now
+    }
+
+    func entries() -> [URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        let current = now()
+        if let cached, current - cached.at >= 0, current - cached.at < Self.lifetime { return cached.urls }
+        let urls = list()
+        cached = (current, urls)
+        return urls
+    }
+
+    /// Forget the listing: the next ask reads the folder.
+    func invalidate() {
+        lock.lock()
+        cached = nil
+        lock.unlock()
     }
 }
 

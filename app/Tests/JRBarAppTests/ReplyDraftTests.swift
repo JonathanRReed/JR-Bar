@@ -28,6 +28,23 @@ struct ReplyDraftTests {
         }
     }
 
+    @Test("a draft nobody touched for days is dropped when the app starts")
+    func oldDraftsAreForgotten() throws {
+        try withScratchDefaults { defaults in
+            let now = Date().timeIntervalSince1970
+            let saved: [String: [String: Any]] = [
+                "req-old": ["text": "an old answer", "editedAt": now - 10 * 86_400],
+                "req-1": ["text": "a fresh answer", "editedAt": now - 3_600],
+            ]
+            defaults.set(try JSONSerialization.data(withJSONObject: saved), forKey: "jrbar.askReplyDrafts.v1")
+            let store = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
+            #expect(store.replyDraft(for: ask(request: "req-old")) == "")
+            #expect(store.replyDraft(for: ask(request: "req-1")) == "a fresh answer")
+            let again = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
+            #expect(again.replyDraft(for: ask(request: "req-old")) == "", "and it is gone from the preferences too")
+        }
+    }
+
     @Test("drafts key by request id; distinct asks don't share text")
     func draftsKeyByRequest() {
         withScratchDefaults { defaults in

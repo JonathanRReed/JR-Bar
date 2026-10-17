@@ -29,21 +29,25 @@ coverage instead of silently inheriting another model's price.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import heapq
 import hmac
+import itertools
 import json
 import math
 import os
+import re
 import secrets
 import stat
+import threading
 import time
-from collections.abc import Iterator
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, NamedTuple
 
 from .capacity_sources import (
     EvidenceMetricKind,
@@ -67,7 +71,8 @@ from .usage_heatmap import build_usage_heatmap
 # scan reads at least the card's 30 days whatever window its caller asked for.
 CACHE_VERSION = 8
 # 5: records carry the turn_context model instead of the literal ``codex``.
-CODEX_CACHE_SEMANTICS_VERSION = 5
+# 6: compaction requests the cumulative counter never added are records too.
+CODEX_CACHE_SEMANTICS_VERSION = 6
 # The byte budget below is the real bound; this one only stops the candidate
 # list itself from growing without limit. At 4096 it bound FIRST on the owner's
 # corpus -- 5,605 transcripts across ~/.claude and ~/.codex -- so ~1,500 files
@@ -81,11 +86,28 @@ USAGE_CACHE_MAX_FILES = 8192
 # (5,540 rollouts against a 4,096 cap left every usage_history range from
 # 7d up empty for the last nine days).
 USAGE_INVENTORY_MAX_FILES = 8192
-USAGE_FILE_MAX_BYTES = 64 * 1024 * 1024
-# Keep large transcript files admissible while bounding the memory a single
-# hostile JSONL record can make json.loads allocate. Real provider records are
-# far smaller than one MiB; the file-level 64 MiB limit remains independent.
-USAGE_RECORD_MAX_BYTES = 1024 * 1024
+# A transcript of any ordinary size is streamed, never skipped: it is read in
+# bounded pieces and remembered by byte offset, so a multi-gigabyte rollout is
+# read once and then only for what was appended. This ceiling exists only for a
+# pathological file (a sparse or runaway one) and is counted in the source's
+# coverage as ``oversized_files``.
+USAGE_FILE_SANITY_BYTES = 8 * 1024 * 1024 * 1024
+# The most one JSONL line may hold while it is parsed. It bounds the memory a
+# single hostile record can make json.loads allocate (the bytes, their decoded
+# copy and the parsed objects are all alive at once). A line over it is skipped
+# as one unparseable record and counted in ``malformed_lines``; the rest of the
+# transcript still counts. Real provider records are far smaller.
+USAGE_RECORD_MAX_BYTES = 16 * 1024 * 1024
+# A ``compacted`` item holds the whole replaced history, often several MiB, and
+# the one thing a scan needs from it is its id. Past this size such a line is
+# never decoded: its start and its end are read instead.
+USAGE_STUB_LINE_BYTES = 1024 * 1024
+# Bytes before a resume offset that are hashed and remembered, so an append-only
+# transcript is only continued when its already-read part is the same bytes.
+USAGE_PREFIX_CHECK_BYTES = 4096
+# How long one scan pass may work before it stops on a line boundary, saves
+# where it got to and leaves the rest for the next pass.
+USAGE_PASS_BUDGET_SECONDS = 2.0
 
 # The scan cache is an accelerator, never the source of truth: the transcripts
 # on disk are. So it is allowed to forget. Three bounds keep it from becoming
@@ -128,21 +150,23 @@ _CACHE_BYTES_PER_ENTRY = 320
 DEDUPE_DIGEST_HEX_CHARS = 32
 USAGE_MARKER = '"usage"'
 CODEX_MARKER = '"token_count"'
-PRICING_TABLE_VERSION = "jrbar-rates-v3"
-PRICING_TABLE_AS_OF = "2026-09-20"
+PRICING_TABLE_VERSION = "jrbar-rates-v4"
+PRICING_TABLE_AS_OF = "2026-10-07"
 
 
 # (input $/MTok, output $/MTok) by model-id substring, first match wins,
 # so the most specific markers come first. Cache reads bill at 0.1x input
 # unless CACHE_READ_RATE_OVERRIDES says otherwise; cache writes at 1.25x.
-# Rates checked 2026-09-20 against platform.claude.com/docs/en/about-claude/pricing:
+# Rates checked 2026-10-07 against platform.claude.com/docs/en/about-claude/pricing:
 # Fable 5.1 / Mythos 5.1 $10/$50 (cache read 0.025x); Fable 5 / Mythos 5
-# $10/$50; Opus 4.5-4.8 and Opus 5 $5/$25; Opus 4 / 4.1 $15/$75;
-# Sonnet 5 $2/$10 (introductory price made permanent); Sonnet 4-4.6
+# $10/$50; Opus 5.5 $4/$20 (cache read 0.05x); Opus 4.5-4.8 and Opus 5
+# $5/$25; Opus 4 / 4.1 $15/$75; Sonnet 5 and 5.5 $2/$10; Sonnet 4-4.6
 # $3/$15; Haiku 4.5 $1/$5; Haiku 3.5 $0.80/$4.
 MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
     ("fable", 10.0, 50.0),
     ("mythos", 10.0, 50.0),
+    ("opus-5-5", 4.0, 20.0),
+    ("opus-5.5", 4.0, 20.0),
     ("opus-4-5", 5.0, 25.0),
     ("opus-4-6", 5.0, 25.0),
     ("opus-4-7", 5.0, 25.0),
@@ -155,6 +179,8 @@ MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
     # named opus is the current $5/$25 generation.
     ("opus-4", 15.0, 75.0),
     ("opus", 5.0, 25.0),
+    ("sonnet-5-5", 2.0, 10.0),
+    ("sonnet-5.5", 2.0, 10.0),
     ("sonnet-5", 2.0, 10.0),
     ("sonnet-4", 3.0, 15.0),
     ("sonnet", 2.0, 10.0),
@@ -167,50 +193,95 @@ MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
 )
 # Per-marker cache-read multipliers where a model departs from 0.1x.
 # Fable 5.1 and Mythos 5.1 read cache at 0.025x base input ($0.25/MTok);
-# every other Anthropic model, and OpenAI/Gemini, use 0.1x.
+# every other model uses 0.1x.
 CACHE_READ_RATE_OVERRIDES: dict[str, float] = {
     "fable-5-1": 0.025,
     "fable-5.1": 0.025,
     "mythos-5-1": 0.025,
     "mythos-5.1": 0.025,
+    # Opus 5.5 reads cache at 0.05x base input ($0.20/MTok). GPT-6.1 Sol
+    # reads at 0.05x too ($0.10 on $2).
+    "opus-5-5": 0.05,
+    "opus-5.5": 0.05,
+    "gpt-6.1-sol": 0.05,
 }
-# Codex models, same substring-match convention. Checked 2026-09-20
+# Codex models, same substring-match convention. Checked 2026-10-07
 # against developers.openai.com/api/docs/pricing (standard tier, short
-# context): GPT-6 Astra $10/$50 (cache read $1, write $12.50); GPT-5.6
-# Sol $4/$20, Terra $2/$12, Luna $0.20/$1.20; GPT-5.4 family unchanged.
-# Requests past 272K input reprice at 2x/1.5x -- not modelled; the
-# short-context rate is the floor.
+# context, at most 272K input): GPT-6 Astra $10/$50; GPT-6.1 Sol and GPT-6
+# Sol $2/$10; GPT-6 Luna $0.10/$0.50; GPT-5.6 Sol $4/$20, Terra $2/$12,
+# Luna $0.20/$1.20; GPT-5.5 $5/$30; GPT-5.4 $2.50/$15; Pro tiers $30/$180
+# (GPT-5.2 Pro $21/$168); GPT-5.3-Codex and GPT-5.2 $1.75/$14; GPT-5.1 and
+# GPT-5 $1.25/$10. Requests past 272K input reprice at 2x input and 1.5x
+# output (LONG_CONTEXT_TOKEN_LIMIT, applied per record).
 GPT_MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
+    ("gpt-6.1-sol", 2.0, 10.0),
+    ("gpt-6-sol", 2.0, 10.0),
+    ("gpt-6-luna", 0.10, 0.50),
     ("gpt-6-astra", 10.0, 50.0),
     ("gpt-6", 10.0, 50.0),
+    ("gpt-5.6-cyber", 12.5, 75.0),
     ("gpt-5.6-luna", 0.20, 1.20),
     ("gpt-5.6-terra", 2.0, 12.0),
     ("gpt-5.6-sol", 4.0, 20.0),
     ("gpt-5.6", 4.0, 20.0),
+    ("gpt-5.5-cyber", 12.5, 75.0),
+    ("gpt-5.5-pro", 30.0, 180.0),
+    ("gpt-5.5", 5.0, 30.0),
+    ("gpt-5.4-pro", 30.0, 180.0),
     ("gpt-5.4-mini", 0.75, 4.50),
     ("gpt-5.4-nano", 0.20, 1.25),
     ("gpt-5.4", 2.50, 15.0),
-    ("gpt-5", 2.50, 15.0),
+    ("gpt-5.3", 1.75, 14.0),
+    ("gpt-5.2-pro", 21.0, 168.0),
+    ("gpt-5.2", 1.75, 14.0),
+    ("gpt-5.1-codex-mini", 0.25, 2.0),
+    ("gpt-5-mini", 0.25, 2.0),
+    ("gpt-5-nano", 0.05, 0.40),
+    ("gpt-5-pro", 15.0, 120.0),
+    ("gpt-5", 1.25, 10.0),
 )
-# Gemini models, same substring-match convention. Checked 2026-09-20
+# Gemini models, same substring-match convention. Checked 2026-10-07
 # against ai.google.dev/gemini-api/docs/pricing: Gemini 3.1 Pro $2/$12
 # (<=200K); Gemini 3.6-3.8 Flash $0.75/$3.75 introductory through
-# 2026-12-31 (then $1.50/$7.50); Gemini 3 Flash $0.50/$3; 3.1 Flash-Lite
-# $0.25/$1.50; cache reads 0.1x input. The Gemini CLI's session files are
+# 2026-12-31 (then $1.50/$7.50); Gemini 3.5 Flash $1.50/$9, 3.5 Flash-Lite
+# $0.30/$2.50; Gemini 3 Flash $0.50/$3; 3.1 Flash-Lite $0.25/$1.50;
+# 2.5 Pro $1.25/$10 (<=200K), 2.5 Flash $0.30/$2.50, 2.5 Flash-Lite
+# $0.10/$0.40; cache reads 0.1x input. The Gemini CLI's session files are
 # read by local_token_history, and so are the Gemini models that Pi,
 # OpenClaw and OpenCode run: this table prices those records in the graph
 # (rates_for_record) as well as a usage_history quote.
 GEMINI_MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
+    ("3.5-flash-lite", 0.30, 2.50),
     ("3.1-flash-lite", 0.25, 1.50),
+    ("2.5-flash-lite", 0.10, 0.40),
     ("flash-lite", 0.10, 0.40),
     ("3.8-flash", 0.75, 3.75),
     ("3.7-flash", 0.75, 3.75),
     ("3.6-flash", 0.75, 3.75),
+    ("3.5-flash", 1.50, 9.0),
+    ("2.5-flash", 0.30, 2.50),
     ("flash", 0.50, 3.00),
+    ("2.5-pro", 1.25, 10.0),
     ("pro", 2.0, 12.0),
 )
 CACHE_READ_RATE = 0.1
 CACHE_WRITE_RATE = 1.25
+#: OpenAI reprices a whole request whose prompt (cached tokens included) is
+#: over this many tokens: 2x the input-side rates, 1.5x the output rate.
+LONG_CONTEXT_TOKEN_LIMIT = 272_000
+LONG_CONTEXT_INPUT_MULTIPLIER = 2.0
+LONG_CONTEXT_OUTPUT_MULTIPLIER = 1.5
+#: Which models publish that tier (OpenAI's pricing page), by the same
+#: substring match the price table uses; the small and Cyber models do not.
+_LONG_CONTEXT_MODELS = ("gpt-6", "gpt-5.6", "gpt-5.5", "gpt-5.4")
+_NO_LONG_CONTEXT_MODELS = ("cyber", "mini", "nano")
+#: A one-hour cache write bills at 2x the input rate (Anthropic's price page).
+ONE_HOUR_CACHE_WRITE_RATE = 2.0
+#: A Claude message that wrote some of its cache for an hour is stored as two
+#: records: the usual one, and one that holds only those writes under the
+#: model key plus this suffix. Both price from the same table row; the suffix
+#: is what bills the second at the one-hour rate. It is never a model name.
+ONE_HOUR_WRITE_SUFFIX = "|1h"
 
 # The tables above are the hand-kept fallback. The packaged snapshot
 # (resources/model_pricing.json, written by scripts/update_model_pricing.py;
@@ -261,14 +332,42 @@ def cache_read_rate_for_model(model: str) -> float:
     return CACHE_READ_RATE
 
 
+def is_long_context_request(provider: str, model: str, prompt_tokens: int) -> bool:
+    """Whether one request is billed at OpenAI's long-context rates.
+
+    ``prompt_tokens`` is the whole prompt (uncached, cached and written
+    input). A person's own price for the model is their rate and is left as
+    they set it. ``provider`` is accepted so a caller never has to guess
+    which table a record came from; only the model name decides today.
+    """
+    del provider
+    if prompt_tokens <= LONG_CONTEXT_TOKEN_LIMIT:
+        return False
+    lowered = str(model or "").lower()
+    if not any(marker in lowered for marker in _LONG_CONTEXT_MODELS):
+        return False
+    if any(marker in lowered for marker in _NO_LONG_CONTEXT_MODELS):
+        return False
+    return _override_rates(model) is None
+
+
+def base_model_key(model: str) -> str:
+    """The model a record is about, without the one-hour-write marker."""
+    text = str(model or "")
+    return text[: -len(ONE_HOUR_WRITE_SUFFIX)] if text.endswith(ONE_HOUR_WRITE_SUFFIX) else text
+
+
 def cache_write_rate_for_model(model: str, default: float = CACHE_WRITE_RATE) -> float:
     """The cache-write multiplier for ``model``: the person's override when
-    they set one, else ``default`` (1.25x for Anthropic)."""
+    they set one, else ``default`` (1.25x for Anthropic), or 2x for the
+    one-hour writes of a ``|1h`` record."""
     from .model_pricing import override_for
 
     prices = override_for(model)
     if prices is not None and "cache_write" in prices and prices["input"] > 0:
         return prices["cache_write"] / prices["input"]
+    if str(model or "").endswith(ONE_HOUR_WRITE_SUFFIX):
+        return ONE_HOUR_CACHE_WRITE_RATE
     return default
 
 
@@ -314,10 +413,6 @@ class UsageTotals:
     codex_rate_limit_observed_at: float | None = None
 
     @property
-    def local_activity_coverage(self) -> dict[str, UsageSourceCoverage]:
-        return self.source_coverage
-
-    @property
     def cost_usd(self) -> float:
         """Compatibility alias for the explicitly estimated monetary value."""
         return self.estimated_cost_usd
@@ -356,8 +451,13 @@ class UsageSourceCoverage:
     unreadable_files: int
     skipped_symlinks: int
     duplicate_physical_files: int
+    #: Files past ``USAGE_FILE_SANITY_BYTES``, skipped whole.
     oversized_files: int = 0
     truncated_files: int = 0
+    #: Files this pass did not finish reading: its time ran out first. They
+    #: are continued from where they stopped on the next pass, and the source
+    #: reads as partial only until they are.
+    pending_files: int = 0
 
     def __post_init__(self) -> None:
         counts = (
@@ -370,9 +470,13 @@ class UsageSourceCoverage:
             self.duplicate_physical_files,
             self.oversized_files,
             self.truncated_files,
+            self.pending_files,
         )
         if any(isinstance(value, bool) or value < 0 for value in counts):
             raise ValueError("usage source coverage counts must be nonnegative")
+
+
+ResolvedUsageCapture = Callable[[SourceKey, Path, list[tuple], UsageSourceCoverage], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -455,6 +559,38 @@ class ProviderUsageResult:
                 object.__setattr__(self, name, float(value))
 
 
+class ScanBudget:
+    """How long one scan pass may keep working, on a clock the caller passes.
+
+    A pass checks ``expired()`` between files and every few hundred lines
+    inside one, stops on a line boundary and leaves the rest to the next pass.
+    ``clock`` is injected so a test cranks time by hand.
+    """
+
+    __slots__ = ("_clock", "_deadline", "_seconds")
+
+    def __init__(self, seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._seconds = max(0.0, float(seconds))
+        self._deadline = clock() + self._seconds
+
+    def restart(self) -> None:
+        """Count from now. A pass spends its first moments listing the folder
+        and recalling files it already knows; the allowance is for reading, so
+        it starts when the reading does."""
+        self._deadline = self._clock() + self._seconds
+
+    def expired(self) -> bool:
+        return self._clock() >= self._deadline
+
+    def remaining(self) -> float:
+        return max(0.0, self._deadline - self._clock())
+
+    def share(self, parts: int) -> ScanBudget:
+        """A budget for one of ``parts`` equal turns of what is left."""
+        return ScanBudget(self.remaining() / max(1, parts), self._clock)
+
+
 @dataclass(frozen=True, slots=True)
 class _DiscoveredUsageFile:
     path: Path
@@ -475,6 +611,13 @@ class _ParseResult:
     #: next incremental tail). -1 means "the whole stat'd file" for
     #: paths that never learned to report it.
     parsed_size: int = -1
+    #: True when the pass ran out of time before the snapshot's last complete
+    #: line: ``parsed_size`` is then where the next pass picks up.
+    stopped_early: bool = False
+    #: ``(n, digest)`` of the ``n`` bytes just before ``parsed_size``.
+    prefix_check: tuple[int, str] | None = None
+    #: What a Codex scan needs to carry on mid-file (see ``_scan_codex_lines``).
+    resume_state: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -513,6 +656,7 @@ class _CoverageState:
     duplicate_physical_files: int = 0
     oversized_files: int = 0
     truncated_files: int = 0
+    pending_files: int = 0
 
     def finalize(self) -> UsageSourceCoverage:
         if not self.root_present:
@@ -533,6 +677,7 @@ class _CoverageState:
                 or self.unreadable_files > 0
                 or self.oversized_files > 0
                 or self.truncated_files > 0
+                or self.pending_files > 0
             ):
                 status = UsageSourceStatus.PARTIAL
             else:
@@ -551,6 +696,7 @@ class _CoverageState:
             duplicate_physical_files=self.duplicate_physical_files,
             oversized_files=self.oversized_files,
             truncated_files=self.truncated_files,
+            pending_files=self.pending_files,
         )
 
     @classmethod
@@ -700,32 +846,69 @@ def _token_counts(mapping: dict, keys: tuple[str, ...]) -> tuple[int, ...] | Non
 def _record_from_line(line: str, session_id: str, dedupe_secret: bytes) -> tuple | None:
     """[session, model, epoch, input, cached_in, cache_create, output,
     dedupe_key] or None. The gate has already run."""
-    if len(line.encode("utf-8")) > USAGE_RECORD_MAX_BYTES:
-        return None
+    records = _records_from_line(line, session_id, dedupe_secret)
+    return records[0] if records else None
+
+
+def one_hour_cache_writes(usage: dict, created: int) -> int:
+    """How many of a message's cache writes were for an hour (0 when unstated)."""
+    breakdown = usage.get("cache_creation")
+    if not isinstance(breakdown, dict):
+        return 0
+    value = breakdown.get("ephemeral_1h_input_tokens")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if not math.isfinite(float(value)) or value <= 0:
+        return 0
+    return min(int(value), created)
+
+
+def _records_from_line(line: str, session_id: str, dedupe_secret: bytes) -> list[tuple]:
+    """The record for one assistant message, plus a second one holding its
+    one-hour cache writes when it made any. Empty when the line is no usage."""
+    return _claude_line(line, session_id, dedupe_secret)[0]
+
+
+def _claude_line(line: str, session_id: str, dedupe_secret: bytes) -> tuple[list[tuple], bool]:
+    """``(records, damaged)`` for one Claude line that carries the usage marker.
+
+    ``damaged`` is True when the line should have counted and could not: it is
+    not JSON, is over the line cap, or is an assistant message whose usage,
+    time or id cannot be read. A line that merely mentions usage (an
+    attachment, a user row whose tool result has a ``usage`` key) is not a
+    record and not damage, so it never makes a complete history read partial.
+    """
+    if _line_over_cap(line):
+        return [], True
     try:
         row = json.loads(line)
     except (json.JSONDecodeError, RecursionError, ValueError):
-        return None
-    if not isinstance(row, dict) or row.get("type") != "assistant":
-        return None
+        return [], True
+    if not isinstance(row, dict):
+        return [], True
+    kind = row.get("type")
+    if kind != "assistant":
+        # A row of another kind that mentions usage is not a record; a row
+        # that names no kind at all is one this scan cannot place.
+        return [], not isinstance(kind, str)
     message = row.get("message")
     if not isinstance(message, dict):
-        return None
+        return [], False
     usage = message.get("usage")
     if not isinstance(usage, dict):
-        return None
+        return [], False
     timestamp = row.get("timestamp")
     if not isinstance(timestamp, str):
-        return None
+        return [], True
     try:
         epoch = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp()
     except ValueError:
-        return None
+        return [], True
 
     raw_dedupe = str(message.get("id") or "")
     if not raw_dedupe:
         # No message id means no safe dedupe; skip rather than overcount.
-        return None
+        return [], True
     dedupe = (
         "message:"
         + hmac.new(
@@ -744,18 +927,23 @@ def _record_from_line(line: str, session_id: str, dedupe_secret: bytes) -> tuple
         ),
     )
     if counts is None:
-        return None
-    return (
-        "claude",
-        session_id,
-        _record_model_key(str(message.get("model") or "")),
-        epoch,
-        counts[0],
-        counts[1],
-        counts[2],
-        counts[3],
-        dedupe,
-    )
+        return [], True
+    model_key = _record_model_key(str(message.get("model") or ""))
+    one_hour = one_hour_cache_writes(usage, counts[2])
+    records = [
+        (
+            "claude", session_id, model_key, epoch,
+            counts[0], counts[1], counts[2] - one_hour, counts[3], dedupe,
+        )
+    ]
+    if one_hour:
+        records.append(
+            (
+                "claude", session_id, model_key + ONE_HOUR_WRITE_SUFFIX, epoch,
+                0, 0, one_hour, 0, dedupe + ONE_HOUR_WRITE_SUFFIX,
+            )
+        )
+    return records, False
 
 
 #: Stands in for a line over ``USAGE_RECORD_MAX_BYTES`` that carries a
@@ -764,8 +952,106 @@ _OVERSIZED_LINE = object()
 _CLAUDE_MARKERS = (USAGE_MARKER.encode("ascii"),)
 _CODEX_MARKERS = (
     CODEX_MARKER.encode("ascii"), b'"session_meta"', b'"turn_context"',
+    b'"token_usage_record"', b'"compacted"',
 )
+#: Markers whose over-cap lines are not damage. A ``compacted`` item carries
+#: the whole replaced history, so one in three is over the cap on a busy
+#: Mac; counting each as a malformed line would turn coverage partial for a
+#: line that holds no usage of its own.
+_CODEX_SOFT_MARKERS = (b'"token_usage_record"', b'"compacted"')
 _READ_BUFFER_BYTES = 256 * 1024
+#: How much of the end of an over-cap line is kept: Codex writes a compacted
+#: item's ``compaction_response_id`` after its history, near the end.
+_OVER_CAP_TAIL_BYTES = 16 * 1024
+_COMPACTED_TYPE = re.compile(rb'"type"\s*:\s*"compacted"')
+_COMPACTION_ID = re.compile(rb'"compaction_response_id"\s*:\s*"([^"\\]{1,256})"')
+_LINE_TIMESTAMP = re.compile(rb'"timestamp"\s*:\s*"([^"\\]{1,40})"')
+
+
+def _compaction_stub(head: bytes, tail: bytes) -> str | None:
+    """A minimal ``compacted`` line for an over-cap one, or None.
+
+    The type and timestamp are read from the start of the line and the id from
+    its end; the megabytes between are never decoded.
+    """
+    start = head[:1024]
+    if _COMPACTED_TYPE.search(start) is None:
+        return None
+    found = _COMPACTION_ID.findall(tail)
+    if not found:
+        return None
+    stamp = _LINE_TIMESTAMP.search(start)
+    return json.dumps(
+        {
+            "type": "compacted",
+            "timestamp": stamp.group(1).decode("ascii", errors="replace") if stamp else None,
+            "payload": {"compaction_response_id": found[-1].decode("ascii", errors="replace")},
+        },
+        separators=(",", ":"),
+    )
+
+
+class _OverCapLine:
+    """What was learned about a line over ``USAGE_RECORD_MAX_BYTES`` while
+    skipping it: whether it carried a hard or a soft marker, and its tail."""
+
+    __slots__ = ("hard", "soft", "tail")
+
+    def __init__(self, hard: bool, soft: bool, tail: bytes) -> None:
+        self.hard = hard
+        self.soft = soft
+        self.tail = tail
+
+
+#: Lines are weighed as they are read (one each, plus one per 16 KiB) and the
+#: pass's clock is looked at every time the weight passes this: about every 512
+#: ordinary lines, or every 8 MiB of long ones.
+_BUDGET_CHECK_WEIGHT = 512
+
+
+def _line_over_cap(line: str) -> bool:
+    """Is this decoded line longer than ``USAGE_RECORD_MAX_BYTES`` in UTF-8?
+
+    The reader already refuses an over-cap line, so this only guards a caller
+    that hands over lines itself; it encodes only a line that could be over.
+    """
+    cap = USAGE_RECORD_MAX_BYTES
+    size = len(line)
+    return size > cap or (size * 4 > cap and len(line.encode("utf-8")) > cap)
+
+
+def _prefix_digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def _prefix_check_of(handle: BinaryIO, offset: int) -> tuple[int, str] | None:
+    """``(n, digest)`` of the up-to-``USAGE_PREFIX_CHECK_BYTES`` bytes that end
+    at ``offset``, or None when the handle cannot be read at a position."""
+    count = min(USAGE_PREFIX_CHECK_BYTES, offset)
+    if count <= 0:
+        return None
+    try:
+        data = os.pread(handle.fileno(), count, offset - count)
+    except (AttributeError, OSError, ValueError):
+        return None
+    return (count, _prefix_digest(data)) if len(data) == count else None
+
+
+def _is_finished_record(
+    raw: bytes, remaining: int, cap: int, markers: tuple[bytes, ...],
+) -> bool:
+    """Is this unterminated last line, read up to the snapshot's end, a
+    complete JSON object that carries a marker? A JSON object only parses once
+    its closing brace is written, so a line half written never passes."""
+    if len(raw) != remaining or len(raw) > cap or not any(marker in raw for marker in markers):
+        return False
+    body = raw.rstrip(b"\r")
+    if not body.endswith(b"}"):
+        return False
+    try:
+        return isinstance(json.loads(body), dict)
+    except (ValueError, RecursionError):
+        return False
 
 
 class _VerifiedPrefix:
@@ -775,59 +1061,156 @@ class _VerifiedPrefix:
     ``markers``, decoded, and ``_OVERSIZED_LINE`` for an over-cap line
     that carries one; lines without a marker are never decoded. Reading
     stops at the snapshot's size and the unfinished last line is left
-    for the next read. Once consumed, ``parsed_size`` is the absolute
-    offset just past the last complete line, and ``read_ok`` is False if
-    the read failed part way.
+    for the next read, or sooner, on a line boundary, when the pass's
+    ``budget`` runs out (``stopped_early``). Once consumed, ``parsed_size``
+    is the absolute offset just past the last complete line, ``prefix_check``
+    fingerprints the bytes just before it, and ``read_ok`` is False if the
+    read failed part way.
     """
 
-    __slots__ = ("_handle", "_remaining", "parsed_size", "read_ok")
+    __slots__ = (
+        "_budget", "_handle", "_remaining", "parsed_size", "prefix_check",
+        "read_ok", "stopped_early",
+    )
 
-    def __init__(self, handle: BinaryIO, resume_offset: int, snapshot_size: int) -> None:
+    def __init__(
+        self,
+        handle: BinaryIO,
+        resume_offset: int,
+        snapshot_size: int,
+        budget: ScanBudget | None = None,
+    ) -> None:
         self._handle = handle
         self._remaining = snapshot_size - resume_offset
+        self._budget = budget
         self.parsed_size = resume_offset
         self.read_ok = True
+        self.stopped_early = False
+        self.prefix_check: tuple[int, str] | None = None
 
-    def lines(self, markers: tuple[bytes, ...]) -> Iterator[str | object]:
+    def lines(
+        self,
+        markers: tuple[bytes, ...],
+        soft_markers: tuple[bytes, ...] = (),
+    ) -> Iterator[str | object]:
+        """``soft_markers`` (a subset of ``markers``) mark lines whose being
+        over the stub size is not damage: such a line is skipped quietly, or,
+        for a ``compacted`` item whose id can be read from its ends, replaced
+        by a stub that names it. A line over ``USAGE_RECORD_MAX_BYTES`` is
+        never held whole: it is counted as one unparseable record when it
+        carries a hard marker."""
         handle = self._handle
         cap = USAGE_RECORD_MAX_BYTES
+        stub_cap = min(USAGE_STUB_LINE_BYTES, cap)
+        hard_markers = tuple(marker for marker in markers if marker not in soft_markers)
+        budget = self._budget
+        weight = 0
         try:
             while self._remaining > 0:
+                if budget is not None and weight >= _BUDGET_CHECK_WEIGHT:
+                    weight = 0
+                    if budget.expired():
+                        self.stopped_early = True
+                        return
                 limit = min(self._remaining, cap + 1)
                 raw = handle.readline(limit)
                 if not raw.endswith(b"\n"):
                     if len(raw) < limit or limit == self._remaining:
-                        return  # the unfinished last line, or a short file
-                    carried = self._skip_rest_of_line(raw, markers)
-                    if carried is None:
+                        # The last line has no newline yet, or the file is
+                        # shorter than its snapshot. A last line that is a
+                        # whole record counts now (the newline that follows
+                        # it is an empty line to the next read); one still
+                        # being written is left until its writer is done.
+                        if _is_finished_record(raw, self._remaining, cap, markers):
+                            self._remaining -= len(raw)
+                            self.parsed_size += len(raw)
+                            yield raw.decode("utf-8", errors="replace")
                         return
-                    if carried:
-                        yield _OVERSIZED_LINE
+                    before = self.parsed_size
+                    over = self._skip_rest_of_line(raw, hard_markers, soft_markers)
+                    if over is None:
+                        return
+                    weight += 1 + ((self.parsed_size - before) >> 14)
+                    verdict = self._over_cap_verdict(raw, over)
+                    if verdict is not None:
+                        yield verdict
                     continue
-                self._remaining -= len(raw)
-                self.parsed_size += len(raw)
+                size = len(raw)
+                self._remaining -= size
+                self.parsed_size += size
+                weight += 1 + (size >> 14)
                 for marker in markers:
                     if marker in raw:
                         break
                 else:
                     continue
-                yield _OVERSIZED_LINE if len(raw) > cap else raw.decode("utf-8", errors="replace")
+                if size > cap:
+                    over = _OverCapLine(
+                        any(marker in raw for marker in hard_markers),
+                        any(marker in raw for marker in soft_markers),
+                        raw[-_OVER_CAP_TAIL_BYTES:],
+                    )
+                    verdict = self._over_cap_verdict(raw, over)
+                    if verdict is not None:
+                        yield verdict
+                    continue
+                if size > stub_cap:
+                    verdict = self._big_line_verdict(raw, hard_markers, soft_markers)
+                    if verdict is not None:
+                        yield verdict
+                    continue
+                yield raw.decode("utf-8", errors="replace")
         except OSError:
             self.read_ok = False
         finally:
+            if self.read_ok:
+                self.prefix_check = _prefix_check_of(handle, self.parsed_size)
             handle.close()
 
-    def _skip_rest_of_line(self, head: bytes, markers: tuple[bytes, ...]) -> bool | None:
+    @staticmethod
+    def _big_line_verdict(
+        raw: bytes,
+        hard_markers: tuple[bytes, ...],
+        soft_markers: tuple[bytes, ...],
+    ) -> str | None:
+        """A line between the stub size and the cap, held whole: a compaction
+        becomes its stub, anything else that may carry usage is decoded for the
+        parser, and a line that only mentions a soft marker is skipped."""
+        if any(marker in raw for marker in soft_markers):
+            stub = _compaction_stub(raw, raw[-_OVER_CAP_TAIL_BYTES:])
+            if stub is not None:
+                return stub
+            if not any(marker in raw for marker in hard_markers):
+                return None
+        return raw.decode("utf-8", errors="replace")
+
+    @staticmethod
+    def _over_cap_verdict(head: bytes, over: _OverCapLine) -> str | object | None:
+        if over.soft:
+            stub = _compaction_stub(head, over.tail)
+            if stub is not None:
+                return stub
+        return _OVERSIZED_LINE if over.hard else None
+
+    def _skip_rest_of_line(
+        self,
+        head: bytes,
+        hard_markers: tuple[bytes, ...],
+        soft_markers: tuple[bytes, ...],
+    ) -> _OverCapLine | None:
         """Read past an over-cap line in bounded pieces.
 
-        True if the line carried a marker, False if not, None if it runs
+        What was learned about it (see ``_OverCapLine``), or None if it runs
         past the snapshot unfinished (it is then left unread).
         """
         # A marker may straddle two pieces, so each piece is searched
         # together with the end of the one before it.
-        overlap = max(len(marker) for marker in markers) - 1
-        carried = any(marker in head for marker in markers)
-        tail = head[len(head) - overlap:]
+        every = (*hard_markers, *soft_markers)
+        overlap = max(len(marker) for marker in every) - 1
+        hard = any(marker in head for marker in hard_markers)
+        soft = any(marker in head for marker in soft_markers)
+        window = head[len(head) - overlap:]
+        tail = head[-_OVER_CAP_TAIL_BYTES:]
         consumed = len(head)
         while True:
             left = self._remaining - consumed
@@ -837,21 +1220,26 @@ class _VerifiedPrefix:
             if not piece:
                 return None
             consumed += len(piece)
-            joined = tail + piece
-            if not carried:
-                carried = any(marker in joined for marker in markers)
-            tail = joined[len(joined) - overlap:]
+            joined = window + piece
+            if not hard:
+                hard = any(marker in joined for marker in hard_markers)
+            if not soft:
+                soft = any(marker in joined for marker in soft_markers)
+            window = joined[len(joined) - overlap:]
+            tail = (tail + piece)[-_OVER_CAP_TAIL_BYTES:]
             if piece.endswith(b"\n"):
                 break
         self._remaining -= consumed
         self.parsed_size += consumed
-        return carried
+        return _OverCapLine(hard, soft, tail)
 
 
 def _read_verified_prefix(
     path: Path,
     expected_stat: os.stat_result,
     resume_offset: int = 0,
+    budget: ScanBudget | None = None,
+    prefix_check: tuple[int, str] | None = None,
 ) -> _VerifiedPrefix | None:
     """The snapshot of a possibly still-growing file, or None.
 
@@ -869,6 +1257,11 @@ def _read_verified_prefix(
     whole transcript at once held bytes, a joined copy, a decoded copy
     and its split lines together: 2.6 GB at the peak of a cold Codex
     scan, and the allocator never handed it back.
+
+    A resume past byte zero also proves the part already read is still the
+    same bytes: ``prefix_check`` (what the previous read saved) must match the
+    file just before ``resume_offset``, or the file was rewritten in place and
+    None comes back, so the caller reads it from the start.
     """
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
@@ -885,6 +1278,14 @@ def _read_verified_prefix(
             and current.st_mtime_ns >= expected_stat.st_mtime_ns
             and 0 <= resume_offset <= expected_stat.st_size
         )
+        if verified and resume_offset > 0 and prefix_check is not None:
+            count, digest = prefix_check
+            verified = (
+                type(count) is int
+                and type(digest) is str
+                and 0 < count <= resume_offset
+                and _prefix_digest(os.pread(descriptor, count, resume_offset - count)) == digest
+            )
         if verified:
             os.lseek(descriptor, resume_offset, os.SEEK_SET)
     except OSError:
@@ -896,7 +1297,28 @@ def _read_verified_prefix(
         open(descriptor, "rb", buffering=_READ_BUFFER_BYTES),
         resume_offset,
         expected_stat.st_size,
+        budget,
     )
+
+
+def _open_snapshot(
+    path: Path,
+    expected_stat: os.stat_result,
+    resume_offset: int = 0,
+    budget: ScanBudget | None = None,
+    prefix_check: tuple[int, str] | None = None,
+) -> _VerifiedPrefix | None:
+    """``_read_verified_prefix`` with only the arguments that are in play, so
+    the plain whole-file read keeps the call shape its spies expect."""
+    arguments: list[object] = [path, expected_stat]
+    options: dict[str, object] = {}
+    if resume_offset:
+        arguments.append(resume_offset)
+    if budget is not None:
+        options["budget"] = budget
+    if prefix_check is not None:
+        options["prefix_check"] = prefix_check
+    return _read_verified_prefix(*arguments, **options)
 
 
 def _codex_private_id(prefix: str, value: str, dedupe_secret: bytes) -> str:
@@ -971,6 +1393,175 @@ def _codex_endpoint_from_dedupe(value: object) -> tuple[int, int, int, int] | No
     return counts
 
 
+_CODEX_COUNT_KEYS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens")
+
+
+def _codex_compaction_candidate(row: dict, payload: object, current_model: str):
+    """(response id, epoch, canonical counts, raw counts, thread total, model)
+    for a ``token_usage_record`` row, or None when it cannot be used."""
+    if not isinstance(payload, dict):
+        return None
+    response_id = payload.get("response_id")
+    if not isinstance(response_id, str) or not response_id.strip() or len(response_id) > 256:
+        return None
+    usage = payload.get("usage")
+    raw = _token_counts(usage, _CODEX_COUNT_KEYS) if isinstance(usage, dict) else None
+    if raw is None or not any(raw):
+        return None
+    try:
+        epoch = datetime.fromisoformat(str(row.get("timestamp")).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+    total = payload.get("thread_token_usage")
+    thread_total = _token_counts(total, _CODEX_COUNT_KEYS) if isinstance(total, dict) else None
+    model = payload.get("model")
+    model = model.strip()[:128] if isinstance(model, str) and model.strip() else current_model
+    canonical = (max(0, raw[0] - raw[1] - raw[2]), raw[1], raw[2], raw[3])
+    return response_id.strip(), epoch, canonical, raw, thread_total, model
+
+
+def _codex_compaction_record(held: tuple, session_id: str, dedupe_secret: bytes, response_id: str) -> tuple:
+    """One record for a compaction request. Its key is its response id, so a
+    fork that replays the compaction counts it once, wherever it was copied."""
+    epoch, canonical, _raw, _total, model = held
+    return (
+        "codex", session_id, model, epoch, *canonical,
+        "codex-response:" + _codex_private_id("", response_id, dedupe_secret),
+    )
+
+
+#: The most compaction ids (each of the three tables) a rollout's saved resume
+#: state may carry; a rollout past it is read from the start next time.
+_CODEX_STATE_LIMIT = 20_000
+#: How many response ids a rollout remembers in each of two tables: usage
+#: records held while they wait for a ``compacted`` marker that names them, and
+#: ids already settled. Almost every response writes a record and almost none
+#: is ever named by a compaction, so a long rollout would hold tens of
+#: thousands of each; a marker comes within a few lines of its record, so only
+#: the newest are kept. The bound is the same whole or in halves, and it keeps
+#: the saved state small.
+_CODEX_RECENT_IDS_LIMIT = 2048
+_CODEX_STATE_VERSION = 1
+
+
+def _codex_state_document(
+    *,
+    session_id: str,
+    parent_id: str | None,
+    root_id: str | None,
+    fork_boundary: float | None,
+    totals: tuple[int, int, int, int] | None,
+    model: str,
+    compacted_ids: set[str],
+    emitted_ids: dict[str, None],
+    latest_usage_id: str | None,
+    pending_usage: dict[str, tuple],
+) -> dict | None:
+    """Everything a Codex scan holds between lines, as plain JSON, so a pass
+    that stops mid-rollout (or a later one that finds it grown) carries on as
+    if it had never stopped. None when it holds more than a state may."""
+    if max(len(compacted_ids), len(emitted_ids), len(pending_usage)) > _CODEX_STATE_LIMIT:
+        return None
+    return {
+        "v": _CODEX_STATE_VERSION,
+        "session": session_id,
+        "parent": parent_id,
+        "root": root_id,
+        "fork": fork_boundary,
+        "totals": list(totals) if totals is not None else None,
+        "model": model,
+        "compacted": sorted(compacted_ids),
+        "emitted": list(emitted_ids),
+        "latest": latest_usage_id,
+        "pending": {
+            response_id: [epoch, list(canonical), list(raw), list(total) if total is not None else None, held_model]
+            for response_id, (epoch, canonical, raw, total, held_model) in pending_usage.items()
+        },
+    }
+
+
+def _counts4(value: object) -> tuple[int, int, int, int] | None:
+    if (
+        isinstance(value, (list, tuple))
+        and len(value) == 4
+        and all(type(item) is int and item >= 0 for item in value)
+    ):
+        return (value[0], value[1], value[2], value[3])
+    return None
+
+
+def _restore_codex_state(document: object) -> dict | None:
+    """The inverse of ``_codex_state_document``; None for anything that is not
+    exactly its output, so a damaged cache reads the rollout from the start."""
+    if not isinstance(document, dict) or document.get("v") != _CODEX_STATE_VERSION:
+        return None
+
+    def optional_text(value: object) -> str | bool | None:
+        if value is None or (isinstance(value, str) and 0 < len(value) <= 512):
+            return value
+        return False
+
+    session, parent, root = (optional_text(document.get(name)) for name in ("session", "parent", "root"))
+    model, latest = document.get("model"), optional_text(document.get("latest"))
+    fork = document.get("fork")
+    if (
+        not isinstance(session, str)
+        or parent is False
+        or root is False
+        or latest is False
+        or not isinstance(model, str)
+        or not 0 < len(model) <= 128
+        or not (fork is None or (type(fork) in {int, float} and math.isfinite(fork)))
+    ):
+        return None
+    raw_totals = document.get("totals")
+    totals = _counts4(raw_totals) if raw_totals is not None else None
+    if raw_totals is not None and totals is None:
+        return None
+    sets = []
+    for name in ("compacted", "emitted"):
+        values = document.get(name)
+        if (
+            not isinstance(values, list)
+            or len(values) > _CODEX_STATE_LIMIT
+            or not all(isinstance(item, str) and 0 < len(item) <= 256 for item in values)
+        ):
+            return None
+        sets.append(list(dict.fromkeys(values)))
+    raw_pending = document.get("pending")
+    if not isinstance(raw_pending, dict) or len(raw_pending) > _CODEX_STATE_LIMIT:
+        return None
+    pending: dict[str, tuple] = {}
+    for response_id, item in raw_pending.items():
+        if not (isinstance(response_id, str) and isinstance(item, list) and len(item) == 5):
+            return None
+        epoch, canonical, raw, total, held_model = item
+        counts = (_counts4(canonical), _counts4(raw), _counts4(total) if total is not None else None)
+        if (
+            type(epoch) not in {int, float}
+            or not math.isfinite(epoch)
+            or counts[0] is None
+            or counts[1] is None
+            or (total is not None and counts[2] is None)
+            or not isinstance(held_model, str)
+        ):
+            return None
+        pending[response_id] = (float(epoch), counts[0], counts[1], counts[2], held_model)
+    return {
+        "session": session, "parent": parent, "root": root,
+        "fork": None if fork is None else float(fork),
+        "totals": totals, "model": model, "latest": latest,
+        "compacted": sets[0], "emitted": sets[1], "pending": pending,
+    }
+
+
+def _remember_response(settled: dict[str, None], response_id: str) -> None:
+    """Note a settled response id, forgetting the oldest past the bound."""
+    settled[response_id] = None
+    if len(settled) > _CODEX_RECENT_IDS_LIMIT:
+        del settled[next(iter(settled))]
+
+
 def _scan_codex_lines(
     handle,
     *,
@@ -980,6 +1571,8 @@ def _scan_codex_lines(
     initial_parent_id: str | None = None,
     initial_root_id: str | None = None,
     initial_model: str | None = None,
+    initial_state: dict | None = None,
+    state_out: dict | None = None,
 ):
     """Parse Codex token deltas and logical lineage from a rollout.
 
@@ -987,6 +1580,13 @@ def _scan_codex_lines(
     event. Rollout forks and resumes copy those rows verbatim, so their stable
     timestamp plus cumulative endpoint is also the safe cross-file dedupe key.
     Older rows without a delta are converted from their cumulative sequence.
+
+    A scan that carries on from an earlier one passes that scan's
+    ``state_out`` back as ``initial_state`` (checked by
+    ``_restore_codex_state``): the session, lineage, fork boundary, running
+    totals, model and the compaction bookkeeping all carry across the cut, so
+    reading a rollout in two halves counts exactly what reading it whole does.
+    ``state_out`` is filled when the lines are used up.
     """
     records: list[tuple] = []
     logical_session_id = fallback_session_id
@@ -1005,6 +1605,25 @@ def _scan_codex_lines(
     # after its last token event and before the scan; a full rescan corrects
     # that one case.
     current_model = initial_model or "codex"
+    # Compaction requests: a request of its own that the thread's cumulative
+    # counter may not include. A ``token_usage_record`` is held until a
+    # ``compacted`` item names its response id (either order), and dropped
+    # when the next counter advance already accounts for it.
+    compacted_ids: set[str] = set()
+    pending_usage: dict[str, tuple] = {}
+    emitted_ids: dict[str, None] = {}
+    latest_usage_id: str | None = None
+    if initial_state is not None:
+        logical_session_id = initial_state["session"]
+        parent_id = initial_state["parent"]
+        root_id = initial_state["root"]
+        fork_boundary = initial_state["fork"]
+        previous_totals = initial_state["totals"]
+        current_model = initial_state["model"]
+        compacted_ids = set(initial_state["compacted"])
+        emitted_ids = dict.fromkeys(initial_state["emitted"])
+        latest_usage_id = initial_state["latest"]
+        pending_usage = dict(initial_state["pending"])
     for line in handle:
         if line is _OVERSIZED_LINE:
             malformed_lines += 1
@@ -1014,9 +1633,11 @@ def _scan_codex_lines(
             CODEX_MARKER not in line
             and '"session_meta"' not in line
             and '"turn_context"' not in line
+            and '"token_usage_record"' not in line
+            and '"compacted"' not in line
         ):
             continue
-        if len(line.encode("utf-8")) > USAGE_RECORD_MAX_BYTES:
+        if _line_over_cap(line):
             malformed_lines += 1
             continue
         try:
@@ -1028,6 +1649,32 @@ def _scan_codex_lines(
             malformed_lines += 1
             continue
         payload = row.get("payload")
+        if row.get("type") == "compacted":
+            marked = payload.get("compaction_response_id") if isinstance(payload, dict) else None
+            if isinstance(marked, str) and marked.strip() and len(marked) <= 256:
+                marked = marked.strip()
+                compacted_ids.add(marked)
+                held = pending_usage.pop(marked, None)
+                if held is not None and marked not in emitted_ids:
+                    _remember_response(emitted_ids, marked)
+                    records.append(_codex_compaction_record(held, logical_session_id, dedupe_secret, marked))
+            continue
+        if row.get("type") == "token_usage_record":
+            held = _codex_compaction_candidate(row, payload, current_model)
+            if held is None:
+                continue
+            response_id = held[0]
+            if response_id in emitted_ids:
+                continue
+            latest_usage_id = response_id
+            if response_id in compacted_ids:
+                _remember_response(emitted_ids, response_id)
+                records.append(_codex_compaction_record(held[1:], logical_session_id, dedupe_secret, response_id))
+            else:
+                pending_usage.setdefault(response_id, held[1:])
+                if len(pending_usage) > _CODEX_RECENT_IDS_LIMIT:
+                    del pending_usage[next(iter(pending_usage))]
+            continue
         if row.get("type") == "session_meta" and isinstance(payload, dict):
             candidate = payload.get("id")
             if isinstance(candidate, str) and candidate and len(candidate) <= 256:
@@ -1067,6 +1714,11 @@ def _scan_codex_lines(
             malformed_lines += 1
             continue
         info = payload.get("info")
+        if info is None and "info" in payload:
+            # Codex also sends a token_count with a null ``info`` just to carry
+            # its rate limits (read above): an event with no usage in it, not
+            # a record that went wrong.
+            continue
         if not isinstance(info, dict):
             malformed_lines += 1
             continue
@@ -1113,6 +1765,13 @@ def _scan_codex_lines(
                 current - previous if current >= previous else current
                 for current, previous in zip(counts, previous_totals)
             )
+        if latest_usage_id is not None and latest_usage_id in pending_usage:
+            # A local compaction advances the counter between its record and
+            # its marker; a remote one does not. Only the latter is extra.
+            _epoch, _canonical, held_raw, held_total, _held_model = pending_usage[latest_usage_id]
+            if held_raw == delta or (held_total is not None and held_total == counts):
+                del pending_usage[latest_usage_id]
+                _remember_response(emitted_ids, latest_usage_id)
         previous_totals = counts
         # Codex reports cache reads and cache writes as subsets of input_tokens.
         # Store the canonical tuple as ordinary input, cached input, cache
@@ -1145,6 +1804,16 @@ def _scan_codex_lines(
                 delta[0], delta[1], delta[2], delta[3], dedupe,
             )
         )
+    if state_out is not None:
+        state_out.clear()
+        state = _codex_state_document(
+            session_id=logical_session_id, parent_id=parent_id, root_id=root_id,
+            fork_boundary=fork_boundary, totals=previous_totals, model=current_model,
+            compacted_ids=compacted_ids, emitted_ids=emitted_ids,
+            latest_usage_id=latest_usage_id, pending_usage=pending_usage,
+        )
+        if state is not None:
+            state_out.update(state)
     return (
         records, rate_limit_windows, malformed_lines, eof_newline,
         legacy_tail_without_baseline,
@@ -1155,16 +1824,19 @@ def _parse_codex_file(
     path: Path,
     expected_stat: os.stat_result,
     dedupe_secret: bytes,
+    budget: ScanBudget | None = None,
 ) -> _ParseResult:
     """Parse event deltas with identities stable across copied rollouts."""
-    snapshot = _read_verified_prefix(path, expected_stat)
+    snapshot = _open_snapshot(path, expected_stat, 0, budget)
     if snapshot is None:
         return _ParseResult([], 0, False)
     physical_id = f"codex:{expected_stat.st_dev}:{expected_stat.st_ino}"
+    state: dict = {}
     records, rate_limit_windows, malformed_lines, _eof, _legacy = _scan_codex_lines(
-        snapshot.lines(_CODEX_MARKERS),
+        snapshot.lines(_CODEX_MARKERS, _CODEX_SOFT_MARKERS),
         fallback_session_id=physical_id,
         dedupe_secret=dedupe_secret,
+        state_out=state,
     )
     if not snapshot.read_ok:
         return _ParseResult([], 0, False)
@@ -1173,8 +1845,11 @@ def _parse_codex_file(
         malformed_lines,
         True,
         rate_limit_windows,
-        True,
+        bool(state),
         snapshot.parsed_size,
+        snapshot.stopped_early,
+        snapshot.prefix_check,
+        state or None,
     )
 
 
@@ -1633,9 +2308,10 @@ def _parse_file(
     path: Path,
     expected_stat: os.stat_result,
     dedupe_secret: bytes,
+    budget: ScanBudget | None = None,
 ) -> _ParseResult:
     session_id = f"claude:{expected_stat.st_dev}:{expected_stat.st_ino}"
-    snapshot = _read_verified_prefix(path, expected_stat)
+    snapshot = _open_snapshot(path, expected_stat, 0, budget)
     if snapshot is None:
         return _ParseResult([], 0, False)
     return _scan_claude_lines(snapshot, session_id, dedupe_secret)
@@ -1649,17 +2325,19 @@ def _scan_claude_lines(
     # T3's mightCarryUsage: the reader skips a line without the marker
     # before it is decoded, let alone parsed.
     for line in snapshot.lines(_CLAUDE_MARKERS):
-        record = (
-            None if line is _OVERSIZED_LINE
-            else _record_from_line(line, session_id, dedupe_secret)
+        found, damaged = (
+            ([], True) if line is _OVERSIZED_LINE
+            else _claude_line(line, session_id, dedupe_secret)
         )
-        if record is not None:
-            records.append(record)
-        else:
+        records.extend(found)
+        if damaged:
             malformed_lines += 1
     if not snapshot.read_ok:
         return _ParseResult([], 0, False)
-    return _ParseResult(records, malformed_lines, True, (), True, snapshot.parsed_size)
+    return _ParseResult(
+        records, malformed_lines, True, (), True, snapshot.parsed_size,
+        snapshot.stopped_early, snapshot.prefix_check,
+    )
 
 
 def _parse_file_tail(
@@ -1673,6 +2351,9 @@ def _parse_file_tail(
     codex_parent_id: str | None = None,
     codex_root_id: str | None = None,
     codex_model: str | None = None,
+    budget: ScanBudget | None = None,
+    prefix_check: tuple[int, str] | None = None,
+    codex_state: dict | None = None,
 ) -> _ParseResult:
     """Parse only the bytes appended past ``resume_offset``.
 
@@ -1681,22 +2362,32 @@ def _parse_file_tail(
     bursts. The offset is the cached entry's own parsed size. Reads are
     growth-tolerant (_read_verified_prefix): the file may keep growing
     while we read -- we parse exactly the inventory snapshot's bytes,
-    trimmed to the last newline.
+    trimmed to the last newline. ``prefix_check`` proves the part already
+    read is unchanged, and ``codex_state`` is the earlier scan's saved state
+    (an entry that has none falls back to what its last record implies).
     """
-    snapshot = _read_verified_prefix(path, expected_stat, resume_offset)
+    restored = None
+    if provider_id == "codex" and codex_state is not None:
+        restored = _restore_codex_state(codex_state)
+        if restored is None:
+            return _ParseResult([], 0, False)
+    snapshot = _open_snapshot(path, expected_stat, resume_offset, budget, prefix_check)
     if snapshot is None:
         return _ParseResult([], 0, False)
     if provider_id == "codex":
         physical_id = f"codex:{expected_stat.st_dev}:{expected_stat.st_ino}"
+        state: dict = {}
         records, rate_limit_windows, malformed_lines, _eof, legacy_without_baseline = (
             _scan_codex_lines(
-                snapshot.lines(_CODEX_MARKERS),
+                snapshot.lines(_CODEX_MARKERS, _CODEX_SOFT_MARKERS),
                 fallback_session_id=codex_session_id or physical_id,
                 dedupe_secret=dedupe_secret,
                 initial_totals=codex_previous_totals,
                 initial_parent_id=codex_parent_id,
                 initial_root_id=codex_root_id,
                 initial_model=codex_model,
+                initial_state=restored,
+                state_out=state,
             )
         )
         if not snapshot.read_ok:
@@ -1711,8 +2402,11 @@ def _parse_file_tail(
             malformed_lines,
             True,
             rate_limit_windows,
-            True,
+            bool(state),
             snapshot.parsed_size,
+            snapshot.stopped_early,
+            snapshot.prefix_check,
+            state or None,
         )
     session_id = f"claude:{expected_stat.st_dev}:{expected_stat.st_ino}"
     return _scan_claude_lines(snapshot, session_id, dedupe_secret)
@@ -1879,7 +2573,7 @@ def _decode_cached_records(
         return None
     try:
         if require_stat_match and (
-            int(entry["size"]) != expected_stat.st_size
+            int(entry.get("stat_size", entry["size"])) != expected_stat.st_size
             or float(entry["mtime"]) != expected_stat.st_mtime
             or int(entry["device"]) != expected_stat.st_dev
             or int(entry["inode"]) != expected_stat.st_ino
@@ -1924,8 +2618,12 @@ def _physical_file_unchanged(path: Path, expected_stat: os.stat_result) -> bool:
         and stat.S_ISREG(current.st_mode)
         and current.st_dev == expected_stat.st_dev
         and current.st_ino == expected_stat.st_ino
-        and current.st_size == expected_stat.st_size
-        and current.st_mtime_ns == expected_stat.st_mtime_ns
+        # Growth is not damage: a live session appends between the pass's
+        # inventory and this look, and the cached part is still the part the
+        # inventory saw. The next pass reads what was added. A file that
+        # shrank or was replaced is not the file the cache describes.
+        and current.st_size >= expected_stat.st_size
+        and current.st_mtime_ns >= expected_stat.st_mtime_ns
     )
 
 
@@ -2083,6 +2781,108 @@ def card_window_start(now: float) -> float:
     return datetime(today.year, today.month, today.day).timestamp()
 
 
+class _ScannedFile(NamedTuple):
+    """One file's place in this pass: what was read of it and what to save."""
+
+    info: os.stat_result
+    provider: str
+    root_key: str | None
+    malformed: int
+    records: list[tuple]
+    windows: tuple[dict, ...]
+    eof_newline: bool
+    #: Offset just past the last complete line read: where the next pass resumes.
+    parsed_size: int
+    #: ``stat_size`` / ``prefix`` / ``resume``, saved beside the records.
+    extra: dict
+
+
+class _PendingParse(NamedTuple):
+    """A file that needs reading this pass, with what the cache held for it."""
+
+    candidate: _DiscoveredUsageFile
+    key: str
+    raw_entry: object
+    tables: tuple[list, list, list]
+    using_index: bool
+
+
+def _codex_derived_resume(
+    records: list[tuple],
+) -> tuple[str | None, tuple[int, int, int, int] | None, str | None, str | None, str | None]:
+    """``(session, running totals, parent, root, model)`` a cached rollout's
+    records imply, for an entry written before scanner state was saved.
+
+    The totals and lineage come from the last token EVENT: a compaction
+    request's record (``codex-response:``) carries neither.
+    """
+    if not records:
+        return (None, None, None, None, None)
+    event = next((r for r in reversed(records) if _codex_event_identity(r[8]) is not None), None)
+    totals = _codex_endpoint_from_dedupe(event[8]) if event is not None else None
+    parent, root = (_codex_context_from_dedupe(event[8]) if event is not None else None) or (None, None)
+    return (records[0][1], totals, parent, root, records[-1][2])
+
+
+#: Which rules decided what counts as a damaged line when an entry was saved.
+#: 2: an attachment or tool result that merely mentions usage, and a Codex
+#: ``token_count`` whose ``info`` is null, are no longer counted as damaged.
+#: An older entry that recorded damaged lines is read again so the count is
+#: right; one that recorded none is unaffected and is kept.
+_MALFORMED_SEMANTICS = 2
+
+
+def _malformed_count_is_stale(entry: dict) -> bool:
+    try:
+        return int(entry.get("malformed_lines", 0)) > 0 and entry.get("sem") != _MALFORMED_SEMANTICS
+    except (TypeError, ValueError):
+        return True
+
+
+def _resume_extras(entry: object) -> dict:
+    """The resume fields of a saved entry, if well formed (else none of them)."""
+    extras: dict = {}
+    if not isinstance(entry, dict):
+        return extras
+    if entry.get("sem") == _MALFORMED_SEMANTICS:
+        extras["sem"] = _MALFORMED_SEMANTICS
+    stat_size = entry.get("stat_size")
+    if type(stat_size) is int and stat_size >= 0:
+        extras["stat_size"] = stat_size
+    if _saved_prefix_check(entry) is not None:
+        extras["prefix"] = list(_saved_prefix_check(entry))
+    if isinstance(entry.get("resume"), dict):
+        extras["resume"] = entry["resume"]
+    return extras
+
+
+def _resume_extras_of(result: _ParseResult, info: os.stat_result) -> dict:
+    """What to save beside a parse so the next pass can carry on from it."""
+    extras: dict = {"sem": _MALFORMED_SEMANTICS}
+    if result.prefix_check is not None:
+        extras["prefix"] = list(result.prefix_check)
+    if result.resume_state:
+        extras["resume"] = result.resume_state
+    if not result.stopped_early:
+        # The read reached the frozen end, so an unchanged file is a cache hit
+        # even when its last line is still unfinished and ``size`` falls short.
+        extras["stat_size"] = info.st_size
+    return extras
+
+
+def _saved_prefix_check(entry: object) -> tuple[int, str] | None:
+    value = entry.get("prefix") if isinstance(entry, dict) else None
+    if (
+        isinstance(value, list)
+        and len(value) == 2
+        and type(value[0]) is int
+        and type(value[1]) is str
+        and 0 < value[0] <= USAGE_PREFIX_CHECK_BYTES
+    ):
+        return (value[0], value[1])
+    return None
+
+
 def _scan_inventory_usage(
     inventory: LocalUsageInventory,
     expected_roots: dict[str, Path],
@@ -2092,6 +2892,8 @@ def _scan_inventory_usage(
     cache_max_files: int = USAGE_CACHE_MAX_FILES,
     cache_source_key: SourceKey,
     now: float | None = None,
+    budget: ScanBudget | None = None,
+    resolved_capture: ResolvedUsageCapture | None = None,
 ) -> UsageTotals:
     """Scan one frozen provider-local inventory into private aggregate state.
 
@@ -2100,11 +2902,48 @@ def _scan_inventory_usage(
     30 days, so the cache it writes can vouch for the card whatever the
     caller's window was: a 7-day graph narrows what is returned, never what
     the cache covers. ``now`` is the clock for the card's window.
+
+    ``budget`` bounds one pass: when it runs out the scan stops on a line
+    boundary, saves how far each file got and reports the files it left as
+    ``pending_files`` in the source's coverage (partial, "still reading"). The
+    next pass carries on from there; with no budget the scan runs to the end.
     """
     inventory_roots = {source.provider_id: source.root for source in inventory.sources}
     if inventory_roots != expected_roots:
         raise ValueError("usage inventory roots do not match scan roots")
 
+    with _cache_scan_lock(cache_path):
+        return _scan_inventory_usage_locked(
+            inventory, cache_path, since_epoch=since_epoch, cache_max_files=cache_max_files,
+            cache_source_key=cache_source_key, now=now, budget=budget, resolved_capture=resolved_capture,
+        )
+
+
+#: One scan at a time per cache file within this process. Passes are short
+#: and frequent now, so two of them (the history service's and a graph
+#: request's) would otherwise each save progress over the other's.
+_CACHE_SCAN_LOCKS: dict[str, threading.Lock] = {}
+_CACHE_SCAN_LOCKS_GUARD = threading.Lock()
+
+
+def _cache_scan_lock(cache_path: Path | None):
+    if cache_path is None:
+        return contextlib.nullcontext()
+    with _CACHE_SCAN_LOCKS_GUARD:
+        return _CACHE_SCAN_LOCKS.setdefault(str(cache_path), threading.Lock())
+
+
+def _scan_inventory_usage_locked(
+    inventory: LocalUsageInventory,
+    cache_path: Path | None,
+    *,
+    since_epoch: float,
+    cache_max_files: int,
+    cache_source_key: SourceKey,
+    now: float | None,
+    budget: ScanBudget | None,
+    resolved_capture: ResolvedUsageCapture | None = None,
+) -> UsageTotals:
     card_start = card_window_start(time.time() if now is None else now)
     read_since = since_epoch if since_epoch <= 0.0 else min(since_epoch, card_start)
     cache = _load_cache(cache_path, cache_source_key) if cache_path is not None else {}
@@ -2127,6 +2966,7 @@ def _scan_inventory_usage(
             inventory, cache_path, cache=cache, file_index=file_index,
             since_epoch=read_since, output_since=since_epoch, card_start=card_start,
             cache_max_files=cache_max_files, cache_source_key=cache_source_key,
+            budget=budget, resolved_capture=resolved_capture,
         )
     finally:
         if file_index is not None:
@@ -2168,6 +3008,8 @@ def _scan_inventory_usage_with_index(
     card_start: float,
     cache_max_files: int,
     cache_source_key: SourceKey,
+    budget: ScanBudget | None = None,
+    resolved_capture: ResolvedUsageCapture | None = None,
 ) -> UsageTotals:
     # ``since_epoch`` is how far back this scan reads; ``output_since`` is the
     # window its caller gets totals for, never earlier than that.
@@ -2194,15 +3036,13 @@ def _scan_inventory_usage_with_index(
     models_index: dict[str, int] = {}
     dedupes_table: list[str] = []
     dedupes_index: dict[str, int] = {}
-    scanned_files: dict[
-        str,
-        tuple[os.stat_result, str, str | None, int, list[tuple], tuple[dict, ...], bool, int],
-    ] = {}
+    scanned_files: dict[str, _ScannedFile] = {}
     coverage_states: dict[str, _CoverageState] = {}
 
     all_records: list[tuple] = []
     observed_root_keys: set[str] = set()
     rate_candidates: list[tuple[int, tuple[dict, ...]]] = []
+    pass_unfinished = False
 
     for source in inventory.sources:
         coverage = _CoverageState.from_coverage(source.coverage)
@@ -2210,6 +3050,11 @@ def _scan_inventory_usage_with_index(
         parser = _parse_codex_file if source.provider_id == "codex" else _parse_file
         if source.root_key is not None and source.walk_complete:
             observed_root_keys.add(source.root_key)
+        # Records are gathered per file and joined in the inventory's order at
+        # the end, so which copy of a duplicated message a window counts first
+        # does not depend on which files this pass happened to get to.
+        gathered: dict[str, list[tuple]] = {}
+        work: list[_PendingParse] = []
         for candidate in source.candidates:
             key = _cache_file_key(source.provider_id, candidate.info)
             raw_cached_entry = cached_files.get(key)
@@ -2236,6 +3081,7 @@ def _scan_inventory_usage_with_index(
                     entry_dedupes,
                 )
                 if _cached_entry_covers(raw_cached_entry, since_epoch)
+                and not _malformed_count_is_stale(raw_cached_entry)
                 else None
             )
             if cached_entry is not None:
@@ -2248,10 +3094,10 @@ def _scan_inventory_usage_with_index(
                 if using_index:
                     index_hits.add(key)
                 coverage.malformed_lines += cached_malformed_lines
-                all_records.extend(cached_records)
+                gathered[key] = cached_records
                 if source.provider_id == "codex" and cached_rate_windows:
                     rate_candidates.append((candidate.info.st_mtime_ns, cached_rate_windows))
-                scanned_files[key] = (
+                scanned_files[key] = _ScannedFile(
                     candidate.info,
                     source.provider_id,
                     source.root_key,
@@ -2262,6 +3108,7 @@ def _scan_inventory_usage_with_index(
                     int(raw_cached_entry.get("size", candidate.info.st_size))
                     if isinstance(raw_cached_entry, dict)
                     else candidate.info.st_size,
+                    _resume_extras(raw_cached_entry),
                 )
                 continue
 
@@ -2273,26 +3120,55 @@ def _scan_inventory_usage_with_index(
                 # eof_newline is unknown, so growth means a full reparse,
                 # and a wider window reads it.
                 file_floors[key] = retention_epoch
-                scanned_files[key] = (
+                scanned_files[key] = _ScannedFile(
                     candidate.info, source.provider_id, source.root_key,
-                    0, [], (), False, candidate.info.st_size,
+                    0, [], (), False, candidate.info.st_size, {},
                 )
                 continue
+            work.append(
+                _PendingParse(
+                    candidate, key, raw_cached_entry,
+                    (entry_sessions, entry_models, entry_dedupes), using_index,
+                )
+            )
 
-            # Incremental tail: the file GREW in place (same device and
-            # inode, cached parse ended on a newline). Read only the
-            # appended bytes instead of re-parsing a 10MB live
-            # transcript on every poll. Both providers now append event
-            # records. Codex copied-history events carry stable HMAC IDs,
-            # so the global pass removes them. Any anomaly falls through
-            # to the full reparse below.
-            resume_offset = (
-                _incremental_resume_offset(raw_cached_entry, candidate.info)
-                if _cached_entry_covers(raw_cached_entry, since_epoch)
+        if budget is not None:
+            budget.restart()
+        # Two lanes, newest first in each, taken in turn. "Grown" files are ones
+        # the cache already holds part of: the sessions being written right
+        # now, and files an earlier pass stopped inside. "Unread" files are
+        # the rest of the history. Newest first fills in the days a person is
+        # looking at first, and taking turns keeps a live session that grows
+        # between every pass from using all of every pass: each lane always
+        # gets its first file, however short the pass.
+        # Incremental tail: the file GREW in place (same device and inode,
+        # cached parse ended on a newline), or an earlier pass stopped inside
+        # it. Read only the bytes past the saved offset instead of re-parsing
+        # a transcript on every poll. Both providers append event records.
+        # Codex copied-history events carry stable HMAC IDs, so the global
+        # pass removes them. Any anomaly (a shrunk file, a changed prefix)
+        # falls through to the full reparse.
+        grown: list[tuple[_PendingParse, int | None]] = []
+        unread: list[tuple[_PendingParse, int | None]] = []
+        for item in sorted(work, key=lambda item: item.candidate.info.st_mtime_ns, reverse=True):
+            offset = (
+                _incremental_resume_offset(item.raw_entry, item.candidate.info)
+                if _cached_entry_covers(item.raw_entry, since_epoch)
+                and not _malformed_count_is_stale(item.raw_entry)
                 else None
             )
-            if resume_offset is not None:
-                base = _decode_cached_records(
+            (grown if offset is not None else unread).append((item, offset))
+        turns: list[tuple[str, _PendingParse, int | None]] = []
+        for pair in itertools.zip_longest(grown, unread):
+            for lane, entry in zip(("grown", "unread"), pair, strict=True):
+                if entry is not None:
+                    turns.append((lane, *entry))
+        lane_started = {"grown": False, "unread": False}
+        for lane, item, resume_offset in turns:
+            candidate, key, raw_cached_entry = item.candidate, item.key, item.raw_entry
+            entry_sessions, entry_models, entry_dedupes = item.tables
+            base = (
+                _decode_cached_records(
                     raw_cached_entry,
                     coverage.provider_id,
                     candidate.info,
@@ -2301,71 +3177,94 @@ def _scan_inventory_usage_with_index(
                     entry_dedupes,
                     require_stat_match=False,
                 )
+                if resume_offset is not None
+                else None
+            )
+            # The pass's time is spent on a file only while it lasts; each
+            # lane's first file always gets its turn, so a pass cannot make no
+            # progress. A file left for the next pass keeps what it had.
+            if budget is not None and lane_started[lane] and (pass_unfinished or budget.expired()):
+                pass_unfinished = True
+                coverage.pending_files += 1
                 if base is not None:
                     base_records, base_malformed, base_windows = base
-                    tail = _parse_file_tail(
-                        candidate.path,
-                        candidate.info,
-                        resume_offset,
-                        source.provider_id,
-                        dedupe_secret,
-                        (
-                            base_records[0][1]
-                            if source.provider_id == "codex" and base_records
-                            else None
-                        ),
-                        (
-                            _codex_endpoint_from_dedupe(base_records[-1][8])
-                            if source.provider_id == "codex" and base_records
-                            else None
-                        ),
-                        *(
-                            _codex_context_from_dedupe(base_records[-1][8])
-                            if source.provider_id == "codex" and base_records
-                            else (None, None)
-                        ),
-                        (
-                            base_records[-1][2]
-                            if source.provider_id == "codex" and base_records
-                            else None
-                        ),
+                    coverage.malformed_lines += base_malformed
+                    gathered[key] = base_records
+                    if item.using_index:
+                        index_hits.add(key)
+                    file_floors[key] = float(raw_cached_entry.get("since", 0.0))
+                    scanned_files[key] = _ScannedFile(
+                        candidate.info, source.provider_id, source.root_key,
+                        base_malformed, base_records, base_windows,
+                        True, resume_offset,
+                        {k: v for k, v in _resume_extras(raw_cached_entry).items() if k != "stat_size"},
                     )
-                    if tail.read_ok:
-                        file_floors[key] = float(raw_cached_entry.get("since", 0.0))
-                        coverage.files_read += 1
-                        merged_malformed = base_malformed + tail.malformed_lines
-                        coverage.malformed_lines += merged_malformed
-                        if source.provider_id == "codex":
-                            merged_records = [*base_records, *tail.records]
-                            merged_windows = tail.rate_limit_windows or base_windows
-                        else:
-                            merged_records = [*base_records, *tail.records]
-                            merged_windows = ()
-                        all_records.extend(merged_records)
-                        if source.provider_id == "codex" and merged_windows:
-                            rate_candidates.append((candidate.info.st_mtime_ns, merged_windows))
-                        scanned_files[key] = (
-                            candidate.info,
-                            source.provider_id,
-                            source.root_key,
-                            merged_malformed,
-                            merged_records,
-                            merged_windows,
-                            tail.eof_newline,
-                            tail.parsed_size if tail.parsed_size >= 0 else candidate.info.st_size,
-                        )
-                        continue
+                continue
+            lane_started[lane] = True
 
-            result = parser(candidate.path, candidate.info, dedupe_secret)
+            if base is not None:
+                base_records, base_malformed, base_windows = base
+                tail = _parse_file_tail(
+                    candidate.path,
+                    candidate.info,
+                    resume_offset,
+                    source.provider_id,
+                    dedupe_secret,
+                    *(
+                        _codex_derived_resume(base_records)
+                        if source.provider_id == "codex"
+                        else (None, None, None, None, None)
+                    ),
+                    budget,
+                    _saved_prefix_check(raw_cached_entry),
+                    raw_cached_entry.get("resume") if source.provider_id == "codex" else None,
+                )
+                if tail.read_ok:
+                    file_floors[key] = float(raw_cached_entry.get("since", 0.0))
+                    coverage.files_read += 1
+                    if tail.stopped_early:
+                        pass_unfinished = True
+                        coverage.pending_files += 1
+                    merged_malformed = base_malformed + tail.malformed_lines
+                    coverage.malformed_lines += merged_malformed
+                    merged_records = [*base_records, *tail.records]
+                    if source.provider_id == "codex":
+                        merged_windows = tail.rate_limit_windows or base_windows
+                    else:
+                        merged_windows = ()
+                    gathered[key] = merged_records
+                    if source.provider_id == "codex" and merged_windows:
+                        rate_candidates.append((candidate.info.st_mtime_ns, merged_windows))
+                    scanned_files[key] = _ScannedFile(
+                        candidate.info,
+                        source.provider_id,
+                        source.root_key,
+                        merged_malformed,
+                        merged_records,
+                        merged_windows,
+                        tail.eof_newline,
+                        tail.parsed_size if tail.parsed_size >= 0 else candidate.info.st_size,
+                        _resume_extras_of(tail, candidate.info),
+                    )
+                    continue
+
+            result = (
+                parser(candidate.path, candidate.info, dedupe_secret)
+                if budget is None
+                else parser(candidate.path, candidate.info, dedupe_secret, budget)
+            )
             if not result.read_ok:
                 coverage.unreadable_files += 1
                 continue
             coverage.files_read += 1
+            if result.stopped_early:
+                pass_unfinished = True
+                coverage.pending_files += 1
             coverage.malformed_lines += result.malformed_lines
-            all_records.extend(result.records)
+            gathered[key] = result.records
             if source.provider_id == "codex" and result.rate_limit_windows:
                 rate_candidates.append((candidate.info.st_mtime_ns, result.rate_limit_windows))
-            scanned_files[key] = (
+            scanned_files[key] = _ScannedFile(
                 candidate.info,
                 source.provider_id,
                 source.root_key,
@@ -2374,7 +3273,10 @@ def _scan_inventory_usage_with_index(
                 result.rate_limit_windows,
                 result.eof_newline,
                 result.parsed_size if result.parsed_size >= 0 else candidate.info.st_size,
+                _resume_extras_of(result, candidate.info),
             )
+        for candidate in source.candidates:
+            all_records.extend(gathered.get(_cache_file_key(source.provider_id, candidate.info), ()))
 
     if file_index is not None:
         if all(source.walk_complete for source in inventory.sources):
@@ -2382,23 +3284,23 @@ def _scan_inventory_usage_with_index(
                 _cache_file_key(source.provider_id, candidate.info)
                 for source in inventory.sources for candidate in source.candidates
             })
-        for key, (
-            info, provider, root_key, malformed, records, windows, eof_newline, parsed_size,
-        ) in scanned_files.items():
+        for key, scanned in scanned_files.items():
             if key in index_hits:
                 continue
+            info = scanned.info
             file_index.put(key, _usage_index_document({
                 "since": file_floors.get(key, 0.0),
-                "size": parsed_size, "mtime": info.st_mtime,
+                "size": scanned.parsed_size, "mtime": info.st_mtime,
                 "device": info.st_dev, "inode": info.st_ino,
-                "provider": provider, "root_key": root_key,
-                "malformed_lines": malformed, "eof_newline": eof_newline,
-                "rate_limit_windows": [dict(window) for window in windows],
-            }, records))
+                "provider": scanned.provider, "root_key": scanned.root_key,
+                "malformed_lines": scanned.malformed, "eof_newline": scanned.eof_newline,
+                "rate_limit_windows": [dict(window) for window in scanned.windows],
+                **scanned.extra,
+            }, scanned.records))
 
     retained_cached_files: dict[
         str,
-        tuple[float, int, int, int, str, str | None, int, list[tuple], tuple[dict, ...], bool],
+        tuple[float, int, int, int, str, str | None, int, list[tuple], tuple[dict, ...], bool, dict],
     ] = {}
     for key, entry in cached_files.items():
         if key in scanned_files or not isinstance(entry, dict):
@@ -2450,35 +3352,31 @@ def _scan_inventory_usage_with_index(
             cached_records,
             cached_rate_windows,
             entry.get("eof_newline") is True,
+            _resume_extras(entry),
         )
 
     cache_candidates = [
         (
             key,
-            file_info.st_mtime,
-            parsed_size,
-            file_info.st_dev,
-            file_info.st_ino,
-            provider_id,
-            root_key,
-            malformed_lines,
-            records,
-            rate_windows,
-            eof_newline,
+            scanned.info.st_mtime,
+            scanned.parsed_size,
+            scanned.info.st_dev,
+            scanned.info.st_ino,
+            scanned.provider,
+            scanned.root_key,
+            scanned.malformed,
+            scanned.records,
+            scanned.windows,
+            scanned.eof_newline,
+            scanned.extra,
         )
-        for key, (
-            file_info,
-            provider_id,
-            root_key,
-            malformed_lines,
-            records,
-            rate_windows,
-            eof_newline,
-            parsed_size,
-        ) in scanned_files.items()
+        for key, scanned in scanned_files.items()
     ]
     cache_candidates.extend(
-        (key, mtime, size, device, inode, provider, root_key, malformed_lines, records, rate_windows, eof_newline)
+        (
+            key, mtime, size, device, inode, provider, root_key, malformed_lines,
+            records, rate_windows, eof_newline, extra,
+        )
         for key, (
             mtime,
             size,
@@ -2490,6 +3388,7 @@ def _scan_inventory_usage_with_index(
             records,
             rate_windows,
             eof_newline,
+            extra,
         ) in retained_cached_files.items()
     )
     cache_candidates.sort(key=lambda item: (-item[1], item[0]))
@@ -2503,13 +3402,18 @@ def _scan_inventory_usage_with_index(
     card_window = _first_sightings(resolved, card_start)
     daily = None
     if cache_path is not None:
-        if all(source.walk_complete for source in inventory.sources):
+        if all(source.walk_complete for source in inventory.sources) and not pass_unfinished and not any(
+            state.pending_files for state in coverage_states.values()
+        ):
             daily = _card_days_document(cache_source_key.provider_id, card_window, card_start)
         else:
             # A transcript folder that could not be walked completely (gone
-            # for a moment, a folder that would not open) says nothing about
-            # what is in it, so it must not zero or shrink the month: the last
-            # good days stay, as the file index keeps its rows on such a walk.
+            # for a moment, a folder that would not open), or a pass that ran
+            # out of time part way through the month, says nothing about what
+            # is in the rest, so it must not zero or shrink the month: the
+            # last good days stay, as the file index keeps its rows on such a
+            # walk. A first-ever pass has none, and the card says nothing
+            # until a pass has read the whole window.
             kept = cache.get("daily") if cache else None
             daily = kept if isinstance(kept, dict) else None
     daily_bytes = 0 if daily is None else len(_compact_json(daily))
@@ -2533,6 +3437,7 @@ def _scan_inventory_usage_with_index(
         records,
         rate_windows,
         eof_newline,
+        extra,
     ) in selected_cache_candidates:
         if retention_epoch > 0.0:
             records = [record for record in records if record[3] >= retention_epoch]
@@ -2546,6 +3451,8 @@ def _scan_inventory_usage_with_index(
             # cycle -- measured live as a CPU pin at 104%, permanently. The
             # cache exists to avoid exactly that read.
         cost = _CACHE_BYTES_PER_ENTRY + _CACHE_BYTES_PER_RECORD * len(records)
+        if extra:
+            cost += len(_compact_json(extra))
         if provider == "codex":
             # Codex lineage keys carry HMAC-safe session ancestry plus the
             # cumulative endpoint needed by incremental tails. Account for
@@ -2579,6 +3486,7 @@ def _scan_inventory_usage_with_index(
             "eof_newline": bool(eof_newline),
             "malformed_lines": malformed_lines,
             "rate_limit_windows": [dict(window) for window in rate_windows],
+            **extra,
             "records": [
                 [
                     _intern(r[0], models_table, models_index),
@@ -2622,6 +3530,9 @@ def _scan_inventory_usage_with_index(
         card_window if output_since == card_start else _first_sightings(resolved, output_since)
     )
     totals.source_coverage = {provider_id: coverage.finalize() for provider_id, coverage in coverage_states.items()}
+    if resolved_capture is not None:
+        source = inventory.sources[0]
+        resolved_capture(cache_source_key, source.root, resolved, totals.source_coverage[source.provider_id])
     if rate_candidates:
         newest = max(rate_candidates, key=lambda item: item[0])
         totals.codex_rate_limit_evidence = newest[1]
@@ -2734,25 +3645,46 @@ def _first_sightings(resolved: list[tuple], since_epoch: float) -> list[tuple]:
     return window
 
 
+#: (input rate, output rate, cache-read multiplier, cache-write multiplier)
+#: for one model: everything pricing a record needs from the tables and the
+#: person's overrides.
+_RateCard = tuple[float, float, float, float]
+
+
+def _rate_card(model: str) -> _RateCard | None:
+    """The rate card a Claude model is priced at, or None when no table
+    prices it. Reads the tables and overrides once, so a pass over many
+    records can ask once per model instead of once per record."""
+    pricing = _pricing_for_model(model)
+    if pricing is None:
+        return None
+    return pricing[0], pricing[1], cache_read_rate_for_model(model), cache_write_rate_for_model(model)
+
+
+def _card_amounts(
+    card: _RateCard, inp: int, cached_in: int, cache_create: int, out: int
+) -> tuple[float, float]:
+    input_rate, output_rate, cache_read_rate, cache_write_rate = card
+    cost = (
+        inp * input_rate
+        + cached_in * input_rate * cache_read_rate
+        + cache_create * input_rate * cache_write_rate
+        + out * output_rate
+    ) / 1_000_000.0
+    savings = (cached_in * input_rate * (1.0 - cache_read_rate)) / 1_000_000.0
+    return cost, savings
+
+
 def _model_amounts(
     model: str, inp: int, cached_in: int, cache_create: int, out: int
 ) -> tuple[float, float] | None:
     """Estimated cost and cache savings (USD) of these Claude tokens on ``model``,
     or None when no table prices it. One record's, or one model's whole day: the
     sums are linear, so the scan and the 30-day card price the same way."""
-    pricing = _pricing_for_model(model)
-    if pricing is None:
+    card = _rate_card(model)
+    if card is None:
         return None
-    input_rate, output_rate = pricing
-    cache_read_rate = cache_read_rate_for_model(model)
-    cost = (
-        inp * input_rate
-        + cached_in * input_rate * cache_read_rate
-        + cache_create * input_rate * cache_write_rate_for_model(model)
-        + out * output_rate
-    ) / 1_000_000.0
-    savings = (cached_in * input_rate * (1.0 - cache_read_rate)) / 1_000_000.0
-    return cost, savings
+    return _card_amounts(card, inp, cached_in, cache_create, out)
 
 
 def _totals_from_records(records: list[tuple], since_epoch: float) -> UsageTotals:
@@ -2772,6 +3704,9 @@ def _totals_from_window(window: list[tuple]) -> UsageTotals:
     total_pricing_records = 0
     priced_token_count = 0
     total_pricing_token_count = 0
+    # A month holds a handful of models and a hundred thousand records: the
+    # tables and overrides are read once per model, not once per record.
+    cards: dict[str, _RateCard | None] = {}
     for record in window:
         provider, session, model, epoch, inp, cached_in, cache_create, out, dedupe = record
         totals.records.append(record)
@@ -2787,9 +3722,13 @@ def _totals_from_window(window: list[tuple]) -> UsageTotals:
         total_pricing_records += 1
         record_tokens = inp + cached_in + cache_create + out
         total_pricing_token_count += record_tokens
-        amounts = _model_amounts(model, inp, cached_in, cache_create, out)
-        if amounts is None:
+        if model in cards:
+            card = cards[model]
+        else:
+            card = cards[model] = _rate_card(model)
+        if card is None:
             continue
+        amounts = _card_amounts(card, inp, cached_in, cache_create, out)
         priced_records += 1
         priced_token_count += record_tokens
         totals.estimated_cost_usd += amounts[0]
@@ -2808,7 +3747,7 @@ def _provider_inventory(
     root: Path,
     *,
     max_files: int = USAGE_INVENTORY_MAX_FILES,
-    max_file_bytes: int = USAGE_FILE_MAX_BYTES,
+    max_file_bytes: int = USAGE_FILE_SANITY_BYTES,
 ) -> LocalUsageInventory:
     coverage, candidates, scanned_root = _discover_usage_files(
         root,
@@ -2893,6 +3832,8 @@ def _scan_provider_usage_with_totals(
     cache_max_files: int = USAGE_CACHE_MAX_FILES,
     inventory: LocalUsageInventory | None = None,
     now: float | None = None,
+    budget: ScanBudget | None = None,
+    resolved_capture: ResolvedUsageCapture | None = None,
 ) -> tuple[ProviderUsageResult, UsageTotals]:
     source_key = _validated_transcript_source(source)
     local_inventory = inventory or _provider_inventory(source_key.provider_id, root)
@@ -2904,6 +3845,7 @@ def _scan_provider_usage_with_totals(
         cache_max_files=cache_max_files,
         cache_source_key=source_key,
         now=now,
+        budget=budget, resolved_capture=resolved_capture,
     )
     return _provider_result(source_key, totals), totals
 
@@ -3089,7 +4031,7 @@ def card_totals(card: CardDays, start_epoch: float, provider_id: str) -> CardTot
         for model, (records, i, c, w, o) in rows.items():
             if records == 0:
                 continue
-            models.add(model)
+            models.add(base_model_key(model))
             inp += i
             cached += c
             creation += w
@@ -3129,7 +4071,35 @@ def _merge_usage_totals(parts: tuple[UsageTotals, ...]) -> UsageTotals:
         merged.output_tokens += part.output_tokens
         merged.estimated_cost_usd += part.estimated_cost_usd
         merged.estimated_cache_savings_usd += part.estimated_cache_savings_usd
-        merged.source_coverage.update(part.source_coverage)
+        for provider_id, coverage in part.source_coverage.items():
+            earlier = merged.source_coverage.get(provider_id)
+            if earlier is not None:
+                statuses = {earlier.status, coverage.status} - {UsageSourceStatus.MISSING}
+                if UsageSourceStatus.PARTIAL in statuses or statuses == {UsageSourceStatus.OK, UsageSourceStatus.FAILED}:
+                    status = UsageSourceStatus.PARTIAL
+                elif UsageSourceStatus.FAILED in statuses:
+                    status = UsageSourceStatus.FAILED
+                elif UsageSourceStatus.OK in statuses:
+                    status = UsageSourceStatus.OK
+                else:
+                    status = UsageSourceStatus.MISSING
+                root_present = earlier.root_present or coverage.root_present
+                counts = {
+                    field: getattr(earlier, field) + getattr(coverage, field)
+                    for field in (
+                        "files_discovered", "files_read", "cache_hits", "malformed_lines",
+                        "unreadable_files", "skipped_symlinks", "duplicate_physical_files",
+                        "oversized_files", "truncated_files", "pending_files",
+                    )
+                }
+                coverage = replace(
+                    coverage, status=status, root_present=root_present,
+                    root_walked=root_present
+                    and (not earlier.root_present or earlier.root_walked)
+                    and (not coverage.root_present or coverage.root_walked),
+                    **counts,
+                )
+            merged.source_coverage[provider_id] = coverage
         if part.codex_rate_limit_evidence:
             merged.codex_rate_limit_evidence = part.codex_rate_limit_evidence
     priced_records = sum(part.pricing_coverage.priced_records for part in parts)
@@ -3155,12 +4125,16 @@ def scan_usage(
     inventory: LocalUsageInventory | None = None,
     provider_ids: tuple[str, ...] | None = None,
     now: float | None = None,
+    budget: ScanBudget | None = None,
+    resolved_capture: ResolvedUsageCapture | None = None,
 ) -> UsageTotals:
     """Compatibility aggregation over independent provider-local scans.
 
     ``since_epoch`` is the window the returned totals cover; the cache each
     scan writes always reaches back the card's 30 days from ``now`` (the wall
-    clock unless a caller passes one) whatever that window is.
+    clock unless a caller passes one) whatever that window is. ``budget``
+    bounds this call to one pass (see ``_scan_inventory_usage``); the
+    providers take turns at what is left of it.
     """
     roots = {"claude": root}
     if codex_root is not None:
@@ -3195,9 +4169,12 @@ def scan_usage(
         )
     by_provider = {item.provider_id: item for item in frozen.sources}
     parts: list[UsageTotals] = []
+    turns_left = len(admitted_roots)
     for provider_id, provider_root in admitted_roots.items():
         source = transcript_sources.get(provider_id)
         source_inventory = by_provider.get(provider_id)
+        turn = budget.share(turns_left) if budget is not None else None
+        turns_left -= 1
         if source is None or source_inventory is None:
             continue
         provider_cache = provider_cache_path(cache_path, source.source_key)
@@ -3209,6 +4186,7 @@ def scan_usage(
             cache_max_files=cache_max_files,
             inventory=LocalUsageInventory((source_inventory,)),
             now=now,
+            budget=turn, resolved_capture=resolved_capture,
         )
         parts.append(totals)
     return _merge_usage_totals(tuple(parts))
@@ -3317,6 +4295,9 @@ def daily_buckets(
     *,
     now: datetime | None = None,
     unpriced: dict[str, int] | None = None,
+    cost_coverage: dict | None = None,
+    provider_ids: tuple[str, ...] | None = None,
+    pricing_evidence: dict[tuple[str, str], bool] | None = None,
 ):
     """Per local-calendar-day totals for the last N days:
     {day_iso: {"claude_cost": float, "codex_tokens": int, "sessions": int}}.
@@ -3339,7 +4320,17 @@ def daily_buckets(
         for key in day_keys
     }
     seen: set[str] = set()
+    unpriced_sessions: set[tuple[str, str]] = set()
+    if cost_coverage is not None:
+        cost_coverage.clear()
+        cost_coverage.update(observed_records=0, priced_records=0, unpriced_records=0,
+                             unpriced_sessions=0,
+                             token_categories={"input": 0, "cached_input": 0, "cache_creation": 0, "output": 0})
+    # One pricing read per (provider, model), not per record.
+    priced_as: dict[tuple[str, str], tuple[RecordRates, float, float] | None] = {}
     for provider, session, model, epoch, inp, cached_in, cache_create, out, dedupe in records:
+        if provider_ids is not None and provider not in provider_ids:
+            continue
         if dedupe in seen:
             continue
         seen.add(dedupe)
@@ -3357,25 +4348,60 @@ def daily_buckets(
         provider_bucket["sessions"].add(session)
         if provider == "codex":
             bucket["codex_tokens"] += record_tokens
-        rates = rates_for_record(provider, model)
-        if rates is None:
+        price_key = (provider, model)
+        if price_key in priced_as:
+            priced = priced_as[price_key]
+        else:
+            found = rates_for_record(provider, model)
+            priced = priced_as[price_key] = (
+                None
+                if found is None
+                else (
+                    found,
+                    cache_read_rate_for_model(model),
+                    cache_write_rate_for_model(model, found.cache_write_rate),
+                )
+            )
+        if priced is None:
+            if pricing_evidence is not None and record_tokens > 0:
+                pricing_evidence.setdefault((provider, day), False)
+            if cost_coverage is not None and record_tokens > 0:
+                cost_coverage["observed_records"] += 1
+                cost_coverage["unpriced_records"] += 1
+                unpriced_sessions.add((provider, session))
+                categories = cost_coverage["token_categories"]
+                for category, amount in zip(("input", "cached_input", "cache_creation", "output"),
+                                            (inp, cached_in, cache_create, out)):
+                    categories[category] += amount
             if unpriced is not None and record_tokens > 0:
-                name = str(model or provider)
+                name = base_model_key(str(model or provider))
                 unpriced[name] = unpriced.get(name, 0) + record_tokens
             continue
+        if cost_coverage is not None and record_tokens > 0:
+            cost_coverage["observed_records"] += 1
+            cost_coverage["priced_records"] += 1
+        if pricing_evidence is not None and record_tokens > 0:
+            pricing_evidence[(provider, day)] = True
         # Codex cost was skipped by code choice while the records carried
         # model + token splits the whole time (owner decision 2026-08-26:
         # price it). OpenAI and Google bill cache writes at the plain input
         # rate, Anthropic at a premium; the person's own override still wins.
+        rates, cache_read_rate, cache_write_rate = priced
+        long_request = is_long_context_request(provider, model, inp + cached_in + cache_create)
         cost = (
-            inp * rates.input_rate
-            + cached_in * rates.input_rate * cache_read_rate_for_model(model)
-            + cache_create * rates.input_rate * cache_write_rate_for_model(model, rates.cache_write_rate)
-            + out * rates.output_rate
+            (
+                inp * rates.input_rate
+                + cached_in * rates.input_rate * cache_read_rate
+                + cache_create * rates.input_rate * cache_write_rate
+            )
+            * (LONG_CONTEXT_INPUT_MULTIPLIER if long_request else 1.0)
+            + out * rates.output_rate * (LONG_CONTEXT_OUTPUT_MULTIPLIER if long_request else 1.0)
         ) / 1_000_000.0
         provider_bucket["cost"] += cost
         if provider == "claude":
             bucket["claude_cost"] += cost
+    if cost_coverage is not None:
+        cost_coverage["unpriced_sessions"] = len(unpriced_sessions)
     for bucket in buckets.values():
         bucket["sessions"] = len(bucket["sessions"])
         for provider_bucket in bucket["providers"].values():
@@ -3393,6 +4419,7 @@ def usage_graph_model(
     extra_sessions: dict[str, dict[str, int]] | None = None,
     ledger_first_day: dict[str, str] | None = None,
     unpriced: dict[str, int] | None = None,
+    cost_coverage: dict | None = None,
 ) -> dict:
     """Build one shared-axis, range-consistent graph projection.
 
@@ -3415,7 +4442,10 @@ def usage_graph_model(
         or not all(type(value) is str and value for value in provider_ids)
     ):
         raise ValueError("usage providers must be a nonempty unique tuple")
-    buckets = daily_buckets(records, days=days, now=now, unpriced=unpriced)
+    pricing_evidence: dict[tuple[str, str], bool] | None = {} if metric == "cost" else None
+    buckets = daily_buckets(records, days=days, now=now, unpriced=unpriced,
+                            cost_coverage=cost_coverage, provider_ids=provider_ids,
+                            pricing_evidence=pricing_evidence)
     if metric == "sessions" and extra_sessions:
         # Ledger-derived sessions for providers with no local
         # transcripts (grok, devin, any hook-emitting provider) --
@@ -3433,18 +4463,27 @@ def usage_graph_model(
     series = []
     for provider_id in provider_ids:
         values = tuple(bucket["providers"].get(provider_id, {}).get(metric, 0) for bucket in buckets.values())
+        if pricing_evidence is not None:
+            values = tuple(-1.0 if pricing_evidence.get((provider_id, day)) is False else value
+                           for day, value in zip(buckets, values, strict=True))
         first_day = (ledger_first_day or {}).get(provider_id) if metric == "sessions" else None
         if first_day is not None:
             values = tuple(
                 -1.0 if day < first_day and not value else value
                 for day, value in zip(buckets, values, strict=True)
             )
-        if any(float(value) > 0.0 for value in values):
-            series.append({"provider_id": provider_id, "values": values})
-    maximum = max(
+        cost_usage = pricing_evidence is not None and any((provider_id, day) in pricing_evidence for day in buckets)
+        if any(float(value) > 0.0 for value in values) or cost_usage:
+            provider_series = {"provider_id": provider_id, "values": values}
+            if pricing_evidence is not None:
+                provider_series["has_priced_usage"] = any(
+                    pricing_evidence.get((provider_id, day)) is True for day in buckets
+                )
+            series.append(provider_series)
+    maximum = max(0.0, max(
         (float(value) for provider_series in series for value in provider_series["values"]),
         default=0.0,
-    )
+    ))
     return {
         "days": days,
         "period_label": usage_period_label(days),

@@ -21,7 +21,7 @@ from .effect_history import (
     EffectSurface,
     effect_event_to_payload,
 )
-from .private_io import atomic_private_write, read_private_text
+from .private_io import atomic_private_write, decode_strict_json, read_private_text
 from .state_paths import default_state_dir
 
 EFFECT_HISTORY_STORE_NAME: Final = "effect-history.json"
@@ -89,7 +89,7 @@ def load_effect_history(path: Path | None = None) -> EffectHistoryRestore:
             target,
             max_bytes=MAX_EFFECT_HISTORY_STORE_BYTES,
         )
-        document = _decode_document(raw)
+        document = decode_strict_json(raw, _CorruptEffectHistoryStore)
         history = _history_from_document(document)
     except FileNotFoundError:
         return _degraded_restore(EffectHistoryRestoreHealth.MISSING)
@@ -126,27 +126,6 @@ def save_effect_history(path: Path, history: EffectHistory) -> Path:
 
 def _degraded_restore(health: EffectHistoryRestoreHealth) -> EffectHistoryRestore:
     return EffectHistoryRestore(EffectHistory(), health)
-
-
-def _strict_object(pairs: list[tuple[object, object]]) -> dict[object, object]:
-    result: dict[object, object] = {}
-    for key, value in pairs:
-        if type(key) is not str or key in result:
-            raise _CorruptEffectHistoryStore
-        result[key] = value
-    return result
-
-
-def _reject_constant(_value: str) -> None:
-    raise _CorruptEffectHistoryStore
-
-
-def _decode_document(raw: str) -> object:
-    return json.loads(
-        raw,
-        object_pairs_hook=_strict_object,
-        parse_constant=_reject_constant,
-    )
 
 
 def _has_exact_fields(value: object, fields: frozenset[str]) -> bool:

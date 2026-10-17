@@ -3,7 +3,7 @@ import Foundation
 /// The panel's short names for usage windows. The daemon's window `id`
 /// (`five-hour`, `weekly`, `daily`, `credits`) or `name` (`5h`, `7d`,
 /// `Daily`, `Weekly`, `Monthly`, `Credits`, or an older long name such as
-/// `Antigravity CLI`) becomes a label that never wraps a 42 pt column.
+/// `Antigravity CLI`) becomes a compact window or model-pool label.
 public enum UsageWindowLabel {
     /// `5h`, `7d`, `Daily`, `Monthly`, `Credits`; a few daemon keys the
     /// table also knows (`cli` → `CLI`, `free-tier` → `Free`, `<model>-only`
@@ -16,14 +16,59 @@ public enum UsageWindowLabel {
         return String(trimmed.prefix(6)).trimmingCharacters(in: .whitespaces)
     }
 
+    private static func pool(_ raw: String) -> (label: String, cadence: String)? {
+        let key = raw.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "+" }
+        let families = [("gemini4argon", "Argon"), ("geminiargon", "Argon"),
+                        ("gemini", "Gemini"), ("claude+gpt", "Claude+GPT"), ("claudegpt", "Claude+GPT")]
+        for (prefix, label) in families where key.hasPrefix(prefix) {
+            let suffix = String(key.dropFirst(prefix.count))
+            switch suffix {
+            case "weekly", "7d": return (label, "7d")
+            case "fivehour", "5hour", "5h": return (label, "5h")
+            default: continue
+            }
+        }
+        return nil
+    }
+
+    private static func factoryPool(_ raw: String) -> (label: String, cadence: String)? {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+        switch key {
+        case "standard_5h": return ("Standard", "5h")
+        case "standard_7d": return ("Standard", "7d")
+        case "standard_30d": return ("Standard", "Monthly")
+        case "core_5h": return ("Core", "5h")
+        case "core_7d": return ("Core", "7d")
+        case "core_30d": return ("Core", "Monthly")
+        default: return nil
+        }
+    }
+
+    /// The ring's pool name. Compact labels used by quota logic stay unchanged.
+    public static func ringTitle(id: String?, name: String?) -> String {
+        if let id, let pool = factoryPool(id) { return pool.label }
+        return short(id: id, name: name)
+    }
+
+    /// A model pool's cadence, shown separately from its short name.
+    public static func cadence(id: String?, name: String?) -> String? {
+        if let id, let pool = factoryPool(id) { return pool.cadence }
+        for raw in [id, name].compactMap({ $0 }) {
+            if let pool = pool(raw) { return pool.cadence }
+        }
+        return nil
+    }
+
     static func known(_ raw: String) -> String? {
+        if let pool = pool(raw) { return pool.label }
         let key = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             .replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: " ", with: "_")
         switch key {
-        case "5h", "five_hour", "5_hour", "fivehour", "five_hours", "5_hours", "5hr", "5hrs": return "5h"
-        case "7d", "seven_day", "7_day", "sevenday", "seven_days", "7_days", "weekly", "week": return "7d"
+        case "standard_5h", "core_5h", "5h", "five_hour", "5_hour", "fivehour", "five_hours", "5_hours", "5hr", "5hrs": return "5h"
+        case "standard_7d", "core_7d", "7d", "seven_day", "7_day", "sevenday", "seven_days", "7_days", "weekly", "week": return "7d"
         case "daily", "day", "24h", "1d", "one_day": return "Daily"
-        case "monthly", "month", "30d": return "Monthly"
+        case "standard_30d", "core_30d", "monthly", "month", "30d": return "Monthly"
         case "credits", "credit", "balance": return "Credits"
         case "cli": return "CLI"
         case "free_tier", "free": return "Free"
@@ -56,13 +101,31 @@ public enum UsageWindowLabel {
     /// `42%`, or `—` when the provider stated no number.
     public static func percent(_ usedPct: Double?) -> String {
         guard let usedPct else { return unknownPercent }
-        return "\(Int(usedPct.rounded()))%"
+        return "\(wholeUsed(usedPct))%"
     }
 
     /// "42 percent used" / "no reading", for VoiceOver and tooltips.
     public static func spoken(_ usedPct: Double?) -> String {
         guard let usedPct else { return "no reading" }
-        return "\(Int(usedPct.rounded())) percent used"
+        return "\(wholeUsed(usedPct)) percent used"
+    }
+
+    /// A used percent as a whole number that never overstates: 100 only
+    /// for a window the forecast also calls spent (99.95 and up), so 99.6
+    /// reads 99 rather than "100% used" beside a run-out forecast. Clamped
+    /// to 0...100, and a value that is not a number or is out of range
+    /// cannot trap the conversion.
+    public static func wholeUsed(_ pct: Double) -> Int {
+        guard !pct.isNaN else { return 0 }
+        let clamped = min(100, max(0, pct))
+        if clamped >= 99.95 { return 100 }
+        return min(99, Int(clamped.rounded()))
+    }
+
+    /// What is left of a window as a whole number, the complement of
+    /// `wholeUsed`: 0 only for a spent window, so 99.6 used is "1% left".
+    public static func wholeLeft(usedPct: Double) -> Int {
+        100 - wholeUsed(usedPct)
     }
 
     /// The lane's own length in seconds — a reset countdown drawn as a
@@ -76,13 +139,13 @@ public enum UsageWindowLabel {
             let key = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 .replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: " ", with: "_")
             switch key {
-            case "5h", "five_hour", "5_hour", "fivehour", "five_hours", "5_hours", "5hr", "5hrs":
+            case "standard_5h", "core_5h", "5h", "five_hour", "5_hour", "fivehour", "five_hours", "5_hours", "5hr", "5hrs":
                 return 5 * 3600
-            case "7d", "seven_day", "7_day", "sevenday", "seven_days", "7_days", "weekly", "week":
+            case "standard_7d", "core_7d", "7d", "seven_day", "7_day", "sevenday", "seven_days", "7_days", "weekly", "week":
                 return 7 * 86400
             case "daily", "day", "24h", "1d", "one_day":
                 return 86400
-            case "monthly", "month", "30d":
+            case "standard_30d", "core_30d", "monthly", "month", "30d":
                 return 30 * 86400
             default: continue
             }

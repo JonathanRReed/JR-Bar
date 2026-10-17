@@ -21,6 +21,7 @@ struct DockHoverTracker {
     private(set) var shown: String?
     private var hoveredSince: TimeInterval?
     private var emptySince: TimeInterval?
+    private var offBothSince: TimeInterval?
 
     /// The grace a stray reading gets before the panel closes — covers
     /// the gap between dock and panel and jitter across item edges.
@@ -47,6 +48,11 @@ struct DockHoverTracker {
                 hoveredSince = nil
             }
         }
+        if item != nil || pointerInPanel {
+            offBothSince = nil
+        } else if offBothSince == nil {
+            offBothSince = now
+        }
         // A rested item opens — or retargets — the panel.
         if let item, shown != item, let since = hoveredSince, now - since >= delay {
             shown = item
@@ -54,7 +60,7 @@ struct DockHoverTracker {
         }
         // Off the dock, off the panel, past the grace — close.
         if shown != nil, item == nil, !pointerInPanel,
-           let left = emptySince, now - left >= Self.grace {
+           let left = offBothSince, now - left >= Self.grace {
             shown = nil
             return .hide
         }
@@ -66,6 +72,7 @@ struct DockHoverTracker {
         shown = nil
         hoveredSince = nil
         emptySince = nil
+        offBothSince = nil
     }
 
     /// A deliberate summon — a middle click or an upward scroll on the
@@ -77,6 +84,7 @@ struct DockHoverTracker {
         hovered = item
         hoveredSince = now
         emptySince = nil
+        offBothSince = nil
         guard shown != item else { return .none }
         shown = item
         return .show(item)

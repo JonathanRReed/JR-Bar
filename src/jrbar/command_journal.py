@@ -93,6 +93,9 @@ class CommandRecord:
         )
 
 
+_MAX_COMMAND_ID_CHARS = 128
+
+
 def new_command_id() -> str:
     return f"cmd-{uuid.uuid4().hex[:20]}"
 
@@ -165,6 +168,10 @@ class CommandJournal:
               *, command_id: str | None = None, now: float | None = None) -> CommandRecord:
         """Persist intent BEFORE the effect. Re-beginning an existing id
         returns the original record — a retry never rewrites history."""
+        # The id comes from whoever connected and is stored and rewritten
+        # with every record, so one that is not a modest string is replaced.
+        if type(command_id) is not str or len(command_id) > _MAX_COMMAND_ID_CHARS:
+            command_id = None
         cid = command_id or new_command_id()
         existing = self._records.get(cid)
         if existing is not None:

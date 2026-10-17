@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from jrbar.provider_usage_sync_settings import ProviderSyncPeer
 from jrbar.provider_usage_sync_transport import (
     SftpFetchResult,
@@ -93,4 +95,14 @@ def test_fetch_failure_is_bounded_and_does_not_return_stderr__and_1_more(tmp_pat
     result = fetch_peer_packet(configured, runner=lambda *_args, **_kwargs: None)
     assert result.reachable is False
     assert result.reason == "unsafe_identity_file"
+
+
+def test_publish_refuses_symlink_parent_without_writing_packet(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked = tmp_path / "linked"
+    linked.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(OSError):
+        publish_local_packet(b"fixture-packet", linked / "packet")
+    assert not (outside / "packet").exists()
 

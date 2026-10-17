@@ -10,7 +10,7 @@ import OSLog
 /// How `MenuBarUtility` answers (MenuBarUtilityDelegate.swift):
 ///   * `menuBarItems` → the live `listedItems`
 ///   * `menuBarSections` → each listed item's effective section, so a
-///     concealed item reads hidden
+///     covered item reads hidden
 ///   * `setSection` → the card's `setSection(_:for:)`
 ///   * `openItem` → the Item Bar tile's `trigger(_:)`
 ///   * `revealHidden`/`revealFor` → `hider.reveal([.hidden])` +
@@ -115,12 +115,32 @@ final class MenuBarActions {
     let commandBar = MenuBarCommandBar()
     /// The Carbon hotkeys (start/stop with the utility).
     let hotkeys: MenuBarHotkeys
+    let itemHotkeys = MenuBarItemHotkeys()
     /// The rule evaluator — value type, keep it here and feed it
     /// events from `triggerSource`.
     var triggerEngine = MenuBarTriggerEngine()
     /// The persisted rules — read through `rules()`, written by the
     /// maintainer's settings.
-    var rules: @MainActor () -> [MenuBarTriggerRule] = { [] }
+    var rules: @MainActor () -> [MenuBarTriggerRule] = { [] } {
+        didSet { rulesRevision += 1; watchScriptRules(revision: rulesRevision) }
+    }
+    private var rulesRevision = 0
+    let scripts = MenuBarScriptRunner { receipt in
+        switch receipt.outcome {
+        case .completed(let status):
+            if status == 0 { MenuBarActions.log.debug("rule script completed") }
+            else { MenuBarActions.log.notice("rule script failed with status \(status)") }
+        case .cancelled: MenuBarActions.log.debug("rule script cancelled")
+        case .busy: MenuBarActions.log.notice("rule script busy; no additional job started")
+        case .stopped: MenuBarActions.log.notice("rule script refused while Menu Bar is stopped")
+        case .launchFailed(let code): MenuBarActions.log.notice("rule script launch failed: errno \(code)")
+        case .waitFailed(let code): MenuBarActions.log.notice("rule script wait failed: errno \(code)")
+        }
+        if !receipt.output.isEmpty {
+            let output = String(decoding: receipt.output, as: UTF8.self)
+            MenuBarActions.log.debug("rule script output: \(output, privacy: .private)")
+        }
+    }
     /// The event feed — set `MenuBarSystemTriggerSource()` when at
     /// least one rule is enabled; nil means no sources run at all.
     var triggerSource: (any MenuBarTriggerSource)? {
@@ -153,12 +173,16 @@ final class MenuBarActions {
     /// only while an enabled rule can fire, so an actions start with no
     /// rules leaves the source parked.
     func start() {
+        scripts.start()
+        scripts.synchronize(rules())
         dropParkedPaletteKey()
         hotkeys.start()
     }
 
     func stop() {
+        scripts.stop()
         hotkeys.stop()
+        itemHotkeys.stop()
         triggerSource?.stop()
         commandBar.close()
         syncParkedPaletteKey()
@@ -209,6 +233,7 @@ final class MenuBarActions {
     /// `applicationWillTerminate`: fold the palette, drop the parked key.
     func shutDownPalette() {
         shutDown = true
+        scripts.shutdown()
         commandBar.close()
         dropParkedPaletteKey()
     }
@@ -268,18 +293,32 @@ final class MenuBarActions {
         }
     }
 
+    private func watchScriptRules(revision: Int) {
+        var snapshot: [MenuBarTriggerRule] = []
+        withObservationTracking {
+            snapshot = rules()
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, !self.shutDown, self.rulesRevision == revision else { return }
+                self.watchScriptRules(revision: revision)
+            }
+        }
+        scripts.synchronize(snapshot)
+    }
+
     /// One event → engine → actions → delegate. The engine is pure;
     /// the side effects are all on the delegate's side.
     private func handleTriggerEvent(_ event: MenuBarTriggerEvent) {
         let dayStamp = MenuBarSystemTriggerSource.dayStamp()
-        for action in triggerEngine.actions(for: event, rules: rules(),
-                                            dayStamp: dayStamp) {
-            perform(action)
+        let snapshot = rules()
+        scripts.synchronize(snapshot)
+        for rule in triggerEngine.matchedRules(for: event, rules: snapshot, dayStamp: dayStamp) {
+            perform(rule.action, rule: rule)
         }
     }
 
-    private func perform(_ action: MenuBarCommandAction) {
-        guard let delegate else { return }
+    private func perform(_ action: MenuBarCommandAction) -> String? {
+        guard let delegate else { return nil }
         switch action {
         case .setSection(let itemID, let section):
             delegate.menuBarActions(self, setSection: section, for: itemID)
@@ -304,21 +343,23 @@ final class MenuBarActions {
         case .runRule(let id):
             // The rule's own action, through the trigger path's router —
             // the card's rule and "run now" can never disagree.
-            guard let rule = rules().first(where: { $0.id == id }) else { return }
-            perform(rule.action)
+            guard let rule = rules().first(where: { $0.id == id }) else { return nil }
+            scripts.synchronize(rules())
+            return perform(rule.action, rule: rule)
         case .setRuleEnabled(let id, let enabled):
             delegate.menuBarActions(self, setRule: id, enabled: enabled)
         case .saveProfile(let name):
             // Built unnamed and filled by the palette's field; an empty
             // name would save nothing the card could list.
-            guard MenuBarProfiles.validName(name) != nil else { return }
+            guard MenuBarProfiles.validName(name) != nil else { return nil }
             delegate.menuBarActions(self, saveProfileNamed: name)
         case .renameProfile(let id, let name):
-            guard MenuBarProfiles.validName(name) != nil else { return }
+            guard MenuBarProfiles.validName(name) != nil else { return nil }
             delegate.menuBarActions(self, renameProfile: id, to: name)
         case .openSettings:
             commandBar.openSettings()
         }
+        return nil
     }
 
     private func perform(_ action: MenuBarHotkeyAction) {
@@ -341,8 +382,9 @@ final class MenuBarActions {
         }
     }
 
-    private func perform(_ action: MenuBarTriggerAction) {
-        guard let delegate else { return }
+    @discardableResult
+    private func perform(_ action: MenuBarTriggerAction, rule: MenuBarTriggerRule) -> String? {
+        guard let delegate else { return nil }
         switch action {
         case .applyProfile(let name):
             delegate.menuBarActions(self, applyProfile: name)
@@ -352,45 +394,17 @@ final class MenuBarActions {
             delegate.menuBarActionsShowAll(self)
         case .reveal(let seconds):
             delegate.menuBarActions(self, revealFor: seconds)
-        case .runScript(let command):
-            Self.runScript(command)
+        case .runScript:
+            return scripts.submit(rule).confirmation
         case .holdAwake(let seconds):
             delegate.menuBarActions(self, holdAwake: MenuBarTriggerAction.clampedAwake(seconds))
         case .releaseAwake:
             delegate.menuBarActions(self, holdAwake: 0)
         }
+        return nil
     }
 
-    /// The script trigger's side effect: `/bin/sh -c` detached so a
-    /// hanging script never stalls the trigger pump — and output rides
-    /// the menubar log either way it exits.
-    private static func runScript(_ command: String) {
-        Task.detached(priority: .utility) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = ["-c", command]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-            do {
-                try process.run()
-                // Drain to EOF *before* waiting — a script that out-writes
-                // the pipe buffer blocks on write() and never exits if the
-                // reader isn't already reading.
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                let out = String(data: data, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if process.terminationStatus != 0 {
-                    MenuBarActions.log.notice("trigger script exited \(process.terminationStatus): \(out, privacy: .public)")
-                } else if !out.isEmpty {
-                    MenuBarActions.log.debug("trigger script: \(out, privacy: .public)")
-                }
-            } catch {
-                MenuBarActions.log.notice("trigger script failed to launch: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-    }
+    isolated deinit { scripts.stop() }
 }
 
 // MARK: - The utility's palette answers

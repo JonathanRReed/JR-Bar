@@ -19,10 +19,12 @@ import SwiftUI
 /// so screenshots can see it (it ships unset).
 ///
 /// Unlike `FoldOverlayWindow` it takes mouse events — hover is what
-/// grows the card — so its frame is always exactly the drawn shape:
-/// the island never parks invisible glass over the menu bar. Idle,
-/// notice and the expanded card only ever move the bottom edge; the
-/// top stays pinned.
+/// grows the card — so at rest its frame is exactly the drawn shape:
+/// the island never parks invisible glass over the menu bar. While it
+/// moves, the window is a stage held at one frame for the whole move
+/// and the shape travels inside it (`NotchStage`); the instant the
+/// spring lands it is the shape again. Idle, notice and the expanded
+/// card only ever move the bottom edge; the top stays pinned.
 /// A two-finger swipe on the island, in finger-travel direction —
 /// `.left` is a swipe toward the left. Read off trackpad scroll events.
 enum NotchIslandSwipe { case left, right, down, up }
@@ -43,8 +45,15 @@ enum NotchIslandSwipe { case left, right, down, up }
 /// pure `NotchPullGesture`: the resting island stretches open under
 /// the finger, the grown card slides off the notch, and the release
 /// verdict — commit, retreat or click — belongs to the toy.
-private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
+final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     var acceptsClicks: () -> Bool = { true }
+    var wingOwnsGesture: (NSPoint) -> Bool = { _ in false }
+    var canRestoreIslandWings: @MainActor (NSPoint) -> Bool = { _ in false }
+    private var restoresWingsOnHorizontalScroll = false
+    private var wingOwnsPress = false
+    private var mouseRestorationStart: NSPoint?
+    private var mouseRestorationConsumed = false
+    private var wingOwnsScroll = false
     /// The pull/swipe master switch — `NotchSettings.pullGestures`.
     var pullsEnabled: () -> Bool = { true }
     /// Which face a pull acts on — `.rest` until the island is grown,
@@ -112,54 +121,120 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
         if event.phase.contains(.ended) || event.phase.contains(.cancelled) { pinch = NotchPinch() }
     }
 
+    /// Where the shape stands on its stage, in the stage's own
+    /// coordinates (top-left origin), or nil when the window is the
+    /// shape. Outside it a stage is transparent glass for the instant
+    /// it exists: nothing there is the island's to take.
+    var stageShape: () -> CGRect? = { nil }
+    var stageExtraContains: (CGPoint) -> Bool = { _ in false }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
-        acceptsClicks() ? super.hitTest(point) : nil
+        guard acceptsClicks() else { return nil }
+        if let shape = stageShape() {
+            // `point` is in the superview's space; the shape is top-left
+            // origin, y down, whichever way this view's own axis runs.
+            let local = convert(point, from: superview)
+            let top = isFlipped ? local.y : bounds.height - local.y
+            let position = CGPoint(x: local.x, y: top)
+            if !shape.contains(position), !stageExtraContains(position) { return nil }
+        }
+        return super.hitTest(point)
     }
 
     // MARK: Pull
 
     override func mouseDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.command), timerDragAllowed() {
-            timerDragStart = NSEvent.mouseLocation
+        if handleMouseDown(at: NSEvent.mouseLocation, time: event.timestamp,
+                           command: event.modifierFlags.contains(.command)) {
+            super.mouseDown(with: event)
+        }
+    }
+
+    /// Returns whether the hosting view should forward this raw mouse input.
+    func handleMouseDown(at point: NSPoint, time: TimeInterval, command: Bool = false) -> Bool {
+        mouseRestorationStart = nil
+        mouseRestorationConsumed = false
+        wingOwnsPress = wingOwnsGesture(point)
+        if wingOwnsPress { return false }
+        if command, timerDragAllowed() {
+            timerDragStart = point
             onTimerDrag(0)
-            return
+            return false
         }
+        if !command, canRestoreIslandWings(point) { mouseRestorationStart = point }
         if pullsEnabled() {
-            pullStart = NSEvent.mouseLocation
+            pullStart = point
             pull = NotchPullGesture()
-            pull.move(translation: 0, at: event.timestamp)
+            pull.move(translation: 0, at: time)
         }
-        super.mouseDown(with: event)
+        return true
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if handleMouseDragged(to: NSEvent.mouseLocation, time: event.timestamp) {
+            super.mouseDragged(with: event)
+        }
+    }
+
+    func handleMouseDragged(to point: NSPoint, time: TimeInterval) -> Bool {
+        if wingOwnsPress || mouseRestorationConsumed { return false }
         if let start = timerDragStart {
-            onTimerDrag(NSEvent.mouseLocation.x - start.x)
-            return
+            onTimerDrag(point.x - start.x)
+            return false
+        }
+        if let start = mouseRestorationStart {
+            let dx = point.x - start.x
+            let dy = point.y - start.y
+            var vertical = NotchPullGesture()
+            vertical.move(translation: dy, at: time)
+            if abs(dx) > abs(dy) {
+                if abs(dx) >= ScreenBarInteraction.swipeThreshold {
+                    mouseRestorationConsumed = true
+                    pullStart = nil
+                    pullLive = false
+                }
+                return false
+            }
+            if vertical.engaged { mouseRestorationStart = nil }
         }
         if let start = pullStart {
-            pull.move(translation: NSEvent.mouseLocation.y - start.y, at: event.timestamp)
+            pull.move(translation: point.y - start.y, at: time)
             if !pullLive, pull.engaged {
                 pullLive = true
                 onPullBegan()
             }
             if pullLive { onPullChanged(pull.offset(for: pullSurface())) }
         }
-        super.mouseDragged(with: event)
+        return true
     }
 
     override func mouseUp(with event: NSEvent) {
+        if handleMouseUp(at: NSEvent.mouseLocation, time: event.timestamp) {
+            super.mouseUp(with: event)
+        }
+    }
+
+    func handleMouseUp(at point: NSPoint, time: TimeInterval) -> Bool {
+        mouseRestorationStart = nil
+        if mouseRestorationConsumed {
+            mouseRestorationConsumed = false
+            return false
+        }
+        if wingOwnsPress {
+            wingOwnsPress = false
+            return false
+        }
         if let start = timerDragStart {
             timerDragStart = nil
-            onTimerDragEnd(NSEvent.mouseLocation.x - start.x)
-            return
+            onTimerDragEnd(point.x - start.x)
+            return false
         }
         if pullLive {
-            onPullEnded(pull.release(at: event.timestamp, surface: pullSurface()))
+            onPullEnded(pull.release(at: time, surface: pullSurface()))
         }
         pullLive = false
         pullStart = nil
-        super.mouseUp(with: event)
+        return true
     }
 
     /// A morph landing mid-pull owns the frame — the pull lets go
@@ -173,24 +248,46 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
     // MARK: Swipe
 
     override func scrollWheel(with event: NSEvent) {
+        handleScroll(precise: event.hasPreciseScrollingDeltas, phase: event.phase,
+                     deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY,
+                     inverted: event.isDirectionInvertedFromDevice, at: NSEvent.mouseLocation)
+    }
+
+    func handleScroll(precise: Bool, phase: NSEvent.Phase, deltaX: CGFloat,
+                      deltaY: CGFloat, inverted: Bool, at point: NSPoint) {
+        if !precise { wingOwnsScroll = false }
+        if phase.contains(.began) {
+            wingOwnsScroll = wingOwnsGesture(point)
+            restoresWingsOnHorizontalScroll = canRestoreIslandWings(point)
+            if wingOwnsScroll { ScreenBarInteraction.diag("native scroll owner=wing") }
+        }
+        if wingOwnsScroll {
+            // Keep the momentum tail with its starting owner. The next
+            // began event or a discrete wheel event establishes new ownership.
+            return
+        }
         // A level capsule up is a slider: any scroll over it — trackpad
         // or wheel, momentum included — moves the level instead.
-        let finger = NotchScrollFinger.travel(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY,
-                                              inverted: event.isDirectionInvertedFromDevice)
-        if finger.dy != 0, onLevelScroll(finger.dy, event.hasPreciseScrollingDeltas) {
+        let finger = NotchScrollFinger.travel(dx: deltaX, dy: deltaY,
+                                              inverted: inverted)
+        if finger.dy != 0, onLevelScroll(finger.dy, precise) {
             gestureLive = false
             return
         }
         // Only a trackpad gesture carries phases; momentum events arrive
         // with `phase` empty and are ignored with everything else.
-        guard pullsEnabled(), event.hasPreciseScrollingDeltas, event.phase != [] else { return }
-        if event.phase.contains(.began) {
+        guard pullsEnabled(), precise, phase != [] else { return }
+        if phase.contains(.began) {
             gestureLive = true
             gestureFired = false
             gestureX = 0
             gestureY = 0
         }
-        if event.phase.contains(.ended) {
+        if phase.contains(.ended) {
+            if gestureLive, !gestureFired {
+                gestureX += finger.dx
+                gestureY += finger.dy
+            }
             // A flick is a gesture that lifts short of the threshold —
             // a fast pull past roughly half commits on release instead
             // of evaporating. `.cancelled` is the OS retracting the
@@ -199,7 +296,7 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
                 let commitY = Self.verticalThreshold * 0.55
                 let commitX = Self.horizontalThreshold * 0.55
                 if abs(gestureX) > abs(gestureY), abs(gestureX) >= commitX {
-                    onSwipe(gestureX < 0 ? .left : .right)
+                    if !restoresWingsOnHorizontalScroll { onSwipe(gestureX < 0 ? .left : .right) }
                 } else if gestureY <= -commitY {
                     onSwipe(.down)
                 } else if gestureY >= commitY {
@@ -211,7 +308,7 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
             gestureY = 0
             return
         }
-        if event.phase.contains(.cancelled) {
+        if phase.contains(.cancelled) {
             gestureLive = false
             gestureX = 0
             gestureY = 0
@@ -230,7 +327,7 @@ private final class NotchIslandHostingView: NSHostingView<NotchIslandView> {
         if abs(gestureX) >= Self.horizontalThreshold, abs(gestureX) > abs(gestureY) {
             gestureFired = true
             // Fingers left = next track, fingers right = previous.
-            onSwipe(gestureX < 0 ? .left : .right)
+            if !restoresWingsOnHorizontalScroll { onSwipe(gestureX < 0 ? .left : .right) }
         } else if gestureY <= -Self.verticalThreshold, abs(gestureY) > abs(gestureX) {
             gestureFired = true
             onSwipe(.down)
@@ -303,7 +400,11 @@ final class NotchIslandWindow: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
-        ignoresMouseEvents = false
+        // `ignoresMouseEvents` is left at its default on purpose: a
+        // window that never assigns it lets a click on fully transparent
+        // pixels fall through to what is beneath, which is what a stage
+        // (briefly larger than the shape) relies on; assigning `false`
+        // explicitly is reported to switch that off for good.
         acceptsMouseMovedEvents = true
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
@@ -326,32 +427,9 @@ final class NotchIslandWindow: NSPanel {
         hosting.onTimerDrag = { [weak toy] travel in toy?.timerDragChanged(travel: travel) }
         hosting.onTimerDragEnd = { [weak toy] travel in toy?.timerDragEnded(travel: travel) }
         hosting.pullSurface = { [weak toy] in toy?.islandExpanded == true ? .card : .rest }
-        hosting.onPullBegan = { [weak self, weak toy] in
-            guard let self else { return }
-            cancelSpring()
-            pullBase = (frame, hosting.pullSurface())
-            toy?.islandPullBegan()
-        }
-        hosting.onPullChanged = { [weak self] offset in
-            guard let self, let base = pullBase else { return }
-            var pulled = base.frame
-            switch base.surface {
-            case .rest:
-                // The resting island stretches down from its pinned
-                // top edge — the notch itself does not move.
-                pulled.origin.y -= offset
-                pulled.size.height += offset
-            case .card:
-                // The grown card slides under the finger — down peels
-                // it off the notch, up tucks it back in.
-                pulled.origin.y += offset
-            }
-            setFrame(pulled, display: true)
-        }
-        hosting.onPullEnded = { [weak self, weak toy] verdict in
-            self?.pullBase = nil
-            toy?.islandPullEnded(verdict)
-        }
+        hosting.onPullBegan = { [weak self] in self?.beginPullFrame() }
+        hosting.onPullChanged = { [weak self] offset in self?.movePullFrame(offset) }
+        hosting.onPullEnded = { [weak self] verdict in self?.endPullFrame(verdict) }
         // The shelf summon: file URLs and web links — NotchNook's
         // drag-to-the-notch gesture.
         // .plainText too — a text clipping dragged to the notch
@@ -361,12 +439,17 @@ final class NotchIslandWindow: NSPanel {
         hosting.onShelfDragExited = { [weak toy] in toy?.shelfDragLeftIsland() }
         hosting.onShelfDragEnded = { [weak toy] in toy?.shelfDragLanded() }
         hosting.onShelfDrop = { [weak toy] urls in toy?.shelfDrop(urls) }
-        // The grown card's content follows its frame: each spring tick
-        // reports how far the height has carried toward the target,
-        // and the toy opens the rows once most of the way there.
-        onSpringProgress = { [weak toy] progress in
-            toy?.noteFrameProgress(progress)
-        }
+        hosting.stageShape = { [weak toy] in toy?.stage.shape }
+        hosting.stageExtraContains = { [weak toy] in toy?.shoulderInputPath?.contains($0) ?? false }
+        hosting.wingOwnsGesture = { [weak toy] in toy?.wingOwnsGesture($0) ?? false }
+        hosting.canRestoreIslandWings = { [weak toy] in toy?.canRestoreIslandWings($0) ?? false }
+        // The grown card's content follows its shape: each spring tick
+        // reports how far the shape has travelled between the resting
+        // island and the card (`NotchReveal` reads it), and the end of
+        // the move says the card is simply there or simply gone.
+        onOpenness = { [weak toy] openness, dt in toy?.noteOpenness(openness, dt: dt) }
+        onMorphEnded = { [weak toy] in toy?.noteMorphEnded() }
+        onTick = { [weak toy] dt in toy?.noteTick(dt) }
     }
 
     /// A morph landing mid-pull owns the frame: the pull's
@@ -380,6 +463,32 @@ final class NotchIslandWindow: NSPanel {
     /// The pull's stretch/slide rides on the window's frame: this is
     /// the frame — and the face — at engage time, so a morph that
     /// starts under the finger can't tug the floor away mid-drag.
+    func beginPullFrame() {
+        cancelSpring()
+        pullBase = (presentedFrame, hosting.pullSurface())
+        toy?.islandPullBegan()
+        syncShadow()
+    }
+
+    func movePullFrame(_ offset: CGFloat) {
+        guard let base = pullBase else { return }
+        var pulled = base.frame
+        switch base.surface {
+        case .rest:
+            pulled.origin.y -= offset
+            pulled.size.height += offset
+        case .card:
+            pulled.origin.y += offset
+        }
+        land(on: pulled)
+    }
+
+    func endPullFrame(_ verdict: NotchPullGesture.Verdict) {
+        pullBase = nil
+        toy?.islandPullEnded(verdict)
+        syncShadow()
+    }
+
     private var pullBase: (frame: NSRect, surface: NotchPullGesture.Surface)?
 
     /// The island's frame motion: a display-link-integrated spring —
@@ -390,14 +499,174 @@ final class NotchIslandWindow: NSPanel {
     private var spring: NotchFrameSpring?
     private var springLink: CADisplayLink?
     private var springTickAt: CFTimeInterval = 0
-    /// Each spring tick's height progress toward the target — the
-    /// expanded card's content-follow gate reads it (≈0 leaving,
-    /// 1.0 landed).
-    var onSpringProgress: ((CGFloat) -> Void)?
+    /// Where a face change runs between: the resting island's height and
+    /// the grown card's. Kept until the spring lands, so every tick of it
+    /// (and of a reversal of it) reads the same two heights.
+    private var morph: NotchMorph?
+    /// Each spring tick's openness — how far the shape has travelled
+    /// between the resting island and the card (0...1). The card's
+    /// content reads it; nothing else keeps time.
+    var onOpenness: ((CGFloat, TimeInterval) -> Void)?
+    /// Every tick of any move, however long: the notice's content clock
+    /// keeps time by it.
+    var onTick: ((TimeInterval) -> Void)?
+    /// The move is over, however it ended.
+    var onMorphEnded: (() -> Void)?
+    /// A test drives the spring tick by tick instead of on the display
+    /// link.
+    var drivesSpringByHand = false
 
-    override var canBecomeKey: Bool { false }
+    /// Whether anything about the window is in motion: a spring carrying a
+    /// move, or the display link that drives it. False at rest, so a
+    /// closed island asks the display for nothing.
+    var isAnimating: Bool { spring != nil || springLink != nil }
+
+    /// The stage. While a move runs the window does not follow the
+    /// shape (a resize per display tick is the dearest thing a window
+    /// can be asked to do): it is held at a frame big enough for the
+    /// whole move, once, and the shape moves inside it. `stagedShape` is
+    /// the shape's place in screen coordinates while that is so, nil when
+    /// the window is the shape. `jrbar.notchStagedMotion` = false in
+    /// the defaults puts the old per-tick resize back.
+    private var stagedShape: NSRect?
+    static var stagedMotion: Bool {
+        UserDefaults.standard.object(forKey: "jrbar.notchStagedMotion") as? Bool ?? true
+    }
+
+    private var shoulderScreenPath: CGPath?
+
+    /// Reserve the same native input window for every painted shoulder.
+    func setShoulderInput(_ path: CGPath?) {
+        let path = isVisible ? path : nil
+        shoulderScreenPath = path
+        let shape = presentedFrame
+        if let bounds = path?.boundingBoxOfPath, !frame.contains(bounds) {
+            seat(shape, on: frame.union(bounds))
+        } else if path == nil, !isAnimating, stagedShape != nil {
+            land(on: shape)
+        }
+        publishShoulderInput()
+    }
+
+    private func publishShoulderInput() {
+        guard let toy, let path = shoulderScreenPath else {
+            toy?.shoulderInputPath = nil
+            return
+        }
+        let shape = presentedFrame
+        let silhouette = NotchSilhouette(notchDepth: toy.notchDepth,
+            restingRadius: toy.notchCornerRadius, notchWidth: toy.notchSlotWidth)
+        var bodyTransform = CGAffineTransform(a: 1, b: 0, c: 0, d: -1,
+            tx: shape.minX, ty: shape.maxY)
+        guard let body = silhouette.path(in: CGRect(origin: .zero, size: shape.size)).cgPath.copy(using: &bodyTransform) else { return }
+        let extra = path.subtracting(body)
+        var localTransform = CGAffineTransform(a: 1, b: 0, c: 0, d: -1,
+            tx: -frame.minX, ty: frame.maxY)
+        toy.shoulderInputPath = extra.copy(using: &localTransform)
+    }
+
+    /// The shape the island draws right now, in screen coordinates: the
+    /// spring's frame while a stage carries a move, else the window's
+    /// own. The Screen Bar couples to this, never to the stage.
+    var presentedFrame: NSRect { stagedShape ?? frame }
+
+    /// Only the explicit ask or Shelf keyboard command can take typing
+    /// from the app in front. Hover remains non-key.
+    private var keyboardWanted = false
+    override var canBecomeKey: Bool { keyboardWanted }
+    override var acceptsFirstResponder: Bool { keyboardWanted }
     override var canBecomeMain: Bool { false }
+
+    /// Take the keyboard, without activating JR-Bar (the panel is
+    /// non-activating, so the terminal stays the frontmost app).
+    func takeKeyboard() {
+        keyboardWanted = true
+        if toy?.runtimeEnabled != false {
+            makeFirstResponder(self)
+            makeKey()
+        }
+    }
+
+    /// Give it back. A window that is key is made to lose it by being
+    /// ordered out and straight back in within one turn of the run loop
+    /// (the window server composes once, so nothing blinks), which hands
+    /// key status to the window that had it. No ordering notification is
+    /// posted: nothing about the island's place changed.
+    func returnKeyboard() {
+        guard keyboardWanted else { return }
+        keyboardWanted = false
+        guard isKeyWindow else { return }
+        super.orderOut(nil)
+        super.orderFrontRegardless()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard keyboardWanted, ShelfKeyboardInput.claims(modifiers: event.modifierFlags) else {
+            super.keyDown(with: event)
+            return
+        }
+        toy?.islandKey(code: event.keyCode, shift: event.modifierFlags.contains(.shift))
+    }
+
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        let changed = super.makeFirstResponder(responder)
+        if changed, keyboardWanted, responder !== self {
+            keyboardWanted = false
+            toy?.releaseAskKeyboard()
+            toy?.releaseShelfKeyboard()
+        }
+        return changed
+    }
+
+    /// A click elsewhere, another window taking key: the keyboard goes.
+    override func resignKey() {
+        super.resignKey()
+        guard keyboardWanted else { return }
+        keyboardWanted = false
+        toy?.releaseAskKeyboard()
+        toy?.releaseShelfKeyboard()
+    }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+
+    // MARK: Shadow
+
+    /// `jrbar.notchShadow` = false in the defaults takes the shadow away.
+    static var shadowEnabled: Bool {
+        UserDefaults.standard.object(forKey: "jrbar.notchShadow") as? Bool ?? true
+    }
+
+    /// The shadow's own panel, made the first time a grown shape lands.
+    private(set) var shadowPanel: NotchShadowPanel?
+
+    /// Whether the island's landed shape casts one right now: it is on
+    /// screen, nothing moves it (no stage, no pull) and it hangs below the
+    /// notch.
+    private var shadowWanted: Bool {
+        guard Self.shadowEnabled, isVisible, !isAnimating, pullBase == nil,
+              let toy else { return false }
+        return NotchShadow.casts(height: presentedFrame.height, notchDepth: toy.notchDepth)
+    }
+
+    /// Put the shadow where the landed shape is, or take it away.
+    private func syncShadow() {
+        guard let toy else { return }
+        guard shadowWanted else {
+            shadowPanel?.lift()
+            return
+        }
+        let panel = shadowPanel ?? NotchShadowPanel()
+        shadowPanel = panel
+        let silhouette = NotchSilhouette(notchDepth: toy.notchDepth, restingRadius: toy.notchCornerRadius,
+                                         notchWidth: toy.notchSlotWidth)
+        panel.cast(shape: presentedFrame, silhouette: silhouette, under: self)
+    }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(frameRect, display: flag)
+        // A stage or a pull is not a shape that landed; `land(on:)` and the
+        // pull's end come back through here once it has.
+        syncShadow()
+    }
 
     /// Posted after the island is ordered in or out. AppKit announces
     /// nothing reliable for an `orderOut` or an `orderFrontRegardless`
@@ -408,10 +677,12 @@ final class NotchIslandWindow: NSPanel {
 
     override func orderFrontRegardless() {
         super.orderFrontRegardless()
+        syncShadow()
         NotificationCenter.default.post(name: Self.didChangeOrderingNotification, object: self)
     }
 
     override func orderOut(_ sender: Any?) {
+        shadowPanel?.lift(immediately: true)
         super.orderOut(sender)
         NotificationCenter.default.post(name: Self.didChangeOrderingNotification, object: self)
     }
@@ -456,23 +727,40 @@ final class NotchIslandWindow: NSPanel {
     /// bottom edge travelling. Animated moves run on the frame spring —
     /// a new target mid-flight retargets it, so an expansion cancelled
     /// halfway folds home from where it visibly was. Snaps under Reduce
-    /// Motion and while the island is hidden.
-    func applyFrame(_ frame: NSRect, animated: Bool) {
+    /// Motion and while the island is hidden. `flip` names the two heights
+    /// of a change between the card and any other face; the move's
+    /// openness reads them.
+    func applyFrame(_ frame: NSRect, animated: Bool, flip: NotchMorph? = nil) {
         guard animated, isVisible, pullBase == nil else {
             // A live pull owns the frame — a morph arriving under the
             // finger would read as the floor moving.
-            cancelSpring()
-            setFrame(frame, display: true)
+            cancelSpring(landingOn: frame)
             return
         }
-        var spring = spring ?? NotchFrameSpring(at: self.frame)
+        if let flip { morph = flip }
+        var spring = spring ?? NotchFrameSpring(at: presentedFrame)
         spring.retarget(frame, motion: NotchFrameSpring.motion(from: spring.frame, to: frame))
         self.spring = spring
+        // The notch is read once per morph, not once per display tick.
+        springNotch = surroundingsOverride.map(\.floor) ?? toy?.notchFloor
+        springScale = screen?.backingScaleFactor ?? 2
+        holdStage(for: spring)
+        // A fold or a shrink to the bezel lets the shadow go as it begins;
+        // a body that stays grown keeps its shadow until the shape lands.
+        if let toy, !NotchShadow.casts(height: presentedFrame.height, notchDepth: toy.notchDepth) {
+            shadowPanel?.lift()
+        }
         startSpring()
     }
 
+    /// The hardware's rectangle and the pixel scale the in-flight morph
+    /// settles every frame onto: whole pixels, never a gap against the
+    /// notch's edge — the overshoot-free landing of a fold included.
+    private var springNotch: CGRect?
+    private var springScale: CGFloat = 2
+
     private func startSpring() {
-        guard springLink == nil else { return }
+        guard springLink == nil, !drivesSpringByHand else { return }
         let link = displayLink(target: self, selector: #selector(springTick(_:)))
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
         link.add(to: .main, forMode: .common)
@@ -480,32 +768,127 @@ final class NotchIslandWindow: NSPanel {
         springLink = link
     }
 
+    /// What a move is held inside: the screen the stage may not leave
+    /// and the hardware rectangle the shape never dips under. A test
+    /// names its own, so a window parked far from any display is not
+    /// measured against this Mac's.
+    struct Surroundings {
+        var bounds: NSRect
+        var floor: CGRect?
+    }
+    var surroundingsOverride: Surroundings?
+    private var stageBounds: NSRect {
+        surroundingsOverride?.bounds ?? (screen ?? ScreenBarGeometry.preferredScreen())?.frame ?? frame
+    }
+
+    /// Make the window carry the move: a stage around the shape and
+    /// where it is going, set before the first tick draws. The shape
+    /// goes onto the stage in the same turn, so the view never fills a
+    /// window larger than the shape for even a frame.
+    private func holdStage(for spring: NotchFrameSpring) {
+        guard Self.stagedMotion else { return }
+        let want = NotchStage.frame(presented: spring.frame, target: spring.target,
+                                    motion: spring.motion, within: stageBounds, scale: springScale)
+        if let shape = stagedShape {
+            guard !NotchStage.holds(frame, want) else { return }
+            seat(shape, on: frame.union(want))
+        } else {
+            seat(frame, on: want.union(frame))
+        }
+    }
+
+    /// Put `shape` on a stage of `stage`'s frame: the model first, then
+    /// the window, so the one layout that sees the new window size has
+    /// already been told where the shape stands in it.
+    private func seat(_ shape: NSRect, on stage: NSRect) {
+        stagedShape = shape
+        toy?.stage.shape = NotchStage.local(shape, in: stage)
+        if frame != stage { setFrame(stage, display: true) }
+        publishShoulderInput()
+        hosting.layoutSubtreeIfNeeded()
+    }
+
+    /// The shape is the window again: the model first, then the frame.
+    private func land(on shape: NSRect) {
+        if let bounds = shoulderScreenPath?.boundingBoxOfPath, !shape.contains(bounds) {
+            seat(shape, on: shape.union(bounds))
+            return
+        }
+        stagedShape = nil
+        toy?.stage.shape = nil
+        setFrame(shape, display: true)
+        publishShoulderInput()
+        hosting.layoutSubtreeIfNeeded()
+    }
+
     /// Kill an in-flight morph — a parked island runs no display link.
-    func cancelSpring() {
+    /// A stage is struck where the shape stands, so the window is the
+    /// shape again whatever stopped the move.
+    func cancelSpring(landingOn target: NSRect? = nil) {
         springLink?.invalidate()
         springLink = nil
+        let wasMoving = spring != nil
         spring = nil
+        morph = nil
+        if let target {
+            land(on: target)
+        } else if let shape = stagedShape {
+            land(on: shape)
+        }
+        if wasMoving { onMorphEnded?() }
     }
 
     @objc private func springTick(_ link: CADisplayLink) {
+        let dt = max(0, link.timestamp - springTickAt)
+        springTickAt = link.timestamp
+        advanceSpring(by: dt)
+    }
+
+    /// One tick of the move: integrate, then draw the shape where the
+    /// spring says. (A test calls this by hand.)
+    func advanceSpring(by dt: TimeInterval) {
         guard var spring else {
-            link.invalidate()
+            springLink?.invalidate()
             springLink = nil
             return
         }
-        let dt = max(0, link.timestamp - springTickAt)
-        springTickAt = link.timestamp
         if spring.integrate(dt: dt) {
             self.spring = spring
-            setFrame(spring.frame, display: true)
-            onSpringProgress?(spring.frame.height / max(1, spring.target.height))
+            // A shape drawn on a stage moves between device pixels, which
+            // the view anti-aliases; only a window that is the shape sits
+            // on the pixel grid.
+            let shape = stagedShape != nil
+                ? NotchIslandLayout.floored(spring.frame, over: springNotch)
+                : NotchIslandLayout.settled(spring.frame, scale: springScale, over: springNotch)
+            if stagedShape != nil {
+                if !NotchStage.holds(frame, shape) {
+                    // A retarget past the stage: widen it without a
+                    // visible step.
+                    seat(shape, on: frame.union(shape))
+                }
+                stagedShape = shape
+                toy?.stage.shape = NotchStage.local(shape, in: frame)
+            } else {
+                setFrame(shape, display: true)
+            }
+            if let morph { onOpenness?(morph.openness(size: shape.size), dt) }
+            onTick?(dt)
+            if stagedShape != nil {
+                hosting.layoutSubtreeIfNeeded()
+                // Publish after the island receives this tick's shape and
+                // content state, so the band cannot lead those updates.
+                NotificationCenter.default.post(name: NSWindow.didResizeNotification, object: self)
+            }
         } else {
             // Land exactly: never rest a fraction of a point off the
             // frame the face actually asked for.
             let target = spring.target
-            cancelSpring()
-            setFrame(target, display: true)
-            onSpringProgress?(1)
+            springLink?.invalidate()
+            springLink = nil
+            self.spring = nil
+            morph = nil
+            land(on: target)
+            onMorphEnded?()
         }
     }
 }

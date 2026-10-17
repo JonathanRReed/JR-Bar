@@ -3,7 +3,7 @@ import JRBarCore
 import Observation
 import SwiftUI
 
-/// `hooks_doctor` for Settings › Agents: one line per provider saying
+/// `hooks_doctor` for Settings › Agents & Usage: one line per provider saying
 /// how its hooks stand — how many events are hooked, when one last
 /// reached the monitor, what is queued while it was away — and, where
 /// something is off, why and a Repair (`install_hooks`) beside it. The
@@ -24,11 +24,16 @@ struct HooksDoctorEntry: Equatable, Sendable {
     let lastEventAt: Double?
     let pendingLines: Int
     let error: String?
+    /// False when the hooks are installed but the agent's own settings turn
+    /// them off (Claude's `disableAllHooks`, Codex's hooks feature); nil from
+    /// a monitor that does not say.
+    var hooksEnabled: Bool? = nil
     /// The CLI's own `--version`, when the doctor found it.
     var version: String? = nil
     /// How that version stands against what JR-Bar verified: "verified",
     /// "newer than verified (2.1.263)", … A note, never a warning.
     var compatibilityNote: String? = nil
+    var isStale = false
 
     init(provider: String, installed: Bool = false, hookEvents: Int = 0, registered: [String] = [],
          wouldInstall: String? = nil, decide: String? = nil, lastEventAt: Double? = nil,
@@ -55,6 +60,7 @@ struct HooksDoctorEntry: Equatable, Sendable {
                   lastEventAt: value["last_event_at"]?.doubleValue,
                   pendingLines: value["pending_lines"]?.intValue ?? 0,
                   error: value["error"]?.stringValue)
+        hooksEnabled = value["hooks_enabled"]?.boolValue
         version = value["version"]?.stringValue
         compatibilityNote = value["compatibility"]?["note"]?.stringValue
     }
@@ -75,7 +81,10 @@ enum HooksDoctor {
     /// Deny can only type into a terminal JR-Bar can prove, so Ghostty
     /// and IDE sessions fall back to Open.
     static func repairReason(_ entry: HooksDoctorEntry) -> String? {
-        guard entry.installed else { return nil }
+        guard entry.installed, entry.error == nil else { return nil }
+        if entry.hooksEnabled == false {
+            return "Hooks are turned off in the agent's own settings — Repair turns them back on"
+        }
         if entry.decide == "missing" {
             return "Answering from JR-Bar isn't hooked up — Repair adds the permission hook"
         }
@@ -97,18 +106,29 @@ enum HooksDoctor {
     /// Whether `line` carries the CLI's version, so the update line under it
     /// need not repeat it: the entry has hooks installed and a version.
     static func lineShowsVersion(_ entry: HooksDoctorEntry) -> Bool {
-        line(entry) != nil && versionWords(entry) != nil
+        entry.error == nil && line(entry) != nil && versionWords(entry) != nil
     }
 
     /// "12 events hooked · last event 4 min ago · 3 queued · answers
     /// from JR-Bar" — nil for a provider with nothing installed, which
     /// the row's own "Not installed" already says.
     static func line(_ entry: HooksDoctorEntry, now: Date = Date()) -> String? {
+        let prefix = entry.isStale ? "Last report · " : ""
+        if let error = entry.error, !error.isEmpty {
+            return prefix + "Could not read hook settings: \(error)"
+        }
         guard entry.installed else { return nil }
+        if entry.hooksEnabled == false {
+            return prefix + "\(entry.hookEvents) event\(entry.hookEvents == 1 ? "" : "s") hooked, but turned off in the agent's own settings"
+        }
         var parts = ["\(entry.hookEvents) event\(entry.hookEvents == 1 ? "" : "s") hooked"]
         if let at = entry.lastEventAt {
-            let ago = PanelStore.elapsed(since: Date(timeIntervalSince1970: at), now: now)
-            parts.append(ago.map { "last event \($0) ago" } ?? "last event just now")
+            if at.isFinite, at > 0, at <= now.timeIntervalSince1970 {
+                let ago = PanelStore.elapsed(since: Date(timeIntervalSince1970: at), now: now)
+                parts.append(ago.map { "last event \($0) ago" } ?? "last event just now")
+            } else {
+                parts.append("event time unavailable")
+            }
         } else {
             parts.append("no event yet")
         }
@@ -121,7 +141,7 @@ enum HooksDoctor {
         if let version = versionWords(entry) {
             parts.append(version)
         }
-        return parts.joined(separator: " · ")
+        return prefix + parts.joined(separator: " · ")
     }
 }
 
@@ -131,45 +151,143 @@ enum HooksDoctor {
 @Observable
 final class HooksDoctorModel {
     private(set) var entries: [String: HooksDoctorEntry] = [:]
+    private(set) var checkedAt: Double?
+    private(set) var receiverAnswers: Bool?
     private(set) var loading = false
     /// The last read failed; the lines keep what they had.
     private(set) var failed = false
+    @ObservationIgnored private var pendingRefresh: (@MainActor () async throws -> CoreReply)?
 
     nonisolated init() {}
 
-    func entry(for provider: String) -> HooksDoctorEntry? { entries[provider] }
+    func entry(for provider: String, live: Bool = true) -> HooksDoctorEntry? {
+        guard var entry = entries[provider] else { return nil }
+        entry.isStale = failed || loading || !live
+        return entry
+    }
 
-    func refresh(core: CoreModel) {
-        guard core.isLive, !loading else { return }
+    @discardableResult
+    func refresh(core: CoreModel) -> Task<Void, Never>? {
+        guard core.isLive else { return nil }
+        return refresh {
+            let reply = try await core.send("hooks_doctor", timeout: 10)
+            return core.isLive ? reply : CoreReply(id: reply.id, ok: false)
+        }
+    }
+
+    @discardableResult
+    func recheck(core: CoreModel) -> Task<Void, Never>? {
+        recheck(live: core.isLive) { name, timeout in
+            let reply = try await core.send(name, timeout: timeout)
+            return core.isLive ? reply : CoreReply(id: reply.id, ok: false)
+        }
+    }
+
+    @discardableResult
+    func recheck(live: Bool,
+                 send: @escaping @MainActor (String, TimeInterval) async throws -> CoreReply) -> Task<Void, Never>? {
+        guard live, !loading else { return nil }
+        return refresh { try await send("hooks_doctor", 10) }
+    }
+
+    func statusLine(live: Bool, now: Date = Date()) -> String {
+        if !live { return "Monitor offline. Recheck when it reconnects." }
+        if loading { return "Checking hooks…" }
+        if failed { return entries.isEmpty ? "Recheck failed. No report available." : "Recheck failed. Showing the last report." }
+        if let checkedAt, checkedAt > 0, checkedAt <= now.timeIntervalSince1970 {
+            let ago = PanelStore.elapsed(since: Date(timeIntervalSince1970: checkedAt), now: now)
+            return ago.map { "Checked \($0) ago" } ?? "Checked just now"
+        }
+        return entries.isEmpty ? "No hook report yet" : "Hook report loaded"
+    }
+
+    func receiverLine(live: Bool) -> String? {
+        guard !entries.isEmpty || checkedAt != nil else { return nil }
+        let prefix = failed || loading || !live ? "Last report · " : ""
+        switch receiverAnswers {
+        case .some(true): return prefix + "Hook receiver answering"
+        case .some(false): return prefix + "Hook receiver not answering"
+        case nil: return prefix + "Hook receiver status unavailable"
+        }
+    }
+
+    /// An install can finish while the first report is reading. Keep one
+    /// follow-up read so that report cannot hide the install's result.
+    @discardableResult
+    func refresh(load: @escaping @MainActor () async throws -> CoreReply) -> Task<Void, Never>? {
+        guard !loading else {
+            pendingRefresh = load
+            return nil
+        }
         loading = true
-        Task { [weak self] in
-            let reply = try? await core.send("hooks_doctor", timeout: 10)
+        return Task { [weak self] in
             guard let self else { return }
-            self.loading = false
-            if let reply, reply.ok {
-                self.entries = HooksDoctor.entries(from: reply.result)
-                self.failed = false
-            } else {
-                self.failed = true
+            defer { self.loading = false }
+            var read = load
+            while true {
+                let reply = try? await read()
+                if let pending = self.pendingRefresh {
+                    self.pendingRefresh = nil
+                    read = pending
+                    continue
+                }
+                if let reply, reply.ok, reply.result?["providers"]?.arrayValue != nil {
+                    self.entries = HooksDoctor.entries(from: reply.result)
+                    let checkedAt = reply.result?["checked_at"]?.doubleValue
+                    self.checkedAt = checkedAt.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+                    self.receiverAnswers = reply.result?["ingress_socket"]?["answers"]?.boolValue
+                    self.failed = false
+                } else {
+                    self.failed = true
+                }
+                return
             }
         }
     }
 }
 
+struct HooksDoctorStatusRow: View {
+    @Bindable var doctor: HooksDoctorModel
+    let live: Bool
+    var onRecheck: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(doctor.statusLine(live: live))
+                    .font(.caption)
+                    .foregroundStyle(doctor.failed && live ? Color.orange : Color.secondary)
+                if let line = doctor.receiverLine(live: live) {
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(doctor.receiverAnswers == false ? Color.orange : Color.secondary)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button("Recheck hooks", action: onRecheck)
+                .controlSize(.small)
+                .disabled(!live || doctor.loading)
+                .help("Read local hook configuration, receiver health and last event arrival without changing anything")
+        }
+        .padding(.top, 8)
+    }
+}
+
 // MARK: - Updating a provider's CLI
 
-/// Settings › Agents' update line for one provider: the version installed,
+/// Settings › Agents & Usage' update line for one provider: the version installed,
 /// "2.1.290 available" when update checks are on and a newer one is known,
 /// and the daemon's own one-line result of the last Update click. The words
 /// are the daemon's (`state.provider_updates`); this only decides which of
 /// them are worth showing.
 enum ProviderUpdateWords {
     /// The providers the daemon has an updater for (`provider_update`).
-    nonisolated static let updatable: Set<String> = ["claude", "codex", "grok", "devin", "opencode"]
+    nonisolated static let updatable: Set<String> = ["claude", "codex", "grok", "devin", "opencode", "gemini"]
 
-    /// Said for Gemini CLI, which has no updater of its own; no button.
+    /// Gemini updates depend on its installation manager.
     nonisolated static let geminiAdvice =
-        "Gemini CLI has no updater of its own: update it the way you installed it (for example `brew upgrade gemini-cli` or `npm install -g @google/gemini-cli`)."
+        "Update supports Gemini CLI installed with npm or Homebrew. For other installations, use the original installer."
 
     /// How long a finished, successful run stays on the row. A failure, or
     /// an updater waiting for a terminal, stays until the next click.
@@ -210,16 +328,28 @@ enum ProviderUpdateWords {
         }
     }
 
+    nonisolated static func showsUpdate(provider: String, status: ProviderUpdateStatus?, installed: String? = nil) -> Bool {
+        guard hasUpdater(provider) else { return false }
+        guard let status else { return true }
+        if status.isRunning { return true }
+        if status.updatable == false { return false }
+        if status.updateAvailable { return true }
+        if status.phase == .failed || status.phase == .needsTerminal { return true }
+        if let installed, !installed.isEmpty, status.upToDateVersion == installed { return false }
+        if status.phase == .updated { return false }
+        if status.phase == .unchanged, let before = status.fromVersion, !before.isEmpty,
+           status.toVersion == before { return false }
+        return true
+    }
+
     /// Whether the row's Update button can be pressed.
-    nonisolated static func canUpdate(provider: String, status: ProviderUpdateStatus?, live: Bool, busy: Bool) -> Bool {
-        hasUpdater(provider) && live && !busy && status?.isRunning != true
+    nonisolated static func canUpdate(provider: String, status: ProviderUpdateStatus?, live: Bool, busy: Bool, installed: String? = nil) -> Bool {
+        showsUpdate(provider: provider, status: status, installed: installed) && live && !busy && status?.isRunning != true
     }
 }
 
-/// One provider's update line under its Agents row: the version, the Update
-/// button (T3 Code's pattern: it runs the CLI's own updater, and only when
-/// clicked) and the daemon's one-line result. Gemini CLI has no updater of
-/// its own, so it gets the advice and no button.
+/// The installed version, an explicit update action when available, and
+/// the daemon's result. Gemini also explains which installers it supports.
 struct ProviderUpdateLine: View {
     @Bindable var store: SettingsStore
     let provider: String
@@ -243,7 +373,7 @@ struct ProviderUpdateLine: View {
                         .monospacedDigit()
                         .lineLimit(1)
                 }
-                if ProviderUpdateWords.hasUpdater(provider) {
+                if running || ProviderUpdateWords.showsUpdate(provider: provider, status: status, installed: version) {
                     Button {
                         store.updateProvider(provider)
                     } label: {
@@ -258,8 +388,8 @@ struct ProviderUpdateLine: View {
                     }
                     .controlSize(.small)
                     .disabled(!ProviderUpdateWords.canUpdate(provider: provider, status: status,
-                                                             live: store.isLive, busy: running))
-                    .help("Runs \(name)'s own updater. Nothing runs until you click.")
+                                                             live: store.isLive, busy: running, installed: version))
+                    .help("Updates \(name) using its updater or installation manager. Nothing runs until you click.")
                     .accessibilityLabel(running ? "Updating \(name)" : "Update \(name)")
                 }
             }
@@ -270,7 +400,13 @@ struct ProviderUpdateLine: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if provider == "gemini" {
+            if let advice = status?.updateAdvice, !running, advice != status?.message {
+                Text(advice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if provider == "gemini", status?.updateAdvice != ProviderUpdateWords.geminiAdvice {
                 Text(ProviderUpdateWords.geminiAdvice)
                     .font(.caption)
                     .foregroundStyle(.tertiary)

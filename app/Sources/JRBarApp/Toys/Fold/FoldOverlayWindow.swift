@@ -24,14 +24,12 @@ final class FoldOverlayWindow: NSPanel {
         metalView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         // Render-target-only drawable: the TBDR path never reads it back.
         metalView.framebufferOnly = true
-        // While the overlay is up the view free-runs at the display's
-        // refresh — the fold's glide lives on the vsync, not on sensor
-        // cadence. Ordered out it pauses: nothing to draw, nothing drawn.
+        // The view has no clock of its own. The toy's display-link tick
+        // writes the uniforms and calls `drawFrame` in the same turn, so
+        // the params and the pixels are one frame, and nothing draws when
+        // nothing ticks.
         metalView.isPaused = true
         metalView.enableSetNeedsDisplay = false
-        // A 0 maximum means "unspecified", not "freeze" — clamp to a
-        // real floor so the fold can't stall on an odd panel.
-        metalView.preferredFramesPerSecond = min(120, max(60, Int(screen.maximumFramesPerSecond)))
         metalView.delegate = renderer
         metalView.autoresizingMask = [.width, .height]
         contentView = metalView
@@ -47,29 +45,35 @@ final class FoldOverlayWindow: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         level = .screenSaver
         sharingType = .none
+        renderer.onRedrawNeeded = { [weak self] in self?.drawFrame() }
     }
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
-    /// Order in and start vsync-driven draws, or pause and order out.
-    /// The toy calls this every heartbeat; both halves are no-ops when
-    /// nothing changed.
+    /// Order in or out. The toy calls this every heartbeat; both halves
+    /// are no-ops when nothing changed. Drawing is `drawFrame`'s.
     func setVisible(_ visible: Bool) {
         if visible {
             if !isVisible {
                 FoldLog.log.notice("overlay: ordered in")
+                // A window coming in has no picture on it yet.
+                renderer.invalidateDrawn()
                 orderFrontRegardless()
             }
-            metalView.isPaused = false
-        } else {
-            metalView.isPaused = true
-            if isVisible {
-                FoldLog.log.notice("overlay: ordered out")
-                orderOut(nil)
-            }
+        } else if isVisible {
+            FoldLog.log.notice("overlay: ordered out")
+            orderOut(nil)
         }
+    }
+
+    /// Draws the renderer's current params, once, if they would put
+    /// something new on screen. The toy's display-link tick calls it right
+    /// after writing them; an owed frame calls it when the GPU has room.
+    func drawFrame() {
+        guard isVisible, renderer.needsDraw else { return }
+        metalView.draw()
     }
 
     /// The fold is parked with no stream: the renderer drops its picture

@@ -11,7 +11,9 @@ remove_orphaned_state_files like every other removed feature's file.
 from __future__ import annotations
 
 import os
+import re
 import stat
+import time
 from pathlib import Path
 
 from .private_io import (
@@ -66,6 +68,96 @@ def remove_orphaned_state_files(state_dir: Path) -> int:
                 continue
             removed += 1
     return removed
+
+
+# Logs of launch agents and a window process that no longer exist. Each is
+# removed only when nothing has written to it for RETIRED_LOG_IDLE_SECONDS,
+# so a development layout that still produces one is left alone.
+RETIRED_LOG_NAMES = (
+    "status-bar.out.log",
+    "status-bar.err.log",
+    "sd-eject-guard.out.log",
+    "sd-eject-guard.err.log",
+    "ui.out.log",
+    "ui.err.log",
+    "core.out.log",
+    "core.err.log",
+)
+RETIRED_LOG_IDLE_SECONDS = 14 * 86400.0
+
+#: ``atomic_private_write`` names its scratch file
+#: ``<name>.<pid>.<thread id>.<32 hex>.tmp``; one that outlived its writer
+#: (a kill between the write and the rename) is stranded for good.
+_SCRATCH_NAME = re.compile(r"^.+\.\d+\.\d+\.[0-9a-f]{32}\.tmp$")
+SCRATCH_IDLE_SECONDS = 600.0
+_SCRATCH_SCAN_LIMIT = 50_000
+
+
+def remove_retired_logs(state_dir: Path, *, now: float | None = None) -> int:
+    """Delete the logs of retired processes that have gone quiet. Never raises."""
+    current = time.time() if now is None else now
+    removed = 0
+    for name in RETIRED_LOG_NAMES:
+        path = Path(state_dir) / name
+        try:
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            if current - info.st_mtime < RETIRED_LOG_IDLE_SECONDS:
+                continue
+            path.unlink()
+        except OSError:
+            continue
+        removed += 1
+    return removed
+
+
+def sweep_orphan_scratch_files(state_dir: Path, *, now: float | None = None) -> int:
+    """Delete atomic-write scratch files whose writer is long gone. Never raises.
+
+    Only a regular file whose whole name has the scratch shape and that
+    nothing has touched for ten minutes: a write in flight is never in
+    that state."""
+    current = time.time() if now is None else now
+    removed = 0
+    try:
+        for index, path in enumerate(Path(state_dir).rglob("*.tmp")):
+            if index >= _SCRATCH_SCAN_LIMIT:
+                break
+            if not _SCRATCH_NAME.match(path.name):
+                continue
+            try:
+                info = path.lstat()
+                if not stat.S_ISREG(info.st_mode):
+                    continue
+                if current - info.st_mtime < SCRATCH_IDLE_SECONDS:
+                    continue
+                path.unlink()
+            except OSError:
+                continue
+            removed += 1
+    except OSError:
+        pass
+    return removed
+
+
+def run_state_housekeeping(state_dir: Path, *, now: float | None = None) -> dict[str, int]:
+    """The launch-time janitor: old process records, stranded scratch files
+    and the logs of retired processes. Never raises."""
+    from .process_registry import prune_registry
+
+    counts = {"registry": 0, "scratch": 0, "logs": 0}
+    steps = (
+        ("registry", lambda: prune_registry(state_dir=Path(state_dir), now=now)),
+        ("scratch", lambda: sweep_orphan_scratch_files(state_dir, now=now)),
+        ("logs", lambda: remove_retired_logs(state_dir, now=now)),
+    )
+    for key, step in steps:
+        try:
+            counts[key] = int(step())
+        except Exception:
+            continue
+    return counts
 
 
 def trim_process_log(

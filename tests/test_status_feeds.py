@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from jrbar.status_feeds import (
     STATUS_FEED_THREAD_NAME,
     FeedState,
@@ -128,6 +130,88 @@ def test_status_feed_worker_uses_current_product_identity_and_scoped_start(
 
     assert STATUS_FEED_THREAD_NAME == "JR-BarStatusFeeds"
     assert started == [("JR-BarStatusFeeds-codex", True)]
+
+
+@pytest.mark.parametrize("failure", ["construction", "start"])
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_failed_worker_admission_keeps_other_feeds_and_allows_retry(monkeypatch, failure, provider):
+    started = []
+    failing = True
+
+    class Thread:
+        def __init__(self, *, target, name, daemon):
+            nonlocal failing
+            del target, daemon
+            self.provider = name.removeprefix(STATUS_FEED_THREAD_NAME + "-")
+            if failure == "construction" and self.provider == provider and failing:
+                failing = False
+                raise RuntimeError("synthetic thread construction failure")
+
+        def start(self):
+            nonlocal failing
+            if failure == "start" and self.provider == provider and failing:
+                failing = False
+                raise RuntimeError("synthetic thread startup failure")
+            started.append(self.provider)
+
+        def is_alive(self):
+            return False
+
+    poller = StatusFeedPoller(
+        feeds={
+            "codex": ("OpenAI", "https://status.example/codex", "https://status.example"),
+            "claude": ("Anthropic", "https://status.example/claude", "https://status.example"),
+        },
+        fetch_json=lambda *_args, **_kwargs: {
+            "status": {"indicator": "major", "description": "Synthetic incident"}
+        },
+        clock=lambda: 100.0,
+        freshness_seconds=60.0,
+    )
+    poller.poll_once()
+    monkeypatch.setattr("jrbar.status_feeds.threading.Thread", Thread)
+
+    poller.start()
+
+    other = "claude" if provider == "codex" else "codex"
+    assert started == [other]
+    assert set(poller.current()) == {"codex", "claude"}
+    poller.start()
+    poller.start()
+    assert started == [other, provider]
+    assert poller.feed_state(provider, now=161.0) is FeedState.STALE
+    assert poller.incident_for(provider, now=161.0) is None
+    assert set(poller.stop()) == {"codex", "claude"}
+
+
+def test_failed_start_cannot_retire_a_replacement_worker(monkeypatch):
+    created = []
+    started = []
+
+    class Thread:
+        def __init__(self, *, target, name, daemon):
+            del target, name, daemon
+            created.append(self)
+
+        def start(self):
+            if self is created[0]:
+                assert poller.stop() == ("codex",)
+                poller.start()
+                raise RuntimeError("synthetic old startup failure")
+            started.append(self)
+
+        def is_alive(self):
+            return False
+
+    monkeypatch.setattr("jrbar.status_feeds.threading.Thread", Thread)
+    poller = StatusFeedPoller(feeds=_CODEX_FEED)
+
+    poller.start()
+    poller.start()
+
+    assert len(created) == 2
+    assert started == [created[1]]
+    assert poller.stop() == ("codex",)
 
 
 def test_scoped_poll_fetches_only_requested_provider() -> None:
@@ -327,3 +411,40 @@ def test_stop_does_not_join_a_thread_that_has_not_started_running(monkeypatch) -
 
     assert poller.stop() == ("codex",)
     assert joined == []
+
+
+def test_an_older_poll_that_lands_late_does_not_replace_a_newer_reading() -> None:
+    # CodexBar #4175: a slow request from an earlier refresh must not
+    # resurrect an incident the newer refresh already saw clear.
+    clock = {"value": 100.0}
+    first_fetch_started = threading.Event()
+    release_first_fetch = threading.Event()
+    calls: list[int] = []
+
+    def fetch(url, **_kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            first_fetch_started.set()
+            assert release_first_fetch.wait(timeout=10.0)
+            return {"status": {"indicator": "major", "description": "Old outage"}}
+        return {"status": {"indicator": "none", "description": "All systems operational"}}
+
+    poller = StatusFeedPoller(
+        feeds={"codex": ("OpenAI", "https://status.example/api", "https://status.example")},
+        fetch_json=fetch,
+        clock=lambda: clock["value"],
+        freshness_seconds=1000.0,
+    )
+    older = threading.Thread(target=poller.poll_once, daemon=True)
+    older.start()
+    assert first_fetch_started.wait(timeout=10.0)
+
+    clock["value"] = 200.0
+    poller.poll_once()
+    assert poller.feed_state("codex", now=200.0) is FeedState.NO_INCIDENT
+
+    release_first_fetch.set()
+    older.join(timeout=10.0)
+    assert not older.is_alive()
+    assert poller.feed_state("codex", now=200.0) is FeedState.NO_INCIDENT
+    assert poller.incident_for("codex", now=200.0) is None

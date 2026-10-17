@@ -16,6 +16,7 @@ from enum import Enum
 from functools import total_ordering
 from typing import Final
 
+from .ask_lifetime import ask_dismissal_key
 from .capacity_types import SourceKey
 from .provider_contracts import DiagnosticIdentifier
 from .provider_facts import (
@@ -130,7 +131,7 @@ def active_work_went_silent(work, now_epoch: float | None) -> bool:
         getattr(work.key, "source_key", None), "provider_id", None
     )
     return (
-        now_epoch - work.watermark.occurred_at_epoch
+        now_epoch - getattr(work, "observed_at_epoch", work.watermark.occurred_at_epoch)
         > active_silence_seconds_for(provider_id)
     )
 
@@ -155,7 +156,7 @@ def completed_work_no_longer_recent(work, now_epoch: float | None) -> bool:
     return (
         work.lifecycle is WorkLifecycle.COMPLETED
         and now_epoch is not None
-        and now_epoch - work.watermark.occurred_at_epoch > COMPLETED_RECENT_SECONDS
+        and now_epoch - getattr(work, "observed_at_epoch", work.watermark.occurred_at_epoch) > COMPLETED_RECENT_SECONDS
     )
 TIMING_RECOVERY_CONFIRMATIONS: Final = 2
 MAX_CANONICAL_WORKS: Final = 1_000
@@ -166,13 +167,12 @@ MAX_CANONICAL_WORKS: Final = 1_000
 # (discontinuity or future-dated facts) so a distrusted wall clock can
 # never mass-expire live work.
 CANONICAL_WORK_RETENTION_SECONDS: Final = 24 * 3_600.0
-# How long an ask may stand unanswered while still claiming "needs you".
-# Same hour as the presence horizon on purpose: the lights, the status
-# rows, and the mailbox all stop trusting a row past it, so a request
-# older than it cannot be reached by anything that could answer it.
-# Past it the ask is held, not deleted -- a live session re-observed
-# re-promotes it on the next batch.
-REQUEST_LIVE_GRACE_SECONDS: Final = 3_600.0
+# There is deliberately no age limit on a live ask here. An ask the person
+# has not answered stays LIVE until the agent settles it (its own events),
+# its session ends, or the person dismisses it; ``ask_lifetime`` owns the
+# two clocks that only mark it "may be stale" and, much later, archive it.
+# A request used to be held at one hour (REQUEST_LIVE_GRACE_SECONDS), which
+# is how an ask read "Ask" at 59 minutes and idle at 61.
 MAX_CANONICAL_REQUESTS: Final = 1_000
 MAX_EVENTS_PER_REDUCTION: Final = 2_000
 MAX_REDUCER_DIAGNOSTICS: Final = 16
@@ -353,8 +353,16 @@ class CanonicalWorkTruth:
     parent_key: WorkKey | None
     request_keys: tuple[RequestKey, ...]
     timing_uncertain: bool
+    terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE
+    observed_at_epoch: float | None = None
 
     def __post_init__(self) -> None:
+        if type(self.watermark) is not ProviderWatermark:
+            raise OperatorStateValidationError("invalid canonical work truth")
+        observed = self.watermark.occurred_at_epoch if self.observed_at_epoch is None else self.observed_at_epoch
+        if not _is_finite_nonnegative_number(observed):
+            raise OperatorStateValidationError("invalid work observation time")
+        object.__setattr__(self, "observed_at_epoch", float(observed))
         if not (
             type(self.key) is WorkKey
             and type(self.lifecycle) is WorkLifecycle
@@ -367,6 +375,7 @@ class CanonicalWorkTruth:
             and type(self.safe_label) is str
             and 1 <= len(self.safe_label) <= 128
             and self.safe_label.isprintable()
+            and type(self.terminal_cause) is ProviderTerminalCause
             and type(self.timing_uncertain) is bool
             and type(self.request_keys) is tuple
             and all(type(key) is RequestKey and key.work_key == self.key for key in self.request_keys)
@@ -378,6 +387,10 @@ class CanonicalWorkTruth:
             or self.parent_key == self.key
         ):
             raise OperatorStateValidationError("invalid canonical work truth")
+        if self.terminal_cause in {ProviderTerminalCause.CODEX_USAGE_LIMIT, ProviderTerminalCause.CLAUDE_RATE_LIMIT}:
+            expected_provider = "codex" if self.terminal_cause is ProviderTerminalCause.CODEX_USAGE_LIMIT else "claude"
+            if self.key.source_key.provider_id != expected_provider or self.lifecycle is not WorkLifecycle.FAILED or self.next_actor is not NextActor.NONE:
+                raise OperatorStateValidationError("invalid canonical terminal cause")
         request_keys = tuple(sorted(self.request_keys, key=_request_sort_key))
         if len(request_keys) != len(set(request_keys)):
             raise OperatorStateValidationError("invalid canonical work truth")
@@ -400,8 +413,15 @@ class CanonicalRequestTruth:
         default=ObservationAuthority.RESTORED_LAST_KNOWN,
         repr=False,
     )
+    observed_at_epoch: float | None = None
 
     def __post_init__(self) -> None:
+        if type(self.watermark) is not ProviderWatermark:
+            raise OperatorStateValidationError("invalid canonical request truth")
+        observed = self.watermark.occurred_at_epoch if self.observed_at_epoch is None else self.observed_at_epoch
+        if not _is_finite_nonnegative_number(observed):
+            raise OperatorStateValidationError("invalid request observation time")
+        object.__setattr__(self, "observed_at_epoch", float(observed))
         opened_valid = self.opened_at_epoch is None or _is_finite_nonnegative_number(
             self.opened_at_epoch
         )
@@ -438,6 +458,7 @@ class CanonicalOperatorEvent:
     interruption_class: InterruptionClass
     occurred_at_epoch: float
     source_freshness: SourceFreshness
+    terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE
 
     def __post_init__(self) -> None:
         if not (
@@ -448,9 +469,17 @@ class CanonicalOperatorEvent:
             and self.key.transition_kind is self.kind
             and type(self.interruption_class) is InterruptionClass
             and _is_finite_nonnegative_number(self.occurred_at_epoch)
+            and type(self.terminal_cause) is ProviderTerminalCause
             and type(self.source_freshness) is SourceFreshness
         ):
             raise OperatorStateValidationError("invalid canonical operator event")
+        if self.terminal_cause is not ProviderTerminalCause.NONE:
+            if self.kind is not TransitionKind.FAILED or type(self.subject_key) is not WorkKey:
+                raise OperatorStateValidationError("invalid event terminal cause")
+            provider = self.subject_key.source_key.provider_id
+            if ((self.terminal_cause is ProviderTerminalCause.CODEX_USAGE_LIMIT and provider != "codex")
+                    or (self.terminal_cause is ProviderTerminalCause.CLAUDE_RATE_LIMIT and provider != "claude")):
+                raise OperatorStateValidationError("invalid event terminal cause")
         object.__setattr__(self, "occurred_at_epoch", float(self.occurred_at_epoch))
 
 
@@ -544,6 +573,19 @@ class _SourceTimingState:
 
 
 @dataclass(frozen=True, slots=True)
+class RetainedOrderMark:
+    watermark: ProviderWatermark
+    authority: ObservationAuthority
+    observed_at_epoch: float
+
+    def __post_init__(self) -> None:
+        if not (type(self.watermark) is ProviderWatermark
+                and type(self.authority) is ObservationAuthority
+                and _is_finite_nonnegative_number(self.observed_at_epoch)):
+            raise OperatorStateValidationError("invalid retained order mark")
+
+
+@dataclass(frozen=True, slots=True)
 class CanonicalOperatorState:
     schema_version: int
     generation: int
@@ -557,8 +599,26 @@ class CanonicalOperatorState:
         default=(),
         repr=False,
     )
+    work_order_marks: tuple[tuple[WorkKey, RetainedOrderMark], ...] = ()
+    request_order_marks: tuple[tuple[RequestKey, RetainedOrderMark], ...] = ()
+    source_order_floors: tuple[tuple[SourceKey, RetainedOrderMark], ...] = ()
 
     def __post_init__(self) -> None:
+        for values, key_type, limit, key_source in (
+            (self.work_order_marks, WorkKey, MAX_CANONICAL_WORKS, lambda key: key.source_key),
+            (self.request_order_marks, RequestKey, MAX_CANONICAL_REQUESTS, lambda key: key.work_key.source_key),
+            (self.source_order_floors, SourceKey, MAX_CANONICAL_SOURCES, lambda key: key),
+        ):
+            if type(values) is not tuple or len(values) > limit:
+                raise OperatorStateValidationError("invalid ordering coverage")
+            seen = set()
+            for item in values:
+                if not (type(item) is tuple and len(item) == 2
+                        and type(item[0]) is key_type and type(item[1]) is RetainedOrderMark
+                        and item[1].watermark.source_key == key_source(item[0])
+                        and item[0] not in seen):
+                    raise OperatorStateValidationError("invalid ordering coverage")
+                seen.add(item[0])
         if not (
             type(self.schema_version) is int
             and self.schema_version == _STATE_SCHEMA_VERSION
@@ -874,6 +934,7 @@ def _codex_usage_limit_can_close_direct_work(
         and batch.request_facts == ()
         and len(batch.work_facts) == 1
         and fact.terminal_cause is ProviderTerminalCause.CODEX_USAGE_LIMIT
+        and fact.has_codex_usage_limit_provenance
         and fact.lifecycle is WorkLifecycle.FAILED
         and fact.next_actor is NextActor.NONE
         and existing.observation_authority
@@ -1014,10 +1075,14 @@ def _determine_continuity(
     diagnostics: dict[str, int],
 ) -> _ContinuityDecision:
     source_timing = {item.source_key: item for item in previous._source_timing}
+    observed_by_source = {source: watermark.occurred_at_epoch for source, watermark in previous.source_watermarks}
+    for _, mark in (*previous.work_order_marks, *previous.request_order_marks, *previous.source_order_floors):
+        source = mark.watermark.source_key
+        observed_by_source[source] = max(observed_by_source.get(source, 0), mark.observed_at_epoch)
     live_sources = frozenset(
         source
         for source, watermark in previous.source_watermarks
-        if clock.wall_epoch - watermark.occurred_at_epoch
+        if clock.wall_epoch - observed_by_source[source]
         <= PRESENCE_HORIZON_SECONDS
     ) | {batch.source_key}
 
@@ -1223,6 +1288,8 @@ def _event(
     kind: TransitionKind,
     watermark: ProviderWatermark,
     freshness: SourceFreshness,
+    *,
+    terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE,
 ) -> CanonicalOperatorEvent:
     key = SemanticEventKey(subject, kind, watermark)
     return CanonicalOperatorEvent(
@@ -1232,6 +1299,7 @@ def _event(
         classify_operator_event(kind),
         watermark.occurred_at_epoch,
         freshness,
+        terminal_cause,
     )
 
 
@@ -1274,6 +1342,7 @@ def _new_request_truth(
     source_freshness: SourceFreshness,
     restored: bool,
     acknowledged: bool,
+    replay_observed_at: float | None = None,
     clock: ClockSample,
     observation_authority: ObservationAuthority,
 ) -> tuple[CanonicalRequestTruth, TransitionKind | None]:
@@ -1329,7 +1398,7 @@ def _new_request_truth(
                 TransitionKind.REQUEST_OPENED,
                 fact.watermark,
             )
-            opened_at = fact.watermark.occurred_at_epoch
+            opened_at = fact.watermark.occurred_at_epoch if replay_observed_at is None else replay_observed_at
             eligible = (
                 max(0.0, clock.wall_epoch - opened_at)
                 if phase is RequestPhase.LIVE_UNACKNOWLEDGED
@@ -1361,6 +1430,7 @@ def _new_request_truth(
             opened_at_epoch=opened_at,
             eligible_elapsed_seconds=eligible,
             _observation_authority=observation_authority,
+            observed_at_epoch=replay_observed_at,
         ),
         transition,
     )
@@ -1434,6 +1504,7 @@ def reduce_operator_state(
     *,
     clock: ClockSample,
     acknowledged_requests: frozenset[RequestKey] = frozenset(),
+    _replay: object = None,
 ) -> ReductionResult:
     """Reduce one provider batch into deterministic bounded canonical truth."""
     if type(previous) is not CanonicalOperatorState:
@@ -1455,6 +1526,17 @@ def reduce_operator_state(
     previous_requests = {request.key: request for request in previous.requests}
     requests = dict(previous_requests)
     source_watermarks = dict(previous.source_watermarks)
+    from .ipc import _admits_replay
+    minted_replay = _admits_replay(_replay, batch.watermark)
+    replay = _admits_replay(_replay, batch.watermark, now_epoch=clock.wall_epoch)
+    replay_observed = _replay.observed_at_epoch if replay else None
+    work_marks = dict(previous.work_order_marks)
+    request_marks = dict(previous.request_order_marks)
+    floors = dict(previous.source_order_floors)
+    for work in previous.works:
+        work_marks.setdefault(work.key, RetainedOrderMark(work.watermark, work.observation_authority, work.observed_at_epoch))
+    for request in previous.requests:
+        request_marks.setdefault(request.key, RetainedOrderMark(request.watermark, request._observation_authority, request.observed_at_epoch))
     retained_source_watermark = source_watermarks.get(batch.source_key)
 
     decision = _determine_continuity(
@@ -1470,6 +1552,9 @@ def reduce_operator_state(
         if retained_source_watermark is None
         else compare_watermarks(batch.watermark, retained_source_watermark)
     )
+    replay_needs_coverage = replay and (
+        retained_source_watermark is None or batch_order is WatermarkOrder.OLDER
+    )
     work_source_authority = _source_authority(previous_works, batch.source_key)
     request_source_authorities = [
         request._observation_authority
@@ -1484,6 +1569,13 @@ def reduce_operator_state(
         ),
         default=None,
     )
+    retained_authorities = [mark.authority for mark in (*work_marks.values(), *request_marks.values())
+                            if mark.watermark.source_key == batch.source_key]
+    if replay_needs_coverage and retained_authorities:
+        current_source_authority = max(*retained_authorities, current_source_authority or retained_authorities[0])
+    floor = floors.get(batch.source_key)
+    if replay_needs_coverage and floor is not None:
+        current_source_authority = max(floor.authority, current_source_authority or floor.authority)
     authority_blocked = (
         current_source_authority is not None
         and batch.observation_authority < current_source_authority
@@ -1497,6 +1589,8 @@ def reduce_operator_state(
         for fact in batch.work_facts
     )
     semantic_allowed = decision.semantic_allowed and (
+        replay
+        or
         batch_order is WatermarkOrder.NEWER
         or (
             batch_order is WatermarkOrder.EQUAL
@@ -1507,6 +1601,9 @@ def reduce_operator_state(
             )
         )
     )
+    if minted_replay and not replay:
+        semantic_allowed = False
+        diagnostics["replay_admission_expired"] = 1
     if authority_blocked and not typed_terminal_exception:
         semantic_allowed = False
         diagnostics["lower_authority_fact_ignored"] = 1
@@ -1563,9 +1660,18 @@ def reduce_operator_state(
                 )
 
     work_events: dict[WorkKey, CanonicalOperatorEvent] = {}
+    superseded_requests: list[ProviderRequestFact] = []
     if semantic_allowed:
         for fact in batch.work_facts:
             existing = previous_works.get(fact.key)
+            mark = work_marks.get(fact.key)
+            coverage = mark if mark is not None else floors.get(fact.key.source_key) if replay_needs_coverage else None
+            if coverage is not None and (
+                compare_watermarks(fact.watermark, coverage.watermark) is not WatermarkOrder.NEWER
+                or (batch.observation_authority < coverage.authority
+                    and not _codex_usage_limit_can_close_direct_work(existing, batch, fact))
+            ):
+                continue
             order = (
                 WatermarkOrder.NEWER
                 if existing is None
@@ -1621,11 +1727,28 @@ def reduce_operator_state(
                 parent_key=fact.parent_key,
                 request_keys=existing.request_keys if existing is not None else (),
                 timing_uncertain=fact.key.source_key in decision.uncertain_sources,
+                terminal_cause=fact.terminal_cause,
+                observed_at_epoch=replay_observed,
             )
-            if fact.terminal_cause is ProviderTerminalCause.CODEX_USAGE_LIMIT:
+            work_marks[fact.key] = RetainedOrderMark(fact.watermark, max(batch.observation_authority, mark.authority if mark is not None else batch.observation_authority),
+                                                   works[fact.key].observed_at_epoch)
+            if (fact.terminal_cause is ProviderTerminalCause.CODEX_USAGE_LIMIT
+                    and fact.has_codex_usage_limit_provenance):
                 for request_key in tuple(requests):
                     if request_key.work_key == fact.key:
                         del requests[request_key]
+            if fact.starts_turn:
+                for request_key, open_request in requests.items():
+                    if request_key.work_key == fact.key and _retained_request_is_live(open_request):
+                        superseded_requests.append(
+                            ProviderRequestFact(
+                                request_key,
+                                ProviderRequestState.RESOLVED,
+                                open_request.request_kind,
+                                NextActor.NONE,
+                                fact.watermark,
+                            )
+                        )
             transition = _work_transition(existing, fact.lifecycle)
             if transition is not None and not restored_batch:
                 work_events[fact.key] = _event(
@@ -1633,6 +1756,8 @@ def reduce_operator_state(
                     transition,
                     fact.watermark,
                     batch.source_freshness,
+                    terminal_cause=(fact.terminal_cause if transition is TransitionKind.FAILED
+                                    else ProviderTerminalCause.NONE),
                 )
             if (
                 fact.lifecycle in _TERMINAL_WORK_LIFECYCLES
@@ -1667,6 +1792,7 @@ def reduce_operator_state(
                             child,
                             lifecycle=WorkLifecycle.COMPLETED,
                             watermark=child_watermark,
+                            observed_at_epoch=child_watermark.occurred_at_epoch if replay_observed is None else replay_observed,
                             source_health=batch.source_health,
                             source_freshness=batch.source_freshness,
                             next_actor=NextActor.NONE,
@@ -1682,15 +1808,14 @@ def reduce_operator_state(
 
     request_events: dict[RequestKey, CanonicalOperatorEvent] = {}
     if semantic_allowed:
-        for fact in batch.request_facts:
+        for fact in (*batch.request_facts, *superseded_requests):
             existing = previous_requests.get(fact.key)
-            if fact.key not in requests and fact.state is ProviderRequestState.RESOLVED:
-                # Resolving a request nobody opened must not materialize a
-                # tombstone: every PostToolUse carries a derived request
-                # identity so it can close the ask its own tool call
-                # opened, and most calls never had one -- without this the
-                # entry sits resolved forever and every later reduce and
-                # snapshot pays to carry it.
+            mark = request_marks.get(fact.key)
+            coverage = mark if mark is not None else floors.get(fact.key.work_key.source_key) if replay_needs_coverage else None
+            if coverage is not None and (
+                compare_watermarks(fact.watermark, coverage.watermark) is not WatermarkOrder.NEWER
+                or batch.observation_authority < coverage.authority
+            ):
                 continue
             order = (
                 WatermarkOrder.NEWER
@@ -1719,6 +1844,12 @@ def reduce_operator_state(
                     diagnostics.get("lower_authority_fact_ignored", 0) + 1
                 )
                 continue
+            request_marks[fact.key] = RetainedOrderMark(
+                fact.watermark, batch.observation_authority,
+                fact.watermark.occurred_at_epoch if replay_observed is None else replay_observed,
+            )
+            if fact.key not in requests and fact.state is ProviderRequestState.RESOLVED:
+                continue
             request, transition = _new_request_truth(
                 fact,
                 previous=existing,
@@ -1727,6 +1858,7 @@ def reduce_operator_state(
                 acknowledged=fact.key in acknowledged_requests,
                 clock=clock,
                 observation_authority=batch.observation_authority,
+                replay_observed_at=replay_observed,
             )
             requests[fact.key] = request
             if transition is not None:
@@ -1799,6 +1931,14 @@ def reduce_operator_state(
             # resolution fact -- or the next batch, which cascades it
             # then -- carries the close.
             phase = RequestPhase.RESOLVED
+            retained = request_marks.get(key)
+            if retained is None or compare_watermarks(owner.watermark, retained.watermark) is WatermarkOrder.NEWER:
+                request_marks[key] = RetainedOrderMark(
+                    owner.watermark,
+                    max(owner.observation_authority, request._observation_authority,
+                        retained.authority if retained is not None else request._observation_authority),
+                    owner.observed_at_epoch,
+                )
             request_events[key] = _event(
                 key,
                 TransitionKind.REQUEST_RESOLVED,
@@ -1821,25 +1961,11 @@ def reduce_operator_state(
                 else request.phase
             )
         elif provider_live:
-            opened_at = (
-                request.opened_at_epoch
-                if request.opened_at_epoch is not None
-                else request.watermark.occurred_at_epoch
+            phase = (
+                RequestPhase.LIVE_ACKNOWLEDGED
+                if key in acknowledged_requests
+                else RequestPhase.LIVE_UNACKNOWLEDGED
             )
-            if opened_at < clock.wall_epoch - REQUEST_LIVE_GRACE_SECONDS:
-                # A live-looking ask past the presence horizon is memory,
-                # not a claim: every light and row already drops it past
-                # the same line, so holding LIVE_* here only let a silent
-                # source keep "needs you" lit forever. Held, not resolved --
-                # fresh facts about a real session re-promote it on the
-                # next batch.
-                phase = RequestPhase.STALE_HOLD
-            else:
-                phase = (
-                    RequestPhase.LIVE_ACKNOWLEDGED
-                    if key in acknowledged_requests
-                    else RequestPhase.LIVE_UNACKNOWLEDGED
-                )
             if freshness in {
                 SourceFreshness.TIMING_UNCERTAIN,
                 SourceFreshness.RESTORED,
@@ -1869,6 +1995,16 @@ def reduce_operator_state(
             eligible_elapsed_seconds=eligible,
         )
 
+    # Secondary resolutions and child retirement can update truth outside
+    # the fact loops. Retain their accepted order before any truth eviction.
+    for work in works.values():
+        mark = work_marks.get(work.key)
+        if mark is None or compare_watermarks(work.watermark, mark.watermark) is WatermarkOrder.NEWER:
+            work_marks[work.key] = RetainedOrderMark(work.watermark, work.observation_authority, work.observed_at_epoch)
+    for request in requests.values():
+        mark = request_marks.get(request.key)
+        if mark is None or compare_watermarks(request.watermark, mark.watermark) is WatermarkOrder.NEWER:
+            request_marks[request.key] = RetainedOrderMark(request.watermark, request._observation_authority, request.observed_at_epoch)
     _remove_parent_cycles(works, diagnostics)
 
     # Gated on "no clock quarantine" (no discontinuity, no future-dated
@@ -1879,10 +2015,21 @@ def reduce_operator_state(
     # per-source lease -- only a distrusted wall clock forbids it.
     if not decision.clock_quarantine:
         horizon = clock.wall_epoch - CANONICAL_WORK_RETENTION_SECONDS
+        # A work with an ask still waiting on the person is not history,
+        # however long it has been silent: it leaves only when its ask is
+        # settled or its session ends (``ask_lifetime``).
+        asking_works = frozenset(
+            key.work_key
+            for key, request in requests.items()
+            if request.phase
+            in {RequestPhase.LIVE_UNACKNOWLEDGED, RequestPhase.LIVE_ACKNOWLEDGED}
+            and request.next_actor is NextActor.USER
+        )
         expired = [
             key
             for key, work in works.items()
-            if work.watermark.occurred_at_epoch < horizon
+            if work.observed_at_epoch < horizon
+            and key not in asking_works
         ]
         if expired:
             diagnostics["canonical_work_retired"] = len(expired)
@@ -1906,7 +2053,7 @@ def reduce_operator_state(
             sorted(
                 works,
                 key=lambda key: (
-                    -works[key].watermark.occurred_at_epoch,
+                    -works[key].observed_at_epoch,
                     _work_sort_key(key),
                 ),
             )[:MAX_CANONICAL_WORKS]
@@ -1926,7 +2073,7 @@ def reduce_operator_state(
             sorted(
                 requests,
                 key=lambda key: (
-                    -requests[key].watermark.occurred_at_epoch,
+                    -requests[key].observed_at_epoch,
                     _request_sort_key(key),
                 ),
             )[:MAX_CANONICAL_REQUESTS]
@@ -1983,6 +2130,28 @@ def reduce_operator_state(
         )
         sorted_events = sorted_events[:MAX_EVENTS_PER_REDUCTION]
 
+    for marks, limit in ((work_marks, MAX_CANONICAL_WORKS), (request_marks, MAX_CANONICAL_REQUESTS)):
+        ordered = sorted(marks, key=lambda key: (marks[key].observed_at_epoch, str(key)))
+        excess = max(0, len(ordered) - limit)
+        for index, key in enumerate(ordered):
+            mark = marks[key]
+            expired = not decision.clock_quarantine and clock.wall_epoch - mark.observed_at_epoch > 1800
+            if index >= excess and not expired:
+                continue
+            source = mark.watermark.source_key
+            floor = floors.get(source)
+            watermark = (mark.watermark if floor is None or
+                         compare_watermarks(mark.watermark, floor.watermark) is WatermarkOrder.NEWER
+                         else floor.watermark)
+            floors[source] = RetainedOrderMark(
+                watermark, mark.authority if floor is None else max(mark.authority, floor.authority),
+                max(mark.observed_at_epoch, floor.observed_at_epoch if floor is not None else 0),
+            )
+            del marks[key]
+    # Source coverage cannot be silently discarded. Refuse the reduction
+    # rather than reopen admission if a malformed/unbounded source set arrives.
+    if len(floors) > MAX_CANONICAL_SOURCES:
+        raise OperatorStateValidationError("ordering source coverage limit")
     candidate_state = CanonicalOperatorState(
         schema_version=_STATE_SCHEMA_VERSION,
         generation=previous.generation,
@@ -1993,6 +2162,9 @@ def reduce_operator_state(
         clock_continuity=decision.continuity,
         last_clock=clock,
         _source_timing=tuple(source_timing.values()),
+        work_order_marks=tuple(sorted(work_marks.items(), key=lambda item: _work_sort_key(item[0]))),
+        request_order_marks=tuple(sorted(request_marks.items(), key=lambda item: _request_sort_key(item[0]))),
+        source_order_floors=tuple(sorted(floors.items(), key=lambda item: _source_sort_key(item[0]))),
     )
     state = (
         previous
@@ -2100,6 +2272,65 @@ def apply_acknowledgements(
             )
         )
         changed = True
+    if not changed:
+        return state
+    return replace(state, requests=tuple(requests))
+
+
+def request_opened_epoch(request: CanonicalRequestTruth) -> float:
+    """When the request opened: its own stamp, else its newest fact's."""
+    return (
+        request.opened_at_epoch
+        if request.opened_at_epoch is not None
+        else request.observed_at_epoch
+    )
+
+
+def apply_ask_dismissals(
+    state: CanonicalOperatorState,
+    dismissed: frozenset[tuple[str, int]],
+) -> CanonicalOperatorState:
+    """Hold the asks the person dismissed locally.
+
+    ``dismissed`` holds ``ask_lifetime.ask_dismissal_key`` identities. A live
+    request whose session and opening time match one is moved to STALE_HOLD:
+    every reader of canonical state already treats that as "not claiming the
+    person", and a fresh fact about a different request is untouched. Nothing
+    is resolved and nothing is sent to the agent -- like an acknowledgement
+    this is the Mac's own triage over the agent's truth, and it never
+    changes what the provider said.
+    """
+    if type(state) is not CanonicalOperatorState:
+        raise OperatorStateValidationError("invalid operator state")
+    if not dismissed:
+        return state
+    works = {work.key: work for work in state.works}
+    live_phases = {
+        RequestPhase.LIVE_UNACKNOWLEDGED,
+        RequestPhase.LIVE_ACKNOWLEDGED,
+    }
+    changed = False
+    requests: list[CanonicalRequestTruth] = []
+    for request in state.requests:
+        work = works.get(request.key.work_key)
+        if request.phase in live_phases and work is not None:
+            opened = request_opened_epoch(request)
+            agent_id = (
+                f"{work.key.source_key.provider_id}:"
+                f"{'agent' if work.parent_key is not None else 'session'}:"
+                f"{work.key.work_id.value}"
+            )
+            if ask_dismissal_key(agent_id, opened) in dismissed:
+                requests.append(
+                    replace(
+                        request,
+                        phase=RequestPhase.STALE_HOLD,
+                        acknowledgement_eligibility=AcknowledgementEligibility.STALE_HOLD,
+                    )
+                )
+                changed = True
+                continue
+        requests.append(request)
     if not changed:
         return state
     return replace(state, requests=tuple(requests))

@@ -2283,3 +2283,55 @@ def test_the_default_deadline_covers_the_slowest_source_that_can_still_succeed()
     from jrbar.provider_usage_runtime import DEFAULT_COLLECTOR_DEADLINE_SECONDS
 
     assert DEFAULT_COLLECTOR_DEADLINE_SECONDS > 3 * provider_usage_collectors.HTTP_TIMEOUT_SECONDS
+
+
+def test_claude_last_good_survives_a_collector_that_raised_or_timed_out(tmp_path) -> None:
+    import json
+
+    from jrbar.claude_quota import account_facts_from_claude_config
+
+    (tmp_path / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "current@example.invalid"}}),
+        encoding="utf-8",
+    )
+    _plan, account = account_facts_from_claude_config(tmp_path)
+    assert account is not None
+    settings = default_provider_usage_settings().with_enabled("grok", False)
+    mode = {"now": "good"}
+
+    def collector(_pref, _home, observed, _credentials):
+        if mode["now"] == "raise":
+            raise RuntimeError("synthetic wake-from-sleep failure")
+        return snapshot("claude", remaining=37, observed=observed, account_discriminator=account)
+
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors={"claude": collector},
+        credentials=object(),
+        home=tmp_path,
+        clock=lambda: 1000,
+        incident_lookup=lambda *_args: None,
+    )
+    assert service.refresh_now(providers=("claude",)).by_provider("claude").lanes
+
+    mode["now"] = "raise"
+    kept = service.refresh_now(providers=("claude",), force=True).by_provider("claude")
+    assert kept.state is ProviderSourceState.STALE
+    assert kept.lanes[0].remaining_percent == 37
+    assert kept.account_discriminator == account
+
+    # The account file is unreadable now: an unanswered collector still
+    # says nothing about the account, so the reading stays.
+    (tmp_path / ".claude.json").unlink()
+    still = service.refresh_now(providers=("claude",), force=True).by_provider("claude")
+    assert still.state is ProviderSourceState.STALE
+    assert still.lanes[0].remaining_percent == 37
+
+    # A different account on this Mac keeps nothing.
+    (tmp_path / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "other@example.invalid"}}),
+        encoding="utf-8",
+    )
+    switched = service.refresh_now(providers=("claude",), force=True).by_provider("claude")
+    assert switched.lanes == ()
+    service.close()

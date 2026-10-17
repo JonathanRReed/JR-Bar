@@ -100,7 +100,9 @@ def _source_note(provider: dict[str, Any]) -> str | None:
 
 def _why_empty(provider: dict[str, Any]) -> str:
     state = str(provider.get("state") or "")
-    if provider.get("quota_source") is False:
+    if provider.get("reason") == "usage_not_turned_on":
+        words = "off (not turned on)"
+    elif provider.get("quota_source") is False:
         words = "no quota source"
     else:
         words = _STATE_WORDS.get(state, state.replace("_", " ") or "no windows")

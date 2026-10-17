@@ -208,22 +208,32 @@ class StatusFeedPoller:
         gate answers False ends instead of asking the vendor again.
         """
         selected = tuple(self._feeds) if provider_ids is None else provider_ids
-        to_start: list[threading.Thread] = []
+        to_start: list[tuple[str, _FeedWorker]] = []
         with self._lock:
             for provider_id in selected:
                 if provider_id in self._feeds and provider_id not in self._workers:
                     stop = threading.Event()
-                    thread = threading.Thread(
-                        target=lambda selected_id=provider_id, selected_stop=stop: (
-                            self._loop(selected_id, selected_stop, enabled)
-                        ),
-                        name=f"{STATUS_FEED_THREAD_NAME}-{provider_id}",
-                        daemon=True,
-                    )
-                    self._workers[provider_id] = _FeedWorker(thread, stop)
-                    to_start.append(thread)
-        for thread in to_start:
-            thread.start()
+                    try:
+                        thread = threading.Thread(
+                            target=lambda selected_id=provider_id, selected_stop=stop: (
+                                self._loop(selected_id, selected_stop, enabled)
+                            ),
+                            name=f"{STATUS_FEED_THREAD_NAME}-{provider_id}",
+                            daemon=True,
+                        )
+                    except Exception:
+                        continue
+                    worker = _FeedWorker(thread, stop)
+                    self._workers[provider_id] = worker
+                    to_start.append((provider_id, worker))
+        for provider_id, worker in to_start:
+            try:
+                worker.thread.start()
+            except Exception:
+                worker.stop.set()
+                with self._lock:
+                    if self._workers.get(provider_id) is worker:
+                        del self._workers[provider_id]
 
     def stop(
         self,
@@ -329,7 +339,12 @@ class StatusFeedPoller:
                 observation = _FeedObservation(state, observed_at, incident)
             with self._lock:
                 # A feed stopped while its request was out keeps nothing.
-                if cancelled is None or not cancelled.is_set():
+                # A request that was started earlier and lands after a newer
+                # reading must not put the older answer back.
+                newer = self._observations.get(provider_id)
+                if (cancelled is None or not cancelled.is_set()) and (
+                    newer is None or observation.observed_at >= newer.observed_at
+                ):
                     self._observations[provider_id] = observation
 
     def _loop(

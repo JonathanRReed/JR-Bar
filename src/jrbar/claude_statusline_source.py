@@ -614,10 +614,10 @@ def core_install_command(controller, args: dict[str, Any]) -> dict[str, Any]:
     statusLine is never replaced; without ``wrap`` the reply says
     ``needs_wrap`` so the app can ask first."""
     from .core_server import CommandError
-    from .install import hook_shim_path
+    from .install import stable_hook_shim
     from .state_paths import default_state_dir
 
-    shim = hook_shim_path()
+    shim = stable_hook_shim()
     if shim is None:
         raise CommandError("unavailable", "the jrbar-hook shim is not installed")
     wrap = args.get("wrap") is True
@@ -695,14 +695,14 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--settings", type=Path, default=None, help=argparse.SUPPRESS)
     options = parser.parse_args(argv)
-    from .install import hook_shim_path
+    from .install import stable_hook_shim
     from .state_paths import default_state_dir
 
     settings_path = options.settings or claude_settings_path()
     state_dir = default_state_dir()
     try:
         if options.verb == "install":
-            shim = hook_shim_path()
+            shim = stable_hook_shim()
             if shim is None:
                 print("the jrbar-hook shim is not built or installed; open JR-Bar once first", file=sys.stderr)
                 return 1

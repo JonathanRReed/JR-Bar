@@ -100,7 +100,6 @@ _REQUEST_PHASE_ORDER: Final = {
     RequestPhase.RESOLVED: 3,
     RequestPhase.UNKNOWN_EXPIRED: 4,
 }
-_DEFAULT_MAILBOX_ORDER: Final = 2_147_483_647
 _DISPLAY_WORKER_FRESHNESS: Final = frozenset(
     {
         SourceFreshness.FRESH,

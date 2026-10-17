@@ -244,7 +244,7 @@ struct MockCoreIntegrationTests {
         #expect(summary.text.hasPrefix("While you were away:"))
 
         #expect(model.lastClear == nil)
-        model.clearCompleted()
+        _ = try await model.clearCompletedNow()
         #expect(await Self.wait { model.lastClear != nil })
         #expect(model.canUndoClear)
         #expect(model.lastClear?.batch.hasPrefix("b-") == true)

@@ -71,7 +71,20 @@ final class NotchToy: Toy {
     var islandVisible = false
     /// The notification capsule on screen, if any — Alcove's instant
     /// notification: the island's only face besides idle.
-    var activeCapsule: AlcoveNotice?
+    var activeCapsule: AlcoveNotice? {
+        // The keyboard belongs to one ask: a different capsule (or none)
+        // lets it go.
+        didSet { if oldValue?.id != activeCapsule?.id { releaseAskKeyboard() } }
+    }
+    /// The ask face's keyboard: engaged only by a person asking for it
+    /// (`engageAskKeyboard`), and it focuses nothing until they move.
+    /// `askFocus.focused` is the verb wearing the ring.
+    var askKeyboardEngaged = false
+    var shelfKeyboardEngaged = false
+    @ObservationIgnored var useGlassShelfKeyboard: () -> String? = { "JR-Bar is still starting." }
+    @ObservationIgnored var releaseGlassShelfKeyboard: () -> Void = {}
+    var askFocus = NotchAskFocus()
+    @ObservationIgnored var askKeyIdleWork: DispatchWorkItem?
     /// Key feedback drawn over the face — a level, Caps Lock
     /// (`AlcoveCapsuleQueue.present`). It outranks a transient capsule
     /// for its short beat and never covers a latched ask.
@@ -100,6 +113,12 @@ final class NotchToy: Toy {
     /// resting cursor earns the few-points grow; a sweep past never
     /// arms it.
     @ObservationIgnored var peekWork: DispatchWorkItem?
+    /// The swell's grace after the pointer slips off (`NotchMotion.swellGrace`):
+    /// it settles when this fires, unless the pointer is back.
+    @ObservationIgnored var peekReleaseWork: DispatchWorkItem?
+    /// Where the pointer is, in screen coordinates. A seam, so a test
+    /// can stand a pointer beside the card without moving the real one.
+    @ObservationIgnored var pointerLocation: @MainActor () -> CGPoint = { NSEvent.mouseLocation }
     /// The press-and-pull is live — the finger owns the frame, so the
     /// hover debounce must not fold the card the finger is holding and
     /// a mid-pull morph calls `cancelPull` rather than fight it.
@@ -120,6 +139,14 @@ final class NotchToy: Toy {
     /// Where the Esc presses come from — AppKit's monitors; a test hands
     /// in a fake.
     @ObservationIgnored var cardKeySource: CardEscapeWatch.Source = .system
+    @ObservationIgnored var cardKeysLive: (() -> Bool)?
+    @ObservationIgnored var menuPopupShown = false {
+        didSet {
+            guard menuPopupShown != oldValue else { return }
+            if menuPopupShown { releaseShelfKeyboard() }
+            syncCardKeyMonitors()
+        }
+    }
     /// Esc is being listened for — only while the card is grown.
     var listensForEscape: Bool { cardEscape?.isListening == true }
     /// The frame last asked of the window — `reconcile` re-runs on every
@@ -142,6 +169,40 @@ final class NotchToy: Toy {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
     @ObservationIgnored var capsuleClock: () -> Date = { Date() }
+    /// Where the hover path arms its timers (the swell, the grow, the
+    /// prewarm, the leave debounce): the main queue; the tests hand in
+    /// a hand-cranked clock and step a pointer's whole visit by hand.
+    @ObservationIgnored var hoverTimer: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+    /// What the island's window tells its view while a morph runs: the
+    /// shape's place on the stage and how open the card is. See
+    /// `NotchStageModel`.
+    let stage = NotchStageModel(directional: NotchIslandWindow.stagedMotion)
+    /// Whether the person asked the Mac for less motion. A seam, so a
+    /// test can stand in for the system setting.
+    @ObservationIgnored var reduceMotion: @MainActor () -> Bool = {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+    /// Where a notice is spoken for a VoiceOver user: the island's line
+    /// is a picture otherwise. A seam, so a test hears it without the
+    /// screen reader; by default it speaks only while VoiceOver runs.
+    @ObservationIgnored var speak: @MainActor (String) -> Void = { text in
+        guard NSWorkspace.shared.isVoiceOverEnabled else { return }
+        AccessibilityNotification.Announcement(text).post()
+    }
+
+    /// What a shown notice says aloud, or nil for the feedback the Mac
+    /// already speaks itself (a level, Caps Lock).
+    func spokenText(for notice: AlcoveNotice) -> String? {
+        guard !notice.kind.isFeedback else { return nil }
+        if notice.kind == .ask {
+            let question = askSummary(notice)
+            return question.isEmpty ? "\(notice.title) needs you" : "\(notice.title) needs you. \(question)"
+        }
+        return notice.subtitle.isEmpty ? notice.title : "\(notice.title). \(notice.subtitle)"
+    }
+
     /// A notice the island took, then gave up from the waiting slot to
     /// newer news of equal or higher rank (`AlcoveCapsuleQueue.onEvict`)
     /// — reported here instead of vanishing. The delegate hands the
@@ -193,12 +254,25 @@ final class NotchToy: Toy {
     /// The hover-leave timer — a short delay so a cursor grazing the
     /// island's edge doesn't flap the card.
     @ObservationIgnored var collapseWork: DispatchWorkItem?
-    @ObservationIgnored var island: NotchIslandWindow?
+    @ObservationIgnored var island: NotchIslandWindow? {
+        didSet {
+            if oldValue !== island {
+                oldValue?.setShoulderInput(nil)
+                shoulderInputPath = nil
+            }
+        }
+    }
+    /// The painted shoulder's input area in the current window's top-left coordinates.
+    var shoulderInputPath: CGPath?
+    /// The band owns gestures beginning on its painted wing.
+    @ObservationIgnored var wingOwnsGesture: (NSPoint) -> Bool = { _ in false }
+    @ObservationIgnored var canRestoreIslandWings: @MainActor (NSPoint) -> Bool = { _ in false }
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// Production owns AppKit windows and system readers. State-machine
     /// tests opt out before observation starts, so no later settings
     /// change can accidentally reconcile a real surface into the test.
     @ObservationIgnored var runtimeEnabled: Bool
+    @ObservationIgnored let nativeSourcesEnabled: Bool
 
     /// The island's faces on the same window — idle capsule, the
     /// one-line notice capsule, the ask (a two-line capsule with its
@@ -206,12 +280,14 @@ final class NotchToy: Toy {
     enum NotchIslandFace { case idle, notice, ask, expanded }
 
     init(core: CoreModel, store: ToysStore, cardModel: NotchCardModel,
-         mediaFeed: MediaFeed? = nil, runtimeEnabled: Bool = true) {
+         mediaFeed: MediaFeed? = nil, runtimeEnabled: Bool = true,
+         nativeSourcesEnabled: Bool = true) {
         self.core = core
         self.store = store
         self.cardModel = cardModel
         self.mediaFeed = mediaFeed ?? MediaFeed.shared
         self.runtimeEnabled = runtimeEnabled
+        self.nativeSourcesEnabled = nativeSourcesEnabled
         sensorIndicatorsEnabled = UserDefaults.standard.object(
             forKey: Self.sensorIndicatorsDefaultsKey) as? Bool ?? true
         // The queue only ever runs on the main actor, inside the toy's
@@ -223,6 +299,9 @@ final class NotchToy: Toy {
         cardModel.onClose = { [weak self] in self?.collapseIsland() }
         cardModel.popoverHold.onChange = { [weak self] held in self?.cardPopoverHoldChanged(held) }
         cardModel.onDropHover = { [weak self] in self?.shelfDragMoved() }
+        cardModel.onPageChanged = { [weak self] page in
+            if page != .shelf { self?.releaseShelfKeyboard() }
+        }
         cardModel.onDropLanded = { [weak self] in self?.shelfDragLanded() }
         cardModel.onOpenSession = { [weak self] in
             guard let self, let session = self.cardModel.focus.clickSession else { return }
@@ -230,9 +309,6 @@ final class NotchToy: Toy {
         }
         cardModel.onOpenOverview = { [weak self] in self?.onOpenOverview() }
         cardModel.mirrorEnabled = { [weak self] in self?.settings.mirror ?? false }
-        cardModel.utility.weather.allowIPLocation = { [weak self] in
-            self?.settings.weatherUseIPLocation ?? false
-        }
         wireLyrics(cardModel.utility.lyrics)
         cardModel.heldAwake = { [weak self] in self?.core.state?.power?.keepAwake == true }
         // The card's privacy line starts from the monitor's reading: no
@@ -308,7 +384,7 @@ final class NotchToy: Toy {
 
     let id = "notch"
     let name = "Notch"
-    let blurb = "Who's working, up in the notch. Alcove or Boring Notch can draw it instead."
+    let blurb = "Agent status, asks, timers and controls in the notch."
     let symbol = "capsule.fill"
 
     var settings: NotchSettings { store?.state.notch ?? NotchSettings() }
@@ -447,7 +523,7 @@ final class NotchToy: Toy {
         guard islandVisible else { return nil }
         // The Screen Bar follows each presented spring frame, including
         // interrupted expansions and pulls, rather than jumping to its goal.
-        return island?.frame ?? desiredFrame
+        return island?.presentedFrame ?? desiredFrame
     }
 
     /// The one surface the notch system may show right now — the
@@ -476,10 +552,55 @@ final class NotchToy: Toy {
         return NotchIslandLayout.expandedWidth(slotWidth: slot?.width ?? 0)
     }
 
-    /// The grown card's top pad — past the notch's own depth and its
-    /// inset, so the card's content starts clear of the bezel.
+    /// The grown card clears the physical notch and configured status strip.
     var cardTopPad: CGFloat {
+        Self.cardContentTopPad(notchDepth: notchDepth, earsDrawn: earsDrawn)
+    }
+
+    static func cardContentTopPad(notchDepth: CGFloat, earsDrawn: Bool) -> CGFloat {
         NotchIslandLayout.expandedTopInset(notchDepth: notchDepth)
+            + wingContentInset(notchDepth: notchDepth, earsDrawn: earsDrawn)
+    }
+
+    /// Configuration reserves this strip even when a person dismisses a mark.
+    var wingContentInset: CGFloat {
+        Self.wingContentInset(notchDepth: notchDepth, earsDrawn: earsDrawn)
+    }
+
+    static func wingContentInset(notchDepth: CGFloat, earsDrawn: Bool) -> CGFloat {
+        earsDrawn && notchDepth > 0 ? ScreenBarGeometry.wingEarDrop : 0
+    }
+
+    var noticeTopPad: CGFloat { notchDepth + wingContentInset }
+    var askTopPad: CGFloat {
+        notchDepth > 0 ? noticeTopPad : NotchIslandLayout.askFloatingTop
+    }
+
+    /// Add content clearance while retaining the silhouette's physical depth.
+    static func reservingWingContent(_ size: CGSize, notchDepth: CGFloat,
+                                     earsDrawn: Bool, underHousing radius: CGFloat?) -> CGSize {
+        let inset = wingContentInset(notchDepth: notchDepth, earsDrawn: earsDrawn)
+        guard inset > 0 else { return size }
+        var result = CGSize(width: size.width, height: size.height + inset)
+        guard let radius else { return result }
+        let originalClimb = NotchIslandLayout.housingClimb(size: size, notchDepth: notchDepth,
+                                                          restingRadius: radius)
+        let contentRoom = size.height - originalClimb + inset
+        while result.height - NotchIslandLayout.housingClimb(size: result, notchDepth: notchDepth,
+                                                            restingRadius: radius) < contentRoom {
+            result.height += 1
+        }
+        return result
+    }
+
+    private func noticeFaceSize(on screen: NSScreen) -> CGSize {
+        let depth = ScreenBarGeometry.islandDepth(of: screen)
+        let radius = housingCorner(on: screen)
+        let size = NotchIslandLayout.noticeSize(slotWidth: ScreenBarGeometry.islandSlot(on: screen)?.width ?? 0,
+                                               notchDepth: depth, underHousing: radius,
+                                               copyWidth: noticeCopyWidth)
+        return Self.reservingWingContent(size, notchDepth: depth, earsDrawn: earsDrawn,
+                                         underHousing: radius)
     }
 
     /// Points of the notice's foot the Screen Bar's housing draws over —
@@ -490,10 +611,30 @@ final class NotchToy: Toy {
         guard let screen = ScreenBarGeometry.preferredScreen(),
               let corner = housingCorner(on: screen) else { return 0 }
         let depth = ScreenBarGeometry.islandDepth(of: screen)
-        let size = NotchIslandLayout.noticeSize(
-            slotWidth: ScreenBarGeometry.islandSlot(on: screen)?.width ?? 0,
-            notchDepth: depth, underHousing: corner)
+        let size = noticeFaceSize(on: screen)
         return NotchIslandLayout.housingClimb(size: size, notchDepth: depth, restingRadius: corner)
+    }
+
+    /// How wide the words of the one-line notice up now measure, so its
+    /// shape fits them (`NotchIslandLayout.noticeWidth`). nil for a face
+    /// that is not a line of words (the ask and meeting verbs, a level),
+    /// which keep their own widths.
+    var noticeCopyWidth: CGFloat? {
+        (activeOverlay ?? activeCapsule).flatMap(Self.copyWidth(of:))
+    }
+
+    /// The line `NotchIslandView.noticeLine` draws, measured at its own
+    /// sizes: the title a weight up, the rest at the regular weight after
+    /// two spaces.
+    static func copyWidth(of notice: AlcoveNotice) -> CGFloat? {
+        guard !notice.kind.hasVerbs, notice.kind != .level else { return nil }
+        let size: CGFloat = 11.5
+        func width(_ text: String, weight: NSFont.Weight) -> CGFloat {
+            (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: weight)]).width
+        }
+        var total = width(notice.title, weight: .semibold)
+        if !notice.subtitle.isEmpty { total += width("  \(notice.subtitle)", weight: .regular) }
+        return ceil(total)
     }
 
     /// Points of the ask face's foot the Screen Bar's housing draws over
@@ -514,11 +655,15 @@ final class NotchToy: Toy {
     /// the same measure.
     private func askFaceSize(on screen: NSScreen) -> CGSize? {
         guard let capsule = activeCapsule, capsule.kind.hasVerbs else { return nil }
-        return NotchIslandLayout.askSize(
+        let depth = ScreenBarGeometry.islandDepth(of: screen)
+        let radius = housingCorner(on: screen)
+        let size = NotchIslandLayout.askSize(
             slotWidth: ScreenBarGeometry.islandSlot(on: screen)?.width ?? 0,
-            notchDepth: ScreenBarGeometry.islandDepth(of: screen),
+            notchDepth: depth,
             summaryLines: askSummaryLines, takeover: capsule.takeover,
-            underHousing: housingCorner(on: screen))
+            underHousing: radius)
+        return Self.reservingWingContent(size, notchDepth: depth, earsDrawn: earsDrawn,
+                                         underHousing: radius)
     }
 
     /// Lines the ask face gives its summary: one on the capsule, as many
@@ -562,6 +707,24 @@ final class NotchToy: Toy {
         _ = displayVersion
         guard let screen = ScreenBarGeometry.preferredScreen() else { return 0 }
         return ScreenBarGeometry.islandDepth(of: screen)
+    }
+
+    /// The preferred screen's notch width — the reference the island's
+    /// shoulders measure their growth against. 0 without a notch.
+    var notchSlotWidth: CGFloat {
+        _ = displayVersion
+        guard let screen = ScreenBarGeometry.preferredScreen() else { return 0 }
+        return ScreenBarGeometry.islandSlot(on: screen)?.width ?? 0
+    }
+
+    /// The notch's rectangle on the preferred screen, pixel-snapped — the
+    /// floor the island's frame never dips under while it morphs. nil
+    /// without a notch (the floating pill has nothing to cover).
+    var notchFloor: CGRect? {
+        _ = displayVersion
+        guard let screen = ScreenBarGeometry.preferredScreen() else { return nil }
+        let hardware = ScreenBarGeometry.notchHardware(of: screen)
+        return hardware.hasSlot ? hardware.rect : nil
     }
 
     /// Whether the Screen Bar's band is on screen — wired by the
@@ -611,7 +774,7 @@ final class NotchToy: Toy {
     /// brief leave-and-return doesn't ping-pong it. A showing capsule
     /// owns the island, so the hover is only remembered then — it
     /// lands its grow when the capsule steps down.
-    private static let collapseDelay: TimeInterval = 0.18
+    private static let collapseDelay = NotchMotion.collapseDelay
     /// How long a resting pointer waits for the card, and for the breath
     /// before it: the Notch card's "Open after" (Alcove-quick 0.12 s by
     /// default — a pointer that reaches the notch itself wants the card),
@@ -630,6 +793,15 @@ final class NotchToy: Toy {
     /// island's hover; a leave from the island's own window onto an
     /// ear is not a leave.
     var pointerOnBand: @MainActor () -> Bool = { false }
+    /// The band arbitrates island, ear and menu hover while it is visible.
+    var bandHandlesHover = false {
+        didSet {
+            if bandHandlesHover, !oldValue {
+                // A native dwell may predate the band's appearance.
+                updateHover(false, fromBar: false)
+            }
+        }
+    }
 
     /// ⌃⌥D and `jrbar://shelf` while the band's glass card is the
     /// notch's surface — the delegate hands in the band's own toggle
@@ -644,26 +816,42 @@ final class NotchToy: Toy {
         ScreenBarGeometry.preferredScreen().map(ScreenBarGeometry.spaceHidesMenuBar) ?? false
     }
 
-    /// The grow's felt edge — a soft trackpad tap as the card lands.
+    /// The island's felt edges (`NotchHaptics`) — a soft trackpad tap as
+    /// the card lands, as a swipe turns its page, as a gesture folds it.
     /// A closure so tests hear it without haptic hardware.
-    var expandHaptic: @MainActor () -> Void = {
-        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+    var haptic: @MainActor (NotchHaptics.Pattern) -> Void = { pattern in
+        let feedback: NSHapticFeedbackManager.FeedbackPattern =
+            pattern == .generic ? .generic : .alignment
+        NSHapticFeedbackManager.defaultPerformer.perform(feedback, performanceTime: .now)
+    }
+
+    /// Whether this island has a trackpad to tap: a live one does; a
+    /// headless one (the tests') does not unless a test says so.
+    @ObservationIgnored var hapticsLive: (() -> Bool)?
+
+    /// A thing a hand just did: tap if the one switch allows it. Reduce
+    /// Motion does not mute it (a tap is not motion).
+    func feel(_ moment: NotchHaptics.Moment) {
+        guard NotchHaptics.fires(moment, switchOn: settings.hapticTick, live: hapticsLive?() ?? runtimeEnabled) else { return }
+        haptic(NotchHaptics.pattern(for: moment))
     }
 
     /// The band's hover, forwarded: the ears are the island's hover
     /// surface while the island owns the notch.
     func bandHover(_ hovering: Bool, fromBar: Bool = false) {
-        setHovered(hovering, fromBar: fromBar)
+        updateHover(hovering, fromBar: fromBar)
     }
 
     func setHovered(_ hovering: Bool, fromBar: Bool = false) {
+        // Hosting-view tracking changes as the stage grows. They must not
+        // compete with the band's pointer and menu ownership decisions.
+        guard !bandHandlesHover else { return }
+        updateHover(hovering || (hoverHeld && pointerOnBand()), fromBar: fromBar)
+    }
+
+    private func updateHover(_ hovering: Bool, fromBar: Bool) {
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled else { return }
-        // The island window's own leave is not a leave while the
-        // pointer is still on the band's surface — stepping from the
-        // housing onto the tray or an ear keeps the hover, and the
-        // grow already armed, alive.
-        let hovering = hovering || (hoverHeld && pointerOnBand())
         let arriving = hovering && !hoverHeld
         if arriving { hoverArrivedFromBar = fromBar }
         if !hovering { hoverArrivedFromBar = false }
@@ -672,29 +860,48 @@ final class NotchToy: Toy {
         // past never grows the island; a rest of `NotchMotion.hoverDelay`
         // does. A re-entrant call while the peek is armed or landed
         // leaves the deadline alone.
+        if hovering {
+            // Back on the island inside the swell's grace: it never let go.
+            peekReleaseWork?.cancel()
+            peekReleaseWork = nil
+        }
         if hovering, !islandExpanded {
             if !islandHoverPeek, peekWork == nil {
-                let work = DispatchWorkItem { [weak self] in
-                    MainActor.assumeIsolated {
-                        guard let self else { return }
-                        self.peekWork = nil
-                        guard self.hoverHeld, !self.islandExpanded else { return }
-                        self.islandHoverPeek = true
-                        self.reframeCurrent(
-                            animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+                let delay = hoverDelays.peek
+                if delay <= 0 {
+                    // A pointer straight onto the island is answered on
+                    // the same turn: the swell starts in the first frame.
+                    landPeek()
+                } else {
+                    let work = DispatchWorkItem { [weak self] in
+                        MainActor.assumeIsolated {
+                            self?.peekWork = nil
+                            self?.landPeek()
+                        }
                     }
+                    peekWork = work
+                    hoverTimer(delay, work)
                 }
-                peekWork = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + hoverDelays.peek,
-                                             execute: work)
             }
         } else {
             peekWork?.cancel()
             peekWork = nil
-            islandHoverPeek = false
+            if hovering || !islandHoverPeek || islandExpanded {
+                islandHoverPeek = false
+            } else if peekReleaseWork == nil {
+                // Leaving a swell: it holds for `swellGrace`, so a
+                // pointer riding the notch's edge does not shiver it.
+                let work = DispatchWorkItem { [weak self] in
+                    MainActor.assumeIsolated { self?.releasePeek() }
+                }
+                peekReleaseWork = work
+                hoverTimer(NotchMotion.swellGrace, work)
+            }
         }
-        collapseWork?.cancel()
-        collapseWork = nil
+        if hovering {
+            collapseWork?.cancel()
+            collapseWork = nil
+        }
         guard activeCapsule == nil, activeOverlay == nil else { return }
         if hovering {
             if !islandExpanded {
@@ -709,7 +916,7 @@ final class NotchToy: Toy {
                 if s.expandOnHover {
                     // The wink lands now; the card only after the pause.
                     reframeCurrent(
-                        animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+                        animated: !reduceMotion())
                     // One arm per hover: a re-entrant true — the pointer
                     // crossing from an ear onto the island — keeps the
                     // deadline the arrival already set.
@@ -719,8 +926,7 @@ final class NotchToy: Toy {
                             MainActor.assumeIsolated { self?.hoverExpandFired() }
                         }
                         expandWork = work
-                        DispatchQueue.main.asyncAfter(deadline: .now() + delay,
-                                                     execute: work)
+                        hoverTimer(delay, work)
                     }
                 }
             }
@@ -731,10 +937,26 @@ final class NotchToy: Toy {
             prewarmWork = nil
             if !islandExpanded {
                 reframeCurrent(
-                    animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+                    animated: !reduceMotion())
             }
             if islandExpanded && !expandHeld { scheduleCollapseCheck() }
         }
+    }
+
+    /// The swell lands: the island leans a few points toward the pointer.
+    /// A move, so Reduce Motion keeps still.
+    private func landPeek() {
+        guard hoverHeld, !islandExpanded, !reduceMotion() else { return }
+        islandHoverPeek = true
+        reframeCurrent(animated: true)
+    }
+
+    /// The swell's grace ran out with the pointer still away: it settles.
+    private func releasePeek() {
+        peekReleaseWork = nil
+        guard !hoverHeld, islandHoverPeek else { return }
+        islandHoverPeek = false
+        if !islandExpanded { reframeCurrent(animated: !reduceMotion()) }
     }
 
     /// The intent debounce landed: a cursor still on the island earns
@@ -777,7 +999,7 @@ final class NotchToy: Toy {
             }
         }
         prewarmWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.prewarmDelay, execute: work)
+        hoverTimer(Self.prewarmDelay, work)
     }
 
     /// Feed the card and measure it grown, ahead of the grow. Internal
@@ -792,12 +1014,12 @@ final class NotchToy: Toy {
     /// The leave debounce a hover-grown card folds on — shared by the
     /// hover's exit and the pull's let-go.
     func scheduleCollapseCheck() {
-        collapseWork?.cancel()
+        guard collapseWork == nil else { return }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.collapseTimerFired() }
         }
         collapseWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.collapseDelay, execute: work)
+        hoverTimer(Self.collapseDelay, work)
     }
 
     /// The leave timer's landing: only folds while the cursor stayed
@@ -811,6 +1033,14 @@ final class NotchToy: Toy {
         // destination, not a leave: the card holds until it closes.
         guard !hoverHeld, !pullActive, !pointerOnBand(),
               !cardModel.popoverHold.isHeld else { return }
+        // A pointer that strayed a few points off the card's edge (a
+        // hand overshooting a button, cutting a corner) has not left:
+        // look again shortly instead of folding under it.
+        if islandExpanded, !expandHeld, let card = desiredFrame,
+           NotchHoverBand.holds(pointer: pointerLocation(), card: card) {
+            scheduleCollapseCheck()
+            return
+        }
         if islandExpanded && !expandHeld { collapseIsland() }
     }
 
@@ -1056,6 +1286,13 @@ final class NotchToy: Toy {
         guard isDrawingIsland, !foldEngaged else { return }
         if held { expandHeld = true }
         guard !islandExpanded else { return }
+        // A click on the swollen notch (or a swipe) does not wait out the
+        // dwell the hover had armed: the card opens now, and the pending
+        // open and swell-release have nothing left to do.
+        expandWork?.cancel()
+        expandWork = nil
+        peekReleaseWork?.cancel()
+        peekReleaseWork = nil
         // A capsule promoted into its show-gap can never draw over the
         // card — `showCurrentCapsule` guards on expanded — so its gap
         // timer must not keep running: it would fire into the early
@@ -1068,20 +1305,23 @@ final class NotchToy: Toy {
             capsuleWork?.cancel()
             capsuleWork = nil
         }
+        expandedHeightHold = nil
         islandExpanded = true
+        cardPresentationGeneration &+= 1
         syncAudioTap()
         // Alcove's felt edge: the grow lands with a soft trackpad tap.
-        if runtimeEnabled, settings.hapticTick { expandHaptic() }
+        feel(.open)
         feedCard()
         cardModel.pinned = true
         syncCardKeyMonitors()
-        // Frame leads, content follows: the rows stay hidden until the
-        // spring has carried the frame most of the way — Reduce Motion
-        // and an unseen snap show them at once instead.
-        let animated = island?.isVisible == true
-            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        cardModel.contentRevealed = !animated
-        reframe(.expanded, animated: animated)
+        // The shape leads and the content follows it: the card's rows
+        // read the frame's own travel (`NotchReveal`). Reduce Motion and
+        // an unseen window have no travel, so the card is simply there.
+        let animated = island?.isVisible == true && !reduceMotion()
+        stage.noteFace(expanded: true, settled: !animated)
+        if !reframe(.expanded, animated: animated) {
+            stage.noteFace(expanded: true, settled: true)
+        }
     }
 
     /// Fold the grown card back — every dismiss path lands here. The
@@ -1091,7 +1331,11 @@ final class NotchToy: Toy {
     /// settles and re-reads the hover.
     func collapseIsland() {
         guard islandExpanded else { return }
+        cardPresentationGeneration &+= 1
+        defer { if island?.isAnimating != true { cardModel.pinned = false } }
         islandExpanded = false
+        releaseShelfKeyboard()
+        expandedHeightHold = nil
         // A quiet stretch that ended under the card says its summary as
         // the card folds — behind a capsule the fold brings back, if any.
         defer { noteQuietChange() }
@@ -1100,11 +1344,7 @@ final class NotchToy: Toy {
         peekWork?.cancel()
         peekWork = nil
         islandHoverPeek = false
-        cardModel.pinned = false
-        // The content-follow gate resets open so the next grow arms it
-        // fresh — and the shared model never leaves the glass card
-        // hiding its rows.
-        cardModel.contentRevealed = true
+        stage.noteFace(expanded: false, settled: island?.isVisible != true || reduceMotion())
         syncCardKeyMonitors()
         syncAudioTap()
         // A capsule the grow shelved is still news while it is fresh —
@@ -1126,18 +1366,20 @@ final class NotchToy: Toy {
             }
             capsuleQueue.cancel(at: capsuleClock())
         }
-        reframe(currentFace,
-                animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        if !reframe(currentFace, animated: !reduceMotion()) {
+            stage.noteFace(expanded: false, settled: true)
+        }
     }
 
-    /// Esc while the card is grown lets it go — the island never takes
-    /// key status, so the toy watches both monitors itself. The local one
+    /// Esc dismisses the ordinary card. Explicit keyboard mode handles
+    /// its own Esc to return focus first. The local monitor
     /// takes only an Esc that belongs to the island's own window or to no
     /// window: Esc in a Settings sheet or a text field is that window's.
     func syncCardKeyMonitors() {
         cardEscape?.stop()
         cardEscape = nil
-        guard runtimeEnabled, islandExpanded else { return }
+        guard cardKeysLive?() ?? runtimeEnabled, islandExpanded,
+              !shelfKeyboardEngaged, !menuPopupShown else { return }
         let watch = CardEscapeWatch(
             source: cardKeySource,
             ownWindows: { [weak self] in [self?.island] },
@@ -1146,23 +1388,43 @@ final class NotchToy: Toy {
         watch.start()
     }
 
-    /// The frame spring's height progress toward its target — the
-    /// expanded card's rows stay hidden until the frame has carried
-    /// most of the way there. Frame leads, content follows: Alcove's
-    /// signature, `NotchMotion.contentRevealThreshold` the bar.
-    /// The settle tick reports 1.0, so a card can never rest hidden.
-    func noteFrameProgress(_ progress: CGFloat) {
-        guard islandExpanded, !cardModel.contentRevealed,
-              progress >= NotchMotion.contentRevealThreshold else { return }
-        cardModel.contentRevealed = true
+    /// The window's report on every tick of a face change: how far the
+    /// shape has travelled between the resting island and the grown card.
+    /// The content reads it (`NotchReveal`); nothing else keeps time.
+    func noteOpenness(_ openness: CGFloat, dt: TimeInterval = 0) {
+        stage.setOpenness(openness, expanded: islandExpanded, dt: dt)
+    }
+
+    /// Whether a notice or an ask is the face right now.
+    private var noticeIsUp: Bool { activeOverlay != nil || activeCapsule != nil }
+
+    /// A tick of the window's move: the notice's clock keeps its time.
+    func noteTick(_ dt: TimeInterval) {
+        stage.tickNotice(dt: dt, shown: noticeIsUp)
+    }
+
+    /// A face change is over, however it ended (landed, snapped,
+    /// cancelled, parked): the card is simply there or simply gone, so
+    /// it can never rest half-revealed.
+    func noteMorphEnded() {
+        if !islandExpanded { cardModel.pinned = false }
+        stage.settleNotice(shown: noticeIsUp)
+        stage.noteFace(expanded: islandExpanded, settled: true)
     }
 
     /// Refill the card's rows from the live state — the same facts the
     /// glass card's presenter would hand it.
     private func feedCard() {
-        if let focus = cardFocus() { cardModel.focus = focus }
         let summary = islandSummary
-        cardModel.rows = summary.rows.filter { $0.id != cardModel.focus.focusSession }
+        if let focus = cardFocus() { cardModel.adoptFocus(focus, rows: summary.rows) }
+        var rows = NotchCardModel.rowsForCard(summary.rows, focusSession: cardModel.focus.focusSession)
+        // The Try it ask rides above the real rows, in the same card, and
+        // is nowhere else: not in the summary the capsule and the count read.
+        if let demo = DemoAskStore.shared.current(at: Date()) {
+            rows.insert(NotchIslandRow(id: DemoAsk.sessionID, label: DemoAsk.label, provider: "jrbar-demo",
+                                       activity: .waiting, ask: demo), at: 0)
+        }
+        cardModel.rows = rows
         let homes = sessionHomes(summary)
         if cardModel.tray.sessionHomes != homes { cardModel.tray.sessionHomes = homes }
         cardModel.workingCount = summary.working
@@ -1208,9 +1470,10 @@ final class NotchToy: Toy {
     /// A morph landing mid-pull owns the frame: the pull lets go
     /// without a verdict rather than fight the spring. `measured` is
     /// `face`'s frame when the caller already took it.
-    func reframe(_ face: NotchIslandFace, measured: NSRect? = nil, animated: Bool) {
-        guard let frame = measured ?? islandFrame(face: face) else { return }
-        guard frame != desiredFrame else { return }
+    @discardableResult
+    func reframe(_ face: NotchIslandFace, measured: NSRect? = nil, animated: Bool) -> Bool {
+        guard let frame = measured ?? islandFrame(face: face) else { return false }
+        guard frame != desiredFrame else { return false }
         if pullActive {
             pullActive = false
             island?.cancelPull()
@@ -1220,12 +1483,74 @@ final class NotchToy: Toy {
            abs(last.height - frame.height) < 2, abs(last.width - frame.width) < 2 {
             animated = false
         }
+        // A change between the card and any other face is the morph the
+        // content follows; the two heights it runs between are the
+        // resting face's and the card's.
+        if face == .expanded {
+            openHeight = frame.height
+            openWidth = frame.width
+            stage.cardHeight = frame.height
+            stage.cardWidth = frame.width
+        } else {
+            restHeight = frame.height
+            restWidth = frame.width
+        }
+        // A notice or an ask drops out of the resting island: its content
+        // follows the shape between the two.
+        switch face {
+        case .idle:
+            idleHeight = frame.height
+            idleWidth = frame.width
+        case .notice, .ask:
+            stage.noticeMorph = NotchMorph(rest: idleHeight ?? notchDepth, open: frame.height,
+                                           restWidth: idleWidth ?? notchSlotWidth, openWidth: frame.width)
+        case .expanded:
+            break
+        }
+        // A new move from rest starts the notice's content where the last
+        // face left it: there, or not. A move already in flight keeps the
+        // clock it has, so a reversal bends and does not jump.
+        if island?.isAnimating != true {
+            stage.settleNotice(shown: lastFace == .notice || lastFace == .ask)
+        }
+        var flip: NotchMorph?
+        if (face == .expanded) != (lastFace == .expanded) {
+            flip = NotchMorph(rest: restHeight ?? notchDepth, open: openHeight ?? frame.height,
+                              restWidth: restWidth, openWidth: openWidth)
+        }
+        lastFace = face
         desiredFrame = frame
-        island?.applyFrame(frame, animated: animated)
+        island?.applyFrame(frame, animated: animated, flip: flip)
+        return true
     }
+
+    /// The last face `reframe` aimed at, and the heights of the resting
+    /// face and the card — the ends of the morph between them.
+    @ObservationIgnored private var lastFace: NotchIslandFace = .idle
+    @ObservationIgnored private var restHeight: CGFloat?
+    @ObservationIgnored private var openHeight: CGFloat?
+    @ObservationIgnored private var restWidth: CGFloat?
+    @ObservationIgnored private var idleHeight: CGFloat?
+    @ObservationIgnored private var idleWidth: CGFloat?
+    @ObservationIgnored private var openWidth: CGFloat?
 
     func reframeCurrent(animated: Bool) {
         reframe(currentFace, animated: animated)
+    }
+
+    @ObservationIgnored private var expandedHeightHold: (page: NotchCardModel.Page, width: CGFloat, height: CGFloat)?
+
+    // Live rows scroll inside the open card instead of moving its edge.
+    // A deliberate page turn or display-width change gets a new measurement.
+    func expandedContentHeight(width: CGFloat, measure: () -> CGFloat) -> CGFloat {
+        if let held = expandedHeightHold, held.page == cardModel.page, held.width == width {
+            return held.height
+        }
+        let height = measure()
+        if islandExpanded {
+            expandedHeightHold = (cardModel.page, width, height)
+        }
+        return height
     }
 
     /// The island's frame for a face: centred on the notch slot, top
@@ -1240,17 +1565,17 @@ final class NotchToy: Toy {
         let size: CGSize
         switch face {
         case .notice:
-            size = NotchIslandLayout.noticeSize(slotWidth: slot?.width ?? 0, notchDepth: depth,
-                                                underHousing: housingCorner(on: screen))
+            size = noticeFaceSize(on: screen)
         case .ask:
             size = askFaceSize(on: screen)
-                ?? NotchIslandLayout.noticeSize(slotWidth: slot?.width ?? 0, notchDepth: depth,
-                                                underHousing: housingCorner(on: screen))
+                ?? noticeFaceSize(on: screen)
         case .expanded:
             let width = NotchIslandLayout.expandedWidth(slotWidth: slot?.width ?? 0)
-            let content = island?.expandedCardHeight(width: width) ?? 0
+            let content = expandedContentHeight(width: width) {
+                island?.expandedCardHeight(width: width) ?? 0
+            }
             size = CGSize(width: width,
-                          height: NotchIslandLayout.expandedTopInset(notchDepth: depth) + content)
+                          height: cardTopPad + content)
         case .idle:
             // Notched: each shoulder carries its own content, the slot
             // stays the notch. Notch-less: the floating pill wraps the
@@ -1264,7 +1589,7 @@ final class NotchToy: Toy {
                     contentWidth: NotchIsland.idleContentWidth(
                         islandSummary, media: idleMedia,
                         sensors: sensorIndicatorsEnabled ? sensorState : NotchSensorState()))
-            if islandHoverPeek {
+            if islandHoverPeek && !settings.expandOnHover {
                 // The wink's frame half — a few points of grow under
                 // the pointer, symmetric on a drawn face, straight
                 // down on the bare housing, never the card.
@@ -1272,9 +1597,12 @@ final class NotchToy: Toy {
             }
             size = idle
         }
-        return NotchIslandLayout.frame(
+        let placed = NotchIslandLayout.frame(
             screenFrame: screen.frame, centerX: centerX, size: size,
             topInset: slot == nil ? NotchIslandLayout.floatingTopInset : 0)
+        // On whole device pixels, and never short of the hardware.
+        return NotchIslandLayout.settled(placed, scale: screen.backingScaleFactor,
+                                         over: ScreenBarGeometry.notchHardware(of: screen).rect)
     }
 
     /// The media the idle capsule draws — nil when the user switched
@@ -1292,6 +1620,9 @@ final class NotchToy: Toy {
         // against — taken at the end, after the pass moved what it moves.
         defer { reconciledInputs = reconcileInputs }
         guard runtimeEnabled else { return }
+        if shelfKeyboardEngaged, !settings.shelfEnabled || currentFace != .expanded {
+            releaseShelfKeyboard()
+        }
         publishRenderer()
         // The shelf's switch reaches the surfaces that offer to shelve a
         // file outside the card (the Dock's Send to Shelf).
@@ -1314,9 +1645,6 @@ final class NotchToy: Toy {
         noteAskState()
         // A quiet stretch ending replays what it held.
         noteQuietChange()
-        // The weather toggle or city text changed — re-read now rather
-        // than on the half-hour tick.
-        cardModel.utility.weather.reload()
         // The lyrics switch: off clears the line at once, on picks the
         // playing track back up (a key compare when nothing moved).
         cardModel.utility.lyrics.note(media: cardModel.utility.media)
@@ -1351,7 +1679,7 @@ final class NotchToy: Toy {
         // itself snaps while the window is ordered out, so a first
         // show still lands unanimated.
         reframe(currentFace, measured: measuredWithWindow ? frame : nil,
-                animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+                animated: !reduceMotion())
         if island?.isVisible != true {
             island?.orderFrontRegardless()
         }
@@ -1377,7 +1705,10 @@ final class NotchToy: Toy {
     /// a frame, not a rebuild — but nothing in it ticks while hidden:
     /// the capsule timers die and the media listener lets go.
     private func parkIsland() {
+        cardPresentationGeneration &+= 1
         islandExpanded = false
+        releaseShelfKeyboard()
+        expandedHeightHold = nil
         expandHeld = false
         bandExpandPending = false
         cardModel.pinned = false
@@ -1393,6 +1724,8 @@ final class NotchToy: Toy {
         prewarmWork = nil
         peekWork?.cancel()
         peekWork = nil
+        peekReleaseWork?.cancel()
+        peekReleaseWork = nil
         // A parked island forgets it was shake-summoned — the pending
         // fold must not fire into a hidden window.
         shelfSummoned = false
@@ -1414,6 +1747,11 @@ final class NotchToy: Toy {
         askTrack.removeAll()
         capsuleQueue.clear()
         desiredFrame = nil
+        lastFace = .idle
+        stage.noticeMorph = nil
+        idleHeight = nil
+        idleWidth = nil
+        stage.noteFace(expanded: false, settled: true)
         islandVisible = false
         publishSurface()
         island?.orderOut(nil)
@@ -1537,8 +1875,9 @@ final class NotchToy: Toy {
             return
         }
         activeCapsule = current
-        reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        reframe(currentFace, animated: !reduceMotion())
         armCapsuleLife()
+        if let text = spokenText(for: current) { speak(text) }
     }
 
     /// The shown capsule's own life (`AlcoveNoticeKind.life`) before
@@ -1644,9 +1983,13 @@ final class NotchToy: Toy {
     @discardableResult
     func openCapsuleSession() -> Task<Void, Never>? {
         guard let capsule = activeCapsule, let session = capsule.session else { return nil }
+        openRequestGeneration &+= 1
+        let request = openRequestGeneration
         let task = Task { [weak self] in
-            guard let self, await self.open(session: session),
-                  self.activeCapsule?.id == capsule.id else { return }
+            guard let self else { return }
+            guard await self.open(session: session, whileCurrent: {
+                self.openRequestGeneration == request && self.activeCapsule?.id == capsule.id
+            }) else { return }
             self.dismissCapsule()
         }
         openInFlight = task
@@ -1663,12 +2006,17 @@ final class NotchToy: Toy {
     }
     /// The last click's open, still on its way — tests await it.
     @ObservationIgnored var openInFlight: Task<Void, Never>?
+    @ObservationIgnored private var openRequestGeneration = 0
+    @ObservationIgnored private var cardPresentationGeneration = 0
 
     /// Open `session`'s own window. True once it is in front; a refusal
     /// is kept on the card model for the row and the ask face to show.
     @discardableResult
-    func open(session: String) async -> Bool {
-        guard let refusal = await openSession(session) else { return true }
+    func open(session: String, whileCurrent: @MainActor () -> Bool = { true }) async -> Bool {
+        guard !Task.isCancelled, whileCurrent() else { return false }
+        let refusal = await openSession(session)
+        guard !Task.isCancelled, whileCurrent() else { return false }
+        guard let refusal else { return true }
         cardModel.noteOpenRefused(refusal, session: session)
         return false
     }
@@ -1676,8 +2024,14 @@ final class NotchToy: Toy {
     /// A row or the header's Open on the grown card: the card folds once
     /// the session is in front; a refusal stays on the card to be read.
     private func openFromCard(_ session: String) {
+        openRequestGeneration &+= 1
+        let request = openRequestGeneration
+        let presentation = cardPresentationGeneration
         openInFlight = Task { [weak self] in
-            guard let self, await self.open(session: session) else { return }
+            guard let self else { return }
+            guard await self.open(session: session, whileCurrent: {
+                self.openRequestGeneration == request && self.cardPresentationGeneration == presentation
+            }) else { return }
             self.collapseIsland()
         }
     }
@@ -1759,7 +2113,7 @@ final class NotchToy: Toy {
     /// state-machine tests never make an EventKit store.
     private func syncMeetingWatch() {
         let s = settings
-        meetingWatch.sync(enabled: runtimeEnabled && islandVisible
+        meetingWatch.sync(enabled: runtimeEnabled && nativeSourcesEnabled && islandVisible
                           && s.meetingAlerts && s.calendar && s.provider == .jrbar)
     }
 
@@ -1850,7 +2204,8 @@ final class NotchToy: Toy {
             askTrack[current.id] = (Date(), true)
         }
         activeCapsule = capsuleQueue.current
-        reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        reframe(currentFace, animated: !reduceMotion())
+        if let shown = activeCapsule, let text = spokenText(for: shown) { speak(text) }
     }
 
     /// The escalation stood down without the ask closing (its pane came
@@ -1860,7 +2215,7 @@ final class NotchToy: Toy {
         guard activeCapsule?.takeover == true else { return }
         capsuleQueue.releaseTakeover()
         activeCapsule = capsuleQueue.current
-        reframe(currentFace, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        reframe(currentFace, animated: !reduceMotion())
     }
 
     /// Writes a level the scroll asked for — the system's own paths, the
@@ -1884,7 +2239,7 @@ final class NotchToy: Toy {
     /// here. The feed itself is shared with the card's row, so the two
     /// can never disagree about the track.
     private func syncMediaMonitor() {
-        let want = islandVisible && settings.mediaEnabled
+        let want = nativeSourcesEnabled && islandVisible && settings.mediaEnabled
         if want {
             if mediaToken == nil {
                 mediaToken = mediaFeed.subscribe { [weak self] media in self?.noteMedia(media) }
@@ -1909,7 +2264,7 @@ final class NotchToy: Toy {
         islandMedia = media
         noteIslandArtwork(media?.artworkData)
         if currentFace != .notice {
-            reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+            reframeCurrent(animated: !reduceMotion())
         }
         syncAudioTap()
     }
@@ -1955,7 +2310,7 @@ final class NotchToy: Toy {
     private func syncAudioTap() {
         audioTap.sync(visible: islandExpanded && islandVisible,
                       playing: islandMedia?.playing == true,
-                      enabled: runtimeEnabled && settings.audioVisualizer,
+                      enabled: runtimeEnabled && nativeSourcesEnabled && settings.audioVisualizer,
                       clientBundleID: islandMedia?.bundleIdentifier)
     }
 
@@ -1978,7 +2333,7 @@ final class NotchToy: Toy {
     /// whoever listens.
     private func syncPowerMonitor() {
         let s = settings
-        let want = islandVisible && s.capsuleNotifications && s.capsuleKinds.charging
+        let want = nativeSourcesEnabled && islandVisible && s.capsuleNotifications && s.capsuleKinds.charging
         if want {
             if powerMonitor == nil {
                 let monitor = AlcovePowerMonitor()
@@ -2044,7 +2399,7 @@ final class NotchToy: Toy {
     /// the reading; `reconcile`/`parkIsland` land here, and the delegate
     /// calls it when a taker elsewhere comes or goes.
     func syncSensorMonitor() {
-        let want = Self.wantsSensorMonitor(runtimeEnabled: runtimeEnabled, islandVisible: islandVisible,
+        let want = Self.wantsSensorMonitor(runtimeEnabled: runtimeEnabled && nativeSourcesEnabled, islandVisible: islandVisible,
                                            indicatorsOn: sensorIndicatorsEnabled, earsDrawn: earsDrawn,
                                            wantedElsewhere: sensorsWantedElsewhere(),
                                            wantedForPresence: sensorsWantedForPresence())
@@ -2090,7 +2445,7 @@ final class NotchToy: Toy {
         // An open card names who is listening; an edge re-reads it.
         if cardModel.pinned { cardModel.refreshPrivacy() }
         if currentFace == .idle {
-            reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+            reframeCurrent(animated: !reduceMotion())
         }
     }
 
@@ -2112,6 +2467,8 @@ final class NotchToy: Toy {
             _ = displayVersion
             _ = cardModel.mirror.state    // the lens going live grows the card to hold it
             _ = cardModel.page            // a page turn re-measures the card
+            _ = AskExpansion.shared.expanded // an ask opened on the card re-measures it
+            _ = DemoAskStore.shared.ask      // the Try it ask comes and goes on the card
             _ = cardModel.privacyLine     // the off-main privacy read lands after the grow; re-measure
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
@@ -2145,7 +2502,8 @@ final class NotchToy: Toy {
             mirror: cardModel.mirror.state,
             page: cardModel.page)
         if islandExpanded {
-            inputs.card = NotchReconcileInputs.Card(focus: cardFocus(), homes: sessionHomes(summary))
+            inputs.card = NotchReconcileInputs.Card(focus: cardFocus(), homes: sessionHomes(summary),
+                                                    demo: DemoAskStore.shared.current(at: Date()))
         }
         return inputs
     }
@@ -2171,12 +2529,12 @@ final class NotchToy: Toy {
         noteAskState()
         noteQuietChange()
         // The grown card's height also follows what no doc carries — a
-        // timer set, a file shelved, the weather landing — and every doc
+        // timer set, a file shelved — and every doc
         // used to re-measure it. Still do: with nothing changed the probe
         // answers from the layout it already has, and the frame guard
         // makes an unchanged height no request at all.
         if islandVisible, islandExpanded {
-            reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+            reframeCurrent(animated: !reduceMotion())
         }
     }
 }

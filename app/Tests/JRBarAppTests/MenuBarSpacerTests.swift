@@ -4,6 +4,15 @@ import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
+@MainActor
+private final class GeometryReportingButtonCell: NSButtonCell {
+    var reportedImageFrame: NSRect?
+
+    override func imageRect(forBounds rect: NSRect) -> NSRect {
+        reportedImageFrame ?? super.imageRect(forBounds: rect)
+    }
+}
+
 /// The Menu Bar utility's positional model (docs/UTILITIES.md): an
 /// item's section is where it sits relative to the boundary, hiding is
 /// the boundary's spacer growing from the fit edge to pack the items
@@ -225,7 +234,7 @@ struct MenuBarSpacerTests {
     @MainActor
     @Test("a length that flips between passes is never written — that is the reflow, not the bar")
     func flappingNeverWrites() {
-        var frames = controls
+        @Captured var frames = controls
         let (hider, writes) = makeHider(controls: { frames })
         settle(hider)
         #expect(writes().count == 1)
@@ -249,9 +258,9 @@ struct MenuBarSpacerTests {
     @Test("a bar that shifted left under the same length is held, not chased — and teaches nothing")
     func shiftIsHeld() {
         var t = Date()
-        var frames = controls
-        var items: [MenuBarItem] = []
-        var generation = 0
+        @Captured var frames = controls
+        @Captured var items: [MenuBarItem] = []
+        @Captured var generation = 0
         let store = MenuBarMemoryFitEdgeStore()
         let (hider, writes) = makeHider(controls: { frames }, store: store)
         hider.listItems = { items }
@@ -295,7 +304,7 @@ struct MenuBarSpacerTests {
     @Test("two passes inside the cooldown do not write; after it they do")
     func cooldown() {
         var t = Date()
-        var frames = controls
+        @Captured var frames = controls
         let (hider, writes) = makeHider(controls: { frames })
         hider.now = { t }
         settle(hider)
@@ -315,7 +324,7 @@ struct MenuBarSpacerTests {
     @MainActor
     @Test("a boundary found parked lowers its cap and collapses; the next pass grows it under the cap")
     func parkedBoundaryLearnsCap() {
-        var frames = controls
+        @Captured var frames = controls
         let (hider, writes) = makeHider(controls: { frames })
         settle(hider)
         #expect(hider.assignedLengths[.hidden] == 122)
@@ -372,10 +381,10 @@ struct MenuBarSpacerTests {
     }
 
     @MainActor
-    @Test("an overflowed boundary moves the fit edge right one step per fresh listing, and remembers it")
+    @Test("native overflow learns the fit edge after two fresh listings")
     func overflowLearnsFitEdge() {
-        var items: [MenuBarItem] = []
-        var generation = 0
+        @Captured var items: [MenuBarItem] = []
+        @Captured var generation = 0
         let store = MenuBarMemoryFitEdgeStore()
         let hider = MenuBarItemHider()
         hider.listItems = { items }
@@ -434,7 +443,7 @@ struct MenuBarSpacerTests {
     func edgePerScreen() {
         let store = MenuBarMemoryFitEdgeStore()
         store.save(930, key: "1512x982")
-        var key = "1512x982"
+        @Captured var key = "1512x982"
         let (hider, _) = makeHider(controls: { self.controls }, store: store)
         hider.edgeKey = { key }
         hider.start()
@@ -564,6 +573,7 @@ struct MenuBarSpacerTests {
         settings.sections = ["old-cover": .hidden]
         utility.settings = { settings }
         utility.onSettingsChange = { settings = $0 }
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [] }
         utility.hider.rowRect = { self.row }
         utility.hider.onPlan = nil
@@ -583,332 +593,6 @@ struct MenuBarSpacerTests {
                                                          "com.example.two": .alwaysHidden])
     }
 
-    // MARK: Ghost triage — only a novel on-row move proves a live escapee
-
-    /// A concealed item's Accessibility ghost reports the frame it
-    /// froze at forever — identical bounds, pass after pass, and it
-    /// must never count as an escapee. Only a move to an on-row slot
-    /// the ghost never showed is a registration the assertion missed.
-    @Test("a frozen concealed item is the ghost, never an escapee")
-    func concealedEscapeesGhost() {
-        let frame = CGRect(x: 993, y: 4, width: 36, height: 24)
-        let now = Date()
-        let first = MenuBarUtility.concealedEscapees(
-            onRow: ["cmux"], frames: ["cmux": frame],
-            previous: [:], ghostHistory: [:], proven: [:], now: now)
-        #expect(first.proven.isEmpty)
-        #expect(first.ghostHistory["cmux"] == [frame])
-        // Pass after pass at the same frame stays the ghost.
-        let still = MenuBarUtility.concealedEscapees(
-            onRow: ["cmux"], frames: ["cmux": frame],
-            previous: ["cmux": frame], ghostHistory: first.ghostHistory,
-            proven: first.proven, now: now)
-        #expect(still.proven.isEmpty)
-    }
-
-    @Test("a move to a novel on-row slot is a live registration — inside the proof window")
-    func concealedEscapeesMoves() {
-        let old = CGRect(x: 993, y: 4, width: 36, height: 24)
-        let new = CGRect(x: 940, y: 4, width: 36, height: 24)
-        let t0 = Date()
-        let proven = MenuBarUtility.concealedEscapees(
-            onRow: ["cmux"], frames: ["cmux": new],
-            previous: ["cmux": old], ghostHistory: ["cmux": [old]], proven: [:], now: t0)
-        #expect(proven.proven["cmux"] == t0)
-        // Holding still inside the window keeps the proof — a live
-        // item standing still is still a live item.
-        let still = MenuBarUtility.concealedEscapees(
-            onRow: ["cmux"], frames: ["cmux": new],
-            previous: ["cmux": new], ghostHistory: proven.ghostHistory,
-            proven: proven.proven, now: t0.addingTimeInterval(5))
-        #expect(still.proven["cmux"] == t0)
-        // Ten seconds without a novel slot expires the proof — a
-        // still-standing "escapee" reads as the ghost relayouted, and
-        // its slot joins the ghost's history.
-        let expired = MenuBarUtility.concealedEscapees(
-            onRow: ["cmux"], frames: ["cmux": new],
-            previous: ["cmux": new], ghostHistory: still.ghostHistory,
-            proven: still.proven, now: t0.addingTimeInterval(11))
-        #expect(expired.proven["cmux"] == nil)
-        #expect(expired.ghostHistory["cmux"]?.contains(new) == true)
-    }
-
-    /// A MenuBarAgent restart relayouts the ghosts: the concealed run
-    /// went from frozen on-row frames to parked ones, then reported
-    /// back on-row at the same slots. A move back to a reported slot
-    /// is the ghost's bookkeeping, not an escape.
-    @Test("a ghost returning to a reported slot is still the ghost")
-    func concealedEscapeesGhostReturn() {
-        let slot = CGRect(x: 993, y: 4, width: 36, height: 24)
-        let parked = CGRect(x: -1, y: 986, width: 36, height: 24)
-        let now = Date()
-        // Concealment: ghost reports its frozen slot once.
-        let born = MenuBarUtility.concealedEscapees(
-            onRow: ["cmux"], frames: ["cmux": slot],
-            previous: [:], ghostHistory: [:], proven: [:], now: now)
-        #expect(born.proven.isEmpty)
-        // The agent's restart parks the ghost off-row — off-row reports
-        // change nothing (the slot stays the only ghost frame known).
-        let off = MenuBarUtility.concealedEscapees(
-            onRow: [], frames: ["cmux": parked],
-            previous: ["cmux": slot], ghostHistory: born.ghostHistory,
-            proven: born.proven, now: now)
-        #expect(off.proven.isEmpty)
-        // Back on-row at the same slot: moved, yes, but the slot is in
-        // the ghost's history — still the ghost, never an escapee.
-        let back = MenuBarUtility.concealedEscapees(
-            onRow: ["cmux"], frames: ["cmux": slot],
-            previous: ["cmux": parked], ghostHistory: off.ghostHistory,
-            proven: off.proven, now: now)
-        #expect(back.proven.isEmpty)
-    }
-
-    @Test("a proven item returning to a ghost slot un-proves at once")
-    func concealedEscapeesProofGhostReturn() {
-        let ghost = CGRect(x: 993, y: 4, width: 36, height: 24)
-        let novel = CGRect(x: 940, y: 4, width: 36, height: 24)
-        let t0 = Date()
-        let proven = MenuBarUtility.concealedEscapees(
-            onRow: ["cmux"], frames: ["cmux": novel],
-            previous: ["cmux": ghost], ghostHistory: ["cmux": [ghost]],
-            proven: [:], now: t0)
-        #expect(proven.proven["cmux"] == t0)
-        // Back at the ghost's own slot two seconds later: proof gone —
-        // the ghost's bookkeeping, not a live item.
-        let back = MenuBarUtility.concealedEscapees(
-            onRow: ["cmux"], frames: ["cmux": ghost],
-            previous: ["cmux": novel], ghostHistory: proven.ghostHistory,
-            proven: proven.proven, now: t0.addingTimeInterval(2))
-        #expect(back.proven["cmux"] == nil)
-    }
-
-    @Test("proof decays off-row too — a vanished item is the ghost again in ten seconds")
-    func concealedEscapeesOffRowDecay() {
-        let ghost = CGRect(x: 993, y: 4, width: 36, height: 24)
-        let novel = CGRect(x: 940, y: 4, width: 36, height: 24)
-        let t0 = Date()
-        let proven = MenuBarUtility.concealedEscapees(
-            onRow: ["cmux"], frames: ["cmux": novel],
-            previous: ["cmux": ghost], ghostHistory: ["cmux": [ghost]],
-            proven: [:], now: t0)
-        #expect(proven.proven["cmux"] == t0)
-        // Gone from the row entirely: no sighting refreshes the stamp.
-        let gone = MenuBarUtility.concealedEscapees(
-            onRow: [], frames: [:], previous: [:],
-            ghostHistory: proven.ghostHistory, proven: proven.proven,
-            now: t0.addingTimeInterval(11))
-        #expect(gone.proven.isEmpty)
-    }
-
-    @Test("a first sighting has no baseline — it is not an escape on its own")
-    func concealedEscapeesFirstSeen() {
-        let proven = MenuBarUtility.concealedEscapees(
-            onRow: ["late"], frames: ["late": CGRect(x: 900, y: 4, width: 24, height: 24)],
-            previous: [:], ghostHistory: [:], proven: [:], now: Date())
-        #expect(proven.proven.isEmpty)
-    }
-
-    @Test("standings accumulate one per re-assert, ≥20 s apart — three earn the cover")
-    func escapeStandings() {
-        let t0 = Date()
-        var stamps = MenuBarUtility.recordEscapeStanding(stamps: [], lastReassert: t0)
-        // The same re-assert read twice counts once.
-        stamps = MenuBarUtility.recordEscapeStanding(stamps: stamps, lastReassert: t0)
-        #expect(stamps == [t0])
-        // A re-assert closer than 20 s does not count.
-        let close = MenuBarUtility.recordEscapeStanding(
-            stamps: stamps, lastReassert: t0.addingTimeInterval(10))
-        #expect(close == [t0])
-        // Two more spaced re-asserts complete the proof.
-        stamps = MenuBarUtility.recordEscapeStanding(
-            stamps: stamps, lastReassert: t0.addingTimeInterval(21))
-        stamps = MenuBarUtility.recordEscapeStanding(
-            stamps: stamps, lastReassert: t0.addingTimeInterval(42))
-        #expect(stamps.count == 3)
-    }
-
-    /// A solid or glyph-bearing tile, for the pixel-proof test.
-    private func tileImage(_ draw: (CGContext) -> Void, size: Int = 32) -> CGImage? {
-        guard let context = CGContext(
-            data: nil, width: size, height: size, bitsPerComponent: 8,
-            bytesPerRow: size * 4, space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return nil }
-        draw(context)
-        return context.makeImage()
-    }
-
-    @Test("the pixel test: a drawn glyph has luma variance, empty bar material does not")
-    func tilePixelProof() {
-        let flat = tileImage { context in
-            context.setFillColor(NSColor.windowBackgroundColor.cgColor)
-            context.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
-        }
-        #expect(!MenuBarUtility.tileHasPixels(flat))
-        let glyph = tileImage { context in
-            context.setFillColor(NSColor.white.cgColor)
-            context.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
-            context.setFillColor(NSColor.black.cgColor)
-            context.fill(CGRect(x: 10, y: 5, width: 12, height: 22))
-        }
-        #expect(MenuBarUtility.tileHasPixels(glyph))
-        #expect(!MenuBarUtility.tileHasPixels(nil))
-    }
-
-    @Test("the palette reads effective sections — concealed items read hidden, Apple's the item map")
-    func effectiveSections() {
-        let concealed = MenuBarUtility.effectiveSection(
-            itemID: "ChatGPT", bundleID: "com.openai.chat",
-            sections: [:], concealedApps: ["com.openai.chat": .hidden],
-            concealing: true, ownBundleID: "com.jonathanreed.jrbar")
-        #expect(concealed == .hidden)
-        // A concealed-map miss reads shown — the palette offers "Hide".
-        let shown = MenuBarUtility.effectiveSection(
-            itemID: "ChatGPT", bundleID: "com.openai.chat",
-            sections: [:], concealedApps: [:],
-            concealing: true, ownBundleID: "com.jonathanreed.jrbar")
-        #expect(shown == .shown)
-        // Apple extras have no app-level path — the positional map speaks.
-        let apple = MenuBarUtility.effectiveSection(
-            itemID: "Clock", bundleID: "com.apple.controlcenter",
-            sections: ["Clock": .hidden],
-            concealedApps: ["com.apple.controlcenter": .hidden],
-            concealing: true, ownBundleID: "com.jonathanreed.jrbar")
-        #expect(apple == .hidden)
-        // Our own family is never concealed by us.
-        let own = MenuBarUtility.effectiveSection(
-            itemID: "JR-Bar", bundleID: "com.jonathanreed.jrbar.helper",
-            sections: [:], concealedApps: ["com.jonathanreed.jrbar.helper": .hidden],
-            concealing: true, ownBundleID: "com.jonathanreed.jrbar")
-        #expect(own == .shown)
-        // Spacer engine: the item map, always.
-        let legacy = MenuBarUtility.effectiveSection(
-            itemID: "ChatGPT", bundleID: "com.openai.chat",
-            sections: ["ChatGPT": .alwaysHidden],
-            concealedApps: ["com.openai.chat": .hidden],
-            concealing: false, ownBundleID: "com.jonathanreed.jrbar")
-        #expect(legacy == .alwaysHidden)
-    }
-
-    @Test("the Item Bar orders concealed apps by their last on-row x, unseen last")
-    func itemBarOrder() {
-        let apps: [String: MenuBarItemSection] = [
-            "b.app": .hidden, "a.app": .alwaysHidden, "z.app": .hidden, "c.app": .hidden]
-        let order = MenuBarUtility.concealedOrder(
-            apps: apps, lastX: ["b.app": 940, "a.app": 1200, "z.app": 600])
-        #expect(order.map(\.id) == ["z.app", "b.app", "a.app", "c.app"])
-    }
-
-    // MARK: The concealer's steady state — no lifts, no stale state
-
-    /// Records what the utility's concealer asks of the agent.
-    @MainActor
-    private final class FakeConcealBackend: MenuBarConcealBackend {
-        var log: [String] = []
-        var n = 0
-        func activate(allowedBundleIDs: [String]) async throws -> MenuBarAssertionToken {
-            n += 1
-            log.append("activate \(n): \(allowedBundleIDs.joined(separator: ","))")
-            return MenuBarAssertionToken(NSNumber(value: n))
-        }
-        func invalidate(_ token: MenuBarAssertionToken) {
-            log.append("invalidate \((token.object as! NSNumber).intValue)")
-        }
-    }
-
-    @MainActor
-    @Test("an unmapped app launch never lifts the bar — the union re-assert shows it")
-    func launchNeverLifts() async {
-        let fake = FakeConcealBackend()
-        // "n.app" is the newcomer — the running read already answers it.
-        let utility = MenuBarUtility(runningBundleIDRead: { ["h.app", "s.app", "n.app"] })
-        utility.settings = {
-            MenuBarSettings(enabled: true, concealedApps: ["h.app": .hidden], concealSeeded: true)
-        }
-        utility.concealer = MenuBarConcealer(backend: fake)
-        utility.concealer?.apply(concealed: ["h.app"], running: ["h.app", "s.app"])
-        try? await Task.sleep(nanoseconds: 100_000_000)
-        #expect(fake.n == 1, "\(fake.log)")
-        utility.noteWorkspaceChange()
-        try? await Task.sleep(nanoseconds: 150_000_000)
-        #expect(fake.n == 2, "one union re-assert, never a drop: \(fake.log)")
-        #expect(utility.concealer?.isConcealing == true)
-        // Every invalidate rides behind an activate — a standalone one
-        // is a full lift, the churn this kills.
-        for (index, entry) in fake.log.enumerated() where entry.hasPrefix("invalidate") {
-            #expect(index > 0 && fake.log[index - 1].hasPrefix("activate"),
-                    "a bare invalidate is a full lift: \(fake.log)")
-        }
-    }
-
-    @MainActor
-    @Test("disable releases the assertion and resets the hider — re-enable leaves no stale state")
-    func stopConcealerResets() async {
-        let fake = FakeConcealBackend()
-        let utility = MenuBarUtility(runningBundleIDRead: { ["h.app", "s.app"] })
-        utility.settings = {
-            MenuBarSettings(enabled: true, concealedApps: ["h.app": .hidden], concealSeeded: true)
-        }
-        utility.concealer = MenuBarConcealer(backend: fake)
-        utility.concealer?.apply(concealed: ["h.app"], running: ["h.app", "s.app"])
-        try? await Task.sleep(nanoseconds: 100_000_000)
-        utility.hider.shuttersSuppressed = true
-        utility.hider.externalPlan = MenuBarHidePlan()
-        utility.stopConcealer()
-        #expect(utility.concealer == nil)
-        #expect(utility.hider.externalPlan == nil)
-        #expect(!utility.hider.shuttersSuppressed)
-        try? await Task.sleep(nanoseconds: 150_000_000)
-        #expect(fake.log.last == "invalidate 1", "the drop lands on disable: \(fake.log)")
-        // Enable again: a fresh engine, and the hider's concealer
-        // state resets just as clean — no stale covers ride along.
-        utility.concealer = MenuBarConcealer(backend: fake)
-        utility.hider.shuttersSuppressed = true
-        utility.hider.externalPlan = MenuBarHidePlan()
-        utility.stopConcealer()
-        #expect(utility.hider.externalPlan == nil)
-        #expect(!utility.hider.shuttersSuppressed)
-        #expect(utility.concealer == nil)
-    }
-
-    @MainActor
-    @Test("a failed click bridge waits before retrying and disable clears the failure")
-    func clickBridgeFailureBacksOff() {
-        let started = Date(timeIntervalSinceReferenceDate: 1_000)
-        #expect(!MenuBarUtility.concealerRetryAllowed(
-            failed: true, startedAt: started,
-            now: started.addingTimeInterval(MenuBarUtility.concealerRetryDelay - 0.1)))
-        #expect(MenuBarUtility.concealerRetryAllowed(
-            failed: true, startedAt: started,
-            now: started.addingTimeInterval(MenuBarUtility.concealerRetryDelay)))
-        #expect(MenuBarUtility.concealerRetryAllowed(
-            failed: false, startedAt: started, now: started))
-
-        let utility = MenuBarUtility()
-        utility.clickBridgeFailed = true
-        utility.stopConcealer()
-        #expect(!utility.clickBridgeFailed)
-    }
-
-    @MainActor
-    @Test("a parked icon at first scan does not hold the engine — seeding proceeds past the deadline")
-    func seedAfterDeadline() {
-        let utility = MenuBarUtility()
-        var draft = MenuBarSettings(enabled: true)
-        utility.settings = { draft }
-        utility.onSettingsChange = { draft = $0 }
-        // Our icon is parked — no own item in the listing — and the
-        // engine is young: the seed still waits for it to land.
-        utility.concealerStartedAt = Date()
-        #expect(!utility.seedConcealedAppsIfNeeded(from: MenuBarHidePlan()))
-        #expect(!draft.concealSeeded)
-        // Past the deadline the same listing seeds anyway — a fresh
-        // install can never wedge waiting for a visible icon.
-        utility.concealerStartedAt = Date().addingTimeInterval(-9)
-        #expect(utility.seedConcealedAppsIfNeeded(from: MenuBarHidePlan()))
-        #expect(draft.concealSeeded)
-    }
-
     @MainActor
     @Test("the palette answers effective sections per listed item — stale map keys never leak")
     func paletteSections() {
@@ -920,6 +604,7 @@ struct MenuBarSpacerTests {
         utility.hider.guessedFitEdge = { 902 }
         utility.hider.edgeStore = MenuBarMemoryFitEdgeStore()
         utility.hider.edgeKey = { "test" }
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [self.item("Left", x: 1000), self.item("Right", x: 1130)] }
         utility.hider.now = Self.fastClock()
         settle(utility.hider)
@@ -936,22 +621,311 @@ struct MenuBarSpacerTests {
     private final class FakeHost: MenuBarBoundaryHost {
         var frame: CGRect? = CGRect(x: 1084, y: 0, width: 39, height: 24)
         var boundaryFrame: CGRect? { frame }
+        var boundaryHoverFrame: NSRect?
         var boundaryGlyphLength: CGFloat = 39
         var spacers: [CGFloat] = []
         func setBoundarySpacer(_ length: CGFloat) { spacers.append(length) }
-        var anchorWantsVisibleSeat = true
-        var mirrors: [Bool] = []
-        func setFaceMirrored(_ mirrored: Bool) { mirrors.append(mirrored) }
-        var mirroredFaceFrame: NSRect?
-        var face = MenuBarIconFace()
-        var onFaceChange: (@MainActor () -> Void)?
-        // The mirror's clicks are pinned in MenuBarIconMirrorTests.
-        func faceClicked() {}
-        func popUpMenu(in view: NSView) {}
         var onBoundaryClick: (@MainActor () -> Void)?
         var hiddenItemsMenu: (@MainActor () -> NSMenu?)?
         var hiddenCount = 0
         var hiddenRevealed = false
+        var barAppearance: NSAppearance? { nil }
+    }
+
+    @Test("the reveal zone ends before the icon on translated menu bar rows")
+    func revealZoneEndsAtSpacerAcrossDisplays() {
+        for origin in [CGPoint(x: 450, y: 958), CGPoint(x: -1200, y: 1658),
+                       CGPoint(x: 2100, y: 658)] {
+            let boundary = NSRect(origin: origin, size: NSSize(width: 174, height: 24))
+            let row = NSRect(x: origin.x - 400, y: origin.y, width: 1200, height: 27)
+            let blank = NSRect(origin: origin, size: NSSize(width: 130, height: 24))
+            let zone = MenuBarUtility.revealZone(row: row, boundary: boundary,
+                                                 hoverFrame: blank, fitEdge: origin.x - 60)
+            #expect(zone == NSRect(x: origin.x - 90, y: row.minY, width: 220, height: row.height))
+            #expect(zone?.contains(NSPoint(x: blank.maxX - 10, y: blank.midY)) == true)
+            #expect(zone?.contains(NSPoint(x: blank.maxX, y: blank.midY)) == false)
+            #expect(zone?.contains(NSPoint(x: blank.maxX + 12, y: blank.midY)) == false)
+        }
+    }
+
+    @Test("a collapsed reveal zone stays empty even when the fit edge is farther left")
+    func collapsedRevealZoneDoesNotFallBackToRow() {
+        let boundary = NSRect(x: 450, y: 958, width: 24, height: 24)
+        let row = NSRect(x: 0, y: 958, width: 1512, height: 27)
+        for blank in [NSRect(x: 450, y: 958, width: 0, height: 24), nil] as [NSRect?] {
+            let zone = MenuBarUtility.revealZone(row: row, boundary: boundary,
+                                                 hoverFrame: blank, fitEdge: 100)
+            #expect(zone != nil)
+            #expect(zone?.isEmpty == true)
+            #expect(zone?.contains(NSPoint(x: 460, y: 965)) == false)
+            #expect(zone?.contains(NSPoint(x: 200, y: 965)) == false)
+        }
+    }
+
+    @Test("native spacer clicks stop strictly before the chevron seat")
+    func nativeSpacerClickExcludesChevronAndIcon() {
+        let bounds = NSRect(x: 0, y: 0, width: 174, height: 24)
+        let blank = StatusItemController.boundaryRevealBounds(bounds, spacer: 150)
+        #expect(blank.contains(NSPoint(x: 129, y: 12)))
+        for x in [CGFloat(130), CGFloat(140), CGFloat(149), CGFloat(150), CGFloat(162)] {
+            #expect(!blank.contains(NSPoint(x: x, y: 12)))
+        }
+        #expect(!blank.contains(NSPoint(x: -1, y: 12)))
+    }
+
+    @Test("hoverable blank space ends before the chevron across native reflow widths")
+    func blankHoverBoundsExcludeChevronDuringReflow() {
+        let settled = NSRect(x: 0, y: 0, width: 174, height: 24)
+        let blank = StatusItemController.boundaryRevealBounds(settled, spacer: 150)
+        #expect(blank.maxX == 130)
+        #expect(blank.contains(NSPoint(x: 129, y: 12)))
+        for x in [CGFloat(130), CGFloat(140), CGFloat(149), CGFloat(150), CGFloat(162)] {
+            #expect(!blank.contains(NSPoint(x: x, y: 12)))
+        }
+        let partial = NSRect(x: 0, y: 0, width: 100, height: 24)
+        #expect(StatusItemController.boundaryRevealBounds(partial, spacer: 150).maxX <= 56)
+        let shifted = NSRect(x: 10, y: 4, width: 174, height: 24)
+        let shiftedBlank = StatusItemController.boundaryRevealBounds(shifted, spacer: 150)
+        #expect(shiftedBlank.minX == 10)
+        #expect(shiftedBlank.maxX == 140)
+    }
+
+    @Test("shared blank bounds leave controls clear even when the requested spacer is oversized")
+    func hoverBoundsMatchNativeSpacerClicks() {
+        let bounds = NSRect(x: 0, y: 0, width: 174, height: 24)
+        let blank = StatusItemController.boundaryRevealBounds(bounds, spacer: 150)
+        #expect(blank.contains(NSPoint(x: 129, y: 12)))
+        #expect(!blank.contains(NSPoint(x: 130, y: 12)))
+        #expect(StatusItemController.boundaryRevealBounds(bounds, spacer: 0).isEmpty)
+        #expect(StatusItemController.boundaryRevealBounds(bounds, spacer: 500).width == 130)
+    }
+
+    @Test("owned source width and title padding stay outside the blank seat")
+    func blankBoundsReserveFullSourceAndTitle() {
+        let bounds = NSRect(x: 10, y: 4, width: 260, height: 24)
+        let blank = StatusItemController.boundaryRevealBounds(bounds, spacer: 150,
+                                                              glyphWidth: 108, trailingWidth: 48)
+        #expect(blank == NSRect(x: 10, y: 4, width: 84, height: 24))
+        for x in [CGFloat(94), CGFloat(100), CGFloat(120), CGFloat(180), CGFloat(269)] {
+            #expect(!blank.contains(NSPoint(x: x, y: 12)))
+        }
+        let compressed = NSRect(x: 0, y: 0, width: 24, height: 24)
+        #expect(StatusItemController.boundaryRevealBounds(compressed, spacer: 150,
+                                                         glyphWidth: 108, trailingWidth: 48).isEmpty)
+    }
+
+    @MainActor
+    @Test("revealing the native spacer keeps the painted icon in place")
+    func nativeSpacerCollapseKeepsPaintedIconInPlace() throws {
+        for glyphWidth in [CGFloat(18), CGFloat(108)] {
+            for label in ["", "Synthetic status"] {
+                let source = NSImage(size: NSSize(width: glyphWidth, height: 18), flipped: false) { rect in
+                    NSColor.red.setFill()
+                    rect.insetBy(dx: 2, dy: 2).fill()
+                    return true
+                }
+                var paintedFrames: [CGRect] = []
+                for spacer in [CGFloat(150), CGFloat(0)] {
+                    let image = spacer > 0
+                        ? StatusItemController.folded(source, spacer: spacer, chevron: true, hintTint: .white)
+                        : source
+                    let title = StatusItemController.labelTitle(label)
+                    let stripWidth = glyphWidth > 18 ? glyphWidth : 0
+                    let length = StatusItemController.itemLength(hasLabel: !label.isEmpty, spacer: spacer,
+                                                                stripWidth: stripWidth, glyphWidth: glyphWidth)
+                    let width: CGFloat
+                    if length == NSStatusItem.variableLength {
+                        width = image.size.width + title.size().width + 8
+                    } else if length == NSStatusItem.squareLength {
+                        width = 24
+                    } else {
+                        width = length
+                    }
+                    let button = NSButton(frame: NSRect(x: 0, y: 0, width: width, height: 24))
+                    button.isBordered = false
+                    button.image = image
+                    button.imageScaling = spacer > 0 ? .scaleNone : .scaleProportionallyDown
+                    button.imagePosition = label.isEmpty ? .imageOnly : .imageLeading
+                    button.imageHugsTitle = true
+                    button.attributedTitle = title
+                    let bitmap = try #require(button.bitmapImageRepForCachingDisplay(in: button.bounds))
+                    button.cacheDisplay(in: button.bounds, to: bitmap)
+                    let scaleX = CGFloat(bitmap.pixelsWide) / width
+                    let scaleY = CGFloat(bitmap.pixelsHigh) / 24
+                    var painted: CGRect?
+                    for y in 0..<bitmap.pixelsHigh {
+                        for x in 0..<bitmap.pixelsWide {
+                            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+                                  color.alphaComponent > 0.5, color.redComponent > 0.7,
+                                  color.greenComponent < 0.3, color.blueComponent < 0.3 else { continue }
+                            let pixel = CGRect(x: 1000 - width + CGFloat(x) / scaleX,
+                                               y: CGFloat(y) / scaleY,
+                                               width: 1 / scaleX, height: 1 / scaleY)
+                            painted = painted.map { $0.union(pixel) } ?? pixel
+                        }
+                    }
+                    paintedFrames.append(try #require(painted))
+                    let blank = StatusItemController.boundaryRevealBounds(for: button, spacer: spacer,
+                                                                           glyphWidth: glyphWidth)
+                    if spacer == 0 { #expect(blank.isEmpty) }
+                    if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" {
+                        let path = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-audit"
+                        let directory = URL(fileURLWithPath: path)
+                        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                        let name = "menu-anchor-\(Int(glyphWidth))-\(label.isEmpty ? "icon" : "title")-\(Int(spacer)).png"
+                        try png.write(to: directory.appendingPathComponent(name))
+                    }
+                }
+                #expect(abs(paintedFrames[0].minX - paintedFrames[1].minX) < 0.5)
+                #expect(abs(paintedFrames[0].maxX - paintedFrames[1].maxX) < 0.5)
+            }
+        }
+    }
+
+    @MainActor
+    @Test("the rendered folded button keeps a reachable blank seat")
+    func foldedButtonNativeLayoutKeepsBlankReachable() throws {
+        for glyphWidth in [CGFloat(24), CGFloat(108)] {
+            for label in ["", "Synthetic status"] {
+                let icon = NSImage(size: NSSize(width: glyphWidth, height: 18), flipped: false) { rect in
+                    NSColor.white.setFill()
+                    rect.insetBy(dx: 2, dy: 2).fill()
+                    return true
+                }
+                let folded = StatusItemController.folded(icon, spacer: 150, chevron: true, hintTint: .white)
+                let title = StatusItemController.labelTitle(label)
+                let width = folded.size.width + (label.isEmpty ? 0 : title.size().width + 8)
+                let button = NSButton(frame: NSRect(x: 0, y: 0, width: width, height: 24))
+                let cell = GeometryReportingButtonCell()
+                button.cell = cell
+                button.isBordered = false
+                button.image = folded
+                button.imageScaling = .scaleNone
+                button.imagePosition = label.isEmpty ? .imageOnly : .imageLeading
+                button.imageHugsTitle = true
+                button.attributedTitle = title
+                let bitmap = try #require(button.bitmapImageRepForCachingDisplay(in: button.bounds))
+                button.cacheDisplay(in: button.bounds, to: bitmap)
+                // Reporting changes after drawing model cells whose public geometry
+                // disagrees with the painted composite, without changing its pixels.
+                let reports: [NSRect?] = [nil, .zero, NSRect(x: 0, y: 0, width: 24, height: 18)]
+                for report in reports {
+                    cell.reportedImageFrame = report
+                    if let report { #expect(cell.imageRect(forBounds: button.bounds) == report) }
+                    let blank = StatusItemController.boundaryRevealBounds(for: button, spacer: 150,
+                                                                           glyphWidth: glyphWidth)
+                    #expect(abs(blank.width - 130) < 0.01)
+                    #expect(blank.contains(NSPoint(x: 30, y: 12)))
+                    for x in [CGFloat(130), CGFloat(140), CGFloat(160), width - 1] {
+                        #expect(!blank.contains(NSPoint(x: x, y: 12)))
+                    }
+                }
+                if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" {
+                    let path = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-audit"
+                    let directory = URL(fileURLWithPath: path)
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                    let name = "menu-reveal-\(Int(glyphWidth))-\(label.isEmpty ? "icon" : "title").png"
+                    try png.write(to: directory.appendingPathComponent(name))
+                }
+            }
+        }
+    }
+
+    @MainActor
+    @Test("a stale or absent folded image cannot lend the button a blank seat")
+    func blankSeatRequiresMatchingComposite() {
+        let button = NSButton(frame: NSRect(x: 0, y: 0, width: 174, height: 24))
+        #expect(StatusItemController.boundaryRevealBounds(for: button, spacer: 150, glyphWidth: 24).isEmpty)
+        let source = NSImage(size: NSSize(width: 24, height: 18))
+        button.image = source
+        #expect(StatusItemController.boundaryRevealBounds(for: button, spacer: 150, glyphWidth: 24).isEmpty)
+        button.image = StatusItemController.folded(source, spacer: 120, chevron: true)
+        #expect(StatusItemController.boundaryRevealBounds(for: button, spacer: 150, glyphWidth: 24).isEmpty)
+        button.image = StatusItemController.folded(source, spacer: 150, chevron: true)
+        #expect(StatusItemController.boundaryRevealBounds(for: button, spacer: 0, glyphWidth: 24).isEmpty)
+        button.frame.size.width = 24
+        #expect(StatusItemController.boundaryRevealBounds(for: button, spacer: 150, glyphWidth: 24).isEmpty)
+    }
+
+    @Test("native reflow preserves only the measured blank seat")
+    func clippedCompositeKeepsMeasuredBlank() {
+        for origin in [CGFloat(0), CGFloat(10)] {
+            let bounds = NSRect(x: origin, y: 0, width: 93, height: 24)
+            let blank = StatusItemController.boundaryRevealBounds(bounds, spacer: 150,
+                glyphWidth: 24)
+            #expect(blank.width == 49)
+            #expect(blank.contains(NSPoint(x: origin + 30, y: 12)))
+            for x in [CGFloat(49), CGFloat(60), CGFloat(70), CGFloat(92), CGFloat(120)] {
+                #expect(!blank.contains(NSPoint(x: origin + x, y: 12)))
+            }
+        }
+        let collapsed = NSRect(x: 0, y: 0, width: 24, height: 24)
+        #expect(StatusItemController.boundaryRevealBounds(collapsed, spacer: 150,
+            glyphWidth: 24).isEmpty)
+        let titled = NSRect(x: 0, y: 0, width: 193, height: 24)
+        let titleBlank = StatusItemController.boundaryRevealBounds(titled, spacer: 150,
+            glyphWidth: 24, trailingWidth: 100)
+        #expect(titleBlank.width == 49)
+        #expect(!titleBlank.contains(NSPoint(x: 140, y: 12)))
+    }
+
+    @Test("a spacer awaiting native reflow leaves the measured icon seat unhoverable")
+    func hoverBoundsProtectMeasuredIconDuringReflow() {
+        let collapsed = NSRect(x: 0, y: 0, width: 24, height: 24)
+        let partial = NSRect(x: 0, y: 0, width: 100, height: 24)
+        let settled = NSRect(x: 0, y: 0, width: 174, height: 24)
+        let collapsedBlank = StatusItemController.boundaryRevealBounds(collapsed, spacer: 150)
+        let partialBlank = StatusItemController.boundaryRevealBounds(partial, spacer: 150)
+        let settledBlank = StatusItemController.boundaryRevealBounds(settled, spacer: 150)
+        #expect(collapsedBlank.isEmpty)
+        #expect(!collapsedBlank.contains(NSPoint(x: 12, y: 12)))
+        #expect(partialBlank.maxX <= 76)
+        #expect(!partialBlank.contains(NSPoint(x: 88, y: 12)))
+        #expect(settledBlank.width == 130)
+        #expect(!settledBlank.contains(NSPoint(x: 162, y: 12)))
+        let wideIconBlank = StatusItemController.boundaryRevealBounds(partial, spacer: 150, glyphWidth: 39)
+        #expect(wideIconBlank.maxX == 41)
+        let normalWideIcon = NSRect(x: 0, y: 0, width: 189, height: 24)
+        #expect(StatusItemController.boundaryRevealBounds(normalWideIcon, spacer: 150,
+                                                         glyphWidth: 39).width == 130)
+    }
+
+    @MainActor
+    @Test("host hover frames contain only the blank spacer across translated displays")
+    func hostHoverFrameExcludesIconAcrossDisplays() {
+        let height = CGDisplayBounds(CGMainDisplayID()).height
+        for origin in [CGPoint(x: 450, y: 4), CGPoint(x: -1200, y: -700),
+                       CGPoint(x: 2100, y: 300)] {
+            let utility = MenuBarUtility()
+            let host = FakeHost()
+            host.frame = CGRect(origin: origin, size: CGSize(width: 174, height: 24))
+            host.boundaryGlyphLength = 24
+            let blank = NSRect(x: origin.x, y: height - origin.y - 24, width: 130, height: 24)
+            host.boundaryHoverFrame = blank
+            utility.host = host
+            #expect(utility.reveal.hotFrames() == [blank])
+            let icon = NSPoint(x: blank.maxX + 32, y: blank.midY)
+            #expect(!utility.reveal.hotFrames().contains { $0.contains(icon) })
+            #expect(utility.reveal.clickHandledFrames().contains { $0.contains(icon) },
+                    "the native button still owns the icon's click")
+        }
+    }
+
+    @MainActor
+    @Test("a host with no spacer publishes no hoverable icon")
+    func hostCollapsedSpacerHasNoHotFrame() {
+        let utility = MenuBarUtility()
+        let host = FakeHost()
+        let height = CGDisplayBounds(CGMainDisplayID()).height
+        host.frame = CGRect(x: 450, y: 4, width: 24, height: 24)
+        host.boundaryGlyphLength = 24
+        host.boundaryHoverFrame = NSRect(x: 450, y: height - 28, width: 0, height: 24)
+        utility.host = host
+        let icon = NSPoint(x: 462, y: height - 16)
+        #expect(!utility.reveal.hotFrames().contains { $0.contains(icon) })
+        #expect(utility.reveal.clickHandledFrames().contains { $0.contains(icon) })
     }
 
     @MainActor
@@ -966,6 +940,7 @@ struct MenuBarSpacerTests {
         utility.hider.edgeStore = MenuBarMemoryFitEdgeStore()
         utility.hider.edgeKey = { "test" }
         utility.hider.shuttersSuppressed = true
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [self.item("Left", x: 1000), self.item("Right", x: 1130)] }
         utility.hider.now = Self.fastClock()
         utility.installBoundary()
@@ -977,11 +952,10 @@ struct MenuBarSpacerTests {
         #expect(utility.lastPlan.shown.map(\.id) == ["Right"])
         #expect(host.hiddenCount == 1)
         utility.hider.reveal([.hidden])
-        #expect(host.spacers.last == 30, "revealed, the affordance floor keeps the drop zone visible")
+        #expect(host.spacers.last == 0, "revealed, the native spacer folds completely")
         #expect(host.hiddenRevealed)
         utility.removeBoundary()
         #expect(host.hiddenCount == 0)
-        #expect(host.mirrors.isEmpty, "the spacer engine never hands the face to a mirror — the real item is the icon")
     }
 
     @MainActor
@@ -991,6 +965,7 @@ struct MenuBarSpacerTests {
         utility.settings = {
             MenuBarSettings(enabled: true, sections: ["A": .hidden], revealStyle: .bar)
         }
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [self.item("A", x: 100)] }
         utility.hider.rowRect = { self.row }
         utility.hider.shuttersSuppressed = true
@@ -1053,9 +1028,12 @@ struct MenuBarSpacerTests {
         #expect(plain.isTemplate)
         let hinted = StatusItemController.folded(icon, spacer: 120, chevron: true, hintTint: .white)
         #expect(hinted.size.width == 159)
-        #expect(StatusItemController.clickIsOnSpacer(x: 30, spacer: 120))
-        #expect(!StatusItemController.clickIsOnSpacer(x: 130, spacer: 120))
-        #expect(!StatusItemController.clickIsOnSpacer(x: 10, spacer: 0))
+        let bounds = NSRect(x: 0, y: 0, width: 159, height: 24)
+        let blank = StatusItemController.boundaryRevealBounds(bounds, spacer: 120, glyphWidth: 39)
+        #expect(blank.contains(NSPoint(x: 30, y: 12)))
+        #expect(!blank.contains(NSPoint(x: 100, y: 12)))
+        #expect(!blank.contains(NSPoint(x: 130, y: 12)))
+        #expect(StatusItemController.boundaryRevealBounds(bounds, spacer: 0).isEmpty)
     }
 
     @Test("the boundary's glyph share follows the host's icon, not the chevron constant")

@@ -30,11 +30,11 @@ final class OverviewWindowController: NSObject, NSWindowDelegate {
         show()
     }
 
-    func show() {
+    func show(link id: String? = nil) {
         let window = self.window ?? makeWindow()
         self.window = window
         attachContent(to: window)
-        store.windowDidOpen()
+        store.windowDidOpen(selectingLink: id)
         WindowFront.bring(window)
         installKeyMonitor()
     }

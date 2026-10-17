@@ -15,12 +15,10 @@ person can repeat them.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
-from jrbar import animation_store as store
 from jrbar.animation import (
     MAX_PROGRAM_BYTES,
     MAX_PROGRAM_LINES,
@@ -476,160 +474,6 @@ def test_the_payload_is_the_exact_bytes_the_device_will_hold__and_2_more(tmp_pat
     assert plan.byte_count == len(plan.program.encode("utf-8"))
     assert plan.byte_count <= MAX_PROGRAM_BYTES
 
-    # --- scenario: a_saved_animation_can_be_burned_by_name_through_led_status
-    """The call site the settings window gets. Library -> model -> bytes,
-    with the dry run still the default.
-
-    Deleted led_status.burn_saved_animation_to_power_up: the editor has no
-    device-facing entry point and the module is unreachable.
-    """
-    from jrbar.led_status import burn_saved_animation_to_power_up
-
-    _firmware()
-    path = tmp_path / "animation-library.json"
-    library = store.AnimationLibrary().with_program(
-        "Boot", compile_animation(BREATHING), now_epoch=1.0
-    )
-    store.save_animation_library(path, library)
-
-    plan = burn_saved_animation_to_power_up(
-        "Boot", library_path=path, device_path=tmp_path, led_count=8
-    )
-    assert plan.dry_run and not plan.written
-    assert plan.program == compile_animation(BREATHING)
-    assert plan.target == tmp_path / "INIT.LED"
-
-    with pytest.raises(store.AnimationLibraryError):
-        burn_saved_animation_to_power_up("Nope", library_path=path, device_path=tmp_path)
-
-    # --- scenario: the_library_round_trips_through_a_private_file
-    """Deleted atomic_private_write in favour of write_text: the file lands
-    world-readable, which is the discipline every other store here keeps.
-    """
-    path = tmp_path / "animation-library.json"
-    library = (
-        store.AnimationLibrary()
-        .with_program("Boot", compile_animation(BREATHING), now_epoch=1.0)
-        .with_program("Stagger", compile_animation(STAGGERED), now_epoch=2.0)
-    )
-    store.save_animation_library(path, library)
-    assert path.stat().st_mode & 0o777 == 0o600
-
-    restored = store.load_animation_library(path)
-    assert restored.health is store.LibraryHealth.HEALTHY
-    assert restored.library == library
-    assert restored.library.get("Boot").to_animation().steps == BREATHING.steps
-
-
-
-def test_the_library_is_bounded_in_count_and_in_bytes(tmp_path) -> None:
-    """Two bounds, not one: a count cap alone lets the file grow, a byte cap
-    alone lets the popup become a scroll.
-
-    Deleted the MAX_SAVED_ANIMATIONS check: the 25th save is accepted and
-    the loader then calls the file corrupt.
-    """
-    library = store.AnimationLibrary()
-    for index in range(store.MAX_SAVED_ANIMATIONS):
-        library = library.with_program(f"look {index}", "#FF0000 100ms", now_epoch=1.0)
-    with pytest.raises(store.AnimationLibraryError) as caught:
-        library.with_program("one more", "#FF0000 100ms")
-    assert "Delete one" in str(caught.value)
-
-    path = tmp_path / "library.json"
-    store.save_animation_library(path, library)
-    assert store.load_animation_library(path).library.names == library.names
-
-    long_name = "x" * (store.MAX_ANIMATION_NAME_LENGTH + 1)
-    with pytest.raises(store.AnimationLibraryError):
-        store.AnimationLibrary().with_program(long_name, "#FF0000 100ms")
-    with pytest.raises(store.AnimationLibraryError):
-        store.AnimationLibrary().with_program("   ", "#FF0000 100ms")
-
-
-def test_the_library_refuses_to_hold_a_program_the_firmware_would_reject__and_1_more() -> None:
-    # --- scenario: the_library_refuses_to_hold_a_program_the_firmware_would_reject
-    """A saved look that cannot be burned is a trap set for the person who
-    loads it a month later.
-
-    Deleted the parse in with_program: "0:off" is stored, and the burn
-    refuses only once the owner has already pressed the button.
-    """
-    with pytest.raises(store.AnimationLibraryError) as caught:
-        store.AnimationLibrary().with_program("Broken", "0:off 100ms")
-    assert "cannot be saved" in str(caught.value)
-
-    # --- scenario: rename_keeps_its_place_and_refuses_a_name_already_taken
-    """Deleted the in-place rename (append instead): a rename silently
-    reorders the owner's list, which is how a look gets lost.
-    """
-    library = (
-        store.AnimationLibrary()
-        .with_program("one", "#FF0000 100ms", now_epoch=1.0)
-        .with_program("two", "#00FF00 100ms", now_epoch=2.0)
-        .with_program("three", "#0000FF 100ms", now_epoch=3.0)
-    )
-    renamed = library.renamed("two", "middle")
-    assert renamed.names == ("one", "middle", "three")
-    assert renamed.get("middle").program == "#00FF00 100ms"
-
-    with pytest.raises(store.AnimationLibraryError):
-        renamed.renamed("one", "three")
-    with pytest.raises(store.AnimationLibraryError):
-        renamed.renamed("gone", "anything")
-
-    assert library.with_program("two", "#FFFFFF 100ms", now_epoch=9.0).names == (
-        "one",
-        "two",
-        "three",
-    )
-    assert library.without("two").names == ("one", "three")
-    with pytest.raises(store.AnimationLibraryError):
-        library.without("gone")
-
-
-
-def test_an_unreadable_library_degrades_instead_of_taking_the_window_down__and_1_more(tmp_path) -> None:
-    # --- scenario: an_unreadable_library_degrades_instead_of_taking_the_window_down
-    """Deleted the typed health (letting the decoder raise): opening
-    Settings after a partial write throws instead of showing an empty list.
-    """
-    for payload, health in [
-        ("not json at all", store.LibraryHealth.CORRUPT),
-        ('{"version":99,"animations":[]}', store.LibraryHealth.UNSUPPORTED),
-        ('{"version":1}', store.LibraryHealth.CORRUPT),
-        ('{"version":1,"animations":[{"name":"x"}]}', store.LibraryHealth.CORRUPT),
-        ('{"version":1,"animations":{}}', store.LibraryHealth.CORRUPT),
-    ]:
-        path = tmp_path / "library.json"
-        path.write_text(payload, encoding="utf-8")
-        restored = store.load_animation_library(path)
-        assert restored.health is health
-        assert restored.library.entries == ()
-
-        assert (
-            store.load_animation_library(tmp_path / "missing.json").health
-            is store.LibraryHealth.MISSING
-        )
-
-    # --- scenario: the_stored_document_has_exactly_the_fields_it_declares
-    """Deleted the exact-field decode: an extra key rides along silently and
-    the format drifts.
-    """
-    path = tmp_path / "library.json"
-    store.save_animation_library(
-        path,
-        store.AnimationLibrary().with_program("one", "#FF0000 100ms", now_epoch=1.0),
-    )
-    document = json.loads(path.read_text(encoding="utf-8"))
-    assert set(document) == {"version", "animations"}
-    assert set(document["animations"][0]) == {"name", "program", "updated_at_epoch"}
-
-    document["animations"][0]["extra"] = True
-    path.write_text(json.dumps(document), encoding="utf-8")
-    assert store.load_animation_library(path).health is store.LibraryHealth.CORRUPT
-
-
 
 # --- the three motions that were lies --------------------------------------
 #
@@ -818,3 +662,9 @@ def test_every_pattern_still_parses_on_the_real_firmware() -> None:
             assert result.ok, f"{pattern}@{speed}: {result.error_name} line {result.line}"
             assert len(program.encode()) <= MAX_PROGRAM_BYTES
             assert len(program.splitlines()) <= MAX_PROGRAM_LINES
+
+
+def test_a_superscript_digit_is_a_problem_in_the_program_not_a_crash() -> None:
+    for program in ("brightness ²\n#FF0000 100ms", "#FF0000 100ms\nrepeat ²"):
+        problems = problems_for_program(program)
+        assert [p for p in problems if p.is_error], program

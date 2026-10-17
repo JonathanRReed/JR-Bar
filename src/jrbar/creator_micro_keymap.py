@@ -108,9 +108,6 @@ def keymap_digest(raw: str) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-canonical_keymap_digest = keymap_digest
-
-
 def _active_profile(config: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     profile_index = config.get("activeProfileId")
     profiles = config.get("profiles")

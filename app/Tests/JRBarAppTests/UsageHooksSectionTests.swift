@@ -3,7 +3,7 @@ import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
-/// Settings › Usage › Hooks reads the rules straight from the settings
+/// Settings › Agents & Usage › Advanced › Hooks reads the rules straight from the settings
 /// document and says, in words, which ones can never run.
 @Suite("Usage hooks section")
 struct UsageHooksSectionTests {

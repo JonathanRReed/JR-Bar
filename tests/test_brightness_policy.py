@@ -425,3 +425,44 @@ def test_ambient_brightness_trace_exposes_final_rounding_and_clamping__and_2_mor
     assert result.brightness == 0
     assert _names(result.trace) == ("base", "idle_auto_off", "normalize")
 
+
+@pytest.mark.parametrize(
+    "zero_input",
+    ["base_brightness", "idle_factor", "focus_factor", "night_factor", "global_factor"],
+)
+def test_escalation_does_not_revive_an_explicit_ambient_zero(zero_input: str) -> None:
+    inputs = {
+        "base_brightness": 200.0,
+        "idle_factor": 1.0,
+        "focus_factor": 1.0,
+        "night_factor": 1.0,
+        "global_factor": 1.0,
+    }
+    inputs[zero_input] = 0.0
+
+    result = plan_ambient_brightness(
+        **inputs,
+        escalation_boost=2.0,
+        is_screen_bar=True,
+        screen_bar_min_glow=0.75,
+    )
+
+    assert result.brightness == 0
+    assert "escalation_floor" not in _names(result.trace)
+    assert "ambient_visibility_floor" not in _names(result.trace)
+    assert "screen_bar_min_glow" not in _names(result.trace)
+
+
+def test_signal_brightness_honors_the_master_dial_at_zero() -> None:
+    result = plan_signal_brightness(
+        configured_brightness=200,
+        global_factor=0.0,
+        escalation_boost=2.0,
+        focus_scale=1.0,
+    )
+
+    assert result.brightness == 0
+    assert _names(result.trace) == (
+        "configured_brightness", "global_brightness", "normalize"
+    )
+

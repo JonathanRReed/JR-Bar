@@ -9,9 +9,10 @@ import Foundation
 /// The gate lets every reading through until the lid has held within
 /// `band` of one spot for `settle` seconds, with the machine idle, and
 /// then stops the flicker at the door. `settle` is longer than the
-/// jitter filter's re-arm (`JitterFilter.restAfter`, 0.3 s) and the
-/// movement anchor's settle (`MoveAnchor.settleAfter`, 0.4 s), so both
-/// finish on real readings before the gate closes. A reading outside
+/// movement anchor's settle (`MoveAnchor.settleAfter`, 0.4 s), so it
+/// finishes on real readings before the gate closes; the motion parks
+/// on its own clock (`FoldMotion.restAfter`), not on readings, so it
+/// settles whether or not any more arrive. A reading outside
 /// the band, or inside the arming band, always goes through, and so
 /// arming is never a reading later than it was.
 struct FoldRestGate: Sendable {

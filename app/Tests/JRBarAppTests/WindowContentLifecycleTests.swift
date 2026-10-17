@@ -96,7 +96,7 @@ struct WindowContentLifecycleTests {
             observer = NotificationCenter.default.addObserver(
                 forName: NSWindow.didResizeNotification, object: window, queue: nil
             ) { [weak self] note in
-                nonisolated(unsafe) let resized = note.object as? NSWindow
+                let resized = note.object as? NSWindow
                 MainActor.assumeIsolated {
                     guard let resized else { return }
                     self?.sizes.append(resized.frame.size)

@@ -338,9 +338,9 @@ def test_year_of_positive_files_does_not_repeat_reads_past_the_view_cache_budget
     reads = []
     original = usage_stats._read_verified_prefix
 
-    def observed(path, info, resume_offset=0):
+    def observed(path, info, resume_offset=0, **options):
         reads.append((path, resume_offset, info.st_size))
-        return original(path, info, resume_offset)
+        return original(path, info, resume_offset, **options)
 
     monkeypatch.setattr(usage_stats, "_read_verified_prefix", observed)
     warm = _scan(root, cache, since_epoch=now - 365 * DAY)
@@ -417,9 +417,9 @@ def test_a_file_last_written_before_the_window_is_remembered_without_a_read(
     reads: list[Path] = []
     original = usage_stats._read_verified_prefix
 
-    def observed(path, info, resume_offset=0):
+    def observed(path, info, resume_offset=0, **options):
         reads.append(path)
-        return original(path, info, resume_offset)
+        return original(path, info, resume_offset, **options)
 
     monkeypatch.setattr(usage_stats, "_read_verified_prefix", observed)
     cold = _scan(root, cache, since_epoch=now - 30 * DAY)

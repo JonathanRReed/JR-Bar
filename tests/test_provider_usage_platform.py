@@ -81,7 +81,11 @@ def test_snapshot_preserves_source_instance_identity__and_2_more() -> None:
         "gemini",
         "antigravity",
         "opencode",
+        "factory",
         "openai-api",
+        "kimi",
+        "kilo",
+        "kiro",
     )
     assert "codexbar" not in ids
 
@@ -245,3 +249,12 @@ def test_a_live_reading_reports_its_own_time_as_the_read_time() -> None:
 
     assert live.read_at is None
     assert live.effective_read_at == 1234.0
+
+
+def test_cli_auth_without_local_usage_history_does_not_claim_local_tokens() -> None:
+    by_id = {descriptor.provider_id: descriptor for descriptor in provider_descriptors()}
+    for provider_id in ("kimi", "kilo", "kiro"):
+        assert by_id[provider_id].supports_local_tokens is False
+    assert by_id["kiro"].source_order == ("kiro-cli-api",)
+    assert by_id["kiro"].supports_quota is True
+    assert by_id["kiro"].supports_browser_sources is False

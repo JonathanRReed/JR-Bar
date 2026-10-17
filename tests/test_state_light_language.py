@@ -275,8 +275,8 @@ def test_ask_reads_louder_than_working__and_2_more() -> None:
         )
 
     assert "cosine" in segments(LedDisplayState.ASK)
-    assert "cosine" not in segments(LedDisplayState.FAILED)
-    assert STATE_MOTION[LedDisplayState.FAILED] == MOTION_BLINK
+    assert "pulse" not in segments(LedDisplayState.FAILED)
+    assert STATE_MOTION[LedDisplayState.FAILED] == MOTION_STEADY
     assert STATE_MOTION[LedDisplayState.ASK] != STATE_MOTION[LedDisplayState.FAILED]
 
     # --- scenario: loudness_follows_intent_rather_than_hue_accident
@@ -382,11 +382,12 @@ def test_luminance_matched_hex_clamps_instead_of_clipping_a_channel__and_2_more(
 
 
 
-def test_every_state_owns_a_distinct_rhythm__and_2_more() -> None:
-    # --- scenario: every_state_owns_a_distinct_rhythm
-    assert len(set(STATE_MOTION.values())) == len(LedDisplayState)
+def test_attention_states_have_distinct_rhythms_and_terminal_states_rest__and_2_more() -> None:
+    # Standing failures and completed work both rest; hue distinguishes them.
+    assert set(STATE_MOTION) == set(LedDisplayState)
+    assert len(set(STATE_MOTION.values())) == len(LedDisplayState) - 1
     assert STATE_MOTION[LedDisplayState.ASK] == MOTION_BEAT
-    assert STATE_MOTION[LedDisplayState.FAILED] == MOTION_BLINK
+    assert STATE_MOTION[LedDisplayState.FAILED] == MOTION_STEADY
     assert STATE_MOTION[LedDisplayState.DONE] == MOTION_STEADY
     assert STATE_MOTION[LedDisplayState.WORKING] == MOTION_CHASE
     assert STATE_MOTION[LedDisplayState.IDLE] == MOTION_BREATHE
@@ -413,15 +414,16 @@ def test_every_state_owns_a_distinct_rhythm__and_2_more() -> None:
             reset.split(" ", 1)[1] if " " in reset else "",
             motion.split(" ", 1)[1] if " " in motion else "",
         )
-    assert len(set(shapes.values())) == len(LedDisplayState), shapes
+    assert shapes[LedDisplayState.FAILED] == shapes[LedDisplayState.DONE]
+    assert len(set(shapes.values())) == len(LedDisplayState) - 1, shapes
     # And the two that matter most: a chase travels, a beat does not.
     assert shapes[LedDisplayState.WORKING][1].endswith("192ms")
     assert not shapes[LedDisplayState.ASK][1].endswith("192ms")
     # A beat is a fraction of the cycle, so there is real dark after it.
     assert shapes[LedDisplayState.ASK][1].startswith(f"{max(1600 // 3, MIN_BEAT_MS)}ms pulse")
-    # A blink never eases.
-    assert "cosine" not in "".join(shapes[LedDisplayState.FAILED])
-    assert "none" in shapes[LedDisplayState.FAILED][1]
+    # A standing failure holds one color without a pulse or recurring fade.
+    assert shapes[LedDisplayState.FAILED][0] == shapes[LedDisplayState.FAILED][1]
+    assert "pulse" not in "".join(shapes[LedDisplayState.FAILED])
 
     # --- scenario: the_light_language_never_flashes_faster_than_two_hertz
     """The beat and the hard blink both need room. At the fastest cycle the

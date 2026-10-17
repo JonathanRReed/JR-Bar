@@ -1,6 +1,7 @@
 import AppKit
 import JRBarCore
 import JRBarLEDS
+import JRBarUI
 import Observation
 import os
 import SwiftUI
@@ -44,7 +45,19 @@ final class NotchBuddyToy: Toy {
 
     /// While non-nil and in the future the buddy hops once. Completions
     /// and treats both hop.
-    private(set) var hopUntil: Date?
+    private(set) var hopUntil: Date? {
+        get { _ = effectsRevision; return hopUntilClock }
+        set { hopUntilClock = newValue; effectsRevision &+= 1 }
+    }
+    /// The one-off effects' clocks (`hopUntil`, the trick, the treat's
+    /// hearts, the crumb) are kept untracked and announced by this
+    /// counter, so `followClockStep` can carry them with a clock set back
+    /// from inside `summary` without mutating tracked state mid-render.
+    private var effectsRevision = 0
+    @ObservationIgnored private var hopUntilClock: Date?
+    @ObservationIgnored private var trickStartedClock: Date?
+    @ObservationIgnored private var treatBurstClock: Date?
+    @ObservationIgnored private var crumbClock: Date?
     /// When the current wave began — the ask entrance and the "!" pop
     /// once from here. `summary(at:)` maintains it because the view is
     /// the only clock that ticks the mood. Observation-ignored: the
@@ -65,27 +78,84 @@ final class NotchBuddyToy: Toy {
     /// Which trick is up this tap.
     private(set) var trickKind: BuddyTrick.Kind = .hop
     /// When the current trick began; the view ages it out.
-    private(set) var trickStartedAt: Date?
+    private(set) var trickStartedAt: Date? {
+        get { _ = effectsRevision; return trickStartedClock }
+        set { trickStartedClock = newValue; effectsRevision &+= 1 }
+    }
     /// When the last treat landed — the hearts burst plays from here.
-    private(set) var treatBurstAt: Date?
+    private(set) var treatBurstAt: Date? {
+        get { _ = effectsRevision; return treatBurstClock }
+        set { treatBurstClock = newValue; effectsRevision &+= 1 }
+    }
     /// When it last ate a completion crumb — the "+1" plays from here.
-    private(set) var crumbAt: Date?
+    private(set) var crumbAt: Date? {
+        get { _ = effectsRevision; return crumbClock }
+        set { crumbClock = newValue; effectsRevision &+= 1 }
+    }
     @ObservationIgnored private var wakeSnapshot: [String: SessionActivity]?
 
-    init(core: CoreModel) {
+    /// The panels re-lay out when a screen comes or goes and when the
+    /// displays wake: a parked buddy on an unplugged monitor, or a docked
+    /// one under an anchor that moved, would otherwise sit wherever it
+    /// last was until something else toggled.
+    @ObservationIgnored private var displayObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
+    private(set) var isShutdown = false
+
+    init(core: CoreModel,
+         notificationCenter: NotificationCenter = .default,
+         workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter) {
         self.core = core
+        for (center, name) in [(notificationCenter, NSApplication.didChangeScreenParametersNotification),
+                               (workspaceCenter, NSWorkspace.screensDidWakeNotification)] {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, !self.isShutdown, self.store?.state.notchBuddy.enabled == true else { return }
+                    self.onVisibilityChange?()
+                }
+            }
+            displayObservers.append((center, token))
+        }
+    }
+
+    isolated deinit {
+        shutdown()
+    }
+
+    func shutdown() {
+        guard !isShutdown else { return }
+        isShutdown = true
+        onVisibilityChange = nil
+        dockPointProvider = nil
+        cancelTuck()
+        livelyWork?.cancel()
+        livelyWork = nil
+        livelyUntil = nil
+        openInFlight?.cancel()
+        openInFlight = nil
+        onOpenRefused = { _ in }
+        for observer in displayObservers { observer.center.removeObserver(observer.token) }
+        displayObservers.removeAll()
+        dismissPanels()
+        renamePanel = nil
+        cardPanel = nil
+        cachedDigest = Self.digest(of: [])
+        digestStale.withLock { $0 = false }
+        wakeSnapshot = nil
+        openAsks = [:]
+        store = nil
     }
 
     let id = "notch-buddy"
     let name = "Notch Buddy"
-    let blurb = "A little guy in the notch who lives by what your agents are doing."
+    let blurb = "An animated notch character that reflects current agent activity."
     let symbol = "face.smiling"
 
     /// On means showing: enabled and not tucked away. Flipping it back
     /// on from the card is also how a tucked buddy gets woken early.
     var isOn: Bool {
-        get { (store?.state.notchBuddy.enabled ?? false) && !isTucked }
+        get { !isShutdown && (store?.state.notchBuddy.enabled ?? false) && !isTucked }
         set {
+            guard !isShutdown else { return }
             let wasTucked = isTucked
             let from = comeBack()
             cancelTuck()
@@ -93,6 +163,8 @@ final class NotchBuddyToy: Toy {
             if newValue {
                 store?.state.notchBuddy.tucked = false
                 if wasTucked { arrive(fromScale: from.scale, fromOpacity: from.opacity) }
+            } else {
+                dismissPanels()
             }
             onVisibilityChange?()
         }
@@ -396,7 +468,9 @@ final class NotchBuddyToy: Toy {
 
     /// The duck-out has played: the panels let it go.
     func finishTuck() {
+        guard !isShutdown else { return }
         cancelTuck()
+        dismissPanels()
         onVisibilityChange?()
     }
 
@@ -565,16 +639,33 @@ final class NotchBuddyToy: Toy {
             .min(by: { ($0.ask?.openedAt ?? .infinity) < ($1.ask?.openedAt ?? .infinity) })
     }
 
-    /// While an ask is open the buddy is useful: this opens the session
-    /// doing the asking — that is where the answer lives — through the
-    /// one opener, so a window the daemon cannot find still comes up
-    /// through the Dock's locator. The buddy has no line of its own to
-    /// say a refusal in; the notch's ask face and the panel carry it.
+    /// Open the waiting session through the shared opener. A refusal
+    /// stays on its card row and reaches the panel toast or feedback HUD.
     @discardableResult
-    func openAskingSession() -> Bool {
-        guard let asking = askingSession else { return false }
+    func openAskingSession(id: String? = nil) -> Bool {
+        guard !isShutdown else { return false }
+        let asking: CoreSession?
+        if let id {
+            asking = core.sessions.first { $0.id == id && SessionActivity.reduce($0) == .waiting }
+        } else {
+            asking = askingSession
+        }
+        guard let asking else { return false }
+        openInFlight?.cancel()
+        openRequestGeneration &+= 1
+        let request = openRequestGeneration
         let open = openSession
-        openInFlight = Task { _ = await open(asking.id) }
+        openInFlight = Task { [weak self] in
+            guard !Task.isCancelled, self?.isShutdown == false else { return }
+            let refusal = await open(asking.id)
+            guard !Task.isCancelled, let self, !self.isShutdown,
+                  self.openRequestGeneration == request else { return }
+            self.openInFlight = nil
+            if let refusal {
+                self.store?.notch.cardModel.noteOpenRefused(refusal, session: asking.id)
+                self.onOpenRefused(refusal)
+            }
+        }
         return true
     }
 
@@ -584,6 +675,8 @@ final class NotchBuddyToy: Toy {
         await SessionOpener.open(id)
     }
     @ObservationIgnored private(set) var openInFlight: Task<Void, Never>?
+    @ObservationIgnored private var openRequestGeneration = 0
+    @ObservationIgnored var onOpenRefused: (String) -> Void = { _ in }
 
     /// The "!" badge hangs over the figure's crown: in the pill's
     /// unscaled layout (36×30 — the 18pt figure plus its padding) it
@@ -599,6 +692,7 @@ final class NotchBuddyToy: Toy {
     /// only a pat, so petting can't hijack the front app mid-ask. (The
     /// held-press menu's "Open" row still opens it too.)
     func tapped(at now: Date = Date(), point: CGPoint? = nil, scale: Double = 1) {
+        guard !isShutdown else { return }
         store?.state.notchBuddy.care.pet(at: now)
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             trickKind = BuddyTrick.Kind.allCases[trickOrdinal % BuddyTrick.Kind.allCases.count]
@@ -621,6 +715,7 @@ final class NotchBuddyToy: Toy {
     /// The card's "Give treat": fed for a while, hearts off the crown,
     /// and the hop borrowed from completions when motion is allowed.
     func giveTreat(at now: Date = Date()) {
+        guard !isShutdown else { return }
         store?.state.notchBuddy.care.feed(at: now)
         treatBurstAt = now
         stayLively(from: now)
@@ -766,11 +861,25 @@ final class NotchBuddyToy: Toy {
     /// document landed. The pass re-arms the one-shot observation.
     func sessionDigest() -> SessionDigest {
         _ = digestVersion
+        guard !isShutdown else { return cachedDigest }
         if digestStale.withLock({ $0 }) { refreshDigest() }
         return cachedDigest
     }
 
+    /// What VoiceOver reads after the buddy's name: how many sessions are
+    /// working, waiting on you or failed, in words. The sighted glance has
+    /// this in the tooltip and the badges; neither reaches VoiceOver.
+    var accessibilityStatus: String {
+        let d = sessionDigest()
+        var parts: [String] = []
+        if d.waiting > 0 { parts.append("\(d.waiting) waiting for you") }
+        if d.failed > 0 { parts.append("\(d.failed) failed") }
+        if d.working > 0 { parts.append("\(d.working) working") }
+        return parts.isEmpty ? "Nothing running" : parts.joined(separator: ", ")
+    }
+
     private func refreshDigest() {
+        guard !isShutdown else { return }
         digestStale.withLock { $0 = false }
         let stale = digestStale
         cachedDigest = withObservationTracking {
@@ -793,6 +902,7 @@ final class NotchBuddyToy: Toy {
     /// in a frame or two. A completion's hop already holds it; an ask
     /// closing, a failure clearing or a run going idle did not.
     private func followDocument() {
+        guard !isShutdown else { return }
         let awake = sessionDigest().isAwake
         if followedAwake, !awake { stayLively() }
         followedAwake = awake
@@ -840,13 +950,14 @@ final class NotchBuddyToy: Toy {
     static let livelyWindow: TimeInterval = 1.4
 
     private func stayLively(from now: Date = Date()) {
+        guard !isShutdown else { return }
         let end = now.addingTimeInterval(Self.livelyWindow)
         if let current = livelyUntil, current >= end { return }
         livelyUntil = end
         livelyWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, !self.isShutdown else { return }
                 self.livelyWork = nil
                 self.livelyUntil = nil
             }
@@ -987,6 +1098,11 @@ final class NotchBuddyToy: Toy {
         latestSummaryAt = latest.addingTimeInterval(step)
         wavingSince = wavingSince?.addingTimeInterval(step)
         slumpedSince = slumpedSince?.addingTimeInterval(step)
+        // The one-off effects keep the time each had left (or its age).
+        hopUntilClock = hopUntilClock?.addingTimeInterval(step)
+        trickStartedClock = trickStartedClock?.addingTimeInterval(step)
+        treatBurstClock = treatBurstClock?.addingTimeInterval(step)
+        crumbClock = crumbClock?.addingTimeInterval(step)
         if let change = moodChange {
             moodChange = (change.from, change.blend, change.at.addingTimeInterval(step))
         }
@@ -1148,8 +1264,10 @@ final class NotchBuddyToy: Toy {
         if let asking = askingSession {
             let label = SessionLabel.display(label: asking.label, shortId: asking.shortId,
                                            id: asking.id, provider: asking.provider)
-            menu.addItem(menuActions.item(title: "Open “\(label)”",
-                                          action: #selector(BuddyMenuActions.openAsk)))
+            let item = menuActions.item(title: "Open “\(label)”",
+                                        action: #selector(BuddyMenuActions.openAsk))
+            item.representedObject = asking.id
+            menu.addItem(item)
         }
         menu.addItem(menuActions.item(title: isFree ? "Dock at the notch" : "Float free",
                                       action: #selector(BuddyMenuActions.toggleDock)))
@@ -1171,6 +1289,7 @@ final class NotchBuddyToy: Toy {
     /// "Rename…" opens a small floating field under the pill; `frame` is
     /// where the buddy sits so the prompt lands next to it.
     func promptRename(near frame: NSRect?) {
+        guard !isShutdown else { return }
         if renamePanel == nil { renamePanel = BuddyRenamePanel() }
         renamePanel?.present(near: frame, current: store?.state.notchBuddy.buddyName ?? "",
                              placeholder: buddyCharacter.defaultName) { [weak self] name in
@@ -1178,9 +1297,22 @@ final class NotchBuddyToy: Toy {
         }
     }
 
+    /// How many times the open rename field and pal card were closed
+    /// because the buddy went away (the tests).
+    @ObservationIgnored private(set) var panelDismissals = 0
+
+    /// The buddy is off or tucked: the rename field and the pal card are
+    /// about a character that is no longer there, so they close with it.
+    func dismissPanels() {
+        panelDismissals += 1
+        renamePanel?.dismiss()
+        cardPanel?.dismiss()
+    }
+
     /// "About Morel…": the pal card under the pill — the care log in a
     /// few lines, every one of them something that happened.
     func presentCard(near frame: NSRect?) {
+        guard !isShutdown else { return }
         if cardPanel == nil { cardPanel = BuddyCardPanel() }
         let care = store?.state.notchBuddy.care ?? BuddyCare()
         cardPanel?.present(near: frame, character: buddyCharacter, name: buddyName,
@@ -1195,6 +1327,7 @@ final class NotchBuddyToy: Toy {
     /// Follows the asks across documents. Only while enabled — a buddy
     /// that's off keeps no log.
     func noteAsks(_ sessions: [CoreSession], at now: Date = Date()) {
+        guard !isShutdown else { return }
         guard store?.state.notchBuddy.enabled == true else {
             openAsks = [:]
             return
@@ -1237,6 +1370,7 @@ final class NotchBuddyToy: Toy {
     /// CoreModel delivers each live event once. Disabled Buddy owns no
     /// session observer and neither animates nor changes its saved care.
     func noteEvent(_ event: CoreEvent, at now: Date = Date()) {
+        guard !isShutdown else { return }
         guard store?.state.notchBuddy.enabled == true else { return }
         guard event.kind == "completed" || event.session != nil else { return }
         wakeForActivity()
@@ -1324,7 +1458,8 @@ struct BuddyTempo: Equatable {
 /// The treat burst's frames on the settings card: 60 a second from the
 /// press until the hearts have flown, then none — the card can stay open
 /// all afternoon without a display-rate clock under a finished burst.
-/// No burst (or Reduce Motion) is a single still frame.
+/// Low Power Mode or serious heat halves the rate. No burst, Reduce
+/// Motion or critical heat draws once and rests.
 struct BuddyBurstSchedule: TimelineSchedule {
     /// How long the hearts fly.
     static let span: TimeInterval = 0.9
@@ -1334,10 +1469,18 @@ struct BuddyBurstSchedule: TimelineSchedule {
 
     /// When the burst ends; nil draws once and rests.
     let end: Date?
+    let interval: TimeInterval
+
+    init(end: Date?, reduceMotion: Bool = false, power: PowerPolicy = .normal) {
+        let clock = NotchBuddyView.clock(interval: Self.frameInterval, visible: true,
+                                        reduceMotion: reduceMotion, power: power)
+        self.end = clock.paused ? nil : end
+        self.interval = clock.interval
+    }
 
     func entries(from startDate: Date, mode: TimelineScheduleMode) -> AnyIterator<Date> {
         let end = self.end ?? .distantPast
-        let step = mode == .lowFrequency ? Self.span : Self.frameInterval
+        let step = mode == .lowFrequency ? Self.span : interval
         var next: Date? = startDate
         return AnyIterator {
             guard let current = next else { return nil }
@@ -1468,14 +1611,18 @@ private struct BuddyControlsView: View {
     /// notch gets its own burst from the same clock. Reads
     /// `toy.treatBurstAt` in the body so the press itself re-renders, and
     /// the schedule runs only through the burst: the rest of the time
-    /// the card is open, and under Reduce Motion, it does not tick.
+    /// the card is open, under Reduce Motion or critical heat, it does
+    /// not tick. Low Power Mode or serious heat halves the frame rate.
     private var treatHearts: some View {
         let burstAt = toy.treatBurstAt
         let still = reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        return TimelineView(BuddyBurstSchedule(end: still ? nil : burstAt?.addingTimeInterval(BuddyBurstSchedule.span))) { context in
+        let power = PowerConditions.shared.policy
+        let schedule = BuddyBurstSchedule(end: burstAt?.addingTimeInterval(BuddyBurstSchedule.span),
+                                           reduceMotion: still, power: power)
+        return TimelineView(schedule) { context in
             let age = burstAt.map { context.date.timeIntervalSince($0) } ?? .infinity
             ZStack {
-                if age < BuddyBurstSchedule.span {
+                if !power.pauses(occluded: false), age < BuddyBurstSchedule.span {
                     ForEach(0..<3, id: \.self) { i in
                         let p = min(1, max(0, (age - Double(i) * 0.09) / 0.65))
                         Image(systemName: "heart.fill")
@@ -1491,7 +1638,8 @@ private struct BuddyControlsView: View {
 
     /// One tile per character, standing still in its patrol pose; the
     /// tile under the pointer paces, at 30 fps rather than the display's
-    /// 120. Reduce Motion stills that one too. One row where the card is
+    /// 120. Reduce Motion and critical heat still that one too; Low Power
+    /// Mode or serious heat halves its rate. One row where the card is
     /// wide enough, two even rows where it is not (`BuddyRosterLayout`),
     /// so no tile ever runs off the card's edge — decided from the
     /// offered width, not by building both.
@@ -1542,8 +1690,22 @@ private struct BuddyControlsView: View {
         }
         .onTapGesture { toy.characterBinding.wrappedValue = c }
         .help("\(c.displayName) — \(c.blurb)")
+        // A real button to VoiceOver: named, hinted, activatable, and
+        // "selected" as a trait rather than a word in the name.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(c.displayName)\(selected ? ", selected" : "")")
+        .accessibilityLabel(BuddyRosterTile.label(for: c))
+        .accessibilityHint(BuddyRosterTile.hint(for: c))
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { toy.characterBinding.wrappedValue = c }
+    }
+}
+
+/// What VoiceOver says about a roster tile.
+enum BuddyRosterTile {
+    static func label(for character: BuddyCharacter) -> String { character.displayName }
+
+    static func hint(for character: BuddyCharacter) -> String {
+        "\(character.blurb) Activate to make it the notch buddy."
     }
 }
 
@@ -1553,6 +1715,11 @@ enum BuddyRosterPaces {
     /// still, so an open card asks for no frames at all.
     static func paces(_ character: BuddyCharacter, hovered: BuddyCharacter?, reduceMotion: Bool) -> Bool {
         !reduceMotion && hovered == character
+    }
+
+    static func clock(pacing: Bool, power: PowerPolicy) -> (interval: TimeInterval, paused: Bool) {
+        NotchBuddyView.clock(interval: BuddyBurstSchedule.rosterInterval, visible: pacing,
+                             reduceMotion: false, power: power)
     }
 }
 
@@ -1564,8 +1731,9 @@ private struct BuddyRosterFigure: View {
     let pacing: Bool
 
     var body: some View {
-        if pacing {
-            TimelineView(.animation(minimumInterval: BuddyBurstSchedule.rosterInterval)) { context in
+        let clock = BuddyRosterPaces.clock(pacing: pacing, power: PowerConditions.shared.policy)
+        if !clock.paused {
+            TimelineView(.animation(minimumInterval: clock.interval)) { context in
                 figure(phase: context.date.timeIntervalSince1970, still: false)
             }
         } else {
@@ -1653,7 +1821,10 @@ final class BuddyMenuActions: NSObject {
         toy?.store?.state.notchBuddy.character = raw
     }
 
-    @objc func openAsk(_ sender: Any?) { toy?.openAskingSession() }
+    @objc func openAsk(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        toy?.openAskingSession(id: id)
+    }
 
     @objc func toggleDock(_ sender: Any?) {
         guard let toy else { return }

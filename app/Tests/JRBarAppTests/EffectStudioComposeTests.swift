@@ -9,6 +9,27 @@ import Testing
 @Suite("Effect Studio · Compose")
 @MainActor
 struct EffectStudioComposeTests {
+    @Test func invalidChoicesStayWithinTheControlsBounds() {
+        var choices = ComposeChoices()
+        choices.periodSeconds = .infinity
+        choices.accentOn = true
+        choices.accentStepMs = .nan
+        choices.brightness = -.infinity
+        choices.held = [-1, 0, 7, 8, Int.max]
+        let composition = choices.composition
+        #expect(composition.motion == .breathe(periodMs: 2400))
+        #expect(composition.accent?.stepMs == 300)
+        #expect(composition.brightness == 255)
+        #expect(Set(composition.overrides.keys) == [0, 7])
+        #expect(LEDSStudioAnalysis(LEDSComposer.compose(composition).text).playable)
+        choices.periodSeconds = 1e100
+        choices.accentStepMs = -1e100
+        choices.brightness = -1
+        #expect(choices.composition.motion == .breathe(periodMs: 8000))
+        #expect(choices.composition.accent?.stepMs == 150)
+        #expect(choices.composition.brightness == 13)
+    }
+
     @Test func theDefaultIsAPlayableBreath() {
         let composed = LEDSComposer.compose(ComposeChoices().composition)
         let analysis = LEDSStudioAnalysis(composed.text)

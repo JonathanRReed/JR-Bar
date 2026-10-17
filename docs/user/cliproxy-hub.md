@@ -35,9 +35,13 @@ Without the key, the hub says it needs one and makes no requests.
   holds back the other providers' numbers.
 - It lists the proxy's accounts and reads each one's usage through the
   proxy's `api-call` route; the proxy fills in the account's own token.
-  From CLIProxyAPI 7.3 on, it also uses the read-only quota routes.
+  From CLIProxyAPI 7.3 on, it also uses the read-only quota routes, which
+  cover Gemini CLI and Antigravity accounts too.
 - It never calls the proxy's reset or consume routes. Those change your
   quota, and JR-Bar refuses them outright.
+- If the proxy answers 429, goes away or runs out of time, a hub account keeps
+  its last numbers, marked stale. An account the proxy has signed out keeps
+  nothing.
 - An account this Mac already reads directly (the same Codex account, the
   same Claude email) is left out, so nothing is counted twice.
 
@@ -45,6 +49,4 @@ Hub accounts show in the Usage Center with a CLIProxyAPI badge. Only
 their 5-hour and weekly windows can drive the lights; anything else is
 shown as detail.
 
-The hub reads quota, not requests. The Data Hoarder's request history
-comes from the proxy's own log files, which it writes only with
-`request-log: true` in its config.
+The hub reads quota, not requests.

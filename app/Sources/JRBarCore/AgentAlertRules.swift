@@ -87,7 +87,9 @@ public enum AgentAlertRules {
         let name = provider(of: event, state: state).map(LightExplainer.providerName) ?? "An agent"
         let label = event.label.flatMap { $0.isEmpty ? nil : $0 } ?? session?.shortLabel ?? name
         let (title, body): (String, String) = switch event.kind {
-        case "completed": ("\(label) finished", event.detail ?? "\(name) is done — you asked to hear. Click to open the session.")
+        case "completed": (FinishBanner.title(label: label, duration: event.duration),
+                           FinishBanner.summary(event.summary) ?? event.detail
+                               ?? "\(name) is done — you asked to hear. Click to open the session.")
         case "failed": ("\(label) failed", event.detail ?? "\(name) stopped with an error. Click to open the session.")
         default: ("\(label) ended", event.detail ?? "\(name) went away without confirming it finished.")
         }
@@ -142,8 +144,10 @@ public enum AgentAlertRules {
                 let session = event.session.flatMap { state?.session(withID: $0) }
                 let name = LightExplainer.providerName(provider)
                 let label = event.label.flatMap { $0.isEmpty ? nil : $0 } ?? session?.shortLabel ?? name
-                out.notification = .init(identifier: "completed:\(event.session ?? event.id)", title: "\(label) finished",
-                                         body: event.detail ?? "\(name) is done. Click to open the session.",
+                out.notification = .init(identifier: "completed:\(event.session ?? event.id)",
+                                         title: FinishBanner.title(label: label, duration: event.duration),
+                                         body: FinishBanner.summary(event.summary) ?? event.detail
+                                             ?? "\(name) is done. Click to open the session.",
                                          session: event.session)
             }
         case "failed":

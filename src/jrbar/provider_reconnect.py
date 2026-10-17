@@ -26,6 +26,7 @@ without a host app.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import time
@@ -167,7 +168,7 @@ def credential_fingerprint(home: Path, provider_id: str, *, fresh: bool = False)
 
 
 def grok_auth_status(home: Path, now: float) -> tuple[str, str | None]:
-    """('ok'|'expired'|'missing', email) for ~/.grok/auth.json.
+    """('ok'|'expired'|'missing'|'unsupported', email) for CLI quota auth.
 
     'expired' means the file exists and parses but holds no entry that
     is still valid -- the one case where "run `grok login`" is the right
@@ -177,9 +178,11 @@ def grok_auth_status(home: Path, now: float) -> tuple[str, str | None]:
     from .provider_usage_collectors import _read_grok_auth
 
     path = Path(home) / ".grok" / "auth.json"
-    live = _read_grok_auth(Path(home), now)
-    if live is not None:
-        return "ok", live[1]
+    read = _read_grok_auth(Path(home), now)
+    if read.credential is not None:
+        return "ok", read.credential[1]
+    if read.unsupported_scope:
+        return "unsupported", None
     try:
         exists = path.is_file() and not path.is_symlink()
     except OSError:
@@ -193,6 +196,7 @@ def repair_grok_credential(
     home: Path,
     now: float,
     server_rejected: bool = False,
+    source_instance_id: str = "default",
 ) -> RepairResult:
     """Make the collector's next read match reality. Background-safe.
 
@@ -202,7 +206,26 @@ def repair_grok_credential(
     LIVE session, the stored copy is at best redundant and at worst that
     wedge -- clear it and let the file win.
     """
+    if source_instance_id != "default":
+        try:
+            read = credential_store.get_for_instance(ProviderInstanceKey("grok", source_instance_id), "token")
+            available = bool(getattr(read, "available", False) and getattr(read, "secret", None))
+        except Exception:
+            available = False
+        return RepairResult(
+            "grok",
+            RepairOutcome.ALREADY_HEALTHY if available and not server_rejected else RepairOutcome.NEEDS_SIGN_IN,
+            "This Grok profile uses its own stored sign-in. "
+            + ("Refreshing usage now." if available and not server_rejected
+               else "Update this profile's credential, then refresh usage."),
+        )
     status, email = grok_auth_status(home, now)
+    if status == "unsupported":
+        return RepairResult(
+            "grok", RepairOutcome.UNAVAILABLE,
+            "This CLI sign-in is not a supported Grok quota source. Add a separate "
+            "Grok quota profile in Settings; the CLI sign-in will be kept.",
+        )
     if status == "ok":
         cleared = False
         try:
@@ -252,12 +275,36 @@ def repair_grok_credential(
 # Claude: Claude Code owns renewal; JR-Bar only copies a current access token.
 
 
+def _named_claude_repair(credential_store, source_instance_id: str, *, now: float, server_rejected: bool) -> RepairResult:
+    """Inspect a profile's own sign-in without importing Claude Code's account."""
+    key = ProviderInstanceKey("claude", source_instance_id)
+    try:
+        read = credential_store.get_for_instance(key, "oauth-token")
+        available = bool(getattr(read, "available", False) and getattr(read, "secret", None))
+        expiry = credential_store.get_for_instance(key, "oauth-expires-at")
+        has_expiry = getattr(expiry, "available", False) and getattr(expiry, "secret", None) is not None
+        stale = bool(has_expiry and claude_token_is_stale(
+            credential_store, now=now, margin=0.0, source_instance_id=source_instance_id
+        ))
+    except Exception:
+        available, stale = False, True
+    healthy = available and not stale and not server_rejected
+    return RepairResult(
+        "claude",
+        RepairOutcome.ALREADY_HEALTHY if healthy else RepairOutcome.NEEDS_SIGN_IN,
+        "This Claude profile uses its own stored sign-in. "
+        + ("Refreshing usage now." if healthy else "Update this profile's credential, then refresh usage."),
+    )
+
+
 def repair_claude_credential(
     credential_store,
     *,
     now: float,
     keychain_payload_reader: Callable[[], object],
     source_instance_id: str = "default",
+    server_rejected: bool = False,
+    clear_unchanged_rest: bool = True,
 ) -> RepairResult:
     """User-initiated Claude reconnect that cannot claim a false success.
 
@@ -268,6 +315,10 @@ def repair_claude_credential(
     those refusals to messages BEFORE calling this -- this function owns
     only the "we hold a payload, is it a working sign-in?" question.
     """
+    if source_instance_id != "default":
+        return _named_claude_repair(
+            credential_store, source_instance_id, now=now, server_rejected=server_rejected
+        )
     from .claude_quota import (
         credential_from_keychain_payload,
         credential_needs_sign_in,
@@ -299,6 +350,8 @@ def repair_claude_credential(
             "Claude Code's stored sign-in is empty or unreadable. Run "
             "`claude` and sign in there, then click Reconnect Claude.",
         )
+    from .provider_usage_codex_claude import clear_claude_auth_rest
+
     stored = None
     instance_key = None
     try:
@@ -311,6 +364,18 @@ def repair_claude_credential(
     except Exception:
         stored = None
     if stored == credential.access_token:
+        if server_rejected:
+            return RepairResult(
+                "claude",
+                RepairOutcome.NEEDS_PROVIDER_REFRESH,
+                "Claude's server rejected this sign-in. Claude Code must renew it "
+                "before usage can reconnect.",
+            )
+        if clear_unchanged_rest:
+            clear_claude_auth_rest(source_instance_id=source_instance_id)
+        _remember_claude_expiry(
+            credential_store, credential.expires_at, source_instance_id=source_instance_id
+        )
         return RepairResult(
             "claude",
             RepairOutcome.ALREADY_HEALTHY,
@@ -326,10 +391,9 @@ def repair_claude_credential(
             credential.access_token,
         )
     _remember_claude_expiry(
-        credential_store,
-        credential.expires_at,
-        source_instance_id=source_instance_id,
+        credential_store, credential.expires_at, source_instance_id=source_instance_id
     )
+    clear_claude_auth_rest(source_instance_id=source_instance_id)
     return RepairResult(
         "claude",
         RepairOutcome.REPAIRED,
@@ -392,7 +456,8 @@ def claude_token_is_stale(
         raw = read.secret if getattr(read, "available", False) else None
         if raw is None:
             return True
-        return float(now) + float(margin) >= float(raw)
+        expires_at = float(raw)
+        return not math.isfinite(expires_at) or float(now) + float(margin) >= expires_at
     except Exception:
         return True
 
@@ -412,6 +477,9 @@ def sync_claude_credential_in_background(
     refresh token and never mutates Claude Code's Keychain item. True
     means JR-Bar's own stored access token changed.
     """
+    # The global Claude Code item has no named-profile identity or grant.
+    if source_instance_id != "default":
+        return False
     del home  # signature symmetry with the other background repairs
     try:
         from .credentials import (
@@ -435,6 +503,7 @@ def sync_claude_credential_in_background(
             now=now,
             keychain_payload_reader=lambda: result.secret,
             source_instance_id=source_instance_id,
+            clear_unchanged_rest=False,
         )
         return bool(repair.changed)
     except Exception:
@@ -449,8 +518,8 @@ def newest_codex_rollout_age(home: Path, now: float) -> float | None:
     """Seconds since the newest rollout transcript, or None when none exist.
 
     Walks only the dated tail of ~/.codex/sessions (year/month/day
-    directories, newest first) so a years-deep archive costs three
-    directory listings, not a full tree walk.
+    directories, newest first), without walking the full archive. Compare
+    modification times across that tail because an older session can resume.
     """
     root = Path(home) / CODEX_SESSIONS_SUBPATH
     try:
@@ -461,6 +530,7 @@ def newest_codex_rollout_age(home: Path, now: float) -> float | None:
         )
     except OSError:
         return None
+    newest: float | None = None
     for year in years[:2]:
         try:
             months = sorted(
@@ -480,7 +550,6 @@ def newest_codex_rollout_age(home: Path, now: float) -> float | None:
             except OSError:
                 continue
             for day in days[:7]:
-                newest: float | None = None
                 try:
                     for candidate in day.iterdir():
                         if candidate.suffix != ".jsonl":
@@ -493,9 +562,7 @@ def newest_codex_rollout_age(home: Path, now: float) -> float | None:
                             newest = mtime
                 except OSError:
                     continue
-                if newest is not None:
-                    return max(0.0, now - newest)
-    return None
+    return None if newest is None else max(0.0, now - newest)
 
 
 def codex_activity_report(home: Path, now: float) -> str:
@@ -615,14 +682,24 @@ _LOST_STATES = frozenset({"needs_sign_in", "unavailable", "error", "rate_limited
 _LOST_STALE_REASONS = frozenset({"authentication_required", "usage_permission_missing"})
 
 
+def _connection_loss_scope(snapshot) -> str | None:
+    from urllib.parse import quote
+
+    provider_id = getattr(snapshot, "provider_id", None)
+    if provider_id is None:
+        return None
+    instance = getattr(snapshot, "source_instance_id", "default")
+    return provider_id if instance == "default" else f"{provider_id}:{quote(instance, safe='')}"
+
+
 def connection_loss_transitions(
     previous_snapshots,
     snapshots,
     *,
     seen_keys: frozenset[str] = frozenset(),
 ) -> tuple[tuple[str, str, str], ...]:
-    """(dedupe_key, provider_id, state_value) for each provider that WAS
-    healthy and now is not. Edge-triggered: a provider that stays broken
+    """(dedupe_key, provider_id, state_value) for each profile that WAS
+    healthy and now is not. Edge-triggered: a profile that stays broken
     produces nothing new, and the dedupe key includes the failing state
     so sign-out and rate-limit each announce once."""
     def _lost_kind(snapshot) -> str | None:
@@ -641,7 +718,7 @@ def connection_loss_transitions(
         return state in _HEALTHY_STATES and _lost_kind(snapshot) is None
 
     previous_by_id = {
-        getattr(snapshot, "provider_id", None): snapshot
+        _connection_loss_scope(snapshot): snapshot
         for snapshot in previous_snapshots
     }
     events: list[tuple[str, str, str]] = []
@@ -650,10 +727,11 @@ def connection_loss_transitions(
         lost = _lost_kind(snapshot)
         if provider_id is None or lost is None:
             continue
-        before = previous_by_id.get(provider_id)
+        scope = _connection_loss_scope(snapshot)
+        before = previous_by_id.get(scope)
         if before is None or not _healthy(before):
             continue
-        key = f"{provider_id}:{lost}"
+        key = f"{scope}:{lost}"
         if key in seen_keys:
             continue
         events.append((key, provider_id, lost))
@@ -672,8 +750,14 @@ def _resolved_codex_binary(codex_binary: str) -> str | None:
         return None
     if os.path.sep in candidate:
         return candidate if os.access(candidate, os.X_OK) else None
+    # Only absolute PATH entries: a relative one (or an empty one, which
+    # means the current directory) would run whatever sits in the folder the
+    # daemon happens to be in.
+    inherited = [
+        entry for entry in os.environ.get("PATH", "").split(os.pathsep) if os.path.isabs(entry)
+    ]
     search_dirs = [
-        os.environ.get("PATH", ""),
+        os.pathsep.join(inherited),
         "/opt/homebrew/bin",
         "/usr/local/bin",
         str(Path.home() / ".local" / "bin"),
@@ -1015,6 +1099,12 @@ def reconnect_provider(
         store = ProviderCredentialStore()
 
     if provider_id == "claude":
+        if source_instance_id != "default":
+            repair = _named_claude_repair(
+                store, source_instance_id, now=stamp,
+                server_rejected=reason_code == "authentication_required",
+            )
+            return ResignInResult(provider_id, repair.message, outcome=repair.outcome)
         reader = keychain_payload_reader
         if reader is None:
             try:
@@ -1074,6 +1164,7 @@ def reconnect_provider(
                 now=stamp,
                 keychain_payload_reader=reader,
                 source_instance_id=source_instance_id,
+                server_rejected=reason_code == "authentication_required",
             )
         except Exception as exc:
             return ResignInResult(
@@ -1095,6 +1186,7 @@ def reconnect_provider(
                 home=root,
                 now=stamp,
                 server_rejected=reason_code == "authentication_required",
+                source_instance_id=source_instance_id,
             )
             return ResignInResult(
                 provider_id,

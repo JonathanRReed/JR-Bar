@@ -35,8 +35,9 @@ code copied):
 - **Cadence that ignores quota level.** Their adaptive refresh
   deliberately does not poll harder when a meter runs low. We adopted
   that and kept one documented divergence: within 10 minutes of a reset
-  boundary we still poll at 120s, because unlike CodexBar we celebrate
-  resets and have to observe the crossing.
+  boundary we poll at 120s to observe the crossing. Current JR-Bar also
+  schedules a read at a known reset boundary. CodexBar now supports reset
+  celebrations too; the comparison below records its current scheduler.
 - **Same-origin redirect refusal** on requests that carry a bearer
   token, in the spirit of their `ProviderHTTPClient`.
 - **Pure layout planning and generation fences.** For P3.35 specifically,
@@ -46,10 +47,13 @@ code copied):
 
 **Where we deliberately diverge:** for Claude-CLI-owned credentials
 CodexBar *delegates* refresh back to the CLI (driving `claude /status`
-in a PTY) and never writes that Keychain item. JR-Bar refreshes
-directly and writes the rotated tokens back, so it needs no PTY
-subprocess and no dependency on `claude` being installed — at the cost
-of owning that write-back. Their delegated path is reported unreliable
+in a PTY) and never writes that Keychain item. The 0.7 build of JR-Bar
+refreshed directly and wrote the rotated tokens back. The current build
+does neither: it reads the access token Claude Code already holds, never
+consumes the refresh token or changes Claude's Keychain item, and asks
+the person to sign in through Claude Code when the token is not usable
+(`claude_quota.credential_needs_sign_in`). That needs no PTY subprocess
+and owns no write-back. CodexBar's delegated path is reported unreliable
 in steipete/CodexBar#1287.
 
 ### The 2026-09-24 pass (hooks v2, reset confirmation, fixture contract)
@@ -75,6 +79,43 @@ in Python and Swift, no code copied:
   double counting (#2954): `local_token_history.py`, `provider_homes.py`.
 - The **plugin manifest and approval model** (`docs/plugins.md`) informs the
   provider-pack design, which is deferred.
+
+### The 2026-10-07 pass (0.67.0 to 0.73.0)
+
+Snapshot studied: MIT, commit `03a51bdcfc6f6804e005d7e5007de67bac82b494`
+(CHANGELOG top 0.73.0, 458 non-merge commits since `e34fe618`). Reimplemented
+in Python, no code copied; every rate below was checked against the maker's own
+pricing page, not taken from CodexBar's table:
+
+- **One-hour cache writes** (`CostUsageScanner+Claude.swift`,
+  `CostUsagePricing.swift`): a Claude cache write for an hour bills at 2x
+  input, from `usage.cache_creation.ephemeral_1h_input_tokens`. Ours is
+  `usage_stats.one_hour_cache_writes` and `ONE_HOUR_WRITE_SUFFIX`; Pi and its
+  OMP fork's `cttl.ephemeral1h` follows
+  [`43c1e338`](https://github.com/steipete/CodexBar/commit/43c1e338eaee58f0ec5e9282b0eebc0a8e97a2a1)
+  (#4121) in `local_token_history._split_one_hour`.
+- **Long-context requests** ([`04b23bed`](https://github.com/steipete/CodexBar/commit/04b23bed620dfbad985ca3a30848f798eaa9c62c),
+  #4302): OpenAI reprices a whole request over 272K prompt tokens.
+  Ours is `usage_stats.is_long_context_request`.
+- **Antigravity bucket cadence** ([`62acfd8e`](https://github.com/steipete/CodexBar/commit/62acfd8ead86a3ae443ec2d76c30c93ec72e09b4),
+  #4084): a bucket's `window` field is its cadence; Starter accounts have
+  weekly groups only. Ours is in `provider_usage_parsers.parse_antigravity_usage`.
+- **Status ordering** ([`09537336`](https://github.com/steipete/CodexBar/commit/0953733615b929805e8c86ac58d5d1f94284bd3b),
+  #4175): an older incident request cannot replace a newer one
+  (`status_feeds.StatusFeedPoller.poll_once`).
+- **Executable discovery** ([`3ce4da88`](https://github.com/steipete/CodexBar/commit/3ce4da881d58fc457e3a5bb945321a040bcd46ed),
+  #4136): no relative PATH entry resolves a binary
+  (`provider_reconnect._resolved_codex_binary`,
+  `hook_compatibility._search_path`).
+- **Installed Claude Code version in the usage request**
+  (`ProviderVersionDetector`): ours reads it from `sessions/<pid>.json`
+  instead of running `claude --version` (`claude_quota._installed_claude_version`).
+
+Studied and left alone (reasons in
+[the dated note](archive/2026-10-07-codexbar-t3-similar-tools-review.md)): the
+`cedar_ember` saved-reset query, Cursor's Grok Bot lane, Priority / Fast
+pricing, and the request ledger, which JR-Bar's `last_token_usage` deltas make
+unnecessary.
 
 ## T3 Code
 
@@ -108,6 +149,25 @@ Snapshot studied: MIT, commit `cb1a3f34` (tag
 - **Docs layout** (`docs/README.md` over `docs/user/*`, an `AGENTS.md` with the
   doc rules).
 
+### The 2026-10-07 pass
+
+Snapshot studied: MIT, © 2026 T3 Tools Inc., commit
+`611132c171f3a821bd2e32f22261135cef6330ac` (tag
+`v0.0.46-nightly.20261007.2774`). Reimplemented, no code copied:
+
+- **The orchestrator v2 database** ([`de343914`](https://github.com/pingdotgg/t3code/commit/de343914273eceb852a1d1d739cd1d38df7796ee),
+  #2829): live threads, runs, runtime requests and plans in
+  `userdata/statev2.sqlite`. What JR-Bar reads from it follows
+  `apps/server/src/orchestration-v2/ProjectionStore.ts`
+  (`threadShellFromProjection`) and
+  `packages/contracts/src/orchestrationV2.ts`; ours is
+  `t3_compat._read_v2_snapshot`.
+- **Per-turn token usage** (`packages/contracts/src/providerRuntime.ts`,
+  `TurnTokenUsage`): ours is `usage_graph_worker._scan_t3code_v2_records`.
+- `T3CODE_HOME` (`apps/desktop/src/app/DesktopConfig.ts`), the `{id, value}`
+  shape of model options (`packages/contracts/src/model.ts`) and the
+  `claudeAgent` / `acpRegistry_*` driver names.
+
 ## CLIProxyAPI
 
 Snapshot studied 2026-09-24: MIT, © Luis Pater, commit `c404af96` (v7.3.16).
@@ -119,8 +179,8 @@ Read for its management API (`internal/api/server_management.go`): the
 the hub uses, and the declarative quota-probe mapping
 (`plugin_quota.go`, `sdk/pluginapi/types.go`) that shaped the
 deferred provider-pack format. Its request-log naming change (`e6fcfa3`,
-an 8-hex counter and `_N` suffixes) is covered by a Data Hoarder test. No
-code copied.
+an 8-hex counter and `_N` suffixes) was read for the retired Data Hoarder's
+proxy-log import. No code copied.
 
 ## ccusage
 
@@ -136,6 +196,23 @@ pricing snapshot is the model for `scripts/update_model_pricing.py`, which
 reads LiteLLM's MIT `model_prices_and_context_window.json` by hand, never at
 runtime.
 
+The 2026-10-07 pass read ccusage at `f3b78d10938456b8a51d85034b2a1c3008e29f50`
+(v20.0.26, MIT, © ryoppippi): `rust/adapters/codex/src/README.md` and
+`parser.rs` describe how a Codex compaction request is recorded
+(`token_usage_record` named by a `compacted` item, absent from the cumulative
+counter in remote compactions); ours is the rule in
+`usage_stats._scan_codex_lines`, written from that description, with no code
+copied.
+
+## OpenUsage
+
+Studied 2026-10-07: MIT, commit
+[`00189454`](https://github.com/robinebers/openusage/commit/00189454816cc3d815a166fa1369d6fe67dd2405)
+(<https://github.com/robinebers/openusage>). Its note that a stale
+`claude-code/2.1.69` user agent was answered "ineligible" on the reset-grants
+query is why our usage request now names the installed Claude Code version. No
+code copied.
+
 ## SidePulse upstream
 
 Snapshot studied for P3.35: MIT, © 2026 Peter Kuhar, commit
@@ -146,6 +223,28 @@ Snapshot studied for P3.35: MIT, © 2026 Peter Kuhar, commit
 This is the original product lineage. It provided negative evidence for the
 old recency-style announcer behavior and positive evidence for keeping the
 product fork attribution explicit even as JR-Bar diverges further.
+
+### Upstream refresh, 2026-10-16
+
+Reviewed `main` at
+[`ffb1d3c2`](https://github.com/inteliwear/sidepulse/commit/ffb1d3c2f3eed3b7e80e32d7876a7e1d67bd5dfb),
+MIT, against the last reviewed `6d55225f` snapshot. Also reviewed the
+experimental Rust branch at `75265ac340bc04ed400f24ea1ce164d9e163812f` against
+its earlier `18f574ee` checkpoint. Keep Awake and lid-sleep source did not
+change in either range.
+
+Reimplemented the eject-guard recovery idea from
+[`b99c029c`](https://github.com/inteliwear/sidepulse/commit/b99c029c866c7cbe38e696e2de6eeeb66ed086fb).
+A changed Disk Arbitration daemon PID makes the guard exit once, so its
+existing launchd policy creates a fresh session. JR-Bar retains explicit
+volume selection and bounded mount retries. Synthetic PID and retry tests
+cover the policy; a real service restart was not exercised.
+
+The upstream Codex restart reminder remains a documentation candidate.
+Its OpenCode LaunchServices icon fix does not apply to JR-Bar's bundled
+provider mark. Android pairing and FCM delivery were not added in this
+launch batch. The Rust branch's preview and editor changes remain
+experimental upstream work rather than a migration target for this app.
 
 ### LED motions, 2026-09-24
 
@@ -175,6 +274,39 @@ programs are short data and were reimplemented as shapes.
   the emulated FAT volume can wedge under a write storm, which is why the
   tool tint dedupes on the family and never rewrites faster than every
   three seconds.
+
+### October 2026 review
+
+Upstream studied again at `6d55225fed20a82521b23d86a4df2c4a15dff295` (MIT),
+with the sibling repositories `sidepulse-bridge` at
+`e8e363df51388a000c03c8e693a531235f7d63d8` (GPL-3.0-or-later) and
+`sidepulse-ios` at `5eec8b41377925d95a47845ea265d8c2b223f848` (MPL-2.0).
+Nothing was copied; the GPL and MPL repositories were read for documented LED
+syntax and policy only. The full ledger is
+[archive/UPSTREAM-REFRESH-2026-10-07.md](archive/UPSTREAM-REFRESH-2026-10-07.md).
+
+- **Tool output is not a verdict.** [PR #48](https://github.com/inteliwear/sidepulse/pull/48):
+  a plain-string tool result that merely mentions a traceback is not a failed
+  tool. JR-Bar's transcript reader had the same text match and dropped it.
+- **One retry timer per disk.** [PR #42](https://github.com/inteliwear/sidepulse/pull/42)
+  and `0445085`: a vetoed eject must not stack a mount-retry timer, and the
+  guard should not log every dissent. JR-Bar's guard keeps a small slot table
+  keyed by BSD name, a 240-try cap and a 10 MB log trim, written fresh.
+- **Firmware identity.** `src/sidepulse/firmware.py` names a Dot by
+  `app_version` and a Pro by `release_version` in `STATUS.TXT`. JR-Bar's
+  `device_firmware.py` reads the same two fields, read-only, and compares them
+  to a table of the published releases.
+- **Firmware install procedure.** `firmware/README.md` at `6d55225` (copy only
+  `FIRMWARE.BIN` to the drive, wait 10 seconds, check `release_version` or
+  `app_version`) and the release notes with their SHA256SUMS. JR-Bar's
+  `firmware_update.py`, `firmware_package.py` and `firmware_drive.py` run that
+  procedure written fresh, with the hashes pinned in the app instead of read
+  from the place that serves the file, the root-directory arithmetic learnt by
+  updating a Pro and a Dot by hand, and an explicit write hold. Nothing of
+  upstream's `firmware upgrade` command was copied.
+- **Pro 1.1.0 release notes** (`firmware/v1.1.0/.../RELEASE_NOTES.txt`):
+  calibrated per-channel gains, brightness and balance applied together with
+  one rounding to 16-bit output. Used to check the LED floors, not copied.
 
 ## SidePulse fleet fork
 
@@ -226,8 +358,28 @@ new one before invalidating the old, the agent ignores clicks on its
 own clock/battery/Wi-Fi under any assertion (Control Center answers an
 AX press), concealed items leave or go stale in Accessibility, the
 agent reorders the bar on its own — and wrote our own implementation
-(`MenuBarConcealer.swift`): no code was copied from any of them. Our
-probe on this Mac confirmed the concealment and the allowlist rule.
+(`MenuBarConcealer.swift`, since retired in favour of the position model
+below): no code was copied from any of them. Our probe on this Mac
+confirmed the concealment and the allowlist rule.
+
+## Ice, Thaw, Pelmet, Stash, Ellipsis, Hidden Bar, SaneBar, Dozer, Bartender — the position model
+
+Studied 2026-10-07 for the Menu Bar utility's divider engine; the notes,
+sources and what was adopted or rejected are in
+[archive/research/2026-10-07-menu-bar-ice-model.md](archive/research/2026-10-07-menu-bar-ice-model.md).
+Ice (jordanbaird/Ice, GPL-3.0, `11edd391`, last commit 2025-09-20) is the
+model: the manager's own status item is a divider, items left of it are
+hidden, and the person ⌘-drags across it. Thaw (GPL-3.0, `897b6225`),
+Pelmet (GPL-3.0, `3f757c96`), Stash (MIT, `10596c43`), Ellipsis
+(Apache-2.0, `be2df6a7`), Hidden Bar (MIT, `47937b9d`), SaneBar (MIT,
+`2311b237`) and Dozer (MPL-2.0, `b0540378`) were read for how they hide
+on macOS 26 and 27 and for their limits: the system drops a status item
+wider than half the screen (Ice issue 954), apps hide whole under the
+assertion, the agent reorders the bar, and a notch Mac needs a panel for
+what does not fit. Bartender is closed; only its public release notes were
+read. We adopted the facts and the habits (the divider and the ⌘-drag, a
+reveal that draws the hidden run, a panel under the bar for the overflow)
+and wrote our own implementation: no code was copied from any of them.
 
 ## TinyCast
 
@@ -287,3 +439,233 @@ That distinction matters when assessing JR-Bar's current Duo look, which
 uses a held-plane model. This comparison does not establish visual parity;
 animation changes require rendered and physical checks. No Mac Duo code was
 copied into JR-Bar.
+
+## Notch island motion, 2026-10-07
+
+Studied to find out why the island did not feel like Alcove. Behaviour and
+numbers were read; nothing was copied, and the code that came of it
+(`NotchMotion`, `NotchStage`, `NotchReveal`) is our own. The full note, with
+what was adopted and what was turned down, is
+[docs/archive/2026-10-07-notch-premium-research.md](archive/2026-10-07-notch-premium-research.md).
+
+- **Boring Notch**, commit `e2654ee41b0b9aee72c5a8113a11ab855896d6e6`,
+  GPL-3.0 (<https://github.com/TheBoredTeam/boring.notch>): spring
+  parameters for open and close, the fixed-panel architecture, the
+  content scale-and-fade, the hover and leave delays.
+- **DynamicNotchKit**, commit `cd0b3e52d537db115ad3a9d89601f20e0bee8d27`,
+  MIT (<https://github.com/MrKai77/DynamicNotchKit>): the blur, scale and
+  opacity content transition, the overshoot-hiding backing, and its
+  maintainer's account of `ignoresMouseEvents` and click-through of
+  transparent pixels (issue 48).
+- **Mew Notch**, commit `2b909a58b0fa22fc647738c107705e14c65affba`,
+  GPL-3.0 (<https://github.com/monuk7735/mew-notch>): the hover scale and
+  hover haptic.
+- **Atoll**, commit `903d1ed3f8afb2a672bdf6d3b57704d3a07603a0`, GPL-3.0
+  (<https://github.com/Ebullioscopic/Atoll>): the blur-replace content swap
+  and its critically damped springs, for contrast.
+- **Alcove** 1.7.x (closed source; public page and release notes at
+  <https://tryalcove.com> and
+  <https://github.com/henrikruscon/alcove-releases>) and **NotchNook**
+  (closed; public pages): which motion problems their release notes say
+  took a release each, and that Alcove draws inside one fixed window.
+  Nothing of either app was disassembled.
+- Apple's WWDC23 session "Animate with springs" (10158) for retargeting
+  and velocity, and the SwiftUI animation documentation for the presets.
+
+## Grok credential expiry, 2026-10-12
+
+- **Grok Build**, commit `2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`, Apache-2.0
+  (<https://github.com/xai-org/grok-build>): the credential model declares
+  `expires_at` as an optional UTC date, serialized as a date string.
+  This informed JR-Bar's expiry input handling; no implementation was copied.
+  The installed CLI is 1.0.50 and its local expiry field is a string. Public
+  source was not mapped to that binary revision, so renewal commands and
+  token lifetimes were not inferred from it.
+
+## Noninteractive Keychain reads, 2026-10-12
+
+- Apple's Security framework declarations for
+  [SecKeychainSetUserInteractionAllowed](https://developer.apple.com/documentation/security/seckeychainsetuserinteractionallowed(_:))
+  and [authentication UI suppression](https://developer.apple.com/documentation/security/ksecuseauthenticationuifail).
+  The local SDK warns that the older query flag alone does not suppress UI
+  for legacy Keychain items. JR-Bar disables interaction in an isolated
+  reader process and also requests a noninteractive query.
+- JR-Bar's pinned keyring 25.7.0 macOS binding, MIT, supplies the existing
+  CoreFoundation and Security function declarations. The helper uses this
+  dependency without copying its implementation.
+
+## REA competitor scouting, 2026-10-12
+
+- [REA](https://github.com/morluto/rea) 6.4.0, MIT, inspected installed
+  Alcove 1.7.9, Bartender 7.0.5 and CodexBar 0.53.0 bundles. Static metadata
+  and compiled controls informed comparison targets. No competitor code or
+  assets were copied, and runtime animation timing was not measured.
+- [CodexBar](https://github.com/steipete/CodexBar), MIT, at installed commit
+  `f844f9882458b41c1dc919b48776cfc4957d0009`: credential recovery outcomes,
+  reset scheduling and account-card state handling were compared with
+  JR-Bar's existing behavior.
+- [Hidden Bar](https://github.com/dwarvesf/hidden), MIT, at
+  `47937b9d8aede0325ca87a7880af13433e7c5cf8`: source-only comparison of
+  spacer, hover and multi-display behavior. No installed runtime was found.
+
+### The 2026-10-13 source reconnaissance
+
+Studied CodexBar, MIT © 2026 Peter Steinberger, at
+[`8ec60334`](https://github.com/steipete/CodexBar/commit/8ec6033461e4717dd7501f922a93584ad6a0f713),
+and T3 Code, MIT © 2026 T3 Tools Inc., at
+[`380bba36`](https://github.com/pingdotgg/t3code/commit/380bba368a9071828616b1b03bde1876cc0af4c8).
+No code was copied or executed.
+
+CodexBar's reset scheduler refreshes after a 30-second grace, subject to
+ordinary cadence and power constraints. Its celebrations require confirmed
+reset events. JR-Bar's current source schedules a known boundary directly;
+this comparison does not explain delayed notifications in an older install.
+The current source keeps one 15-second recovery when the provider still quotes
+the ended window. A new active window reported within 30 seconds of that
+boundary retains clock-backed reset eligibility. These changes preserve
+account, source and refill checks; synthetic tests do not prove live latency.
+
+T3 Code resolves provider update commands from installation provenance,
+including package-manager prefixes, and serializes shared manager operations.
+Its usage charts also show unpriced-record coverage and cost categories.
+These are targeted improvements to study alongside JR-Bar's existing updater
+and usage charts, rather than evidence that either app has runtime parity.
+
+### The 2026-10-14 source comparison
+
+Studied [T3 Code](https://github.com/pingdotgg/t3code), MIT, at
+[`11fd54fc`](https://github.com/pingdotgg/t3code/commit/11fd54fcbbfb39f824bb4c908d428c20d801267c)
+for usage presentation, provider maintenance and registry metadata. JR-Bar's
+provider comparison and daily composition use its own data and native views.
+T3 Code is a compatibility integration. Imported usage keeps its source
+separate from actual provider identity, and ACP registration does not grant
+an account-quota capability. No competitor code was copied.
+
+Rechecked [CodexBar](https://github.com/steipete/CodexBar), MIT, at
+[`3bfbf4a5`](https://github.com/steipete/CodexBar/commit/3bfbf4a51d3af6c7307d5aa189e85b3e94390fe8).
+The ten reviewed reset and celebration files match the earlier source
+comparison. This deeper delivery review does not establish natural reset
+accuracy in either installed app.
+
+Studied [Mac Duo](https://github.com/DhananjayBhosale/MacDuo), MIT, at
+[`f6862c85`](https://github.com/DhananjayBhosale/MacDuo/commit/f6862c85f02964ac4720fd9c7a2979d812a1b627)
+for effect-scoped Escape dismissal. JR-Bar implements its own temporary key
+lease and physical-gesture rearm policy.
+
+Studied [Boring Notch](https://github.com/TheBoredTeam/boring.notch), GPL-3.0,
+at [`64b54592`](https://github.com/TheBoredTeam/boring.notch/commit/64b545929cf31681e09b5c375859c1eceeb733eb)
+for interaction and geometry comparison on macOS 27 Golden Gate. This was
+source inspection only, with no copied code or runtime parity claim.
+
+
+Studied [CodexBar](https://github.com/steipete/CodexBar), MIT, at
+[`8ec6033461`](https://github.com/steipete/CodexBar/commit/8ec6033461e4717dd7501f922a93584ad6a0f713)
+for Factory's API-key billing endpoints and response fields. JR-Bar
+reimplements its own collector and parser. It keeps Standard and Core pools
+separate, does not infer replenishment from an expired timestamp, and does
+not treat extra-use money as subscription allowance. No browser extraction,
+WorkOS login, or competitor runtime is used by this integration.
+
+Consulted [SwiftNIO's syscall handling](https://github.com/apple/swift-nio/blob/3bd6c86af3f269ac91df7c1fbb8f6566f111bcc7/Sources/NIOPosix/System.swift),
+Apache-2.0, at
+[`3bd6c86a`](https://github.com/apple/swift-nio/commit/3bd6c86af3f269ac91df7c1fbb8f6566f111bcc7)
+for capturing `errno` immediately after a syscall. JR-Bar's child-output
+reader uses its own per-process state and the existing supervisor queue.
+No implementation was copied and no dependency was added.
+
+
+## Antigravity Argon quota compatibility
+
+Checked Google's [model documentation](https://antigravity.google/docs/models)
+and [quota command documentation](https://antigravity.google/docs/cli/commands/usage/)
+on 2026-10-16. Also inspected the embedded quota protobuf descriptors in
+Antigravity 2.23.1's local language server. The compatibility change uses
+reported groups and buckets, keeps Argon separate from legacy Gemini lanes,
+and sends the declared request envelope. No vendor implementation was copied.
+
+Argon lanes exist only when the source reports them. The collector does not
+force a backend refresh, and the descriptor does not establish the vendor
+cache's expiration behavior. Synthetic schema-based fixtures are not captured
+live replies.
+
+### Factory browser sessions, 2026-10-16
+
+Studied CodexBar commit `7e60198d7bb31b03a703bd04481011a59e8eb808`,
+MIT licensed, including `docs/factory.md`, `FactoryStatusProbe.swift`,
+`FactoryLocalStorageImporter.swift`, and `FactorySessionStore.swift`.
+Reimplemented the selected Factory local-storage keys, WorkOS refresh
+endpoint and public client identifier, JWT organization routing hint,
+JWT subject fallback after successful account authentication, scoped
+legacy usage queries, and bearer-based Factory billing requests. No code
+was copied. CodexBar issue [626](https://github.com/steipete/CodexBar/issues/626)
+documents successful account responses that omit `userProfile.id`.
+
+JR-Bar imports only a browser profile the person selects and confirms.
+It stores its own session in Keychain, asks separately before usage
+requests, verifies the returned account, and never switches to an API
+key after a saved browser session fails. Firefox-family imports use
+JR-Bar's bounded SQLite snapshot reader. Chromium imports use its
+existing bounded LevelDB snapshot reader.
+
+## Runtime notices
+
+The packaged app includes the build interpreter's original Python license.
+For Python 3.12.13, the upstream terms are in
+[CPython's release license](https://github.com/python/cpython/blob/v3.12.13/LICENSE).
+The PyObjC core 12.2.1 wheel omits its license file, so packaging includes
+the unchanged MIT notice from
+[`pyobjc-core/License.txt`](https://github.com/ronaldoussoren/pyobjc/blob/cb525f3e7f433c851b68725dea54bc70d35681b8/pyobjc-core/License.txt),
+commit `cb525f3e7f433c851b68725dea54bc70d35681b8`.
+The build checks the PyObjC version and notice hash before copying it.
+`ThirdPartyLicenses/runtime-notices.json` records both versions and file hashes.
+These notices do not establish complete coverage of statically linked dependencies.
+
+The standalone Python runtime profile comes from Astral's
+[`20260602` release](https://github.com/astral-sh/python-build-standalone/releases/tag/20260602),
+commit `9150a58ba8fbf6e9f0683ec3d66365e9b3d1d8e8` of the MPL-2.0 build project.
+We used its build metadata to select nine original notices for the static
+libraries present in our Python 3.12.13 runtime. Each notice keeps its own
+upstream terms. No build-system code was copied.
+Packaging checks the runtime's version and all executable text sections
+before assigning that profile. Other runtimes retain their base notices and
+are marked unverified. This profile covers the selected Python runtime,
+not every dependency in JR-Bar.
+
+Packaging also preserves the notices supplied with setuptools's vendored
+libraries. It checks their original RECORD hashes and sizes before copying,
+then records each vendor's name, version and relative source path.
+The notice manifest leaves runtime membership unverified; bundled code is
+attributed separately. Wheel's metadata and original notice are included
+because the runtime inventory found its code in the daemon.
+
+
+### The 2026-10-17 provider and reset pass
+
+Studied [CodexBar](https://github.com/steipete/CodexBar) at
+[`6480977b47`](https://github.com/steipete/CodexBar/commit/6480977b47f6e4ffd5dcaae1cb0c7fdf34ee449e),
+MIT, copyright 2026 Peter Steinberger. The registered provider catalog,
+Kimi Code, Kilo and Kiro fetchers, credential sources and reset-detection paths
+were inspected from this snapshot. Their endpoint and response contracts
+informed independent Python collectors and synthetic tests. No code or
+provider artwork was copied.
+
+Kimi Code allowances remain separate from Moonshot developer balances.
+Kilo credit balances and subscription allowances remain separate, with
+reset dates only where the source supplies them. JR-Bar retains its own
+consent gate, instance isolation and credential-safe transport.
+
+CodexBar's reviewed celebration path detects session and weekly resets.
+JR-Bar's broader confirmed-window trigger follows the owner's request and
+also covers daily, monthly and model-specific windows where measured.
+Its durable reset journal remains the delivery authority.
+
+The planned-provider list uses product names from the same pinned manifest.
+
+
+Kiro's `KiroUsageLimitsAPI.swift` and `KiroStatusProbe.swift` at that pinned
+MIT snapshot informed the read-only SQLite keys, regional API requests,
+plan/overage separation, Unix-second reset validation and CLI-owned login
+route. JR-Bar independently implements those contracts in Python. It does
+not copy upstream code or assets, invoke the CLI's chat for background
+usage, refresh the CLI token, or claim separable trial and bonus usage
+from an ambiguous API total.

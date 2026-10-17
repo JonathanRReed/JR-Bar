@@ -14,14 +14,16 @@ final class EffectStudioStore {
     static let consentKey = "effectHardwarePreviewConsent"
 
     let core: CoreModel
+    @ObservationIgnored private let defaults: UserDefaults
     private(set) var catalog: EffectCatalog?
     private(set) var assignments: EffectAssignmentDocument?
     private(set) var loading = false
+    private(set) var loadError: String?
     var lastError: String?
     var status: String?
     var search = ""
     var selectedID: String? {
-        didSet { UserDefaults.standard.set(selectedID, forKey: "effectStudioSelection") }
+        didSet { defaults.set(selectedID, forKey: "effectStudioSelection") }
     }
     var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     /// The window is open but nothing of it shows: covered, minimised, on
@@ -39,8 +41,8 @@ final class EffectStudioStore {
 
     /// Hardware preview: consent remembered across launches, and the moment
     /// the current 5 s preview ends.
-    var hardwareConsent: Bool = UserDefaults.standard.bool(forKey: EffectStudioStore.consentKey) {
-        didSet { UserDefaults.standard.set(hardwareConsent, forKey: Self.consentKey) }
+    var hardwareConsent: Bool = false {
+        didSet { defaults.set(hardwareConsent, forKey: Self.consentKey) }
     }
     var askingConsent = false
     var hardwarePreviewUntil: Date?
@@ -49,21 +51,57 @@ final class EffectStudioStore {
     /// The "Assign…" sheet. Defaults to Provider scope — the flagship
     /// flow — with the first live provider as the target. Changing scope
     /// or target re-hydrates `draftParameters` for the new pair.
-    var assigning = false
+    var assigning = false {
+        didSet {
+            if !assigning {
+                assignmentSheetID = UUID()
+            }
+        }
+    }
+    private(set) var assignmentEffect: EffectDefinition?
+    private(set) var assignmentError: String?
+    private struct AssignmentSubmission {
+        let id = UUID()
+        let sheetID: UUID
+        let draft: EffectAssignment
+        let snapshot: Int
+    }
+    private var pendingAssignment: AssignmentSubmission?
+    @ObservationIgnored private var assignmentSheetID = UUID()
+
+    var assignmentSaving: Bool { pendingAssignment != nil }
+    var assignmentSavingThisDraft: Bool {
+        guard let request = pendingAssignment else { return false }
+        return ownsAssignmentSheet(request)
+    }
+    var assignmentEffectAvailable: Bool {
+        guard let effect = assignmentEffect else { return false }
+        return catalog?.effect(effect.id) != nil
+    }
+    var canCommitAssignment: Bool {
+        guard assigning, !assignmentSaving, assignmentEffectAvailable, let draft else { return false }
+        return draft.problem == nil && !isRemoving(draft)
+    }
+
+    private func ownsAssignmentSheet(_ request: AssignmentSubmission) -> Bool {
+        assigning && assignmentSheetID == request.sheetID && draft == request.draft
+    }
     var draftScope: EffectScope = .provider {
-        didSet { hydrateDraftParameters() }
+        didSet { assignmentError = nil; hydrateDraftParameters() }
     }
     var draftTarget: String = "claude" {
-        didSet { hydrateDraftParameters() }
+        didSet { assignmentError = nil; hydrateDraftParameters() }
     }
-    var draftUsesParameters = true
+    var draftUsesParameters = true { didSet { assignmentError = nil } }
     /// The values the sheet's "keep the parameters" writes: the
     /// parameters stored on the assignment at (draftScope, draftTarget)
     /// when one exists, else the catalog defaults — never values tuned
     /// for a different target.
     private(set) var draftParameters: [String: JSONValue] = [:]
 
-    @ObservationIgnored private var renderTask: Task<Void, Never>?
+    @ObservationIgnored private(set) var renderTask: Task<Void, Never>?
+    @ObservationIgnored private var renderRevision = 0
+    @ObservationIgnored var renderDelay: () async throws -> Void = { try await Task.sleep(for: .milliseconds(150)) }
     /// How a preview is rendered: the daemon's `render_effect` unless a
     /// test hands in its own (effect id, values, LED count, colour).
     @ObservationIgnored var renderer: ((String, [String: JSONValue], Int, String?) async throws -> EffectPreview)?
@@ -75,15 +113,43 @@ final class EffectStudioStore {
     @ObservationIgnored private var wasLive = false
     @ObservationIgnored private var isOpen = false
     @ObservationIgnored private var seenCatalogGeneration: Int?
+    @ObservationIgnored private var libraryRevision = 0
+    @ObservationIgnored private var libraryTask: Task<Void, Never>?
+    @ObservationIgnored private var assignmentSnapshotSequence = 0
+    @ObservationIgnored private var appliedAssignmentSnapshot = 0
+    @ObservationIgnored private var windowSession = UUID()
+    private var pendingRemovals: [String: UUID] = [:]
 
-    init(core: CoreModel) {
+    private enum SceneSetting: String, Hashable {
+        case scene = "active_scene", pack = "active_scene_pack"
+        var failurePrefix: String { self == .scene ? "Scene not changed" : "Scene pack not changed" }
+        func accepts(_ value: JSONValue) -> Bool {
+            if case .string(let text) = value { return !text.isEmpty }
+            return self == .pack && value == .null
+        }
+    }
+    private struct SceneConfirmation {
+        let stream: String
+        let generation: Int
+        let value: JSONValue
+    }
+    private var sceneRequests: [SceneSetting: UUID] = [:]
+    private var sceneConfirmations: [SceneSetting: SceneConfirmation] = [:]
+    var sceneChanging: Bool { sceneRequests[.scene] != nil }
+    var scenePackChanging: Bool { sceneRequests[.pack] != nil }
+
+    init(core: CoreModel, defaults: UserDefaults = .standard) {
         self.core = core
-        selectedID = UserDefaults.standard.string(forKey: "effectStudioSelection")
+        self.defaults = defaults
+        selectedID = defaults.string(forKey: "effectStudioSelection")
+        hardwareConsent = defaults.bool(forKey: Self.consentKey)
+        mode = Mode(rawValue: defaults.string(forKey: "effectStudioMode") ?? "") ?? .effects
     }
 
     // MARK: Lifecycle
 
     func windowDidOpen() {
+        if !isOpen { windowSession = UUID() }
         isOpen = true
         syncTicker()
         observeCore()
@@ -91,15 +157,28 @@ final class EffectStudioStore {
     }
 
     func windowDidClose() {
+        windowSession = UUID()
+        pendingRemovals.removeAll()
+        sceneRequests.removeAll()
         isOpen = false
+        libraryRevision += 1
+        libraryTask?.cancel()
+        libraryTask = nil
+        loading = false
+        sceneListRevision += 1
         syncTicker()
         hardwarePreviewUntil = nil
-        renderTask?.cancel()
-        renderTask = nil
+        cancelRender()
+        scenePreviewRevision += 1
+        scenePreviewTask?.cancel()
+        scenePreviewTask = nil
         // Everything modal or transient belongs to the window session: a
         // half-finished assign sheet, a consent prompt, a pack-conflict
         // alert or a stale toast must not greet the next open.
+        pendingAssignment = nil
         assigning = false
+        assignmentEffect = nil
+        assignmentError = nil
         askingConsent = false
         pendingHardwarePlay = nil
         packConflict = nil
@@ -139,15 +218,11 @@ final class EffectStudioStore {
         track()
     }
 
-    /// What the Studio wakes for: liveness and the two generations, as
-    /// slices, so a frame that moves neither leaves it asleep.
-    /// `catalog_generation` moves when the registry, packs or assignments
-    /// change anywhere (this window, the CLI, another client);
-    /// `settings_generation` carries `active_scene`.
+    /// Catalog reloads follow connection and catalog changes. Scene
+    /// selection reads settings frames directly.
     static func observedFacts(_ core: CoreModel) {
         _ = core.isLive
         _ = core.catalogGeneration
-        _ = core.stateSettingsGeneration
     }
 
     private func track() {
@@ -173,35 +248,50 @@ final class EffectStudioStore {
 
     var isLive: Bool { core.isLive }
 
-    func reload() {
-        guard core.isLive, !loading else { return }
+    @discardableResult
+    func reload() -> Task<Void, Never>? {
+        guard core.isLive, !loading else { return nil }
+        libraryRevision += 1
+        let revision = libraryRevision
         loading = true
-        // The generation the fetch starts from: a bump landing mid-fetch
-        // is consumed by `track()` while `loading` drops its reload, so
-        // compare after the fetch and go around again if state moved.
+        loadError = nil
         let generationAtStart = core.state?.catalogGeneration
-        Task { [weak self] in
+        let assignmentSnapshot = nextAssignmentSnapshot()
+        let task = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.libraryRevision == revision {
+                    self.loading = false
+                    self.libraryTask = nil
+                }
+            }
             do {
                 async let catalog = self.core.listEffects()
                 async let assignments = self.core.listAssignments()
-                self.catalog = try await catalog
-                self.assignments = try await assignments
-                // The reload cue is `state.catalog_generation`; the
-                // catalog's own `generation` is only a fallback for cores
-                // that don't carry it in state.
-                self.seenCatalogGeneration = self.core.state?.catalogGeneration ?? self.catalog?.generation
+                let fetchedCatalog = try await catalog
+                let fetchedAssignments = try await assignments
+                guard self.libraryRevision == revision, !Task.isCancelled else { return }
+                self.catalog = fetchedCatalog
+                self.acceptAssignments(fetchedAssignments, snapshot: assignmentSnapshot)
+                self.seenCatalogGeneration = self.core.state?.catalogGeneration ?? fetchedCatalog.generation
                 self.catalogDidChange()
                 await self.loadScenePacks()
             } catch {
-                self.fail("Could not load effects: \(Self.describe(error))")
+                guard self.libraryRevision == revision, !Task.isCancelled else { return }
+                let message = "Could not load effects: \(Self.describe(error))"
+                self.loadError = message
+                self.fail(message)
             }
+            guard self.libraryRevision == revision, !Task.isCancelled else { return }
             self.loading = false
+            self.libraryTask = nil
             if self.isOpen, self.core.isLive,
                self.core.state?.catalogGeneration != generationAtStart {
                 self.reload()
             }
         }
+        libraryTask = task
+        return task
     }
 
     /// Selection and caches follow the catalog: after any write that
@@ -209,10 +299,20 @@ final class EffectStudioStore {
     /// re-anchor the selection and drop edits and renders for effects
     /// that no longer exist.
     private func catalogDidChange() {
+        // An updated pack may keep its ids while changing the programs.
+        // Those renders belong to the previous catalog.
+        cancelRender()
+        renders.removeAll()
+        renderOrder.removeAll()
         if selectedID == nil || catalog?.effect(selectedID ?? "") == nil {
             selectedID = catalog?.effects.first?.id
         }
         pruneForRemovedEffects()
+        if assigning, assignmentEffectAvailable, let effect = assignmentEffect {
+            scheduleRender(effect, values: draftParameters, color: draftColor)
+        } else if !assigning, let selected {
+            scheduleRender(selected)
+        }
     }
 
     /// Drops edits and renders for effects a pack removal (or an older
@@ -306,11 +406,14 @@ final class EffectStudioStore {
 
     func resetParameters(_ effect: EffectDefinition) {
         edits[effect.id] = nil
+        scheduleRender(effect)
     }
 
-    private static func renderKey(_ effect: EffectDefinition, _ values: [String: JSONValue], color: String? = nil) -> String {
-        let data = (try? JSONEncoder().encode(values)) ?? Data()
-        return effect.id + "|" + (color ?? "") + "|" + String(decoding: data, as: UTF8.self)
+    private static func renderKey(_ effect: EffectDefinition, _ values: [String: JSONValue], ledCount: Int, color: String? = nil) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = (try? encoder.encode(values)) ?? Data()
+        return effect.id + "|" + String(ledCount) + "|" + (color ?? "") + "|" + String(decoding: data, as: UTF8.self)
     }
 
     /// The effect the preview actually plays. Under Reduce Motion the
@@ -331,7 +434,7 @@ final class EffectStudioStore {
     func previewProgram(for effect: EffectDefinition, values: [String: JSONValue]) -> String {
         let shown = Self.displayedEffect(for: effect, catalog: catalog, reduceMotion: reduceMotion)
         if shown.id != effect.id { return shown.preview?.program ?? "off" }
-        if let render = renders[Self.renderKey(effect, values)] { return render.program }
+        if let render = renders[Self.renderKey(effect, values, ledCount: previewLedCount)] { return render.program }
         return effect.preview?.program ?? "off"
     }
 
@@ -342,7 +445,7 @@ final class EffectStudioStore {
     func draftPreviewProgram(for effect: EffectDefinition) -> String {
         let shown = Self.displayedEffect(for: effect, catalog: catalog, reduceMotion: reduceMotion)
         if shown.id == effect.id, let color = draftColor,
-           let render = renders[Self.renderKey(effect, draftParameters, color: color)] {
+           let render = renders[Self.renderKey(effect, draftParameters, ledCount: previewLedCount, color: color)] {
             return render.program
         }
         return previewProgram(for: effect, values: draftParameters)
@@ -372,7 +475,7 @@ final class EffectStudioStore {
     /// catalog's.
     func cadence(for effect: EffectDefinition) -> BlinkCadence? {
         let values = values(for: effect)
-        if let render = renders[Self.renderKey(effect, values)], let cadence = render.cadence { return cadence }
+        if let render = renders[Self.renderKey(effect, values, ledCount: previewLedCount)], let cadence = render.cadence { return cadence }
         if effect.id == "blink" || effect.parameter(named: "cadence") != nil,
            let id = values["cadence"]?.stringValue, let cadence = catalog?.cadences.first(where: { $0.id == id }) {
             return cadence
@@ -389,25 +492,35 @@ final class EffectStudioStore {
     /// tuning session grows the cache for the window's whole lifetime.
     private static let renderCacheLimit = 48
 
-    private func scheduleRender(_ effect: EffectDefinition, values: [String: JSONValue], color: String? = nil) {
+    private func cancelRender() {
+        renderRevision += 1
         renderTask?.cancel()
-        let key = Self.renderKey(effect, values, color: color)
+        renderTask = nil
+        rendering = false
+    }
+
+    private func scheduleRender(_ effect: EffectDefinition, values: [String: JSONValue], color: String? = nil) {
+        cancelRender()
+        let revision = renderRevision
+        let ledCount = previewLedCount
+        let key = Self.renderKey(effect, values, ledCount: ledCount, color: color)
         // The catalog already carries each effect at its defaults in the
         // working cyan; anything else is the daemon's to draw.
         guard renders[key] == nil, values != effect.defaultParameters || color != nil else { return }
         renderTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled, let self else { return }
+            guard let self else { return }
+            do { try await self.renderDelay() } catch { return }
+            guard !Task.isCancelled, self.renderRevision == revision else { return }
             self.rendering = true
-            defer { self.rendering = false }
+            defer { if self.renderRevision == revision { self.rendering = false } }
             do {
-                let ledCount = previewLedCount
                 let preview: EffectPreview
                 if let renderer = self.renderer {
                     preview = try await renderer(effect.id, values, ledCount, color)
                 } else {
                     preview = try await self.core.renderEffect(effect.id, parameters: values, ledCount: ledCount, color: color)
                 }
+                guard !Task.isCancelled, self.renderRevision == revision else { return }
                 self.renders[key] = preview
                 self.renderOrder.removeAll { $0 == key }
                 self.renderOrder.append(key)
@@ -419,7 +532,7 @@ final class EffectStudioStore {
                 // Every keystroke cancels the previous render and the
                 // window close cancels the last one — neither is a
                 // failure worth a toast.
-                if Task.isCancelled || error is CancellationError { return }
+                if Task.isCancelled || self.renderRevision != revision || error is CancellationError { return }
                 self.fail("Preview render failed: \(Self.describe(error))")
             }
         }
@@ -537,8 +650,8 @@ final class EffectStudioStore {
     }
 
     /// The room on screen — remembered per Mac, a viewer convenience.
-    var mode: Mode = Mode(rawValue: UserDefaults.standard.string(forKey: "effectStudioMode") ?? "") ?? .effects {
-        didSet { UserDefaults.standard.set(mode.rawValue, forKey: "effectStudioMode") }
+    var mode: Mode = .effects {
+        didSet { defaults.set(mode.rawValue, forKey: "effectStudioMode") }
     }
 
     /// The hand-written program's editor state.
@@ -558,42 +671,83 @@ final class EffectStudioStore {
     // MARK: Assignments
 
     var activeScene: String {
-        assignments?.activeScene ?? SettingsDocument(core.settings?.document ?? .object([:])).string(SettingsPath("active_scene")) ?? "calm"
+        sceneValue(.scene)?.stringValue ?? assignments?.activeScene ?? "calm"
     }
 
-    func setActiveScene(_ scene: String) {
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                _ = try await self.core.setSetting(SettingsPath("active_scene"), value: .string(scene))
-                self.assignments = try await self.core.listAssignments()
-            } catch {
-                self.fail("Scene not changed: \(Self.describe(error))")
-            }
+    var activeSceneIsAutomatic: Bool {
+        confirmationAheadOfFrame(.scene) == nil &&
+            core.settings?.document["scene_state"]?["lease_id"]?.stringValue != nil
+    }
+
+    var selectedScene: String {
+        core.settings?.document["active_scene"]?.stringValue ?? "calm"
+    }
+
+    var activeScenePackID: String? { sceneValue(.pack)?.stringValue }
+
+    private func confirmationAheadOfFrame(_ key: SceneSetting) -> SceneConfirmation? {
+        guard let confirmation = sceneConfirmations[key], confirmation.stream == core.hello?.stream else { return nil }
+        let frame = core.settingsFrame
+        return frame?.stream != confirmation.stream ||
+            (frame?.settings.generation ?? -1) < confirmation.generation ? confirmation : nil
+    }
+
+    private func sceneValue(_ key: SceneSetting) -> JSONValue? {
+        if let confirmation = confirmationAheadOfFrame(key) { return confirmation.value }
+        if key == .scene,
+           let scene = core.settings?.document["scene_state"]?["effective_scene"]?.stringValue,
+           EffectScene(rawValue: scene) != nil {
+            return .string(scene)
         }
+        return SettingsDocument(core.settings?.document ?? .object([:])).value(at: SettingsPath(key.rawValue))
     }
 
-    /// The `active_scene_pack` settings key: the installed pack whose
-    /// policy rows the daemon applies over the built-in scenes, or nil
-    /// for the built-ins. Read straight from the settings document —
-    /// `list_assignments` does not carry it.
-    var activeScenePackID: String? {
-        SettingsDocument(core.settings?.document ?? .object([:])).string(SettingsPath("active_scene_pack"))
+    @discardableResult
+    func setActiveScene(_ scene: String) -> Task<Void, Never>? {
+        changeSceneSetting(.scene, value: .string(scene))
     }
 
-    /// Writes `active_scene_pack` through `set_setting`; nil clears it
-    /// back to the built-in policies. The settings document lands on
-    /// `core.settings` by itself, so there is nothing to re-fetch.
-    func setActiveScenePack(_ packID: String?) {
-        Task { [weak self] in
+    @discardableResult
+    func setActiveScenePack(_ packID: String?) -> Task<Void, Never>? {
+        changeSceneSetting(.pack, value: packID.map(JSONValue.string) ?? .null)
+    }
+
+    private func changeSceneSetting(_ key: SceneSetting, value: JSONValue) -> Task<Void, Never> {
+        let request = UUID()
+        let session = windowSession
+        let stream = core.hello?.stream
+        sceneRequests[key] = request
+        return Task { [weak self] in
             guard let self else { return }
+            defer { if self.sceneRequests[key] == request { self.sceneRequests[key] = nil } }
             do {
-                _ = try await self.core.setSetting(
-                    SettingsPath("active_scene_pack"),
-                    value: packID.map(JSONValue.string) ?? .null
-                )
+                let reply = try await self.core.setSetting(SettingsPath(key.rawValue), value: value)
+                guard reply.ok else { throw reply.error ?? CoreReplyError(code: "refused") }
+                guard reply.result?["path"]?.stringValue == key.rawValue,
+                      let kept = reply.result?["value"], key.accepts(kept),
+                      case .number(let rawGeneration) = reply.result?["generation"],
+                      let generation = Int(exactly: rawGeneration), generation >= 0 else {
+                    throw CoreReplyError(code: "invalid_reply", message: "The monitor returned an incomplete setting result.")
+                }
+                if let stream, !stream.isEmpty, self.core.hello?.stream == stream {
+                    let previous = self.sceneConfirmations[key]
+                    if previous?.stream != stream || (previous?.generation ?? -1) <= generation {
+                        self.sceneConfirmations[key] = SceneConfirmation(stream: stream, generation: generation, value: kept)
+                    }
+                }
+                if kept != value {
+                    let description = kept.stringValue ?? "the built-in scenes"
+                    throw CoreReplyError(code: "normalized", message: "The monitor kept \(description) instead.")
+                }
             } catch {
-                self.fail("Scene pack not changed: \(Self.describe(error))")
+                guard !Task.isCancelled, self.sceneRequests[key] == request,
+                      self.windowSession == session, self.core.hello?.stream == stream else { return }
+                let replyError = error as? CoreReplyError
+                let unconfirmed = replyError == nil || replyError?.code == "invalid_reply"
+                let prefix = unconfirmed
+                    ? (key == .scene ? "Scene change not confirmed" : "Scene pack change not confirmed")
+                    : key.failurePrefix
+                self.fail("\(prefix): \(Self.describe(error))")
             }
         }
     }
@@ -614,8 +768,9 @@ final class EffectStudioStore {
     }
 
     func beginAssigning(_ effect: EffectDefinition, scope: EffectScope? = nil, target: String? = nil) {
-        // The sheet reads `selected`; a context-menu Assign on a row that
-        // is not selected must not write the other effect's id.
+        assignmentSheetID = UUID()
+        assignmentEffect = effect
+        assignmentError = nil
         selectedID = effect.id
         if let scope { draftScope = scope }
         draftTarget = target ?? defaultTarget(for: draftScope)
@@ -632,7 +787,7 @@ final class EffectStudioStore {
     /// means the pair's tuning — not what was last edited for another
     /// target. A provider's draft is always the loop it will play.
     private func hydrateDraftParameters(for effect: EffectDefinition? = nil) {
-        guard let effect = effect ?? selected else { draftParameters = [:]; return }
+        guard let effect = effect ?? assignmentEffect ?? selected else { draftParameters = [:]; return }
         let target = draftScope == .global ? nil : draftTarget.trimmingCharacters(in: .whitespaces)
         var values = assignments?.draftParameters(for: effect, scope: draftScope, targetID: target)
             ?? effect.defaultParameters
@@ -685,7 +840,7 @@ final class EffectStudioStore {
     }
 
     var draft: EffectAssignment? {
-        guard let effect = selected else { return nil }
+        guard let effect = assignmentEffect ?? selected else { return nil }
         let target: String? = draftScope == .global ? nil : draftTarget.trimmingCharacters(in: .whitespaces)
         return EffectAssignment(effectID: effect.id, scope: draftScope, targetID: target,
                                 parameters: draftUsesParameters ? draftParameters : [:])
@@ -706,35 +861,80 @@ final class EffectStudioStore {
         }
     }
 
-    func commitAssignment() {
-        guard let draft, draft.problem == nil else { return }
-        assigning = false
-        Task { [weak self] in
+    @discardableResult
+    func commitAssignment() -> Task<Void, Never>? {
+        guard canCommitAssignment, let draft else { return nil }
+        let request = AssignmentSubmission(sheetID: assignmentSheetID, draft: draft, snapshot: nextAssignmentSnapshot())
+        let effectName = assignmentEffect?.label ?? draft.effectID
+        let destination = draft.scope == .global
+            ? "everywhere"
+            : "\(draft.scope.label.lowercased()) \(targetTitle(for: draft))"
+        pendingAssignment = request
+        assignmentError = nil
+        return Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.pendingAssignment?.id == request.id { self.pendingAssignment = nil }
+            }
             do {
-                let document = try await self.core.setAssignment(draft)
-                self.assignments = document
-                let effectName = self.catalog?.effect(draft.effectID)?.label ?? draft.effectID
-                let where_ = draft.scope == .global
-                    ? "everywhere"
-                    : "\(draft.scope.label.lowercased()) \(self.targetTitle(for: draft))"
-                self.show(status: "\(effectName) assigned to \(where_)")
+                guard self.pendingAssignment?.id == request.id, !Task.isCancelled else { return }
+                let document = try await self.core.setAssignment(request.draft)
+                guard self.pendingAssignment?.id == request.id, !Task.isCancelled else { return }
+                self.acceptAssignments(document, snapshot: request.snapshot)
+                guard self.ownsAssignmentSheet(request) else { return }
+                self.assigning = false
+                self.show(status: "\(effectName) assigned to \(destination)")
                 if let warning = document.motionWarning, !warning.isEmpty {
                     self.fail("Assigned, but the provider's motion did not change: \(warning)")
                 }
             } catch {
-                self.fail("Assignment refused: \(Self.describe(error))")
+                guard self.pendingAssignment?.id == request.id, !Task.isCancelled,
+                      self.ownsAssignmentSheet(request) else { return }
+                let prefix = error is CoreReplyError ? "Assignment refused" : "Assignment not confirmed"
+                let message = "\(prefix): \(Self.describe(error))"
+                self.assignmentError = message
+                self.fail(message)
             }
         }
     }
 
-    func remove(_ assignment: EffectAssignment) {
-        Task { [weak self] in
+    func isRemoving(_ assignment: EffectAssignment) -> Bool { pendingRemovals[assignment.id] != nil }
+
+    func assignmentChanging(_ assignment: EffectAssignment) -> Bool {
+        isRemoving(assignment) || pendingAssignment?.draft.id == assignment.id
+    }
+
+    private func nextAssignmentSnapshot() -> Int {
+        assignmentSnapshotSequence += 1
+        return assignmentSnapshotSequence
+    }
+
+    private func acceptAssignments(_ document: EffectAssignmentDocument, snapshot: Int) {
+        guard snapshot >= appliedAssignmentSnapshot else { return }
+        appliedAssignmentSnapshot = snapshot
+        assignments = document
+    }
+
+    @discardableResult
+    func remove(_ assignment: EffectAssignment) -> Task<Void, Never>? {
+        guard !assignmentChanging(assignment) else { return nil }
+        let request = UUID()
+        let snapshot = nextAssignmentSnapshot()
+        pendingRemovals[assignment.id] = request
+        return Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.pendingRemovals[assignment.id] == request { self.pendingRemovals[assignment.id] = nil }
+            }
             do {
-                self.assignments = try await self.core.clearAssignment(scope: assignment.scope, targetID: assignment.targetID)
+                guard self.pendingRemovals[assignment.id] == request, !Task.isCancelled else { return }
+                let document = try await self.core.clearAssignment(scope: assignment.scope, targetID: assignment.targetID)
+                guard self.pendingRemovals[assignment.id] == request, !Task.isCancelled else { return }
+                self.acceptAssignments(document, snapshot: snapshot)
             } catch {
-                self.fail("Could not remove: \(Self.describe(error))")
+                guard self.pendingRemovals[assignment.id] == request, !Task.isCancelled else { return }
+                let prefix = error is CoreReplyError ? "Could not remove" : "Removal not confirmed"
+                self.fail("\(prefix): \(Self.describe(error))")
             }
         }
     }
@@ -879,6 +1079,11 @@ final class EffectStudioStore {
     private(set) var scenePacks: [ScenePackSummary] = []
     private(set) var scenePacksSupported = false
     var scenePreview: (packID: String, preview: EffectPreview)?
+    @ObservationIgnored private var scenePreviewRevision = 0
+    @ObservationIgnored private var sceneListRevision = 0
+    @ObservationIgnored private(set) var scenePreviewTask: Task<Void, Never>?
+    @ObservationIgnored var scenePackRenderer: ((String, Int) async throws -> EffectPreview)?
+    @ObservationIgnored var scenePackLoader: (() async throws -> [ScenePackSummary])?
 
     /// Set when an import was refused with `already_installed`: the view
     /// offers an explicit Update retry, which is a different write, not a
@@ -886,30 +1091,51 @@ final class EffectStudioStore {
     var packConflict: (path: String, name: String)?
 
     func loadScenePacks() async {
+        sceneListRevision += 1
+        let revision = sceneListRevision
         do {
-            self.scenePacks = try await self.core.listScenePacks()
-            self.scenePacksSupported = true
+            let packs: [ScenePackSummary]
+            if let loader = scenePackLoader { packs = try await loader() }
+            else { packs = try await core.listScenePacks() }
+            guard sceneListRevision == revision, !Task.isCancelled else { return }
+            scenePacks = packs
+            scenePacksSupported = true
         } catch {
-            // A core without scene-pack commands answers unknown_command;
-            // the section simply does not render.
-            self.scenePacks = []
-            self.scenePacksSupported = false
+            guard sceneListRevision == revision, !Task.isCancelled else { return }
+            if let reply = error as? CoreReplyError, reply.code == "unknown_command" {
+                scenePacks = []
+                scenePacksSupported = false
+            } else {
+                fail("Could not load scene packs: \(Self.describe(error))")
+            }
         }
     }
 
-    func previewScenePack(_ pack: ScenePackSummary) {
-        Task { [weak self] in
+    @discardableResult
+    func previewScenePack(_ pack: ScenePackSummary) -> Task<Void, Never> {
+        scenePreviewRevision += 1
+        let revision = scenePreviewRevision
+        scenePreviewTask?.cancel()
+        scenePreview = nil
+        let ledCount = previewLedCount
+        let task = Task { [weak self] in
             guard let self else { return }
             do {
-                let preview = try await self.core.previewScenePack(packID: pack.id, ledCount: self.previewLedCount)
+                let preview: EffectPreview
+                if let renderer = self.scenePackRenderer { preview = try await renderer(pack.id, ledCount) }
+                else { preview = try await self.core.previewScenePack(packID: pack.id, ledCount: ledCount) }
                 // A reply landing after the window closed would resurface
                 // as an unasked-for preview on the next open.
-                guard self.isOpen else { return }
+                guard self.isOpen, !Task.isCancelled, self.scenePreviewRevision == revision else { return }
                 self.scenePreview = (pack.id, preview)
             } catch {
+                guard self.isOpen, !Task.isCancelled, self.scenePreviewRevision == revision,
+                      !(error is CancellationError) else { return }
                 self.fail("Scene pack preview failed: \(Self.describe(error))")
             }
         }
+        scenePreviewTask = task
+        return task
     }
 
     /// `import_scene_pack {path}`: same data-only JSON file flow as effect
@@ -998,7 +1224,7 @@ final class EffectStudioStore {
         guard !ids.isEmpty else { return }
         let panel = NSSavePanel()
         panel.title = "Export Effect Pack"
-        panel.message = "Writes a data-only JSON v2 pack with the current parameters as defaults."
+        panel.message = "Writes a data-only JSON v2 pack with catalog or saved defaults. To keep edited parameters, use Save as Effect, then export the saved effect."
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = suggestedName + ".json"
         panel.canCreateDirectories = true

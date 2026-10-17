@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shlex
 import subprocess
 import sys
@@ -33,6 +34,11 @@ CONTRACT_TESTS: Final = (
     "tests/test_workflow_contract.py",
     "tests/test_repository_hygiene.py",
     "tests/test_build_script_contract.py",
+    "tests/test_runtime_notices.py",
+    "tests/test_build_origin_metadata.py",
+    "tests/test_sbom_binding.py",
+    "tests/test_runtime_sbom.py",
+    "tests/test_packaging_namespace.py",
     "tests/test_executable_packaging.py",
     "tests/test_release_gate_contract.py",
     "tests/test_dependency_and_entitlements.py",
@@ -69,7 +75,6 @@ FOCUSED_TESTS: Final = (
     "tests/test_presentation_safety_compiler.py",
     "tests/test_hook_client.py",
     "tests/test_hook_ingress.py",
-    "tests/test_alcove_observation.py",
     "tests/test_macos_notifications.py",
     "tests/test_provider_usage_sync_service.py",
     "tests/test_provider_usage_controller_actions.py",
@@ -161,11 +166,15 @@ def run_steps(
     runner=subprocess.run,
 ) -> int:
     """Run in order, stopping at and preserving the first failure code."""
+    environment = os.environ.copy()
+    source_path = str(root / "src")
+    inherited_path = environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = os.pathsep.join(filter(None, (source_path, inherited_path)))
     gate_started = time.perf_counter()
     for step in steps:
         started = time.perf_counter()
         print(f"==> {step.name}", flush=True)
-        result = runner(step.command, cwd=root, check=False)
+        result = runner(step.command, cwd=root, check=False, env=environment)
         elapsed = time.perf_counter() - started
         if result.returncode != 0:
             print(

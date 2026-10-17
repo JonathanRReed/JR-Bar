@@ -384,3 +384,100 @@ def test_a_forced_refresh_still_waits_a_minute_after_the_last_hub_read(hub: Fake
     assert len(hub.paths) == asked, "a menu open right after a read asks the proxy nothing"
     source(NOW + 61, force=True)
     assert len(hub.paths) > asked, "past the floor a forced refresh reads"
+
+
+def test_the_hub_call_never_goes_through_a_configured_proxy(monkeypatch) -> None:
+    # The management key rides this request. A proxy named in the environment
+    # (or the system settings) must not be handed a call meant for this Mac.
+    import http.server
+    import threading
+
+    from jrbar import cliproxy_hub
+
+    seen: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            seen.append(self.headers.get("Authorization", ""))
+            body = b'{"files": []}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+    thread.start()
+    try:
+        # Nothing listens here: a call sent through it fails.
+        monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+        monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+        monkeypatch.delenv("no_proxy", raising=False)
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        result = cliproxy_hub._default_transport(
+            "GET",
+            f"http://127.0.0.1:{server.server_address[1]}/v0/management/auth-files",
+            headers={"Authorization": "Bearer synthetic-key"},
+            body=None,
+            timeout=5.0,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5.0)
+    assert result == {"files": []}
+    assert seen == ["Bearer synthetic-key"]
+
+
+def test_an_account_that_answers_429_keeps_its_last_reading_marked_stale(hub: FakeHub) -> None:
+    first = collect_hub(settings(hub.url), now=NOW, key_reader=lambda: KEY, identities=LocalIdentities())
+    previous = {snapshot.identity: snapshot for snapshot in first}
+    limited = FakeHub(account_status=429)
+    try:
+        again = collect_hub(
+            settings(limited.url), now=NOW + 600, key_reader=lambda: KEY,
+            identities=LocalIdentities(), previous=previous,
+        )
+    finally:
+        limited.close()
+
+    work = {snapshot.source_instance_id: snapshot for snapshot in again}[instance_for("a1")]
+    before = previous[("claude", instance_for("a1"))]
+    assert work.state is ProviderSourceState.STALE
+    assert work.reason_code == "rate_limited"
+    assert work.lanes == before.lanes, "the last good numbers are kept, not blanked"
+    assert work.read_at == NOW and work.observed_at == NOW + 600
+
+
+def test_a_hub_that_goes_quiet_keeps_every_account_it_last_read_as_stale(hub: FakeHub) -> None:
+    first = collect_hub(settings(hub.url), now=NOW, key_reader=lambda: KEY, identities=LocalIdentities())
+    previous = {snapshot.identity: snapshot for snapshot in first}
+
+    def unreachable(*_args, **_kwargs):
+        raise HubError(0, "network_error")
+
+    again = collect_hub(
+        settings(hub.url), now=NOW + 600, key_reader=lambda: KEY, identities=LocalIdentities(),
+        transport=unreachable, previous=previous,
+    )
+
+    by_instance = {snapshot.source_instance_id: snapshot for snapshot in again}
+    assert by_instance["cliproxy"].reason_code == "cliproxy_unreachable"
+    for auth_index in ("a1", "a2", "a3"):
+        kept = by_instance[instance_for(auth_index)]
+        assert kept.state is ProviderSourceState.STALE
+        assert kept.lanes
+        assert kept.read_at == NOW
+
+
+def test_a_clock_set_back_does_not_freeze_the_hub(hub: FakeHub) -> None:
+    current = {"cliproxy_hub": settings(hub.url)}
+    source = HubSource(settings_loader=lambda: type("S", (), current)(), key_reader=lambda: KEY, identities=LocalIdentities)
+    source(NOW)
+    asked = len(hub.paths)
+
+    source(NOW - 86_400.0)
+    assert len(hub.paths) > asked, "a read dated before the last one is not 'a moment ago'"

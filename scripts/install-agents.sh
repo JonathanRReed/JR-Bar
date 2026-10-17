@@ -23,8 +23,8 @@
 # --pkg [SOURCE] (the packaged app): installs the bundle `make package`
 # built, boots out and parks both LaunchAgents, and launches the app, which
 # supervises the daemon it carries (Contents/Helpers/jrbar-core.app), refreshes
-# owned hooks on upgrades, and registers itself as a login item. Fresh
-# installs connect chosen providers in Settings > Agents. SOURCE is
+# owned hooks on upgrades, and preserves the login choice. Fresh
+# installs connect chosen providers in Settings > Agents & Usage. SOURCE is
 # dist/JR-Bar-<version>.pkg (installed for this user with `installer
 # -target CurrentUserHomeDirectory`, no password) or a JR-Bar.app (copied);
 # the default is the PKG when it exists, else build/macos-pkg/app/JR-Bar.app.
@@ -132,6 +132,37 @@ login_item() {
     if [[ -x "$bundle/Contents/MacOS/JR-Bar" && -x "$bundle/Contents/Helpers/jrbar-hook" ]]; then
         JRBAR_LOGIN_ITEM="$request" "$bundle/Contents/MacOS/JR-Bar" 2>/dev/null || true
     fi
+}
+
+# Transfer startup intent only from this installer's enabled development job.
+# A helperless app or an old plist alone does not establish ownership.
+owned_dev_startup() {
+    local plist="$AGENTS/$UI_LABEL.plist" identifier disabled
+    [[ -d "$APP" && ! -L "$APP" && -x "$BINARY" ]] || return 1
+    [[ ! -e "$APP/Contents/Helpers/jrbar-core.app" && ! -L "$APP/Contents/Helpers/jrbar-core.app" ]] || return 1
+    identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw -expect string "$APP/Contents/Info.plist" 2>/dev/null)" || return 1
+    [[ "$identifier" == com.jonathanreed.jrbar ]] || return 1
+    [[ -f "$plist" && ! -L "$plist" && -O "$plist" ]] || return 1
+    [[ "$(/usr/bin/plutil -extract Label raw -expect string "$plist" 2>/dev/null)" == "$UI_LABEL" ]] || return 1
+    [[ "$(/usr/bin/plutil -extract ProgramArguments raw -expect array "$plist" 2>/dev/null)" == 1 ]] || return 1
+    [[ "$(/usr/bin/plutil -extract ProgramArguments.0 raw -expect string "$plist" 2>/dev/null)" == "$BINARY" ]] || return 1
+    [[ "$(/usr/bin/plutil -extract RunAtLoad raw -expect bool "$plist" 2>/dev/null)" == true ]] || return 1
+    disabled="$(launchctl print-disabled "$DOMAIN" 2>/dev/null)" || return 1
+    # print-disabled is not a plist. Accept its complete boolean-map form;
+    # unknown output or an explicit disable keeps registration off.
+    print -r -- "$disabled" | /usr/bin/awk -v label="$UI_LABEL" '
+        NR == 1 { if ($0 !~ /^[[:space:]]*disabled services = \{[[:space:]]*$/) bad=1; next }
+        /^[[:space:]]*}[[:space:]]*$/ { if (closed) bad=1; closed=1; next }
+        {
+            if (closed || $0 !~ /^[[:space:]]*"[^"\\]+" => (true|false)[,]?[[:space:]]*$/) { bad=1; next }
+            key=$0; sub(/^[[:space:]]*"/, "", key); sub(/".*/, "", key)
+            if (key == label) {
+                if (seen++) bad=1
+                if ($0 ~ /=> true/) off=1
+            }
+        }
+        END { exit (bad || !closed || off) ? 1 : 0 }
+    '
 }
 
 wait_for_socket() {
@@ -246,6 +277,8 @@ if [[ "$MODE" == "pkg" ]]; then
     }
     trap restore_install EXIT
 
+    transfer_dev_startup=0
+    if owned_dev_startup; then transfer_dev_startup=1; fi
     stop_everything
     if [[ -e "$APP" || -L "$APP" ]]; then
         /bin/mv "$APP" "$old_app"
@@ -307,7 +340,9 @@ if [[ "$MODE" == "pkg" ]]; then
         fi
     fi
 
-    echo "==> launch at login: $(JRBAR_LOGIN_ITEM=on "$BINARY" 2>/dev/null || echo 'could not register')"
+    if [[ "$transfer_dev_startup" == 1 ]]; then
+        login_item "$APP" on
+    fi
     echo "==> launching $APP"
     open -a "$APP"
     wait_for_socket || true
@@ -377,6 +412,11 @@ $args	</array>
 		<string>$SHIM</string>
 		<key>JRBAR_COMMIT</key>
 		<string>$COMMIT$DIRTY</string>
+		<!-- Development layout only: no app starts this daemon, so it holds no
+		     app secret; this makes it take privileged commands from the dev app.
+		     The release daemon ignores it (docs/CORE-PROTOCOL.md). -->
+		<key>JRBAR_DEV_ALLOW_UNAUTH</key>
+		<string>1</string>
 	</dict>
 	<key>RunAtLoad</key>
 	<true/>

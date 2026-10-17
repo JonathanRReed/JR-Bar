@@ -22,6 +22,7 @@ struct NotchHoverTests {
                               state: state, cardModel: makeTestCardModel(),
                               notchRuntimeEnabled: false)
         let toy: NotchToy = store.notch
+        toy.pointerLocation = { CGPoint(x: -10_000, y: -10_000) }
         toy.islandVisible = true
         return (toy, store)
     }
@@ -31,23 +32,19 @@ struct NotchHoverTests {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
         toy.setHovered(true)
-        #expect(!toy.islandHoverPeek, "the breath waits out its intent delay")
+        #expect(toy.islandHoverPeek, "a pointer straight onto the island is answered on the same turn")
         try await Task.sleep(for: .seconds(0.25))
         #expect(toy.islandExpanded, "the fast floor passed — the card is up")
     }
 
-    @Test("the breath lands after the intent delay, not at once")
-    func peekWaitsOutIntentDelay() async throws {
+    @Test("the breath is the first frame's answer to a pointer on the island, and only a tell")
+    func peekAnswersAtOnce() async throws {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
         store.state.notch.expandOnHover = false
         toy.setHovered(true)
-        #expect(!toy.islandHoverPeek, "a fresh hover has earned nothing yet")
-        try await Task.sleep(for: .seconds(0.2))
-        #expect(toy.islandHoverPeek, "the rest earned the breath")
+        #expect(toy.islandHoverPeek, "a fresh hover is answered at once: the island leans in the first frame")
         #expect(!toy.islandExpanded, "the tell is only a tell — no card")
-        toy.setHovered(false)
-        #expect(!toy.islandHoverPeek, "leaving settles it back")
     }
 
     @Test("a bar-row arrival waits the third-of-a-second floor")
@@ -153,7 +150,7 @@ struct NotchHoverTests {
     func headlessGrowSkipsHaptic() {
         let (toy, store) = makeToy()
         var ticks = 0
-        toy.expandHaptic = { ticks += 1 }
+        toy.haptic = { _ in ticks += 1 }
         toy.expandFromBand()
         #expect(toy.islandExpanded)
         #expect(ticks == 0)
@@ -190,9 +187,10 @@ struct NotchHoverTests {
         let now = NotchMotion.hoverDelays(openAfter: 0, fromBar: false)
         #expect(now.peek == 0 && now.expand == 0)
         let standard = NotchMotion.hoverDelays(openAfter: 0.12, fromBar: false)
-        #expect(standard.peek == 0.12 && standard.expand == 0.12, "the default is today's timing")
+        #expect(standard.peek == NotchMotion.peekDelay && standard.expand == 0.12,
+                "the default card timing, with the swell leading it")
         let slow = NotchMotion.hoverDelays(openAfter: 0.5, fromBar: false)
-        #expect(slow.peek == NotchMotion.hoverDelay && slow.expand == 0.5, "the breath still tells first")
+        #expect(slow.peek == NotchMotion.peekDelay && slow.expand == 0.5, "the breath still tells first")
         #expect(NotchMotion.hoverDelays(openAfter: 0, fromBar: true).expand == NotchMotion.barArrivalFloor)
         #expect(NotchMotion.hoverDelays(openAfter: 0.5, fromBar: true).expand == 0.5)
         #expect(NotchMotion.hoverDelays(openAfter: .nan, fromBar: false).expand == NotchMotion.hoverDelay)

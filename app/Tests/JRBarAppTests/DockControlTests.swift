@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import JRBarCore
 @testable import JRBarApp
 
 /// `AppleDockControl`'s contract (docs/TOY-PARITY.md P1): what an old
@@ -59,6 +60,28 @@ import Testing
                 "the next launch finds nothing left to restore")
     }
 
+    @MainActor
+    @Test func aRestoreThatRestartedTheDockSaysSoOnTheCard() {
+        let defaults = FakeDefaults()
+        defaults.store["autohide"] = true
+        let (control, restarter, _, persistence) = makeControl(defaults, saved: false)
+        let hold = DockAutohideHold(
+            driver: nil,
+            persistence: UserDefaults(suiteName: ScratchDefaults.suiteName("DockControlTests.hold"))!)
+        let utility = DockUtility(appleDock: control, autohideHold: hold, legacyEnhanceDefaults: persistence)
+        var stored = DockSettings()
+        utility.settings = { stored }
+        utility.onSettingsChange = { stored = $0 }
+        utility.applySettings()
+        #expect(restarter.count == 1)
+        #expect(utility.recoveredHoldNote == DockUtility.recoveredHideLine,
+                "a Dock restart is never silent")
+        // With nothing saved there is nothing to restore and nothing to say.
+        utility.dismissRecoveredHoldNote()
+        utility.applySettings()
+        #expect(utility.recoveredHoldNote == nil)
+    }
+
     @Test func restorePreservesAUsersOn() {
         let defaults = FakeDefaults()
         defaults.store["autohide"] = true   // the user already auto-hid
@@ -71,7 +94,7 @@ import Testing
 
     @Test func restoreRunsOnce() {
         let defaults = FakeDefaults()
-        let (control, restarter, _, _) = makeControl(defaults, saved: false)
+        let (control, restarter, _, persistence) = makeControl(defaults, saved: false)
 
         #expect(control.restore() == true)
         #expect(control.restore() == false, "handed back — nothing left to write")

@@ -25,6 +25,13 @@ _UNSET_CENTER: Final = object()
 # Follow Focus at the refresh cadence. Authorization changes only in System
 # Settings, so it lives longer; wake, activation and a request's answer
 # forget both (``invalidate``).
+#
+# The authorization read is also the slow one: when tccd is busy it holds the
+# run loop for seconds (24 h of the unified log, 2026-10-08: ``ingest.dnd``
+# 1.0-4.3 s on nine refreshes, each logged as a run-loop stall). Once there is
+# an answer, an expired one is served as it is while a worker thread asks the
+# system again, so a slow tccd costs one refresh of staleness instead of a
+# frozen daemon. Only the very first read waits.
 FOCUS_OBSERVATION_TTL_SECONDS: Final = 3.0
 FOCUS_AUTHORIZATION_TTL_SECONDS: Final = 60.0
 
@@ -131,6 +138,10 @@ def _authorization(raw: object) -> FocusAuthorization:
     }.get(raw, FocusAuthorization.UNAVAILABLE)
 
 
+def _start_worker_thread(job: Callable[[], None]) -> None:
+    threading.Thread(target=job, name="JRBarFocusAuthorization", daemon=True).start()
+
+
 class MacOSFocusStatusClient:
     """Polling adapter over one process-owned ``INFocusStatusCenter``."""
 
@@ -140,6 +151,7 @@ class MacOSFocusStatusClient:
         center: object = _UNSET_CENTER,
         bridge_loader: Callable[[], object | None] = _load_focus_status_center,
         monotonic: Callable[[], float] = time.monotonic,
+        refresh_runner: Callable[[Callable[[], None]], None] = _start_worker_thread,
     ) -> None:
         if not callable(bridge_loader):
             raise TypeError("Focus bridge loader must be callable")
@@ -148,9 +160,14 @@ class MacOSFocusStatusClient:
         self._loaded = center is not _UNSET_CENTER
         self._load_lock = threading.Lock()
         self._monotonic = monotonic
-        self._cache_lock = threading.Lock()
+        self._refresh_runner = refresh_runner
+        # Re-entrant: a runner that runs the job inline (tests) re-takes it.
+        self._cache_lock = threading.RLock()
         self._observation: tuple[float, FocusStatusObservation] | None = None
         self._authorization: tuple[float, FocusAuthorization] | None = None
+        self._revalidating = False
+        # Bumped by ``invalidate``: an answer asked for before it is not kept.
+        self._generation = 0
 
     def _center_for_use(self) -> object | None:
         with self._load_lock:
@@ -167,6 +184,7 @@ class MacOSFocusStatusClient:
         with self._cache_lock:
             self._observation = None
             self._authorization = None
+            self._generation += 1
 
     def observe(self) -> FocusStatusObservation:
         """Read authorization and coarse status without requesting permission."""
@@ -181,7 +199,9 @@ class MacOSFocusStatusClient:
 
     def _authorization_at(self, center: object, now: float) -> FocusAuthorization | None:
         cached = self._authorization
-        if cached is not None and now - cached[0] < FOCUS_AUTHORIZATION_TTL_SECONDS:
+        if cached is not None:
+            if now - cached[0] >= FOCUS_AUTHORIZATION_TTL_SECONDS:
+                self._revalidate_authorization(center)
             return cached[1]
         try:
             authorization = _authorization(center.authorizationStatus())
@@ -189,6 +209,37 @@ class MacOSFocusStatusClient:
             return None
         self._authorization = (now, authorization)
         return authorization
+
+    def _revalidate_authorization(self, center: object) -> None:
+        """Ask the system again on a worker; the caller keeps the old answer."""
+        if self._revalidating:
+            return
+        self._revalidating = True
+        generation = self._generation
+
+        def job() -> None:
+            try:
+                try:
+                    authorization = _authorization(center.authorizationStatus())
+                except Exception:
+                    return
+                with self._cache_lock:
+                    if generation != self._generation:
+                        return
+                    changed = self._authorization is None or self._authorization[1] is not authorization
+                    self._authorization = (self._monotonic(), authorization)
+                    if changed:
+                        # The next observation must not reuse a reading made
+                        # under the old answer.
+                        self._observation = None
+            finally:
+                with self._cache_lock:
+                    self._revalidating = False
+
+        try:
+            self._refresh_runner(job)
+        except Exception:
+            self._revalidating = False
 
     def _read(self, now: float) -> FocusStatusObservation:
         center = self._center_for_use()

@@ -320,7 +320,7 @@ class MacOSNotificationClient:
                 return False
             if (
                 identifier not in self._pending_deliveries
-                and len(self._pending_deliveries) >= _MAX_PENDING_DELIVERIES
+                and len(self._pending_deliveries) + self._active_deliveries >= _MAX_PENDING_DELIVERIES
             ):
                 self.last_diagnostic = "Notification delivery refused"
                 return False

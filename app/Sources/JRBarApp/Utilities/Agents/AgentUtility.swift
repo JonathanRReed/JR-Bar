@@ -23,6 +23,8 @@ final class AgentUtility: Toy {
     /// The "Open the Overview" button's target — the delegate wires it
     /// to `OverviewWindowController.show()`. Left unset the button hides,
     /// so the utility stands alone.
+    @ObservationIgnored var connectionDescription: @MainActor () -> String = { "Monitor not connected" }
+    @ObservationIgnored var onOpenMonitorDetails: (@MainActor () -> Void)?
     @ObservationIgnored var onOpenOverview: (@MainActor () -> Void)?
 
     /// What the card and its chip read from the daemon: whether it is
@@ -31,6 +33,9 @@ final class AgentUtility: Toy {
     /// changes neither — nearly all of them — redraws nothing.
     struct Snapshot: Equatable {
         var live = false
+        var connected = false
+        var connecting = false
+        var stateRejected: String?
         var reporting: Set<String> = []
     }
 
@@ -54,14 +59,17 @@ final class AgentUtility: Toy {
         if let hooks = core.state?.health?["hooks"]?.objectValue {
             reporting.formUnion(hooks.compactMap { provider, state in state.stringValue == "missing" ? nil : provider })
         }
-        return Snapshot(live: core.isLive, reporting: reporting)
+        var connecting = false
+        if case .connecting = core.connection { connecting = true }
+        return Snapshot(live: core.isLive, connected: core.connection.isConnected,
+                        connecting: connecting, stateRejected: core.stateRejected, reporting: reporting)
     }
 
     // MARK: Toy
 
     let id = "agents"
     let name = "Agent Overview"
-    let blurb = "How loud each agent may be, and quiet while you watch — the roster itself lives in the panel and the Overview."
+    let blurb = "Live agent activity, session controls, and alerts."
     let symbol = "person.2"
 
     var isOn: Bool {
@@ -71,7 +79,11 @@ final class AgentUtility: Toy {
 
     var status: ToyStatus {
         guard isOn else { return .off }
-        return snapshot.live ? .on : .paused("Monitor not connected")
+        if snapshot.live { return .on }
+        if snapshot.stateRejected != nil { return .paused("Monitor update unreadable") }
+        if snapshot.connected { return .paused("Waiting for monitor state") }
+        if snapshot.connecting { return .paused("Connecting to monitor") }
+        return .paused("Monitor not connected")
     }
 
     var controls: AnyView { AnyView(AgentUtilityControls(utility: self)) }
@@ -139,4 +151,5 @@ final class AgentUtility: Toy {
 
     /// The "Open the Overview" button — the delegate's Overview window.
     func openFullOverview() { onOpenOverview?() }
+    func openMonitorDetails() { onOpenMonitorDetails?() }
 }

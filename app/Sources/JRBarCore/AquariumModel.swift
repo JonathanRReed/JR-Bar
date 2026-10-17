@@ -660,10 +660,16 @@ public enum AquariumModel {
     /// count: the plume celebrates mains finishing, matching the view's
     /// burst filter.
     public static func isMilestone(fish: [Fish], at now: Date) -> Bool {
+        milestoneLeavers(fish: fish, at: now).count >= milestoneCount
+    }
+
+    /// The mains that finished inside the milestone window, for the chest
+    /// plume to time itself against the earliest.
+    public static func milestoneLeavers(fish: [Fish], at now: Date) -> [Fish] {
         fish.filter {
             $0.state == .leaving && !$0.isFry
                 && now.timeIntervalSince($0.stateSince) < milestoneWindow
-        }.count >= milestoneCount
+        }
     }
 
     /// Depths keep clear of the surface and the floor so a surfacing or

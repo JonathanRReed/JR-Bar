@@ -114,7 +114,24 @@ struct FoldCaptureRetry {
     }
 }
 
+/// Which way the Duo gets its picture. The live stream is the default and
+/// stays so: a hidden defaults key (`jrbar.foldStillCapture`, off) asks
+/// for one still taken when the fold arms instead, which the renderer
+/// uploads and blurs once rather than on every captured frame. Whether a
+/// one-shot still lights the Screen Recording indicator on macOS 27 is
+/// unverified, and a frozen picture stops live video behind the fold, so
+/// nothing turns it on but the person who sets the key. The Room needs the
+/// stream (window cards, the far wall) and ignores it.
+enum FoldCaptureMode {
+    static let stillKey = "jrbar.foldStillCapture"
+
+    static func stillWanted(defaults: UserDefaults = .standard, dual: Bool) -> Bool {
+        !dual && defaults.bool(forKey: stillKey)
+    }
+}
+
 enum FoldCaptureError: LocalizedError {
+    case noStillImage
     case noBuiltinDisplay
     /// ScreenCaptureKit lists no application entry for JR-Bar itself, as
     /// happens while it has no listable windows: the fold keeps its own
@@ -123,6 +140,7 @@ enum FoldCaptureError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .noStillImage: return "ScreenCaptureKit returned no image for the still"
         case .noBuiltinDisplay: return "no built-in display to capture"
         case .ownAppMissing: return "JR-Bar is not in the list of apps ScreenCaptureKit can capture"
         }
@@ -134,9 +152,9 @@ enum FoldCaptureError: LocalizedError {
 ///
 /// The Duo look (`dual: false`) needs one picture and nothing else: a
 /// single **full** stream, no far wall and no window-list poll. It
-/// keeps JR-Bar's own menu-bar pieces — the icon mirror, the Screen Bar
-/// — through `exceptingWindows`, so the whole bar folds together the
-/// way the Duo's status bar does.
+/// keeps JR-Bar's own menu-bar pieces — the Screen Bar and the covers —
+/// through `exceptingWindows`, so the whole bar folds together the way
+/// the Duo's status bar does.
 ///
 /// The Room look (`dual: true`) runs two:
 ///
@@ -161,8 +179,14 @@ enum FoldCaptureError: LocalizedError {
 final class FoldCapture {
     /// Two streams and the card poll (the Room), or one stream (the Duo).
     let dual: Bool
+    /// The Duo's picture as one still taken at `start` instead of a
+    /// stream (`FoldCaptureMode`). Never with `dual`.
+    let still: Bool
+    private var stillTaken = false
     private let fullSink = Sink()
     private let farSink = Sink()
+    private var fullDelivery: FoldFrameDelivery?
+    private var farDelivery: FoldFrameDelivery?
     private var fullStream: SCStream?
     private var farStream: SCStream?
     /// Set by `stop` while `start` is still suspended inside an await —
@@ -173,6 +197,7 @@ final class FoldCapture {
     var onFullFrame: (@MainActor (CVPixelBuffer) -> Void)?
     /// Called once per accepted far-wall frame.
     var onFarFrame: (@MainActor (CVPixelBuffer) -> Void)?
+    var onFarFrameInvalidated: (@MainActor () -> Void)?
     /// Called when the card layout changes — windows open, close, move
     /// or reorder. Never per frame: the rects only matter while frames
     /// flow, and unchanged layouts don't re-emit.
@@ -180,8 +205,8 @@ final class FoldCapture {
     /// Called when the full stream dies on its own — SCK reports a
     /// stopped stream through its delegate, and without one a dead
     /// capture is silent: frames simply stop arriving with `hasFrame`
-    /// left true. A dead far stream only logs; the full texture stands
-    /// in as the far wall until the next start.
+    /// left true. A dead far stream invalidates its picture so the
+    /// renderer uses the current full frame as the far wall.
     var onError: (@MainActor (String) -> Void)?
     /// True once the full stream has delivered a complete frame — the
     /// overlay's gate.
@@ -189,6 +214,7 @@ final class FoldCapture {
     /// True once the far wall has delivered — until then the renderer
     /// stands the full texture in for it.
     private(set) var hasFarFrame = false
+    private var farStreamFailed = false
     /// The last stream-death reason, for the card's diagnostic line.
     private(set) var lastError: String?
 
@@ -200,19 +226,19 @@ final class FoldCapture {
     private var displayFrameQuartz = CGRect.zero
     private var lastCardRects: [CGRect] = []
 
-    init(dual: Bool = true) {
+    init(dual: Bool = true, still: Bool = false) {
         self.dual = dual
-        fullSink.onFrame = { [weak self] buffer in
-            let box = FrameBox(buffer)
-            Task { @MainActor [weak self] in
-                guard let self, !self.stopRequested else { return }
-                if !self.hasFrame {
-                    FoldLog.log.notice("capture: first full frame delivered")
-                }
-                self.hasFrame = true
-                self.onFullFrame?(box.buffer)
+        self.still = still && !dual
+        let fullDelivery = FoldFrameDelivery { [weak self] buffer in
+            guard let self, !self.stopRequested else { return }
+            if !self.hasFrame {
+                FoldLog.log.notice("capture: first full frame delivered")
             }
+            self.hasFrame = true
+            self.onFullFrame?(buffer)
         }
+        self.fullDelivery = fullDelivery
+        fullSink.onFrame = { [weak fullDelivery] in fullDelivery?.submit($0) }
         fullSink.onError = { [weak self] message in
             Task { @MainActor [weak self] in
                 guard let self, !self.stopRequested else { return }
@@ -221,29 +247,46 @@ final class FoldCapture {
                 self.onError?(message)
             }
         }
-        farSink.onFrame = { [weak self] buffer in
-            let box = FrameBox(buffer)
-            Task { @MainActor [weak self] in
-                guard let self, !self.stopRequested else { return }
-                if !self.hasFarFrame {
-                    FoldLog.log.notice("capture: first far-wall frame delivered")
-                }
-                self.hasFarFrame = true
-                self.onFarFrame?(box.buffer)
-            }
+        let farDelivery = FoldFrameDelivery { [weak self] buffer in
+            self?.noteFarFrame(buffer)
         }
+        self.farDelivery = farDelivery
+        farSink.onFrame = { [weak farDelivery] in farDelivery?.submit($0) }
         farSink.onError = { [weak self] message in
             Task { @MainActor [weak self] in
                 guard let self, !self.stopRequested else { return }
-                FoldLog.log.error("capture: far stream stopped: \(message, privacy: .public)")
+                self.noteFarStreamFailure(message)
             }
         }
     }
 
+    func noteFarStreamFailure(_ message: String) {
+        guard !stopRequested, !farStreamFailed else { return }
+        farStreamFailed = true
+        hasFarFrame = false
+        farDelivery?.discard()
+        FoldLog.log.error("capture: far stream stopped: \(message, privacy: .public)")
+        onFarFrameInvalidated?()
+    }
+
+    func noteFarFrame(_ buffer: CVPixelBuffer) {
+        guard !stopRequested, !farStreamFailed else { return }
+        if !hasFarFrame {
+            FoldLog.log.notice("capture: first far-wall frame delivered")
+        }
+        hasFarFrame = true
+        onFarFrame?(buffer)
+    }
+
+    func noteFarStartFailure(_ error: Error) {
+        noteFarStreamFailure(error.localizedDescription)
+    }
+
     /// Starts both streams. Safe to call again while running.
     func start() async throws {
-        guard fullStream == nil else { return }
+        guard fullStream == nil, !stillTaken else { return }
         stopRequested = false
+        farStreamFailed = false
         lastError = nil
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: false)
@@ -273,6 +316,21 @@ final class FoldCapture {
         let barWindows = dual ? [] : Self.ownBarWindows(in: content, display: display)
         let fullFilter = SCContentFilter(
             display: display, excludingApplications: [ownApp], exceptingWindows: barWindows)
+        if still {
+            // One picture now, no stream: the renderer builds its blur
+            // pyramid from it once, and the fold folds a held picture.
+            let sample = try await SCScreenshotManager.captureSampleBuffer(
+                contentFilter: fullFilter, configuration: config)
+            guard !stopRequested else { return }
+            guard let image = CMSampleBufferGetImageBuffer(sample) else {
+                throw FoldCaptureError.noStillImage
+            }
+            stillTaken = true
+            hasFrame = true
+            FoldLog.log.notice("capture: one still taken, no stream (\(barWindows.count, privacy: .public) bar windows kept)")
+            onFullFrame?(image)
+            return
+        }
         let outputQueue = DispatchQueue(label: "jrbar.fold.capture")
         let full = SCStream(filter: fullFilter, configuration: config, delegate: fullSink)
         try full.addStreamOutput(fullSink, type: .screen, sampleHandlerQueue: outputQueue)
@@ -297,7 +355,7 @@ final class FoldCapture {
                 // The far wall is the nice-to-have half: if its stream
                 // refuses (some systems balk at an empty application set)
                 // the full texture stands in and the fold still runs.
-                FoldLog.log.error("capture: far stream failed, using full as far wall: \(error.localizedDescription, privacy: .public)")
+                noteFarStartFailure(error)
             }
         }
         if dual {
@@ -317,8 +375,8 @@ final class FoldCapture {
         if dual { startLayoutPolling() }
     }
 
-    /// JR-Bar's own windows that live in the menu bar — the icon mirror,
-    /// the Screen Bar — so the Duo's picture keeps the whole bar. The
+    /// JR-Bar's own windows that live in the menu bar — the Screen Bar and
+    /// the covers — so the Duo's picture keeps the whole bar. The
     /// fold's own overlay never qualifies: it sits far above the bar
     /// levels, and `sharingType = .none` keeps it out regardless.
     private static func ownBarWindows(in content: SCShareableContent,
@@ -366,6 +424,8 @@ final class FoldCapture {
 
     func stop() async {
         stopRequested = true
+        fullDelivery?.discard()
+        farDelivery?.discard()
         layoutTimer?.invalidate()
         layoutTimer = nil
         let full = fullStream, far = farStream
@@ -373,6 +433,7 @@ final class FoldCapture {
         farStream = nil
         hasFrame = false
         hasFarFrame = false
+        stillTaken = false
         lastCardRects = []
         if let full { try? await full.stopCapture() }
         if let far { try? await far.stopCapture() }
@@ -416,14 +477,6 @@ final class FoldCapture {
         lastCardRects = rects
         onCards?(PortalDepth.cards(for: rects))
     }
-}
-
-/// A pixel buffer crossing the capture queue → main actor boundary.
-/// CoreVideo buffers are reference-counted and safe to read from any
-/// thread once retained; the wrapper just tells Swift that.
-private struct FrameBox: @unchecked Sendable {
-    let buffer: CVPixelBuffer
-    init(_ buffer: CVPixelBuffer) { self.buffer = buffer }
 }
 
 /// Receives frames on the stream's own queue and keeps only the newest

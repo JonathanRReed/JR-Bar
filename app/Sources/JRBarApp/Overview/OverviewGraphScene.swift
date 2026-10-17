@@ -143,9 +143,15 @@ struct GraphScene: View, Animatable {
                 painter.drawStill(&context, size: size)
             } symbols: {
                 ForEach(Array(model.nodes.values)) { node in
-                    GraphNodeLabel(node: node, caption: model.captions[node.id],
-                                   side: painter.nodeSide(node.id), worker: painter.isWorker(node.id))
-                        .tag("label." + node.id)
+                    if model.layout.presentation == .network {
+                        GraphNetworkNodeLabel(node: node, caption: model.captions[node.id],
+                                              worker: painter.isWorker(node.id))
+                            .tag("label." + node.id)
+                    } else {
+                        GraphNodeLabel(node: node, caption: model.captions[node.id],
+                                       side: painter.nodeSide(node.id), worker: painter.isWorker(node.id))
+                            .tag("label." + node.id)
+                    }
                 }
                 ForEach(model.hubsDrawn) { hub in
                     GraphHubCaption(provider: hub.id, detail: model.hubCaptions[hub.id] ?? "")
@@ -397,7 +403,7 @@ private struct GraphPainter {
         world.translateBy(x: camera.offset.x, y: camera.offset.y)
         world.scaleBy(x: camera.scale, y: camera.scale)
         let visible = visibleWorld(size)
-        drawClusters(&world, visible: visible)
+        if model.layout.presentation == .map { drawClusters(&world, visible: visible) }
         drawSpokes(&world)
         drawFamilies(&world)
         drawHubs(&world)
@@ -484,8 +490,12 @@ private struct GraphPainter {
             for id in spokeIDs(hub) {
                 guard let node = model.nodes[id], let (rect, alpha) = frame(of: id) else { continue }
                 let side = nodeSide(id)
-                let start = CGPoint(x: center.x + side.sign * Layout.Metrics.hubDiameter / 2, y: center.y)
-                let end = CGPoint(x: side == .right ? rect.minX : rect.maxX, y: rect.midY)
+                let destination = CGPoint(x: rect.midX, y: rect.minY + 24)
+                let network = model.layout.presentation == .network
+                let start = network ? boundary(center, toward: destination, radius: Layout.Metrics.hubDiameter / 2)
+                    : CGPoint(x: center.x + side.sign * Layout.Metrics.hubDiameter / 2, y: center.y)
+                let end = network ? boundary(destination, toward: center, radius: 22)
+                    : edgePoint(rect, side: side, outgoing: false)
                 let lit = min(light(id), light("hub:" + hub.id))
                 strokeEdge(&context, from: start, to: end, start: accent, activity: node.activity,
                            alpha: min(alpha, hubAlpha) * lit * doneFade(node))
@@ -498,8 +508,7 @@ private struct GraphPainter {
             guard let parent = model.nodes[edge.from], let child = model.nodes[edge.to],
                   let (from, fromAlpha) = frame(of: edge.from), let (to, toAlpha) = frame(of: edge.to) else { continue }
             let side = nodeSide(edge.to)
-            let start = CGPoint(x: side == .right ? from.maxX : from.minX, y: from.midY)
-            let end = CGPoint(x: side == .right ? to.minX : to.maxX, y: to.midY)
+            let (start, end) = familyEndpoints(from, to: to, side: side)
             let lit = min(light(edge.from), light(edge.to))
             strokeEdge(&context, from: start, to: end, start: providerColor(parent.provider), activity: child.activity,
                        alpha: min(fromAlpha, toAlpha) * lit * doneFade(child))
@@ -512,7 +521,12 @@ private struct GraphPainter {
     private func strokeEdge(_ context: inout GraphicsContext, from start: CGPoint, to end: CGPoint, start color: Color,
                             activity: SessionActivity, alpha: Double) {
         guard alpha > 0.01 else { return }
-        let path = Self.bezier(start, end)
+        var path = Self.bezier(start, end)
+        if model.layout.presentation == .network {
+            path = Path()
+            path.move(to: start)
+            path.addLine(to: end)
+        }
         let (width, bright) = Self.edgeWeight(activity)
         let tail = edgeEnd(activity, accent: color)
         let shading = GraphicsContext.Shading.linearGradient(
@@ -561,6 +575,10 @@ private struct GraphPainter {
 
     private func drawNode(_ context: inout GraphicsContext, id: String, visible: CGRect) {
         guard let node = model.nodes[id], let (rect, alpha) = frame(of: id), rect.intersects(visible) else { return }
+        if model.layout.presentation == .network {
+            drawNetworkNode(&context, node: node, rect: rect, alpha: alpha)
+            return
+        }
         let side = nodeSide(id)
         let worker = isWorker(id)
         let accent = providerColor(node.provider)
@@ -598,7 +616,7 @@ private struct GraphPainter {
             c.stroke(shine, with: .color(capsuleShine), lineWidth: hairline)
         }
 
-        let (center, radius) = Self.orb(in: rect, side: side, worker: worker)
+        let (center, radius) = nodeOrb(in: rect, side: side, worker: worker)
         drawOrb(&c, center: center, radius: radius, accent: accent, node: node, worker: worker)
         drawRing(&c, center: center, radius: radius, node: node, worker: worker)
 
@@ -622,6 +640,61 @@ private struct GraphPainter {
                                style: .continuous)
             ring.stroke(outline, with: .color(.accentColor.opacity(0.25)), lineWidth: 6)
             ring.stroke(outline, with: .color(.accentColor), lineWidth: 2)
+        }
+    }
+
+    private func boundary(_ center: CGPoint, toward other: CGPoint, radius: CGFloat) -> CGPoint {
+        let dx = other.x - center.x
+        let dy = other.y - center.y
+        let length = max(1, hypot(dx, dy))
+        return CGPoint(x: center.x + dx / length * radius, y: center.y + dy / length * radius)
+    }
+
+    private func familyEndpoints(_ from: CGRect, to: CGRect, side: Layout.Side) -> (CGPoint, CGPoint) {
+        if model.layout.presentation == .network {
+            let parent = CGPoint(x: from.midX, y: from.minY + 24)
+            let child = CGPoint(x: to.midX, y: to.minY + 24)
+            return (boundary(parent, toward: child, radius: 22), boundary(child, toward: parent, radius: 18))
+        }
+        return (edgePoint(from, side: side, outgoing: true), edgePoint(to, side: side, outgoing: false))
+    }
+
+    private func nodeOrb(in rect: CGRect, side: Layout.Side, worker: Bool) -> (center: CGPoint, radius: CGFloat) {
+        if model.layout.presentation == .network {
+            return (CGPoint(x: rect.midX, y: rect.minY + 24), worker ? 14 : 18)
+        }
+        return Self.orb(in: rect, side: side, worker: worker)
+    }
+
+    private func edgePoint(_ rect: CGRect, side: Layout.Side, outgoing: Bool) -> CGPoint {
+        if model.layout.presentation == .network {
+            let direction: CGFloat = outgoing ? 1 : -1
+            return CGPoint(x: rect.midX + direction * 22, y: rect.minY + 24)
+        }
+        let right = outgoing ? side == .right : side == .left
+        return CGPoint(x: right ? rect.maxX : rect.minX, y: rect.midY)
+    }
+
+    private func drawNetworkNode(_ context: inout GraphicsContext, node: OverviewGraphNode,
+                                 rect: CGRect, alpha: Double) {
+        let worker = isWorker(node.id)
+        let orb = nodeOrb(in: rect, side: .right, worker: worker)
+        var c = context
+        c.opacity = alpha * light(node.id) * presence(node)
+        drawOrb(&c, center: orb.center, radius: orb.radius, accent: providerColor(node.provider),
+                node: node, worker: worker)
+        drawRing(&c, center: orb.center, radius: orb.radius, node: node, worker: worker)
+        if camera.scale >= GraphCamera.networkCaptionScale, let label = c.resolveSymbol(id: "label." + node.id) {
+            let height: CGFloat = worker ? 46 : 62
+            c.draw(label, in: CGRect(x: rect.minX, y: rect.minY + 48, width: rect.width, height: height))
+        }
+        if model.unseen.contains(node.id) {
+            c.fill(Self.circle(CGPoint(x: orb.center.x + orb.radius, y: orb.center.y - orb.radius), 3),
+                   with: .color(unseen))
+        }
+        if model.selectedID == node.id {
+            c.stroke(Self.circle(orb.center, orb.radius + 7), with: .color(.accentColor.opacity(0.25)), lineWidth: 6)
+            c.stroke(Self.circle(orb.center, orb.radius + 7), with: .color(.accentColor), lineWidth: 2)
         }
     }
 
@@ -771,8 +844,12 @@ private struct GraphPainter {
             for id in hub.sessionIDs where model.nodes[id]?.activity == .working {
                 guard let (rect, alpha) = frame(of: id) else { continue }
                 let side = nodeSide(id)
-                let start = CGPoint(x: center.x + side.sign * Layout.Metrics.hubDiameter / 2, y: center.y)
-                let end = CGPoint(x: side == .right ? rect.minX : rect.maxX, y: rect.midY)
+                let destination = CGPoint(x: rect.midX, y: rect.minY + 24)
+                let network = model.layout.presentation == .network
+                let start = network ? boundary(center, toward: destination, radius: Layout.Metrics.hubDiameter / 2)
+                    : CGPoint(x: center.x + side.sign * Layout.Metrics.hubDiameter / 2, y: center.y)
+                let end = network ? boundary(destination, toward: center, radius: 22)
+                    : edgePoint(rect, side: side, outgoing: false)
                 drawSparks(&sparks, from: start, to: end, color: accent, seed: id,
                            alpha: min(alpha, hubAlpha) * min(light(id), light("hub:" + hub.id)), time: time)
             }
@@ -781,8 +858,7 @@ private struct GraphPainter {
             guard let parent = model.nodes[edge.from],
                   let (from, fromAlpha) = frame(of: edge.from), let (to, toAlpha) = frame(of: edge.to) else { continue }
             let side = nodeSide(edge.to)
-            let start = CGPoint(x: side == .right ? from.maxX : from.minX, y: from.midY)
-            let end = CGPoint(x: side == .right ? to.minX : to.maxX, y: to.midY)
+            let (start, end) = familyEndpoints(from, to: to, side: side)
             drawSparks(&sparks, from: start, to: end, color: providerColor(parent.provider), seed: edge.to,
                        alpha: min(fromAlpha, toAlpha) * min(light(edge.from), light(edge.to)), time: time)
         }
@@ -804,7 +880,7 @@ private struct GraphPainter {
             var c = world
             c.opacity = alpha * light(id)
             let worker = isWorker(id)
-            let (center, radius) = Self.orb(in: rect, side: nodeSide(id), worker: worker)
+            let (center, radius) = nodeOrb(in: rect, side: nodeSide(id), worker: worker)
             if node.activity == .working {
                 // A comet: the head, then two fading lengths of tail.
                 let ring = radius + (worker ? 3 : 4)
@@ -820,7 +896,10 @@ private struct GraphPainter {
             } else {
                 // Waiting on you: a slow amber breath the eye finds first.
                 let breath = 0.5 - 0.5 * cos(time * 2 * .pi / 2.4)
-                strokeGlow(&c, rect: rect, strength: 0.45 + 0.55 * breath)
+                let glowRect = model.layout.presentation == .network
+                    ? CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+                    : rect
+                strokeGlow(&c, rect: glowRect, strength: 0.45 + 0.55 * breath)
             }
         }
     }
@@ -839,7 +918,13 @@ private struct GraphPainter {
         let count = length > 180 ? 3 : 2
         for index in 0..<count {
             let t = (time / period + offset + Double(index) / Double(count)).truncatingRemainder(dividingBy: 1)
-            let at = Self.point(on: start, end, at: CGFloat(t))
+            let at: CGPoint
+            if model.layout.presentation == .network {
+                at = CGPoint(x: start.x + (end.x - start.x) * CGFloat(t),
+                             y: start.y + (end.y - start.y) * CGFloat(t))
+            } else {
+                at = Self.point(on: start, end, at: CGFloat(t))
+            }
             let strength = sin(Double.pi * t) * alpha
             context.fill(Self.circle(at, 6), with: .color(color.opacity((dark ? 0.24 : 0.16) * strength)))
             context.fill(Self.circle(at, 2.4), with: .color(color.opacity(strength)))
@@ -934,6 +1019,23 @@ struct GraphGlyph: Hashable {
 }
 
 /// A node's words: its title, and under a session's its state line.
+/// Network keeps the map's title and state details under a circular glyph.
+struct GraphNetworkNodeLabel: View {
+    let node: OverviewGraphNode
+    let caption: GraphCaption?
+    let worker: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            GraphNodeLabel(node: node, caption: caption, side: .right, worker: worker)
+            Text([node.project ?? "No folder", node.provenance].compactMap { $0 }.joined(separator: " · "))
+                .font(.system(size: 9)).foregroundStyle(.secondary)
+                .lineLimit(1).truncationMode(.tail)
+        }
+        .frame(width: worker ? 116 : 160, height: worker ? 46 : 62, alignment: .topLeading)
+    }
+}
+
 struct GraphNodeLabel: View {
     let node: OverviewGraphNode
     let caption: GraphCaption?

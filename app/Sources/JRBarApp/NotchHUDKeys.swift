@@ -554,9 +554,36 @@ final class HUDKeyMonitor {
         pendingReads = [:]
     }
 
-    /// A tap the window server timed out comes back disabled — wake it.
-    private func reenable() {
-        if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+    /// How the tap is asked back on, and whether it is. A seam for tests.
+    var tapControl = EventTapHealth.Control.system
+
+    /// A tap the window server timed out comes back disabled — wake it. When
+    /// the system will not (the Accessibility grant was pulled), the tap is
+    /// taken down so the monitor is honestly not live, and the next
+    /// `start()` or the app becoming active again asks for a new one.
+    func reenable() {
+        guard let tap else { return }
+        if EventTapHealth.reenable(tap, control: tapControl) { return }
+        NotchHUD.log.error("media keys: the system turned the tap off and would not turn it back on — the capsules stay off until a tap can be made again")
+        stop()
+        CFMachPortInvalidate(tap)
+    }
+
+    /// Whether a tap stands. False after a refused re-enable, or while the
+    /// notch has the capsules off.
+    var tapLive: Bool { tap != nil }
+
+    /// The person came back to the app: if the capsules are wanted and the
+    /// tap is down, ask for it again.
+    func reviveIfWanted() {
+        guard tap == nil, isAllowed() else { return }
+        start()
+    }
+
+    init() {
+        EventTapRevival.shared.register(self, key: "media-keys",
+                                        isLive: { $0.tapLive },
+                                        revive: { $0.reviveIfWanted() })
     }
 
     /// One decoded key-down: schedule the read that lands after the OS

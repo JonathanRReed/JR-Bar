@@ -157,7 +157,7 @@ struct ScreenBarSensorDotsTests {
         let meter = ScreenBarWingSlot(text: "42%", provider: "codex", meter: 0.42)
         let dressed = ScreenBarWings.withSensors(Self.both, on: ScreenBarWings(right: meter))
         #expect(dressed.right?.sensors == Self.both)
-        #expect(dressed.right?.meter == 0.42, "the mark stays; the dots sit beside it")
+        #expect(dressed.right?.meter == 0.42, "the mark stays with its privacy dots")
         #expect(dressed.right?.text == "42% · camera and microphone in use")
         let alone = ScreenBarWings.withSensors(Self.camera, on: .empty)
         #expect(alone.right?.sensors == Self.camera)
@@ -197,15 +197,17 @@ struct ScreenBarSensorDotsTests {
     }
 
     @Test func aDotsOnlyEarDrawsOnTheNotchedFlank() throws {
-        let view = ScreenBarView(frame: NSRect(x: 0, y: 0, width: 500, height: 48))
+        let view = ScreenBarView(frame: NSRect(x: 0, y: 0, width: 500, height: 64))
         view.wingGeometry = ScreenBarWingGeometry(
             notchWidth: 185, notchDepth: 32, bandSpan: 500,
-            leftExtent: 0, rightExtent: 60)
+            leftExtent: 132, rightExtent: 132)
         view.wings = ScreenBarWings.withSensors(Self.camera, on: .empty)
         view.relayout()
         let ear = try #require(view.rightWingRect)
-        #expect(ear.width == 17)
+        #expect(ear.width == 19)
         #expect(ear.width >= ScreenBarView.minimumEarWidth)
-        #expect(view.leftWingRect == nil)
+        #expect(view.leftWingRect?.width == ear.width)
+        #expect(ear.height == ScreenBarGeometry.wingSeatHeight)
+        #expect(ear.midY == view.bounds.height - 16)
     }
 }

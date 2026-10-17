@@ -50,6 +50,64 @@ def _retention(*policies):
     )
 
 
+def test_graph_skips_nonfinite_and_unrepresentable_timestamps() -> None:
+    text = "".join(
+        _line("claude", "weekly", 40.0, epoch)
+        for epoch in (float("nan"), float("inf"), -1.0, 1e300, 10**400)
+    )
+    text += _line("claude", "weekly", 71.0, NOW_EPOCH)
+    model = percent_graph_model(text, days=1, provider_ids=("claude",), now=NOW)
+    assert model["series"][0]["values"] == (71.0,)
+
+
+def test_invalid_observation_clock_keeps_deduplication_state_unchanged() -> None:
+    previous = {("claude", "default", "weekly"): (71.0, NOW_EPOCH)}
+    for epoch in (float("nan"), float("inf"), -1.0):
+        fresh, updated = filter_new_observations(
+            previous,
+            [("claude", "default", "weekly", 60.0)],
+            now_epoch=epoch,
+        )
+        assert fresh == []
+        assert updated == previous
+
+
+def test_unchanged_retention_prunes_expired_rows_without_live_readings(
+    monkeypatch, tmp_path
+) -> None:
+    target = tmp_path / "usage-percent-history.jsonl"
+    target.write_text(_line("claude", "weekly", 71.0, NOW_EPOCH))
+    retention = _retention(("claude", "default", 7))
+    clock = [NOW_EPOCH]
+    controller = SimpleNamespace()
+    monkeypatch.setattr(
+        "jrbar.usage_percent_history.default_percent_history_path", lambda: target
+    )
+    monkeypatch.setattr("jrbar.usage_percent_history.time.time", lambda: clock[0])
+
+    writer = SerialPersistenceWriter()
+    assert record_state_observations(
+        controller, (), writer=writer, retention_projection=retention
+    ) is True
+    assert writer.close(timeout_seconds=1.0)
+    assert target.read_text()
+
+    clock[0] += 60
+    writer = SerialPersistenceWriter()
+    assert record_state_observations(
+        controller, (), writer=writer, retention_projection=retention
+    ) is None
+    assert writer.close(timeout_seconds=1.0)
+
+    clock[0] += 8 * 86_400
+    writer = SerialPersistenceWriter()
+    assert record_state_observations(
+        controller, (), writer=writer, retention_projection=retention
+    ) is True
+    assert writer.close(timeout_seconds=1.0)
+    assert target.read_text() == ""
+
+
 def test_filter_records_first_sight_and_movement_only__and_2_more() -> None:
     # --- scenario: filter_records_first_sight_and_movement_only
     fresh, updated = filter_new_observations(
@@ -181,6 +239,39 @@ def test_graph_model_charts_every_provider_with_history__and_1_more() -> None:
     assert by_identity[("claude", "work")]["label"] == "claude · work"
     assert by_identity[("claude", "work")]["values"] == (60.0, 60.0, 30.0)
 
+
+
+def test_percent_graph_carries_each_profiles_prior_reading_across_ranges() -> None:
+    day = 86_400.0
+    text = "".join(
+        (
+            _line("claude", "weekly", 10.0, NOW_EPOCH - 10 * day),
+            _line("claude", "weekly", 42.0, NOW_EPOCH - 7 * day),
+            _line("claude", "weekly", 80.0, NOW_EPOCH - 8 * day,
+                  source_instance_id="work"),
+            _line("claude", "weekly", 30.0, NOW_EPOCH - 2 * day,
+                  source_instance_id="new"),
+            _line("claude", "weekly", 5.0, NOW_EPOCH + day,
+                  source_instance_id="future"),
+        )
+    )
+    models = {
+        days: {
+            series["source_instance_id"]: series["values"]
+            for series in percent_graph_model(
+                text, days=days, provider_ids=("claude",), now=NOW
+            )["series"]
+        }
+        for days in (7, 30)
+    }
+    assert models[7]["default"] == (42.0,) * 7
+    assert models[7]["work"] == (80.0,) * 7
+    assert models[7]["new"] == (-1.0,) * 4 + (30.0,) * 3
+    assert "future" not in models[7]
+    assert "future" not in models[30]
+    assert models[7] == {
+        identity: values[-7:] for identity, values in models[30].items()
+    }
 
 
 def test_append_writes_private_jsonl__and_2_more(tmp_path) -> None:
@@ -469,3 +560,28 @@ def test_newer_sample_is_ordered_behind_a_pending_append(monkeypatch, tmp_path) 
         ][0]
         == 68.0
     )
+
+
+def test_a_stale_reading_is_not_recorded_as_a_new_observation(monkeypatch, tmp_path) -> None:
+    controller = SimpleNamespace()
+    snapshots = (
+        SimpleNamespace(
+            provider_id="claude",
+            source_instance_id="default",
+            state=SimpleNamespace(value="stale"),
+            lanes=(SimpleNamespace(lane_id="weekly", remaining_percent=71.0),),
+        ),
+        SimpleNamespace(
+            provider_id="codex",
+            source_instance_id="default",
+            state=SimpleNamespace(value="ready"),
+            lanes=(SimpleNamespace(lane_id="weekly", remaining_percent=40.0),),
+        ),
+    )
+    target = tmp_path / "usage-percent-history.jsonl"
+    monkeypatch.setattr("jrbar.usage_percent_history.default_percent_history_path", lambda: target)
+    writer = SerialPersistenceWriter()
+    assert record_state_observations(controller, snapshots, writer=writer) is True
+    assert writer.close(timeout_seconds=1.0) is True
+    stored = [json.loads(line) for line in target.read_text().splitlines()]
+    assert [row["provider_id"] for row in stored] == ["codex"]

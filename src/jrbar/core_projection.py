@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Any, Final
 
 from .activity_model import session_axes
+from .ask_lifetime import ASK_MAY_BE_STALE_SECONDS, AskStanding, ask_standing
 from .completion_visibility import (
     COMPLETED_VISIBLE_SECONDS,
     END_EVENT_NAMES,
@@ -25,6 +26,7 @@ from .completion_visibility import (
     filter_visible_sessions,
 )
 from .models import AgentMode
+from .provider_facts import WorkKey
 
 PROTOCOL_VERSION: Final = 1
 SETTINGS_SCHEMA: Final = 3
@@ -72,6 +74,12 @@ TERMINAL_APPS: Final = {
     "windsurf": ("Windsurf", "com.exafunction.windsurf"),
     "claude": ("Claude", "com.anthropic.claudefordesktop"),
     "codex": ("Codex", "com.openai.codex"),
+    # The Codex desktop app ships inside ChatGPT.app: its main process is
+    # ``ChatGPT`` and the ``codex app-server`` that runs its threads is a
+    # child of it, so a thread's ancestry ends at an executable that is not
+    # named after Codex.
+    "chatgpt": ("Codex", "com.openai.codex"),
+    "cmux": ("cmux", "com.cmuxterm.app"),
 }
 TERMINAL_BUNDLE_IDS: Final = frozenset(bundle for _name, bundle in TERMINAL_APPS.values())
 
@@ -131,13 +139,6 @@ _DISPLAY_KIND_WHY: Final = {
     "signal_test": "preview",
     "peek": "preview",
 }
-# brightness_policy trace step names -> ``why_detail.dimming`` words.
-_DIMMING_STEPS: Final = {
-    "idle_dim": "idle_dim",
-    "sleep_dim": "sleep",
-    "dnd_dim": "quiet",
-    "night_dim": "auto_dim",
-}
 # ``usage.providers[].windows[].name``: the short form the panel shows,
 # keyed by the lane id the provider usage lanes carry.
 USAGE_WINDOW_NAMES: Final = {
@@ -172,6 +173,8 @@ _LEDGER_KINDS: Final = {
     "asked": "asked",
     "blocked": "failed",
     "threshold_crossed": "quota_crossed",
+    "capacity_limited": "quota_crossed",
+    "expired": "ask_expired",
 }
 
 
@@ -218,6 +221,7 @@ class SurfaceFacts:
     #: number -- the one the owner is looking at. Last in the field order on
     #: purpose: every existing positional caller keeps its meaning.
     brightness_policy: float | None = None
+    strip_transfer: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -502,6 +506,15 @@ def terminal_from_command(command: str | None) -> tuple[str, str] | None:
         ("windsurf.app", ("Windsurf", "com.exafunction.windsurf")),
         ("claude.app", ("Claude", "com.anthropic.claudefordesktop")),
         ("codex.app", ("Codex", "com.openai.codex")),
+        # Codex's own helpers (``Codex (Renderer).app``) and the bundled CLI
+        # (``CodexCLI.app``) all live inside ChatGPT.app.
+        ("chatgpt.app", ("Codex", "com.openai.codex")),
+        # Devin for Desktop is a Windsurf build and keeps its bundle id.
+        ("devin.app", ("Devin", "com.exafunction.windsurf")),
+        # ``T3 Code (Nightly).app`` and its siblings (Alpha, dev).
+        ("t3 code", ("T3 Code", "com.t3tools.t3code")),
+        ("cmux.app", ("cmux", "com.cmuxterm.app")),
+        ("antigravity.app", ("Antigravity", "com.google.antigravity")),
     ):
         if token in lowered:
             return value
@@ -533,15 +546,10 @@ def lifecycle_for_mode(
     completion the collector merely *inferred* from something that was not
     an end event.
 
-    **A living process is never over.** ``ended_unconfirmed`` was invented
-    for "probably over, nobody said so", back when a silence timer was the
-    only evidence there was. It is not any more: when
-    ``process_alive is True`` the registry has just seen the agent's own
-    process in the table, and a session cannot be both running and ended.
-    Such a row reads ``active`` -- or ``stale`` once its information is old
-    enough for the collector to say so -- and never ``ended``, and never
-    ``completed`` either, because being alive is not a finish. A long tool
-    run that says nothing for twenty minutes is the ordinary case here.
+    A live process can recover a silence-inferred ``ended_unconfirmed``
+    row to ``active`` or ``stale``. This keeps a quiet tool run visible.
+    ``session_document`` preserves an explicitly stopped turn whose
+    canonical next actor is none, even if its process remains alive.
 
     ``event_name`` of ``None`` means the caller has no event to judge by;
     ``provider_ended`` of ``None`` means the process registry had nothing
@@ -928,6 +936,9 @@ def ask_document(
     decision_lane: object = None,
     ask_previews: object = None,
     operator_index: _OperatorIndex | None = None,
+    now: float | None = None,
+    stale_after_seconds: float = ASK_MAY_BE_STALE_SECONDS,
+    process_alive: bool | None = None,
 ) -> dict[str, Any]:
     request = _request_for_status(operator_state, status, operator_index)
     kind = getattr(getattr(request, "request_kind", None), "value", None)
@@ -946,8 +957,13 @@ def ask_document(
     parked = None
     preview: str | None = None
     risk: str | None = None
+    detail: dict[str, Any] | None = None
     if request is not None:
-        from .answer_decisions import ask_preview_for_request, parked_decision_for_request
+        from .answer_decisions import (
+            ask_detail_for_request,
+            ask_preview_for_request,
+            parked_decision_for_request,
+        )
 
         parked = parked_decision_for_request(request, decision_lane)
         if parked is not None and not parked.decided:
@@ -958,6 +974,9 @@ def ask_document(
             # still what is running, so it comes from the PermissionRequest
             # the ingress saw for that exact request id, as for any ask.
             preview, risk = ask_preview_for_request(request, ask_previews)  # type: ignore[arg-type]
+        # The expanded card's extra facts always come from the
+        # PermissionRequest the ingress saw, held or not.
+        detail = ask_detail_for_request(request, ask_previews)  # type: ignore[arg-type]
     decided = parked is not None and parked.decided
     if decided:
         # Answered from JR-Bar: the agent's own events have not closed the
@@ -991,9 +1010,28 @@ def ask_document(
             request_identity = str(announcer_alert_identity(request_key).value)
         except Exception:
             request_identity = None
+    # An ask nobody has touched for ``stale_after_seconds`` is still an ask,
+    # and still on every surface; it says it may be stale and offers Dismiss
+    # (``ask_lifetime``). Both times are the Mac's own: when the request
+    # opened and the newest thing its session said.
+    last_activity_at = epoch(getattr(status, "updated_at", None))
+    may_be_stale = now is not None and (
+        ask_standing(
+            opened_at_epoch=opened_at,
+            last_activity_epoch=last_activity_at,
+            now_epoch=float(now),
+            process_alive=process_alive is True,
+            stale_after_seconds=stale_after_seconds,
+        )
+        is not AskStanding.CURRENT
+    )
+    remote_ask = str(getattr(status, "agent_id", "") or "").startswith("remote:")
     document: dict[str, Any] = {
         "kind": kind,
         "opened_at": opened_at,
+        "last_activity_at": last_activity_at,
+        "stale": may_be_stale,
+        "dismissible": may_be_stale and not remote_ask,
         "summary": summary if isinstance(summary, str) else None,
         "answerable": answerable,
         "replyable": replyable,
@@ -1009,6 +1047,9 @@ def ask_document(
         # saw for this exact request id.
         "preview": preview,
         "risk": risk,
+        # What the card adds when the person expands it: the whole command,
+        # a file edit's size, a plan. Null when the line says it all.
+        "detail": detail,
     }
     if with_session:
         document = {"session": getattr(status, "agent_id", None), **document}
@@ -1029,6 +1070,8 @@ def session_document(
     has_answer_handler: object = None,
     acknowledged: bool = False,
     operator_index: _OperatorIndex | None = None,
+    now: float | None = None,
+    ask_stale_after_seconds: float = ASK_MAY_BE_STALE_SECONDS,
 ) -> dict[str, Any]:
     mode = getattr(status, "mode", AgentMode.UNKNOWN)
     if not isinstance(mode, AgentMode):
@@ -1038,7 +1081,7 @@ def session_document(
     is_subagent = bool(getattr(status, "is_subagent", False))
     work = _work_for_status(operator_state, status, operator_index)
     next_actor = getattr(getattr(work, "next_actor", None), "value", None)
-    if next_actor in (None, "unknown", "none"):
+    if next_actor is None:
         next_actor = (
             "user"
             if mode in (AgentMode.WAITING_FOR_INPUT, AgentMode.COMPLETED, AgentMode.BLOCKED_ERROR)
@@ -1079,6 +1122,11 @@ def session_document(
         process_alive=process_alive,
         provider_ended=provider_ended,
     )
+    # A provider-reported stop with no next actor is over even while its
+    # process stays open. Only a silence-inferred end can recover from
+    # process liveness.
+    if mode is AgentMode.ENDED_UNCONFIRMED and next_actor == "none":
+        lifecycle = "ended"
     # ``mode`` travels beside ``lifecycle`` and the app reads whichever is
     # more definite; a run demoted to ``ended`` must not still say
     # ``completed`` or it renders as Done with a green check.
@@ -1134,6 +1182,9 @@ def session_document(
                 has_answer_handler=has_answer_handler,
                 host_bundle_ids=_extras_host_bundle_ids(extras),
                 operator_index=operator_index,
+                now=now,
+                stale_after_seconds=ask_stale_after_seconds,
+                process_alive=process_alive,
             )
             if agent_id in ask_ids
             else None
@@ -1157,11 +1208,18 @@ def session_document(
             acknowledged=acknowledged,
         ),
     }
+    work_key = getattr(status, "work_key", None)
+    if type(work_key) is WorkKey and work_key.source_key.adapter_id == "t3code":
+        document["source_integration"] = "t3code"
     if workers_waiting is not None and not is_subagent:
         # Beside ``workers``: how many of them wait on a request that stays
         # quiet. Only a main row says it, and a caller that cannot tell leaves
         # it out so the app shows nothing rather than a false zero.
         document["workers_waiting"] = max(0, int(workers_waiting))
+    cause = getattr(getattr(status, "terminal_cause", None), "value", None)
+    if cause in {"claude_rate_limit", "codex_usage_limit"}:
+        document["terminal_cause"] = cause
+
     return document
 
 
@@ -1209,7 +1267,8 @@ def _snapshot_has_quota_source(snapshot: object) -> bool:
 def _is_detail_lane(lane: object) -> bool:
     from .provider_usage_parsers import DETAIL_LANE_IDS
 
-    return getattr(lane, "lane_id", None) in DETAIL_LANE_IDS
+    return (getattr(lane, "lane_id", None) in DETAIL_LANE_IDS
+            or (getattr(lane, "provider_id", None) == "factory" and getattr(lane, "scope", None) == "core"))
 
 
 def usage_document(
@@ -1217,6 +1276,7 @@ def usage_document(
     *,
     usage_samples: object = None,
     now: float | None = None,
+    privacy_mode: bool | None = None,
 ) -> dict[str, Any] | None:
     """``state.usage``. With a ``UsageSampleBuffer`` the primary window of
     each provider gets a ``forecast``; without one it stays null."""
@@ -1262,6 +1322,8 @@ def usage_document(
                         used_pct=used_pct,
                         resets_at=reset,
                         now=now,
+                        instance=getattr(snapshot, "source_instance_id", None),
+                        account_discriminator=getattr(snapshot, "account_discriminator", None),
                     )
                 except Exception:
                     window_forecast = None
@@ -1387,6 +1449,7 @@ def usage_document(
             }
         )
     return {
+        **({"privacy_mode": privacy_mode} if privacy_mode is not None else {}),
         "refreshed_at": epoch(getattr(usage_state, "refreshed_at", None)),
         "next_refresh_at": epoch(getattr(usage_state, "next_refresh_at", None)),
         "refreshing": bool(getattr(usage_state, "refreshing", False)),
@@ -1406,7 +1469,7 @@ _FOCUS_SOURCE_WORDS = {
 }
 
 
-def focus_document(dnd_projection: object, *, override_until: object = None) -> dict[str, Any]:
+def focus_document(dnd_projection: object, *, override_until: object = None, override_revision: str | None = None) -> dict[str, Any]:
     """``state.focus``: the quiet state in the words the panel reads.
 
     ``mode`` is the active quiet mode (``pause``, ``dim``, ``mute``,
@@ -1446,6 +1509,7 @@ def focus_document(dnd_projection: object, *, override_until: object = None) -> 
     else:
         until = next_transition
     return {
+        **({"override_revision": override_revision} if override_revision is not None else {}),
         "mode": mode or "off",
         "source": _FOCUS_SOURCE_WORDS.get(source, source) if source else None,
         "until": until,
@@ -1478,6 +1542,8 @@ def project_session_rows(
     has_answer_handler: object = None,
     acknowledged_keys: object = (),
     quiet_worker_ids: frozenset[str] | None = None,
+    now: float | None = None,
+    ask_stale_after_seconds: float = ASK_MAY_BE_STALE_SECONDS,
 ) -> tuple[list[dict[str, Any]], frozenset[str]]:
     """Every session the snapshot knows, projected — before panel visibility.
 
@@ -1544,6 +1610,8 @@ def project_session_rows(
             has_answer_handler=has_answer_handler,
             acknowledged=agent_id in acknowledged_at_by_id,
             operator_index=operator_index,
+            now=now,
+            ask_stale_after_seconds=ask_stale_after_seconds,
         )
         labels_by_id[agent_id] = document["label"]
         documents_by_id[agent_id] = document
@@ -1570,15 +1638,18 @@ def build_state_document(
     peers: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
     deck: dict[str, Any] | None = None,
     usage_samples: object = None,
+    usage_privacy_mode: bool | None = None,
     acknowledged_keys: object = (),
     snoozed_until_by_id: dict[str, float] | None = None,
     dnd_override_until: object = None,
+    dnd_override_revision: str | None = None,
     answer_contracts: object = None,
     has_answer_handler: object = None,
     detected_agents: Mapping[str, bool] | None = None,
     catalog_generation: int | None = None,
     provider_updates: Mapping[str, Mapping[str, Any]] | None = None,
     quiet_worker_ids: frozenset[str] | None = None,
+    ask_stale_after_seconds: float = ASK_MAY_BE_STALE_SECONDS,
 ) -> dict[str, Any]:
     """The full ``state`` frame. ``snapshot`` is a MonitorSnapshot-shaped
     object; ``deck`` is ``core_deck.build_deck_document``'s ``state.deck``;
@@ -1601,6 +1672,8 @@ def build_state_document(
         has_answer_handler=has_answer_handler,
         acknowledged_keys=acknowledged_keys,
         quiet_worker_ids=quiet_worker_ids,
+        now=now,
+        ask_stale_after_seconds=ask_stale_after_seconds,
     )
     extras_by_id = extras_by_id or {}
     # An ask is the loudest thing the panel can show, so visibility never
@@ -1633,6 +1706,13 @@ def build_state_document(
                 extras_by_id.get(str(getattr(status, "agent_id", "") or ""))
             ),
             operator_index=ask_operator_index,
+            now=now,
+            stale_after_seconds=ask_stale_after_seconds,
+            process_alive=getattr(
+                extras_by_id.get(str(getattr(status, "agent_id", "") or "")),
+                "process_alive",
+                None,
+            ),
         )
         for status in ask_statuses
         if str(getattr(status, "agent_id", "") or "") in listed_ids
@@ -1658,7 +1738,8 @@ def build_state_document(
         "hidden_count": int(hidden_count),
         "asks": asks,
         "devices": [device_document(device) for device in devices],
-        "usage": usage_document(usage_state, usage_samples=usage_samples, now=now),
+        "usage": usage_document(usage_state, usage_samples=usage_samples, now=now,
+                                privacy_mode=usage_privacy_mode),
         "power": {
             "keep_awake": bool(power.keep_awake),
             "closed_lid": {
@@ -1667,7 +1748,7 @@ def build_state_document(
                 "helper_installed": bool(power.helper_installed),
             },
         },
-        "focus": focus_document(dnd_projection, override_until=dnd_override_until),
+        "focus": focus_document(dnd_projection, override_until=dnd_override_until, override_revision=dnd_override_revision),
         "escalation": {
             "stage": escalation_stage_name(escalation.stage),
             "since": epoch(escalation.since),
@@ -1764,6 +1845,7 @@ def build_lights_document(
             "override",
             "role",
             "why_detail",
+            "strip_transfer",
         ):
             value = getattr(facts, key)
             if value is not None:
@@ -1775,7 +1857,7 @@ def build_lights_document(
 #: Keys the daemon adds to the settings document that no settings file
 #: carries: facts about the daemon, not preferences. ``set_setting`` on one
 #: replies ``read_only``; ``reset_settings`` ignores it.
-READ_ONLY_SETTINGS: Final = frozenset({"cloud_ingest_token_path"})
+READ_ONLY_SETTINGS: Final = frozenset({"cloud_ingest_token_path", "settings_seal", "scene_state"})
 
 
 def build_settings_document(
@@ -1798,7 +1880,8 @@ def build_settings_document(
     }
 
 
-def history_rows(ledger: object, *, since: float | None = None, limit: int = 500) -> list[dict[str, Any]]:
+def history_rows(ledger: object, *, since: float | None = None, limit: int = 500,
+                 instance_visual: object = None, privacy_mode: bool = True) -> list[dict[str, Any]]:
     """``list_history`` rows from an ActivityLedger-shaped object, newest first."""
     last_seen = float(getattr(ledger, "last_seen_epoch", 0.0) or 0.0)
     rows: list[dict[str, Any]] = []
@@ -1819,6 +1902,15 @@ def history_rows(ledger: object, *, since: float | None = None, limit: int = 500
                 "unseen": at > last_seen,
             }
         )
+        instance = getattr(entry, "source_instance_id", None)
+        if instance is not None:
+            from .provider_event_identity import instance_event_label
+
+            rows[-1]["instance"] = instance
+            caption = instance_event_label(instance_visual, getattr(entry, "provider", ""),
+                                           instance, privacy_mode=privacy_mode)
+            if caption is not None:
+                rows[-1]["instance_label"] = caption
     rows.sort(key=lambda row: row["at"], reverse=True)
     return rows[: max(0, int(limit))]
 

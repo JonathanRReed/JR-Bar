@@ -139,15 +139,6 @@ class DndOverride:
     ) -> DndOverride:
         return cls(mode, False, created_epoch, until_epoch)
 
-    @classmethod
-    def for_resume(
-        cls,
-        *,
-        created_epoch: float,
-        until_epoch: float,
-    ) -> DndOverride:
-        return cls(None, True, created_epoch, until_epoch)
-
     def active_at(self, epoch: float) -> bool:
         now = _finite_epoch(epoch)
         return now is not None and self.created_epoch <= now < self.until_epoch

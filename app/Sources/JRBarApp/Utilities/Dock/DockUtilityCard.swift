@@ -8,7 +8,7 @@ extension DockUtility: Toy {
     var id: String { "dock" }
     var name: String { "Dock" }
     var blurb: String {
-        "Rest on a Dock icon to see that app's windows — click one to raise it, close or minimize from the card."
+        "Dock window previews, folder browsing, and app switching."
     }
     var symbol: String { "dock.rectangle" }
 
@@ -41,6 +41,7 @@ struct DockUtilityControls: View {
     @ViewState private var installed: [DockInstalledApps.App] = []
     @ViewState private var showPreviewOptions = false
     @ViewState private var showExclusions = false
+    @ViewState private var showSwitcherExclusions = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -57,7 +58,7 @@ struct DockUtilityControls: View {
                     .fixedSize()
             } label: {
                 SettingLabel(title: "Render with",
-                             subtitle: "Hand the previews to DockDoor (free) or ActiveDock (paid); ours park while the pick stands. The switcher has its own pick below.")
+                             subtitle: "Preview provider. Choosing DockDoor or ActiveDock pauses JR-Bar previews. The app switcher has a separate provider.")
             }
             if let note = utility.providerNote {
                 providerNote(note, symbol: "arrow.triangle.2.circlepath",
@@ -69,8 +70,9 @@ struct DockUtilityControls: View {
             CardSectionHeader("Previews")
             Toggle(isOn: hoverPreviews) {
                 SettingLabel(title: "Hover previews",
-                             subtitle: "Apple's Dock stays. Rest on an icon and its windows appear beside the Dock — click a card to raise it, ⌥-click to keep the preview up.")
+                             subtitle: "App previews show windows; folder previews show files. Selecting a window raises it. Option-click keeps the preview open.")
             }
+            .help("Browse folders in place. If a read fails, Retry reads the same folder again without closing the preview.")
             LabeledContent {
                 Picker(selection: previewTrigger) {
                     Text("Hover").tag(DockPreviewTrigger.hover)
@@ -82,7 +84,7 @@ struct DockUtilityControls: View {
                     .fixedSize()
             } label: {
                 SettingLabel(title: "Open previews on",
-                             subtitle: "A rest on the icon, a rest with Option held, or a middle click — for anyone who finds hover panels noisy.")
+                             subtitle: "Previews open on hover, Option-hover or middle-click.")
             }
             .disabled(!ownPreviews)
             LabeledContent {
@@ -181,6 +183,13 @@ struct DockUtilityControls: View {
             } label: {
                 SettingLabel(title: "Card faces",
                              subtitle: "Each window's still, or its app's icon — icons never capture, so the recording dot stays off.")
+            }
+            .disabled(!ownSwitcher)
+            DisclosureGroup(isExpanded: $showSwitcherExclusions) {
+                exclusionList(switcherExclusions, restore: "Show in the switcher again")
+            } label: {
+                SettingLabel(title: "Never switch to",
+                             subtitle: "Exclude apps from both ⌥⇥ and ⌘⇥. Their Dock previews stay available.")
             }
             .disabled(!ownSwitcher)
             let learned = utility.settings().enhance.learnedPicks.count
@@ -347,7 +356,12 @@ struct DockUtilityControls: View {
     /// The apps that never open a preview, each with its way back, and
     /// the menu that adds one — running apps first, installed ones under.
     private var exclusionList: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        exclusionList(exclusions, restore: "Preview again")
+    }
+
+    private func exclusionList(_ exclusions: Binding<[String]>, restore: String) -> some View {
+        let filterable = filterableApps(excluded: exclusions.wrappedValue)
+        return VStack(alignment: .leading, spacing: 6) {
             ForEach(exclusions.wrappedValue, id: \.self) { bundleID in
                 HStack(spacing: 6) {
                     Text(appName(for: bundleID))
@@ -360,11 +374,12 @@ struct DockUtilityControls: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Preview \(appName(for: bundleID)) again")
+                    .help("\(restore): \(appName(for: bundleID))")
+                    .accessibilityLabel("\(restore): \(appName(for: bundleID))")
                 }
             }
             Menu {
-                ForEach(filterableApps, id: \.bundleID) { app in
+                ForEach(filterable, id: \.bundleID) { app in
                     Button(app.name ?? "App") {
                         exclusions.wrappedValue.append(app.bundleID!)
                     }
@@ -372,7 +387,7 @@ struct DockUtilityControls: View {
                 // Apps that aren't running right now — an exclusion
                 // shouldn't have to wait for the app to be open.
                 let others = DockInstalledApps.notListed(installed, excluded: exclusions.wrappedValue,
-                                                         running: filterableApps.compactMap(\.bundleID))
+                                                         running: filterable.compactMap(\.bundleID))
                 if !others.isEmpty {
                     Divider()
                     Menu("Other Apps") {
@@ -387,7 +402,7 @@ struct DockUtilityControls: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .disabled(filterableApps.isEmpty && installed.isEmpty)
+            .disabled(filterable.isEmpty && installed.isEmpty)
         }
     }
 
@@ -558,13 +573,17 @@ struct DockUtilityControls: View {
         Binding(get: { utility.enhance.preferences.excludedBundleIDs },
                 set: { utility.enhance.preferences.excludedBundleIDs = $0 })
     }
+    private var switcherExclusions: Binding<[String]> {
+        Binding(get: { utility.enhance.preferences.switcherExcludedBundleIDs },
+                set: { utility.enhance.preferences.switcherExcludedBundleIDs = $0 })
+    }
 
     /// Running regular apps not already excluded — the add menu's pool.
     /// Read from the `RunningApps` index: the card's body asks for it
     /// three times a render, and asking each app was a LaunchServices
     /// round trip apiece.
-    private var filterableApps: [RunningApp] {
-        let excluded = Set(exclusions.wrappedValue)
+    private func filterableApps(excluded bundleIDs: [String]) -> [RunningApp] {
+        let excluded = Set(bundleIDs)
         return RunningApps.shared.apps
             .filter { app in
                 guard app.policy == .regular, let id = app.bundleID else { return false }
@@ -577,7 +596,7 @@ struct DockUtilityControls: View {
     /// installed app's, else the bundle id so an uninstalled filter is
     /// still recognisable.
     private func appName(for bundleID: String) -> String {
-        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.localizedName
+        RunningApps.shared.apps.first(where: { $0.bundleID == bundleID })?.name
             ?? installed.first(where: { $0.bundleID == bundleID })?.name
             ?? bundleID
     }

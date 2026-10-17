@@ -1,4 +1,5 @@
 import CoreVideo
+import Foundation
 import JRBarCore
 import MetalKit
 import Testing
@@ -412,5 +413,52 @@ import Testing
                 if px[i] != 0 { break }
             }
         }
+    }
+}
+
+/// The shaders compile once and off the main thread.
+@Suite struct FoldShaderCacheTests {
+    private final class Record: @unchecked Sendable {
+        let lock = NSLock()
+        var onMain: [Bool] = []
+        let done = DispatchSemaphore(value: 0)
+        func note(_ main: Bool) {
+            lock.lock()
+            onMain.append(main)
+            lock.unlock()
+        }
+    }
+
+    @Test func aSecondAskCompilesNothing() throws {
+        let cache = FoldShaderCache()
+        let record = Record()
+        let real = cache.compile
+        cache.compile = { format in
+            record.note(Thread.isMainThread)
+            return try real(format)
+        }
+        _ = try cache.compiled(pixelFormat: .bgra8Unorm)
+        _ = try cache.compiled(pixelFormat: .bgra8Unorm)
+        _ = try FoldRenderer(pixelFormat: .bgra8Unorm)
+        #expect(record.onMain.count == 1)
+        #expect(cache.compileCount == 1)
+    }
+
+    @Test func prewarmCompilesOffTheMainThread() throws {
+        let cache = FoldShaderCache()
+        let record = Record()
+        let real = cache.compile
+        cache.compile = { format in
+            record.note(Thread.isMainThread)
+            defer { record.done.signal() }
+            return try real(format)
+        }
+        cache.prewarm(pixelFormat: .bgra8Unorm)
+        cache.prewarm(pixelFormat: .bgra8Unorm)
+        // Bounded: a hung compile fails the test instead of hanging it.
+        #expect(record.done.wait(timeout: .now() + 60) == .success)
+        #expect(record.onMain == [false], "one compile, and not on the main thread")
+        _ = try cache.compiled(pixelFormat: .bgra8Unorm)
+        #expect(cache.compileCount == 1, "the renderer's own ask is free afterwards")
     }
 }

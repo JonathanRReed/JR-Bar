@@ -67,8 +67,6 @@ def test_the_scheduler_inputs_say_the_bar_is_off_screen_and_plan_no_timer() -> N
     assert inputs.app_terminating is False
     assert inputs.animation_active is False
     assert inputs.next_visual_change_at is None
-    assert inputs.alcove_enabled is False
-    assert inputs.alcove_relevant is False
 
     plan = plan_presentation_schedule(inputs, now=100.0)
     assert plan.intents == ()
@@ -90,7 +88,6 @@ def test_nothing_the_controller_pushes_turns_the_bar_on() -> None:
     assert bar.set_accessibility_display_preferences(object(), generation=3) is False
     bar.redraw_(None)
     bar.presentationStaticDeadline()
-    bar.presentationAlcoveObservation()
 
     inputs = bar.presentation_scheduler_inputs()
     assert inputs.screen_bar_enabled is False
@@ -177,6 +174,7 @@ def test_the_python_bars_drawing_modules_are_not_packaged() -> None:
         "native_gradient",
         "notch_silhouette",
         "alcove_window_probe",
+        "alcove_observation",
         "screen_bar_runtime",
         "screen_bar_design",
         "screen_bar_profile",

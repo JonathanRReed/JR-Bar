@@ -200,3 +200,24 @@ def test_legacy_creator_micro_enablement_without_identity_fails_closed__and_2_mo
 
     assert target.read_text(encoding="utf-8") == "{not-json"
 
+
+
+def test_an_unreadable_file_is_not_called_newer_and_the_message_names_the_path(tmp_path) -> None:
+    import pytest
+
+    from jrbar.integration_settings import (
+        IntegrationSettings,
+        IntegrationSettingsWriteRefusedError,
+        load_integration_settings,
+        save_integration_settings,
+    )
+
+    target = tmp_path / "integrations.json"
+    target.write_text('{"schema_version":1')  # torn
+    loaded = load_integration_settings(target)
+    with pytest.raises(IntegrationSettingsWriteRefusedError) as raised:
+        save_integration_settings(IntegrationSettings(), target, loaded=loaded)
+    message = str(raised.value)
+    assert "newer" not in message
+    assert str(target) in message and "fix or delete" in message
+    assert target.read_text() == '{"schema_version":1', "the damaged file is left for the person"

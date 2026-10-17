@@ -131,20 +131,53 @@ enum ShelfActions {
             let errors = Pipe()
             process.standardError = errors
             process.standardOutput = FileHandle.nullDevice
+            // Drained while the tool runs, never after: a tool with more
+            // to say than the pipe holds (ditto over a folder of
+            // unreadable files) would block on its write and never exit.
+            // Only the head of what it says is kept, for the message.
+            let said = ToolOutput()
+            errors.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if chunk.isEmpty {
+                    handle.readabilityHandler = nil
+                } else {
+                    said.append(chunk)
+                }
+            }
             process.terminationHandler = { finished in
-                let said = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                errors.fileHandleForReading.readabilityHandler = nil
+                said.append(errors.fileHandleForReading.availableData)
                 if finished.terminationStatus == 0 {
                     continuation.resume()
                 } else {
-                    let why = said.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let why = said.text.trimmingCharacters(in: .whitespacesAndNewlines)
                     continuation.resume(throwing: ActionError.failed(why.isEmpty ? "\(tool) failed" : why))
                 }
             }
             do {
                 try process.run()
             } catch {
+                errors.fileHandleForReading.readabilityHandler = nil
                 continuation.resume(throwing: error)
             }
+        }
+    }
+
+    /// The head of a tool's stderr, safe to append to from the pipe's
+    /// queue and read from the termination handler's.
+    private final class ToolOutput: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        private static let limit = 8 * 1024
+
+        func append(_ chunk: Data) {
+            lock.lock(); defer { lock.unlock() }
+            if data.count < Self.limit { data.append(chunk.prefix(Self.limit - data.count)) }
+        }
+
+        var text: String {
+            lock.lock(); defer { lock.unlock() }
+            return String(decoding: data, as: UTF8.self)
         }
     }
 
@@ -202,7 +235,7 @@ enum ShelfActions {
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
         if onCPU, let cpu = try cpuDevice(for: request) {
-            try request.setComputeDevice(cpu, for: .main)
+            request.setComputeDevice(cpu, for: .main)
         }
         try VNImageRequestHandler(cgImage: image, orientation: up, options: [:]).perform([request])
         let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
@@ -279,7 +312,22 @@ enum ShelfActions {
     nonisolated static func transfer(_ urls: [URL], to folder: URL, move: Bool,
                                      fileManager: FileManager = .default) -> Transfer {
         var result = Transfer()
-        for url in urls {
+        // A moved directory already carries its descendants. Move it
+        // once, regardless of where its children occur in the pick.
+        let directories = urls.filter { url in
+            var isDirectory: ObjCBool = false
+            return fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
+        }.map { $0.standardizedFileURL.path }
+        var seen = Set<String>()
+        let roots = urls.filter { url in
+            let path = url.standardizedFileURL.path
+            guard move else { return true }
+            return seen.insert(path).inserted && !directories.contains { parent in
+                path != parent && path.hasPrefix(parent == "/" ? parent : parent + "/")
+            }
+        }
+        for url in roots {
             let ext = url.pathExtension.isEmpty ? nil : url.pathExtension
             do {
                 let landed = try place(url, in: folder, base: url.deletingPathExtension().lastPathComponent,
@@ -343,21 +391,28 @@ extension ShelfTrayModel {
     }
 
     /// Copy Text: every file's text, joined, on the pasteboard.
-    func copyText(_ entries: [ShelfEntry], to board: NSPasteboard = .general) {
+    @discardableResult
+    func copyText(
+        _ entries: [ShelfEntry], to board: NSPasteboard = .general,
+        reader: @escaping @Sendable ([URL]) async -> ShelfActions.TextRead = { urls in
+            await Task.detached(priority: .userInitiated) { ShelfActions.readTexts(urls) }.value
+        }
+    ) -> Task<Void, Never>? {
+        let boardChangeCount = board.changeCount
         let urls = presentURLs(of: entries).filter(ShelfActions.hasText)
-        guard !urls.isEmpty else { return }
-        Task { [weak self] in
-            let texts = await Task.detached(priority: .userInitiated) {
-                urls.compactMap { try? ShelfActions.text(of: $0) }
-            }.value
-            guard !texts.isEmpty else {
-                self?.actionNotice = urls.count == 1 ? "No text found in \(urls[0].lastPathComponent)"
-                    : "No text found in those files"
-                return
+        guard !urls.isEmpty else { return nil }
+        let token = UUID()
+        latestCopyTextToken = token
+        return Task { [weak self] in
+            let read = await reader(urls)
+            guard let self, self.latestCopyTextToken == token,
+                  board.changeCount == boardChangeCount else { return }
+            if !read.texts.isEmpty {
+                board.clearContents()
+                board.setString(read.texts.joined(separator: "\n\n"), forType: .string)
             }
-            board.clearContents()
-            board.setString(texts.joined(separator: "\n\n"), forType: .string)
-            self?.actionNotice = texts.count == 1 ? "Copied the text" : "Copied the text of \(texts.count) files"
+            self.actionNotice = ShelfActions.copyTextNotice(read, fileCount: urls.count,
+                                                             firstName: urls.first?.lastPathComponent)
         }
     }
 
@@ -477,5 +532,47 @@ struct ShelfActionMenuItems: View {
         case .copyTo: tray.transfer(targets, move: false)
         case .moveTo: tray.transfer(targets, move: true)
         }
+    }
+}
+
+/// Copy Text's reading and its one line.
+extension ShelfActions {
+    /// What reading a set of files for Copy Text found: the text of the
+    /// ones that had some, and the names of the ones that could not be
+    /// read at all (a file that cannot be opened is not "no text").
+    struct TextRead: Equatable, Sendable {
+        var texts: [String] = []
+        var unreadable: [String] = []
+        /// The first read error's words, for the notice.
+        var reason: String?
+    }
+
+    nonisolated static func readTexts(_ urls: [URL]) -> TextRead {
+        var read = TextRead()
+        for url in urls {
+            do {
+                if let text = try ShelfActions.text(of: url) { read.texts.append(text) }
+            } catch {
+                read.unreadable.append(url.lastPathComponent)
+                if read.reason == nil { read.reason = error.localizedDescription }
+            }
+        }
+        return read
+    }
+
+    /// Copy Text's one line: what was copied, and what was not and why.
+    /// Files that could not be read are named, never folded into "no text".
+    nonisolated static func copyTextNotice(_ read: TextRead, fileCount: Int, firstName: String?) -> String {
+        let unreadable = read.unreadable
+        let failed: String? = unreadable.isEmpty ? nil
+            : unreadable.count == 1 ? "Couldn't read \(unreadable[0])" + (read.reason.map { ": \($0)" } ?? "")
+            : "Couldn't read \(unreadable.count) of those files"
+        if read.texts.isEmpty {
+            if let failed { return failed }
+            return fileCount == 1 ? "No text found in \(firstName ?? "that file")" : "No text found in those files"
+        }
+        let copied = read.texts.count == 1 ? "Copied the text" : "Copied the text of \(read.texts.count) files"
+        guard let failed else { return copied }
+        return "\(copied). \(failed)"
     }
 }

@@ -20,6 +20,7 @@ I/O.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import socket
@@ -33,8 +34,11 @@ from pathlib import Path
 from typing import Any, Final
 
 from . import __version__
+from .core_auth import AUTH_COMMAND, CoreAuthority, loggable_name
 from .ipc import _accept_one, _AcceptWakeup, _same_uid_peer
 from .state_paths import default_state_dir
+
+_log = logging.getLogger(__name__)
 
 PROTOCOL_VERSION: Final = 1
 CORE_SOCKET_NAME: Final = "core.sock"
@@ -70,6 +74,12 @@ MAX_QUEUED_FRAMES: Final = 128
 # socket churn, not a daemon restart (a new stream id makes that honest).
 MAX_JOURNAL_EVENTS: Final = 512
 STALE_SOCKET_PROBE_TIMEOUT_SECONDS: Final = 0.5
+# One refusal line per command name per this many seconds: a process that
+# hammers a privileged command must not fill the log.
+REFUSAL_LOG_INTERVAL_SECONDS: Final = 30.0
+# macOS: getsockopt(SOL_LOCAL, LOCAL_PEERPID) names the process on the other end.
+_SOL_LOCAL: Final = 0
+_LOCAL_PEERPID: Final = 2
 _SEND_TIMEOUT_TIMEVAL: Final = struct.pack(
     "ll",
     int(CLIENT_SEND_TIMEOUT_SECONDS),
@@ -120,21 +130,35 @@ READ_LANE_COMMANDS: Final = frozenset(
         "compare_sessions",
         "session_usage",
         "doctor",
+        # They read a device's STATUS.TXT, which a stalled SD reader can hold
+        # for seconds: never on the socket thread an answer_ask shares.
+        "firmware_status",
+        "firmware_update",
     }
 )
 # The ACTION lane holds a click that can wait on a provider's own tool: Fix
 # sign-in asks Claude Code to renew its sign-in with a real call the daemon
 # allows 90 s. It is not a read, so it has a worker of its own: it must not
 # make History, a doctor run or a comparison wait, nor wait behind a scan.
-ACTION_LANE_COMMANDS: Final = frozenset({"provider_sign_in"})
-SLOW_LANE_COMMANDS: Final = SCAN_LANE_COMMANDS | READ_LANE_COMMANDS | ACTION_LANE_COMMANDS
+ACTION_LANE_COMMANDS: Final = frozenset({
+    "provider_sign_in", "factory_session_profiles", "factory_session_import", "factory_session_disconnect",
+})
+# Setup and settings share controller completion events and a device manager.
+# Admit one operation at a time; never queue a later device write.
+DECK_LANE_COMMANDS: Final = frozenset({
+    "deck_plan_keymap", "deck_apply_keymap", "deck_restore_keymap",
+    "deck_approve_device", "deck_disable", "deck_set_settings",
+})
+SLOW_LANE_COMMANDS: Final = SCAN_LANE_COMMANDS | READ_LANE_COMMANDS | ACTION_LANE_COMMANDS | DECK_LANE_COMMANDS
 _SCAN_LANE: Final = "scan"
 _READ_LANE: Final = "read"
 _ACTION_LANE: Final = "action"
+_DECK_LANE: Final = "deck"
 _LANE_THREAD_NAMES: Final = {
     _SCAN_LANE: "JRBarCoreScanLane",
     _READ_LANE: "JRBarCoreReadLane",
     _ACTION_LANE: "JRBarCoreActionLane",
+    _DECK_LANE: "JRBarCoreDeckLane",
 }
 # Stamped into a slow-lane command's args when it is queued (epoch
 # seconds), so a command that records "now" -- mark_history_seen's
@@ -159,6 +183,15 @@ class CommandError(Exception):
 
 def default_core_socket_path() -> Path:
     return default_state_dir() / CORE_SOCKET_NAME
+
+
+def _peer_pid(connection: socket.socket) -> int | None:
+    """The pid of the process on the other end, for log lines only."""
+    try:
+        value = struct.unpack("i", connection.getsockopt(_SOL_LOCAL, _LOCAL_PEERPID, 4))[0]
+    except (OSError, struct.error, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 def _without_non_finite(value: Any, replaced: list[int]) -> Any:
@@ -238,6 +271,13 @@ class _Client:
         self.index = index
         self.write_lock = threading.Lock()
         self.alive = True
+        # Set for the life of the connection by a valid ``auth`` proof; only
+        # then does the daemon take privileged commands from it.
+        self.authenticated = False
+        # The pid on the other end (log lines only) and the one nonce this
+        # connection was offered in ``hello``; ``take_nonce`` spends it.
+        self.peer_pid: int | None = None
+        self._nonce: str | None = None
         self._log = log or (lambda _line: None)
         # A client is registered for live frames before its greeting is sent,
         # so no event falls between the journal tail in ``hello`` and the
@@ -246,6 +286,19 @@ class _Client:
         # it, in order. ``None`` means the client is primed.
         self._gate = threading.Lock()
         self._held: list[bytes] | None = []
+
+    def offer_nonce(self, nonce: str) -> None:
+        self._nonce = nonce
+
+    def take_nonce(self) -> str | None:
+        """The nonce this connection was offered, once; ``None`` after that."""
+        nonce, self._nonce = self._nonce, None
+        return nonce
+
+    @property
+    def who(self) -> str:
+        pid = f", pid {self.peer_pid}" if self.peer_pid else ""
+        return f"client {self.index}{pid}"
 
     def deliver(self, frame: bytes) -> bool:
         """The flusher's send. Never blocks on a client that is still being
@@ -285,6 +338,8 @@ class _Client:
         if not self.alive:
             return False
         with self.write_lock:
+            if not self.alive:
+                return False
             try:
                 self.connection.sendall(frame)
             except (TimeoutError, BlockingIOError):
@@ -333,12 +388,17 @@ class CoreServer:
         slow_commands: Iterable[str] = SLOW_LANE_COMMANDS,
         scan_commands: Iterable[str] = SCAN_LANE_COMMANDS,
         action_commands: Iterable[str] = ACTION_LANE_COMMANDS,
+        deck_commands: Iterable[str] = DECK_LANE_COMMANDS,
         slow_lane_setup: Callable[[], None] | None = None,
+        reset_replay_source: Callable[[], list[dict[str, Any]]] | None = None,
+        authority: CoreAuthority | None = None,
     ) -> None:
         if not callable(dispatch) or not callable(initial_documents):
             raise ValueError("invalid core server dependency")
         if slow_lane_setup is not None and not callable(slow_lane_setup):
             raise ValueError("invalid core server slow-lane setup")
+        if reset_replay_source is not None and not callable(reset_replay_source):
+            raise ValueError("invalid core server reset replay source")
         if type(max_clients) is not int or max_clients <= 0:
             raise ValueError("invalid core server client bound")
         self.socket_path = Path(socket_path or default_core_socket_path()).expanduser()
@@ -351,11 +411,22 @@ class CoreServer:
         self._on_client_change = on_client_change
         self._log = log or (lambda _line: None)
         self._clock = clock
+        # Who may send a privileged command (core_auth.py). The runtime always
+        # passes one; ``None`` is a bare server in a unit test that gates
+        # nothing.
+        self._authority = authority
+        self._refusal_logged: dict[str, float] = {}
         self._slow_commands = frozenset(slow_commands)
-        # The slow commands that take a long scan's lane, and the ones that
-        # take the action lane; every other slow command takes the read lane.
+        # The durable half of the greet's ``quota_reset`` replay: the
+        # journal's short tail only covers socket churn, so the runtime
+        # hands in the persisted reset events a connecting app may still
+        # celebrate (``reset_replay_documents``).
+        self._reset_replay_source = reset_replay_source
+        # Separate scans, provider actions and Deck setup from short reads.
         self._scan_commands = frozenset(scan_commands)
         self._action_commands = frozenset(action_commands)
+        self._deck_commands = frozenset(deck_commands)
+        self._deck_busy = False
         # Runs once on each lane's worker before its first command (the
         # runtime drops it to utility QoS there, never on a client's reader
         # thread).
@@ -365,6 +436,7 @@ class CoreServer:
             _SCAN_LANE: deque(),
             _READ_LANE: deque(),
             _ACTION_LANE: deque(),
+            _DECK_LANE: deque(),
         }
         self._slow_workers: list[threading.Thread] = []
         # Bumped at each start: a worker left finishing a scan from before a
@@ -407,7 +479,8 @@ class CoreServer:
                       "refused_clients": 0, "deduped_frames": 0,
                       "dropped_queue": 0, "journal_dropped": 0,
                       "slow_lane": 0, "slow_lane_refused": 0,
-                      "sanitized_frames": 0, "dropped_unencodable": 0}
+                      "sanitized_frames": 0, "dropped_unencodable": 0,
+                      "refused_privileged": 0, "auth_failed": 0}
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -456,12 +529,16 @@ class CoreServer:
                     name=_LANE_THREAD_NAMES[lane],
                     daemon=True,
                 )
-                for lane in (_SCAN_LANE, _READ_LANE, _ACTION_LANE)
+                for lane in (_SCAN_LANE, _READ_LANE, _ACTION_LANE, _DECK_LANE)
             ]
             self._accept_thread.start()
             self._flusher.start()
-            for worker in self._slow_workers:
-                worker.start()
+            try:
+                for worker in self._slow_workers:
+                    worker.start()
+            except RuntimeError:
+                self.stop(timeout_seconds=0)
+                raise
             self._log(f"core listening on {path}")
             return path
 
@@ -478,6 +555,8 @@ class CoreServer:
         with self._flush_condition:
             self._flush_condition.notify_all()
         with self._slow_condition:
+            if self._slow_queues[_DECK_LANE]:
+                self._deck_busy = False
             for queue in self._slow_queues.values():
                 queue.clear()
             self._slow_condition.notify_all()
@@ -833,6 +912,7 @@ class CoreServer:
                     continue
                 self._client_counter += 1
                 client = _Client(connection, self._client_counter, self._log)
+                client.peer_pid = _peer_pid(connection)
                 self._clients.append(client)
             try:
                 threading.Thread(
@@ -869,7 +949,12 @@ class CoreServer:
             self._drop_clients([client])
 
     def _greet(self, client: _Client) -> None:
-        hello = self._encode(self.hello_document(), "hello")
+        document = self.hello_document()
+        challenge = self._authority.new_challenge() if self._authority is not None else None
+        if challenge is not None:
+            client.offer_nonce(challenge["nonce"])
+            document["auth"] = challenge
+        hello = self._encode(document, "hello")
         if hello is not None:
             client.send(hello)
         for document in self._initial_documents():
@@ -885,7 +970,35 @@ class CoreServer:
                 self._log(f"core skipped oversize initial {document.get('t')} frame")
                 continue
             client.send(frame)
-        for event in self.recent_reset_events():
+        replayed: list[dict[str, Any]] = list(self.recent_reset_events())
+        if self._reset_replay_source is not None:
+            try:
+                # Materialize before changing the journal fallback: a source
+                # that raises while iterating must not cost the greeting.
+                pending = list(self._reset_replay_source())
+            except Exception:
+                self._log("core: reset replay source failed; greeting without it")
+            else:
+                durable: list[dict[str, Any]] = []
+                pending_ids: set[str] = set()
+                for document in pending:
+                    if not isinstance(document, dict):
+                        continue
+                    event_id = document.get("event_id")
+                    if isinstance(event_id, str) and event_id:
+                        if event_id in pending_ids:
+                            continue
+                        pending_ids.add(event_id)
+                    durable.append(_envelope("event", document))
+                # An unsettled fact must use its cursor-free durable frame.
+                # Repeating its journal cursor would be transport-deduplicated
+                # before the native receipt-aware consumer can reconsider it.
+                replayed = [
+                    event for event in replayed
+                    if not isinstance(event.get("event_id"), str) or event["event_id"] not in pending_ids
+                ]
+                replayed.extend(durable)
+        for event in replayed:
             if not client.alive:
                 break
             frame = self._encode(event, "quota_reset")
@@ -907,7 +1020,7 @@ class CoreServer:
             if not chunk:
                 return
             buffer.extend(chunk)
-            while True:
+            while client.alive and self._running:
                 newline = buffer.find(b"\n")
                 if newline < 0:
                     if len(buffer) > MAX_FRAME_BYTES:
@@ -926,7 +1039,7 @@ class CoreServer:
     def _handle_line(self, client: _Client, line: bytes) -> None:
         try:
             message = json.loads(line.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
+        except (UnicodeDecodeError, ValueError, RecursionError):
             self._send_reply(client, self._reply(None, ok=False, code="bad_frame", message="not JSON"))
             return
         if not isinstance(message, dict):
@@ -945,13 +1058,95 @@ class CoreServer:
             self._send_reply(client, self._reply(command_id, ok=False, code="bad_command", message="missing name"))
             return
         self.stats["commands"] += 1
+        if name == AUTH_COMMAND:
+            self._handle_auth(client, command_id, args)
+            return
+        authority = self._authority
+        if authority is not None and not client.authenticated and authority.requires_app(name, args):
+            self._refuse_privileged(client, command_id, name, authority)
+            return
         if name in self._slow_commands:
-            self._queue_slow(client, command_id, name, {**args, SLOW_LANE_RECEIVED_AT: time.time()})
+            if name == "mark_history_seen":
+                args = {**args, SLOW_LANE_RECEIVED_AT: time.time()}
+            self._queue_slow(client, command_id, name, args)
             return
         self._send_reply(client, self.run_command(command_id, name, args), name)
 
+    def _refuse_privileged(
+        self, client: _Client, command_id: str | None, name: str, authority: CoreAuthority
+    ) -> None:
+        """Answer a privileged command from a connection that is not the app.
+
+        The log line names the command and the peer, never its arguments, and
+        appears once per command name per ``REFUSAL_LOG_INTERVAL_SECONDS``.
+        """
+        self.stats["refused_privileged"] += 1
+        label = loggable_name(name)
+        now = self._clock()
+        last = self._refusal_logged.get(label)
+        if last is None or now - last >= REFUSAL_LOG_INTERVAL_SECONDS:
+            if len(self._refusal_logged) >= 256:
+                self._refusal_logged.clear()
+            self._refusal_logged[label] = now
+            self._log(
+                f"core refused privileged command {label} from an unauthenticated connection "
+                f"({client.who})"
+            )
+        self._send_reply(
+            client,
+            self._reply(command_id, ok=False, code="unauthenticated", message=authority.refusal_message()),
+            name,
+        )
+
+    def _handle_auth(self, client: _Client, command_id: str | None, args: dict[str, Any]) -> None:
+        """The ``auth`` command: prove the app's secret with an HMAC over the
+        nonce ``hello`` offered. One attempt per connection; a wrong proof
+        closes it."""
+        authority = self._authority
+        if authority is None or not authority.has_secret:
+            self._send_reply(
+                client,
+                self._reply(
+                    command_id,
+                    ok=False,
+                    code="auth_unavailable",
+                    message="this daemon was not started by the JR-Bar app and holds no secret",
+                ),
+                AUTH_COMMAND,
+            )
+            return
+        if client.authenticated:
+            reply = self._reply(command_id, ok=True)
+            reply["result"] = {"authenticated": True}
+            self._send_reply(client, reply, AUTH_COMMAND)
+            return
+        nonce = client.take_nonce()
+        if nonce is None:
+            self._reject_auth(client, command_id, authority, "auth_replayed", "the nonce was already used")
+            return
+        if not authority.check_proof(nonce, args.get("proof")):
+            self._reject_auth(client, command_id, authority, "auth_failed", "the proof did not match")
+            return
+        client.authenticated = True
+        self._log(f"core {client.who} authenticated")
+        reply = self._reply(command_id, ok=True)
+        reply["result"] = {"authenticated": True}
+        self._send_reply(client, reply, AUTH_COMMAND)
+
+    def _reject_auth(
+        self, client: _Client, command_id: str | None, authority: CoreAuthority, code: str, message: str
+    ) -> None:
+        self.stats["auth_failed"] += 1
+        self._log(f"core refused an authentication attempt ({code}, {client.who})")
+        authority.wait(authority.record_failure())
+        self._send_reply(client, self._reply(command_id, ok=False, code=code, message=message), AUTH_COMMAND)
+        # One attempt: the connection is done. The reader loop sees it closed.
+        client.close()
+
     def _queue_slow(self, client: _Client, command_id: str | None, name: str, args: dict[str, Any]) -> None:
-        if name in self._action_commands:
+        if name in self._deck_commands:
+            lane = _DECK_LANE
+        elif name in self._action_commands:
             lane = _ACTION_LANE
         elif name in self._scan_commands:
             lane = _SCAN_LANE
@@ -959,7 +1154,10 @@ class CoreServer:
             lane = _READ_LANE
         queue = self._slow_queues[lane]
         with self._slow_condition:
-            if len(queue) < MAX_SLOW_LANE_QUEUED:
+            available = not self._deck_busy if lane == _DECK_LANE else len(queue) < MAX_SLOW_LANE_QUEUED
+            if self._running and available:
+                if lane == _DECK_LANE:
+                    self._deck_busy = True
                 queue.append((client, command_id, name, args))
                 self.stats["slow_lane"] += 1
                 self._slow_condition.notify_all()
@@ -967,7 +1165,8 @@ class CoreServer:
             self.stats["slow_lane_refused"] += 1
         self._send_reply(
             client,
-            self._reply(command_id, ok=False, code="busy", message=f"{name}: too many slow reads queued; try again"),
+            self._reply(command_id, ok=False, code="busy", message=("Creator Micro 2 setup or settings is already running; try again."
+                     if lane == _DECK_LANE else f"{name}: too many slow reads queued; try again")),
         )
 
     def _slow_lane_loop(self, generation: int, lane: str) -> None:
@@ -986,12 +1185,21 @@ class CoreServer:
                 client, command_id, name, args = queue.popleft()
             # A client that left while its read waited gets no scan.
             if not client.alive:
+                if lane == _DECK_LANE:
+                    with self._slow_condition:
+                        self._deck_busy = False
                 continue
             # _Client.send holds the client's write lock, so this reply
             # never interleaves with a frame the flusher or the reader
             # thread is writing to the same socket.
             try:
-                self._send_reply(client, self.run_command(command_id, name, args), name)
+                try:
+                    reply = self.run_command(command_id, name, args)
+                finally:
+                    if lane == _DECK_LANE:
+                        with self._slow_condition:
+                            self._deck_busy = False
+                self._send_reply(client, reply, name)
             except Exception as exc:  # pragma: no cover - defensive
                 # A lane that died would leave every later read queued for good.
                 self._log(f"core slow-lane {lane} worker survived {name}: {exc.__class__.__name__}: {exc}")
@@ -1122,7 +1330,7 @@ class CoreServer:
         try:
             self._on_client_change(self.client_count)
         except Exception:
-            pass
+            _log.warning("client-count change listener failed", exc_info=True)
 
 
 class CommandRouter:

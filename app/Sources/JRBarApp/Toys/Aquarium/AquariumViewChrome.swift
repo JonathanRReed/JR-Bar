@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 /// The game's chrome over the water: pearls, the shop and the inspector.
@@ -32,7 +33,7 @@ extension AquariumView {
                                 Image(systemName: "flame.fill")
                                     .font(.system(size: 10, weight: .semibold))
                                     .foregroundStyle(.orange.gradient)
-                                    .symbolEffect(.bounce, options: .nonRepeating, value: game.streakDays)
+                                    .symbolEffect(.bounce, options: .nonRepeating, value: reduceMotion ? 0 : game.streakDays)
                                 Text("\(game.streakDays)d")
                             }
                         }
@@ -42,10 +43,18 @@ extension AquariumView {
                 Spacer()
                 GlassEffectContainer(spacing: 8) {
                     HStack(spacing: 8) {
-                        hudButton("hand.pinch.fill", help: "Drop a pinch of food — or just tap the water.") {
+                        hudButton(isStill ? "play.fill" : "pause.fill",
+                                  label: isStill ? "Resume motion" : "Pause motion",
+                                  help: isStill ? "Live motion" : "Hold the scene still") {
+                            toy?.store?.state.aquarium.motion = isStill ? .live : .still
+                        }
+                        fishMenu(fish)
+                        hudButton("hand.pinch.fill", label: "Feed fish",
+                                  help: "Drop a pinch of food or tap the water.") {
                             feed(at: CGPoint(x: motion.size.width * 0.5, y: motion.size.height * 0.30))
                         }
-                        hudButton("bag.fill", help: "Tank shop — decor, pets, themes, hats.") {
+                        hudButton("bag.fill", label: "Open tank shop",
+                                  help: "Shop for decor, pets, themes and hats.") {
                             showShop = true
                         }
                         .popover(isPresented: $showShop, arrowEdge: .top) {
@@ -73,22 +82,37 @@ extension AquariumView {
                     .environment(\.colorScheme, .dark)
                     .padding(.bottom, 52)
                     .onTapGesture { toy?.dismissToast() }
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(hudTransition(edge: .bottom))
+                    .task(id: toast.at) {
+                        // The economy's tick is twenty seconds apart, so
+                        // the toast clears itself on its own six.
+                        try? await Task.sleep(for: .seconds(6))
+                        guard !Task.isCancelled else { return }
+                        toy?.dismissToast(shownAt: toast.at)
+                    }
             }
         }
-        .animation(.smooth(duration: 0.35), value: toy?.notice?.id)
-        .animation(.smooth(duration: 0.3), value: toy?.toast?.text)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.35), value: toy?.notice?.id)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: toy?.toast?.text)
+    }
+
+    /// How a HUD card arrives: sliding in from its edge, or, under
+    /// Reduce Motion, only fading.
+    private func hudTransition(edge: Edge) -> AnyTransition {
+        reduceMotion ? .opacity : .move(edge: edge).combined(with: .opacity)
     }
 
     /// The pearl counter: a little lit pearl and the bank, bouncing when
     /// it grows. It measures where it sits so a pearl collected in the
     /// water flies home to it.
     private func pearlChip(_ game: AquariumGame) -> some View {
-        hudChip {
+        // The keyframe builder is a Sendable closure, so it gets the value.
+        let stillPearl = reduceMotion
+        return hudChip {
             HStack(spacing: 5) {
                 PearlGlyph(size: 10, coin: game.themeID == "arcade")
                     .keyframeAnimator(initialValue: 1.0, trigger: game.pearls) { pearl, scale in
-                        pearl.scaleEffect(scale)
+                        pearl.scaleEffect(stillPearl ? 1 : scale)
                     } keyframes: { _ in
                         SpringKeyframe(1.35, duration: 0.14)
                         SpringKeyframe(1.0, duration: 0.32)
@@ -97,6 +121,8 @@ extension AquariumView {
                     .contentTransition(.numericText())
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(game.pearls) pearls")
         .help("Pearls — earned while sessions work, spent in the shop.")
         .onGeometryChange(for: CGPoint.self) { proxy in
             let frame = proxy.frame(in: .named(Self.tankSpace))
@@ -119,7 +145,7 @@ extension AquariumView {
     }
 
     /// A round glass button in the HUD.
-    private func hudButton(_ symbol: String, help: String,
+    private func hudButton(_ symbol: String, label: String, help: String,
                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
@@ -131,7 +157,53 @@ extension AquariumView {
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .circle)
         .environment(\.colorScheme, .dark)
+        .accessibilityLabel(label)
+        .accessibilityHint(help)
         .help(help)
+    }
+
+    /// A stationary route to the same inspector opened by a fish tap.
+    func fishMenu(_ fish: [Fish]) -> some View {
+        let paused = AquariumFrameRates.livePaused(
+            power: PowerConditions.shared.policy,
+            occluded: toy?.windowOccluded ?? fixture?.paused ?? false)
+        return TimelineView(.animation(minimumInterval: AquariumFrameRates.heartbeat,
+                                       paused: paused)) { context in
+            let visible = AquariumInspection.visibleFish(fish, at: context.date)
+            Menu {
+                ForEach(visible) { fish in
+                    Button {
+                        selectedID = fish.id
+                    } label: {
+                        let title = AquariumInspection.title(for: fish, connected: toy?.core.isLive ?? true)
+                        if selectedID == fish.id {
+                            Label(title, systemImage: "checkmark")
+                        } else {
+                            Text(title)
+                        }
+                    }
+                }
+                if selectedID != nil {
+                    Divider()
+                    Button("Close inspector") { selectedID = nil }
+                }
+            } label: {
+                Image(systemName: "fish.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.95))
+                    .frame(width: 28, height: 28)
+                    .contentShape(Circle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .glassEffect(.regular.interactive(), in: .circle)
+            .environment(\.colorScheme, .dark)
+            .accessibilityLabel("Inspect a fish")
+            .accessibilityValue("\(visible.count) fish")
+            .help(visible.isEmpty ? "No fish to inspect." : "Inspect a session, worker or resident.")
+            .disabled(visible.isEmpty)
+        }
     }
 
     /// The reward card — kin to the away-summary banner: glass, a gold
@@ -159,7 +231,7 @@ extension AquariumView {
         .environment(\.colorScheme, .dark)
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.trailing, 12)
-        .transition(.move(edge: .top).combined(with: .opacity))
+        .transition(hudTransition(edge: .top))
         .task(id: n.id) {
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled else { return }
@@ -204,7 +276,7 @@ extension AquariumView {
         .glassEffect(.regular, in: .capsule)
         .environment(\.colorScheme, .dark)
         .onTapGesture { toy?.dismissAwayNotice() }
-        .transition(.move(edge: .top).combined(with: .opacity))
+        .transition(hudTransition(edge: .top))
     }
 
     // MARK: Shop
@@ -459,6 +531,7 @@ extension AquariumView {
             } else {
                 Button("Use") { toy?.selectTheme(item) }
                     .controlSize(.small)
+                    .accessibilityLabel("Use \(item.displayName)")
             }
         case .substrates:
             if game.substrateID == item.substrateID
@@ -473,6 +546,7 @@ extension AquariumView {
                     }
                 }
                 .controlSize(.small)
+                .accessibilityLabel("Use \(item.displayName)")
             }
         case .buddy:
             // The Notch Buddy wears it — the same purse dresses both toys.
@@ -481,6 +555,7 @@ extension AquariumView {
                 toy?.store?.notchBuddy.wear(worn ? nil : item)
             }
             .controlSize(.small)
+            .accessibilityLabel(worn ? "Take off \(item.displayName)" : "Wear \(item.displayName)")
             .help(worn ? "The buddy is wearing it." : "Put it on the Notch Buddy.")
         case .hats, .accessories:
             let worn = item.category == .hats ? game.hats : game.accessories
@@ -511,6 +586,7 @@ extension AquariumView {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+            .accessibilityLabel("Wear \(item.displayName) on a fish")
         case .decor, .pets:
             // Owned pieces and pets can be put away without selling
             // them — the switch is whether it's in the tank.
@@ -521,6 +597,7 @@ extension AquariumView {
                 .controlSize(.mini)
                 .font(.system(size: 10.5))
                 .fixedSize()
+                .accessibilityLabel("\(item.displayName) in tank")
                 .help(game.shows(item) ? "In the tank — switch off to put it away."
                                        : "Put away — switch on to bring it back.")
         }
@@ -558,6 +635,7 @@ extension AquariumView {
         .buttonStyle(.borderedProminent)
         .tint(Self.shopAccent)
         .controlSize(.small)
+        .accessibilityLabel("Buy \(item.displayName) for \(item.price) pearls")
         .disabled(game.pearls < item.price)
     }
 

@@ -192,7 +192,9 @@ struct AskChoicePicks: Equatable, Sendable {
             let labels: [String]
             if let one = value.stringValue {
                 labels = [one]
-            } else if let many = value.arrayValue?.compactMap(\.stringValue), choice.multi {
+            } else if let values = value.arrayValue, choice.multi {
+                let many = values.compactMap(\.stringValue)
+                guard many.count == values.count else { return nil }
                 labels = many
             } else {
                 return nil
@@ -358,6 +360,9 @@ final class AskAnswerDesk {
     /// production; tests stage the reply.
     @ObservationIgnored var send: @MainActor (_ session: String, _ verdict: AskVerdict,
                                               _ request: String?) async throws -> CoreReply
+    /// Where the Try it ask goes when it is "answered": taken down, and
+    /// nothing sent (`DemoAsk`). Tests hand in their own.
+    @ObservationIgnored var demo: DemoAskStore = .shared
     /// A verdict the daemon took — the notch steps its capsule down now
     /// rather than waiting for `ask_resolved`.
     @ObservationIgnored var onAnswered: @MainActor (_ session: String, _ request: String?) -> Void = { _, _ in }
@@ -443,6 +448,9 @@ final class AskAnswerDesk {
     /// its way; the daemon's refusal otherwise, never a guessed success.
     @discardableResult
     func answer(_ ask: CoreAsk, _ verdict: AskVerdict) async -> Outcome {
+        // The demo is the app's own and has no agent: it is put away, and
+        // nothing is sent to the daemon, whatever the verdict.
+        if ask.isDemo { return demo.finish(verdict) }
         if let line = refusal(ask, verdict) { return Outcome(ok: false, line: line) }
         guard let session = ask.session else { return Outcome(ok: false, line: Self.noSession) }
         pending.insert(session)
@@ -465,8 +473,23 @@ final class AskAnswerDesk {
             setNote(Note(text: line, refused: true), for: session)
             return Outcome(ok: false, line: line, code: reply.error?.code)
         } catch {
-            setNote(Note(text: NotchAskRefusal.unreachable, refused: true), for: session)
-            return Outcome(ok: false, line: NotchAskRefusal.unreachable)
+            let line = Self.line(for: error)
+            setNote(Note(text: line, refused: true), for: session)
+            return Outcome(ok: false, line: line)
+        }
+    }
+
+    /// Said when the monitor never confirmed: a timeout or a dropped
+    /// connection may come after the answer went out, so the line does not
+    /// claim the ask is still open.
+    static let unconfirmedLine = "Not confirmed — check the session before answering again"
+
+    /// What a failed send says: nothing left the app for a connection that
+    /// was never there; for a wait that ran out, nobody knows.
+    static func line(for error: Error) -> String {
+        switch error as? CoreClientError {
+        case .timeout, .disconnected: return unconfirmedLine
+        default: return NotchAskRefusal.unreachable
         }
     }
 

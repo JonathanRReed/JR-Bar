@@ -347,6 +347,10 @@ def quota_adjusted_work_mode(
 
     auto_bindings = {}
     has_unbound_work = False
+    #: The leases of the agents working right now. A finished agent's
+    #: lease is never ended, so the hold must not read it: its stale
+    #: "holding" would keep a quota-exhausted Mac awake all night.
+    active_keys = []
     for status in statuses:
         if getattr(status, "is_subagent", True) or getattr(status, "mode", None) not in work_modes:
             continue
@@ -373,6 +377,7 @@ def quota_adjusted_work_mode(
             binding.opaque_account_id,
         )
         coordinator.renew(key, event_at=status.updated_at.timestamp())
+        active_keys.append(key)
         snapshot = capacity_by_provider.get(binding.provider_id)
         if snapshot is None:
             continue
@@ -404,7 +409,9 @@ def quota_adjusted_work_mode(
                 now=now,
             )
 
-    if has_unbound_work or coordinator.global_hold(now=now):
+    if has_unbound_work or any(
+        coordinator.should_hold(key, now=now) for key in active_keys
+    ):
         return mode
     return AgentMode.IDLE_READY
 

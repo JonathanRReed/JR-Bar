@@ -27,6 +27,7 @@ read-only lstat boundary and only asks for the snapshot.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import threading
@@ -34,6 +35,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Final
+
+_log = logging.getLogger(__name__)
 
 #: How long one probe may take. A cold login shell can need several
 #: seconds; the probe has a thread of its own, so waiting costs nothing.
@@ -166,7 +169,7 @@ class LoginShellPathProbe:
             try:
                 on_done()
             except Exception:
-                pass
+                _log.warning("login-shell PATH completion listener failed", exc_info=True)
 
 
 _default_probe: LoginShellPathProbe | None = None

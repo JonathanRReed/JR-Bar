@@ -289,24 +289,35 @@ struct StatusSessionDotsTests {
         #expect(Self.pixels(askFirst) != Self.pixels(doneFirst), "the first dot is the first session")
     }
 
-    @Test("a working dot carries the provider's accent; asks and failures breathe")
+    @Test("a working dot carries the provider's accent; only open asks breathe")
     func coloursAndBreathing() {
         let renderer = StatusIconRenderer()
         let working = renderer.image(for: StatusIconSpec(style: .agents, sessions: Self.dots([.working])))
         let plain = renderer.image(for: StatusIconSpec(style: .agents, sessions: [SessionDot(id: "s", state: .working)]))
         #expect(Self.pixels(working) != Self.pixels(plain), "an accent changes the dot")
         #expect(!working.isTemplate && !plain.isTemplate)
-        // Only asks and failures move the strip: a working dot's phase is
+        // Only asks move the strip: a working dot's phase is
         // pinned so the picture (and the cache) holds still.
-        #expect(StatusDotState.ask.breathes && StatusDotState.error.breathes)
+        #expect(StatusDotState.ask.breathes && !StatusDotState.error.breathes)
         #expect(!StatusDotState.working.breathes && !StatusDotState.idle.breathes && !StatusDotState.done.breathes)
         let breathing = StatusIconSpec(style: .agents, sessions: Self.dots([.ask]), phase: 0.9)
         #expect(breathing.cacheKey.phase == 1, "an ask in the strip keeps the clock")
         let still = StatusIconSpec(style: .agents, sessions: Self.dots([.working]), phase: 0.9)
-        #expect(still.cacheKey.phase == 0, "a strip with no ask or failure ignores the clock")
+        #expect(still.cacheKey.phase == 0, "a strip with no open ask ignores the clock")
         let a = renderer.image(for: StatusIconSpec(style: .agents, sessions: Self.dots([.ask]), phase: 0.1))
         let b = renderer.image(for: StatusIconSpec(style: .agents, sessions: Self.dots([.ask]), phase: 0.5))
         #expect(Self.pixels(a) != Self.pixels(b), "an ask dot breathes")
+    }
+
+    @Test("standing failures stay steady while an unrelated ask breathes")
+    func standingFailureIsStatic() {
+        let renderer = StatusIconRenderer()
+        let a = StatusIconSpec(style: .agents, sessions: Self.dots([.error]), phase: 0.1)
+        let b = StatusIconSpec(style: .agents, sessions: Self.dots([.error]), phase: 0.75)
+        #expect(a.cacheKey == b.cacheKey)
+        #expect(Self.pixels(renderer.image(for: a)) == Self.pixels(renderer.image(for: b)))
+        let asking = StatusIconSpec(style: .agents, sessions: Self.dots([.error, .ask]), phase: 0.75)
+        #expect(asking.cacheKey.phase != a.cacheKey.phase)
     }
 
     @Test("the tooltip keeps the headline and adds one line per session, six at most")
@@ -375,7 +386,7 @@ struct StatusMetersTests {
         #expect(Self.meter("claude", 0.80).warning == .amber)
         #expect(Self.meter("claude", 0.94).warning == .amber)
         #expect(Self.meter("claude", 0.95).warning == .red)
-        #expect(Self.meter("claude", 1.0).warning == .red)
+        #expect(Self.meter("claude", 1.0).warning == .none)
 
         let renderer = StatusIconRenderer()
         let calm = renderer.image(for: StatusIconSpec(style: .meters, meters: [Self.meter("claude", 0.4)]))
@@ -434,6 +445,24 @@ struct StatusMetersTests {
         let x = Int(((left + StatusIconRenderer.meterBarWidth / 2) * scale).rounded(.down))
         guard let data = rep.bitmapData else { return [] }
         return (0..<height).map { data[$0 * rep.bytesPerRow + x * 4 + 3] }
+    }
+
+    @Test("fully spent meters and rings keep normal ink while near-spent windows still warn")
+    func fullySpentMetersAreQuiet() {
+        let renderer = StatusIconRenderer()
+        let spent = Self.meter("claude", 1.0)
+        #expect(spent.warning == .none)
+        #expect(spent.readout == "Claude 100%")
+        #expect(renderer.image(for: StatusIconSpec(style: .meters, meters: [spent])).isTemplate)
+        #expect(StatusIconSpec(style: .glyphRing, ringFraction: 1).ringWarning == .none)
+        #expect(StatusIconSpec(style: .orbit, ringFraction: 1).ringWarning == .none)
+        #expect(Self.meter("claude", 0.97).warning == .red)
+        #expect(Self.meter("claude", 0.85).warning == .amber)
+        var confirmed = Self.meter("claude", 0.97)
+        confirmed.paceVerdict = .exhausted
+        #expect(confirmed.warning == .none)
+        #expect(StatusIconSpec(style: .glyphRing, ringFraction: 0.97, meters: [confirmed]).ringWarning == .none)
+        #expect(StatusIconSpec(style: .orbit, ringFraction: 0.97, meters: [confirmed]).ringWarning == .none)
     }
 
     @Test("a stale figure fills the same continuous column, faint, and never warns")
@@ -501,14 +530,14 @@ struct StatusMetersTests {
         #expect(Self.pixels(error) != Self.pixels(ask), "a failure is not an ask")
         #expect(Self.pixels(error) != Self.pixels(done))
         #expect(idle.size == working.size && idle.size == error.size, "the dot never changes the width")
-        #expect(StatusDotState.working.animates && StatusDotState.ask.animates && StatusDotState.error.animates)
+        #expect(StatusDotState.working.animates && StatusDotState.ask.animates && !StatusDotState.error.animates)
         #expect(!StatusDotState.idle.animates && !StatusDotState.done.animates)
         #expect(StatusDotState.error.meaning == "Red dot: something failed.")
-        // A hard square, not the ask's eased halo: the two ends of the
-        // blink differ, and neither matches the ask at the same phase.
+        // A standing failure stays red at every phase.
         let lit = renderer.image(for: StatusIconSpec(style: .meters, meters: meters, dot: .error, phase: 0.2))
         let dark = renderer.image(for: StatusIconSpec(style: .meters, meters: meters, dot: .error, phase: 0.75))
-        #expect(Self.pixels(lit) != Self.pixels(dark))
+        #expect(Self.pixels(lit) == Self.pixels(dark))
+        #expect(lit === dark, "a standing failure does not spend redraw work on phase")
     }
 
     @Test("the breathing phase moves the picture but is bucketed, so 2 Hz costs three images")
@@ -704,6 +733,29 @@ struct StatusCompactPercentTests {
         #expect(StatusIconRenderer.tightestMeter(StatusIconSpec(style: .compactPercent)) == nil)
     }
 
+    @Test("a confirmed spent window keeps its exact number without an alarm tint")
+    func exhaustedKeepsItsReadoutAndNormalColor() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let spent = Self.meter("claude", 1.0, verdict: .exhausted)
+        #expect(spent.warning == .none)
+        #expect(StatusIconRenderer.compactColor(spent) == nil)
+        #expect(StatusIconRenderer.percentText(spent, now: now) == "0")
+        let renderer = StatusIconRenderer()
+        let spec = StatusIconSpec(style: .compactPercent, meters: [spent])
+        #expect(renderer.image(for: spec).isTemplate)
+        #expect(StatusIconRenderer.accessibilityLabel(spec) == "JR-Bar · Claude 0% left")
+        let accented = Self.meter("claude", 1.0, verdict: .exhausted, accent: "#112233")
+        #expect(StatusIconRenderer.compactColor(accented) == NSColor(hex: "#112233"))
+        let exactOnly = Self.meter("claude", 1.0, verdict: .runsOut)
+        #expect(exactOnly.warning == .none)
+        #expect(StatusIconRenderer.compactColor(exactOnly) == nil)
+        let confirmed = Self.meter("claude", 0.97, verdict: .exhausted)
+        #expect(confirmed.warning == .none)
+        #expect(StatusIconRenderer.compactColor(confirmed) == nil)
+        let resetting = Self.meter("claude", 1.0, resetsAt: now.timeIntervalSince1970 + 600, verdict: .exhausted)
+        #expect(StatusIconRenderer.percentText(resetting, now: now) == "10m")
+    }
+
     @Test("a stale figure loses the readout to a fresh one and takes no tint")
     func staleReadout() {
         var stale = Self.meter("grok", 0.9, verdict: .exhausted, accent: "#D97757")
@@ -736,7 +788,8 @@ struct StatusCompactPercentTests {
         let runningOut = renderer.image(for: StatusIconSpec(style: .compactPercent, meters: [Self.meter("claude", 0.4, verdict: .runsOut)]))
         let spent = renderer.image(for: StatusIconSpec(style: .compactPercent, meters: [Self.meter("claude", 0.4, verdict: .exhausted)]))
         #expect(calm.isTemplate, "a quiet verdict leaves the menu bar's own colour")
-        #expect(!runningOut.isTemplate && !spent.isTemplate)
+        #expect(!runningOut.isTemplate && spent.isTemplate)
+        #expect(Self.pixels(calm) == Self.pixels(spent), "known spent keeps normal ink")
         #expect(Self.pixels(calm) != Self.pixels(runningOut))
         #expect(Self.pixels(runningOut) != Self.pixels(spent))
         // An accent tints the calm readout without a verdict.
@@ -824,5 +877,45 @@ struct HexColorTests {
         for bad in ["", "#", "#FFF", "#00E5FF00", "zzzzzz", "#12 456"] {
             #expect(NSColor(hex: bad) == nil, "\(bad)")
         }
+    }
+}
+
+@Suite("Status dots told apart by shape")
+struct StatusDotShapeTests {
+    /// One state's dot drawn in plain ink, so any difference is the outline.
+    static func shape(_ state: StatusDotState, phase: Double = 0.5) -> [UInt8] {
+        let image = NSImage(size: NSSize(width: 36, height: 36), flipped: false) { _ in
+            StatusIconRenderer.drawShapedDot(state, rect: NSRect(x: 6, y: 6, width: 24, height: 24),
+                                             color: nil, ink: .black, breath: 1, phase: phase)
+            return true
+        }
+        return StatusIconRendererTests.pixels(image)
+    }
+
+    @Test("idle, working, ask, failure and done each have a shape of their own, with no colour to lean on")
+    func fiveShapes() {
+        let all = StatusDotState.allCases
+        for (index, first) in all.enumerated() {
+            for second in all[(index + 1)...] {
+                #expect(Self.shape(first) != Self.shape(second), "\(first) and \(second) look alike")
+            }
+        }
+    }
+
+    @Test("a held ask and a held failure still differ, which Reduce Motion needs")
+    func heldStatesDiffer() {
+        #expect(Self.shape(.ask, phase: 0) != Self.shape(.error, phase: 0))
+        #expect(Self.shape(.ask, phase: 0.5) != Self.shape(.error, phase: 0.5))
+    }
+
+    @Test("the spec carries the choice, so the strip is redrawn when the setting flips")
+    func specCarriesIt() {
+        let sessions = [SessionDot(id: "a", state: .ask), SessionDot(id: "b", state: .error), SessionDot(id: "c", state: .done)]
+        let plain = StatusIconSpec(style: .agents, sessions: sessions)
+        let shaped = StatusIconSpec(style: .agents, sessions: sessions, shapes: true)
+        #expect(plain != shaped)
+        let renderer = StatusIconRenderer()
+        #expect(StatusIconRendererTests.pixels(renderer.image(for: plain))
+                != StatusIconRendererTests.pixels(renderer.image(for: shaped)))
     }
 }

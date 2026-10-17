@@ -135,7 +135,7 @@ def build_jrbar_parser() -> argparse.ArgumentParser:
     setup.add_argument(
         "--sd-eject-guard",
         action="store_true",
-        help="Install SidePulse Pro Eject Prevention for a physical LED bar.",
+        help="Install JR-Bar SD Eject Guard for a physical LED bar.",
     )
     setup.add_argument(
         "--sd-eject-guard-scope",
@@ -177,9 +177,50 @@ def build_jrbar_parser() -> argparse.ArgumentParser:
     add_jrbar_status_bar_parser(subparsers)
     add_jrbar_sdejectguard_parser(subparsers)
     add_jrbar_battery_parser(subparsers)
+    add_jrbar_firmware_parser(subparsers)
     add_jrbar_core_parser(subparsers)
     add_jrbar_hooks_parser(subparsers)
     return parser
+
+
+def add_jrbar_firmware_parser(subparsers: argparse._SubParsersAction) -> None:
+    firmware = subparsers.add_parser(
+        "firmware",
+        help="Show which firmware each connected SidePulse runs, and update it.",
+    )
+    commands = firmware.add_subparsers(dest="firmware_command", required=True)
+    version = commands.add_parser("version", help="Show the firmware release of connected devices (read-only).")
+    version.add_argument("--device", type=Path, help="Mounted SidePulse drive. Default: every mounted one.")
+    version.add_argument("--json", action="store_true", help="Print one document per device.")
+    version.set_defaults(func=cmd_jrbar_firmware_version)
+    upgrade = commands.add_parser(
+        "upgrade",
+        help="Update a SidePulse's firmware. Downloads the package once, only when you run this.",
+    )
+    upgrade.add_argument(
+        "--device",
+        help="Which device: its serial, drive name or drive path. Default: the one with an update.",
+    )
+    upgrade.add_argument(
+        "--from",
+        dest="package",
+        type=Path,
+        help="Use a package zip you already have instead of downloading it (checked the same way).",
+    )
+    upgrade.add_argument("--yes", action="store_true", help="Go ahead without asking.")
+    upgrade.set_defaults(func=cmd_jrbar_firmware_upgrade)
+
+
+def cmd_jrbar_firmware_version(args: argparse.Namespace) -> int:
+    from .device_firmware import run_version_command
+
+    return run_version_command(args.device, as_json=args.json)
+
+
+def cmd_jrbar_firmware_upgrade(args: argparse.Namespace) -> int:
+    from .firmware_cli import run_from_args
+
+    return run_from_args(args.device, args.package, args.yes)
 
 
 def add_jrbar_core_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -251,11 +292,11 @@ def add_jrbar_status_bar_parser(subparsers: argparse._SubParsersAction) -> None:
 def add_jrbar_sdejectguard_parser(subparsers: argparse._SubParsersAction) -> None:
     guard = subparsers.add_parser(
         "sdejectguard",
-        help="Start, stop, uninstall, or inspect SidePulse Pro Eject Prevention.",
+        help="Start, stop, uninstall, or inspect JR-Bar SD Eject Guard.",
     )
     guard_subparsers = guard.add_subparsers(dest="sdejectguard_command", required=True)
 
-    start = guard_subparsers.add_parser("start", help="Install and start SidePulse Pro Eject Prevention.")
+    start = guard_subparsers.add_parser("start", help="Install and start JR-Bar SD Eject Guard.")
     add_sdejectguard_scope_arg(start)
     start.add_argument("--dry-run", action="store_true", help="Show what would change.")
     start.add_argument(
@@ -271,17 +312,17 @@ def add_jrbar_sdejectguard_parser(subparsers: argparse._SubParsersAction) -> Non
     )
     start.set_defaults(func=cmd_jrbar_sdejectguard_start)
 
-    stop = guard_subparsers.add_parser("stop", help="Stop SidePulse Pro Eject Prevention.")
+    stop = guard_subparsers.add_parser("stop", help="Stop JR-Bar SD Eject Guard.")
     add_sdejectguard_scope_arg(stop)
     stop.add_argument("--dry-run", action="store_true", help="Show what would stop.")
     stop.set_defaults(func=cmd_jrbar_sdejectguard_stop)
 
-    uninstall = guard_subparsers.add_parser("uninstall", help="Remove SidePulse Pro Eject Prevention.")
+    uninstall = guard_subparsers.add_parser("uninstall", help="Remove JR-Bar SD Eject Guard.")
     add_sdejectguard_scope_arg(uninstall)
     uninstall.add_argument("--dry-run", action="store_true", help="Show what would be removed.")
     uninstall.set_defaults(func=cmd_jrbar_sdejectguard_uninstall)
 
-    logs = guard_subparsers.add_parser("logs", help="Show SidePulse Pro Eject Prevention logs.")
+    logs = guard_subparsers.add_parser("logs", help="Show JR-Bar SD Eject Guard logs.")
     add_sdejectguard_scope_arg(logs)
     logs.add_argument("--lines", type=int, default=80, help="Lines to show per log file.")
     logs.add_argument("-f", "--follow", action="store_true", help="Follow existing log files.")
@@ -599,7 +640,7 @@ def cmd_jrbar_sdejectguard_logs(args: argparse.Namespace) -> int:
     try:
         paths = log_paths_for_requested_scope(args.scope)
     except Exception as exc:
-        print(f"SidePulse Pro Eject Prevention logs: {exc}", file=sys.stderr)
+        print(f"JR-Bar SD Eject Guard logs: {exc}", file=sys.stderr)
         return 1
 
     existing_paths = [path for path in paths if path.exists()]
@@ -641,15 +682,17 @@ def cmd_jrbar_setup(args: argparse.Namespace) -> int:
     for line in migration.summary_lines():
         print(line)
 
-    results = install_hook_results(args)
+    failures: list[str] = []
+    results = install_hook_results(args, failures=failures)
     print_install_results(results, dry_run=args.dry_run)
+    setup_exit = max(install_exit_code(args, results, failures), int(bool(migration.errors)))
 
     # The eject guard is best-effort: it needs clang (Xcode Command Line
     # Tools), and a fresh Mac without them must still come out of setup
     # with its hooks installed. The app is the Swift JR-Bar.app, which
     # registers itself as a login item; setup installs no LaunchAgent.
     if args.no_sd_eject_guard or not args.sd_eject_guard:
-        return 0
+        return setup_exit
 
     from .sd_eject_guard_launch import (
         SD_EJECT_GUARD_DISPLAY_NAME,
@@ -672,9 +715,9 @@ def cmd_jrbar_setup(args: argparse.Namespace) -> int:
             "with your selected guard options to add it).",
             file=sys.stderr,
         )
-        return 0
+        return setup_exit
     print_sd_eject_guard_result(guard_result)
-    return 0
+    return setup_exit
 
 
 def print_sd_eject_guard_result(result) -> None:
@@ -873,12 +916,22 @@ def add_doctor_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _loopback_port(text: str) -> int:
+    try:
+        port = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a port number: {text!r}") from None
+    if not 0 <= port <= 65535:
+        raise argparse.ArgumentTypeError(f"{port} is not a port; use 0-65535")
+    return port
+
+
 def add_serve_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--port",
-        type=int,
+        type=_loopback_port,
         default=8737,
-        help="Loopback port (default 8737).",
+        help="Loopback port, 0-65535 (default 8737).",
     )
     parser.add_argument(
         "--allow-anonymous-status",
@@ -1043,9 +1096,22 @@ def cmd_serve(args: argparse.Namespace) -> int:
             allow_anonymous_status=allow_anonymous_status,
             answers=answers,
         )
-    except ValueError:
-        print("jrbar serve: invalid serve configuration", file=sys.stderr)
+    except ValueError as error:
+        hint = (
+            f" ({SERVE_ACCESS_TOKEN_ENV} must be at least 24 characters)"
+            if "access token" in str(error)
+            else ""
+        )
+        print(f"jrbar serve: invalid serve configuration{hint}", file=sys.stderr)
         return 2
+    except OSError as error:
+        port = getattr(args, "port", 8737)
+        print(
+            f"jrbar serve: cannot listen on port {port} ({error.strerror or error}); "
+            "stop whatever holds it or pick another with --port",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
@@ -1245,16 +1311,26 @@ def cmd_leds(args: argparse.Namespace) -> int:
 
 
 def cmd_install(args: argparse.Namespace) -> int:
-    results = install_hook_results(args)
+    failures: list[str] = []
+    results = install_hook_results(args, failures=failures)
     print_install_results(results, dry_run=args.dry_run)
-    return 0
+    return install_exit_code(args, results, failures)
+
+
+def install_exit_code(args: argparse.Namespace, results, failures: list[str]) -> int:
+    """1 when what was asked for did not happen: the one provider named, or
+    every provider of ``all``. A partial ``all`` stays 0 (it installed what it
+    could and said what it skipped), since a Mac rarely has every agent."""
+    if not failures:
+        return 0
+    return 1 if args.provider != "all" or not results else 0
 
 
 def selected_hook_providers(provider: str) -> tuple[str, ...]:
     return HOOK_PROVIDERS if provider == "all" else (provider,)
 
 
-def install_hook_results(args: argparse.Namespace):
+def install_hook_results(args: argparse.Namespace, failures: list[str] | None = None):
     providers = selected_hook_providers(args.provider)
     results = []
     for provider in providers:
@@ -1271,11 +1347,16 @@ def install_hook_results(args: argparse.Namespace):
             # going -- one broken interpreter must not hide the other
             # providers' outcomes.
             print(f"{provider}: {exc}")
+            if failures is not None:
+                failures.append(provider)
         except Exception as exc:
             # A config JR-Bar will not touch (a symlink, a file another
             # tool owns) or cannot read raises here. It is one provider's
             # problem: say so and let the rest install.
             print(f"{provider}: skipped ({_failure_reason(exc)})", file=sys.stderr)
+            print_install_failure_hint(provider, exc)
+            if failures is not None:
+                failures.append(provider)
     return results
 
 
@@ -1304,8 +1385,17 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         except Exception as exc:
             # One config JR-Bar refuses to edit (a dotfiles symlink) or
             # cannot read (a commented JSON file) must not hide the other
-            # providers. Record it and go on.
-            outcomes.append((provider, exc))
+            # providers. Record it and go on -- unless nothing in it names
+            # JR-Bar, in which case there is nothing to remove and the
+            # person is not stopped from deleting the app over it.
+            clean = _config_names_no_jrbar(provider)
+            if clean is not None:
+                outcomes.append((provider, InstallResult(
+                    provider, clean, log_path or default_state_dir() / f"{provider}.jsonl",
+                    False, None, args.dry_run,
+                )))
+            else:
+                outcomes.append((provider, exc))
 
     failed = False
     for provider, outcome in outcomes:
@@ -1321,11 +1411,65 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         print(f"  log: {outcome.log_path}")
         if outcome.backup_path:
             print(f"  backup: {outcome.backup_path}")
+    if args.provider == "all" and not failed and not args.dry_run:
+        # Every hook that ran the launcher is gone; the launcher goes too.
+        from .install import remove_stable_hook_shim
+
+        remove_stable_hook_shim()
     return 1 if failed else 0
+
+
+#: What any JR-Bar hook line carries, in today's names and the older ones.
+_JRBAR_MARKERS = ("jrbar", "sidepulse", "agent-monitor")
+_MAX_INSPECTED_CONFIG_BYTES = 4 * 1024 * 1024
+
+
+def _config_names_no_jrbar(provider: str) -> Path | None:
+    """The provider's config path when it can be read as it is -- through a
+    dotfiles symlink, comments and all -- and nothing in it names JR-Bar;
+    None otherwise. A read only: nothing is created, tightened or written."""
+    try:
+        config = provider_spec(provider).config_path(None)
+    except Exception:
+        return None
+    try:
+        with open(config, "rb") as handle:
+            data = handle.read(_MAX_INSPECTED_CONFIG_BYTES + 1)
+    except FileNotFoundError:
+        return config
+    except OSError:
+        return None
+    if len(data) > _MAX_INSPECTED_CONFIG_BYTES:
+        return None
+    text = data.decode("utf-8", "replace").lower()
+    return None if any(marker in text for marker in _JRBAR_MARKERS) else config
 
 
 def _failure_reason(exc: Exception) -> str:
     return f"{type(exc).__name__}: {str(exc)[:500]}"
+
+
+def print_install_failure_hint(provider: str, exc: Exception) -> None:
+    """The config JR-Bar left alone and what would make it installable."""
+    try:
+        config = provider_spec(provider).config_path(None)
+    except Exception:
+        config = None
+    if config is not None:
+        print(f"  config: {config}", file=sys.stderr)
+    if isinstance(exc, OSError) and "refusing" in str(exc):
+        hint = (
+            "JR-Bar does not edit a symlinked or shared-writable config; "
+            "make it a plain file you own, then run this again."
+        )
+    elif isinstance(exc, ValueError):
+        hint = (
+            "JR-Bar could not read this config as plain JSON; fix or remove "
+            "the broken part, then run this again."
+        )
+    else:
+        hint = "Fix the problem above, then run this again."
+    print(f"  {hint}", file=sys.stderr)
 
 
 def print_uninstall_failure(provider: str, exc: Exception) -> None:

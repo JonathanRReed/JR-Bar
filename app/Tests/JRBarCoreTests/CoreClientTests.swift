@@ -57,17 +57,21 @@ struct CoreClientTests {
             while true {
                 let descriptor = accept(listenFD, nil, nil)
                 guard descriptor >= 0 else { return }
+                var nosig: Int32 = 1
+                guard setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &nosig,
+                                 socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+                    close(descriptor)
+                    continue
+                }
                 lock.lock()
                 guard running else { lock.unlock(); close(descriptor); return }
                 clients.append(descriptor)
                 let greet = speakHello
-                lock.unlock()
                 if greet {
-                    var nosig: Int32 = 1
-                    setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &nosig, socklen_t(MemoryLayout<Int32>.size))
                     let hello = "{\"t\":\"hello\",\"v\":1,\"core_version\":\"stub\",\"pid\":1,\"capabilities\":[]}\n"
                     _ = hello.withCString { Darwin.write(descriptor, $0, strlen($0)) }
                 }
+                lock.unlock()
                 // Never read and never write again: the peer is wedged.
             }
         }
@@ -94,7 +98,8 @@ struct CoreClientTests {
     /// `replay_events` command gets a scripted reply. Each accepted
     /// connection is scripted; dropping a client fd drives a reconnect.
     final class ReplayStubCore: @unchecked Sendable {
-        struct Conn {
+        /// Test-only values, read on the stub's own threads after being set up.
+        struct Conn: @unchecked Sendable {
             let fd: Int32
             var hello: String
             var replayEvents: [[String: Any]] = []
@@ -113,8 +118,13 @@ struct CoreClientTests {
         var replays: [Conn] = []
         /// Event frames to push per connection, after hello.
         var pushes: [[String]] = []
+        var replyToCommands = false
         /// Commands the client sent, per connection.
-        private(set) var receivedCommands: [[String]] = []
+        private var _receivedCommands: [[String]] = []
+        var receivedCommands: [[String]] {
+            lock.lock(); defer { lock.unlock() }
+            return _receivedCommands
+        }
 
         init(path: String) { self.path = path }
 
@@ -153,21 +163,33 @@ struct CoreClientTests {
                 let descriptor = accept(listenFD, nil, nil)
                 guard descriptor >= 0 else { return }
                 var nosig: Int32 = 1
-                setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &nosig, socklen_t(MemoryLayout<Int32>.size))
+                guard setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &nosig,
+                                 socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+                    close(descriptor)
+                    continue
+                }
                 lock.lock()
                 guard running else { lock.unlock(); close(descriptor); return }
+                let ownedDescriptor = dup(descriptor)
+                guard ownedDescriptor >= 0 else {
+                    lock.unlock()
+                    close(descriptor)
+                    continue
+                }
                 let index = connIndex
                 connIndex += 1
                 clientFDs.append(descriptor)
-                receivedCommands.append([])
+                _receivedCommands.append([])
                 let hello = hellos[min(index, hellos.count - 1)]
                 let conn = index < replays.count ? replays[index] : nil
                 let toPush = index < pushes.count ? pushes[index] : []
                 lock.unlock()
-                write(descriptor, hello + "\n")
-                for frame in toPush { write(descriptor, frame + "\n") }
                 Thread.detachNewThread { [weak self] in
-                    self?.readCommands(descriptor, connIndex: index, conn: conn)
+                    defer { close(ownedDescriptor) }
+                    guard let self else { return }
+                    self.write(ownedDescriptor, hello + "\n")
+                    for frame in toPush { self.write(ownedDescriptor, frame + "\n") }
+                    self.readCommands(ownedDescriptor, connIndex: index, conn: conn)
                 }
             }
         }
@@ -185,7 +207,7 @@ struct CoreClientTests {
                     guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
                           let name = object["name"] as? String else { continue }
                     lock.lock()
-                    receivedCommands[connIndex].append(name)
+                    _receivedCommands[connIndex].append(name)
                     lock.unlock()
                     if name == "replay_events", let conn, let commandID = object["id"] as? String {
                         let events = conn.replayEvents.compactMap {
@@ -201,9 +223,17 @@ struct CoreClientTests {
                         }
                         write(descriptor,
                               "{\"t\":\"reply\",\"v\":1,\"id\":\"\(commandID)\",\"ok\":true,\"result\":{\(result)}}\n")
+                    } else if replyToCommands, let commandID = object["id"] as? String {
+                        write(descriptor,
+                              "{\"t\":\"reply\",\"v\":1,\"id\":\"\(commandID)\",\"ok\":true}\n")
                     }
                 }
             }
+        }
+
+        func pushFrame(_ frame: String) {
+            lock.lock(); defer { lock.unlock() }
+            if let descriptor = clientFDs.last { write(descriptor, frame + "\n") }
         }
 
         /// Close the newest client connection; the client should reconnect.
@@ -223,7 +253,7 @@ struct CoreClientTests {
             listenFD = -1
             lock.unlock()
             if listener >= 0 { shutdown(listener, SHUT_RDWR); close(listener) }
-            for descriptor in fds { close(descriptor) }
+            for descriptor in fds { shutdown(descriptor, SHUT_RDWR); close(descriptor) }
             unlink(path)
         }
     }
@@ -379,6 +409,136 @@ struct CoreClientTests {
         // The wedged connection is dropped, not parked.
         #expect(await Self.wait { !events.disconnectReasons.isEmpty })
     }
+
+    /// One thread holds and releases the writer while the async test advances.
+    final class WriteBarrier {
+        private let releaseGate: DispatchSemaphore
+        let acquired: Bool
+        private var held = true
+        init(_ lock: NSLock) {
+            let acquiredGate = DispatchSemaphore(value: 0)
+            let releaseGate = DispatchSemaphore(value: 0)
+            self.releaseGate = releaseGate
+            Thread.detachNewThread {
+                lock.lock()
+                acquiredGate.signal()
+                _ = releaseGate.wait(timeout: .now() + 10)
+                lock.unlock()
+            }
+            acquired = acquiredGate.wait(timeout: .now() + 2) == .success
+        }
+        func release() {
+            guard held else { return }
+            held = false
+            releaseGate.signal()
+        }
+    }
+
+    @Test("a command that expires behind another writer never reaches a healthy daemon")
+    func expiredQueuedCommandIsNotWritten() async throws {
+        let path = Self.temporarySocketPath()
+        let server = ReplayStubCore(path: path)
+        server.hellos = ["{\"t\":\"hello\",\"v\":1,\"capabilities\":[]}"]
+        server.replyToCommands = true
+        try server.start()
+        defer { server.stop() }
+
+        let events = EventLog()
+        let client = CoreClient(socketPath: path, helloTimeout: 2, connectTimeout: 1) { events.add($0) }
+        client.start()
+        defer { client.stop() }
+        try #require(await Self.wait { client.isConnected && !server.receivedCommands.isEmpty })
+
+        let barrier = WriteBarrier(client.writeLock)
+        defer { barrier.release() }
+        try #require(barrier.acquired)
+        let command = Task.detached {
+            try await client.send(name: "set_setting", args: ["key": .string("test")], timeout: 1)
+        }
+        try #require(await Self.wait { client.pendingCommandCount == 1 })
+        server.pushFrame("{\"t\":\"event\",\"v\":1,\"id\":\"healthy\",\"kind\":\"completed\"}")
+        try #require(await Self.wait { events.receivedEventIDs == ["healthy"] })
+        try #require(await Self.wait { client.pendingCommandCount == 0 })
+        #expect(client.isConnected, "traffic during the deadline must keep this connection open")
+        barrier.release()
+
+        do {
+            _ = try await command.value
+            Issue.record("the queued command must time out")
+        } catch let error as CoreClientError {
+            #expect(error == .timeout)
+        }
+        let reply = try await client.send(name: "ping", timeout: 2)
+        #expect(reply.ok)
+        #expect(server.receivedCommands == [["ping"]],
+                "the expired mutation must not arrive before the successful ping")
+        #expect(events.disconnectReasons.isEmpty)
+    }
+
+    @Test("a cancelled command waiting for the writer never reaches the daemon")
+    func cancelledQueuedCommandIsNotWritten() async throws {
+        let server = ReplayStubCore(path: Self.temporarySocketPath())
+        server.hellos = ["{\"t\":\"hello\",\"v\":1,\"capabilities\":[]}"]
+        server.replyToCommands = true
+        try server.start()
+        defer { server.stop() }
+        let events = EventLog()
+        let client = CoreClient(socketPath: server.path, helloTimeout: 2, connectTimeout: 1) { events.add($0) }
+        client.start()
+        defer { client.stop() }
+        try #require(await Self.wait { client.isConnected && !server.receivedCommands.isEmpty })
+        let barrier = WriteBarrier(client.writeLock)
+        defer { barrier.release() }
+        try #require(barrier.acquired)
+        let command = Task.detached { try await client.send(name: "set_setting") }
+        try #require(await Self.wait { client.pendingCommandCount == 1 })
+        command.cancel()
+        try #require(await Self.wait { client.pendingCommandCount == 0 })
+        barrier.release()
+        do {
+            _ = try await command.value
+            Issue.record("the queued command must report cancellation")
+        } catch is CancellationError {}
+        #expect(try await client.send(name: "ping", timeout: 2).ok)
+        #expect(server.receivedCommands == [["ping"]])
+        #expect(events.disconnectReasons.isEmpty)
+    }
+
+    @Test("cancelling a command already written retires its reply without dropping the shared socket")
+    func cancelledWrittenCommandKeepsConnection() async throws {
+        let server = ReplayStubCore(path: Self.temporarySocketPath())
+        server.hellos = ["{\"t\":\"hello\",\"v\":1,\"capabilities\":[]}"]
+        try server.start()
+        defer { server.stop() }
+        let client = CoreClient(socketPath: server.path, helloTimeout: 2, connectTimeout: 1) { _ in }
+        client.start()
+        defer { client.stop() }
+        try #require(await Self.wait { client.isConnected })
+        let command = Task.detached { try await client.send(name: "ping", timeout: 5) }
+        try #require(await Self.wait { server.receivedCommands == [["ping"]] })
+        command.cancel()
+        do {
+            _ = try await command.value
+            Issue.record("the pending reply must report cancellation")
+        } catch is CancellationError {}
+        #expect(client.pendingCommandCount == 0)
+        #expect(client.isConnected)
+    }
+
+    @Test("a task cancelled before send does not register a command")
+    func alreadyCancelledCommandIsNotRegistered() async throws {
+        let client = CoreClient(socketPath: Self.temporarySocketPath()) { _ in }
+        let command = Task.detached {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await client.send(name: "set_setting")
+        }
+        do {
+            _ = try await command.value
+            Issue.record("the command must report cancellation before checking connection")
+        } catch is CancellationError {}
+        #expect(client.pendingCommandCount == 0)
+        #expect(client.authenticationWaiterCount == 0)
+    }
 }
 
 extension CoreClientTests.EventLog {
@@ -391,6 +551,57 @@ extension CoreClientTests.EventLog {
 }
 
 extension CoreClientTests {
+
+    @Test("same-stream socket reconnect forwards durable reset reoffers while deduplicating cursor events")
+    func durableResetReoffersAcrossReconnect() async throws {
+        let stub = ReplayStubCore(path: Self.temporarySocketPath())
+        stub.hellos = [
+            #"{"t":"hello","v":1,"stream":"s1","cursor":"s1:ev-0","capabilities":[]}"#,
+            #"{"t":"hello","v":1,"stream":"s1","cursor":"s1:ev-1","capabilities":[]}"#,
+        ]
+        let durable = #"{"t":"event","v":1,"id":"synthetic-stable-reset","kind":"quota_reset","provider":"kimi","lane":"monthly","event_id":"synthetic-stable-reset","notify":false}"#
+        let cursorReset = #"{"t":"event","v":1,"id":"ev-1","kind":"quota_reset","event_id":"synthetic-cursor-reset","notify":false,"cursor":"s1:ev-1"}"#
+        let completion = #"{"t":"event","v":1,"id":"ev-2","kind":"completed","cursor":"s1:ev-2"}"#
+        stub.pushes = [[durable, cursorReset], [durable, cursorReset, completion, completion]]
+        try stub.start()
+        defer { stub.stop() }
+        let events = EventLog()
+        let client = CoreClient(socketPath: stub.path, helloTimeout: 2, connectTimeout: 1) { events.add($0) }
+        client.start()
+        defer { client.stop() }
+        try #require(await Self.wait { events.receivedEventIDs == ["synthetic-stable-reset", "ev-1"] })
+        stub.dropClient()
+        try #require(await Self.wait { events.receivedEventIDs.contains("ev-2") })
+        #expect(events.receivedEventIDs == ["synthetic-stable-reset", "ev-1", "synthetic-stable-reset", "ev-2"])
+    }
+
+    @Test("reconnect at the same stream tail keeps event deduplication")
+    func sameStreamTailReconnectKeepsDedupe() async throws {
+        let path = Self.temporarySocketPath()
+        let stub = ReplayStubCore(path: path)
+        stub.hellos = [
+            "{\"t\":\"hello\",\"v\":1,\"stream\":\"s1\",\"cursor\":\"s1:ev-0\",\"capabilities\":[]}",
+            "{\"t\":\"hello\",\"v\":1,\"stream\":\"s1\",\"cursor\":\"s1:ev-1\",\"capabilities\":[]}",
+        ]
+        let repeated = "{\"t\":\"event\",\"v\":1,\"id\":\"ev-1\",\"kind\":\"quota_reset\",\"cursor\":\"s1:ev-1\"}"
+        stub.pushes = [
+            [repeated],
+            [repeated, "{\"t\":\"event\",\"v\":1,\"id\":\"ev-2\",\"kind\":\"completed\",\"cursor\":\"s1:ev-2\"}"],
+        ]
+        try stub.start()
+        defer { stub.stop() }
+
+        let events = EventLog()
+        let client = CoreClient(socketPath: path, helloTimeout: 2, connectTimeout: 1) { events.add($0) }
+        client.start()
+        defer { client.stop() }
+        try #require(await Self.wait { events.receivedEventIDs == ["ev-1"] })
+        stub.dropClient()
+        try #require(await Self.wait { events.receivedEventIDs.contains("ev-2") })
+        #expect(events.receivedEventIDs == ["ev-1", "ev-2"],
+                "the greeting's repeated quota event must only reach the handler once")
+        #expect(!stub.receivedCommands.dropFirst().contains { $0.contains("replay_events") })
+    }
 
     /// Reconnecting onto the SAME stream replays exactly the frames the
     /// drop ate — and a frame the socket already fanned out is not

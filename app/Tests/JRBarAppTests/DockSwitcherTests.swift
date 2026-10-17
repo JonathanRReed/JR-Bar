@@ -8,6 +8,52 @@ import Testing
 /// The ⌥⇥ switcher's pure half: the CGWindow/AX merge, the recency
 /// order, and the selection walk.
 struct DockSwitcherTests {
+    @Test("switcher exclusions follow a relaunched app and preserve apps with no bundle id")
+    func excludedAppsResolveByBundleID() {
+        let apps: [pid_t: String?] = [100: "test.remote", 200: "test.editor", 300: nil, 400: "test.remote"]
+        let excluded = DockSwitcherList.excludedPIDs(apps, bundleIDs: ["test.remote"], bundleID: { $0 })
+        #expect(excluded == [100, 400])
+        #expect(DockSwitcherList.excludedPIDs(apps, bundleIDs: [], bundleID: { $0 }).isEmpty)
+    }
+
+    @Test("excluded apps never enter the on-screen, minimized or other-Space merge")
+    func excludedWindowsAreNotReadOrMerged() {
+        let rows = [row(pid: 100, wid: 1, title: "Excluded"), row(pid: 200, wid: 2, title: "Editor")]
+        var off = row(pid: 100, wid: 3, title: "Minimized")
+        off.onScreen = false
+        var readPIDs: [pid_t] = []
+        let items = DockSwitcherList.order(rows: rows, offRows: [off], excludedPIDs: [100], windowsForApp: { pid in
+            readPIDs.append(pid)
+            return pid == 100 ? [self.window(id: 9, title: "Other Space")] : []
+        }, appName: { "App\($0)" }, icon: { _ in nil })
+        #expect(readPIDs == [200])
+        #expect(items.map(\.pid) == [200])
+        #expect(items.map(\.title) == ["Editor"])
+    }
+
+    @Test("a filter changed while an async AX read was out applies when the merge lands")
+    func latestExclusionsFilterLateAXWindows() {
+        let apps: [pid_t: String] = [100: "test.remote", 200: "test.editor"]
+        let readExclusions = DockSwitcherList.excludedPIDs(apps, bundleIDs: [], bundleID: { $0 })
+        #expect(readExclusions.isEmpty)
+        let landedExclusions = DockSwitcherList.excludedPIDs(apps, bundleIDs: ["test.remote"], bundleID: { $0 })
+        let items = DockSwitcherList.order(rows: [row(pid: 100, wid: 1), row(pid: 200, wid: 2)],
+            excludedPIDs: landedExclusions,
+            windowsForApp: { pid in [self.window(id: Int(pid), title: "Window")] },
+            appName: { "App\($0)" }, icon: { _ in nil })
+        #expect(!items.isEmpty)
+        #expect(items.allSatisfy { $0.pid == 200 })
+    }
+
+    @Test("excluded apps do not return as windowless cards")
+    func windowlessAppsRespectExclusions() {
+        let items = DockSwitcherList.windowlessItems(
+            apps: [(pid: 100, name: "Remote", icon: nil), (pid: 200, name: "Editor", icon: nil),
+                   (pid: 300, name: "Notes", icon: nil)], listed: [300], excludedPIDs: [100])
+        #expect(items.map(\.pid) == [200])
+        #expect(items[0].windowless)
+    }
+
 
     private func row(pid: pid_t, wid: CGWindowID, title: String = "",
                      x: CGFloat = 0, y: CGFloat = 0,
@@ -475,6 +521,61 @@ struct DockSwitcherTests {
         #expect(before == minimized, "a window moving off-screen is the same window")
     }
 
+    @MainActor
+    @Test("a key typed just before option lifts lands before the commit")
+    func keysKeepTheirOrderWithTheRelease() async throws {
+        let tap = SwitcherKeyTap()
+        var order: [String] = []
+        tap.onArrow = { _ in order.append("arrow") }
+        tap.onCommit = { order.append("commit") }
+        tap.setOpen(true)
+        let arrow = try bareKey(124)
+        #expect(tap.handle(type: .keyDown, event: arrow) == nil, "the open strip eats the arrow")
+        let release = try #require(CGEvent(source: nil))
+        release.type = .flagsChanged
+        release.flags = []
+        _ = tap.handle(type: .flagsChanged, event: release)
+        await withCheckedContinuation { done in DispatchQueue.main.async { done.resume() } }
+        #expect(order == ["arrow", "commit"])
+        tap.setOpen(false)
+    }
+
+    @MainActor
+    @Test("switching the switcher off stops listening for input-source changes")
+    func keyboardWatchStopsWithTheSwitcher() {
+        let keyboard = DockKeyboardLayout()
+        keyboard.startWatching()
+        #expect(keyboard.watching)
+        keyboard.stopWatching()
+        #expect(!keyboard.watching)
+        keyboard.startWatching()
+        #expect(keyboard.watching, "it can start again")
+        keyboard.stopWatching()
+    }
+
+    @MainActor
+    @Test("a tap the system switched off mid-hold still commits the strip when option is up")
+    func disabledTapReadsTheKeysAgain() async throws {
+        let tap = SwitcherKeyTap()
+        var commits = 0
+        tap.onCommit = { commits += 1 }
+        tap.setOpen(true)
+        // Option lifted while the tap was off: the flagsChanged never came.
+        tap.liveModifierFlags = { [] }
+        let event = try bareKey(0)
+        #expect(tap.handle(type: .tapDisabledByTimeout, event: event) != nil)
+        await withCheckedContinuation { done in DispatchQueue.main.async { done.resume() } }
+        #expect(commits == 1)
+
+        // Still held: nothing commits, the strip stays up.
+        tap.setOpen(true)
+        tap.liveModifierFlags = { [.maskAlternate] }
+        _ = tap.handle(type: .tapDisabledByUserInput, event: event)
+        await withCheckedContinuation { done in DispatchQueue.main.async { done.resume() } }
+        #expect(commits == 1)
+        tap.setOpen(false)
+    }
+
     @Test("` under the open strip is the scope toggle, not a typed character")
     func scopeKey() throws {
         let tap = SwitcherKeyTap()
@@ -557,7 +658,7 @@ struct DockSwitcherTests {
     }
 
     @Test("a strip's cards share one slot, and a ring inset in a card keeps its curve")
-    func cardSlot() {
+    @MainActor func cardSlot() {
         #expect(DockSwitcherView.slotWidth(hasStills: true) == 128)
         #expect(DockSwitcherView.slotWidth(hasStills: false) == 96,
                 "icon cards alone keep the narrower slot")
@@ -710,6 +811,45 @@ struct SwitcherTapReviveTests {
         #expect(factory.asked == 2)
         controller.reviveTap()
         #expect(factory.asked == 2, "live: reviving asks for nothing")
+    }
+
+    @Test("a tap the system switched off and will not switch on again is taken down, and revives")
+    func refusedReenableMarksTheTapNotLive() async throws {
+        let factory = TapFactory(refusing: 0)
+        let tap = keyTap(factory)
+        // The system's answer after the re-enable request: still off.
+        tap.tapControl = EventTapHealth.Control(enable: { _, _ in }, isEnabled: { _ in false })
+        let controller = DockSwitcherController(tap: tap)
+        controller.start()
+        defer { controller.stop() }
+        #expect(tap.tapLive)
+
+        let event = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
+        _ = tap.handle(type: .tapDisabledByTimeout, event: event)
+        await withCheckedContinuation { done in DispatchQueue.main.async { done.resume() } }
+        #expect(!tap.tapLive, "a tap the system will not enable is not live")
+        #expect(factory.asked == 1)
+
+        // The usual retry: the next reconcile, a grant arriving, or the app
+        // becoming active again asks for a new tap.
+        tap.tapControl = .system
+        controller.reviveTap()
+        #expect(factory.asked == 2)
+        #expect(tap.tapLive)
+    }
+
+    @Test("a tap the system switched back on stays live")
+    func acceptedReenableKeepsTheTap() async throws {
+        let factory = TapFactory(refusing: 0)
+        let tap = keyTap(factory)
+        tap.tapControl = EventTapHealth.Control(enable: { _, _ in }, isEnabled: { _ in true })
+        tap.start()
+        defer { tap.stop() }
+
+        let event = try #require(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
+        _ = tap.handle(type: .tapDisabledByUserInput, event: event)
+        await withCheckedContinuation { done in DispatchQueue.main.async { done.resume() } }
+        #expect(tap.tapLive)
     }
 
     @Test("reviveTap alone brings the tap up, and a stopped switcher is not resurrected")

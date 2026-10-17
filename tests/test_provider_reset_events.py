@@ -187,9 +187,7 @@ def test_seen_requires_terminal_delivery_or_expiry_not_an_attempt__and_2_more() 
 
 def test_quota_reset_wire_event_carries_the_lane__and_1_more() -> None:
     # --- scenario: quota_reset_wire_event_carries_the_lane
-    """The app's confetti fires on the weekly lane only -- dropping
-    ``lane`` from the publish would silence it, and conflating lanes
-    would fire it on the five-hour window."""
+    """Every confirmed quota window retains its lane and stable delivery ID."""
     from types import SimpleNamespace
 
     from jrbar.provider_usage_status_bar import _publish_reset_wire_events
@@ -253,3 +251,235 @@ def test_quota_reset_wire_event_carries_the_lane__and_1_more() -> None:
     _publish_reset_wire_events(controller, (broken, _event()))
     assert [kind for kind, _fields in sent] == ["quota_reset"]
 
+
+def test_app_receipts_close_the_replay_offer__and_2_more() -> None:
+    from jrbar.provider_reset_events import (
+        RESET_APP_FRESHNESS_SECONDS,
+        apply_app_receipt,
+        reset_events_pending_app,
+    )
+
+    # --- scenario: a fresh unacknowledged reset is re-offered to the app
+    state = begin_reset_delivery(
+        ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
+    )
+    assert [
+        event.event_id for event in reset_events_pending_app(state, now=2_000.0)
+    ] == [_event().event_id]
+
+    # --- scenario: held, expired and suppressed stay re-offerable; delivered and dropped close it
+    for outcome in ("held", "expired", "suppressed"):
+        updated = apply_app_receipt(
+            state, _event().event_id, outcome, "room", now=2_100.0
+        )
+        pending = reset_events_pending_app(updated, now=2_200.0)
+        assert pending and pending[0].app_receipts[-1].outcome == outcome
+    for outcome in ("delivered", "dropped"):
+        closed = apply_app_receipt(
+            state, _event().event_id, outcome, "done", now=2_100.0
+        )
+        assert reset_events_pending_app(closed, now=2_200.0) == ()
+
+    # --- scenario: the freshness window bounds what is still newsworthy
+    edge = 1_000.0 + RESET_APP_FRESHNESS_SECONDS
+    assert reset_events_pending_app(state, now=edge - 1.0)
+    assert reset_events_pending_app(state, now=edge) == ()
+
+
+@pytest.mark.parametrize("outcome", ["delivered", "dropped"])
+def test_terminal_app_receipt_survives_late_receipts_and_persistence(outcome) -> None:
+    from jrbar.provider_reset_events import (
+        MAX_APP_RECEIPTS,
+        apply_app_receipt,
+        reset_events_pending_app,
+    )
+
+    state = begin_reset_delivery(
+        ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
+    )
+    state = apply_app_receipt(state, _event().event_id, outcome, "finished", now=1_001.0)
+    for index in range(MAX_APP_RECEIPTS + 1):
+        state = apply_app_receipt(
+            state, _event().event_id, "held", "late receipt", now=1_002.0 + index
+        )
+    restored = decode_reset_delivery_state(encode_reset_delivery_state(state))
+    assert reset_events_pending_app(restored, now=1_100.0) == ()
+    assert [receipt.outcome for receipt in restored.events[0].app_receipts] == [outcome]
+
+
+def test_app_receipt_validates_and_survives_persistence__and_1_more() -> None:
+    import json
+
+    from jrbar.provider_reset_events import apply_app_receipt
+
+    state = begin_reset_delivery(
+        ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
+    )
+    with pytest.raises(KeyError):
+        apply_app_receipt(state, "nope", "delivered", "ok", now=1_100.0)
+    with pytest.raises(ValueError):
+        apply_app_receipt(state, _event().event_id, "shrug", "ok", now=1_100.0)
+    with pytest.raises(ValueError):
+        apply_app_receipt(state, _event().event_id, "held", "", now=1_100.0)
+
+    state = apply_app_receipt(
+        state, _event().event_id, "held", "call", now=1_100.0
+    )
+    restored = decode_reset_delivery_state(encode_reset_delivery_state(state))
+    assert restored == state
+
+    # --- scenario: a file from before app receipts decodes with none
+    document = json.loads(encode_reset_delivery_state(state))
+    for item in document["events"]:
+        item.pop("app_receipts", None)
+    older = decode_reset_delivery_state(json.dumps(document))
+    assert older.events[0].app_receipts == ()
+
+
+def test_replay_documents_and_app_receipt_round_trip() -> None:
+    from types import SimpleNamespace
+
+    from jrbar.provider_reset_settings_action import (
+        apply_app_reset_receipt,
+        reset_replay_documents,
+    )
+
+    state = begin_reset_delivery(
+        ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
+    )
+    saved = []
+    controller = SimpleNamespace(
+        _jrbar_reset_delivery_state=state,
+        _persist_reset_delivery_state=lambda: saved.append(
+            controller._jrbar_reset_delivery_state
+        ),
+    )
+    assert reset_replay_documents(controller, now=2_000.0) == [
+        {
+            "kind": "quota_reset",
+            "provider": "claude",
+            "instance": "acct",
+            "lane": "weekly",
+            "event_id": _event().event_id,
+            "id": _event().event_id,
+            "at": 1_000.0,
+            "notify": False,
+        }
+    ]
+
+    assert apply_app_reset_receipt(
+        controller, _event().event_id, "delivered", "presented"
+    ) == {"recorded": True}
+    assert saved[-1].events[0].app_receipts[-1].outcome == "delivered"
+    assert reset_replay_documents(controller, now=2_000.0) == []
+
+
+def test_reset_receipt_command_records_the_verdict__and_1_more() -> None:
+    from types import SimpleNamespace
+
+    from jrbar import core_runtime
+    from jrbar.core_server import CommandError
+
+    state = begin_reset_delivery(
+        ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
+    )
+    controller = SimpleNamespace(
+        _jrbar_reset_delivery_state=state,
+        _persist_reset_delivery_state=lambda: None,
+        _core_log=lambda message: None,
+    )
+    assert core_runtime._cmd_reset_receipt(
+        controller,
+        {"event_id": _event().event_id, "outcome": "held", "reason": "call"},
+    ) == {"recorded": True}
+    receipts = controller._jrbar_reset_delivery_state.events[0].app_receipts
+    assert (receipts[-1].outcome, receipts[-1].reason) == ("held", "call")
+
+    # --- scenario: bad args and unknown events are honest refusals
+    with pytest.raises(CommandError) as missing_id:
+        core_runtime._cmd_reset_receipt(controller, {"outcome": "delivered"})
+    assert missing_id.value.code == "invalid_args"
+    with pytest.raises(CommandError) as unknown:
+        core_runtime._cmd_reset_receipt(
+            controller, {"event_id": "nope", "outcome": "delivered"}
+        )
+    assert unknown.value.code == "not_found"
+    with pytest.raises(CommandError) as bad_outcome:
+        core_runtime._cmd_reset_receipt(
+            controller, {"event_id": _event().event_id, "outcome": "shrug"}
+        )
+    assert bad_outcome.value.code == "invalid_args"
+
+
+
+def test_a_channel_receipt_keeps_what_the_app_reported() -> None:
+    from jrbar.provider_reset_events import (
+        ResetChannel,
+        ResetChannelOutcome,
+        apply_app_receipt,
+        apply_reset_channel_receipt,
+    )
+
+    state = begin_reset_delivery(
+        ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
+    )
+    state = apply_app_receipt(state, _event().event_id, "held", "call", now=1_010.0)
+    state = apply_reset_channel_receipt(
+        state,
+        _event().event_id,
+        ResetChannel.OVERLAY,
+        ResetChannelOutcome.DELIVERED,
+        reason="effect_scheduled",
+        now=1_020.0,
+    )
+    receipts = state.events[0].app_receipts
+    assert [(r.outcome, r.reason) for r in receipts] == [("held", "call")]
+
+
+def test_same_window_boundary_keeps_distinct_proven_accounts_after_reload():
+    from jrbar.provider_reset_events import apply_app_receipt, reset_events_pending_app
+    from jrbar.provider_usage_qol import _event_id
+
+    def account_event(account):
+        return replace(_event(), event_id=_event_id("claude", "acct", "weekly", 900.0, account),
+                       account_discriminator=account)
+
+    first = account_event("synthetic-account-a")
+    second = account_event("synthetic-account-b")
+    state = begin_reset_delivery(ResetDeliveryState(), first, ResetDeliverySettings(), now=1_000.0)
+    state = apply_reset_channel_receipt(state, first.event_id, ResetChannel.OVERLAY,
+                                      ResetChannelOutcome.DELIVERED, reason="shown", now=1_001.0)
+    state = apply_app_receipt(state, first.event_id, "delivered", "presented", now=1_001.0)
+    state = decode_reset_delivery_state(encode_reset_delivery_state(state))
+    state = begin_reset_delivery(state, second, ResetDeliverySettings(), now=1_002.0)
+    assert [event.event_id for event in state.events] == [first.event_id, second.event_id]
+    restored = decode_reset_delivery_state(encode_reset_delivery_state(state))
+    assert [event.account_discriminator for event in restored.events] == [
+        "synthetic-account-a", "synthetic-account-b"]
+    assert [event.event_id for event in reset_events_pending_app(restored, now=1_003.0)] == [second.event_id]
+    assert begin_reset_delivery(restored, second, ResetDeliverySettings(), now=1_004.0) == restored
+    assert begin_reset_delivery(restored, replace(second, event_id="different-untrusted-id"),
+                                ResetDeliverySettings(), now=1_004.0) == restored
+    settled = apply_app_receipt(restored, second.event_id, "delivered", "presented", now=1_005.0)
+    assert reset_events_pending_app(settled, now=1_006.0) == ()
+
+
+def test_legacy_delivery_without_account_scope_keeps_fact_and_stable_id_dedup():
+    import json
+
+    from jrbar.provider_reset_events import apply_app_receipt, reset_events_pending_app
+
+    first = replace(_event(), account_discriminator="synthetic-account-a")
+    state = begin_reset_delivery(ResetDeliveryState(), first, ResetDeliverySettings(), now=1_000.0)
+    state = apply_app_receipt(state, first.event_id, "delivered", "presented", now=1_001.0)
+    document = json.loads(encode_reset_delivery_state(state))
+    document["events"][0].pop("account_discriminator", None)
+    legacy = decode_reset_delivery_state(json.dumps(document))
+    assert len(legacy.events) == 1
+    assert legacy.events[0].event_id == first.event_id
+    assert legacy.events[0].app_receipts == state.events[0].app_receipts
+    assert begin_reset_delivery(legacy, first, ResetDeliverySettings(), now=1_002.0) == legacy
+    second = replace(first, event_id="claude:acct:weekly:second-account", account_discriminator="synthetic-account-b")
+    grown = begin_reset_delivery(legacy, second, ResetDeliverySettings(), now=1_003.0)
+    assert len(grown.events) == 2
+    assert [event.event_id for event in reset_events_pending_app(grown, now=1_004.0)] == [second.event_id]

@@ -1,6 +1,8 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from jrbar.ambient_effect_consumer import active_hardware_ambient_presentation
 from jrbar.ambient_effect_dispatch import AmbientEffectFamily, AmbientEffectSurface
 from jrbar.ambient_effect_runtime import (
@@ -902,3 +904,134 @@ def test_a_waiting_worker_alone_never_reads_as_an_ask_on_the_dot(monkeypatch) ->
         SemanticEventKind.ASK
     )
     assert worker_request not in {request.key for request in state.requests}
+
+
+def test_capacity_failure_never_becomes_an_ambient_failure_signature():
+    from jrbar.ambient_effect_runtime import _active_semantics
+    from jrbar.provider_facts import ProviderTerminalCause
+
+    state, work_key, _request_key, watermark = _canonical_state(lifecycle=WorkLifecycle.FAILED)
+    limited = replace(state.works[0], next_actor=NextActor.NONE,
+                      terminal_cause=ProviderTerminalCause.CODEX_USAGE_LIMIT)
+    state = replace(state, works=(limited,))
+    event = replace(_operator_event(work_key, TransitionKind.FAILED, watermark),
+                    terminal_cause=ProviderTerminalCause.CODEX_USAGE_LIMIT)
+    assert SemanticEventKind.FAILURE not in _active_semantics(
+        state, (event,), quiet_requests=frozenset(), workers_quiet=False)
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    controller = controller_type()
+    controller.observe_operator_history_events((event,), state)
+    assert controller.observed_event_batches[-1] == ((event,), state)
+    assert getattr(controller, "_courtesy_signature_plan", None) is None
+
+
+def _runtime_surface_outputs(controller, surface):
+    active = active_ambient_surface_output(controller, surface)
+    outputs = [] if active is None else [active[0]]
+    if surface is not AmbientEffectSurface.SCREEN_BAR:
+        presentation = active_hardware_ambient_presentation(
+            controller,
+            device_id="fixture-device",
+            led_count=2 if surface is AmbientEffectSurface.SIDEPULSE_DOT else 8,
+            reduce_motion=False,
+            brightness=255,
+        )
+        if presentation is not None:
+            outputs.append(presentation.output)
+    return outputs
+
+
+@pytest.mark.parametrize("surface", tuple(AmbientEffectSurface))
+def test_ask_heartbeat_retires_when_its_last_request_closes(monkeypatch, surface):
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    controller = controller_type()
+    clock = [50.0]
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0)
+    waiting, *_ = _canonical_state(lifecycle=WorkLifecycle.WAITING, request_open=True)
+    controller.observe_operator_history_events((), waiting)
+    before = _runtime_surface_outputs(controller, surface)
+    assert before
+    assert all(output.semantic is SemanticEventKind.ASK for output in before)
+    clock[0] = 51.0
+    resumed, *_ = _canonical_state(lifecycle=WorkLifecycle.ACTIVE, request_open=False)
+    controller.observe_operator_history_events((), resumed)
+    assert controller._ask_heartbeat_plan.request_count == 0
+    after = _runtime_surface_outputs(controller, surface)
+    assert all(output.family is not AmbientEffectFamily.ASK_HEARTBEAT for output in after)
+    assert all(output.semantic is not SemanticEventKind.ASK for output in after)
+    if surface is AmbientEffectSurface.SIDEPULSE_DOT:
+        assert after
+        assert all(output.semantic is SemanticEventKind.WORK for output in after)
+
+
+@pytest.mark.parametrize("surface", tuple(AmbientEffectSurface))
+def test_disabling_ask_heartbeat_retires_its_staged_family(monkeypatch, surface):
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    controller = controller_type()
+    clock = [50.0]
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0)
+    waiting, *_ = _canonical_state(lifecycle=WorkLifecycle.WAITING, request_open=True)
+    controller.observe_operator_history_events((), waiting)
+    before = _runtime_surface_outputs(controller, surface)
+    assert before
+    if surface is not AmbientEffectSurface.SIDEPULSE_DOT:
+        assert all(output.family is AmbientEffectFamily.ASK_HEARTBEAT for output in before)
+    clock[0] = 51.0
+    controller.settings = SimpleNamespace(active_scene="calm", ambient_cues_disabled=("ask_heartbeat",))
+    controller.observe_operator_history_events((), waiting)
+    after = _runtime_surface_outputs(controller, surface)
+    assert all(output.family is not AmbientEffectFamily.ASK_HEARTBEAT for output in after)
+    if surface is AmbientEffectSurface.SIDEPULSE_DOT:
+        assert after
+        assert all(output.family is AmbientEffectFamily.DOT_BINARY_HEARTBEAT for output in after)
+        assert all(output.semantic is SemanticEventKind.ASK for output in after)
+
+
+def test_finite_completion_still_finishes_after_its_event_batch(monkeypatch):
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    controller = controller_type()
+    clock = [50.0]
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0)
+    completed, work_key, _request_key, watermark = _canonical_state(lifecycle=WorkLifecycle.COMPLETED)
+    controller.observe_operator_history_events((_operator_event(work_key, TransitionKind.COMPLETED, watermark),), completed)
+    before = active_ambient_surface_output(controller, AmbientEffectSurface.SCREEN_BAR)
+    assert before is not None
+    assert before[0].family is AmbientEffectFamily.FIREFLY_COMPLETION
+    clock[0] = 50.1
+    controller.observe_operator_history_events((), empty_operator_state())
+    held = active_ambient_surface_output(controller, AmbientEffectSurface.SCREEN_BAR)
+    assert held == before
+    clock[0] = 50.0 + before[0].expires_after_ms / 1_000.0
+    assert active_ambient_surface_output(controller, AmbientEffectSurface.SCREEN_BAR) is None
+
+
+@pytest.mark.parametrize(
+    "surface", (AmbientEffectSurface.SCREEN_BAR, AmbientEffectSurface.SIDEPULSE_PRO)
+)
+def test_disabling_finite_completion_retires_its_held_family(monkeypatch, surface):
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    controller = controller_type()
+    clock = [50.0]
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0)
+    completed, work_key, _request_key, watermark = _canonical_state(lifecycle=WorkLifecycle.COMPLETED)
+    controller.observe_operator_history_events((_operator_event(work_key, TransitionKind.COMPLETED, watermark),), completed)
+    before = _runtime_surface_outputs(controller, surface)
+    assert before
+    assert all(output.family is AmbientEffectFamily.FIREFLY_COMPLETION for output in before)
+    clock[0] = 50.1
+    controller.observe_operator_history_events((), empty_operator_state())
+    assert _runtime_surface_outputs(controller, surface) == before
+    clock[0] = 50.2
+    controller.settings = SimpleNamespace(active_scene="calm", ambient_cues_disabled=("firefly_completion",))
+    controller.observe_operator_history_events((), empty_operator_state())
+    after = _runtime_surface_outputs(controller, surface)
+    assert all(output.family is not AmbientEffectFamily.FIREFLY_COMPLETION for output in after)

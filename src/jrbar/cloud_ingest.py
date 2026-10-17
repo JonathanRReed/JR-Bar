@@ -38,6 +38,7 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import json
+import math
 import os
 import queue
 import re
@@ -54,6 +55,7 @@ from pathlib import Path
 from .models import HookEvent, parse_datetime
 from .private_io import atomic_private_write, ensure_private_file, read_private_text
 from .providers import HOOK_PROVIDERS, canonical_event_name, default_state_dir
+from .request_deadline import RequestDeadlines
 
 # ---------------------------------------------------------------------------
 # Wire surface
@@ -170,8 +172,13 @@ class CloudIngestLimits:
     max_past_skew_seconds: float = 86400.0
 
     def __post_init__(self) -> None:
+        counts = (self.max_body_bytes, self.burst_events, self.max_sessions, self.max_queue_events)
+        durations = (self.max_events_per_second, self.session_idle_seconds,
+                     self.max_future_skew_seconds, self.max_past_skew_seconds)
         if not (
-            1 <= self.max_body_bytes <= 1024 * 1024
+            all(type(value) is int for value in counts)
+            and all(type(value) in (int, float) and math.isfinite(value) for value in durations)
+            and 1 <= self.max_body_bytes <= 1024 * 1024
             and self.max_events_per_second > 0
             and self.burst_events >= 1
             and self.max_sessions >= 1
@@ -683,17 +690,21 @@ class CloudIngest:
             return IngestReason.FORBIDDEN_HOST
         # A browser attaches Origin to every cross-site request it is allowed
         # to make. We never answer one, and we never emit a CORS header.
-        if lookup.get("origin"):
+        if lookup.has("origin"):
             return IngestReason.FORBIDDEN_ORIGIN
         if not self._authenticated(lookup.get("authorization")):
             return IngestReason.UNAUTHENTICATED
+        if lookup.has("transfer-encoding"):
+            return IngestReason.MALFORMED
 
         declared = lookup.get("content-length")
-        if declared is None or not declared.strip().isdigit():
+        if declared is None or not (declared.strip().isascii() and declared.strip().isdigit()):
             return IngestReason.LENGTH_REQUIRED
-        length = int(declared.strip())
-        if length > self.config.limits.max_body_bytes:
+        digits = declared.strip().lstrip("0") or "0"
+        maximum = str(self.config.limits.max_body_bytes)
+        if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits > maximum):
             return IngestReason.BODY_TOO_LARGE
+        length = int(digits)
         try:
             body = read_body(length)
         except (OSError, ValueError):
@@ -776,7 +787,7 @@ class CloudIngest:
         )
 
 
-_SECURITY_HEADERS = frozenset({"authorization", "host", "origin", "content-length"})
+_SECURITY_HEADERS = frozenset({"authorization", "host", "origin", "content-length", "transfer-encoding"})
 
 
 class _HeaderLookup:
@@ -808,6 +819,9 @@ class _HeaderLookup:
         value = self._values.get(name.casefold())
         return value if type(value) is str else None
 
+    def has(self, name: str) -> bool:
+        return name.casefold() in self._values
+
 
 # ---------------------------------------------------------------------------
 # The HTTP adapter
@@ -828,6 +842,12 @@ class _IngestHandler(BaseHTTPRequestHandler):
     def log_message(self, *_args, **_kwargs) -> None:
         """Silence. The default writes every request line to stderr, and an
         ingest endpoint's request lines are exactly what must not be logged."""
+
+    def parse_request(self) -> bool:
+        parsed = super().parse_request()
+        # The headers are in; the body is only read after the token checks out.
+        self.server.deadlines.disarm(self.request)  # type: ignore[attr-defined]
+        return parsed
 
     def do_POST(self) -> None:
         self._respond()
@@ -866,8 +886,15 @@ class _IngestHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
 
-    def __init__(self, address: tuple[str, int], ingest: CloudIngest) -> None:
+    def __init__(
+        self,
+        address: tuple[str, int],
+        ingest: CloudIngest,
+        *,
+        deadlines: RequestDeadlines | None = None,
+    ) -> None:
         self.ingest = ingest
+        self.deadlines = deadlines or RequestDeadlines()
         self._slots = threading.BoundedSemaphore(_MAX_CONCURRENT_CONNECTIONS)
         super().__init__(address, _IngestHandler)
 
@@ -881,12 +908,15 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                 pass
             return
         try:
+            self.deadlines.arm(request)
             super().process_request(request, client_address)
         except BaseException:
+            self.deadlines.disarm(request)
             self._slots.release()
             raise
 
     def shutdown_request(self, request) -> None:
+        self.deadlines.disarm(request)
         try:
             super().shutdown_request(request)
         finally:

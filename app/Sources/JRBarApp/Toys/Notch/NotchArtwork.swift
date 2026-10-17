@@ -159,9 +159,8 @@ final class ArtworkThumbCache: @unchecked Sendable {
 
     /// The decoded thumbnail for a payload — `NotchArtworkStore`'s own
     /// decode, so the cover decodes at cover size once, and never the
-    /// full bytes per render again. A payload too big for the thumbnail
-    /// decode falls back to `NSImage(data:)`, as the surfaces drew before
-    /// the cache: the result is still decoded once and kept.
+    /// full bytes per render again. Refused payloads stay refused in
+    /// this cache as well.
     func image(for data: Data) -> NSImage? {
         lock.withLock {
             let print = ArtworkPrint(data)
@@ -170,7 +169,7 @@ final class ArtworkThumbCache: @unchecked Sendable {
                 covers.append(hit)
                 return hit.image
             }
-            let image = NotchArtworkStore.decodeCover(data)?.image ?? NSImage(data: data)
+            let image = NotchArtworkStore.decodeCover(data)?.image
             covers.append((print, image))
             if covers.count > NotchArtworkStore.cacheLimit {
                 covers.removeFirst(covers.count - NotchArtworkStore.cacheLimit)

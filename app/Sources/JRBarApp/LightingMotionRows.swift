@@ -1,7 +1,7 @@
 import JRBarCore
 import SwiftUI
 
-/// Settings › Lighting › Blend, under the celebration: which finish plays
+/// Settings › Devices & Lighting › Blend, under the celebration: which finish plays
 /// when a session is done, and the opt-in tool tint on the working light.
 /// Effect Studio › Moments shows the finishes side by side.
 struct LightingMotionRows: View {

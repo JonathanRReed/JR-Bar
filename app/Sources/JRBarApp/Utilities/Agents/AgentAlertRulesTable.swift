@@ -14,11 +14,11 @@ struct AgentAlertRulesTable: View {
     var body: some View {
         VStack(alignment: .leading, spacing: SettingsMetrics.s) {
             SettingLabel(title: "Alert rules",
-                         subtitle: "How loud each agent may be — \"Codex can be loud, Grok quiet\". A blank rule follows Settings › Notifications.")
+                         subtitle: "Per-provider notifications and sounds. Unchanged rules follow Settings › Alerts & Sounds.")
                 .padding(.top, SettingsMetrics.xs)
             let providers = utility.alertProviders
             if providers.isEmpty {
-                CardNote("No agents yet — providers appear here once their hooks are installed or a session reports in.",
+                CardNote("Providers appear after hook installation or a reported session.",
                          symbol: "person.crop.circle.badge.questionmark")
             } else {
                 // The table while it fits; at a narrow window each agent
@@ -112,7 +112,7 @@ struct AgentAlertRulesTable: View {
         Toggle(labelled ? "Asks" : "", isOn: utility.bindRule(provider, \.asks))
             .labelsHidden(!labelled)
             .toggleStyle(.checkbox)
-            .help("Ask banners, the ask sound and the escalation's pulse, chime and notch takeover; off keeps the ask on the panel and the light but never interrupts")
+            .help("Ask banners, sounds and escalation. When off, asks remain in the panel and on the lights.")
     }
 
     private func finishes(_ provider: String, labelled: Bool) -> some View {
@@ -125,7 +125,7 @@ struct AgentAlertRulesTable: View {
             .labelsHidden()
             .fixedSize()
         }
-        .help("Completion banners for this agent: follow Settings, always, or never")
+        .help("Completion banners. Follow uses the global setting.")
     }
 
     private func failures(_ provider: String, labelled: Bool) -> some View {
@@ -139,7 +139,7 @@ struct AgentAlertRulesTable: View {
         Toggle(labelled ? "Sounds" : "", isOn: utility.bindRule(provider, \.sounds))
             .labelsHidden(!labelled)
             .toggleStyle(.checkbox)
-            .help("Every sound this agent's events make, the escalation chime included — banners stay")
+            .help("Provider event sounds, including escalation chimes. Banner settings are separate.")
     }
 
     private func escalation(_ provider: String, labelled: Bool) -> some View {
@@ -153,7 +153,7 @@ struct AgentAlertRulesTable: View {
             .labelsHidden()
             .fixedSize()
         }
-        .help("How far an unanswered ask from this agent may climb past the light, which always ramps; a rule can only lower Settings' ceiling")
+        .help("Maximum escalation for unanswered asks. Cannot exceed the global limit; the light still ramps.")
     }
 
     /// A picker with its column's word before it in the stacked rows —
@@ -238,6 +238,7 @@ struct WidestThatFits<Preferred: View, Fallback: View>: View {
                             ideal = width
                             measured = key
                         }
+                        .id(key)
                 }
             }
         }
@@ -251,7 +252,10 @@ struct WidestThatFits<Preferred: View, Fallback: View>: View {
 /// to report.
 private struct IdealWidthLayout: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        subviews.first?.sizeThatFits(proposal) ?? .zero
+        var size = subviews.first?.sizeThatFits(proposal) ?? .zero
+        // The grid's minimum width must not expand the parent form before the fallback is measured.
+        if let width = proposal.width, width.isFinite { size.width = width }
+        return size
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {

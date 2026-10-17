@@ -47,11 +47,15 @@ struct SettingsRootView: View {
             SettingsPageContainer(store: store, page: store.page)
         }
         .navigationSplitViewStyle(.balanced)
+        .modifier(ProviderUsageLifecycle(store: store))
         .frame(minWidth: 640, minHeight: 420)
         // A covered, minimised or far-Space window holds every preview.
         .environment(\.ledPreviewsHeld, heldAbove || store.windowCovered)
         .sheet(isPresented: Binding(get: { store.calibrating != nil }, set: { if !$0 { store.calibrating = nil } })) {
             CalibrationSheet(store: store, deviceID: store.calibrating ?? "", dismiss: { store.calibrating = nil })
+        }
+        .sheet(isPresented: Binding(get: { store.firmware.sheetDeviceID != nil }, set: { if !$0 { store.firmware.closeSheet() } })) {
+            FirmwareSheet(store: store)
         }
         .sheet(isPresented: Binding(get: { store.doctorReport != nil }, set: { if !$0 { store.doctorReport = nil } })) {
             DoctorSheet(report: store.doctorReport ?? .object([:]), dismiss: { store.doctorReport = nil })
@@ -67,7 +71,7 @@ struct SettingsRootView: View {
             }
             Button("Cancel", role: .cancel) { store.resetTarget = nil }
         } message: {
-            Text("Every setting on that page goes back to the monitor's default. This cannot be undone.")
+            Text(store.resetTarget.map(SettingsStore.resetMessage(for:)) ?? "")
         }
     }
 }
@@ -91,8 +95,8 @@ struct SettingsSearchResults: View {
                     store.reveal(entry)
                 } label: {
                     HStack(spacing: 8) {
-                        SidebarIcon(symbol: toy?.symbol ?? entry.page.symbol,
-                                    tint: toy.map { ToyCard.tint(for: $0.id, page: entry.page.tint) } ?? entry.page.tint)
+                        SidebarIcon(symbol: toy?.symbol ?? entry.chapter.symbol,
+                                    tint: toy.map { ToyCard.tint(for: $0.id, page: entry.chapter.tint) } ?? entry.chapter.tint)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(entry.title)
                                 .lineLimit(1)
@@ -128,7 +132,7 @@ extension SettingsStore {
     func cardToy(_ id: String) -> (any Toy)? {
         var cards: [any Toy] = []
         if let utilities {
-            cards += [utilities.menuBar, utilities.dock, utilities.agents, utilities.dataHoarder] as [any Toy]
+            cards += [utilities.menuBar, utilities.dock, utilities.agents] as [any Toy]
         }
         if let toys {
             if let notch = toys.notch { cards.append(notch) }
@@ -139,16 +143,13 @@ extension SettingsStore {
 }
 
 extension SettingsStore.Page {
-    /// The sidebar's runs, System Settings-style: the app itself, the
-    /// agents and what they cost, the tools, the hardware and how it
-    /// looks and sounds, then the plumbing. Every page sits in exactly
-    /// one run.
+    /// The sidebar's runs, System Settings-style: the app itself, then
+    /// what it watches and does, then how you and other machines reach
+    /// it. Every page sits in exactly one run.
     static let sidebarGroups: [[SettingsStore.Page]] = [
         [.general],
-        [.agents, .usage, .notifications],
-        [.utilities, .toys],
-        [.devices, .lighting, .sounds],
-        [.shortcuts, .remote, .advanced],
+        [.agents, .alerts, .devices, .utilities],
+        [.shortcuts, .remote],
     ]
 }
 
@@ -171,16 +172,33 @@ struct SettingsPageContainer: View {
         .id(page)
     }
 
-    /// Scroll to the card a search hit opened, once the new page has
-    /// laid its rows out, and let its light go after a beat — unless a
-    /// newer hit took it.
+    /// Scroll to what a search hit or a link opened, once the new page has
+    /// laid its rows out: its card (lit for a beat, unless a newer hit
+    /// took it) or, for a row on a daemon page, the group it sits in; for
+    /// a chapter, the place that chapter starts.
     private func scrollToHit(_ proxy: ScrollViewProxy) async {
-        guard let card = store.highlightedCard, store.searchHit?.page == page else { return }
+        if let chapter = store.pendingChapter, chapter.page == page {
+            store.pendingChapter = nil
+            if let anchor = chapter.anchor {
+                try? await Task.sleep(for: .milliseconds(120))
+                guard !Task.isCancelled else { return }
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
+                    proxy.scrollTo(anchor, anchor: .top)
+                }
+            }
+            return
+        }
+        guard let hit = store.searchHit, hit.page == page else { return }
+        let card = store.highlightedCard
+        let target = card.map(SettingsStore.cardAnchor)
+            ?? (hit.group.isEmpty ? hit.chapter.anchor : SettingsStore.groupAnchor(hit.group))
+        guard let target else { return }
         try? await Task.sleep(for: .milliseconds(120))
         guard !Task.isCancelled else { return }
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
-            proxy.scrollTo(SettingsStore.cardAnchor(card), anchor: .top)
+            proxy.scrollTo(target, anchor: .top)
         }
+        guard let card else { return }
         try? await Task.sleep(for: .seconds(2.4))
         guard !Task.isCancelled, store.highlightedCard == card else { return }
         store.highlightedCard = nil
@@ -190,6 +208,11 @@ struct SettingsPageContainer: View {
         Form {
             Section {
                 SettingsPageHeader(page: page)
+            }
+            if let seal = store.seal, seal.notice != nil || seal.resultLine != nil {
+                Section {
+                    SettingsSealBanner(seal: seal)
+                }
             }
             if !store.hasDocument {
                 Section {
@@ -217,29 +240,10 @@ struct SettingsPageContainer: View {
             }
             if let hit = store.searchHit, hit.page == page, hit.title != page.title {
                 Section {
-                    SettingsBanner(symbol: "magnifyingglass", tint: page.tint,
-                                   title: hit.group.isEmpty || hit.group == hit.title
-                                       ? "“\(hit.title)” is on this page."
-                                       : "“\(hit.title)” is under \(hit.group).")
+                    SettingsBanner(symbol: "magnifyingglass", tint: page.tint, title: SettingsSearch.banner(for: hit))
                 }
             }
-            switch page {
-            case .general: GeneralPage(store: store)
-            case .agents: AgentsPage(store: store)
-            case .usage: UsagePage(store: store)
-            case .devices: DevicesPage(store: store)
-            case .utilities: UtilitiesPage(store: store)
-            case .lighting: LightingPage(store: store)
-            case .toys: ToysPage(store: store)
-            case .notifications: NotificationsPage(store: store)
-            case .sounds: SoundsPage(store: store)
-            case .shortcuts: ShortcutsPage(store: store)
-            case .remote: RemotePage(store: store)
-            case .advanced:
-                AdvancedPage(store: store)
-                DiagnosticsCopyGroup(store: store)
-                SettingsTransferGroup(store: store)
-            }
+            SettingsPageBody(store: store, page: page)
         }
         .formStyle(.grouped)
         .disclosureGroupStyle(SettingsDisclosureStyle())
@@ -298,7 +302,9 @@ struct SettingLabel: View {
             if let subtitle {
                 Text(subtitle)
                     .font(.subheadline)
-                    .foregroundStyle(isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.quaternary))
+                    // A disabled row's line is often the reason it is disabled,
+                    // so it stays readable, only dimmer.
+                    .foregroundStyle(isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -492,6 +498,7 @@ struct SettingStepper: View {
                     ValueText(text: "\(store.values.int(SettingsPath(path)) ?? fallback) \(unit)", width: 44)
                     Stepper("", value: store.int(path, default: fallback), in: range, step: step)
                         .labelsHidden()
+                        .accessibilityLabel(title)
                 }
             } label: {
                 SettingLabel(title: title, subtitle: subtitle)
@@ -527,6 +534,7 @@ struct SettingTextField: View {
             LabeledContent {
                 TextField("", text: Binding(get: { focused ? draft : current }, set: { draft = $0 }), prompt: Text(prompt))
                     .labelsHidden()
+                    .accessibilityLabel(title)
                     .focused($focused)
                     .onChange(of: focused) { _, now in
                         if now { draft = current } else { commit() }
@@ -580,6 +588,7 @@ struct SettingNumberField: View {
                         if began { draft = currentText; editing = true } else { commit() }
                     })
                     .labelsHidden()
+                    .accessibilityLabel(title)
                     .onSubmit { commit() }
                     .textFieldStyle(.roundedBorder)
                     .multilineTextAlignment(.trailing)
@@ -620,4 +629,78 @@ extension SettingsStore {
     static let seconds: (Double) -> String = { $0 == $0.rounded() ? "\(Int($0)) s" : String(format: "%.1f s", $0) }
     static let minutes: (Double) -> String = { "\(Int($0.rounded())) min" }
     static let points: (Double) -> String = { String(format: "%g pt", $0) }
+}
+
+extension SettingsStore.Chapter {
+    /// Where the chapter starts on its page: the anchor of its first
+    /// titled group. nil for a chapter at the top of its page.
+    var anchor: String? {
+        switch self {
+        case .usage: return SettingsStore.groupAnchor("Provider usage")
+        case .sounds: return SettingsStore.groupAnchor("Event sounds")
+        case .lighting: return SettingsStore.groupAnchor("Provider colours")
+        case .toys: return SettingsStore.groupAnchor("Toys")
+        case .advanced: return SettingsStore.groupAnchor("Advanced")
+        default: return nil
+        }
+    }
+}
+
+/// What a page is made of: its chapters in order, each the view that
+/// used to be a page of its own.
+struct SettingsPageBody: View {
+    @Bindable var store: SettingsStore
+    let page: SettingsStore.Page
+
+    var body: some View {
+        switch page {
+        case .general:
+            GeneralPage(store: store)
+            PageAdvanced(store: store, page: page,
+                         subtitle: "Setup, the beta channel, diagnostics, backup and reset.") {
+                GeneralAdvanced(store: store)
+            }
+        case .agents:
+            AgentsPage(store: store)
+            UsagePage(store: store)
+            PageAdvanced(store: store, page: page,
+                         subtitle: "How long asks live, agent updates, transcripts, other usage sources and history.") {
+                AgentsAdvanced(store: store)
+                UsageAdvanced(store: store)
+            }
+        case .alerts:
+            NotificationsPage(store: store)
+            SoundsPage(store: store)
+            PhoneAlertGroup(store: store)
+            PageAdvanced(store: store, page: page,
+                         subtitle: "Escalation timing, calendar glow, battery, sound output and the webhook.") {
+                NotificationsAdvanced(store: store)
+                SoundsAdvanced(store: store)
+            }
+        case .devices:
+            DevicesPage(store: store)
+            LightingPage(store: store)
+            PageAdvanced(store: store, page: page,
+                         subtitle: "Calibration profiles, pulse range, Auto-dim and ambient cues.") {
+                CalibrationProfilesSection(store: store)
+                LightingAdvanced(store: store)
+            }
+        case .utilities:
+            UtilitiesPage(store: store)
+            Section {
+                VStack(alignment: .leading, spacing: SettingsMetrics.xs) {
+                    SettingsGroupHeader(title: "Toys", symbol: SettingsStore.Chapter.toys.symbol, tint: SettingsStore.Chapter.toys.tint)
+                    SectionNote("Just for fun. None of it touches your agents or your usage, and each one can be turned off.")
+                }
+                .id(SettingsStore.groupAnchor("Toys"))
+            }
+            ToysPage(store: store)
+        case .shortcuts:
+            ShortcutsPage(store: store)
+            PageAdvanced(store: store, page: page, subtitle: "Links and the command line.") {
+                ShortcutsAdvanced()
+            }
+        case .remote: RemotePage(store: store)
+        }
+    }
 }

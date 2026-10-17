@@ -72,7 +72,7 @@ public struct EventLogFilter: Equatable, Sendable {
         self.text = text
     }
 
-    public static let hiddenKinds: Set<String> = [CoreEvent.usageHistoryReadyKind]
+    public static let hiddenKinds: Set<String> = [CoreEvent.usageHistoryReadyKind, CoreEvent.usageHistoryFailedKind]
 
     public var isEmpty: Bool { categories.isEmpty && text.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -113,20 +113,22 @@ public struct LightLogEntry: Hashable, Sendable, Identifiable {
 /// light" popover: the reason says what the light is doing now, the log
 /// says how it got there.
 public enum LightLog {
-    public static func entries(from events: [CoreEvent], limit: Int = 5) -> [LightLogEntry] {
+    public static func entries(from events: [CoreEvent], limit: Int = 5, privacyMode: Bool? = nil) -> [LightLogEntry] {
         var out: [LightLogEntry] = []
         for event in events.reversed() {
             let category = EventLogCategory.of(event.kind)
             guard category.movesALight, !EventLogFilter.hiddenKinds.contains(event.kind), let at = event.at else { continue }
-            out.append(LightLogEntry(id: event.id, at: at, category: category, text: text(for: event)))
+            out.append(LightLogEntry(id: event.id, at: at, category: category, text: text(for: event, privacyMode: privacyMode)))
             if out.count >= limit { break }
         }
         return out
     }
 
     /// "Codex asked · sidepulse-core" — who, then what, in the log's words.
-    public static func text(for event: CoreEvent) -> String {
-        let who = event.provider.map { SessionLabel.providerName($0) }
+    public static func text(for event: CoreEvent, privacyMode: Bool? = nil) -> String {
+        let who = QuotaAccountCaption.isQuota(event.kind)
+            ? QuotaAccountCaption.provider(event.provider, instance: event.instance, label: event.instanceLabel, privacyMode: privacyMode)
+            : event.provider.map { SessionLabel.providerName($0) }
         let subject = event.label?.trimmingCharacters(in: .whitespacesAndNewlines)
         let verb: String
         switch event.kind {
@@ -146,24 +148,6 @@ public enum LightLog {
         if let subject, !subject.isEmpty, subject != who { return head + " · " + subject }
         if let detail = event.detail, !detail.isEmpty { return head + " · " + detail }
         return head
-    }
-}
-
-// MARK: - Transcript hits
-
-public enum TranscriptSnippet {
-    /// A full-text snippet cut from a stored JSONL line, made readable:
-    /// escapes undone, JSON keys, brackets and quotes dropped, runs of
-    /// space collapsed. The « » the index puts around matched terms stay,
-    /// so the view can mark them.
-    public static func readable(_ raw: String) -> String {
-        raw.replacingOccurrences(of: "\\n", with: " ")
-            .replacingOccurrences(of: "\\t", with: " ")
-            .replacingOccurrences(of: "\"[A-Za-z_]+\"\\s*:", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "[{}\\[\\]\"\\\\]", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: " ,", with: ",")
-            .trimmingCharacters(in: CharacterSet(charactersIn: ", ").union(.whitespacesAndNewlines))
     }
 }
 
@@ -214,5 +198,25 @@ public enum HistoryTimelineRequest {
     public static func canExpand(_ row: CoreHistoryRow) -> Bool {
         guard let session = row.session, !session.isEmpty, !CoreSession.isRemoteID(session) else { return false }
         return provider(of: row).map(readableProviders.contains) ?? false
+    }
+}
+
+/// Account captions require current privacy consent and explicit display metadata.
+public enum QuotaAccountCaption {
+    public static func isQuota(_ kind: String) -> Bool {
+        ["quota_crossed", "quota_pace", "quota_reset"].contains(kind)
+    }
+
+    public static func provider(_ provider: String?, instance: String?, label: String?, privacyMode: Bool?) -> String {
+        let name = provider.map(SessionLabel.providerName) ?? "An agent"
+        let normalizedInstance = instance?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard privacyMode == false,
+              let normalizedInstance, !normalizedInstance.isEmpty, normalizedInstance != "default",
+              let label, !label.contains("@"),
+              !label.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return name }
+        let caption = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !caption.isEmpty, caption.unicodeScalars.count <= 96 else { return name }
+        if caption.range(of: name, options: .caseInsensitive) != nil { return caption }
+        return "\(name) · \(caption)"
     }
 }

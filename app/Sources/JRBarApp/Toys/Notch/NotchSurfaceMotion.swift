@@ -10,6 +10,14 @@ import QuartzCore
 /// orders a panel out only once it really faded.
 @MainActor
 enum NotchSurfaceMotion {
+    private static let transitions = NSMapTable<NSWindow, NSNumber>.weakToStrongObjects()
+
+    private static func beginTransition(_ panel: NSWindow) -> UInt64 {
+        let generation = (transitions.object(forKey: panel)?.uint64Value ?? 0) &+ 1
+        transitions.setObject(NSNumber(value: generation), forKey: panel)
+        return generation
+    }
+
     /// `NotchMotion.panelCurve` for Core Animation.
     static var panelCurve: CAMediaTimingFunction {
         let curve = NotchMotion.panelCurve
@@ -26,6 +34,7 @@ enum NotchSurfaceMotion {
     static func fade(_ panel: NSWindow, to alpha: CGFloat, duration: TimeInterval,
                      reducedDuration: TimeInterval?, curve: CAMediaTimingFunction?,
                      alongside: (NSWindow) -> Void = { _ in }) {
+        _ = beginTransition(panel)
         let reduced = reduceMotion
         if reduced, reducedDuration == nil {
             panel.alphaValue = alpha
@@ -68,23 +77,36 @@ enum NotchSurfaceMotion {
     static func dismiss(_ panel: NSWindow, duration: TimeInterval, reducedDuration: TimeInterval?,
                         curve: CAMediaTimingFunction? = CAMediaTimingFunction(name: .easeIn),
                         stillGone: (@MainActor @Sendable () -> Bool)? = nil,
+                        animate: ((@escaping () -> Void, @escaping () -> Void) -> Void)? = nil,
                         then: @escaping @MainActor @Sendable () -> Void = {}) {
+        let generation = beginTransition(panel)
         let reduced = reduceMotion
         if reduced, reducedDuration == nil {
             panel.orderOut(nil)
             then()
             return
         }
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = reduced ? reducedDuration ?? 0 : duration
-            if let curve { context.timingFunction = curve }
+        let animations = {
             panel.animator().alphaValue = 0
-        }, completionHandler: {
+        }
+        let completion: @Sendable () -> Void = {
             MainActor.assumeIsolated {
+                // A later show or hide owns the panel, even when its alpha is
+                // still zero or its own fade has not finished yet.
+                guard transitions.object(forKey: panel)?.uint64Value == generation else { return }
                 guard stillGone?() ?? (panel.alphaValue < 0.01) else { return }
                 panel.orderOut(nil)
                 then()
             }
-        })
+        }
+        if let animate {
+            animate(animations, completion)
+        } else {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = reduced ? reducedDuration ?? 0 : duration
+                if let curve { context.timingFunction = curve }
+                animations()
+            }, completionHandler: completion)
+        }
     }
 }

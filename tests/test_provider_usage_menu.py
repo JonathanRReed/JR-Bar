@@ -771,3 +771,47 @@ def test_a_provider_with_no_usable_number_says_what_would_fix_it() -> None:
     row = project_usage_menu(state, now=1000).rows[0]
     assert row.title == "Grok · Run grok login"
     assert "stale" in (row.detail or "")
+
+
+def test_a_stale_reading_never_raises_a_new_pace_alert():
+    from dataclasses import replace
+
+    from jrbar.usage_pace import critical_pace_transitions
+
+    hour = 3600.0
+    base = 1_000_000.0
+
+    def snap(remaining, state):
+        return ProviderUsageSnapshot(
+            provider_id="codex",
+            account_label=None,
+            observed_at=base,
+            state=state,
+            reason_code=None,
+            action_label=None,
+            lanes=(
+                UsageLane(
+                    provider_id="codex",
+                    lane_id="five-hour",
+                    label="5-hour",
+                    remaining_percent=remaining,
+                    reset_at=base + 2.5 * hour,
+                    scope="all",
+                    model=None,
+                    feature=None,
+                    bindable=True,
+                    source_id="fixture",
+                ),
+            ),
+            input_tokens=0, cached_input_tokens=0, output_tokens=0,
+            model_count=0, estimated_cost_usd=None, cache_savings_usd=None,
+            credits_remaining=None, incident=None,
+        )
+
+    healthy = (snap(55.0, ProviderSourceState.READY),)
+    stale_critical = (snap(30.0, ProviderSourceState.STALE),)
+    live_critical = (replace(stale_critical[0], state=ProviderSourceState.READY),)
+    # The numbers on a stale snapshot were read earlier, so projecting them
+    # to now is not news about this moment.
+    assert critical_pace_transitions(healthy, stale_critical, now=base, seen_keys=frozenset()) == ()
+    assert len(critical_pace_transitions(healthy, live_critical, now=base, seen_keys=frozenset())) == 1

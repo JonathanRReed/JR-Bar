@@ -32,13 +32,15 @@ struct ShelfPasteTests {
 
     @Test("copied files paste as themselves")
     func files() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("jrbar-paste-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
         let board = privatePasteboard()
         defer { board.releaseGlobally() }
         let a = URL(fileURLWithPath: "/tmp/jrbar-paste/a.png")
         let b = URL(fileURLWithPath: "/tmp/jrbar-paste/b.txt")
         board.clearContents()
         board.writeObjects([a as NSURL, b as NSURL])
-        #expect(ShelfTrayDrop.pasteURLs(board).map(\.path) == [a.path, b.path])
+        #expect(ShelfTrayDrop.pasteResult(board, directory: directory) == .files([a, b]))
     }
 
     @Test("the chip shows for a fresh copy and not for an empty or unshelvable one")

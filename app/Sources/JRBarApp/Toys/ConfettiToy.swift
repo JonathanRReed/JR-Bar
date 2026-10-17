@@ -1,6 +1,7 @@
 import AppKit
 import JRBarCore
 import Observation
+import OSLog
 import SwiftUI
 
 /// Confetti (docs/TOYS.md): when one of the user's triggers lands, the
@@ -8,9 +9,8 @@ import SwiftUI
 /// lower lip (or the icon, the corners, or rain) across a transparent,
 /// click-through overlay, flutters down, lands on the window tops (in
 /// Rest), and the window closes the moment the last piece is gone. The
-/// default trigger is the one the toy has always had — a provider's
-/// *weekly* quota reset (a `quota_reset` event whose `lane` is
-/// `"weekly"` or ends `-weekly`); the rest are opt-in. Off by default;
+/// default trigger is a confirmed quota reset on any provider lane.
+/// The toy starts off and other triggers are opt-in;
 /// Reduce Motion gets one soft glow at the lip instead.
 ///
 /// It minds the room: while JR-Bar is quiet, a Focus is on or a call has
@@ -33,6 +33,7 @@ final class ConfettiToy: Toy {
     /// each living & dying on its own timer. A new burst replaces all
     /// of them — the single-burst policy holds per screen.
     @ObservationIgnored private var windows: [ConfettiWindow] = []
+    @ObservationIgnored private var isShutdown = false
 
     /// Nothing runs between bursts; a burst's windows close themselves.
     /// Once one has played, the line quotes what its frames measured.
@@ -58,14 +59,51 @@ final class ConfettiToy: Toy {
     @ObservationIgnored private var meter: ConfettiDrawMeter?
     /// The state-edge memory for the triggers no event carries (banked
     /// credits growing, the ask set emptying).
-    @ObservationIgnored private var edges = ConfettiEdgeTracker()
-    /// The burst the room is holding, newest wins: whose it is, when it
-    /// was held, and why — the chip says so while it waits.
-    private(set) var held: (shot: ConfettiShot, at: Date, why: ToysHush.Reason)?
+    @ObservationIgnored private var edges = ConfettiEdgeTracker(session: UUID().uuidString)
+    /// One held visual burst accounts for every fact waiting for the room.
+    struct HeldBurst {
+        var shot: ConfettiShot
+        var why: ToysHush.Reason
+        var facts: [Fact]
+        var request: HeldRequest?
+    }
+    struct HeldRequest {
+        var shot: ConfettiShot
+        var since: TimeInterval
+    }
+    private(set) var held: HeldBurst?
+    static let maximumHeldFacts = 64
+
+    /// A fact a burst celebrates: its dedup key, the daemon's id for it
+    /// when it has one, and a word for the log.
+    struct Fact: Equatable {
+        var key: String
+        var eventID: String?
+        var label: String
+        var trigger: ConfettiFireReason? = nil
+        var provider: String? = nil
+        var since: TimeInterval = 0
+    }
+
+    private static let log = Logger(subsystem: "devin.jrbar", category: "confetti")
+    /// Where a decision's one-line account goes — the unified log
+    /// (`log show --predicate 'subsystem == "devin.jrbar" AND category ==
+    /// "confetti"'`) and the app's own log tail. The tests swap it.
+    @ObservationIgnored var logSink: (@MainActor (String) -> Void)?
+    /// Where a `quota_reset`'s verdict goes — the daemon's `reset_receipt`.
+    /// The tests swap it.
+    @ObservationIgnored var receiptSink: (@MainActor (ConfettiResetReceipt) -> Void)?
     /// Re-reads the room while a burst is held; exists only then.
     @ObservationIgnored private var recheck: Timer?
     /// When an outside caller last got a burst — `requestCooldown`.
-    @ObservationIgnored private var lastRequestAt = Date.distantPast
+    @ObservationIgnored private var lastRequestAt: TimeInterval?
+    /// The toy's monotonic clock, in seconds: the request cooldown and the
+    /// hold limit are ages, so a wall-clock step cannot bend them. It keeps
+    /// counting through sleep, so a burst held across a night is old news.
+    /// The tests crank it by hand.
+    @ObservationIgnored var clock: @MainActor () -> TimeInterval = {
+        TimeInterval(clock_gettime_nsec_np(CLOCK_MONOTONIC)) / 1_000_000_000
+    }
     /// How the room is read — injectable so the tests can stage a
     /// fullscreen screen or a clear one without a window server.
     @ObservationIgnored var screensForBurst: @MainActor () -> [NSScreen?] = {
@@ -75,7 +113,7 @@ final class ConfettiToy: Toy {
     /// bursts (screens, density, pieces, colour) without putting
     /// anything on screen.
     @ObservationIgnored var presentOverride: (@MainActor (ConfettiPresentation) -> Void)?
-    /// Where the pop plays: Settings › Sounds' rules (volume, alert
+    /// Where the pop plays: Settings › Alerts & Sounds' rules (volume, alert
     /// device, the call hold). The delegate hands in the app's own
     /// player, the one every event sound uses; without one (previews) a
     /// player is made on the first pop, and tests hand in one that
@@ -87,16 +125,31 @@ final class ConfettiToy: Toy {
 
     init() {}
 
+    isolated deinit {
+        recheck?.invalidate()
+        for window in windows { window.close() }
+    }
+
+    /// Owner retirement ends overlays and timers without settling a held
+    /// daemon fact or changing the saved toy preference.
+    func shutdown() {
+        guard !isShutdown else { return }
+        isShutdown = true
+        dropHeld()
+        stopBurst()
+    }
+
     let id = "confetti"
     let name = "Confetti"
-    let blurb = "A burst in the provider's colours when the moment earns it."
+    let blurb = "Confetti for quota resets and agent events."
     let symbol = "party.popper"
 
     var isOn: Bool {
-        get { store?.state.confetti.enabled ?? false }
+        get { !isShutdown && (store?.state.confetti.enabled ?? false) }
         set {
+            guard !isShutdown else { return }
             store?.state.confetti.enabled = newValue
-            if !newValue { dropHeld() }
+            if !newValue { dropHeld(.dropped, "toy_off") }
         }
     }
 
@@ -115,7 +168,10 @@ final class ConfettiToy: Toy {
     func bind<T>(_ keyPath: WritableKeyPath<ConfettiSettings, T>) -> Binding<T> {
         Binding(
             get: { self.store?.state.confetti[keyPath: keyPath] ?? ConfettiSettings()[keyPath: keyPath] },
-            set: { self.store?.state.confetti[keyPath: keyPath] = $0 })
+            set: {
+                self.store?.state.confetti[keyPath: keyPath] = $0
+                self.roomChanged()
+            })
     }
 
     /// The page-wide "quiet the toys" switch, shown on this card — the
@@ -161,7 +217,8 @@ final class ConfettiToy: Toy {
              at: now)
     }
 
-    private func fire(reason: Reason, shot: ConfettiShot, at now: Date) -> Bool {
+    private func fire(reason: Reason, shot: ConfettiShot, at now: Date, fact: Fact? = nil) -> Bool {
+        guard !isShutdown else { return false }
         switch reason {
         case .test:
             present(shot)
@@ -171,11 +228,12 @@ final class ConfettiToy: Toy {
         case .milestone:
             guard isOn, settings.triggers.milestones else { return false }
         case .request:
-            guard isOn, now.timeIntervalSince(lastRequestAt) >= ConfettiRoom.requestCooldown
-            else { return false }
-            lastRequestAt = now
+            guard isOn else { return false }
+            let stamp = clock()
+            if let last = lastRequestAt, stamp - last < ConfettiRoom.requestCooldown { return false }
+            lastRequestAt = stamp
         }
-        mindTheRoom(shot, now: now)
+        mindTheRoom(shot, now: now, fact: fact)
         return true
     }
 
@@ -183,6 +241,7 @@ final class ConfettiToy: Toy {
     /// trigger policy decides whether it earns a burst and the
     /// `firedKeys` ring keeps each fact to once.
     func noteEvent(_ event: CoreEvent) {
+        guard !isShutdown else { return }
         // An explicit ask relayed by the daemon (a `confetti` event from
         // a CLI or a hook) is an outside request, not a trigger: it wears
         // the named provider's colour, or the calling session's.
@@ -192,8 +251,30 @@ final class ConfettiToy: Toy {
             fire(reason: .request, provider: provider)
             return
         }
-        guard let decision = ConfettiTriggerPolicy.eventFire(event, settings: settings) else { return }
-        deliver(decision, event: event)
+        switch ConfettiTriggerPolicy.eventVerdict(event, settings: settings) {
+        case .unrelated:
+            return
+        case .fire(let decision):
+            deliver(decision, event: event)
+        case .dropped(let why):
+            // A trigger kind that earned nothing is worth a line: a
+            // swallowed weekly reset is how this toy once failed silently.
+            guard event.kind == "quota_reset" else { return }
+            let fact = Fact(key: ConfettiTriggerPolicy.eventKey(event), eventID: event.eventId,
+                            label: Self.label(of: event))
+            // Already celebrated, too old, a trigger off: the daemon keeps
+            // offering a reset until it hears it is settled, so say so.
+            if held?.facts.contains(where: { $0.key == fact.key }) == true {
+                removeHeldFact(fact, outcome: .dropped, reason: why.rawValue)
+            } else {
+                settle(fact, .dropped, why.rawValue)
+            }
+        }
+    }
+
+    /// "quota_reset claude weekly", for the log.
+    private static func label(of event: CoreEvent) -> String {
+        [event.kind, event.provider, event.lane].compactMap { $0 }.joined(separator: " ")
     }
 
     /// The event kind a daemon-relayed ask arrives as: `jrbar confetti`
@@ -206,7 +287,14 @@ final class ConfettiToy: Toy {
     /// baseline never goes stale enough to fire on old news at enable.
     /// A document is also where a Focus or quiet edge arrives, so a held
     /// burst looks at the room again.
+    /// The daemon connection dropped: the next document is a new run's and
+    /// only seeds the edges.
+    func noteConnectionLost() {
+        edges.reseed(session: UUID().uuidString)
+    }
+
     func noteState(_ state: CoreState) {
+        guard !isShutdown else { return }
         for decision in edges.note(state, triggers: settings.triggers) {
             deliver(decision, event: nil)
         }
@@ -217,18 +305,35 @@ final class ConfettiToy: Toy {
     /// provider's colour the way the panel does (the fact's provider,
     /// else the event's session's), and fire — `fire` still checks the
     /// toy is on.
+    ///
+    /// The key is written when the burst is on screen, or when it is let
+    /// go for good — never while it is only held, so a quit during a call
+    /// leaves the fact to be celebrated on the next launch instead of
+    /// losing it.
     private func deliver(_ decision: ConfettiFire, event: CoreEvent?) {
-        guard isOn, !settings.firedKeys.contains(decision.key) else { return }
-        store?.state.confetti.noteFired(decision.key)
         let provider = decision.provider
             ?? event?.session.flatMap { store?.core.state?.session(withID: $0) }?.provider
+        let fact = Fact(key: decision.key, eventID: decision.eventID,
+                        label: event.map { Self.label(of: $0) } ?? "\(decision.reason)",
+                        trigger: decision.reason, provider: provider, since: clock())
+        guard isOn else {
+            // Legacy reset events still need local deduplication without a receipt ID.
+            if event?.kind == "quota_reset" { settle(fact, .dropped, "toy_off") }
+            return
+        }
+        guard !settings.firedKeys.contains(decision.key) else { return }
+        pruneHeldFacts()
+        // The room is already holding this very fact: a second copy (the
+        // greet's replay of a reset the live frame already brought) waits
+        // with it rather than queueing a second burst.
+        guard held?.facts.contains(where: { $0.key == decision.key }) != true else { return }
         let moment: ConfettiShot.Moment
         switch decision.reason {
         case .milestone: moment = .milestone
         case .allClear: moment = .allClear
         default: moment = .plain
         }
-        _ = fire(reason: .trigger, shot: shot(for: provider, moment: moment), at: Date())
+        _ = fire(reason: .trigger, shot: shot(for: provider, moment: moment), at: Date(), fact: fact)
     }
 
     /// A burst for `provider`: its colour, and the provider itself (a
@@ -262,19 +367,41 @@ final class ConfettiToy: Toy {
     // MARK: The room
 
     /// Fire now on the free screens, hold for later, or let it go.
-    private func mindTheRoom(_ shot: ConfettiShot, now: Date) {
+    private func mindTheRoom(_ shot: ConfettiShot, now: Date, fact: Fact? = nil) {
+        pruneHeldFacts()
         let hush = store?.hushReason(now: now)
         let minding = store?.state.hushDuringQuiet ?? true
         let screens = pickScreens(minding ? screensForBurst() : Self.allScreens())
         let free = screens.count
         switch ConfettiRoom.verdict(hush: hush, freeScreens: free, whenHeld: settings.whenHeld) {
         case .fire:
-            present(shot, on: screens)
-        case .hold:
-            held = (shot, now, hush ?? .fullscreen)
-            armRecheck()
-        case .drop:
+            let waiting = held?.facts ?? []
             dropHeld()
+            present(shot, on: screens)
+            for waitingFact in waiting { settle(waitingFact, .delivered, "after_hold") }
+            settle(fact, .delivered, "presented")
+        case .hold:
+            if var waiting = held {
+                if let fact, !waiting.facts.contains(where: { $0.key == fact.key }) {
+                    if waiting.facts.count >= Self.maximumHeldFacts {
+                        let oldest = waiting.facts.removeFirst()
+                        report(oldest, .expired, "hold_capacity")
+                    }
+                    waiting.facts.append(fact)
+                }
+                if fact == nil { waiting.request = HeldRequest(shot: shot, since: clock()) }
+                waiting.shot = shot
+                waiting.why = hush ?? .fullscreen
+                held = waiting
+            } else {
+                held = HeldBurst(shot: shot, why: hush ?? .fullscreen, facts: fact.map { [$0] } ?? [],
+                                 request: fact == nil ? HeldRequest(shot: shot, since: clock()) : nil)
+            }
+            armRecheck()
+            report(fact, .held, (hush ?? .fullscreen).rawValue)
+        case .drop:
+            dropHeld(.dropped, "room_hushed")
+            settle(fact, .dropped, (hush ?? .fullscreen).rawValue)
         }
     }
 
@@ -282,26 +409,84 @@ final class ConfettiToy: Toy {
     /// presence edge, the switch, the recheck timer. A held burst plays
     /// (smaller) once the room is clear, and is let go once it is old.
     func roomChanged(at now: Date = Date()) {
-        guard let held else { return }
-        guard isOn, ConfettiRoom.stillWorthPlaying(heldAt: held.at, now: now) else {
-            dropHeld()
+        guard !isShutdown else { return }
+        guard held != nil else { return }
+        guard isOn else {
+            dropHeld(.dropped, "toy_off")
             return
         }
+        guard settings.whenHeld == .later else {
+            dropHeld(.dropped, "hold_disabled")
+            return
+        }
+        pruneHeldFacts()
+        guard let held else { return }
         // The daemon's reading first — it is free; the window list is
         // only worth asking once nothing else is keeping the room down.
         if let hush = store?.hushReason(now: now) {
-            if hush != held.why { self.held = (held.shot, held.at, hush) }
+            if hush != held.why {
+                var updated = held
+                updated.why = hush
+                self.held = updated
+            }
             return
         }
         let minding = store?.state.hushDuringQuiet ?? true
         let screens = pickScreens(minding ? screensForBurst() : Self.allScreens())
         guard !screens.isEmpty else {
-            if held.why != .fullscreen { self.held = (held.shot, held.at, .fullscreen) }
+            if held.why != .fullscreen {
+                var updated = held
+                updated.why = .fullscreen
+                self.held = updated
+            }
             return
         }
         dropHeld()
         present(held.shot, on: screens, densityScale: ConfettiRoom.replayDensity)
+        for fact in held.facts { settle(fact, .delivered, "after_hold") }
     }
+
+    private func pruneHeldFacts() {
+        guard var waiting = held else { return }
+        if let request = waiting.request,
+           !ConfettiRoom.stillWorthPlaying(heldFor: clock() - request.since) {
+            waiting.request = nil
+        }
+        let triggers = settings.triggers
+        var kept: [Fact] = []
+        for fact in waiting.facts {
+            let eligible: Bool
+            switch fact.trigger {
+            case .quotaReset, .providerReset:
+                eligible = triggers.quotaReset || triggers.perProviderReset.contains(fact.provider?.lowercased() ?? "")
+            case .sessionCompleted: eligible = triggers.sessionCompleted
+            case .allClear: eligible = triggers.allClear
+            case .codexBanked: eligible = triggers.codexBankedReset
+            case .milestone: eligible = triggers.milestones
+            case nil: eligible = true
+            }
+            if !eligible {
+                settle(fact, .dropped, "trigger_off")
+            } else if !ConfettiRoom.stillWorthPlaying(heldFor: clock() - fact.since) {
+                report(fact, .expired, "held_too_long")
+            } else {
+                kept.append(fact)
+            }
+        }
+        guard !kept.isEmpty || waiting.request != nil else { dropHeld(); return }
+        if let request = waiting.request, request.since >= (kept.last?.since ?? -.infinity) {
+            waiting.shot = request.shot
+        } else if let last = kept.last {
+            let moment: ConfettiShot.Moment = last.trigger == .milestone ? .milestone
+                : (last.trigger == .allClear ? .allClear : .plain)
+            waiting.shot = shot(for: last.provider, moment: moment)
+        }
+        waiting.facts = kept
+        held = waiting
+    }
+
+    /// Whether the held burst's recheck timer is running (the tests).
+    var isRecheckArmed: Bool { recheck != nil }
 
     private func armRecheck() {
         guard recheck == nil else { return }
@@ -312,10 +497,62 @@ final class ConfettiToy: Toy {
         recheck = timer
     }
 
-    private func dropHeld() {
+    /// Lets the held burst go. With an `outcome`, the fact it celebrated is
+    /// settled that way: `dropped` closes it for good, `expired` leaves it
+    /// to be offered again on a later connection.
+    private func dropHeld(_ outcome: ConfettiResetReceipt.Outcome? = nil, _ reason: String = "") {
+        let facts = held?.facts ?? []
         held = nil
         recheck?.invalidate()
         recheck = nil
+        if let outcome {
+            for fact in facts { settle(fact, outcome, reason) }
+        }
+    }
+
+    private func removeHeldFact(_ fact: Fact, outcome: ConfettiResetReceipt.Outcome, reason: String) {
+        held?.facts.removeAll { $0.key == fact.key }
+        if held?.facts.isEmpty == true, held?.request == nil { dropHeld() }
+        settle(fact, outcome, reason)
+    }
+
+    // MARK: Accounting
+
+    /// A fact's burst reached its end: `delivered` and `dropped` are for
+    /// good, so its dedup key is written and the daemon stops offering it;
+    /// `expired` and `held` leave it open. Every end is logged, and a
+    /// daemon fact answers the daemon with a `reset_receipt`.
+    private func settle(_ fact: Fact?, _ outcome: ConfettiResetReceipt.Outcome, _ reason: String) {
+        guard let fact else { return }
+        if outcome == .delivered || outcome == .dropped, !settings.firedKeys.contains(fact.key) {
+            store?.state.confetti.noteFired(fact.key)
+        }
+        if outcome == .delivered || outcome == .dropped, let id = fact.eventID {
+            store?.state.confetti.noteSettledReset(id, at: Date().timeIntervalSince1970)
+        }
+        report(fact, outcome, reason)
+    }
+
+    /// One line in the log, and the daemon's receipt for a daemon fact.
+    private func report(_ fact: Fact?, _ outcome: ConfettiResetReceipt.Outcome, _ reason: String) {
+        guard let fact else { return }
+        note("confetti: \(fact.label) \(outcome.rawValue) (\(reason))")
+        guard let eventID = fact.eventID, !eventID.isEmpty else { return }
+        let receipt = ConfettiResetReceipt(eventID: eventID, outcome: outcome, reason: reason)
+        if let receiptSink {
+            receiptSink(receipt)
+        } else {
+            store?.core.post("reset_receipt", args: receipt.args)
+        }
+    }
+
+    private func note(_ line: String) {
+        if let logSink {
+            logSink(line)
+            return
+        }
+        Self.log.info("\(line, privacy: .public)")
+        store?.core.appendLocalLog(line)
     }
 
     /// The Screens pick: every free screen, or only the main one (the
@@ -358,8 +595,7 @@ final class ConfettiToy: Toy {
     /// burst already on screen is replaced — the newest wins, on every
     /// screen at once. `densityScale` shrinks a replayed hold.
     private func present(_ shot: ConfettiShot, on screens: [NSScreen?]? = nil, densityScale: Double = 1) {
-        for window in windows { window.close() }
-        finishBurst()
+        stopBurst()
         // One overlay per screen — each staged & timed off its own
         // display, same physics & life rules everywhere, and each closes
         // itself, so the replaces-burst policy stays per screen.
@@ -397,7 +633,7 @@ final class ConfettiToy: Toy {
             overlays.append(overlay)
             overlay.burst { [weak self, weak overlay] in
                 MainActor.assumeIsolated {
-                    guard let self, let overlay else { return }
+                    guard let self, !self.isShutdown, let overlay else { return }
                     self.windows.removeAll { $0 === overlay }
                     if self.windows.isEmpty { self.finishBurst() }
                 }
@@ -411,6 +647,12 @@ final class ConfettiToy: Toy {
     private func finishBurst() {
         if let summary = meter?.summary() { lastBurst = summary }
         meter = nil
+    }
+
+    private func stopBurst() {
+        for window in windows { window.close() }
+        windows.removeAll()
+        finishBurst()
     }
 
     /// What a burst is asked to be, from the settings: the moment's own
@@ -516,7 +758,7 @@ final class ConfettiToy: Toy {
 
     /// The pop, if it's wanted and JR-Bar isn't being quiet — the
     /// lights' own reading decides, whatever the hush switch says — at
-    /// Settings › Sounds' volume, a touch higher or lower each burst.
+    /// Settings › Alerts & Sounds' volume, a touch higher or lower each burst.
     private func playPop(pan: Double) {
         guard settings.sound, !isQuietNow() else { return }
         let player = sounds ?? SoundPlayer()

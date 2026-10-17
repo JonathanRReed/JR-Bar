@@ -23,6 +23,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Protocol
 
+from .ask_lifetime import ask_dismissal_key
 from .boot_identity import boot_identifier_basis
 from .capacity_types import SourceKey
 from .completion_visibility import (
@@ -62,10 +63,13 @@ from .operator_state import (
     ClockContinuityStatus,
     ClockSample,
     RequestPhase,
+    RetainedOrderMark,
     SemanticEventKey,
     apply_acknowledgements,
+    apply_ask_dismissals,
     empty_operator_state,
     reduce_operator_state,
+    request_opened_epoch,
     semantic_event_key_from_payload,
     semantic_event_key_to_payload,
 )
@@ -75,6 +79,7 @@ from .private_io import (
     read_private_text,
 )
 from .provider_adapters import (
+    NormalizedProviderRecord,
     minimize_hook_event,
     normalized_provider_record_from_payload,
     provider_facts_for_record,
@@ -85,6 +90,7 @@ from .provider_facts import (
     NextActor,
     ObservationAuthority,
     ProviderFactBatch,
+    ProviderTerminalCause,
     ProviderWatermark,
     RequestKey,
     RequestKind,
@@ -104,6 +110,7 @@ from .provider_facts import (
 from .providers import (
     HOOK_PROVIDERS,
     NegotiatedProviderSource,
+    canonical_event_name,
     detect_log_path,
     negotiated_provider_sources,
     parse_log_line,
@@ -129,6 +136,7 @@ CODEX_TRANSCRIPT_MAX_FILES = 12
 CODEX_TRANSCRIPT_MAX_LINES = 500
 CLAUDE_TRANSCRIPT_MAX_FILES = 24
 CLAUDE_TRANSCRIPT_MAX_LINES = 500
+RECENT_LINES_MAX_BYTES = 8 * 1024 * 1024
 # 45s: the rglob walked 2,445 files on the main thread every refresh.
 # New FILES appear rarely; new LINES are caught by per-file signatures.
 TRANSCRIPT_FILE_LIST_CACHE_SECONDS = 45.0
@@ -136,9 +144,6 @@ TRANSCRIPT_RECORDS_CACHE_MAX_ENTRIES = (
     CODEX_TRANSCRIPT_MAX_FILES + CLAUDE_TRANSCRIPT_MAX_FILES
 ) * 4
 TRANSCRIPT_FILE_LIST_CACHE_MAX_ENTRIES = 16
-# Keep a day of finished sessions: latest.json once accumulated every
-# session ever seen and was re-serialized on every hook event.
-STATUS_RETENTION_SECONDS = 24 * 3600.0
 # latest.json is the restore snapshot and a slow feed: socket clients get
 # every change as it lands, but serve.py's /status.json, doctor and the
 # app's offline fallback read the file. At 5 s the daemon still rewrote
@@ -171,6 +176,32 @@ WORKING_SILENCE_SECONDS = ACTIVE_SILENCE_SECONDS
 # keep a session that really did die reading "Working" forever.
 LIVE_SESSION_TRUST_SECONDS = 30.0
 CODEX_USAGE_LIMIT_TERMINAL_CLASSIFICATIONS = frozenset({"usage_limit_exceeded"})
+#: Codex's typed ``codex_error_info`` classes (protocol.rs ``CodexErrorInfo``)
+#: that mean a turn ended in failure. Unit classes arrive as a string, the
+#: ones with a status code as a one-key object. ``other``, a rollback and
+#: "this turn cannot be steered" are not failures of the turn.
+CODEX_FAILED_TURN_CLASSIFICATIONS = frozenset(
+    {
+        "context_window_exceeded",
+        "session_budget_exceeded",
+        "rate_limit_exceeded",
+        "flex_unavailable",
+        "server_overloaded",
+        "cyber_policy",
+        "bio_policy",
+        "misalignment_policy_violation",
+        "too_many_denials",
+        "http_connection_failed",
+        "response_stream_connection_failed",
+        "internal_server_error",
+        "unauthorized",
+        "bad_request",
+        "invalid_prompt",
+        "sandbox_error",
+        "response_stream_disconnected",
+        "response_too_many_failed_attempts",
+    }
+)
 LATEST_STATE_MAX_BYTES = 4 * 1_024 * 1_024
 MAX_PENDING_OPERATOR_EVENTS = 2_000
 MAX_EXTERNAL_STATUS_SOURCES = 16
@@ -275,6 +306,27 @@ def _registered_hook_source(provider: str) -> NegotiatedProviderSource | None:
     )
 
 
+def _normalized_hook_record(record: HookEvent, source: NegotiatedProviderSource) -> NormalizedProviderRecord | None:
+    """Decode an encoded record without losing its typed terminal cause."""
+    payload = dict(record.raw)
+    hook_name = payload.pop("hook_event_name", record.event_name)
+    logged_at = payload.pop("logged_at", None)
+    if hook_name != record.event_name or (
+        logged_at is not None and (type(logged_at) is not datetime or logged_at != record.logged_at)
+    ):
+        return None
+    normalized = normalized_provider_record_from_payload(payload)
+    if type(normalized) is not NormalizedProviderRecord:
+        return None
+    if (
+        normalized.source_key != source.source_key
+        or canonical_event_name(normalized.event_name.value) != record.event_name
+        or abs(normalized.occurred_at_epoch - record.logged_at.timestamp()) > 0.000001
+    ):
+        return None
+    return normalized
+
+
 def _batch_for_hook_record(
     record: HookEvent,
     *,
@@ -289,12 +341,17 @@ def _batch_for_hook_record(
         in {CODEX_TRANSCRIPT_PROVIDER, CLAUDE_TRANSCRIPT_PROVIDER}
         else source.registration.observation_authority
     )
-    normalized = minimize_hook_event(
-        record,
-        source_key=source.source_key,
-        contract=source.contract,
-        observation_authority=observation_authority,
-    )
+    if "record_kind" in record.raw:
+        normalized = _normalized_hook_record(record, source)
+        if normalized is None:
+            return None
+    else:
+        normalized = minimize_hook_event(
+            record,
+            source_key=source.source_key,
+            contract=source.contract,
+            observation_authority=observation_authority,
+        )
     return provider_facts_for_record(
         normalized,
         contract=source.contract,
@@ -329,6 +386,31 @@ def _canonical_datetime(epoch: float) -> datetime:
         return datetime.fromtimestamp(epoch, timezone.utc)
     except (OSError, OverflowError, ValueError):
         return datetime.max.replace(tzinfo=timezone.utc)
+
+
+def _status_request_key(
+    work: CanonicalWorkTruth,
+    requests: Mapping[RequestKey, CanonicalRequestTruth] | None,
+) -> RequestKey | None:
+    """The request a session row stands for: its first open ask, the one the
+    card, the answer and the attention gate all mean.
+
+    Resolved tombstones stay linked to the work, and one may sort ahead of
+    the ask that is open now. Naming it would gate the real ask out as "no
+    longer live", so a tombstone is named only when nothing is open (which is
+    what lets that gate demote a row whose ask the state has closed).
+    """
+    if not work.request_keys:
+        return None
+    if requests is not None:
+        for key in work.request_keys:
+            request = requests.get(key)
+            if request is not None and request.phase in {
+                RequestPhase.LIVE_UNACKNOWLEDGED,
+                RequestPhase.LIVE_ACKNOWLEDGED,
+            }:
+                return key
+    return work.request_keys[0]
 
 
 def agent_status_from_canonical_work(
@@ -369,14 +451,18 @@ def agent_status_from_canonical_work(
         ),
         WorkLifecycle.COMPLETED: (AgentMode.COMPLETED, "Stop"),
         WorkLifecycle.FAILED: (AgentMode.BLOCKED_ERROR, "StopFailure"),
-        WorkLifecycle.UNKNOWN: (AgentMode.UNKNOWN, "Unknown"),
+        WorkLifecycle.UNKNOWN: (
+            (AgentMode.ENDED_UNCONFIRMED, "StopUnconfirmed")
+            if work.next_actor is NextActor.NONE
+            else (AgentMode.UNKNOWN, "Unknown")
+        ),
     }[work.lifecycle]
     provider = work.key.source_key.provider_id
     is_worker = work.parent_key is not None
     matching_overlay = overlay is not None and (
         overlay.watermark == work.watermark
         or overlay.status.updated_at
-        >= _canonical_datetime(work.watermark.occurred_at_epoch)
+        >= _canonical_datetime(work.observed_at_epoch)
     )
     projected_mode = (
         AgentMode.WAITING_FOR_INPUT
@@ -395,9 +481,9 @@ def agent_status_from_canonical_work(
         else event_name
     )
     projected_updated_at = (
-        overlay.status.updated_at
+        max(overlay.status.updated_at, _canonical_datetime(work.observed_at_epoch))
         if matching_overlay
-        else _canonical_datetime(work.watermark.occurred_at_epoch)
+        else _canonical_datetime(work.observed_at_epoch)
     )
     session_id = (
         work.parent_key.work_id.value if work.parent_key is not None else work.key.work_id.value
@@ -427,7 +513,9 @@ def agent_status_from_canonical_work(
             and matching_overlay
         ),
         work_key=work.key,
-        request_key=work.request_keys[0] if work.request_keys else None,
+        request_key=_status_request_key(work, requests),
+        terminal_cause=(work.terminal_cause if projected_mode is AgentMode.BLOCKED_ERROR
+                        else ProviderTerminalCause.NONE),
     )
 
 
@@ -447,7 +535,11 @@ def _snapshot_from_operator_state(
     post_tool_working_visible_seconds: float,
     canonical_projected_uses_age_windows: bool,
     session_is_live: Callable[[AgentStatus], bool] | None = None,
+    dismissed_asks: frozenset[tuple[str, int]] = frozenset(),
+    retain_liveness_candidates: bool = False,
 ) -> MonitorSnapshot:
+    # Asks the person dismissed locally are held before anything reads them.
+    state = apply_ask_dismissals(state, dismissed_asks)
     requests_by_key = {request.key: request for request in state.requests}
     projected = tuple(
         agent_status_from_canonical_work(
@@ -490,19 +582,51 @@ def _snapshot_from_operator_state(
         )
     )
     merged = _reconcile_delegating_parents(merged, collected_at)
+    if dismissed_asks:
+        merged = tuple(
+            _status_without_dismissed_ask(status, requests_by_key, dismissed_asks)
+            for status in merged
+        )
+    live_request_keys = frozenset(
+        request.key
+        for request in state.requests
+        if request.phase
+        in {RequestPhase.LIVE_UNACKNOWLEDGED, RequestPhase.LIVE_ACKNOWLEDGED}
+    )
     # Hour-silent rows are history, not presence.
     presence_horizon = max(PRESENCE_HORIZON_SECONDS, float(stale_after_seconds or 0.0))
     fresh: list[AgentStatus] = []
     stale: list[AgentStatus] = []
     for status in merged:
-        if bounded_age_seconds(collected_at, status.updated_at) > presence_horizon:
-            continue
-        effective = status_for_snapshot(
-            status,
-            collected_at,
-            post_tool_working_visible_seconds=post_tool_working_visible_seconds,
-            session_is_live=session_is_live,
+        # An ask nobody has answered is not history, however long ago it
+        # was heard: it stays present until it is settled or its session
+        # ends (``ask_lifetime``).
+        asking = status_is_unanswered_ask(status) and (
+            status.request_key is None or status.request_key in live_request_keys
         )
+        working_shaped = status.mode in {
+            AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS,
+        }
+        process_vouched = (
+            working_shaped
+            and session_is_live is not None
+            and session_is_live(status)
+        )
+        if (
+            not asking
+            and not process_vouched
+            and not (retain_liveness_candidates and working_shaped)
+            and bounded_age_seconds(collected_at, status.updated_at) > presence_horizon
+        ):
+            continue
+        effective = status
+        if not (retain_liveness_candidates and working_shaped):
+            effective = status_for_snapshot(
+                status,
+                collected_at,
+                post_tool_working_visible_seconds=post_tool_working_visible_seconds,
+                session_is_live=lambda _: process_vouched,
+            )
         projected_status = projected_by_agent_id.get(status.agent_id)
         is_stale = (
             status_is_stale(
@@ -525,6 +649,8 @@ def _snapshot_from_operator_state(
                 idle_visible_seconds=idle_visible_seconds,
             )
         )
+        if process_vouched:
+            is_stale = False
         current = _replace_stale(effective, is_stale)
         if is_stale:
             stale.append(current)
@@ -607,8 +733,7 @@ class LiveSessionMemory:
     before this existed.
     """
 
-    _live_sessions: frozenset[tuple[str, str]] = frozenset()
-    _live_sessions_at: float = 0.0
+    _live_session_evidence: tuple[float, frozenset[tuple[str, str]]] = (0.0, frozenset())
     #: Counts every change a snapshot could show: an ingested record or
     #: batch, an acknowledgement folded in, a restore, a new live set. The
     #: daemon's refresh admission fingerprints this number instead of the
@@ -647,22 +772,44 @@ class LiveSessionMemory:
             return frozenset()
         return keys
 
+    #: Optional callable returning the ``ask_lifetime.ask_dismissal_key``
+    #: identities of the asks the person dismissed locally. Pulled on every
+    #: snapshot so a dismissal applies to the very next read; a missing or
+    #: throwing supplier means nothing is dismissed.
+    dismissed_asks_supplier: Callable[[], frozenset[tuple[str, int]]] | None = None
+
+    def _dismissed_ask_keys(self) -> frozenset[tuple[str, int]]:
+        supplier = getattr(self, "dismissed_asks_supplier", None)
+        if not callable(supplier):
+            return frozenset()
+        try:
+            keys = supplier()
+        except Exception:
+            return frozenset()
+        return keys if type(keys) is frozenset else frozenset()
+
     def note_live_sessions(
         self, sessions: Iterable[tuple[str, str]], *, now: float | None = None
-    ) -> None:
-        """Record the ``(provider, session_id)`` pairs the sweep just proved
-        alive (``liveness_sweep.SweepResult.live_sessions``)."""
+    ) -> bool:
+        """Publish process proof and report a pair or trust-validity change."""
 
         pairs = frozenset(
             (str(provider), str(session_id))
             for provider, session_id in sessions
             if provider and session_id
         )
-        # One rebind of two attributes: readers never need the monitor lock.
-        self._live_sessions_at = time.time() if now is None else now
-        if pairs != self._live_sessions:
+        clock_now = time.time()
+        stamp = clock_now if now is None else now
+        previous_stamp, previous_pairs = self._live_session_evidence
+        previous_valid = bool(previous_pairs) and 0 <= clock_now - previous_stamp <= LIVE_SESSION_TRUST_SECONDS
+        valid = bool(pairs) and 0 <= clock_now - stamp <= LIVE_SESSION_TRUST_SECONDS
+        changed = pairs != previous_pairs or valid != previous_valid
+        if changed:
             self.revision += 1
-        self._live_sessions = pairs
+        # Publish the clock and its witnesses together, so a reader cannot
+        # pair a new stamp with the previous sweep's processes.
+        self._live_session_evidence = (stamp, pairs)
+        return changed
 
     def session_is_live(self, status: AgentStatus) -> bool:
         """Whether the sweep vouched for this session's process, recently.
@@ -675,10 +822,10 @@ class LiveSessionMemory:
         session_id = getattr(status, "session_id", None)
         if not session_id:
             return False
-        live = self._live_sessions
+        stamp, live = self._live_session_evidence
         if not live:
             return False
-        if time.time() - self._live_sessions_at > LIVE_SESSION_TRUST_SECONDS:
+        if not 0 <= time.time() - stamp <= LIVE_SESSION_TRUST_SECONDS:
             return False
         return (str(getattr(status, "provider", "")), str(session_id)) in live
 
@@ -722,29 +869,11 @@ class AgentMonitor(LiveSessionMemory):
         self.acknowledged_requests_supplier = acknowledged_requests_supplier
         self.operator_state = empty_operator_state()
         self._canonical_signature: tuple[Any, ...] | None = None
+        self._initial_replay_failures: set[tuple[WorkKey, ProviderWatermark]] | None = None
         self._pending_operator_events: tuple[CanonicalOperatorEvent, ...] = ()
         self._canonical_records_seen = False
         self._canonical_status_overlays_by_work_key: dict[WorkKey, CanonicalStatusOverlay] = {}
         self._canonical_statuses_by_agent_id: dict[str, AgentStatus] = {}
-
-    @classmethod
-    def from_default_sources(
-        cls,
-        stale_after_seconds: float = 3600.0,
-        tool_running_timeout_seconds: float = 0.0,
-        completed_visible_seconds: float = COMPLETED_VISIBLE_SECONDS,
-        idle_visible_seconds: float = IDLE_VISIBLE_SECONDS,
-        post_tool_working_visible_seconds: float = POST_TOOL_WORKING_VISIBLE_SECONDS,
-        max_lines_per_source: int = 5000,
-    ) -> AgentMonitor:
-        return cls(
-            stale_after_seconds=stale_after_seconds,
-            tool_running_timeout_seconds=tool_running_timeout_seconds,
-            completed_visible_seconds=completed_visible_seconds,
-            idle_visible_seconds=idle_visible_seconds,
-            post_tool_working_visible_seconds=post_tool_working_visible_seconds,
-            max_lines_per_source=max_lines_per_source,
-        )
 
     def snapshot(self) -> MonitorSnapshot:
         now = _canonical_datetime(self._clock_sampler().wall_epoch)
@@ -768,6 +897,7 @@ class AgentMonitor(LiveSessionMemory):
                 post_tool_working_visible_seconds=self.post_tool_working_visible_seconds,
                 canonical_projected_uses_age_windows=True,
                 session_is_live=self.session_is_live,
+                dismissed_asks=self._dismissed_ask_keys(),
             )
         statuses_by_key = self._latest_statuses()
 
@@ -870,6 +1000,16 @@ class AgentMonitor(LiveSessionMemory):
                     )
             batches.append(batch)
         batches = sorted(batches, key=_batch_sort_key)
+        if self._initial_replay_failures is None:
+            # Journal history predates this monitor. Keep its outcome without
+            # treating an old unclassified failure as a newly observed alarm.
+            self._initial_replay_failures = {
+                (fact.key, fact.watermark)
+                for batch in batches
+                for fact in batch.work_facts
+                if fact.lifecycle is WorkLifecycle.FAILED
+                and fact.terminal_cause is ProviderTerminalCause.NONE
+            }
         self._canonical_signature = signature
         self._canonical_records_seen = bool(batches)
         self._canonical_status_overlays_by_work_key = status_overlays
@@ -909,11 +1049,26 @@ class AgentMonitor(LiveSessionMemory):
                     item for item in state.source_watermarks if item[0] in remaining_sources
                 ),
             )
+        open_ask_work_keys = {
+            request.key.work_key
+            for request in state.requests
+            if request.phase in {RequestPhase.LIVE_UNACKNOWLEDGED, RequestPhase.LIVE_ACKNOWLEDGED}
+            and request.next_actor is NextActor.USER
+        }
+        state = replace(state, works=tuple(
+            replace(work, source_freshness=SourceFreshness.STALE)
+            if work.lifecycle is WorkLifecycle.FAILED
+            and (work.key, work.watermark) in self._initial_replay_failures
+            and work.key not in open_ask_work_keys
+            else work
+            for work in state.works
+        ))
         self.operator_state = state
         self._pending_operator_events = tuple(
             event
             for key, event in sorted(events.items())
-            if (
+            if (event.subject_key, key.provider_watermark) not in self._initial_replay_failures
+            and (
                 (retained := previous_watermarks.get(key.provider_watermark.source_key))
                 is None
                 or compare_watermarks(key.provider_watermark, retained)
@@ -1060,6 +1215,10 @@ class AgentMonitor(LiveSessionMemory):
         for line in read_recent_lines(source.path, self.max_lines_per_source):
             record = parse_log_line(source.provider, line)
             if record is not None:
+                if "record_kind" in record.raw:
+                    registered = _registered_hook_source(record.provider)
+                    if registered is None or _normalized_hook_record(record, registered) is None:
+                        continue
                 records.append(record)
 
         cached_records = tuple(records)
@@ -1162,6 +1321,8 @@ class AgentMonitor(LiveSessionMemory):
     def is_stale_status(self, status: AgentStatus, now: datetime) -> bool:
         if status.stale:  # facade rule: self-marked stays stale
             return True
+        if status_is_unanswered_ask(status):
+            return False
         age = bounded_age_seconds(now, status.updated_at)
         if status.mode == AgentMode.COMPLETED and self.completed_visible_seconds >= 0:
             return age > self.completed_visible_seconds
@@ -1349,6 +1510,7 @@ class LiveAgentMonitor(LiveSessionMemory):
         batch: ProviderFactBatch,
         *,
         clock: ClockSample | None = None,
+        _replay: object = None,
     ) -> None:
         sampled_clock = self._clock_sampler() if clock is None else clock
         with self.lock:
@@ -1358,6 +1520,7 @@ class LiveAgentMonitor(LiveSessionMemory):
                 batch,
                 clock=sampled_clock,
                 acknowledged_requests=acknowledged,
+                _replay=_replay,
             )
             self.operator_state = reduced.state
             self._acknowledged_applied = acknowledged
@@ -1499,15 +1662,17 @@ class LiveAgentMonitor(LiveSessionMemory):
             )
         equal_watermark_confirmed = False
         for batch in sorted(batches, key=_batch_sort_key):
+            from .ipc import _admits_replay
+            replay = hint._replay if _admits_replay(hint._replay, batch.watermark) else None
             if retained_watermark is not None:
                 order = compare_watermarks(batch.watermark, retained_watermark)
-                if order is WatermarkOrder.OLDER:
+                if order is WatermarkOrder.OLDER and replay is None:
                     continue
                 if order is WatermarkOrder.EQUAL:
                     if equal_watermark_confirmed:
                         continue
                     equal_watermark_confirmed = True
-            self.ingest_batch(batch, clock=clock)
+            self.ingest_batch(batch, clock=clock, _replay=replay)
             if (
                 retained_watermark is None
                 or compare_watermarks(batch.watermark, retained_watermark)
@@ -1637,6 +1802,8 @@ class LiveAgentMonitor(LiveSessionMemory):
             idle_visible_seconds=self.idle_visible_seconds,
             post_tool_working_visible_seconds=self.post_tool_working_visible_seconds,
             canonical_projected_uses_age_windows=False,
+            session_is_live=self.session_is_live,
+            dismissed_asks=self._dismissed_ask_keys(),
         )
 
     def load_latest_state(self) -> None:
@@ -1672,7 +1839,7 @@ class LiveAgentMonitor(LiveSessionMemory):
         self.revision += 1
         self._status_overlays_by_work_key = (
             _presentation_overlays_from_document(document)
-            if type(document) is dict and document.get("version") == 2
+            if type(document) is dict and document.get("version") in {2, 3}
             else {}
         )
         if (
@@ -1695,6 +1862,15 @@ class LiveAgentMonitor(LiveSessionMemory):
         self._pending_operator_events = ()
 
     def current_statuses_by_key(self) -> dict[str, AgentStatus]:
+        return self._current_statuses_by_key()
+
+    def liveness_statuses_by_key(self) -> dict[str, AgentStatus]:
+        """Internal sweep candidates, including quiet work awaiting process proof."""
+        return self._current_statuses_by_key(retain_liveness_candidates=True)
+
+    def _current_statuses_by_key(
+        self, *, retain_liveness_candidates: bool = False
+    ) -> dict[str, AgentStatus]:
         now = _canonical_datetime(self._clock_sampler().wall_epoch)
         with self.lock:
             self._reapply_acknowledgements_locked()
@@ -1716,6 +1892,9 @@ class LiveAgentMonitor(LiveSessionMemory):
             idle_visible_seconds=self.idle_visible_seconds,
             post_tool_working_visible_seconds=self.post_tool_working_visible_seconds,
             canonical_projected_uses_age_windows=False,
+            session_is_live=self.session_is_live,
+            dismissed_asks=self._dismissed_ask_keys(),
+            retain_liveness_candidates=retain_liveness_candidates,
         )
         return {
             status.agent_id: status
@@ -2000,6 +2179,7 @@ def _work_to_payload(work: CanonicalWorkTruth) -> dict[str, object]:
         "key": work_key_to_payload(work.key),
         "lifecycle": work.lifecycle.value,
         "watermark": _watermark_to_payload(work.watermark),
+        "observed_at_epoch": work.observed_at_epoch,
         "observation_authority": int(work.observation_authority),
         "source_health": work.source_health.value,
         "source_freshness": work.source_freshness.value,
@@ -2010,6 +2190,8 @@ def _work_to_payload(work: CanonicalWorkTruth) -> dict[str, object]:
         ),
         "request_keys": [request_key_to_payload(key) for key in work.request_keys],
         "timing_uncertain": work.timing_uncertain,
+        **({"terminal_cause": work.terminal_cause.value}
+           if work.terminal_cause is not ProviderTerminalCause.NONE else {}),
     }
 
 
@@ -2020,6 +2202,7 @@ def _request_to_payload(request: CanonicalRequestTruth) -> dict[str, object]:
         "request_kind": request.request_kind.value,
         "next_actor": request.next_actor.value,
         "watermark": _watermark_to_payload(request.watermark),
+        "observed_at_epoch": request.observed_at_epoch,
         "source_freshness": request.source_freshness.value,
         "acknowledgement_eligibility": request.acknowledgement_eligibility.value,
         "semantic_event_key": semantic_event_key_to_payload(
@@ -2055,13 +2238,56 @@ def _presentation_hint_payloads(
     ]
 
 
+def _order_mark_payload(key, mark: RetainedOrderMark, encode_key) -> dict[str, object]:
+    return {"key": encode_key(key), "watermark": _watermark_to_payload(mark.watermark),
+            "authority": int(mark.authority), "observed_at_epoch": mark.observed_at_epoch}
+
+
+def _order_marks_from_payload(payload, decode_key):
+    if type(payload) is not list or len(payload) > 1000:
+        raise ValueError("invalid ordering coverage")
+    marks = []
+    for row in payload:
+        if not _has_exact_fields(row, {"key", "watermark", "authority", "observed_at_epoch"}):
+            raise ValueError("invalid ordering coverage")
+        key, watermark = decode_key(row["key"]), _watermark_from_payload(row["watermark"])
+        if key is None or watermark is None or type(row["authority"]) is not int:
+            raise ValueError("invalid ordering coverage")
+        marks.append((key, RetainedOrderMark(watermark, ObservationAuthority(row["authority"]), row["observed_at_epoch"])))
+    return tuple(marks)
+
+
+def _legacy_order_coverage(state: CanonicalOperatorState) -> CanonicalOperatorState:
+    # Earlier snapshots omitted resolved identities and eviction history.
+    # Unknown earlier identities must retain the old source-wide refusal.
+    return replace(state, source_order_floors=tuple(
+        (source, RetainedOrderMark(watermark, ObservationAuthority.AUTHORITATIVE_PROVIDER,
+                                   watermark.occurred_at_epoch))
+        for source, watermark in state.source_watermarks
+    ))
+
+
+def _v3_state_from_document(document: dict) -> CanonicalOperatorState:
+    additions = {"work_order_marks", "request_order_marks", "source_order_floors"}
+    if not _has_exact_fields(document, _LATEST_DOCUMENT_FIELDS | additions):
+        raise ValueError("invalid latest-state document")
+    base = {key: value for key, value in document.items() if key not in additions}
+    base["version"] = 2
+    state = _v2_state_from_document(base)
+    return replace(state,
+        work_order_marks=_order_marks_from_payload(document["work_order_marks"], work_key_from_payload),
+        request_order_marks=_order_marks_from_payload(document["request_order_marks"], request_key_from_payload),
+        source_order_floors=_order_marks_from_payload(document["source_order_floors"], _source_key_from_payload),
+    )
+
+
 def _state_to_document(
     state: CanonicalOperatorState,
     *,
     overlays: Mapping[WorkKey, CanonicalStatusOverlay] = MappingProxyType({}),
 ) -> dict[str, object]:
     return {
-        "version": 2,
+        "version": 3,
         "generation": state.generation,
         "works": [_work_to_payload(work) for work in state.works],
         "requests": [
@@ -2073,6 +2299,9 @@ def _state_to_document(
             _watermark_to_payload(watermark)
             for _source, watermark in state.source_watermarks
         ],
+        "work_order_marks": [_order_mark_payload(key, mark, work_key_to_payload) for key, mark in state.work_order_marks],
+        "request_order_marks": [_order_mark_payload(key, mark, request_key_to_payload) for key, mark in state.request_order_marks],
+        "source_order_floors": [_order_mark_payload(key, mark, _source_key_to_payload) for key, mark in state.source_order_floors],
         "timing_uncertain_sources": [
             _source_key_to_payload(source)
             for source in state.timing_uncertain_sources
@@ -2109,7 +2338,10 @@ def _safe_label_for_key(key: WorkKey) -> str:
 
 
 def _work_from_payload(payload: object) -> CanonicalWorkTruth:
-    if not _has_exact_fields(payload, _WORK_FIELDS):
+    expected_fields = _WORK_FIELDS | {"terminal_cause"} if type(payload) is dict and "terminal_cause" in payload else _WORK_FIELDS
+    if type(payload) is dict and "observed_at_epoch" in payload:
+        expected_fields = expected_fields | {"observed_at_epoch"}
+    if not _has_exact_fields(payload, expected_fields):
         raise ValueError("invalid work restore row")
     key = work_key_from_payload(payload["key"])
     watermark = _watermark_from_payload(payload["watermark"])
@@ -2149,6 +2381,8 @@ def _work_from_payload(payload: object) -> CanonicalWorkTruth:
         parent_key=parent,
         request_keys=request_keys,
         timing_uncertain=payload["timing_uncertain"],
+        terminal_cause=ProviderTerminalCause(payload.get("terminal_cause", "none")),
+        observed_at_epoch=payload.get("observed_at_epoch"),
     )
 
 
@@ -2170,7 +2404,8 @@ def _resolved_tombstone(request: CanonicalRequestTruth) -> bool:
 
 
 def _request_from_payload(payload: object) -> CanonicalRequestTruth:
-    if not _has_exact_fields(payload, _REQUEST_FIELDS):
+    expected_fields = _REQUEST_FIELDS | {"observed_at_epoch"} if type(payload) is dict and "observed_at_epoch" in payload else _REQUEST_FIELDS
+    if not _has_exact_fields(payload, expected_fields):
         raise ValueError("invalid request restore row")
     key = request_key_from_payload(payload["key"])
     watermark = _watermark_from_payload(payload["watermark"])
@@ -2215,6 +2450,7 @@ def _request_from_payload(payload: object) -> CanonicalRequestTruth:
         opened_at_epoch=opened,
         eligible_elapsed_seconds=elapsed,
         _observation_authority=ObservationAuthority.RESTORED_LAST_KNOWN,
+        observed_at_epoch=payload.get("observed_at_epoch"),
     )
 
 
@@ -2561,20 +2797,24 @@ def _operator_state_from_document(
     if type(document) is not dict:
         raise ValueError("invalid latest-state document")
     if frozenset(document) == {"updated_at", "statuses"}:
-        return _v1_state_from_document(
+        state, health = _v1_state_from_document(
             document,
             restore_work_keys=restore_work_keys,
         )
+        return _legacy_order_coverage(state), health
     version = document.get("version")
     if type(version) is not int:
         raise ValueError("invalid latest-state version")
     if version == 2:
-        return _v2_state_from_document(document), RestoreHealth.HEALTHY
+        return _legacy_order_coverage(_v2_state_from_document(document)), RestoreHealth.HEALTHY
+    if version == 3:
+        return _v3_state_from_document(document), RestoreHealth.HEALTHY
     if version == 1:
-        return _v1_state_from_document(
+        state, health = _v1_state_from_document(
             document,
             restore_work_keys=restore_work_keys,
         )
+        return _legacy_order_coverage(state), health
     raise _UnsupportedLatestState
 
 
@@ -2720,6 +2960,32 @@ def codex_transcript_event(
 ) -> HookEvent | None:
     payload_type = payload.get("type")
 
+    assistant_message = payload_type == "message" and payload.get("role") == "assistant"
+    phase = _string_or_none(payload.get("phase"))
+    channel = _string_or_none(payload.get("channel"))
+    progress_message = assistant_message and (
+        phase in {"commentary", "analysis"} or channel in {"commentary", "analysis"}
+    )
+    if payload_type == "reasoning" or progress_message:
+        # A resumed turn may have no prompt left in the bounded tail. These
+        # provider records are affirmative progress, without a new turn or text.
+        return HookEvent(
+            provider="codex",
+            logged_at=timestamp,
+            event_name="ActivityProgress",
+            raw={
+                "hook_event_name": "ActivityProgress",
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "cwd": cwd,
+                "transcript_path": str(path),
+                "source": CODEX_TRANSCRIPT_PROVIDER,
+            },
+            session_id=session_id,
+            turn_id=turn_id,
+            cwd=cwd,
+        )
+
     if payload_type == "message":
         role = payload.get("role")
         if role == "user":
@@ -2743,6 +3009,10 @@ def codex_transcript_event(
                 message=prompt,
             )
         if role == "assistant":
+            if ("phase" in payload or "channel" in payload) and not (
+                phase in {"final", "final_answer"} or channel == "final"
+            ):
+                return None
             message = message_text_from_content(payload.get("content"))
             return HookEvent(
                 provider="codex",
@@ -2763,7 +3033,7 @@ def codex_transcript_event(
                 message=message,
             )
 
-    if payload_type == "function_call":
+    if payload_type in {"function_call", "custom_tool_call"}:
         tool_name = _string_or_none(payload.get("name"))
         return HookEvent(
             provider="codex",
@@ -2775,7 +3045,11 @@ def codex_transcript_event(
                 "turn_id": turn_id,
                 "cwd": cwd,
                 "tool_name": tool_name,
-                "tool_input": payload.get("arguments"),
+                "tool_input": (
+                    payload.get("arguments")
+                    if payload_type == "function_call"
+                    else payload.get("input")
+                ),
                 "tool_use_id": payload.get("call_id"),
                 "transcript_path": str(path),
                 "source": CODEX_TRANSCRIPT_PROVIDER,
@@ -2786,7 +3060,7 @@ def codex_transcript_event(
             tool_name=tool_name,
         )
 
-    if payload_type == "function_call_output":
+    if payload_type in {"function_call_output", "custom_tool_call_output"}:
         return HookEvent(
             provider="codex",
             logged_at=timestamp,
@@ -2806,10 +3080,32 @@ def codex_transcript_event(
             cwd=cwd,
         )
 
+    if payload_type == "turn_aborted":
+        # The turn was stopped (an interrupt, a replacement turn, the end of
+        # a review, a spent budget). Codex fires no Stop for it; without this
+        # the session reads as working until the silence window runs out.
+        return HookEvent(
+            provider="codex",
+            logged_at=timestamp,
+            event_name="Interrupt",
+            raw={
+                "hook_event_name": "Interrupt",
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "cwd": cwd,
+                "transcript_path": str(path),
+                "source": CODEX_TRANSCRIPT_PROVIDER,
+            },
+            session_id=session_id,
+            turn_id=turn_id,
+            cwd=cwd,
+        )
+
     if payload_type == "task_complete":
+        usage_limit = codex_usage_limit_terminal(payload)
         event_name = (
             "StopFailure"
-            if codex_usage_limit_terminal(payload)
+            if usage_limit or codex_failed_turn_terminal(payload)
             else "Stop"
         )
         message = (
@@ -2837,13 +3133,26 @@ def codex_transcript_event(
             cwd=cwd,
             message=message,
             _terminal_provenance=(
-                _CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE
-                if event_name == "StopFailure"
-                else None
+                _CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE if usage_limit else None
             ),
         )
 
     return None
+
+
+def codex_failed_turn_terminal(payload: Mapping[str, Any]) -> bool:
+    """A turn that ended with one of Codex's typed failure classes.
+
+    Only the structured ``codex_error_info`` counts, never the message
+    text; the error itself is not copied anywhere.
+    """
+    error = payload.get("error")
+    if type(error) is not dict:
+        return False
+    info = error.get("codex_error_info")
+    if type(info) is dict and len(info) == 1:
+        info = next(iter(info))
+    return type(info) is str and info in CODEX_FAILED_TURN_CLASSIFICATIONS
 
 
 def codex_usage_limit_terminal(payload: Mapping[str, Any]) -> bool:
@@ -3241,7 +3550,7 @@ def mode_for_event(record: HookEvent) -> AgentMode | None:
         return AgentMode.TOOL_RUNNING
     if event == "PostToolUse":
         return AgentMode.WORKING
-    if event in {"UserPromptSubmit", "PreCompact", "PostCompact", "SubagentStart"}:
+    if event in {"UserPromptSubmit", "ActivityProgress", "PreCompact", "PostCompact", "SubagentStart"}:
         return AgentMode.WORKING
     if event == "SubagentStop":
         # A finished sub-agent can't be answered -- mapping its often
@@ -3463,6 +3772,37 @@ def _merged_status_candidates(
     return tuple(merged[agent_id] for agent_id in sorted(merged))
 
 
+def _status_without_dismissed_ask(
+    status: AgentStatus,
+    requests_by_key: Mapping[RequestKey, CanonicalRequestTruth],
+    dismissed: frozenset[tuple[str, int]],
+) -> AgentStatus:
+    """The row the person dismissed the ask of reads as quiet, not asking."""
+    if not status.is_hard_ask:
+        return status
+    request = (
+        requests_by_key.get(status.request_key) if status.request_key is not None else None
+    )
+    opened = (
+        request_opened_epoch(request)
+        if request is not None
+        else status.updated_at.timestamp()
+    )
+    if ask_dismissal_key(status.agent_id, opened) in dismissed:
+        return _replace_mode(status, AgentMode.IDLE_READY)
+    return status
+
+
+def status_is_unanswered_ask(status: AgentStatus) -> bool:
+    """Whether this row is an ask that is still waiting on the person.
+
+    Such a row is exempt from the silence and presence clocks that retire
+    other work: only its own resolution, its session ending, or the person
+    dismissing it takes it off the surfaces (``ask_lifetime``).
+    """
+    return not status.stale and status.is_hard_ask
+
+
 def status_is_stale(
     status: AgentStatus,
     now: datetime,
@@ -3476,6 +3816,8 @@ def status_is_stale(
     # projection) stays stale no matter how fresh the timestamp is.
     if status.stale:
         return True
+    if status_is_unanswered_ask(status):
+        return False
     age = bounded_age_seconds(now, status.updated_at)
     if status.mode == AgentMode.COMPLETED and completed_visible_seconds >= 0:
         return age > completed_visible_seconds
@@ -3664,26 +4006,36 @@ def should_ignore_record(record: HookEvent, metadata: StatusMetadata) -> bool:
     return any(prompt in text for prompt in internal_prompts)
 
 
-def read_recent_lines(path: Path, max_lines: int) -> list[str]:
-    if max_lines <= 0:
+def read_recent_lines(path: Path, max_lines: int, *, max_bytes: int = RECENT_LINES_MAX_BYTES) -> list[str]:
+    if max_lines <= 0 or max_bytes <= 1:
         return []
 
     chunk_size = 8192
     chunks: list[bytes] = []
     newline_count = 0
+    # Reserve one byte to establish whether the tail begins at a line boundary.
+    remaining = max_bytes - 1
+    partial_first = False
 
     with path.open("rb") as handle:
         handle.seek(0, 2)
         position = handle.tell()
-        while position > 0 and newline_count <= max_lines:
-            read_size = min(chunk_size, position)
+        while position > 0 and remaining > 0 and newline_count <= max_lines:
+            read_size = min(chunk_size, position, remaining)
             position -= read_size
             handle.seek(position)
             chunk = handle.read(read_size)
             chunks.append(chunk)
+            remaining -= read_size
             newline_count += chunk.count(b"\n")
+        if position > 0:
+            handle.seek(position - 1)
+            partial_first = handle.read(1) != b"\n"
 
     data = b"".join(reversed(chunks))
+    if partial_first:
+        boundary = data.find(b"\n")
+        data = data[boundary + 1:] if boundary >= 0 else b""
     lines = data.decode("utf-8", errors="replace").splitlines()
     return lines[-max_lines:]
 
@@ -3888,10 +4240,10 @@ def _tool_response_looks_failed(response: object) -> bool:
             return True
         return False
 
-    if isinstance(response, str):
-        text = response.lower()
-        return "exit code: 1" in text or "traceback" in text
-
+    # A plain string is what a command printed, not a verdict on it: a test
+    # run that logs a traceback and passes, or a log tailed for one, is not a
+    # failed tool. Real failures arrive structured (``is_error``, ``success``,
+    # ``exit_code``, ``interrupted``) or as the PostToolUseFailure event.
     return False
 
 

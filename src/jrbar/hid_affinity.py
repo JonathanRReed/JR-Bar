@@ -28,6 +28,11 @@ _ready = threading.Event()
 _error: BaseException | None = None
 _stop = threading.Event()
 _thread: threading.Thread | None = None
+#: How long the pump sleeps in its run loop between looks at ``_stop``.
+#: Nothing sets ``_stop`` while the daemon lives, and a device arriving wakes
+#: the loop at once, so a short beat here only woke an idle thread twice a
+#: second for the life of the process.
+PUMP_WAKE_SECONDS = 3600.0
 
 
 def _bind() -> None:
@@ -80,14 +85,14 @@ def _bind() -> None:
         while not _stop.is_set():
             loop.runMode_beforeDate_(
                 NSDefaultRunLoopMode,
-                NSDate.dateWithTimeIntervalSinceNow_(0.5),
+                NSDate.dateWithTimeIntervalSinceNow_(PUMP_WAKE_SECONDS),
             )
     else:
         # No run-loop machinery: the binding alone still prevents the
         # dead-run-loop crash (the thread never exits); device-matching
         # callbacks just go unpumped, matching pre-affinity behaviour.
         while not _stop.is_set():
-            _stop.wait(0.5)
+            _stop.wait(PUMP_WAKE_SECONDS)
 
 
 def ensure_hid_binding() -> None:

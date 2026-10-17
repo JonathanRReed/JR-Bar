@@ -32,6 +32,22 @@ final class NotchAnnouncements {
     private let capsLock = CapsLockWatcher()
     private let displays = DisplayWatcher()
     private(set) var started = false
+    /// Whether the Bluetooth registration has been made. Registering is
+    /// what makes macOS ask for Bluetooth access, so it waits until the
+    /// person has the notch's announcements on, and it is made once.
+    private(set) var bluetoothStarted = false
+    /// What registers for connect notifications; a test swaps it so no
+    /// hardware is touched.
+    var startBluetooth: (() -> Void)?
+
+    /// Registers for Bluetooth connects the first time announcements are
+    /// allowed. Nothing is registered, and nothing asked, while the notch
+    /// or its announcements are off.
+    func syncBluetooth() {
+        guard !bluetoothStarted, isAllowed() else { return }
+        bluetoothStarted = true
+        if let startBluetooth { startBluetooth() } else { bluetooth.start() }
+    }
 
     func start() {
         guard !started else { return }
@@ -57,7 +73,7 @@ final class NotchAnnouncements {
             self.announce(Self.displayNotice(connected: connected))
         }
         focus.start()
-        bluetooth.start()
+        syncBluetooth()
         capsLock.start()
         displays.start()
     }

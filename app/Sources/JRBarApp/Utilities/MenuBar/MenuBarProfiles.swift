@@ -4,8 +4,8 @@ import JRBarCore
 /// Named presets for the Menu Bar utility, persisted inside
 /// `MenuBarSettings.profiles`. A profile is a delta over the base map —
 /// only the apps (and covered items) it says differently — plus the
-/// cover's look, the reveal's style and clock, the spacing and the
-/// spacer items. `curation.activeProfileID` names the one laid over the
+/// cover's look, the reveal's style and clock and the spacing.
+/// `curation.activeProfileID` names the one laid over the
 /// base right now, so switching swaps a layer instead of replacing the
 /// map: an app you hide after a profile was saved stays hidden in every
 /// profile that does not say otherwise.
@@ -23,9 +23,31 @@ enum MenuBarProfiles {
     /// The name the built-in state shows.
     nonisolated static let noneName = "None"
 
+    /// Follow a mapped display after two uninterrupted observations.
+    /// Staying on the active display preserves a manually chosen profile.
+    nonisolated static func displayProfile(observedKey: String?, mappings: [String: String],
+                                          activeKey: inout String?,
+                                          pending: inout (key: String, count: Int)?) -> String? {
+        guard !mappings.isEmpty else {
+            activeKey = nil
+            pending = nil
+            return nil
+        }
+        guard let key = observedKey, key != activeKey, let profileID = mappings[key] else {
+            pending = nil
+            return nil
+        }
+        let count = pending?.key == key ? (pending?.count ?? 0) + 1 : 1
+        pending = (key, count)
+        guard count >= 2 else { return nil }
+        activeKey = key
+        pending = nil
+        return profileID
+    }
+
     /// Snapshot what a profile keeps of the live settings: the cover
-    /// appearance, the reveal's style and clock, the item spacing and
-    /// the spacer items — and the active profile's deltas, so "save as"
+    /// appearance, the reveal's style and clock and the item spacing
+    /// — and the active profile's deltas, so "save as"
     /// over a profile duplicates it. With no profile active the new one
     /// starts as "your bar, this look": its differences are picked in
     /// the card's profile editor, one app at a time.
@@ -42,16 +64,15 @@ enum MenuBarProfiles {
             revealStyle: settings.revealStyle,
             rehideMode: settings.rehideMode,
             rehideSeconds: settings.rehideSeconds,
-            itemSpacing: settings.itemSpacing,
-            spacers: settings.spacers)
+            itemSpacing: settings.itemSpacing)
     }
 
     /// Switch to a profile: it becomes the active layer and its look,
-    /// reveal, spacing and spacers replace the live ones. The maps are
+    /// reveal and spacing replace the live ones. The maps are
     /// never written — the base stays yours. `nil` is the built-in
     /// "None": the base map alone, with the look a fresh install has
     /// (the Blend In cover, the timed default reveal, the system's own
-    /// spacing, no spacers). The reveal gestures, `enabled`, the hotkeys
+    /// spacing). The reveal gestures, `enabled`, the hotkeys
     /// and the rules are not the profile's business and survive either
     /// way.
     nonisolated static func apply(_ profile: MenuBarSettings.Profile?,
@@ -67,7 +88,6 @@ enum MenuBarProfiles {
             settings.rehideMode = .timed
             settings.rehideSeconds = MenuBarSettings.defaultRehideSeconds
             settings.itemSpacing = 0
-            settings.spacers = []
             return
         }
         settings.curation.activeProfileID = profile.id
@@ -80,12 +100,11 @@ enum MenuBarProfiles {
         settings.rehideMode = profile.rehideMode
         settings.rehideSeconds = profile.rehideSeconds
         settings.itemSpacing = profile.itemSpacing
-        settings.spacers = profile.spacers
     }
 
     /// The cover's look alone — what a "while" rule's profile brings to
-    /// the live copy while it holds. The reveal, the spacing and the
-    /// spacers are system-wide or gesture settings and stay with your
+    /// the live copy while it holds. The reveal and the spacing
+    /// are system-wide or gesture settings and stay with your
     /// saved choice.
     nonisolated static func applyCoverLook(_ profile: MenuBarSettings.Profile,
                                            to settings: inout MenuBarSettings) {
@@ -153,28 +172,16 @@ enum MenuBarProfiles {
         settings.curation.profileModel = MenuBarCuration.currentProfileModel
     }
 
-    /// Where a pick for an app lands while a profile is active: the
-    /// profile's delta when it already speaks for the app — a pick is
+    /// Where a pick for a covered item lands while a profile is active: the
+    /// profile's delta when it already speaks for the item — a pick is
     /// never silently overridden — else the base, so it holds in every
     /// profile.
-    nonisolated static func pickTargetsProfile(appID: String, in settings: MenuBarSettings) -> Bool {
-        activeProfile(in: settings)?.concealedApps[appID] != nil
-    }
-
-    /// The same question for a covered item's positional entry.
     nonisolated static func pickTargetsProfile(itemID: String, in settings: MenuBarSettings) -> Bool {
         activeProfile(in: settings)?.sections[itemID] != nil
     }
 
-    /// The profile editor's write: what `profileID` says about one app —
-    /// nil drops the delta, so the app follows the base again.
-    nonisolated static func setDelta(appID: String, to section: MenuBarItemSection?,
-                                     profileID: String, in settings: inout MenuBarSettings) {
-        guard let index = settings.profiles.firstIndex(where: { $0.id == profileID }) else { return }
-        settings.profiles[index].concealedApps[appID] = section
-    }
-
-    /// The same for a covered item.
+    /// The profile editor's write: what `profileID` says about one covered
+    /// item — nil drops the delta, so the item follows the base again.
     nonisolated static func setDelta(itemID: String, to section: MenuBarItemSection?,
                                      profileID: String, in settings: inout MenuBarSettings) {
         guard let index = settings.profiles.firstIndex(where: { $0.id == profileID }) else { return }
@@ -225,12 +232,46 @@ enum MenuBarProfiles {
         return saved.id
     }
 
-    /// Rename, keeping the id and contents. A bad name is a no-op.
+    /// Whether an existing profile can take this name without another profile sharing it.
+    nonisolated static func canRename(id: String, to name: String,
+                                      in settings: MenuBarSettings) -> Bool {
+        guard let name = validName(name), settings.profiles.contains(where: { $0.id == id })
+        else { return false }
+        return !settings.profiles.contains {
+            $0.id != id && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }
+    }
+
+    /// Rename, keeping the id and contents. Returns the name mapping only when
+    /// saved name references belonged to this profile. Invalid names are a no-op.
+    @discardableResult
     nonisolated static func rename(id: String, to name: String,
-                                   in settings: inout MenuBarSettings) {
-        guard let name = validName(name),
-              let index = settings.profiles.firstIndex(where: { $0.id == id }) else { return }
+                                   in settings: inout MenuBarSettings) -> (from: String, to: String)? {
+        guard canRename(id: id, to: name, in: settings), let name = validName(name),
+              let index = settings.profiles.firstIndex(where: { $0.id == id }) else { return nil }
+        let oldName = settings.profiles[index].name
+        let ownerIndex = settings.profiles.firstIndex {
+            $0.name.caseInsensitiveCompare(oldName) == .orderedSame
+        }
         settings.profiles[index].name = name
+        guard oldName.caseInsensitiveCompare(noneName) != .orderedSame,
+              ownerIndex == index else { return nil }
+        for i in settings.triggerRules.indices {
+            if case .applyProfile(let target) = settings.triggerRules[i].action,
+               target.caseInsensitiveCompare(oldName) == .orderedSame {
+                settings.triggerRules[i].action = .applyProfile(name: name)
+            }
+        }
+        for i in settings.curation.stateRules.indices {
+            settings.curation.stateRules[i].effects = settings.curation.stateRules[i].effects.map { effect in
+                if case .useProfile(let target) = effect,
+                   target.caseInsensitiveCompare(oldName) == .orderedSame {
+                    return .useProfile(name: name)
+                }
+                return effect
+            }
+        }
+        return (from: oldName, to: name)
     }
 
     /// Delete by id. The built-in "None" is not in `profiles`, so it

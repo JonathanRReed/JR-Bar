@@ -125,7 +125,7 @@ struct NotchCapsuleTests {
 
     @Test("the glass card presents only on the glass surface — island ownership and off both stay dark")
     func presenterHonoursTheSurface() {
-        var surface = NotchSurface.glass
+        @Captured var surface = NotchSurface.glass
         let presenter = NotchCardPresenter(model: makeTestCardModel())
         presenter.surface = { surface }
         presenter.focus = { ScreenBarFocus(style: nil, label: "JR-Bar",

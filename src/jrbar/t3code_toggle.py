@@ -1,4 +1,4 @@
-"""The T3 Code switch behind Settings > Agents, as data.
+"""The T3 Code switch behind Settings > Agents & Usage, as data.
 
 `jrbar-integrations enable|disable t3code` for the app: whether T3 Code's
 database is on this Mac, whether JR-Bar reads it, and one write of

@@ -27,18 +27,20 @@ public struct UsageSampleLog: Hashable, Sendable {
 
     public mutating func record(_ usage: CoreUsage?, now: Double) {
         guard let usage else { return }
-        for provider in usage.providers {
+        for provider in usage.providers where !provider.isStale {
+            let at = provider.readingAt ?? usage.refreshedAt ?? now
             for window in provider.windows {
                 // A window with no reading is not a window at zero: a
                 // sample of 0 would drag every pace this log computes.
                 guard let usedPct = window.usedPct else { continue }
                 // `identity` keeps two accounts of one provider apart.
-                record(provider: provider.identity, window: window.name, usedPct: usedPct, at: now)
+                record(provider: provider.identity, window: window.name, usedPct: usedPct, at: at)
             }
         }
     }
 
     public mutating func record(provider: String, window: String, usedPct: Double, at: Double) {
+        guard at.isFinite, usedPct.isFinite, (0...100).contains(usedPct) else { return }
         let key = Self.key(provider, window)
         var samples = table[key] ?? []
         if let last = samples.last {
@@ -135,15 +137,15 @@ public struct UsageForecast: Hashable, Sendable {
             // Nothing was measured: say so, and say the one thing that IS
             // known -- when the window turns over.
             if let resetsAt {
-                return "No reading for the \(window) window · resets \(Self.relative(to: resetsAt, now: now))"
+                return "No reading for the \(window) window · \(Self.resetPhrase(resetsAt, now: now))"
             }
             return "No reading for the \(window) window"
         }
-        let left = Int(remainingPct.rounded())
+        let left = UsageWindowLabel.wholeLeft(usedPct: 100 - remainingPct)
         switch verdict {
         case .exhausted:
             if let resetsAt {
-                return "Used up: the \(window) window resets \(Self.relative(to: resetsAt, now: now))"
+                return "Used up: the \(window) window \(Self.resetPhrase(resetsAt, now: now))"
             }
             return "Used up: the \(window) window is exhausted"
         case .runsOut(let at):
@@ -178,13 +180,19 @@ public struct UsageForecast: Hashable, Sendable {
         case "reset_boundary": return "window just reset; pace resumes as readings arrive"
         case "stale_samples": return "readings stopped; pace paused"
         case "clock_regressed": return "clock moved backwards; pace paused"
+        case "window_elapsed": return "window reset; waiting for a new reading"
+        case "monitor_offline": return "monitor disconnected; pace paused"
         default: return "no pace yet"
         }
     }
 
     /// "~2.4 %/h" for the card's pace column.
     public var rateText: String? {
-        guard let rate = ratePctPerHour, rate > UsageForecaster.idleRate else { return nil }
+        switch verdict {
+        case .comfortable, .runsOut: break
+        default: return nil
+        }
+        guard let rate = ratePctPerHour, rate.isFinite, rate > UsageForecaster.idleRate else { return nil }
         return rate >= 10 ? String(format: "%.0f %%/h", rate) : String(format: "%.1f %%/h", rate)
     }
 
@@ -196,9 +204,17 @@ public struct UsageForecast: Hashable, Sendable {
             .formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, timeZone: timeZone))
     }
 
+    /// "resets in 1h 12m", or "reset — waiting for a new reading" once the
+    /// time has gone by: the figure beside it is the old window's until the
+    /// next reading lands, and "resets now" would promise one.
+    static func resetPhrase(_ epoch: Double, now: Date) -> String {
+        if epoch - now.timeIntervalSince1970 < 1 { return "reset — waiting for a new reading" }
+        return "resets \(relative(to: epoch, now: now))"
+    }
+
     /// "in 1h 12m", "in 4m", "now", "2 d ago" is never needed: resets are ahead.
     public static func relative(to epoch: Double, now: Date) -> String {
-        let seconds = Int(epoch - now.timeIntervalSince1970)
+        let seconds = Int(saturating: epoch - now.timeIntervalSince1970)
         if seconds <= 30 { return "now" }
         let minutes = (seconds + 30) / 60
         if minutes < 60 { return "in \(max(1, minutes))m" }
@@ -221,7 +237,17 @@ public enum UsageForecaster {
     /// more than a point), least-squares over the lookback. Nil with fewer
     /// than two usable samples or less than a minute of spread.
     public static func rate(samples: [UsageSample], now: Double) -> Double? {
-        var recent = samples.filter { now - $0.at <= lookback }
+        guard now.isFinite else { return nil }
+        let valid = samples.filter {
+            $0.at.isFinite && $0.usedPct.isFinite && (0...100).contains($0.usedPct)
+                && $0.at <= now && now - $0.at <= lookback
+        }.sorted { $0.at < $1.at }
+        // Two values at one instant are one observation, not extra evidence.
+        var recent: [UsageSample] = []
+        for sample in valid {
+            if recent.last?.at == sample.at { recent[recent.count - 1] = sample }
+            else { recent.append(sample) }
+        }
         if let drop = recent.indices.dropFirst().last(where: { recent[$0].usedPct < recent[$0 - 1].usedPct - 1 }) {
             recent = Array(recent[drop...])
         }
@@ -247,6 +273,11 @@ public enum UsageForecaster {
         guard let used = window.usedPct else {
             return UsageForecast(window: window.name, usedPct: nil, resetsAt: resetsAt, verdict: .unmeasured,
                                  ratePctPerHour: nil, source: .none, pace: daemon?.pace)
+        }
+        if let resetsAt, resetsAt <= now {
+            return UsageForecast(window: window.name, usedPct: used, resetsAt: resetsAt,
+                                 verdict: .guarded(reason: "window_elapsed"), ratePctPerHour: nil,
+                                 source: .none, pace: "guarded", guardReason: "window_elapsed")
         }
         if used >= 99.95 {
             return UsageForecast(window: window.name, usedPct: used, resetsAt: resetsAt, verdict: .exhausted, ratePctPerHour: nil, source: daemon != nil ? .daemon : .local, pace: daemon?.pace)
@@ -315,7 +346,11 @@ extension UsageForecast {
         guard let used = usedPct, let resetsAt, resetsAt > now else { return nil }
         if verdict == .exhausted { return used }
         if heldIdle { return used }
-        guard let rate = ratePctPerHour, rate > UsageForecaster.idleRate else { return nil }
+        switch verdict {
+        case .comfortable, .runsOut: break
+        default: return nil
+        }
+        guard let rate = ratePctPerHour, rate.isFinite, rate > UsageForecaster.idleRate else { return nil }
         return used + rate * (resetsAt - now) / 3600
     }
 
@@ -331,7 +366,8 @@ extension UsageForecast {
             if let rate = ratePctPerHour, rate <= UsageForecaster.idleRate { return "Not burning" }
             return resetsAt != nil ? "Resets first" : "Comfortable"
         case .unknown: return "No pace yet"
-        case .guarded: return "Paused"
+        case .guarded(let reason):
+            return ["insufficient_samples", "insufficient_span"].contains(reason) ? "No pace yet" : "Paused"
         case .unmeasured: return "No reading"
         }
     }
@@ -361,9 +397,13 @@ public enum SessionAwarePace {
     /// the window out before it resets? Nil when there is nothing to
     /// divide (no agent working, no rate, no reset, no reading).
     public static func roomForOneMore(_ forecast: UsageForecast, now: Double) -> Bool? {
+        switch forecast.verdict {
+        case .comfortable, .runsOut: break
+        default: return nil
+        }
         guard let working = forecast.workingAgents, working > 0,
               let used = forecast.usedPct, used < 99.95,
-              let rate = forecast.ratePctPerHour, rate > UsageForecaster.idleRate,
+              let rate = forecast.ratePctPerHour, rate.isFinite, rate > UsageForecaster.idleRate,
               let resetsAt = forecast.resetsAt, resetsAt > now else { return nil }
         let withOneMore = rate / Double(working) * Double(working + 1)
         let exhaustsAt = now + (100 - used) / withOneMore * 3600

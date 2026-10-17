@@ -209,7 +209,7 @@ struct NotchControlsView: View {
         }
         Toggle(isOn: toy.bind(\.hapticTick)) {
             SettingLabel(title: "Haptic tick",
-                         subtitle: "A soft trackpad tap as the island opens, on a Mac with haptics.")
+                         subtitle: "A soft trackpad tap as the island opens, as a swipe turns the card's page and as a swipe or pinch folds it. Only when your hand did it, never when news arrives.")
         }
         Toggle(isOn: toy.bind(\.pullGestures)) {
             SettingLabel(title: "Pull & swipe gestures",
@@ -310,26 +310,6 @@ struct NotchControlsView: View {
     @ViewBuilder
     private var glanceRows: some View {
         CardSectionHeader("Glances")
-        Toggle(isOn: toy.bind(\.weather)) {
-            SettingLabel(title: "Weather",
-                         subtitle: "Conditions, today's high and low and rain in the next two hours, from keyless Open-Meteo for the city below.")
-        }
-        if toy.settings.weather {
-            CardSubrows {
-                LabeledContent {
-                    TextField("City", text: toy.bind(\.weatherCity), prompt: Text("e.g. London"))
-                        .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 180)
-                } label: {
-                    SettingLabel(title: "City")
-                }
-                Toggle(isOn: toy.bind(\.weatherUseIPLocation)) {
-                    SettingLabel(title: "Locate by IP when no city is set",
-                                 subtitle: "Sends your IP address to ipapi.co for a city-level guess. Off, an empty city just means no weather row.")
-                }
-            }
-        }
         Toggle(isOn: toy.calendarBinding) {
             SettingLabel(title: "Calendar",
                          subtitle: Self.accessNote(SetupModel.calendarStatus(), app: "Calendar",
@@ -370,11 +350,14 @@ struct NotchControlsView: View {
             }
         }
         if let settings = toy.store?.settings {
-            // The same switch as General's, where a shelf person
-            // looks for it: beside the other way to summon the shelf.
-            Toggle(isOn: Binding(get: { settings.shelfHotkeyEnabled },
-                                 set: { settings.shelfHotkeyEnabled = $0 })) {
-                SettingLabel(title: "Shelf hotkey", subtitle: shelfHotkeyNote(settings))
+            // The key itself is set on Shortcuts, its one home; this row
+            // says what it does and links there, beside the other way to
+            // summon the shelf.
+            LabeledContent {
+                Button("Open Shortcuts") { settings.revealHome(.hotkeys, titled: "Open the shelf") }
+                    .buttonStyle(.link)
+            } label: {
+                SettingLabel(title: "Shelf hotkey", subtitle: shelfHotkeyNote(settings) + " Change it on Shortcuts.")
             }
         }
         Toggle(isOn: toy.bind(\.timerLights)) {
@@ -509,22 +492,40 @@ struct NotchControlsView: View {
         case .jrbar:
             EmptyView()
         case .alcove:
-            externalNote(installed: toy.alcoveURL != nil, name: "Alcove",
+            externalNote(installed: toy.alcoveURL != nil, running: toy.isAlcoveRunning, name: "Alcove",
                          link: URL(string: "https://tryalcove.com")!)
         case .boringNotch:
-            externalNote(installed: toy.boringNotchURL != nil, name: "Boring Notch",
+            externalNote(installed: toy.boringNotchURL != nil, running: toy.isBoringNotchRunning, name: "Boring Notch",
                          link: URL(string: "https://github.com/TheBoredTeam/boring.notch")!)
         }
     }
 
-    private func externalNote(installed: Bool, name: String, link: URL) -> some View {
+    private func externalNote(installed: Bool, running: Bool, name: String, link: URL) -> some View {
+        NotchExternalProviderNote(installed: installed, running: running, name: name,
+                                  link: link, open: { toy.openExternal() })
+    }
+}
+
+struct NotchExternalProviderNote: View {
+    let installed: Bool
+    let running: Bool
+    let name: String
+    let link: URL
+    let open: () -> Void
+
+    static func text(installed: Bool, running: Bool, name: String) -> String {
+        guard installed else { return "\(name) isn't installed." }
+        return running ? "\(name) is running and draws the island." : "\(name) isn't running. Open it to draw the island."
+    }
+
+    var body: some View {
         HStack(spacing: SettingsMetrics.s) {
-            CardNote(installed ? "\(name) is installed and draws the island." : "\(name) isn't installed.",
-                     symbol: installed ? "checkmark.circle.fill" : "arrow.down.circle",
-                     tint: installed ? .green : .secondary)
+            CardNote(Self.text(installed: installed, running: running, name: name),
+                     symbol: installed ? (running ? "checkmark.circle.fill" : "pause.circle") : "arrow.down.circle",
+                     tint: installed && running ? .green : .secondary)
             Spacer(minLength: SettingsMetrics.s)
             if installed {
-                Button("Open \(name)") { toy.openExternal() }
+                Button("Open \(name)", action: open)
                     .controlSize(.small)
             } else {
                 Link("Get \(name)", destination: link)
@@ -603,8 +604,44 @@ struct ShelfShakeExclusionsRow: View {
     }
 
     /// An app's own name for a bundle id when it is installed, else the
-    /// id's last word ("com.apple.iWork.Keynote" → "Keynote").
+    /// id's last word ("com.apple.iWork.Keynote" → "Keynote"). Read once
+    /// per id and kept: a row asks for it on every body pass, and each ask
+    /// is a Launch Services lookup and a file-system name.
     static func name(of bundleID: String) -> String {
+        AppDisplayNames.shared.name(of: bundleID)
+    }
+}
+
+/// App names by bundle id, resolved once. The lookup — Launch Services for
+/// the bundle, the file system for its display name — is the same every
+/// time, and a card row asks for it on every redraw.
+final class AppDisplayNames: @unchecked Sendable {
+    static let shared = AppDisplayNames()
+
+    private let lock = NSLock()
+    private var known: [String: String] = [:]
+    /// How a name is worked out; the tests count the lookups.
+    private let resolve: @Sendable (String) -> String
+
+    init(resolve: @escaping @Sendable (String) -> String = AppDisplayNames.lookUp) {
+        self.resolve = resolve
+    }
+
+    func name(of bundleID: String) -> String {
+        lock.lock()
+        if let cached = known[bundleID] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+        let found = resolve(bundleID)
+        lock.lock()
+        known[bundleID] = found
+        lock.unlock()
+        return found
+    }
+
+    @Sendable static func lookUp(_ bundleID: String) -> String {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
             return bundleID.split(separator: ".").last.map(String.init) ?? bundleID
         }

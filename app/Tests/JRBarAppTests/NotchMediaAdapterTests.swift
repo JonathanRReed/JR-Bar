@@ -8,6 +8,45 @@ import JRBarCore
 @Suite("Notch media adapter")
 @MainActor
 struct NotchMediaAdapterTests {
+    @Test("accepted helper commands never also reach the bridge",
+          arguments: ["send 2\n", "send 4\n", "send 5\n", "seek 42.000\n"])
+    func acceptedCommandUsesOneTransport(_ line: String) {
+        let bytes = Data(line.utf8)
+        var writes: [Data] = []
+        var bridgeCalls = 0
+        AlcoveMediaMonitor.routeCommand(adapter: {
+            AlcoveMediaAdapter.submit(bytes) { writes.append($0) }
+        }, fallback: { bridgeCalls += 1 })
+        #expect(writes == [bytes])
+        #expect(bridgeCalls == 0)
+    }
+
+    @Test("an unavailable helper falls back once for transport and seek")
+    func unavailableHelperUsesBridge() {
+        let adapter = AlcoveMediaAdapter()
+        var bridgeCalls = 0
+        AlcoveMediaMonitor.routeCommand(adapter: { adapter.send(.togglePlayPause) },
+            fallback: { bridgeCalls += 1 })
+        AlcoveMediaMonitor.routeCommand(adapter: { adapter.seek(to: 42) },
+            fallback: { bridgeCalls += 1 })
+        #expect(bridgeCalls == 2)
+    }
+
+    @Test("an uncertain pipe write never retries a command through the bridge")
+    func partialWriteDoesNotDuplicateCommand() {
+        struct WriteFailure: Error {}
+        var writtenPrefix = Data()
+        var bridgeCalls = 0
+        AlcoveMediaMonitor.routeCommand(adapter: {
+            AlcoveMediaAdapter.submit(Data("send 2\n".utf8)) { data in
+                writtenPrefix = data.prefix(4)
+                throw WriteFailure()
+            }
+        }, fallback: { bridgeCalls += 1 })
+        #expect(writtenPrefix == Data("send".utf8))
+        #expect(bridgeCalls == 0)
+    }
+
     @Test("null, blank and unparseable lines are nothing playing")
     func nothingPlaying() {
         #expect(AlcoveMediaAdapter.parse(Data("null".utf8)) == nil)

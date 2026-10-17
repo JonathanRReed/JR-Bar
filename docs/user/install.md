@@ -32,7 +32,7 @@ On first launch the app:
 - records the installed build so later upgrades can identify it;
 - registers itself as a login item.
 
-It does not install provider hooks by itself. Open **Settings > Agents**,
+It does not install provider hooks by itself. Open **Settings > Agents & Usage**,
 review the detected providers, and install the ones you want JR-Bar to watch.
 Later upgrades refresh only hooks the detector can prove JR-Bar manages.
 Inactive hooks remain inactive, and a custom managed log path is preserved.
@@ -60,21 +60,28 @@ sudo ./scripts/uninstall-macos.sh --dry-run   # show every step first
 sudo ./scripts/uninstall-macos.sh
 ```
 
-The script removes:
+The script first quits the running app and daemon, then removes:
 
 - the hooks JR-Bar wrote;
-- its helpers;
+- its helpers, after putting the Mac's sleep setting back
+  (`pmset -a disablesleep 0`) so a closed-lid hold cannot outlive its rule;
 - the `jrbar` link;
-- the app, wherever it is (`~/Applications` or `/Applications`).
+- the login item;
+- every copy of the app (`~/Applications` and `/Applications`).
+
+Your saved provider keys and the settings seal stay in the login Keychain
+unless you add `--purge-keychain`, which deletes only JR-Bar's own items.
 
 It removes a `jrbar` link only when that link points into a JR-Bar
 bundle, so a `jrbar` of your own is left alone.
 
 If a hook cannot be removed, for example because an agent's config is a
-symlink into your dotfiles or holds comments JR-Bar cannot read, the
-script names the config, exits 1 and keeps the app, the helpers and your
-data. Every other agent is still cleaned first. Fix that config or remove
-JR-Bar's entries from it by hand, then run the script again.
+symlink into your dotfiles or holds comments JR-Bar cannot read, and that
+config does hold a JR-Bar hook, the script names the config, exits 1 and
+keeps the app, the helpers and your data. A config like that which never
+names JR-Bar has nothing to remove and is passed over. Every other agent is
+still cleaned first. Fix that config or remove JR-Bar's entries from it by
+hand, then run the script again.
 
 Options:
 

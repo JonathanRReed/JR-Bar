@@ -175,6 +175,53 @@ struct SettingsStorePathTests {
         withExtendedLifetime(core) {}
     }
 
+    @Test("cached state cannot make a new connection ready")
+    func cachedStateDoesNotProveReadiness() {
+        let (core, store) = Self.store()
+        core.apply(.state(CoreState()))
+        core.handle(.connected)
+        #expect(core.state != nil)
+        #expect(!core.isLive)
+        #expect(!store.isLive)
+        #expect(!CoreReading.now(core).live)
+
+        core.apply(.state(CoreState()))
+        #expect(core.isLive)
+        #expect(store.isLive, "reads stay current before the observation is rearmed")
+        store.syncMirrors()
+        #expect(store.isLive)
+        core.handle(.connected)
+        #expect(!store.isLive)
+        #expect(!CoreReading.now(core).live)
+    }
+
+    @Test("a rejected frame changes readiness without replacing the cached state")
+    func rejectionInvalidatesReadiness() {
+        let (core, store) = Self.store()
+        core.handle(.connected)
+        core.apply(.state(CoreState()))
+        #expect(store.isLive)
+        store.syncMirrors()
+        let live = Self.watch { _ = store.isLive }
+
+        core.handle(.stateRejected("missing generation"))
+        #expect(core.state != nil)
+        #expect(core.connection.isConnected)
+        #expect(!store.isLive, "the read is current before the mirror sync")
+        #expect(live.count == 0, "the row observes the store mirror")
+        store.syncMirrors()
+        #expect(live.count == 1)
+
+        core.apply(.state(CoreState()))
+        #expect(store.isLive)
+        store.syncMirrors()
+        let incompatible = Self.watch { _ = store.isLive }
+        core.apply(.unknown(type: "state", version: CoreProtocol.version + 1))
+        #expect(!store.isLive)
+        store.syncMirrors()
+        #expect(incompatible.count == 1)
+    }
+
     @Test("pending shows the edit until the echo carries it, then drops without a change")
     func pendingThenEcho() {
         let (core, store) = Self.store()
@@ -297,7 +344,7 @@ struct SettingsStorePathTests {
         store.reveal(SettingsSearchEntry(.devices, "Stream Deck", "Status URL"))
         #expect(store.isFoldOpen(SettingsFold.streamDeck))
         let colours = SettingsSearch.search("provider colours", in: SettingsSearch.rows).first
-        #expect(colours?.page == .lighting)
+        #expect(colours?.chapter == .lighting)
         if let colours { store.reveal(colours) }
         #expect(store.isFoldOpen(SettingsFold.providerColours))
         let action = SettingsSearch.shortcutRows.first { $0.group == "Actions" }
@@ -307,18 +354,88 @@ struct SettingsStorePathTests {
         if let chip { store.reveal(chip) }
         #expect(store.isFoldOpen(SettingsFold.quickToggles))
         let open = store.openFolds
-        store.reveal(SettingsSearchEntry(.notifications, "Power", "Lid closed"))
+        store.reveal(SettingsSearchEntry(.general, "Power", "Lid closed"))
         #expect(store.openFolds == open, "a row outside every fold opens none")
         store.setFold(SettingsFold.screenBar, open: false)
         #expect(!store.isFoldOpen(SettingsFold.screenBar), "folding by hand is the person's")
         withExtendedLifetime(core) {}
     }
 
+    @Test("Screen Bar search opens its single card and hardware search keeps its own folds")
+    func screenBarSharedControlsHaveTheirOwnSearchDestination() throws {
+        let (_, store) = Self.store(.object(["devices": .array([
+            .object(["id": .string("sidepulse:pro:A1"), "name": .string("SidePulse Pro")]),
+            .object(["id": .string("virtual:status-bar"), "name": .string("Screen Bar")]),
+            .object(["id": .string("dot"), "name": .string("SidePulse Dot")]),
+        ])]))
+        for title in ["Display", "Brightness", "Auto-brightness", "Pin to", "Asks only", "Blend", "Colour calibration"] {
+            let hit = try #require(SettingsSearch.rows.first { $0.group == "Screen Bar" && $0.title == title })
+            store.openFolds.removeAll()
+            store.reveal(hit)
+            #expect(store.openFolds == [SettingsFold.screenBar])
+            #expect(store.searchHit?.group == "Screen Bar")
+        }
+        store.openFolds.removeAll()
+        let hardware = try #require(SettingsSearch.rows.first { $0.group == "Devices" && $0.title == "Brightness" })
+        store.reveal(hardware)
+        #expect(store.openFolds == [SettingsFold.device("sidepulse:pro:A1"), SettingsFold.device("dot")])
+        let advanced = try #require(SettingsSearch.rows.first { $0.group == "Screen Bar" && $0.title == "Phase nudge" })
+        store.openFolds.removeAll()
+        store.reveal(advanced)
+        #expect(store.openFolds == [SettingsFold.screenBar, SettingsFold.screenBarAdvanced])
+    }
+
+    @Test("a hit on a row inside a nested Advanced or Clock disclosure unfolds it")
+    func nestedDisclosuresOpenForTheirHits() {
+        let (core, store) = Self.store()
+        let cases: [(String, String)] = [
+            ("Update channel", SettingsFold.advanced(.general)),
+            ("Phase nudge", SettingsFold.screenBarAdvanced),
+            ("Minimum glow", SettingsFold.screenBarAdvanced),
+            ("Keep in step", SettingsFold.dotClock),
+            ("Sync tolerance", SettingsFold.dotClock),
+        ]
+        for (title, fold) in cases {
+            let row = SettingsSearch.rows.first { $0.title == title }
+            #expect(row != nil, "\(title) is still listed")
+            guard let row else { continue }
+            store.setFold(fold, open: false)
+            store.reveal(row)
+            #expect(store.isFoldOpen(fold), "\(title) sits behind a disclosure the hit must open")
+        }
+        withExtendedLifetime(core) {}
+    }
+
+    @Test("the reset confirmation names what it clears beyond what the page shows, and what it leaves")
+    func resetMessageIsSpecific() {
+        let devices = SettingsStore.resetMessage(for: .devices)
+        #expect(devices.contains("brightness, colour gains and resting glow"))
+        #expect(devices.contains("hidden apps"))
+        #expect(SettingsStore.resetMessage(for: .agents).contains("how a click opens each session"))
+        #expect(SettingsStore.resetMessage(for: .alerts).contains("per-Focus dim rules"))
+        #expect(SettingsStore.resetMessage(for: .general).contains("menu bar icon"))
+        for page in SettingsStore.Page.allCases {
+            let message = SettingsStore.resetMessage(for: page)
+            #expect(message.contains("Shortcuts, sounds, window choices"), "\(page) names what stays")
+            #expect(message.hasSuffix("This cannot be undone."))
+        }
+    }
+
+    @Test("every row inside a nested disclosure is one the search list still has")
+    func nestedRowsAreListed() {
+        for nested in SettingsFold.nested {
+            for title in nested.titles {
+                #expect(SettingsSearch.rows.contains { $0.chapter == nested.chapter && $0.group == nested.group && $0.title == title },
+                        "\(title) is mapped to a fold but not listed")
+            }
+        }
+    }
+
     @Test("every listed row on a folded run names a fold to open")
     func everyFoldedGroupMapsToAFold() {
         let (core, store) = Self.store()
         let folded: Set<String> = ["Devices", "Screen Bar", "Creator Micro 2", "Stream Deck"]
-        for row in SettingsSearch.rows where row.page == .devices && folded.contains(row.group) {
+        for row in SettingsSearch.rows where row.chapter == .devices && folded.contains(row.group) {
             #expect(!store.folds(holding: row).isEmpty, "\(row.title) sits in a fold the search cannot open")
         }
         withExtendedLifetime(core) {}

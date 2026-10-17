@@ -227,6 +227,7 @@ class LinkedSync:
             if self._reading:
                 return False
             self._reading = True
+        previous_read_at = self.last_read_at
         self.last_read_at = self.now()
 
         def work() -> None:
@@ -236,7 +237,13 @@ class LinkedSync:
                 status = None
             self._deliver(dot_id, status)
 
-        self.spawn(work)
+        try:
+            self.spawn(work)
+        except Exception:
+            with self._lock:
+                self.last_read_at = previous_read_at
+                self._reading = False
+            return False
         return True
 
     def consume(self) -> float | None:

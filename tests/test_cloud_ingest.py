@@ -1021,6 +1021,15 @@ def test_concurrent_connections_are_capped_not_queued(monkeypatch):
     server = cloud_ingest._IngestHTTPServer.__new__(cloud_ingest._IngestHTTPServer)
     server._slots = threading.BoundedSemaphore(1)
 
+    class _NoDeadlines:
+        def arm(self, request) -> None:
+            pass
+
+        def disarm(self, request) -> None:
+            pass
+
+    server.deadlines = _NoDeadlines()
+
     class _Request:
         def __init__(self) -> None:
             self.closed = False
@@ -1062,3 +1071,48 @@ def test_stats_count_outcomes_without_payload_content():
     assert stats.rejected == 2
     assert dict(stats.reasons) == {"unauthenticated": 1, "forbidden_peer": 1}
     assert stats.queued == 1
+
+
+def test_a_content_length_that_is_not_ascii_digits_is_refused_as_length_required() -> None:
+    # str.isdigit() accepts a superscript two, and int() then raises.
+    ingest = _ingest()
+    response = _post(ingest, **{"Content-Length": "²"})
+    assert response.reason is IngestReason.LENGTH_REQUIRED
+
+
+def test_a_client_that_never_finishes_its_headers_is_hung_up_on_at_the_deadline() -> None:
+    import socket
+    import threading
+
+    from jrbar.cloud_ingest import _IngestHTTPServer
+    from jrbar.request_deadline import RequestDeadlines
+
+    fired: list = []
+    armed = threading.Event()
+
+    class ManualTimer:
+        def __init__(self, seconds, function, args=()):
+            self.function, self.args, self.daemon, self.cancelled = function, args, False, False
+            fired.append(self)
+
+        def start(self) -> None:
+            armed.set()
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    server = _IngestHTTPServer(("127.0.0.1", 0), _ingest(), deadlines=RequestDeadlines(timer_factory=ManualTimer))
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+    thread.start()
+    try:
+        slow = socket.create_connection(server.server_address, timeout=10.0)
+        slow.sendall(b"POST /x HTTP/1.0\r\nHost: x\r\n")  # the headers never end
+        assert armed.wait(timeout=5.0)
+        fired[0].function(*fired[0].args)
+        slow.settimeout(5.0)
+        assert slow.recv(4096) == b""
+        slow.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5.0)

@@ -137,3 +137,16 @@ def test_loaded_sync_settings_exposes_source_digest_and_refuses_external_edit__a
     with pytest.raises(ProviderSyncSettingsWriteRefusedError):
         save_provider_sync_settings(loaded.settings, target, loaded=loaded)
 
+
+def test_duplicate_categories_load_once_without_aborting():
+    document = {"settings_schema_version": 1, "categories": ["quota", "quota", "token_usage"]}
+    loaded = load_provider_sync_settings(reader=lambda _path: json.dumps(document))
+    assert loaded.settings.categories == ("quota", "token_usage")
+    assert loaded.settings.enabled is False
+
+
+def test_nonfinite_settings_document_is_disabled_and_read_only():
+    loaded = load_provider_sync_settings(reader=lambda _path: '{"settings_schema_version":1,"extra":NaN}')
+    assert loaded.settings.enabled is False
+    assert loaded.read_only is True
+

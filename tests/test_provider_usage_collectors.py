@@ -190,6 +190,7 @@ def test_antigravity_uses_configured_loopback_endpoint__and_2_more(tmp_path: Pat
     assert result.state.value == "ready"
     assert result.lanes[0].label == "Gemini Weekly"
     assert "RetrieveUserQuotaSummary" in http.calls[0][1]
+    assert http.calls[0][3] == {"request": {}}
 
     # --- scenario: antigravity_allows_http_loopback_and_discovers_dynamically
     payload = {
@@ -810,3 +811,55 @@ def test_antigravity_server_that_answers_401_needs_sign_in(tmp_path: Path) -> No
     assert result.state.value == "needs_sign_in"
     assert result.reason_code == "authentication_required"
     assert result.lanes == ()
+
+
+def test_opencode_totals_follow_rows_that_have_only_reached_the_wal(tmp_path) -> None:
+    import os
+    import sqlite3
+
+    from jrbar import provider_usage_collectors as collectors
+
+    db = tmp_path / "opencode.db"
+    writer = sqlite3.connect(db)
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("CREATE TABLE session(tokens_input INT, tokens_output INT, model TEXT)")
+        writer.execute("CREATE TABLE message(time_created INT, data TEXT)")
+        writer.execute("INSERT INTO session VALUES (100, 50, 'm1')")
+        writer.commit()
+        writer.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        collectors._cached_opencode_mtime = None
+        collectors._cached_opencode_totals = None
+        assert collectors._opencode_local_facts(db, 1_790_000_000.0)[:3] == (100, 50, 1)
+
+        main_stat = os.stat(db)
+        writer.execute("INSERT INTO session VALUES (900000, 400000, 'm2')")
+        writer.commit()
+        os.utime(db, ns=(main_stat.st_atime_ns, main_stat.st_mtime_ns))
+        assert os.path.getsize(f"{db}-wal") > 0, "the new row sits in the WAL, not the main file"
+        assert collectors._opencode_local_facts(db, 1_790_000_000.0)[:3] == (900_100, 400_050, 2)
+    finally:
+        writer.close()
+
+
+
+def test_disabled_antigravity_never_requests_its_quota_even_with_saved_consent(tmp_path):
+    from jrbar.provider_usage_consent import consent_gated_collectors
+    from jrbar.provider_usage_runtime import ProviderUsageService
+
+    settings = default_provider_usage_settings().with_usage_consent(
+        "antigravity", True, source="settings", at=1000,
+    ).with_enabled("antigravity", False)
+    http = FixtureHttp([])
+    service = ProviderUsageService(
+        settings_loader=lambda: settings,
+        collectors=consent_gated_collectors(http_json=http),
+        credentials=FixtureCredentials(), home=tmp_path, clock=lambda: 1000,
+        incident_lookup=lambda *_args: None,
+    )
+    try:
+        service.refresh_now(providers=("antigravity",), force=True)
+        assert http.calls == []
+    finally:
+        service.close()

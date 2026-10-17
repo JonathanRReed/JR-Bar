@@ -62,7 +62,7 @@ def test_rainstick_is_opt_in_and_fails_dark_by_default__and_2_more() -> None:
     assert geometry.lit_pixel_count == RAINSTICK_LIT_PIXEL_COUNT == 1
     assert geometry.path_start_index == 0
     assert geometry.path_end_index == 11
-    assert geometry.position_count == 12
+    assert geometry.path_end_index - geometry.path_start_index + 1 == 12
     assert geometry.step_delta == 1
     assert geometry.wraps is True
     assert geometry.relative_luminance == RAINSTICK_RELATIVE_LUMINANCE

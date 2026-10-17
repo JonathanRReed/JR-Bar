@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -81,7 +82,7 @@ def test_fast_gate_has_explicit_ordered_evidence_layers__and_2_more() -> None:
 
 
 
-def test_fast_gate_fixture_lane_ends_with_provider_fixture_ownership__and_2_more() -> None:
+def test_fast_gate_fixture_lane_ends_with_provider_fixture_ownership__and_2_more(monkeypatch) -> None:
     # --- scenario: fast_gate_fixture_lane_ends_with_provider_fixture_ownership
     gate = _gate()
 
@@ -110,8 +111,12 @@ def test_fast_gate_fixture_lane_ends_with_provider_fixture_ownership__and_2_more
         fix=False,
     )[:3]
     calls: list[tuple[tuple[str, ...], Path, bool]] = []
+    monkeypatch.setenv("PYTHONPATH", "/tmp/other-jrbar-source")
+    monkeypatch.setenv("JRBAR_GATE_FIXTURE", "preserved")
 
-    def run(command, *, cwd, check):
+    def run(command, *, cwd, check, env):
+        assert env["PYTHONPATH"].split(os.pathsep) == [str(ROOT / "src"), "/tmp/other-jrbar-source"]
+        assert env["JRBAR_GATE_FIXTURE"] == "preserved"
         calls.append((command, cwd, check))
         return SimpleNamespace(returncode=7 if len(calls) == 2 else 0)
 

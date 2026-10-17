@@ -11,6 +11,12 @@ set -euo pipefail
 # removed only when it points into a JR-Bar bundle, the same rule the app's
 # own Remove button uses; anything else at that path is left alone.
 #
+# It quits the running app and daemon first, puts the Mac's sleep setting back
+# (`pmset disablesleep 0`, while it is still root and before the sudoers rule
+# that lets the app do it goes away), and switches the login item off. Saved
+# provider keys and the settings seal live in the login Keychain: they are
+# deleted only with --purge-keychain.
+#
 # --dry-run prints every step instead of taking it and needs no sudo. The
 # The JRBAR_* path variables below exist only for dry runs and tests. A real
 # root run resolves the account home and accepts only the two supported app
@@ -23,6 +29,7 @@ RETIRED_AGENT_LABELS="com.jonathanreed.jrbar.app io.sidepulse.agentstatus com.si
 RECEIPT_DIR="/var/db/jrbar"
 LEGACY_RECEIPT_DIR="/var/db/sidepulse"
 PURGE_STATE=0
+PURGE_KEYCHAIN=0
 REMOVE_APP=1
 DRY_RUN=0
 TARGET_USER="${JRBAR_USER:-${SIDEPULSE_USER:-}}"
@@ -34,6 +41,9 @@ Usage: sudo ./scripts/uninstall-macos.sh [options]
   --user NAME    Remove user-owned JR-Bar integrations for NAME.
   --keep-app     Keep JR-Bar.app (in ~/Applications or /Applications).
   --purge-state  Also remove JR-Bar settings, logs, and local history.
+  --purge-keychain
+                 Also delete the provider keys and settings seal JR-Bar saved
+                 in the login Keychain.
   --dry-run      Print each step instead of taking it (no sudo needed).
 EOF
 }
@@ -47,6 +57,7 @@ while [ "$#" -gt 0 ]; do
             ;;
         --keep-app) REMOVE_APP=0 ;;
         --purge-state) PURGE_STATE=1 ;;
+        --purge-keychain) PURGE_KEYCHAIN=1 ;;
         --dry-run) DRY_RUN=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -70,6 +81,7 @@ fi
 if [ "$DRY_RUN" -eq 0 ] && { \
     [ -n "${JRBAR_HOME:-}" ] || \
     [ -n "${JRBAR_APP_PATH:-${SIDEPULSE_APP_PATH:-}}" ] || \
+    [ -n "${JRBAR_SYSTEM_APPLICATIONS:-}" ] || \
     [ -n "${JRBAR_CLI_LINK:-${SIDEPULSE_CLI_LINK:-}}" ] || \
     [ -n "${JRBAR_RECEIPT_DIR:-${SIDEPULSE_RECEIPT_DIR:-}}" ]; }; then
     echo "Path overrides are allowed only with --dry-run." >&2
@@ -110,23 +122,37 @@ act() {
     fi
 }
 
-# Which JR-Bar.app: an explicit path, else the user's, else the system's.
+# Which JR-Bar.app: an explicit path, else every copy there is (the user's
+# first, then the system's). With no copy at all, the system path stands in so
+# the rest of the script still has something to name. The hooks are taken out
+# with the first copy's daemon; every copy is removed at the end.
+SYSTEM_APPS="${JRBAR_SYSTEM_APPLICATIONS:-/Applications}"
+APP_PATHS=()
 if [ -n "${JRBAR_APP_PATH:-${SIDEPULSE_APP_PATH:-}}" ]; then
-    APP_PATH="${JRBAR_APP_PATH:-$SIDEPULSE_APP_PATH}"
-elif [ -d "$TARGET_HOME/Applications/JR-Bar.app" ]; then
-    APP_PATH="$TARGET_HOME/Applications/JR-Bar.app"
+    APP_PATHS=("${JRBAR_APP_PATH:-$SIDEPULSE_APP_PATH}")
 else
-    APP_PATH="/Applications/JR-Bar.app"
+    if [ -d "$TARGET_HOME/Applications/JR-Bar.app" ]; then
+        APP_PATHS+=("$TARGET_HOME/Applications/JR-Bar.app")
+    fi
+    if [ -d "$SYSTEM_APPS/JR-Bar.app" ]; then
+        APP_PATHS+=("$SYSTEM_APPS/JR-Bar.app")
+    fi
+    if [ "${#APP_PATHS[@]}" -eq 0 ]; then
+        APP_PATHS=("$SYSTEM_APPS/JR-Bar.app")
+    fi
 fi
-case "$APP_PATH" in
-    "$TARGET_HOME/Applications/JR-Bar.app"|/Applications/JR-Bar.app) ;;
-    *) echo "Refusing unsafe JR-Bar application path: $APP_PATH" >&2; exit 2 ;;
-esac
-if [ -L "$APP_PATH" ]; then
-    echo "Refusing symlinked JR-Bar application: $APP_PATH" >&2
-    exit 2
-fi
-echo "JR-Bar.app: $APP_PATH"
+for candidate_app in "${APP_PATHS[@]}"; do
+    case "$candidate_app" in
+        "$TARGET_HOME/Applications/JR-Bar.app"|"$SYSTEM_APPS/JR-Bar.app") ;;
+        *) echo "Refusing unsafe JR-Bar application path: $candidate_app" >&2; exit 2 ;;
+    esac
+    if [ -L "$candidate_app" ]; then
+        echo "Refusing symlinked JR-Bar application: $candidate_app" >&2
+        exit 2
+    fi
+    echo "JR-Bar.app: $candidate_app"
+done
+APP_PATH="${APP_PATHS[0]}"
 # The Swift app takes no arguments; the command line is the bundled daemon.
 APP_BINARY="$APP_PATH/Contents/MacOS/JR-Bar"
 CORE_BINARY="$APP_PATH/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core"
@@ -149,6 +175,28 @@ run_as_user() {
             LOGNAME="$TARGET_USER" \
             "$@"
 }
+
+# Quit the running app and daemon first. Left running, the app would write
+# its hooks back while they are being taken out, and the daemon would keep the
+# lid hold (or a socket) alive under a deleted bundle. SIGTERM lets both shut
+# down cleanly; whatever is still there after a few seconds is killed.
+quit_process() {
+    local name="$1" waited=0
+    act /usr/bin/pkill -TERM -U "$TARGET_UID" -x "$name" || true
+    if [ "$DRY_RUN" -eq 1 ]; then
+        return 0
+    fi
+    while /usr/bin/pgrep -U "$TARGET_UID" -x "$name" >/dev/null 2>&1; do
+        waited=$((waited + 1))
+        if [ "$waited" -gt 12 ]; then
+            /usr/bin/pkill -KILL -U "$TARGET_UID" -x "$name" >/dev/null 2>&1 || true
+            break
+        fi
+        /bin/sleep 0.5
+    done
+}
+quit_process "JR-Bar"
+quit_process "jrbar-core"
 
 # Remove only JR-Bar-owned integrations. Provider installers preserve every
 # unrelated hook entry. An install from before the Swift app may still hold
@@ -196,8 +244,21 @@ if [ -n "$FAILED_HOOK_STEPS" ]; then
     exit 1
 fi
 
+# Switch the login item off while the bundle is still here (the app answers
+# JRBAR_LOGIN_ITEM=off and exits). Only when the app is going: a kept app keeps
+# its choice. A failure only means it was never on.
+if [ "$REMOVE_APP" -eq 1 ] && { [ "$DRY_RUN" -eq 1 ] || [ -x "$APP_BINARY" ]; }; then
+    run_as_user JRBAR_LOGIN_ITEM=off "$APP_BINARY" \
+        || echo "note: could not switch the login item off; if JR-Bar is still listed, remove it in System Settings > General > Login Items." >&2
+fi
+
 # System cleanup uses fixed reviewed paths. Never execute a binary from the
 # target user's writable app bundle as root.
+# Put sleep back first: the sudoers rule below is what lets the app clear the
+# closed-lid hold, so with it gone a leftover `disablesleep 1` would stay for
+# good. This runs as root with a fixed system binary, never from the bundle.
+act /usr/bin/pmset -a disablesleep 0 \
+    || echo "note: could not reset disablesleep; run 'sudo pmset -a disablesleep 0'." >&2
 for sudoers in /etc/sudoers.d/jrbar-disablesleep /etc/sudoers.d/sidepulse-disablesleep; do
     if [ -e "$sudoers" ] || [ -L "$sudoers" ]; then
         act /bin/rm -f "$sudoers"
@@ -217,8 +278,10 @@ for plist in \
     fi
 done
 for owned in \
+    "/Library/Application Support/JR-Bar/sd-eject-guard/JR-Bar SD Eject Guard" \
     "/Library/Application Support/JR-Bar/sd-eject-guard/SidePulse Pro Eject Prevention" \
     "/Library/Application Support/JR-Bar/sd-eject-guard/sd_eject_guard" \
+    "/Library/Application Support/SidePulse/sd-eject-guard/JR-Bar SD Eject Guard" \
     "/Library/Application Support/SidePulse/sd-eject-guard/SidePulse Pro Eject Prevention" \
     "/Library/Application Support/SidePulse/sd-eject-guard/sd_eject_guard"; do
     if [ -e "$owned" ] || [ -L "$owned" ]; then
@@ -278,8 +341,38 @@ if [ "$PURGE_STATE" -eq 1 ]; then
         "$TARGET_HOME/Library/Application Support/SidePulse"
 fi
 
+if [ "$PURGE_KEYCHAIN" -eq 1 ]; then
+    # Items are found by their service name (JR-Bar's own, and the one used
+    # before the rename), so nothing else in the Keychain is touched. Each
+    # delete runs as the person, in their session, where the login Keychain is.
+    if [ "$DRY_RUN" -eq 1 ]; then
+        KEYCHAIN_SERVICES="com.jonathanreed.jrbar.settings-seal com.jonathanreed.jrbar.provider.NAME"
+    else
+        KEYCHAIN_SERVICES="$(/bin/launchctl asuser "$TARGET_UID" \
+            /usr/bin/sudo -H -u "$TARGET_USER" /usr/bin/security dump-keychain 2>/dev/null \
+            | /usr/bin/sed -n -E 's/^ *"svce"<blob>="((com\.jonathanreed\.jrbar\.|io\.sidepulse\.provider\.)[^"]*)"$/\1/p' \
+            | /usr/bin/sort -u)" || KEYCHAIN_SERVICES=""
+    fi
+    for service in $KEYCHAIN_SERVICES; do
+        if [ "$DRY_RUN" -eq 1 ]; then
+            run_as_user /usr/bin/security delete-generic-password -s "$service"
+            continue
+        fi
+        # One delete removes one item, and a service can hold several accounts.
+        attempts=0
+        while [ "$attempts" -lt 16 ]; do
+            attempts=$((attempts + 1))
+            if ! run_as_user /usr/bin/security delete-generic-password -s "$service" >/dev/null 2>&1; then
+                break
+            fi
+        done
+    done
+fi
+
 if [ "$REMOVE_APP" -eq 1 ]; then
-    act /bin/rm -rf "$APP_PATH"
+    for candidate_app in "${APP_PATHS[@]}"; do
+        act /bin/rm -rf "$candidate_app"
+    done
 fi
 
 # Forget only the exact installer receipt owned by the supported JR-Bar PKG.

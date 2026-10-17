@@ -23,8 +23,8 @@ struct WindowsRenderProofTests {
             isDirectory: true)
     }
 
-    /// Writes `view` at `size`, once per appearance, over a plate that
-    /// stands in for the window's own material.
+    /// Writes `view` at the requested width and at least the requested
+    /// height, once per appearance, over the window's material plate.
     static func write<V: View>(_ name: String, size: CGSize, plate: Plate = .window,
                                @ViewBuilder _ view: () -> V) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -34,12 +34,11 @@ struct WindowsRenderProofTests {
                 plate.color(dark: dark)
                 content
             }
-            .frame(width: size.width, height: size.height)
+            .frame(width: size.width)
+            .frame(minHeight: size.height)
             .environment(\.colorScheme, dark ? .dark : .light)
             .environment(\.renderSnapshot, true)
-            let renderer = ImageRenderer(content: framed)
-            renderer.scale = 2
-            let rep = NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
+            let rep = try ProofRender.render(framed, size: size, dark: dark)
             let png = try #require(rep.representation(using: .png, properties: [:]))
             try png.write(to: directory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
         }

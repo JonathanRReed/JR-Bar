@@ -14,6 +14,7 @@ from .local_triage import (
 )
 from .private_io import (
     atomic_private_write,
+    decode_strict_json,
     private_file_identity,
     quarantine_private_file,
     read_private_text,
@@ -51,7 +52,7 @@ def load_operator_triage_with_report(path: Path) -> tuple[LocalTriageState, int]
     seen = private_file_identity(target)
     try:
         raw = read_private_text(target, max_bytes=_MAX_STORE_BYTES)
-        document = _decode_document(raw)
+        document = decode_strict_json(raw, _InvalidTriageStore)
         state, dropped = _state_from_document(document)
     except FileNotFoundError:
         return LocalTriageState(()), 0
@@ -115,27 +116,6 @@ def save_operator_triage(path: Path, state: LocalTriageState) -> None:
     if len(encoded.encode("utf-8")) > _MAX_STORE_BYTES:
         raise ValueError("operator triage store exceeds maximum size")
     atomic_private_write(Path(path), encoded)
-
-
-def _strict_object(pairs: list[tuple[object, object]]) -> dict[object, object]:
-    result: dict[object, object] = {}
-    for key, value in pairs:
-        if type(key) is not str or key in result:
-            raise _InvalidTriageStore
-        result[key] = value
-    return result
-
-
-def _reject_constant(_value: str) -> None:
-    raise _InvalidTriageStore
-
-
-def _decode_document(raw: str) -> object:
-    return json.loads(
-        raw,
-        object_pairs_hook=_strict_object,
-        parse_constant=_reject_constant,
-    )
 
 
 def _state_from_document(document: object) -> tuple[LocalTriageState, int]:

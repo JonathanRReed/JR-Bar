@@ -57,6 +57,25 @@ struct NotchAnnouncerTests {
         #expect(NotchLevelGlyph.title(for: .brightnessDown, deviceName: "AirPods") == "Brightness")
     }
 
+    @Test("Bluetooth is not registered, so not asked for, until announcements are allowed")
+    func bluetoothWaitsForTheNotch() {
+        let announcements = NotchAnnouncements()
+        var registrations = 0
+        var allowed = false
+        announcements.isAllowed = { allowed }
+        announcements.startBluetooth = { registrations += 1 }
+        announcements.syncBluetooth()
+        announcements.syncBluetooth()
+        #expect(registrations == 0, "a fresh install's launch asks for nothing")
+        allowed = true
+        announcements.syncBluetooth()
+        announcements.syncBluetooth()
+        #expect(registrations == 1, "registered once, when the person turned announcements on")
+        allowed = false
+        announcements.syncBluetooth()
+        #expect(registrations == 1)
+    }
+
     @Test("a headphone the ear names is its news; a goodbye always speaks")
     func deviceDedup() {
         let airpods = BluetoothWatcher.Change(name: "AirPods Pro", battery: 80,

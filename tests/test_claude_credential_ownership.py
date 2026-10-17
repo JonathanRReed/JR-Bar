@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import subprocess
 
 
 class FakeStore:
@@ -170,3 +171,27 @@ def test_runtime_terminal_gate_has_no_claude_credential_mutation_bypass():
     source = inspect.getsource(provider_usage_runtime.ProviderUsageService._run_refresh)
     assert "renew_claude_credential_in_background" not in source
     assert "sync_claude_credential_in_background" not in source
+
+
+def test_noninteractive_refusal_preserves_stored_claude_token(tmp_path, monkeypatch):
+    from jrbar import credentials, providers
+    from jrbar.credentials import CLAUDE_CODE_KEYCHAIN, KeychainConsentLedger
+    from jrbar.provider_reconnect import sync_claude_credential_in_background
+
+    ledger = KeychainConsentLedger(tmp_path / "keychain-consent.json")
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1_000)
+    calls = []
+
+    def run(arguments, **kwargs):
+        calls.append(arguments)
+        assert "--allow-prompt" not in arguments
+        return subprocess.CompletedProcess(arguments, 3, stdout="", stderr="keychain interaction required")
+
+    monkeypatch.setattr(credentials.subprocess, "run", run)
+    monkeypatch.setattr(providers, "default_state_dir", lambda: tmp_path)
+    store = FakeStore()
+    store.secrets[("claude", "oauth-token")] = "last-known-token"
+    original = store.secrets.copy()
+    assert not sync_claude_credential_in_background(store, home=tmp_path, now=1_000)
+    assert store.secrets == original
+    assert len(calls) == 1

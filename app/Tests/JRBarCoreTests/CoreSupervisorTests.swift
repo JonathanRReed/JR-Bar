@@ -207,4 +207,119 @@ struct CoreSupervisorTests {
         supervisor.stop(gracePeriod: 1.0)
         #expect(supervisor.state == .stopped)
     }
+
+    enum SyntheticLaunchError: Error { case refused }
+
+    @Test("a stop during a launch error keeps the stopped state and does not schedule a retry",
+          arguments: [1, 2])
+    func stopFromLaunchFailure(maxFailures: Int) {
+        let supervisor = CoreSupervisor(executable: "/synthetic/jrbar-core", maxFailures: maxFailures)
+        supervisor.processRunHook = { _ in throw SyntheticLaunchError.refused }
+        let log = Log()
+        supervisor.onStateChange = { log.add($0) }
+        supervisor.onOutput = { [weak supervisor] _, line in
+            if line.hasPrefix("cannot launch") { supervisor?.stop(gracePeriod: 0) }
+        }
+
+        supervisor.start()
+
+        #expect(supervisor.state == .stopped)
+        #expect(supervisor.recentFailures == 0)
+        #expect(log.states == [.stopped])
+    }
+
+    @Test("concurrent starts reserve one launch before generating a secret")
+    func concurrentStartsReserveOneLaunch() async {
+        let supervisor = CoreSupervisor(executable: "/synthetic/jrbar-core", maxFailures: 1,
+                                        authSecret: CoreAuthSecret())
+        let generationEntered = Flag()
+        let startDone = Flag()
+        let releaseGeneration = DispatchSemaphore(value: 0)
+        let log = Log()
+        supervisor.secretGenerator = {
+            log.add("secret")
+            generationEntered.set()
+            guard releaseGeneration.wait(timeout: .now() + 5) == .success else { return nil }
+            return Data(repeating: 7, count: CoreAuthSecret.byteCount)
+        }
+        supervisor.processRunHook = { _ in
+            log.add("launch")
+            throw SyntheticLaunchError.refused
+        }
+        defer {
+            releaseGeneration.signal()
+            supervisor.stop(gracePeriod: 0)
+        }
+        Thread.detachNewThread {
+            supervisor.start()
+            startDone.set()
+        }
+        #expect(await Self.wait(timeout: 2) { generationEntered.isSet })
+
+        supervisor.start()
+        #expect(log.lines == ["secret"], "another start must leave the reserved launch alone")
+        releaseGeneration.signal()
+
+        #expect(await Self.wait(timeout: 2) { startDone.isSet })
+        #expect(log.lines == ["secret", "launch"])
+        #expect(supervisor.state == .crashed(failures: 1))
+    }
+
+    @Test("a stopped launch cannot clear the secret or count a failure for its replacement")
+    func staleLaunchLeavesReplacementAlone() async {
+        let secret = CoreAuthSecret()
+        let supervisor = CoreSupervisor(executable: "/synthetic/jrbar-core", maxFailures: 1,
+                                        authSecret: secret)
+        let generationEntered = Flag()
+        let oldStartDone = Flag()
+        let releaseGeneration = DispatchSemaphore(value: 0)
+        let log = Log()
+        supervisor.secretGenerator = {
+            generationEntered.set()
+            guard releaseGeneration.wait(timeout: .now() + 5) == .success else { return nil }
+            return Data(repeating: 7, count: CoreAuthSecret.byteCount)
+        }
+        supervisor.processRunHook = { _ in
+            log.add("old launch")
+            throw SyntheticLaunchError.refused
+        }
+        defer {
+            releaseGeneration.signal()
+            supervisor.stop(gracePeriod: 0)
+        }
+        Thread.detachNewThread {
+            supervisor.start()
+            oldStartDone.set()
+        }
+        #expect(await Self.wait(timeout: 2) { generationEntered.isSet })
+        supervisor.stop(gracePeriod: 0)
+        // A replacement launch may own this holder while the old start is
+        // still preparing its pipe. The abandoned start must not touch it.
+        let replacement = Data(repeating: 9, count: CoreAuthSecret.byteCount)
+        secret.set(replacement, daemonPID: 123)
+        releaseGeneration.signal()
+
+        #expect(await Self.wait(timeout: 2) { oldStartDone.isSet })
+        #expect(log.lines.isEmpty)
+        #expect(secret.current == replacement)
+        #expect(secret.supervisedPID == 123)
+        #expect(supervisor.state == .stopped)
+        #expect(supervisor.recentFailures == 0)
+    }
+
+    @Test("letting a supervisor go ends its child without waiting for it")
+    func releaseDoesNotWait() async throws {
+        var supervisor: CoreSupervisor? = CoreSupervisor(
+            executable: "/bin/sh", arguments: ["-c", "trap '' TERM; echo up; while :; do sleep 1; done"])
+        let log = Log()
+        supervisor?.onOutput = { stream, line in log.add("\(stream): \(line)") }
+        supervisor?.start()
+        #expect(await Self.wait { log.lines.contains("stdout: up") })
+        guard case .running(let pid) = supervisor?.state else { Issue.record("expected running"); return }
+
+        let started = Date()
+        supervisor = nil
+        #expect(Date().timeIntervalSince(started) < 0.5, "the destructor waited on the child")
+        #expect(await Self.wait(timeout: 5) { kill(pid, 0) != 0 })
+    }
 }

@@ -10,6 +10,7 @@ reach the live light.
 
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -306,6 +307,7 @@ def test_a_provider_assignment_with_parameters_reaches_the_live_light() -> None:
     saved = []
     host = SimpleNamespace(
         settings=AgentMonitorSettings(),
+        _core_settings_save_lock=threading.Lock(),
         _core_legacy=lambda: SimpleNamespace(save_settings=saved.append),
         _core_publish_settings=lambda: None,
     )
@@ -413,6 +415,7 @@ def test_clearing_an_assignment_gives_back_the_providers_own_motion() -> None:
 
         def __init__(self) -> None:
             self.settings = AgentMonitorSettings()
+            self._core_settings_save_lock = threading.Lock()
             self.saved: list = []
             self.published = 0
 

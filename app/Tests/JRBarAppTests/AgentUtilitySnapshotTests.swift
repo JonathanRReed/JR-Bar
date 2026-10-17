@@ -85,6 +85,60 @@ struct AgentUtilitySnapshotTests {
         #expect(!Choice.fallsBack(ideal: 420, offered: nil, current: true))
     }
 
+    @Test("a rules grid selects stacked rows when its fixed columns exceed the available width",
+          arguments: [CGFloat(360), 430, 900])
+    func rulesGridRespectsConstrainedWidth(width: CGFloat) {
+        func columns() -> some View {
+            Grid(horizontalSpacing: 12) {
+                GridRow {
+                    ForEach(0..<6) { _ in Text("Escalates to").fixedSize() }
+                }
+            }
+            .frame(height: 20)
+        }
+        let chosen = NSHostingView(rootView: WidestThatFits(key: 1) {
+            columns()
+        } fallback: {
+            Color.blue.frame(height: 40)
+        }.frame(width: width))
+        chosen.frame = CGRect(x: 0, y: 0, width: width, height: 100)
+        for _ in 0..<8 {
+            chosen.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date())
+        }
+        #expect(chosen.fittingSize.height == (width < 600 ? 40 : 20),
+                "Fixed columns must not widen the offered space at \(width) points")
+    }
+
+    @Test("provider changes and repeated resizing keep the rules layout responsive")
+    func rulesGridRemeasuresAfterProviderChanges() {
+        func card(width: CGFloat, key: Int) -> some View {
+            WidestThatFits(key: key) {
+                Grid(horizontalSpacing: 12) {
+                    GridRow {
+                        ForEach(0..<6) { _ in Text("Escalates to").fixedSize() }
+                    }
+                }
+                .frame(height: 20)
+            } fallback: {
+                Color.blue.frame(height: 40)
+            }
+            .frame(width: width)
+        }
+        let chosen = NSHostingView(rootView: card(width: 900, key: 1))
+        for (width, key, expectedHeight) in [(900.0, 1, 20.0), (900, 2, 20),
+                                           (360, 2, 40), (900, 2, 20), (360, 3, 40)] {
+            chosen.rootView = card(width: width, key: key)
+            chosen.frame = CGRect(x: 0, y: 0, width: width, height: 100)
+            for _ in 0..<8 {
+                chosen.layoutSubtreeIfNeeded()
+                RunLoop.main.run(until: Date())
+            }
+            #expect(abs(chosen.fittingSize.height - CGFloat(expectedHeight)) < 0.5,
+                    "Width \(width), provider key \(key)")
+        }
+    }
+
     @Test("the rules card builds one layout, and picks as ViewThatFits did")
     func rulesLayoutMatchesViewThatFits() {
         for width in [CGFloat(900), 360] {

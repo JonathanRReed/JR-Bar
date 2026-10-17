@@ -19,10 +19,10 @@ enum PaletteWiring {
         var replay: @MainActor () -> Void
         var panel: @MainActor () -> Void
         var checkForUpdates: @MainActor () -> Void
-        var settings: @MainActor (SettingsStore.Page) -> Void
+        var settings: @MainActor (SettingsStore.Chapter) -> Void
         /// What's New opens the way `jrbar://window/whats-new` does, so the
         /// row, the link and the menus land on the one route.
-        var whatsNew: @MainActor () -> Void = { _ = AppCommandRouter.shared.perform(.window(.whatsNew)) }
+        var whatsNew: @MainActor () -> Void = { _ = Task { await AppCommandRouter.shared.perform(.window(.whatsNew)) } }
     }
 
     static func sources(panel: PanelStore,
@@ -30,7 +30,6 @@ enum PaletteWiring {
                         toggles: @escaping @MainActor () -> SystemTogglesStore?,
                         aquarium: @escaping @MainActor () -> AquariumToy?,
                         confetti: @escaping @MainActor () -> ConfettiToy? = { nil },
-                        hoarder: DataHoarderUtility,
                         history: HistoryStore? = nil,
                         windows: Windows) -> [any PaletteSource] {
         [
@@ -42,9 +41,8 @@ enum PaletteWiring {
             tank(aquarium: aquarium),
             confettiSource(confetti),
             AppMenuPaletteSource(),
-            archive(hoarder: hoarder),
         ] + (history.map { [historySource($0, windows: windows)] } ?? []) + [
-            open(hoarder: hoarder, windows: windows),
+            open(windows: windows),
         ]
     }
 
@@ -76,12 +74,11 @@ enum PaletteWiring {
             },
             verbs: HistoryPaletteVerbs(
                 show: { row, query in
-                    store.filter = HistoryFilter(text: query)
+                    store.focus(on: row, query: query)
                     windows.history()
-                    store.selectedID = row.id
                 },
                 search: { query in
-                    store.filter = HistoryFilter(text: query)
+                    store.focus(on: nil, query: query)
                     windows.history()
                 },
                 isLive: { store.isLiveSession($0) },
@@ -145,13 +142,13 @@ enum PaletteWiring {
             },
             end: { panel.endQuiet() })
         return PaletteClosureSource(build: {
-            guard panel.core.isLive else { return [] }
+            guard panel.core.isLive, !panel.isQuietChanging else { return [] }
             return QuietPaletteRows.items(
                 mode: panel.quietMode, quietLabel: panel.quietLabel, quietIsOurs: panel.quietIsOurs,
                 now: Date(), verbs: verbs)
         }, typed: { query in
             // "quiet 45m", "dim for 2h" — any length, not just a preset's.
-            guard panel.core.isLive else { return [] }
+            guard panel.core.isLive, !panel.isQuietChanging else { return [] }
             return QuietPaletteRows.typedItems(query: query, mode: panel.quietMode, now: Date(), verbs: verbs)
         })
     }
@@ -163,7 +160,7 @@ enum PaletteWiring {
     /// Bar through the delegate's own switch.
     static func lights(panel: PanelStore, effects: EffectStudioStore) -> PaletteClosureSource {
         let verbs = LightsPaletteVerbs(
-            setScene: { effects.setActiveScene($0) },
+            setScene: { _ = effects.setActiveScene($0) },
             setBrightness: { panel.setBrightness($0, final: true) },
             setScreenBar: { shown in
                 if panel.screenBarShown != shown { panel.toggleScreenBar() }
@@ -252,43 +249,12 @@ enum PaletteWiring {
         }
     }
 
-    /// Data Hoarder's full-text search, only while the hoarder is on —
-    /// switched off, its archive is not something to search from a
-    /// hotkey. Nothing leaves this Mac: the archive is a local SQLite
-    /// file and the query never goes further than it.
-    static func archive(hoarder: DataHoarderUtility) -> PaletteClosureSource {
-        let verbs = ArchivePaletteVerbs(
-            openRecord: { record, query in
-                hoarder.model.query = query
-                hoarder.model.selectedID = record.id
-                hoarder.openArchive()
-            },
-            search: { query in
-                hoarder.model.query = query
-                hoarder.openArchive()
-            },
-            sessionFor: { hoarder.model.sessionResolver?($0) },
-            openSession: { openSession($0) })
-        return PaletteClosureSource(build: { [] }, search: { query in
-            let trimmed = query.trimmingCharacters(in: .whitespaces)
-            guard hoarder.model.enabled, trimmed.count >= ArchivePaletteRows.minimumQuery else { return [] }
-            let hits = (try? await hoarder.model.archive.search(
-                query: trimmed, limit: ArchivePaletteRows.limit)) ?? []
-            return ArchivePaletteRows.items(query: trimmed, hits: hits, verbs: verbs)
-        })
+    static func open(windows: Windows) -> PaletteClosureSource {
+        PaletteClosureSource(build: { openItems(windows: windows) })
     }
 
-    static func open(hoarder: DataHoarderUtility, windows: Windows) -> PaletteClosureSource {
-        PaletteClosureSource(build: { openItems(hoarder: hoarder, windows: windows) })
-    }
-
-    /// The windows (the archive's only while the hoarder is on) and the
-    /// Settings pages.
-    static func openItems(hoarder: DataHoarderUtility, windows: Windows) -> [PaletteItem] {
-        var archive: (@MainActor () -> Void)?
-        if hoarder.model.enabled {
-            archive = { hoarder.openArchive() }
-        }
+    /// The windows and the Settings pages.
+    static func openItems(windows: Windows) -> [PaletteItem] {
         let verbs = PaletteWindowVerbs(
             overview: windows.overview,
             usageCenter: { windows.usageCenter(nil) },
@@ -296,7 +262,6 @@ enum PaletteWiring {
             effects: windows.effects,
             deck: windows.deck,
             replay: windows.replay,
-            archive: archive,
             panel: windows.panel,
             checkForUpdates: windows.checkForUpdates,
             settings: windows.settings,

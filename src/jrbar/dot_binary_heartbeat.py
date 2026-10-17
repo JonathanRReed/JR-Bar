@@ -123,13 +123,6 @@ class DotLedInstruction:
             raise DotBinaryHeartbeatError("a pulse Dot instruction requires a safe cadence")
         object.__setattr__(self, "intensity", float(self.intensity))
 
-    @property
-    def relies_on_color(self) -> bool:
-        """Color may decorate a renderer, but it is never part of this code."""
-
-        return False
-
-
 @dataclass(frozen=True, slots=True)
 class DotLegendEntry:
     """One immutable row in the public Dot binary-heartbeat legend."""
@@ -198,11 +191,6 @@ class DotBinaryHeartbeatPlan:
                 raise DotBinaryHeartbeatError("fleet policy must expose only a fleet-size band")
         elif self.fleet_size_band is not None or type(self.unseen_notification_present) is not bool:
             raise DotBinaryHeartbeatError("unseen policy must expose only notification presence")
-
-    @property
-    def instructions(self) -> tuple[DotLedInstruction, DotLedInstruction]:
-        return (self.primary, self.secondary)
-
 
 _ASK_CADENCE: Final = DotPulseCadence(250, 250, 2, 1_500)
 _NOTIFICATION_CADENCE: Final = DotPulseCadence(250, 750, 1, 2_000)

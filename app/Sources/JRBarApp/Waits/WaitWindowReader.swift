@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Reports whether the window hosting a wait's orb or beam is on screen
 /// (its occlusion state, re-read whenever AppKit says it changed), so a
-/// window kept alive but ordered out — the Dock's preview, the Data
-/// Hoarder after its close — runs no clock for it.
+/// window kept alive but ordered out — the Dock's preview, say — runs no
+/// clock for it.
 ///
 /// Unlike `WindowVisibilityReader`, a probe that leaves its window says
 /// nothing. SwiftUI replaces the probe as the orb it rides on redraws

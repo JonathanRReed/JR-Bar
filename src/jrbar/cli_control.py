@@ -86,7 +86,7 @@ def parse_duration(raw: str) -> int:
     text = raw.strip().lower().replace(" ", "")
     if text in ("off", "0", "none", "end", "stop"):
         return 0
-    if text.isdigit():
+    if text.isascii() and text.isdigit():
         return int(text)
     position = 0
     total = 0
@@ -251,6 +251,9 @@ class CoreConnection:
                 error = reply.get("error") or {}
                 message = error.get("message") or error.get("code") or "refused"
                 code = error.get("code") if isinstance(error.get("code"), str) else None
+                if code == "unauthenticated":
+                    # The daemon's sentence already says the app has to do it.
+                    raise ControlError(str(message), 1, code=code)
                 raise ControlError(f"{name}: {message}", 1, code=code)
             result = reply.get("result")
             return result if isinstance(result, dict) else {}
@@ -279,7 +282,7 @@ def _setting_at(document: Any, path: str) -> Any:
     for part in path.split("."):
         if isinstance(node, dict) and part in node:
             node = node[part]
-        elif isinstance(node, list) and part.isdigit() and int(part) < len(node):
+        elif isinstance(node, list) and part.isascii() and part.isdigit() and int(part) < len(node):
             node = node[int(part)]
         else:
             raise ControlError(f"no setting at {path}", 1)

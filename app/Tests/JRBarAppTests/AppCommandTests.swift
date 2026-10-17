@@ -65,8 +65,7 @@ import Testing
     @Test func everySettingsPageALinkMayNameExists() {
         // The pure parser keeps its own list so it needs no main-actor
         // type; this keeps it honest against the real pages.
-        let pages = Set(SettingsStore.Page.allCases.map(\.rawValue))
-        #expect(SettingsPageName.known == pages)
+        #expect(SettingsPageName.known == SettingsStore.Page.linkNames)
     }
 
     @Test func toggleLinksNameChipsTheWayAPersonWould() {
@@ -204,12 +203,12 @@ import Testing
     }
 
     @MainActor
-    @Test func theRouterHandsTheTintToTheBurst() {
+    @Test func theRouterHandsTheTintToTheBurst() async {
         let router = AppCommandRouter()
         var tints: [AppCommand.ConfettiTint] = []
         router.fireConfetti = { tints.append($0) }
-        #expect(router.open(URL(string: "jrbar://confetti?provider=codex")!) == .done)
-        #expect(router.perform(.confetti()) == .done)
+        #expect(await router.open(URL(string: "jrbar://confetti?provider=codex")!) == .done)
+        #expect(await router.perform(.confetti()) == .done)
         #expect(tints == [.provider("codex"), .focused])
     }
 
@@ -238,29 +237,29 @@ import Testing
     // MARK: The router
 
     @MainActor
-    @Test func anUnwiredOrRefusingCommandIsSaidOutLoud() {
+    @Test func anUnwiredOrRefusingCommandIsSaidOutLoud() async {
         let router = AppCommandRouter()
         var said: [String] = []
         router.onRefused = { said.append($0) }
-        #expect(router.perform(.confetti()) != .done)
+        #expect(await router.perform(.confetti()) != .done)
         router.revealAsk = { "No agent is waiting on you." }
-        #expect(router.perform(.revealAsk) == .refused("No agent is waiting on you."))
+        #expect(await router.perform(.revealAsk) == .refused("No agent is waiting on you."))
         var opened: [Bool] = []
         router.showPanel = { opened.append($0) }
-        #expect(router.perform(.panel(toggle: true)) == .done)
+        #expect(await router.perform(.panel(toggle: true)) == .done)
         #expect(opened == [true])
-        #expect(router.open(URL(string: "jrbar://nonsense")!) != .done)
+        #expect(await router.open(URL(string: "jrbar://nonsense")!) != .done)
         #expect(said.count == 3)
     }
 
     @MainActor
-    @Test func theGraphAndTheTankLinksReachTheirOwnHands() {
+    @Test func theGraphAndTheTankLinksReachTheirOwnHands() async {
         let router = AppCommandRouter()
         var said: [String] = []
         router.onRefused = { said.append($0) }
         // Unwired, each is refused out loud like any other surface.
-        #expect(router.perform(.overviewGraph) == .refused("JR-Bar is still starting."))
-        #expect(router.perform(.aquarium) == .refused("JR-Bar is still starting."))
+        #expect(await router.perform(.overviewGraph) == .refused("JR-Bar is still starting."))
+        #expect(await router.perform(.aquarium) == .refused("JR-Bar is still starting."))
         var hands: [String] = []
         router.openWindow = { hands.append("window:\($0.rawValue)") }
         router.openOverviewGraph = { hands.append("graph") }
@@ -268,14 +267,14 @@ import Testing
             hands.append("aquarium")
             return nil
         }
-        #expect(router.open(URL(string: "jrbar://overview/graph")!) == .done)
-        #expect(router.open(URL(string: "jrbar://overview")!) == .done)
-        #expect(router.open(URL(string: "jrbar://aquarium")!) == .done)
-        #expect(router.open(URL(string: "jrbar://aquarium")!) == .done, "a second open is the same open")
+        #expect(await router.open(URL(string: "jrbar://overview/graph")!) == .done)
+        #expect(await router.open(URL(string: "jrbar://overview")!) == .done)
+        #expect(await router.open(URL(string: "jrbar://aquarium")!) == .done)
+        #expect(await router.open(URL(string: "jrbar://aquarium")!) == .done, "a second open is the same open")
         #expect(hands == ["graph", "window:overview", "aquarium", "aquarium"])
         // The tank's own refusal is said the same way.
         router.openAquarium = { "JR-Bar is still starting." }
-        #expect(router.perform(.aquarium) == .refused("JR-Bar is still starting."))
+        #expect(await router.perform(.aquarium) == .refused("JR-Bar is still starting."))
         #expect(said.count == 3)
     }
 
@@ -313,21 +312,28 @@ import Testing
     }
 
     @MainActor
-    @Test func theRouterHoldsAsksOnlyQuietAndSaysWhatHappened() {
+    @Test func theRouterHoldsAsksOnlyQuietAndSaysWhatHappened() async {
         let router = AppCommandRouter()
         var clock = Date(timeIntervalSince1970: 1_000)
         router.now = { clock }
         var scheduled: [(TimeInterval, DispatchWorkItem)] = []
         router.schedule = { scheduled.append(($0, $1)) }
         var quiets: [(String?, Int)] = []
-        router.quiet = { quiets.append(($0, $1)); return nil }
-        router.endQuiet = { nil }
+        router.quiet = { mode, seconds, onApplied in
+            quiets.append((mode, seconds))
+            onApplied(router.now().addingTimeInterval(Double(seconds)))
+            return nil
+        }
+        router.endQuiet = { onApplied in
+            onApplied(nil)
+            return nil
+        }
         var sessions = [CoreSession(id: "a", provider: "claude", mode: "working", lifecycle: "active")]
         router.sessionsNow = { sessions }
         var lines: [String] = []
         router.onDeepWorkSummary = { lines.append($0) }
 
-        #expect(router.perform(.deepWork(seconds: 1500)) == .done)
+        #expect(await router.perform(.deepWork(seconds: 1500)) == .done)
         #expect(quiets.count == 1 && quiets[0].0 == "asks_only" && quiets[0].1 == 1500)
         #expect(router.isInDeepWork)
         #expect(scheduled.first?.0 == 1500)
@@ -338,15 +344,15 @@ import Testing
         #expect(!router.isInDeepWork)
 
         // Ending quiet by hand closes the stretch early, with its line.
-        router.perform(.deepWork(seconds: 1500))
+        await router.perform(.deepWork(seconds: 1500))
         clock = clock.addingTimeInterval(300)
-        router.perform(.endQuiet)
+        await router.perform(.endQuiet)
         #expect(lines.last == "Deep work ended after 5 min: the agents had nothing new.")
         #expect(scheduled.last?.1.isCancelled == true)
 
         // Another quiet takes over without a word.
-        router.perform(.deepWork(seconds: 1500))
-        router.perform(.quiet(mode: "dim", seconds: 600))
+        await router.perform(.deepWork(seconds: 1500))
+        await router.perform(.quiet(mode: "dim", seconds: 600))
         #expect(!router.isInDeepWork)
         #expect(lines.count == 2)
     }
@@ -365,8 +371,14 @@ import Testing
         init() {
             router.now = { [unowned self] in self.clock }
             router.schedule = { [unowned self] delay, work in self.scheduled.append((delay, work)) }
-            router.quiet = { _, _ in nil }
-            router.endQuiet = { nil }
+            router.quiet = { [unowned self] _, seconds, onApplied in
+                onApplied(self.router.now().addingTimeInterval(Double(seconds)))
+                return nil
+            }
+            router.endQuiet = { onApplied in
+                onApplied(nil)
+                return nil
+            }
             router.sessionsNow = { [unowned self] in self.sessions }
             router.onDeepWorkSummary = { [unowned self] line in self.lines.append(line) }
         }
@@ -379,9 +391,9 @@ import Testing
     }
 
     @MainActor
-    @Test func aStretchThatRanLongPastItsEndStillNamesItsPlannedLength() {
+    @Test func aStretchThatRanLongPastItsEndStillNamesItsPlannedLength() async {
         let bench = DeepWorkBench()
-        bench.router.perform(.deepWork(seconds: 1500))
+        await bench.router.perform(.deepWork(seconds: 1500))
         bench.finishSession()
         // The Mac slept through most of a day: the end timer only fires
         // now, long after the daemon's quiet lease lapsed on the wall clock.
@@ -392,39 +404,39 @@ import Testing
     }
 
     @MainActor
-    @Test func endingQuietByHandAfterASleepIsClampedToo() {
+    @Test func endingQuietByHandAfterASleepIsClampedToo() async {
         let slept = DeepWorkBench()
-        slept.router.perform(.deepWork(seconds: 600))
+        await slept.router.perform(.deepWork(seconds: 600))
         slept.advance(30_000)
-        slept.router.perform(.endQuiet)
+        await slept.router.perform(.endQuiet)
         #expect(slept.lines.last?.hasPrefix("Deep work ended after 10 min") == true)
 
         // A real early end is not inflated to the planned length.
         let early = DeepWorkBench()
-        early.router.perform(.deepWork(seconds: 600))
+        await early.router.perform(.deepWork(seconds: 600))
         early.advance(120)
-        early.router.perform(.endQuiet)
+        await early.router.perform(.endQuiet)
         #expect(early.lines.last?.hasPrefix("Deep work ended after 2 min") == true)
     }
 
     @MainActor
-    @Test func theEndFiresOnce() {
+    @Test func theEndFiresOnce() async {
         let bench = DeepWorkBench()
-        bench.router.perform(.deepWork(seconds: 1500))
+        await bench.router.perform(.deepWork(seconds: 1500))
         bench.advance(1500)
         let end = bench.scheduled.first?.1
         end?.perform()
-        bench.router.perform(.endQuiet)
+        await bench.router.perform(.endQuiet)
         end?.perform()
         #expect(bench.lines.count == 1, "a late timer and a hand end cannot both report")
     }
 
     @MainActor
-    @Test func aRefusedQuietStartsNoStretch() {
+    @Test func aRefusedQuietStartsNoStretch() async {
         let router = AppCommandRouter()
-        router.quiet = { _, _ in "The monitor is not connected — quiet needs it." }
+        router.quiet = { _, _, _ in "The monitor is not connected — quiet needs it." }
         router.onRefused = { _ in }
-        #expect(router.perform(.deepWork(seconds: 1500)) == .refused("The monitor is not connected — quiet needs it."))
+        #expect(await router.perform(.deepWork(seconds: 1500)) == .refused("The monitor is not connected — quiet needs it."))
         #expect(!router.isInDeepWork)
     }
 
@@ -445,6 +457,22 @@ import Testing
             "key_code": .number(15), "modifiers": .array([.string("hyper")]),
         ])])
         #expect(AppShortcutCatalog.legacyRevealAskChord(from: bad) == nil)
+    }
+
+    @MainActor
+    @Test func theWaitingAskKeyIsOptionalAndOffUntilRecorded() throws {
+        // "Show the waiting ask" is in Shortcuts › App actions with no
+        // default key: nothing is bound until a person records one, and
+        // the command only opens a surface, it never answers.
+        let suite = ScratchDefaults.suiteName("AppCommandTestsRevealOff")
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let hotkeys = AppHotkeys()
+        hotkeys.defaults = defaults
+        hotkeys.center = HotkeyCenter(registrar: HotkeyCenterTests.Recorder())
+        #expect(hotkeys.chord(for: AppShortcutCatalog.revealAskID) == nil)
+        #expect(AppShortcutCatalog.action(id: AppShortcutCatalog.revealAskID)?.command == .revealAsk)
+        #expect(defaults.string(forKey: HotkeyChordDefaults.key(for: AppShortcutCatalog.revealAskID)) == nil)
     }
 
     @MainActor
@@ -482,5 +510,64 @@ import Testing
             #expect(AppShortcutCatalog.action(id: AppShortcutCatalog.toggleID(toggle))?.command
                     == .toggle(toggle, on: nil))
         }
+    }
+
+    // MARK: Links from outside ask before the hard-to-undo ones
+
+    @Test func aLinkThatEjectsOrSleepsOrEndsQuietAsksFirst() throws {
+        #expect(AppCommand.parse(URL(string: "jrbar://toggle/eject")!)?.linkConfirmation?.trustKey == "toggle.eject")
+        #expect(AppCommand.parse(URL(string: "jrbar://toggle/sleepnow")!)?.linkConfirmation != nil)
+        #expect(AppCommand.parse(URL(string: "jrbar://toggle/lock")!)?.linkConfirmation != nil)
+        #expect(AppCommand.parse(URL(string: "jrbar://toggle/mic?on=0")!)?.linkConfirmation != nil, "unmuting the mic")
+        #expect(AppCommand.parse(URL(string: "jrbar://toggle/mic")!)?.linkConfirmation != nil, "a bare toggle may unmute")
+        #expect(AppCommand.parse(URL(string: "jrbar://toggle/mic?on=1")!)?.linkConfirmation == nil, "muting is harmless")
+        #expect(AppCommand.parse(URL(string: "jrbar://awake")!)?.linkConfirmation != nil, "no end")
+        #expect(AppCommand.parse(URL(string: "jrbar://awake?for=1h")!)?.linkConfirmation == nil)
+        #expect(AppCommand.parse(URL(string: "jrbar://quiet/end")!)?.linkConfirmation != nil)
+        #expect(AppCommand.parse(URL(string: "jrbar://settings/sounds")!)?.linkConfirmation == nil)
+        #expect(AppCommand.parse(URL(string: "jrbar://toggle/dark")!)?.linkConfirmation == nil)
+    }
+
+    @MainActor @Test func aCancelledLinkRunsNothingAndAnAllowedOneRunsOnce() async throws {
+        let scratch = try #require(UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.tests.links")))
+        let router = AppCommandRouter()
+        router.linkTrust = scratch
+        var ended = 0
+        router.endQuiet = { onApplied in
+            ended += 1
+            onApplied(nil)
+            return nil
+        }
+        var said: [String] = []
+        router.onRefused = { said.append($0) }
+        var asked: [String] = []
+        var answer = AppCommandRouter.LinkAnswer.cancel
+        router.confirmLink = { asked.append($0); return answer }
+        let link = URL(string: "jrbar://quiet/end")!
+
+        #expect(await router.open(link) == .refused("Link cancelled"))
+        #expect(ended == 0, "a cancelled link runs nothing")
+        #expect(said == ["Link cancelled"])
+
+        answer = .allow
+        #expect(await router.open(link) == .done)
+        #expect(ended == 1)
+        #expect(asked.count == 2, "a plain yes is for this one link")
+
+        // A shortcut the person recorded runs without asking.
+        #expect(await router.perform(.endQuiet) == .done)
+        #expect(asked.count == 2)
+        #expect(ended == 2)
+
+        answer = .allowAlways
+        #expect(await router.open(link) == .done)
+        #expect(router.hasTrustedLinks)
+        #expect(await router.open(link) == .done)
+        #expect(asked.count == 3, "after don't-ask-again the same kind of link goes straight through")
+        #expect(ended == 4)
+        router.forgetTrustedLinks()
+        #expect(!router.hasTrustedLinks)
+        answer = .cancel
+        #expect(await router.open(link) == .refused("Link cancelled"))
     }
 }

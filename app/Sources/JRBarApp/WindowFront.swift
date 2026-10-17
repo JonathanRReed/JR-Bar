@@ -73,12 +73,30 @@ enum WindowFront {
                 let activation = ActivationWatch()
                 return { activation.end() }
             }, openSelf: {
+                WindowFront.noteOwnReopenRequested()
                 let configuration = NSWorkspace.OpenConfiguration()
                 configuration.activates = true
                 configuration.createsNewApplicationInstance = false
                 NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in }
             })
         }
+    }
+
+    /// When the Launch Services fallback last opened this very app. The
+    /// open arrives as a reopen, which the app answers by opening Settings
+    /// for someone who cannot find the icon; one this app asked for itself
+    /// is not that, and must not pop Settings up behind the window it was
+    /// bringing forward.
+    private static var ownReopenRequestedAt: Date?
+    static let ownReopenWindow: TimeInterval = 3
+
+    static func noteOwnReopenRequested(now: Date = Date()) { ownReopenRequestedAt = now }
+
+    /// True once for a reopen that follows this app's own request.
+    static func consumeOwnReopen(now: Date = Date()) -> Bool {
+        defer { ownReopenRequestedAt = nil }
+        guard let at = ownReopenRequestedAt else { return false }
+        return now.timeIntervalSince(at) <= ownReopenWindow
     }
 
     /// `fallbackDelay` after the order-in, asks Launch Services to open

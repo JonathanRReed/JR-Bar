@@ -10,7 +10,7 @@ import SwiftUI
 /// this page has no "other apps" section.
 struct ToysPage: View {
     let store: SettingsStore
-    private var tint: Color { SettingsStore.Page.toys.tint }
+    private var tint: Color { SettingsStore.Chapter.toys.tint }
 
     var body: some View {
         if let toys = store.toys {

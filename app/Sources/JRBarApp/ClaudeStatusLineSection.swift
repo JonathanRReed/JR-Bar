@@ -1,7 +1,7 @@
 import JRBarCore
 import SwiftUI
 
-/// Settings › Usage: the sections lane oss adds under Quota alerts — the
+/// Settings › Agents & Usage: the sections lane oss adds under Quota alerts — the
 /// Claude Code status line and the usage hooks — behind one mount.
 struct UsageExtrasSections: View {
     @Bindable var store: SettingsStore
@@ -12,7 +12,7 @@ struct UsageExtrasSections: View {
     }
 }
 
-/// Settings › Usage › Claude Code status line: an opt-in source for the
+/// Settings › Agents & Usage › Advanced › Claude Code status line: an opt-in source for the
 /// Claude 5-hour and weekly numbers, from Claude Code's own status line.
 ///
 /// Turning it on points Claude Code's `statusLine` at JR-Bar's shim

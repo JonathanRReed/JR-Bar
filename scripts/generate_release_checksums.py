@@ -107,6 +107,39 @@ def _validate_evidence_manifest(
         expected_size, expected_digest = expected[relative]
         if path.stat().st_size != expected_size or _sha256_file(path) != expected_digest:
             raise ChecksumManifestError(f"release asset does not match release evidence: {relative}")
+    _validate_sbom_binding(document, root=root, artifacts=tuple(actual.values()))
+
+
+def _validate_sbom_binding(document: dict, *, root: Path, artifacts: tuple[Path, ...]) -> None:
+    if __package__:
+        from . import release_evidence
+    else:
+        import release_evidence
+
+    try:
+        candidate = document.get("candidate")
+        if not isinstance(candidate, dict):
+            raise ValueError("candidate identity is missing")
+        paths = {}
+        for name in ("sbom", "performance_evidence"):
+            record = document.get(name)
+            if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+                raise ValueError(f"{name} record is missing")
+            _, path = _artifact_record(Path(record["path"]), root=root)
+            if release_evidence.artifact_record(path, root=root) != record:
+                raise ValueError(f"{name} no longer matches its evidence")
+            if name == "sbom" and record not in document["artifacts"]:
+                raise ValueError("SBOM is absent from the release artifact inventory")
+            paths[name] = path
+        release_evidence.validate_sbom_evidence(
+            root=root,
+            candidate=candidate,
+            sbom=paths["sbom"],
+            artifacts=artifacts,
+            performance_evidence=paths["performance_evidence"],
+        )
+    except (OSError, ValueError, ChecksumManifestError) as exc:
+        raise ChecksumManifestError(f"SBOM validation failed: {exc}") from exc
 
 
 def write_checksum_manifest(

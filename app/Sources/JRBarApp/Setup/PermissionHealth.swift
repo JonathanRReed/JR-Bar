@@ -67,8 +67,8 @@ extension SetupPermission {
         case .accessibility: return "asks no longer answer in the terminal"
         case .automation: return "the Dark chip cannot switch"
         case .location: return "Wi-Fi rules cannot see the network"
-        case .fullDiskAccess: return "Focus sync cannot see the Focus"
-        case .focusStatus: return "Focus rules stop"
+        case .fullDiskAccess: return "rules for named Focus modes stop"
+        case .focusStatus: return "React to Focus modes and Focus-based Menu Bar rules stop"
         case .lidHelper: return "the lid-closed hold is gone"
         }
     }

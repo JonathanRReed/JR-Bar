@@ -178,6 +178,7 @@ struct WindowNoticeRow<Trailing: View>: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .help(text)
             Spacer(minLength: 8)
             trailing()
                 .font(.system(size: 11.5))
@@ -186,7 +187,9 @@ struct WindowNoticeRow<Trailing: View>: View {
         .padding(.vertical, 6)
         .background(RoundedRectangle(cornerRadius: WindowMetrics.controlRadius, style: .continuous)
             .fill(tint == .secondary ? Color.primary.opacity(0.04) : tint.opacity(0.08)))
-        .accessibilityElement(children: .combine)
+        // Read as one line, unless it carries a button of its own: a
+        // button must stay a button to VoiceOver.
+        .accessibilityElement(children: Trailing.self == EmptyView.self ? .combine : .contain)
     }
 }
 
@@ -201,6 +204,7 @@ extension WindowNoticeRow where Trailing == EmptyView {
 struct WindowStatusCapsule: View {
     let text: String
     var isError = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 7) {
@@ -218,7 +222,10 @@ struct WindowStatusCapsule: View {
         .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
         .padding(.bottom, 16)
         .padding(.horizontal, 24)
-        .transition(.opacity.combined(with: .offset(y: 6)))
+        .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 6)))
+        // It is gone in a few seconds: say it, so an outcome or an error is
+        // not missed by someone who cannot see it.
+        .onAppear { AccessibilityNotification.Announcement(text).post() }
     }
 }
 

@@ -46,8 +46,14 @@ final class ShelfTimerModel {
         }
 
         var paused: Bool { pausedRemaining != nil }
-        var remaining: TimeInterval { pausedRemaining ?? deadline.timeIntervalSinceNow }
-        var overdue: Bool { !paused && remaining <= 0 }
+        var remaining: TimeInterval { remaining(at: Date()) }
+        var overdue: Bool { overdue(at: Date()) }
+
+        func remaining(at now: Date) -> TimeInterval {
+            pausedRemaining ?? deadline.timeIntervalSince(now)
+        }
+
+        func overdue(at now: Date) -> Bool { !paused && remaining(at: now) <= 0 }
     }
 
     /// The done chip's quick extensions, in seconds.
@@ -78,16 +84,26 @@ final class ShelfTimerModel {
     private(set) var armedFor: Date?
     private var observers: [NSObjectProtocol] = []
     private let storeURL: URL
+    private let clock: @MainActor () -> Date
+    private let schedulingEnabled: Bool
 
     /// `storeURL` is injectable so tests never touch the real file.
-    init(storeURL: URL? = nil) {
+    init(storeURL: URL? = nil, schedulingEnabled: Bool = true,
+         clock: @escaping @MainActor () -> Date = { Date() }) {
+        self.clock = clock
+        self.schedulingEnabled = schedulingEnabled
         self.storeURL = storeURL ?? Self.defaultStoreURL()
         entries = Self.load(from: self.storeURL)
-        // Recovery sweep: anything that came due while the app was down
-        // fires exactly once now (T51's "one overdue notification"). It
-        // arms the wake for whatever is still to come.
-        sweep()
-        observeClockAndWake()
+        // Recovery: anything that came due while the app was down fires
+        // exactly once (T51's "one overdue notification"). The sweep that
+        // does it waits for the wake armed here, which for an overdue
+        // timer is the next turn of the run loop: the app has wired
+        // `onFire`, `onFireNotice` and `firePredicate` by then. Sweeping
+        // inside `init` marked the timer fired before anything was
+        // listening, so a timer that expired while the app was quit
+        // never spoke.
+        rearm()
+        if schedulingEnabled { observeClockAndWake() }
     }
 
     // No deinit cleanup: the model lives for the app's run — the wake
@@ -99,10 +115,11 @@ final class ShelfTimerModel {
     /// Adds a timer with an absolute deadline. Durations past
     /// `maxDuration` clamp rather than silently accepting a typo.
     @discardableResult
-    func add(label: String, duration: TimeInterval, watchSession: String? = nil) -> Entry {
-        let clamped = min(max(1, duration), Self.maxDuration)
-        let entry = Entry(id: UUID().uuidString, label: label.isEmpty ? "Timer" : label,
-                          deadline: Date().addingTimeInterval(clamped), fired: false,
+    func add(label: String, duration: TimeInterval, watchSession: String? = nil, now: Date = Date()) -> Entry {
+        let clamped = duration.isFinite ? min(max(1, duration), Self.maxDuration) : 1
+        let title = label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Timer" : label
+        let entry = Entry(id: UUID().uuidString, label: title,
+                          deadline: now.addingTimeInterval(clamped), fired: false,
                           watchSession: watchSession)
         entries.append(entry)
         sortEntries()
@@ -117,7 +134,7 @@ final class ShelfTimerModel {
     func add(label: String, until instant: Date, now: Date = Date()) -> Entry? {
         let span = instant.timeIntervalSince(now)
         guard span >= 1, span <= Self.maxDuration else { return nil }
-        return add(label: label, duration: span)
+        return add(label: label, duration: span, now: now)
     }
 
     /// Removes a timer entirely — cancel and dismiss are the same act.
@@ -129,9 +146,11 @@ final class ShelfTimerModel {
 
     /// Bank the time left; the chip reads "paused" and nothing fires.
     func pause(_ entry: Entry) {
+        let now = clock()
         guard let index = entries.firstIndex(where: { $0.id == entry.id }),
-              !entries[index].fired, !entries[index].paused else { return }
-        entries[index].pausedRemaining = max(1, entries[index].deadline.timeIntervalSinceNow)
+              !entries[index].fired, !entries[index].paused,
+              !entries[index].overdue(at: now) else { return }
+        entries[index].pausedRemaining = min(Self.maxDuration, max(1, entries[index].deadline.timeIntervalSince(now)))
         persist()
         rearm()
     }
@@ -140,7 +159,7 @@ final class ShelfTimerModel {
     func resume(_ entry: Entry) {
         guard let index = entries.firstIndex(where: { $0.id == entry.id }),
               let left = entries[index].pausedRemaining else { return }
-        entries[index].deadline = Date().addingTimeInterval(left)
+        entries[index].deadline = clock().addingTimeInterval(left)
         entries[index].pausedRemaining = nil
         sortEntries()
         persist()
@@ -151,11 +170,12 @@ final class ShelfTimerModel {
     /// runs again for it — snooze, one tap. Clamped to `maxDuration`
     /// from now.
     func extend(_ entry: Entry, by seconds: TimeInterval) {
-        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
-        let now = Date()
+        guard seconds.isFinite, seconds > 0,
+              let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        let now = clock()
         if let left = entries[index].pausedRemaining {
             entries[index].pausedRemaining = min(Self.maxDuration, left + seconds)
-        } else if entries[index].fired || entries[index].overdue {
+        } else if entries[index].fired || entries[index].overdue(at: now) {
             entries[index].deadline = now.addingTimeInterval(min(Self.maxDuration, seconds))
             entries[index].fired = false
         } else {
@@ -170,7 +190,8 @@ final class ShelfTimerModel {
 
     /// Soonest first; paused timers sort by what they have left.
     private func sortEntries() {
-        entries.sort { $0.remaining < $1.remaining }
+        let now = clock()
+        entries.sort { $0.remaining(at: now) < $1.remaining(at: now) }
     }
 
     // MARK: - Wake and recovery
@@ -189,8 +210,8 @@ final class ShelfTimerModel {
         tick?.invalidate()
         tick = nil
         armedFor = Self.nextDeadline(entries)
-        guard let due = armedFor else { return }
-        let timer = Timer(fire: max(due, Date()), interval: 0, repeats: false) { [weak self] _ in
+        guard schedulingEnabled, let due = armedFor else { return }
+        let timer = Timer(fire: max(due, clock()), interval: 0, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.sweep() }
         }
         timer.tolerance = 0.3
@@ -203,24 +224,26 @@ final class ShelfTimerModel {
     /// the same — then arm for the next one. Internal so tests can run a
     /// sweep without waiting for the wake.
     func sweep() {
-        var changed = false
-        var retired: [String] = []
-        for index in entries.indices where !entries[index].fired && entries[index].overdue {
+        let now = clock()
+        var notices: [Entry] = []
+        var retired = Set<String>()
+        for index in entries.indices where !entries[index].fired && entries[index].overdue(at: now) {
             entries[index].fired = true
-            changed = true
             let entry = entries[index]
-            // A nudge whose run already finished owes no interruption:
-            // it retires without a word rather than sit "Done".
-            guard firePredicate?(entry) ?? true else {
-                retired.append(entry.id)
-                continue
+            if firePredicate?(entry) ?? true {
+                notices.append(entry)
+            } else {
+                retired.insert(entry.id)
             }
+        }
+        if !retired.isEmpty { entries.removeAll { retired.contains($0.id) } }
+        if !notices.isEmpty || !retired.isEmpty { persist() }
+        rearm()
+        // A listener may remove or snooze a timer. Finish the sweep first.
+        for entry in notices {
             onFire?(entry)
             onFireNotice?(entry)
         }
-        if !retired.isEmpty { entries.removeAll { retired.contains($0.id) } }
-        if changed { persist() }
-        rearm()
     }
 
     private func observeClockAndWake() {
@@ -250,9 +273,13 @@ final class ShelfTimerModel {
         guard let data = try? Data(contentsOf: url),
               let decoded = try? JSONDecoder().decode([Entry].self, from: data)
         else { return [] }
-        // Corrupt entries are dropped wholesale; a half-written file is
-        // not a timer set.
-        return decoded
+        var ids = Set<String>()
+        return decoded.filter { entry in
+            guard !entry.id.isEmpty, entry.deadline.timeIntervalSinceReferenceDate.isFinite,
+                  entry.pausedRemaining.map({ $0.isFinite && $0 > 0 && $0 <= maxDuration }) ?? true
+            else { return false }
+            return ids.insert(entry.id).inserted
+        }
     }
 
     private func persist() {

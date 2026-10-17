@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -34,10 +33,9 @@ from .capacity_types import (
     SourceKey,
 )
 from .private_io import (
-    _private_parent,
-    _require_private_leaf,
     atomic_private_write,
     read_private_text,
+    unlink_private_file_if_unchanged,
 )
 
 STORE_VERSION: Final = 1
@@ -348,23 +346,9 @@ def _activity_from_payload(payload: object) -> ActivityHistorySample:
     )
 
 
-def _secure_unlink(path: Path) -> bool:
-    with _private_parent(path, tighten=False) as (
-        target,
-        parent_descriptor,
-        name,
-    ):
-        info = _require_private_leaf(target, parent_descriptor, name)
-        if info is None:
-            return False
-        os.unlink(name, dir_fd=parent_descriptor)
-        os.fsync(parent_descriptor)
-        return True
-
-
 def _discard_and_diagnose(path: Path) -> None:
     try:
-        _secure_unlink(path)
+        unlink_private_file_if_unchanged(path)
     except OSError:
         return
     diagnostic = path.with_name(path.name + ".corrupt")
@@ -389,10 +373,6 @@ class CapacityHistoryStore:
         self.cached_summaries: dict[tuple[HistoryInterval, float], CapacityHistorySummary] = {}
         self._dirty = False
         self._last_flush_at: float | None = None
-
-    @property
-    def calibration_inputs(self) -> tuple[CapacityHistorySample, ...]:
-        return self.state.capacity_samples
 
     def restore(self) -> CapacityHistoryRestore:
         restored = load_capacity_history(self.path)
@@ -487,7 +467,7 @@ class CapacityHistoryStore:
         self.cached_summaries.clear()
         self._dirty = False
         try:
-            removed = _secure_unlink(self.path)
+            removed = unlink_private_file_if_unchanged(self.path)
         except FileNotFoundError:
             removed = False
         return had_memory or removed

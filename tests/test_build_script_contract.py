@@ -55,7 +55,10 @@ def test_package_builder_embeds_creator_micro_backend__and_2_more() -> None:
     # --- scenario: package_builder_embeds_distribution_metadata_for_runtime_version
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
-    assert "--copy-metadata jrbar" in text
+    assert "--recursive-copy-metadata jrbar" in text
+    assert "--copy-metadata setuptools" in text
+    assert "--copy-metadata wheel" in text
+    assert "--copy-metadata packaging" in text
 
     # --- scenario: package_builder_sets_display_name_without_changing_bundle_identity
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
@@ -180,12 +183,12 @@ def test_production_builder_notarizes_app_before_final_zip_and_pkg__and_2_more()
     # --- scenario: production_builder_notarizes_app_before_final_zip_and_pkg
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
-    app_submit = 'notarytool submit "$APP_NOTARY_ZIP"'
+    app_submit = 'notarize_and_wait "$APP_NOTARY_ZIP"'
     app_staple = 'stapler staple "$APP_PATH"'
     app_validate = 'stapler validate "$APP_PATH"'
     updater_zip = 'scripts/package_sparkle_archive.py"'
     package = 'scripts/package_macos_artifact.py"'
-    pkg_submit = 'notarytool submit "$OUTPUT_PKG"'
+    pkg_submit = 'notarize_and_wait "$OUTPUT_PKG"'
 
     assert "app-notary-submission.json" in text
     assert "app-notary-log.json" in text

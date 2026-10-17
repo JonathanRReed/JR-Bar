@@ -406,7 +406,7 @@ def test_v2_restore_is_metadata_only_restored_and_edge_free__and_1_more(tmp_path
         "raw_error",
         "account_label",
     )
-    assert document["version"] == 2
+    assert document["version"] == 3
     assert all(field not in raw for field in forbidden)
 
     restored = LiveAgentMonitor(

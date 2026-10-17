@@ -82,6 +82,23 @@ struct UsageSourceNotesTests {
         #expect(UsageCenterStore.forecast(for: hub, window: window, core: core, now: Self.now).workingAgents == nil)
     }
 
+    /// A weekly window at 97 % must not be called "Resets first" because the
+    /// 5-hour lane's pace is `under`: a pace belongs to the lane it was
+    /// measured on.
+    @Test @MainActor func anotherLanesPaceIsNotThisLanes() {
+        let core = CoreModel(socketPath: "/nonexistent/jrbar-usage-notes.sock")
+        core.handle(.connected)
+        core.apply(.state(CoreState(sessions: [], asks: [])))
+        let fiveHour = CoreUsageWindow(key: "five-hour", name: "5h", usedPct: 20, resetsAt: Self.now.timeIntervalSince1970 + 3600)
+        let weekly = CoreUsageWindow(key: "weekly", name: "7d", usedPct: 97, resetsAt: Self.now.timeIntervalSince1970 + 3 * 86_400)
+        let provider = CoreProviderUsage(id: "claude", windows: [fiveHour, weekly], state: "ready",
+                                         forecast: CoreUsageForecast(exhaustsAt: nil, pace: "under"))
+        let primary = UsageCenterStore.forecast(for: provider, window: fiveHour, core: core, now: Self.now)
+        #expect(primary.verdict == .comfortable, "the lane the pace was measured on keeps it")
+        let other = UsageCenterStore.forecast(for: provider, window: weekly, core: core, now: Self.now)
+        #expect(other.verdict == .unknown, "no pace has been measured on the weekly lane")
+    }
+
     @Test @MainActor func aProviderWithNoQuotaSourceClaimsNoFidelity() {
         let none = CoreProviderUsage(id: "opencode", fidelity: "official", state: "unsupported", quotaSource: false)
         let metered = CoreProviderUsage(id: "opencode", fidelity: "official", state: "ready",
@@ -127,5 +144,21 @@ struct UsageSourceNotesTests {
         #expect(provider.resetCredits == 2)
         let older = try JSONDecoder().decode(CoreProviderUsage.self, from: Data(#"{"id":"codex"}"#.utf8))
         #expect(older.resetCredits == nil)
+    }
+
+    @Test func twoAccountsOfOneProviderNeverReadTheSame() {
+        #expect(UsageSourceNotes.displayName("Claude", instance: nil) == "Claude")
+        #expect(UsageSourceNotes.displayName("Claude", instance: "default") == "Claude")
+        #expect(UsageSourceNotes.displayName("Claude", instance: "work") == "Claude · work")
+        #expect(UsageSourceNotes.displayName("Claude", instance: "cliproxy:ab12") == "Claude · CLIProxyAPI")
+    }
+
+    @Test func aDrillLandsOnTheAccountItNames() {
+        let usage = [CoreProviderUsage(id: "claude", state: "ready", instance: "work"),
+                     CoreProviderUsage(id: "claude", state: "ready")]
+        #expect(UsageCenterStore.identity(for: "claude|work", in: usage) == "claude|work")
+        #expect(UsageCenterStore.identity(for: "claude", in: usage) == "claude", "the bare id is the default account's own")
+        #expect(UsageCenterStore.identity(for: "claude", in: [usage[0]]) == "claude|work", "with no default card, the provider's first")
+        #expect(UsageCenterStore.identity(for: "gemini", in: usage) == "gemini")
     }
 }

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .companion_seal import BROWSER_CONSENT, guard_companion, record_companion
+from .private_io import document_digest
 from .provider_contracts import ContractValidationError, SourceInstanceIdentifier
 
 BROWSER_CONSENT_SCHEMA_VERSION = 2
@@ -198,17 +199,6 @@ def _consent_from_document(value: object) -> BrowserConsent | None:
         return None
 
 
-def _document_digest(document: dict[str, object]) -> str:
-    encoded = json.dumps(
-        document,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def _read_real_document(target: Path) -> dict[str, object]:
     from .private_io import read_private_text
 
@@ -250,7 +240,9 @@ def load_browser_consents(
             None,
             target if real_path else None,
         )
-    source_revision = _document_digest(document)
+    if real_path:
+        document = guard_companion(BROWSER_CONSENT, target, document)
+    source_revision = document_digest(document)
     version = document.get("settings_schema_version")
     if type(version) is not int or version > BROWSER_CONSENT_SCHEMA_VERSION:
         return LoadedBrowserConsents(
@@ -299,7 +291,7 @@ def save_browser_consents(
     ).expanduser().absolute()
     if loaded is not None and loaded.source_path == target:
         try:
-            current_revision = _document_digest(_read_real_document(target))
+            current_revision = document_digest(_read_real_document(target))
         except FileNotFoundError:
             current_revision = None
         except (OSError, UnicodeError, ValueError) as exc:
@@ -332,6 +324,8 @@ def save_browser_consents(
 
         write = atomic_private_write
     write(target, text)
+    if writer is None:
+        record_companion(BROWSER_CONSENT, target, document)
     return target
 
 

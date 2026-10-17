@@ -9,6 +9,12 @@ struct OverviewGraphNode: Identifiable, Equatable, Sendable {
     let parentID: String?
     let project: String?
     let provider: String
+    let sourceIntegration: String?
+    let legacyImportedProvider: Bool
+    var provenance: String? {
+        if sourceIntegration == "t3code" { return "from T3 Code" }
+        return legacyImportedProvider ? "Legacy T3 Code import · provider unknown" : nil
+    }
     let activity: SessionActivity
     let label: String
     /// Epoch seconds of the last thing it did: how far a finished run's
@@ -16,11 +22,14 @@ struct OverviewGraphNode: Identifiable, Equatable, Sendable {
     let lastActive: Double
 
     init(id: String, parentID: String? = nil, project: String? = nil, provider: String,
-         activity: SessionActivity, label: String, lastActive: Double = 0) {
+         activity: SessionActivity, label: String, lastActive: Double = 0, sourceIntegration: String? = nil) {
         self.id = id
         self.parentID = parentID
         self.project = project
-        self.provider = provider
+        let legacy = provider == "t3code"
+        legacyImportedProvider = legacy
+        self.provider = legacy ? "unknown" : provider
+        self.sourceIntegration = sourceIntegration
         self.activity = activity
         self.label = label
         self.lastActive = lastActive
@@ -33,7 +42,8 @@ struct OverviewGraphNode: Identifiable, Equatable, Sendable {
         self.init(id: entry.id, parentID: session.parent,
                   project: AgentProject.name(of: session.cwd),
                   provider: session.provider, activity: SessionActivity.reduce(session),
-                  label: session.displayLabel, lastActive: session.updatedAt ?? session.since ?? 0)
+                  label: session.displayLabel, lastActive: session.updatedAt ?? session.since ?? 0,
+                  sourceIntegration: session.sourceIntegration)
     }
 }
 
@@ -51,6 +61,17 @@ struct OverviewGraphNode: Identifiable, Equatable, Sendable {
 /// each hub sits level with the sessions it feeds, so the spokes stay
 /// short and rarely cross.
 struct OverviewGraphLayout: Equatable {
+    enum Presentation: String, CaseIterable, Identifiable {
+        case map = "Map", network = "Network"
+        var id: Self { self }
+        var displayTitle: String {
+            switch self {
+            case .map: return "Cabinet"
+            case .network: return "Radial"
+            }
+        }
+    }
+    var presentation: Presentation = .map
     enum Side: Int, Equatable, Sendable {
         case left = -1, right = 1
         var sign: CGFloat { CGFloat(rawValue) }
@@ -66,6 +87,11 @@ struct OverviewGraphLayout: Equatable {
         var frame: CGRect {
             let radius = Metrics.hubDiameter / 2
             return CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+        }
+
+        var captionFrame: CGRect {
+            CGRect(x: center.x - 80, y: center.y + Metrics.hubDiameter / 2,
+                   width: 160, height: Metrics.hubCaption)
         }
     }
 
@@ -129,7 +155,8 @@ struct OverviewGraphLayout: Equatable {
     }
 
     /// The Graph for these sessions.
-    static func make(_ input: [OverviewGraphNode]) -> OverviewGraphLayout {
+    static func make(_ input: [OverviewGraphNode], presentation: Presentation = .map) -> OverviewGraphLayout {
+        if presentation == .network { return makeNetwork(input) }
         typealias M = Metrics
         var layout = OverviewGraphLayout()
         guard !input.isEmpty else { return layout }
@@ -355,7 +382,7 @@ struct OverviewGraphLayout: Equatable {
     /// Whether everything sits where it sat in `other` — a state change
     /// alters a cluster's counts but moves nothing, and needs no settle.
     func placesMatch(_ other: OverviewGraphLayout) -> Bool {
-        nodes == other.nodes
+        presentation == other.presentation && nodes == other.nodes
             && hubs.map(\.id) == other.hubs.map(\.id) && hubs.map(\.center) == other.hubs.map(\.center)
             && clusters.map(\.id) == other.clusters.map(\.id) && clusters.map(\.frame) == other.clusters.map(\.frame)
     }
@@ -452,6 +479,61 @@ struct OverviewGraphLayout: Equatable {
     }
 }
 
+enum GraphFraming: Equatable {
+    case opening
+    case whole
+    case manual(GraphCamera)
+
+    func camera(for layout: OverviewGraphLayout, in size: CGSize, focus: String? = nil) -> GraphCamera {
+        if case .manual(let camera) = self { return camera }
+        let floor: CGFloat = layout.presentation == .network ? 0.01 : GraphCamera.minScale
+        let whole = GraphCamera.fit(layout.bounds, in: size, inset: 16, minimumScale: floor)
+        if self == .whole { return whole }
+        guard layout.presentation == .network else {
+            let frame = focus.flatMap { layout.nodes[$0]?.frame.insetBy(dx: -12, dy: -12) }
+            return GraphCamera.opening(layout.bounds, in: size, focus: frame, inset: 16)
+        }
+        guard !layout.nodes.isEmpty else { return whole }
+        if whole.scale >= GraphCamera.networkCaptionScale { return whole }
+        let id = focus.flatMap { layout.nodes[$0] == nil ? nil : $0 } ?? layout.order.first
+        guard let id, let selected = layout.nodes[id] else { return whole }
+        let children = Dictionary(grouping: layout.edges, by: \.from).mapValues { $0.map(\.to) }
+        var owners: [String: Int] = [:]
+        var families = layout.hubs.map { $0.frame.union($0.captionFrame) }
+        var queue: [String] = []
+        for (index, hub) in layout.hubs.enumerated() {
+            for root in hub.sessionIDs where owners[root] == nil {
+                owners[root] = index
+                queue.append(root)
+            }
+        }
+        var cursor = 0
+        while cursor < queue.count {
+            let nodeID = queue[cursor]
+            cursor += 1
+            guard let owner = owners[nodeID] else { continue }
+            if let frame = layout.nodes[nodeID]?.frame { families[owner] = families[owner].union(frame) }
+            for child in children[nodeID] ?? [] where owners[child] == nil {
+                owners[child] = owner
+                queue.append(child)
+            }
+        }
+        if let owner = owners[id] {
+            let hub = layout.hubs[owner]
+            let context = selected.frame.union(hub.frame).union(hub.captionFrame)
+            for bounds in [families[owner], context] {
+                let camera = GraphCamera.fit(bounds.insetBy(dx: -24, dy: -24), in: size,
+                                             inset: 16, minimumScale: 0.01)
+                if camera.scale >= GraphCamera.networkCaptionScale { return camera }
+            }
+        }
+        let scale = GraphCamera.readableScale
+        return GraphCamera(scale: scale,
+                           offset: CGPoint(x: size.width / 2 - selected.frame.midX * scale,
+                                           y: size.height / 2 - selected.frame.midY * scale))
+    }
+}
+
 /// How the map sits in the window: points on the map times `scale`, plus
 /// `offset`, are points on screen.
 struct GraphCamera: Equatable, Sendable {
@@ -465,6 +547,7 @@ struct GraphCamera: Equatable, Sendable {
     /// The smallest scale the Graph opens at: titles still read. A map
     /// too big to fit at it opens on its middle, and ⌘0 shows the lot.
     static let readableScale: CGFloat = 0.6
+    static let networkCaptionScale: CGFloat = 0.45
 
     func screen(_ point: CGPoint) -> CGPoint {
         CGPoint(x: point.x * scale + offset.x, y: point.y * scale + offset.y)
@@ -480,11 +563,12 @@ struct GraphCamera: Equatable, Sendable {
 
     /// The whole map, centred, as large as fits (and no larger than
     /// `maxFitScale`).
-    static func fit(_ bounds: CGRect, in size: CGSize, inset: CGFloat = 12) -> GraphCamera {
+    static func fit(_ bounds: CGRect, in size: CGSize, inset: CGFloat = 12,
+                    minimumScale: CGFloat = GraphCamera.minScale) -> GraphCamera {
         guard bounds.width > 0, bounds.height > 0, size.width > 0, size.height > 0 else {
             return GraphCamera(scale: 1, offset: CGPoint(x: size.width / 2, y: size.height / 2))
         }
-        let scale = min(maxFitScale, max(minScale, min((size.width - 2 * inset) / bounds.width,
+        let scale = min(maxFitScale, max(minimumScale, min((size.width - 2 * inset) / bounds.width,
                                                        (size.height - 2 * inset) / bounds.height)))
         return GraphCamera(scale: scale, offset: CGPoint(x: size.width / 2 - bounds.midX * scale,
                                                          y: size.height / 2 - bounds.midY * scale))
@@ -505,7 +589,8 @@ struct GraphCamera: Equatable, Sendable {
 
     /// Zoomed by `factor` about a point on screen, which stays put.
     func zoomed(by factor: CGFloat, about anchor: CGPoint) -> GraphCamera {
-        let scale = min(Self.maxScale, max(Self.minScale, self.scale * factor))
+        let lower = min(Self.minScale, self.scale)
+        let scale = min(Self.maxScale, max(lower, self.scale * factor))
         let pinned = world(anchor)
         return GraphCamera(scale: scale, offset: CGPoint(x: anchor.x - pinned.x * scale,
                                                          y: anchor.y - pinned.y * scale))

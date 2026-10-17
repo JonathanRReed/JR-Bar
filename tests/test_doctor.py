@@ -52,7 +52,6 @@ def _result() -> DiagnosticResult:
             _finding(DiagnosticCheck.WORKER_REGISTRY_BOUNDS, DiagnosticCode.BOUNDED, 32, 32),
             _finding(DiagnosticCheck.TIMER_REGISTRY_BOUNDS, DiagnosticCode.BOUNDED, 22, 64),
             _finding(DiagnosticCheck.MOUNTED_DEVICE_HEALTH, DiagnosticCode.DISCONNECTED, 0, 16),
-            _finding(DiagnosticCheck.ALCOVE_FOLLOW_STATE, DiagnosticCode.NOT_PERMITTED, 0, 1),
             _finding(DiagnosticCheck.EVENT_INTAKE_FRESHNESS, DiagnosticCode.HEALTHY, 1, 1),
         ),
         last_failure_class=SanitizedFailureClass.NONE,
@@ -64,9 +63,11 @@ def test_manifest_and_result_are_frozen_exact_and_bounded__and_2_more() -> None:
     assert isinstance(DIAGNOSTIC_MANIFEST, DiagnosticManifest)
     # Adding a check changes the exported document's shape, so the version
     # moves with it -- a v1 reader must not silently miss a whole row.
-    assert DIAGNOSTIC_MANIFEST.version == DOCTOR_VERSION == 6
+    assert DIAGNOSTIC_MANIFEST.version == DOCTOR_VERSION == 7
     # v6 dropped launch_agent_state: no install has a menu-bar LaunchAgent.
     assert "launch_agent_state" not in {check.value for check in DiagnosticCheck}
+    # v7 dropped alcove_follow_state: the app follows Alcove, not the Python side.
+    assert "alcove_follow_state" not in {check.value for check in DiagnosticCheck}
     assert tuple(field.check for field in DIAGNOSTIC_MANIFEST.fields) == tuple(DiagnosticCheck)
     assert tuple(field.name for field in fields(DiagnosticResult)) == (
         "manifest_version",
@@ -153,16 +154,16 @@ def test_manifest_and_result_are_frozen_exact_and_bounded__and_2_more() -> None:
 
 
 
-def test_alcove_probe_exception_is_a_legal_recovering_nothing() -> None:
-    def failed_alcove_probe() -> DiagnosticFinding:
-        raise RuntimeError("capture failed")
+def test_a_probe_that_raises_is_unavailable_and_counted_as_nothing() -> None:
+    def failed_probe() -> DiagnosticFinding:
+        raise RuntimeError("probe failed")
 
     probes = tuple(
         DiagnosticProbe(
             finding.check,
             (
-                failed_alcove_probe
-                if finding.check is DiagnosticCheck.ALCOVE_FOLLOW_STATE
+                failed_probe
+                if finding.check is DiagnosticCheck.MOUNTED_DEVICE_HEALTH
                 else (lambda row=finding: row)
             ),
         )
@@ -170,9 +171,9 @@ def test_alcove_probe_exception_is_a_legal_recovering_nothing() -> None:
     )
 
     result = collect_diagnostics(probes=probes)
-    finding = result.finding(DiagnosticCheck.ALCOVE_FOLLOW_STATE)
+    finding = result.finding(DiagnosticCheck.MOUNTED_DEVICE_HEALTH)
 
-    assert finding.code is DiagnosticCode.RECOVERING
+    assert finding.code is DiagnosticCode.UNAVAILABLE
     assert (finding.count, finding.limit) == (0, 0)
 
 
@@ -189,10 +190,6 @@ def test_default_collection_uses_only_read_only_local_probes__and_2_more(tmp_pat
         patch("jrbar.doctor.detect_provider_configs", return_value=[]),
         patch("jrbar.doctor.negotiated_provider_sources", return_value=()),
         patch("jrbar.doctor.discover_devices", return_value=[]),
-        # Otherwise this probe reads the real settings file and the live
-        # window list, and the assertion below would depend on whether
-        # Alcove happens to be running on the machine under test.
-        patch("jrbar.doctor._alcove_following_enabled", return_value=False),
         patch("jrbar.doctor.subprocess.run") as run,
     ):
         result = collect_diagnostics()
@@ -205,7 +202,6 @@ def test_default_collection_uses_only_read_only_local_probes__and_2_more(tmp_pat
     assert result.finding(DiagnosticCheck.WORKER_REGISTRY_BOUNDS).code is DiagnosticCode.BOUNDED
     assert result.finding(DiagnosticCheck.TIMER_REGISTRY_BOUNDS).code is DiagnosticCode.BOUNDED
     assert result.finding(DiagnosticCheck.MOUNTED_DEVICE_HEALTH).code is DiagnosticCode.DISCONNECTED
-    assert result.finding(DiagnosticCheck.ALCOVE_FOLLOW_STATE).code is DiagnosticCode.NOT_CONFIGURED
     assert result.last_failure_class is SanitizedFailureClass.NONE
     run.assert_not_called()
 

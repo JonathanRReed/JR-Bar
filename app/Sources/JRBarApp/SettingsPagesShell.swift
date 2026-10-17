@@ -67,6 +67,15 @@ struct SoundsPage: View {
             }
         }
 
+    }
+}
+
+/// What Alerts keeps behind its Advanced disclosure for sound: where the
+/// sounds play and your own sound files.
+struct SoundsAdvanced: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
         SettingGroup("Output", note: "The alert device is System Settings › Sound › Play sound effects through.") {
             Toggle(isOn: $store.soundPreferences.useAlertDevice) {
                 SettingLabel(title: "Play through the alert device",
@@ -119,7 +128,7 @@ struct SettingsTransferGroup: View {
     @Bindable var store: SettingsStore
 
     var body: some View {
-        SettingGroup("Transfer", note: "Import writes only what you tick; the monitor checks every setting as it lands.") {
+        SettingGroup("Transfer", note: "Import writes only what you tick; the monitor checks every setting as it lands. A file never turns on a request that leaves this Mac, a hook program, a phone link or a permission prompt; those stay off until you turn them on here.") {
             SettingRow("Export settings", subtitle: "The monitor's settings, devices, Utilities, Toys, shortcuts and sounds, as one JSON file.") {
                 Button("Export…") { store.exportSettings() }
             }
@@ -175,7 +184,7 @@ struct SettingsImportSheet: View {
         VStack(alignment: .leading, spacing: SettingsMetrics.m + 2) {
             HStack(alignment: .center, spacing: SettingsMetrics.m) {
                 SettingsIconTile(symbol: "tray.and.arrow.down.fill",
-                                 tint: SettingsStore.Page.advanced.tint, size: 40)
+                                 tint: SettingsStore.Chapter.advanced.tint, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Import settings").font(.title3.weight(.semibold))
                     Text(origin).font(.callout).foregroundStyle(.secondary)
@@ -184,6 +193,10 @@ struct SettingsImportSheet: View {
             if let schema = bundle.schema, schema > knownSchema {
                 CardNote("Its monitor settings are a newer shape; keys this JR-Bar does not know are skipped.",
                          symbol: "exclamationmark.triangle.fill", tint: .orange)
+            }
+            if !bundle.categories.isEmpty {
+                CardNote("Webhooks, lyrics lookups, remote machines, update checks and anything that asks for a permission stay off until you turn them on here. The import lists what it left off.",
+                         symbol: "hand.raised.fill", tint: .secondary)
             }
             if bundle.categories.isEmpty {
                 Text("The file holds nothing to import.").foregroundStyle(.secondary)
@@ -253,7 +266,7 @@ struct ShortcutsPage: View {
                         onTakeOver: { store.setShortcut(nil, for: $0) })
         }
 
-        SettingGroup("Actions", note: "No key until you record one. The same actions answer to jrbar:// links, below.") {
+        SettingGroup("Actions", note: "No key until you record one. The same actions answer to jrbar:// links, under Advanced.") {
             // A recorder per action: folded until asked for.
             SettingsFoldRow(store, id: SettingsFold.shortcutActions, title: "App actions",
                             subtitle: actionsSummary) {
@@ -282,11 +295,11 @@ struct ShortcutsPage: View {
                                 onChange: { menuBar.setHotkeyChord($0, for: binding.action) },
                                 onTakeOver: { store.setShortcut(nil, for: $0) })
                 }
+                MenuBarItemShortcutRows(menuBar: menuBar, center: center,
+                                        onTakeOver: { store.setShortcut(nil, for: $0) })
             }
         }
 
-        LinksGroup()
-        CommandLineGroup()
     }
 
     /// "12 actions, 2 with a key".
@@ -295,6 +308,15 @@ struct ShortcutsPage: View {
         let bound = actions.filter { store.actionShortcut($0.id) != nil }.count
         let keys = bound == 0 ? "none with a key yet" : bound == 1 ? "1 with a key" : "\(bound) with a key"
         return "\(actions.count) actions, \(keys)."
+    }
+}
+
+/// What Shortcuts keeps behind its Advanced disclosure: the `jrbar://`
+/// links and the command-line tool, for scripts and launchers.
+struct ShortcutsAdvanced: View {
+    var body: some View {
+        LinksGroup()
+        CommandLineGroup()
     }
 }
 
@@ -424,8 +446,19 @@ private struct LinksGroup: View {
         ("jrbar://settings/shortcuts", "Open Settings on a page"),
     ]
 
+    @ViewState private var forgotten = 0
+
     var body: some View {
-        SettingGroup("Links", note: "Links never answer an ask — Approve and Deny stay where the ask is on screen.") {
+        SettingGroup("Links", note: "Links never answer an ask — Approve and Deny stay where the ask is on screen. A link from outside that ejects disks, sleeps or locks the Mac, restarts the Finder or Dock, unmutes the microphone, holds the Mac awake with no end or ends your quiet asks first.") {
+            if forgotten >= 0, AppCommandRouter.shared.hasTrustedLinks {
+                SettingRow("Links you stopped asking about",
+                           subtitle: "You chose \"Don't ask again\" for some links. Ask again makes them check with you every time.") {
+                    Button("Ask again") {
+                        AppCommandRouter.shared.forgetTrustedLinks()
+                        forgotten += 1
+                    }
+                }
+            }
             ForEach(Self.examples, id: \.link) { example in
                 LabeledContent {
                     Button {

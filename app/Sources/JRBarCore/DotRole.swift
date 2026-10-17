@@ -103,7 +103,13 @@ public struct DotRoleReadout: Equatable, Sendable {
     public static func make(chosen: DotRole, includeCompletions: Bool, linked: Bool = true,
                             link: CoreDotLink? = nil,
                             lidClosed: Bool = false, now: Date = Date(),
+                            live: Bool = true,
                             dot: CoreLightSurface?) -> DotRoleReadout {
+        guard live else {
+            return DotRoleReadout(chosen: chosen, active: nil, rendersItself: false,
+                                  headline: "Monitor not connected",
+                                  detail: "Reconnect the monitor to see what the Dot is doing.")
+        }
         let active = dot?.role.map(DotRole.parse)
         let rendersItself = dot != nil && dot?.role == nil
         // The daemon's own link word answers first: it knows about states
@@ -214,15 +220,15 @@ public struct DotRoleReadout: Equatable, Sendable {
     /// nil before the first timed write -- nothing is claimed unmeasured.
     static func timingSentence(link: CoreDotLink?, now: Date) -> String? {
         guard let link else { return nil }
-        if let until = link.checkUntil, until > now.timeIntervalSince1970 {
+        if let until = link.checkUntil, until.isFinite, until > now.timeIntervalSince1970 {
             return "Checking sync: both flash white every 2 seconds. They should read as one flash."
         }
-        guard let error = link.phaseErrorMs else { return nil }
+        guard let error = link.phaseErrorMs, error.isFinite, abs(error) < Double(Int.max) else { return nil }
         let off = Int(abs(error).rounded())
         if link.clockSource == "off" {
             return "Started on the strip's beat; clock correction is off, so it drifts between writes."
         }
-        let tolerance = link.toleranceMs ?? 40
+        let tolerance = link.toleranceMs.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 40
         if abs(error) > tolerance {
             return "Re-syncing: \(off) ms off the strip."
         }
@@ -230,7 +236,7 @@ public struct DotRoleReadout: Equatable, Sendable {
         if link.clockSource == "frozen" {
             return sentence + "; its clock can't be read fresh, so it is re-synced every minute."
         }
-        if let rate = link.clockRate, abs(rate - 1) >= 0.001 {
+        if let rate = link.clockRate, rate.isFinite, (0.9...1.1).contains(rate), abs(rate - 1) >= 0.001 {
             let percent = String(format: "%.1f", abs(rate - 1) * 100)
             let way = rate < 1 ? "slow" : "fast"
             sentence += "; the Dot's clock runs \(percent)% \(way), corrected."

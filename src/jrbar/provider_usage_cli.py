@@ -7,6 +7,7 @@ import json
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
 
@@ -24,6 +25,12 @@ from .provider_management import (
 from .provider_management import (
     CREDENTIAL_ACCOUNTS as _CREDENTIAL_ACCOUNTS,
 )
+from .provider_usage_consent import (
+    migrate_usage_consent,
+    overlay_usage_off,
+    usage_disclosure,
+    usage_off_snapshot,
+)
 from .provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
@@ -33,6 +40,7 @@ from .provider_usage_platform import (
 )
 from .provider_usage_runtime import ProviderUsageService, ProviderUsageState
 from .provider_usage_settings import (
+    ProviderUsageSettingsError,
     default_provider_usage_settings_path,
     load_provider_usage_settings,
     save_provider_usage_settings,
@@ -96,9 +104,19 @@ def build_parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status", help="Show native provider state")
     status.add_argument("--json", action="store_true")
 
-    for command in ("enable", "disable"):
-        item = commands.add_parser(command)
+    for command, summary in (
+        ("enable", "Turn a provider on, including its usage read"),
+        ("disable", "Turn a provider off and withdraw its usage consent"),
+    ):
+        item = commands.add_parser(command, help=summary)
         item.add_argument("provider", choices=[row.provider_id for row in provider_descriptors()])
+
+    usage = commands.add_parser(
+        "usage",
+        help="Turn one provider's usage read on or off; it is off until you do",
+    )
+    usage.add_argument("provider", choices=[row.provider_id for row in provider_descriptors()])
+    usage.add_argument("switch", type=_on_off, metavar="{on,off}")
 
     configure = commands.add_parser("configure")
     configure.add_argument("provider", choices=[row.provider_id for row in provider_descriptors()])
@@ -242,6 +260,15 @@ def _initial_state(settings, now: float) -> ProviderUsageState:
         "openai-api": "Add OpenAI Admin key",
     }
     for preference in settings.providers:
+        if preference.enabled and not preference.usage_consented:
+            snapshots.append(
+                usage_off_snapshot(
+                    preference.provider_id,
+                    observed_at=now,
+                    source_instance_id=preference.source_instance_id,
+                )
+            )
+            continue
         if not preference.enabled:
             state = ProviderSourceState.DISABLED
             reason = None
@@ -280,7 +307,20 @@ def _load_state(
     now: float,
 ) -> ProviderUsageState:
     state = loader() if loader is not None else load_provider_usage_state(path)
-    return state if state.snapshots else _initial_state(settings, now)
+    if not state.snapshots:
+        return _initial_state(settings, now)
+    # A reading that came from a provider the person has not turned on is
+    # not shown, whatever an older build left in the file.
+    preferences = {item.identity: item for item in settings.providers}
+    return replace(
+        state,
+        snapshots=tuple(
+            overlay_usage_off(item, preferences[item.identity])
+            if item.identity in preferences
+            else item
+            for item in state.snapshots
+        ),
+    )
 
 
 def main(
@@ -318,6 +358,15 @@ def main(
         else Path(state_path)
     )
     credential_store = credentials or ProviderCredentialStore()
+    try:
+        # Once per install: what was on and returning usage stays on.
+        migrate_usage_consent(
+            settings_target,
+            state_loader or (lambda: load_provider_usage_state(state_target)),
+            log=lambda message: sys.stderr.write(message + "\n"),
+        )
+    except Exception:
+        pass
     loaded_settings = load_provider_usage_settings(settings_target)
     settings = loaded_settings.settings
 
@@ -331,32 +380,61 @@ def main(
         _print_state(state, output=output, as_json=args.json)
         return 0
 
-    if args.command in {"enable", "disable"}:
-        updated = settings.with_enabled(args.provider, args.command == "enable")
-        save_provider_usage_settings(updated, settings_target, loaded=loaded_settings)
-        output.write(
-            f"{provider_descriptor(args.provider).label} "
-            f"{'enabled' if args.command == 'enable' else 'disabled'}.\n"
+    if args.command in {"enable", "disable", "usage"}:
+        turning_on = (
+            args.command == "enable"
+            or (args.command == "usage" and args.switch is True)
         )
+        label = provider_descriptor(args.provider).label
+        updated = settings
+        if args.command in {"enable", "disable"}:
+            updated = updated.with_enabled(args.provider, args.command == "enable")
+        updated = updated.with_usage_consent(
+            args.provider,
+            turning_on,
+            source="cli",
+            at=float(clock()),
+        )
+        save_provider_usage_settings(updated, settings_target, loaded=loaded_settings)
+        if args.command == "disable":
+            output.write(f"{label} disabled. Its usage read is off.\n")
+        elif turning_on:
+            disclosure = usage_disclosure(args.provider)
+            output.write(
+                f"{label} usage on. {disclosure.detail}\n"
+                "Turn it off any time with "
+                f"`jrbar providers usage {args.provider} off`.\n"
+            )
+        else:
+            output.write(
+                f"{label} usage off. Nothing is asked of {label} or read from "
+                "its sign-in until you turn it back on.\n"
+            )
         _notify_daemon_usage_refresh(args.provider)
         return 0
 
     if args.command == "configure":
         updated = settings
-        if args.browser_sources is not None:
-            updated = updated.with_browser_sources(args.provider, args.browser_sources)
-        if args.reset_celebrations is not None:
-            updated = updated.with_reset_celebrations(
-                args.provider,
-                args.reset_celebrations,
-            )
-        if args.threshold_remaining is not None:
-            updated = updated.with_threshold_remaining(
-                args.provider,
-                args.threshold_remaining,
-            )
-        for key, value in args.option:
-            updated = updated.with_option(args.provider, key, value)
+        try:
+            if args.browser_sources is not None:
+                updated = updated.with_browser_sources(args.provider, args.browser_sources)
+            if args.reset_celebrations is not None:
+                updated = updated.with_reset_celebrations(
+                    args.provider,
+                    args.reset_celebrations,
+                )
+            if args.threshold_remaining is not None:
+                updated = updated.with_threshold_remaining(
+                    args.provider,
+                    args.threshold_remaining,
+                )
+            for key, value in args.option:
+                if key == "go_usage" and (value or "").strip().lower() not in {"on", "off"}:
+                    raise ProviderUsageSettingsError("go_usage is on or off")
+                updated = updated.with_option(args.provider, key, value)
+        except ProviderUsageSettingsError as error:
+            output.write(f"Not saved: {error}. Nothing was changed.\n")
+            return 2
         save_provider_usage_settings(updated, settings_target, loaded=loaded_settings)
         output.write(f"{provider_descriptor(args.provider).label} settings updated.\n")
         _notify_daemon_usage_refresh(args.provider)

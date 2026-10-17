@@ -193,8 +193,8 @@ def test_beacon_returns_to_dark_when_the_ask_resolves__and_2_more() -> None:
     assert beacon_program(asking)[0] != "off"
     assert beacon_program(DotBeaconFacts(ask_count=0, escalation_stage=3))[0] == "off"
 
-    # --- scenario: beacon_shows_red_for_a_blocked_error_over_an_ask
-    program, why, _animated = beacon_program(DotBeaconFacts(ask_count=2, blocked=True))
+    # --- scenario: a_fresh_failure_cue_is_distinct_from_a_standing_failure
+    program, why, _animated = beacon_program(DotBeaconFacts(ask_count=2, blocked=True, failure_active=True))
     assert program.startswith(DotRoleColors().blocked)
     assert why == "failed"
 
@@ -223,7 +223,7 @@ def test_an_ask_outranks_an_unseen_completion__and_2_more() -> None:
 
     # --- scenario: no_beacon_state_ever_exceeds_two_hertz
     for stage in range(4):
-        for facts_kwargs in [{"ask_count": 1}, {"blocked": True}, {"unseen_completions": 1}]:
+        for facts_kwargs in [{"ask_count": 1}, {"blocked": True, "failure_active": True}, {"unseen_completions": 1}]:
             facts = DotBeaconFacts(escalation_stage=stage, **facts_kwargs)
             program = beacon_program(facts, include_completions=True)[0]
             if program == "off":
@@ -1186,3 +1186,17 @@ def test_a_later_pulse_resets_an_earlier_assignment_on_the_same_led() -> None:
 
     (step,) = _paint_steps("#00FF00 #FF0000 300ms pulse", DOT_LED_COUNT)
     assert _resting_source_state(step, source_leds=2, state=start) == start
+
+
+
+def test_known_failure_is_steady_and_does_not_hide_a_real_ask():
+    program, why, animated = beacon_program(DotBeaconFacts(blocked=True))
+    assert program == DotRoleColors().blocked
+    assert why == "failed" and not animated
+    assert "repeat" not in program and "off" not in program
+    asking, why, animated = beacon_program(DotBeaconFacts(blocked=True, ask_count=1))
+    assert asking.startswith(DotRoleColors().ask)
+    assert why == "waiting" and animated
+    plan = plan_dot_surface(role="asks", facts=DotBeaconFacts(blocked=True), brightness=128)
+    assert plan.why == "failed" and not plan.animated
+    assert plan.program == "brightness 128\n" + DotRoleColors().blocked

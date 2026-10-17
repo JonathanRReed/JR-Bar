@@ -196,6 +196,48 @@ import JRBarCore
         }
     }
 
+    @Test("registry and graph replies preserve provider options while keeping T3 separate",
+          arguments: [true, false])
+    func graphProviderReplyOrder(graphFirst: Bool) async {
+        let store = OverviewStore(core: CoreModel())
+        let graphGate = OverviewLoadOrderTests.Gate<CoreUsageGraphDocument>()
+        let registryGate = OverviewLoadOrderTests.Gate<[String]>()
+        store.fetchGraph = { _, _, _ in try await graphGate.request() }
+        store.fetchGraphProviderIDs = { try await registryGate.request() }
+        let graphTask = Task { await store.loadGraph() }
+        let registryTask = Task { await store.loadGraphProvidersIfNeeded() }
+        await graphGate.untilRequests(1)
+        await registryGate.untilRequests(1)
+        var chart = CoreUsageGraph()
+        chart.series = [.init(providerId: "t3code", values: [1]),
+                        .init(providerId: "gemini", values: [2])]
+        chart.providers = ["codex"]
+        let document = CoreUsageGraphDocument(graph: chart)
+        if graphFirst {
+            graphGate.answer(1, with: document)
+            await graphTask.value
+            #expect(store.graphProviderOptions == ["codex", "gemini"])
+            registryGate.answer(1, with: ["claude", "codex", "codex"])
+            await registryTask.value
+        } else {
+            registryGate.answer(1, with: ["claude", "codex", "codex"])
+            await registryTask.value
+            graphGate.answer(1, with: document)
+            await graphTask.value
+        }
+        #expect(store.graphProviderOptions == ["claude", "codex", "gemini"])
+        #expect(store.graph?.graph.series.contains { $0.providerId == "t3code" } == true)
+
+        // A new chart replaces its source-only choices rather than retaining ghosts.
+        store.fetchGraph = { _, _, _ in
+            var chart = CoreUsageGraph()
+            chart.providers = ["codex"]
+            return CoreUsageGraphDocument(graph: chart)
+        }
+        await store.loadGraph()
+        #expect(store.graphProviderOptions == ["claude", "codex"])
+    }
+
     @Test("picks made during a scan wait for it and then ask once, with the latest picks")
     func oneGraphInFlight() async {
         let store = OverviewStore(core: CoreModel())

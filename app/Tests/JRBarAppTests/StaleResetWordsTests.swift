@@ -107,4 +107,19 @@ struct StaleResetWordsTests {
         #expect(ear.fix == "Reconnect Claude")
         #expect(PanelStore.meterWingText(ear, now: now) == "19% · Reconnect Claude · incident")
     }
+
+    @Test("a stale reading with its reset still ahead is marked on the Screen Bar's meter ear")
+    func staleEarIsMarked() throws {
+        var stale = BrokenUsageSources.claude
+        stale.windows = [CoreUsageWindow(key: "five-hour", name: "5h", usedPct: 42, resetsAt: now.timeIntervalSince1970 + 3 * 3600)]
+        let meter = try #require(NotchIsland.meters(CoreUsage(providers: [stale])).first)
+        #expect(meter.stale)
+        #expect(PanelStore.meterWingText(meter, now: now) == "42% · resets in 3h 00m · stale")
+        var live = stale
+        live.state = "ready"
+        live.fidelity = "official"
+        let fresh = try #require(NotchIsland.meters(CoreUsage(providers: [live])).first)
+        #expect(!fresh.stale)
+        #expect(PanelStore.meterWingText(fresh, now: now) == "42% · resets in 3h 00m")
+    }
 }

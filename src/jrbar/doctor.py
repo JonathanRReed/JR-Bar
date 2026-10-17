@@ -13,12 +13,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Final
 
-from .alcove_observation import (
-    AlcoveConfidenceState,
-    alcove_follow_blocker,
-    latest_alcove_status,
-    project_alcove_confidence,
-)
 from .app_bundle import containing_app_bundle, running_inside_bundle
 from .device_identity import DeviceKind
 from .device_inventory import mounted_device_kind
@@ -46,11 +40,13 @@ DOCTOR_DOCUMENT: Final = "jrbar-doctor"
 # where the app supervises the core and a missing LaunchAgent plist is
 # the design rather than a fault; 6 drops launch_agent_state, since no
 # JR-Bar install has a menu-bar LaunchAgent any more (the Swift app
-# supervises the daemon, and startup unloads the retired plist). The
-# document gains and loses rows and codes, so anything holding an older
-# export is reading a different shape -- version it rather than let a
-# consumer silently miss a check.
-DOCTOR_VERSION: Final = 6
+# supervises the daemon, and startup unloads the retired plist); 7 drops
+# alcove_follow_state and the codes only it used, since the app follows
+# Alcove and holds its Screen Recording permission, so the Python side had
+# nothing true to report. The document gains and loses rows and codes, so
+# anything holding an older export is reading a different shape -- version
+# it rather than let a consumer silently miss a check.
+DOCTOR_VERSION: Final = 7
 MAX_DOCTOR_EXPORT_BYTES: Final = 64 * 1024
 PUBLIC_COLLECTION_ERROR_MESSAGE: Final = "Diagnostics could not be collected."
 
@@ -64,7 +60,6 @@ class DiagnosticCheck(str, Enum):
     WORKER_REGISTRY_BOUNDS = "worker_registry_bounds"
     TIMER_REGISTRY_BOUNDS = "timer_registry_bounds"
     MOUNTED_DEVICE_HEALTH = "mounted_device_health"
-    ALCOVE_FOLLOW_STATE = "alcove_follow_state"
     EVENT_INTAKE_FRESHNESS = "event_intake_freshness"
 
 
@@ -89,16 +84,6 @@ class DiagnosticCode(str, Enum):
     CONNECTED = "connected"
     AMBIGUOUS = "ambiguous"
     UNAVAILABLE = "unavailable"
-    # Alcove following. Content-free by construction: a fixed product
-    # vocabulary, never a message, a path, or a window title.
-    NOT_PERMITTED = "not_permitted"
-    NOT_RUNNING = "not_running"
-    STALE = "stale"
-    RECOVERING = "recovering"
-    UNSUPPORTED = "unsupported"
-    # Kept as a source-compatibility identifier for older callers. Doctor
-    # v4 emits UNSUPPORTED for the semantic state instead.
-    UNUSABLE = "unusable"
 
 
 class SanitizedFailureClass(str, Enum):
@@ -226,22 +211,6 @@ DIAGNOSTIC_MANIFEST: Final = DiagnosticManifest(
                 DiagnosticCode.UNAVAILABLE,
             ),
             16,
-        ),
-        # Alcove following uses the seven semantic confidence states from
-        # alcove_observation. The fixed vocabulary keeps exported findings
-        # content-free while preserving the projection's distinctions.
-        DiagnosticFieldManifest(
-            DiagnosticCheck.ALCOVE_FOLLOW_STATE,
-            (
-                DiagnosticCode.HEALTHY,
-                DiagnosticCode.STALE,
-                DiagnosticCode.NOT_PERMITTED,
-                DiagnosticCode.NOT_RUNNING,
-                DiagnosticCode.UNSUPPORTED,
-                DiagnosticCode.NOT_CONFIGURED,
-                DiagnosticCode.RECOVERING,
-            ),
-            1,
         ),
         # The event-refresh latch once jammed silently: every provider hint
         # was dropped and the menu only moved on turn boundaries, with no
@@ -524,54 +493,15 @@ def _mounted_device_health_probe() -> DiagnosticFinding:
     )
 
 
-_ALCOVE_DIAGNOSTIC_CODES: Final[dict[AlcoveConfidenceState, DiagnosticCode]] = {
-    AlcoveConfidenceState.FRESH: DiagnosticCode.HEALTHY,
-    AlcoveConfidenceState.STALE: DiagnosticCode.STALE,
-    AlcoveConfidenceState.PERMISSION_DENIED: DiagnosticCode.NOT_PERMITTED,
-    AlcoveConfidenceState.DISCONNECTED: DiagnosticCode.NOT_RUNNING,
-    AlcoveConfidenceState.UNSUPPORTED: DiagnosticCode.UNSUPPORTED,
-    AlcoveConfidenceState.NOT_FOLLOWING: DiagnosticCode.NOT_CONFIGURED,
-    AlcoveConfidenceState.RECOVERING: DiagnosticCode.RECOVERING,
-}
-
-
-def _alcove_following_enabled() -> bool:
-    # Imported here, not at module scope: doctor is an entry point and
-    # settings pulls in the colour and signal models with it.
-    from .settings import load_settings
-
-    return bool(load_settings(track=False).screen_bar_follow_alcove)
-
-
-def _alcove_follow_state_probe() -> DiagnosticFinding:
-    """What Alcove following is actually doing, or why it is not.
-
-    Gather the current promptless blocker and let the pure confidence
-    projection resolve status age, geometry age, and precedence in one
-    place. Diagnostic output contains only a fixed code and bounded count.
-    """
-    following = _alcove_following_enabled()
-    blocker = alcove_follow_blocker(following=following)
-    projection = project_alcove_confidence(
-        following=following,
-        snapshot=latest_alcove_status(),
-        blocker=blocker,
-        now=time.monotonic(),
-    )
-    code = _ALCOVE_DIAGNOSTIC_CODES.get(
-        projection.state,
-        DiagnosticCode.RECOVERING,
-    )
-    return _finding(
-        DiagnosticCheck.ALCOVE_FOLLOW_STATE,
-        code,
-        int(code is DiagnosticCode.HEALTHY),
-        1,
-    )
-
-
 _INTAKE_FRESHNESS_LAG_SECONDS: Final = 120.0
 _INTAKE_FRESHNESS_LOOKBACK_SECONDS: Final = 3600.0
+
+
+def _valid_event_epoch(value: object, now: float) -> bool:
+    return (
+        type(value) in (int, float)
+        and 0 < value <= now
+    )
 
 
 def _event_intake_freshness_probe() -> DiagnosticFinding:
@@ -586,7 +516,7 @@ def _event_intake_freshness_probe() -> DiagnosticFinding:
                 continue
             source = entry.get("source_key")
             occurred = entry.get("occurred_at_epoch")
-            if isinstance(source, dict) and isinstance(occurred, (int, float)):
+            if isinstance(source, dict) and _valid_event_epoch(occurred, now):
                 provider = str(source.get("provider_id") or "")
                 watermarks[provider] = max(
                     watermarks.get(provider, 0.0), float(occurred)
@@ -613,8 +543,10 @@ def _event_intake_freshness_probe() -> DiagnosticFinding:
                         row = json.loads(raw)
                     except Exception:
                         continue
+                    if not isinstance(row, dict):
+                        continue
                     occurred = row.get("occurred_at_epoch")
-                    if isinstance(occurred, (int, float)):
+                    if _valid_event_epoch(occurred, now):
                         newest = max(newest, float(occurred))
         except OSError:
             continue
@@ -631,16 +563,14 @@ def _event_intake_freshness_probe() -> DiagnosticFinding:
         breaker_tripped = False
     active = min(active, maximum)
     fresh = min(fresh, active)
-    if active == 0:
-        code = DiagnosticCode.HEALTHY
-        active = 1
-        fresh = 1
-    elif fresh == active and not breaker_tripped:
+    if breaker_tripped:
+        code = DiagnosticCode.PARTIAL
+    elif active == 0:
+        code = DiagnosticCode.UNAVAILABLE
+    elif fresh == active:
         code = DiagnosticCode.HEALTHY
     else:
         code = DiagnosticCode.PARTIAL
-        if breaker_tripped and fresh == active:
-            fresh = max(0, fresh - 1)
     return _finding(
         DiagnosticCheck.EVENT_INTAKE_FRESHNESS,
         code,
@@ -659,7 +589,6 @@ def _default_probes() -> tuple[DiagnosticProbe, ...]:
         DiagnosticProbe(DiagnosticCheck.WORKER_REGISTRY_BOUNDS, _worker_registry_bounds_probe),
         DiagnosticProbe(DiagnosticCheck.TIMER_REGISTRY_BOUNDS, _timer_registry_bounds_probe),
         DiagnosticProbe(DiagnosticCheck.MOUNTED_DEVICE_HEALTH, _mounted_device_health_probe),
-        DiagnosticProbe(DiagnosticCheck.ALCOVE_FOLLOW_STATE, _alcove_follow_state_probe),
         DiagnosticProbe(
             DiagnosticCheck.EVENT_INTAKE_FRESHNESS, _event_intake_freshness_probe
         ),
@@ -687,34 +616,9 @@ def _failed_probe_finding(check: DiagnosticCheck) -> DiagnosticFinding:
     private-path probe that raised before reading a single path rendered
     ``private path modes: unavailable [0/32]`` -- a ratio out of a total
     the app had not counted and paths it had not looked at. 0/0 is the
-    honest pair: nothing examined, nothing healthy. Doctor v4 represents
-    an Alcove probe failure as recovering because unavailable is not one
-    of that field's seven semantic confidence states.
+    honest pair: nothing examined, nothing healthy.
     """
-    code = (
-        DiagnosticCode.RECOVERING
-        if check is DiagnosticCheck.ALCOVE_FOLLOW_STATE
-        else DiagnosticCode.UNAVAILABLE
-    )
-    return _finding(check, code, 0, 0)
-
-
-def _app_owned_alcove_probe() -> DiagnosticFinding:
-    """The daemon's Alcove line: the app follows Alcove and holds the Screen
-    Recording permission, so the daemon says it does not run following
-    instead of asking tccd on the app's behalf."""
-    return _finding(DiagnosticCheck.ALCOVE_FOLLOW_STATE, DiagnosticCode.NOT_RUNNING, 0, 1)
-
-
-def daemon_probes() -> tuple[DiagnosticProbe, ...]:
-    """The default probes, in manifest order, with the checks the app owns
-    answered without the system round trips they would cost the daemon."""
-    return tuple(
-        DiagnosticProbe(probe.check, _app_owned_alcove_probe)
-        if probe.check is DiagnosticCheck.ALCOVE_FOLLOW_STATE
-        else probe
-        for probe in _default_probes()
-    )
+    return _finding(check, DiagnosticCode.UNAVAILABLE, 0, 0)
 
 
 def collect_diagnostics(
@@ -924,7 +828,6 @@ __all__ = [
     "SanitizedFailureClass",
     "collect_diagnostics",
     "core_doctor_document",
-    "daemon_probes",
     "encode_diagnostic_result",
     "render_diagnostic_result",
     "render_performance_section",

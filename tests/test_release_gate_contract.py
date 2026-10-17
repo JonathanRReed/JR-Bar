@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -100,7 +101,9 @@ def _run_release_ref_gate(
     app_identity: str | None = "test-app",
     keychain_identities: str = '  1) AAAA "Developer ID Application: Discovered (TEAM123456)"\n',
     notary_profile_exists: bool = False,
+    sparkle_key_exists: bool = False,
     arguments: tuple[str, ...] = (),
+    reused_inputs: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     origin = tmp_path / "origin.git"
     repo = tmp_path / "release"
@@ -112,7 +115,22 @@ def _run_release_ref_gate(
     (repo / "packaging").mkdir()
     shutil.copy2(ROOT / "scripts" / "verify_macos_release.sh", repo / "scripts")
     _write_executable(repo / "packaging" / "build_macos_pkg.sh", "#!/bin/bash\necho PACKAGING_REACHED\nexit 73\n")
+    if reused_inputs is not None:
+        shutil.copy2(ROOT / "packaging" / "build_input_manifest.py", repo / "packaging")
+        (repo / ".gitignore").write_text("build/\ndist/\n", encoding="utf-8")
+        (repo / "scripts/validate_release_version.py").write_text(
+            'from pathlib import Path\nPath("version-validation-reached").write_text("reached")\n'
+            'raise SystemExit(73)\n', encoding="utf-8"
+        )
     (repo / "performance.json").write_text("{}\n", encoding="utf-8")
+    if sparkle_key_exists:
+        (repo / "packaging" / "sparkle_public_ed_key.txt").write_text(
+            "synthetic-public-key\n", encoding="utf-8"
+        )
+        _write_executable(
+            repo / "build/macos-pkg/sparkle-distribution/bin/generate_keys",
+            "#!/bin/bash\necho synthetic-public-key\n",
+        )
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-m", "first"], cwd=repo, check=True, capture_output=True)
     first = subprocess.run(
@@ -166,6 +184,17 @@ def _run_release_ref_gate(
         env["JRBAR_REQUIRED_HARDWARE"] = required_hardware
     if confirm_hardware:
         env["JRBAR_HARDWARE_CONFIRM"] = "1"
+    if reused_inputs is not None:
+        env["PYTHON"] = sys.executable
+        if reused_inputs != "missing":
+            subprocess.run(
+                [sys.executable, str(repo / "packaging/build_input_manifest.py"), "capture",
+                 str(repo), str(repo / "build/macos-pkg/release-evidence-raw/build-inputs.json"),
+                 "--exclude", str(repo / "build/macos-pkg"), "--exclude", str(repo / "dist")],
+                cwd=repo, env=env, capture_output=True, text=True, check=True, timeout=30,
+            )
+        if reused_inputs == "changed":
+            (repo / "second").write_text("changed since the package build\n", encoding="utf-8")
     return subprocess.run(
         [str(repo / "scripts" / "verify_macos_release.sh"), *arguments],
         cwd=repo,
@@ -174,6 +203,27 @@ def _run_release_ref_gate(
         text=True,
         check=False,
     )
+
+
+@pytest.mark.parametrize("inputs", ["missing", "changed", "matching"])
+def test_reused_build_requires_its_saved_source_inputs(tmp_path: Path, inputs: str) -> None:
+    result = _run_release_ref_gate(
+        tmp_path, arguments=("--reuse-build", "--skip-install"), reused_inputs=inputs,
+    )
+
+    assert "PACKAGING_REACHED" not in result.stdout
+    assert not (tmp_path / "release/dist/release-evidence").exists()
+    assert not (tmp_path / "release/build/macos-pkg/python-release").exists()
+    validation_reached = (tmp_path / "release/version-validation-reached").exists()
+    if inputs == "matching":
+        assert result.returncode == 73, result.stderr
+        assert validation_reached
+    else:
+        assert result.returncode == 1, result.stderr
+        assert "Build input verification failed" in result.stderr
+        assert not validation_reached
+        if inputs == "changed":
+            assert "second" in result.stderr
 
 
 def test_hardware_smoke_restores_backup_after_partial_write_failure(
@@ -385,6 +435,25 @@ def test_release_gate_reports_missing_notary_and_installer_instead_of_failing(
     assert "verify the candidate but not publish it" in result.stdout
     # Preflight is a read-only report: it may not build anything.
     assert "PACKAGING_REACHED" not in result.stdout
+
+
+def test_release_gate_preflight_reports_all_capabilities_without_release_receipts(
+    tmp_path: Path,
+) -> None:
+    result = _run_release_ref_gate(
+        tmp_path,
+        keychain_identities='  1) BBBB "Developer ID Installer: Synthetic (TEAM123456)"\n',
+        notary_profile_exists=True,
+        sparkle_key_exists=True,
+        arguments=("--preflight",),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Preflight: every capability is present. A full run can publish." in result.stdout
+    assert "verify the candidate but not publish it" not in result.stdout
+    assert "PACKAGING_REACHED" not in result.stdout
+    assert not (tmp_path / "release/dist/release-verification.json").exists()
+    assert not (tmp_path / "release/dist/release-evidence").exists()
 
 
 def test_release_gate_notarizes_as_soon_as_the_keychain_profile_appears(

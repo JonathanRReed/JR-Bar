@@ -41,9 +41,13 @@ struct ComposeChoices: Equatable {
 
     var composition: LEDSComposition {
         func color(_ hex: String) -> RGB8 { RGB8(hex: hex.uppercased()) ?? .black }
+        func bounded(_ value: Double, in range: ClosedRange<Double>, fallback: Double) -> Double {
+            guard value.isFinite else { return fallback }
+            return min(range.upperBound, max(range.lowerBound, value))
+        }
         let base: LEDSComposition.Base = baseKind == .solid
             ? .solid(color(baseFrom)) : .gradient(color(baseFrom), color(baseTo))
-        let period = Int((periodSeconds * 1000).rounded())
+        let period = Int((bounded(periodSeconds, in: 1...8, fallback: 2.4) * 1000).rounded())
         let motion: LEDSComposition.Motion
         switch self.motion {
         case .steady: motion = .steady
@@ -51,11 +55,11 @@ struct ComposeChoices: Equatable {
         case .roll: motion = .roll(periodMs: period, leftward: rollLeftward)
         }
         let accent = accentOn
-            ? LEDSComposition.Accent(color: color(accentColor), stepMs: Int(accentStepMs.rounded()), leftward: accentLeftward)
+            ? LEDSComposition.Accent(color: color(accentColor), stepMs: Int(bounded(accentStepMs, in: 150...1000, fallback: 300).rounded()), leftward: accentLeftward)
             : nil
-        let overrides = Dictionary(uniqueKeysWithValues: held.map { ($0, color(heldColor)) })
+        let overrides = Dictionary(uniqueKeysWithValues: held.filter { (0..<LEDSComposer.ledCount).contains($0) }.map { ($0, color(heldColor)) })
         return LEDSComposition(base: base, motion: motion, accent: accent, overrides: overrides,
-                               brightness: Int((min(1, max(0, brightness)) * 255).rounded()))
+                               brightness: Int((bounded(brightness, in: 0.05...1, fallback: 1) * 255).rounded()))
     }
 }
 

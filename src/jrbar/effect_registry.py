@@ -68,11 +68,15 @@ class EffectParameter:
         if not numeric and (self.minimum is not None or self.maximum is not None):
             raise EffectRegistryError("only numeric parameters may declare numeric bounds")
         for bound in (self.minimum, self.maximum):
-            if bound is not None and (
-                isinstance(bound, bool)
-                or not isinstance(bound, (int, float))
-                or not math.isfinite(float(bound))
-            ):
+            if bound is None:
+                continue
+            if isinstance(bound, bool) or not isinstance(bound, (int, float)):
+                raise EffectRegistryError("parameter bounds must be finite numbers")
+            try:
+                finite = math.isfinite(float(bound))
+            except OverflowError:
+                finite = False
+            if not finite:
                 raise EffectRegistryError("parameter bounds must be finite numbers")
         if (
             self.minimum is not None
@@ -123,7 +127,10 @@ class EffectParameter:
         if self.value_type == "number":
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise EffectRegistryError(f"parameter {self.name} must be a number")
-            normalized = float(value)
+            try:
+                normalized = float(value)
+            except OverflowError as error:
+                raise EffectRegistryError(f"parameter {self.name} must be finite") from error
             if not math.isfinite(normalized):
                 raise EffectRegistryError(f"parameter {self.name} must be finite")
             self._check_numeric_bounds(normalized)
@@ -255,12 +262,6 @@ class EffectDefinition:
             raise EffectRegistryError("effect catalog is required")
         if not self.role:
             raise EffectRegistryError("effect role is required")
-
-    @property
-    def parameter_defaults(self) -> Mapping[str, object]:
-        return {
-            parameter.name: parameter.default for parameter in self.parameter_metadata
-        }
 
     def normalize_parameters(
         self, values: Mapping[str, object] | None = None

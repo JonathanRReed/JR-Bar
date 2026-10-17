@@ -4,6 +4,34 @@ import Testing
 
 @Suite("The Dot's role")
 struct DotRoleTests {
+    @Test("cached Dot facts do not claim an active role while disconnected")
+    func offlineReadout() {
+        let dot = CoreLightSurface(program: "#FF9F0A 1s none", why: "waiting", role: "asks")
+        let offline = DotRoleReadout.make(chosen: .asks, includeCompletions: false, live: false, dot: dot)
+        #expect(offline.headline == "Monitor not connected")
+        #expect(offline.active == nil)
+        #expect(!offline.rendersItself)
+        #expect(!offline.settling)
+        let reconnected = DotRoleReadout.make(chosen: .asks, includeCompletions: false, live: true, dot: dot)
+        #expect(reconnected.headline.contains("amber"))
+        #expect(reconnected.active == .asks)
+    }
+
+    @Test("invalid timing values neither trap nor claim the Dot is synchronized")
+    func invalidTimingValues() {
+        var link = CoreDotLink(state: "linked", role: "extend")
+        for value in [Double.nan, .infinity, .greatestFiniteMagnitude] {
+            link.phaseErrorMs = value
+            #expect(DotRoleReadout.timingSentence(link: link, now: Date()) == nil)
+        }
+        link.phaseErrorMs = 64
+        link.toleranceMs = .nan
+        #expect(DotRoleReadout.timingSentence(link: link, now: Date()) == "Re-syncing: 64 ms off the strip.")
+        link.phaseErrorMs = 18
+        link.clockRate = .infinity
+        #expect(DotRoleReadout.timingSentence(link: link, now: Date()) == "Within 18 ms of the strip.")
+    }
+
     @Test("an unknown or absent value reads as extend, the daemon's default")
     func parsing() {
         #expect(DotRole.parse(nil) == .extend)

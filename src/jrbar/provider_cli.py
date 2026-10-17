@@ -95,7 +95,7 @@ PROVIDER_CLIS: Final[Mapping[str, ProviderCli]] = MappingProxyType({
         label="Codex",
         binary="codex",
         sign_in=("login",),
-        update=("update",),
+        update=None,
         npm_package="@openai/codex",
         watches_sign_in=True,
     ),
@@ -135,6 +135,15 @@ PROVIDER_CLIS: Final[Mapping[str, ProviderCli]] = MappingProxyType({
         sign_in=("providers", "login"),
         update=("upgrade",),
         npm_package="opencode-ai",
+        watches_sign_in=False,
+    ),
+    "kiro": ProviderCli(
+        provider="kiro",
+        label="Kiro CLI",
+        binary="kiro-cli",
+        sign_in=("login",),
+        update=None,
+        npm_package=None,
         watches_sign_in=False,
     ),
     "gemini": ProviderCli(
@@ -283,6 +292,60 @@ def resolve_cli(
 
 # ---------------------------------------------------------------------------
 # Running it
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderUpdateCommand:
+    executable: str
+    arguments: tuple[str, ...]
+
+
+def resolve_update_command(
+    cli: ProviderCli, executable: str,
+    *, group_writable_roots: Sequence[str] = GROUP_WRITABLE_ROOTS,
+) -> ProviderUpdateCommand | None:
+    """Use the manager that owns a proven global install, never a local project."""
+    if cli.provider not in {"codex", "gemini"}:
+        return None if cli.update is None else ProviderUpdateCommand(executable, cli.update)
+    uid = os.getuid()
+    if not _executable_is_trusted(executable, uid, group_writable_roots):
+        return None
+    real = Path(os.path.realpath(executable))
+    package_parts = tuple((cli.npm_package or "").split("/"))
+    for root in real.parents:
+        if tuple(root.parts[-len(package_parts):]) != package_parts:
+            continue
+        modules = root.parents[len(package_parts) - 1]
+        if modules.name != "node_modules" or modules.parent.name != "lib":
+            continue
+        prefix = modules.parent.parent
+        # Global npm links live in this prefix's bin, including nvm installs.
+        if Path(os.path.realpath(Path(executable).parent)) != prefix / "bin":
+            continue
+        manager = str(prefix / "bin" / "npm")
+        if _executable_is_trusted(manager, uid, group_writable_roots):
+            return ProviderUpdateCommand(manager, ("install", "-g", "--prefix", str(prefix),
+                                                    f"{cli.npm_package}@latest"))
+        return None
+    formula = "codex" if cli.provider == "codex" else "gemini-cli"
+    for configured_prefix in group_writable_roots:
+        prefix = Path(os.path.realpath(configured_prefix))
+        for area, flag in (("Cellar", "--formula"), ("Caskroom", "--cask")):
+            if area == "Caskroom" and cli.provider != "codex":
+                continue
+            install = prefix / area / formula
+            try:
+                relative = real.relative_to(install)
+            except ValueError:
+                continue
+            # One version directory and a file below it prove the managed root.
+            if len(relative.parts) < 2:
+                continue
+            manager = str(prefix / "bin" / "brew")
+            if _executable_is_trusted(manager, uid, group_writable_roots):
+                return ProviderUpdateCommand(manager, ("upgrade", flag, formula))
+            return None
+    return None
 
 
 @dataclass(frozen=True, slots=True)

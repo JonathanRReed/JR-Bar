@@ -65,10 +65,9 @@ struct ToysHushTests {
 
     @Test("a held burst goes stale after half an hour")
     func holdLimit() {
-        #expect(ConfettiRoom.stillWorthPlaying(heldAt: now, now: now.addingTimeInterval(60)))
-        #expect(ConfettiRoom.stillWorthPlaying(heldAt: now, now: now.addingTimeInterval(ConfettiRoom.holdLimit)))
-        #expect(!ConfettiRoom.stillWorthPlaying(heldAt: now,
-                                                now: now.addingTimeInterval(ConfettiRoom.holdLimit + 1)))
+        #expect(ConfettiRoom.stillWorthPlaying(heldFor: 60))
+        #expect(ConfettiRoom.stillWorthPlaying(heldFor: ConfettiRoom.holdLimit))
+        #expect(!ConfettiRoom.stillWorthPlaying(heldFor: ConfettiRoom.holdLimit + 1))
         #expect(ConfettiRoom.replayDensity < 1)
     }
 

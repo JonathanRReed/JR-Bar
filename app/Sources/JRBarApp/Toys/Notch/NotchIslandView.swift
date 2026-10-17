@@ -42,59 +42,58 @@ struct NotchIslandView: View {
             guard notice.kind.hasVerbs else { return 1 }
             return notice.takeover ? 4 : 3
         }
-        return toy.islandExpanded ? 2 : 0
+        return cardOnStage ? 2 : 0
     }
+
+    /// How tall the content under the shape's foot is: a notice's own
+    /// frame, the card's, or nothing at rest.
+    private var footContentHeight: CGFloat? {
+        if shownNotice != nil || lastNotice != nil { return toy.stage.noticeMorph?.open }
+        return cardOnStage ? toy.stage.cardHeight : nil
+    }
+
+    /// The card stays on stage through its fold, until the shape has
+    /// carried the content out of sight (`NotchReveal.staged`).
+    private var cardOnStage: Bool { toy.islandExpanded || toy.stage.cardStaged }
 
     var body: some View {
         let summary = toy.islandSummary
-        ZStack(alignment: .top) {
-            islandBackground
-            if let notice = shownNotice ?? lastNotice {
-                noticeCapsule(notice)
-                    .opacity(noticeShown ? 1 : 0)
-                    .offset(y: reduceMotion || noticeShown
-                            ? 0 : -NotchMotion.noticeSlide)
-                    // The face comes into focus as it slides down.
-                    .blur(radius: reduceMotion || noticeShown ? 0 : 3)
-                    .allowsHitTesting(shownNotice != nil)
-            } else if toy.islandExpanded {
-                // The card, grown out of the notch — the same rows the
-                // glass fallback shows, on black under `cardTopPad`.
-                ScrollView(.vertical) {
-                    NotchCardView(model: toy.cardModel, style: .island,
-                                  width: toy.expandedCardWidth)
-                }
-                    // No scroller on the black and no rubber band on a
-                    // card that fits: it scrolls only when it must.
-                    .scrollIndicators(.hidden)
-                    .scrollBounceBehavior(.basedOnSize)
-                    .padding(.top, toy.cardTopPad)
-                    .transition(.opacity)
-            } else {
-                idle(summary: summary)
-                    // A tap on the resting island grows the card — the
-                    // face carries it, so a tap on a dot is a tap too.
-                    .contentShape(Rectangle())
-                    .onTapGesture { toy.islandTapped() }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Notch island")
-                    .accessibilityValue(summary.statusLine + sensorSpokenSuffix)
-                    .accessibilityHint("Opens the notch card")
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAction { toy.islandTapped() }
-                    .transition(.opacity)
-            }
+        // The shape is the proposed size, whatever the faces inside ask
+        // for: a face with a rigid width (the grown card's 320 points, a
+        // wide idle row) is laid out in an overlay, so it can neither
+        // widen the silhouette nor shrink it, and the clip below cuts it
+        // to the shape the stage says.
+        Color.clear.overlay(alignment: .top) { faces(summary: summary) }
+        // The soft foot sits over the faces too, while the shape is
+        // still short of the content it uncovers.
+        .overlay(alignment: .bottom) {
+            NotchFootFade(stage: toy.stage, contentHeight: footContentHeight)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The edge light sits over the faces and under the clip, so
+        // half its width is cut away and one point of light is left.
+        .overlay { NotchEdgeLight(stage: toy.stage, silhouette: silhouette) }
         .clipShape(silhouette)
+        // Hover and the press belong to the shape, not to the window
+        // around it (a stage is larger than the shape while it moves).
+        .contentShape(silhouette)
         .onHover { toy.setHovered($0) }
         // Every face decision funnels through `NotchMotion.faceTransition`
-        // — the morph spring normally, the quiet crossfade under
-        // Reduce Motion — so the accessibility path is one pinned fact.
+        // — the fades normally, the quiet crossfade under Reduce
+        // Motion — so the accessibility path is one pinned fact.
         .animation(NotchMotion.faceTransition(reduceMotion: reduceMotion) == .crossfade
                    ? .easeInOut(duration: NotchMotion.reduceMotionFade)
-                   : .spring(response: 0.32, dampingFraction: 0.82),
+                   : .easeOut(duration: NotchMotion.swapFadeIn),
                    value: face)
+        .modifier(NotchStageFrame(stage: toy.stage))
+        .overlay {
+            if let path = toy.shoulderInputPath {
+                Color.clear
+                    .contentShape(Path(path))
+                    .onTapGesture { toy.islandTapped() }
+                    .accessibilityHidden(true)
+                    .transaction { $0.animation = nil; $0.disablesAnimations = true }
+            }
+        }
         // A face built while a notice is already up (a rebuilt root, a
         // re-hosted window) shows it at once — the entrance only ever
         // plays on the change.
@@ -128,6 +127,66 @@ struct NotchIslandView: View {
         }
     }
 
+    /// The faces, stacked on the black.
+    private func faces(summary: NotchIslandSummary) -> some View {
+        ZStack(alignment: .top) {
+            islandBackground
+            if let notice = shownNotice ?? lastNotice {
+                // Laid out once at its own width and uncovered by the
+                // shape: it never re-wraps while the island grows.
+                noticeCapsule(notice)
+                    .frame(width: toy.stage.noticeMorph?.openWidth)
+                    .modifier(NotchNoticeReveal(stage: toy.stage, shown: noticeShown))
+                    .allowsHitTesting(shownNotice != nil)
+            } else if cardOnStage {
+                let width = toy.stage.cardWidth ?? toy.expandedCardWidth
+                let height = toy.stage.cardHeight.map { max(0, $0 - toy.cardTopPad) }
+                // The card, grown out of the notch — the same rows the
+                // glass fallback shows, on black under `cardTopPad`. Its
+                // sheet and rows read the shape's travel, so no
+                // transition of its own.
+                ScrollView(.vertical) {
+                    NotchCardView(model: toy.cardModel, style: .island,
+                                  width: width)
+                }
+                    .allowsHitTesting(toy.islandExpanded)
+                    .frame(width: width, height: height, alignment: .top)
+                    // No scroller on the black and no rubber band on a
+                    // card that fits: it scrolls only when it must.
+                    .scrollIndicators(.hidden)
+                    .scrollBounceBehavior(.basedOnSize)
+                    .modifier(NotchSheetReveal())
+                    .padding(.top, toy.cardTopPad)
+                    .environment(\.notchStage, toy.stage)
+            } else {
+                idle(summary: summary)
+                    // A tap on the resting island grows the card — the
+                    // face carries it, so a tap on a dot is a tap too.
+                    .contentShape(Rectangle())
+                    .onTapGesture { toy.islandTapped() }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Notch island")
+                    .accessibilityValue(summary.statusLine + mediaSpokenSuffix + sensorSpokenSuffix)
+                    .accessibilityHint("Opens the notch card")
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { toy.islandTapped() }
+                    .transition(swapTransition)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// One face giving way to another: the old one out a little quicker
+    /// than the new one comes in, so the two never share the black.
+    private var swapTransition: AnyTransition {
+        // Reduce Motion: the plain crossfade on the face animation's own
+        // curve.
+        guard NotchMotion.faceTransition(reduceMotion: reduceMotion) == .morph else { return .opacity }
+        return .asymmetric(
+            insertion: .opacity.animation(.easeOut(duration: NotchMotion.swapFadeIn)),
+            removal: .opacity.animation(.easeIn(duration: NotchMotion.swapFadeOut)))
+    }
+
     /// Plain black — the black the notch's bezel already reads as — so
     /// the island and the hardware merge into one shape (the glass rule:
     /// only a surface floating free of the notch gets Liquid Glass, and
@@ -136,7 +195,8 @@ struct NotchIslandView: View {
     /// the notch profile's own radius so island and bar tray match.
     /// Notch-less: a floating pill.
     private var silhouette: NotchSilhouette {
-        NotchSilhouette(notchDepth: toy.notchDepth, restingRadius: toy.notchCornerRadius)
+        NotchSilhouette(notchDepth: toy.notchDepth, restingRadius: toy.notchCornerRadius,
+                        notchWidth: toy.notchSlotWidth)
     }
 
     private var islandBackground: some View {
@@ -190,8 +250,8 @@ struct NotchIslandView: View {
             // points (the toy's `islandHoverPeek` reframe), and the
             // marks swell inside it. A passing cursor earns only this.
             .scaleEffect(toy.islandHoverPeek ? NotchMotion.hoverContentScale : 1)
-            .animation(reduceMotion ? .easeInOut(duration: 0.12)
-                                    : .spring(response: 0.22, dampingFraction: 0.75),
+            .animation(reduceMotion ? .easeInOut(duration: NotchMotion.reduceMotionFade)
+                                    : NotchMotion.hoverMarks.animation,
                        value: toy.islandHoverPeek)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
@@ -204,8 +264,15 @@ struct NotchIslandView: View {
         HStack(spacing: 0) {
             Group {
                 if !layout.bare, layout.leftWidth > 0 {
-                    agentRow(summary: summary)
-                        .padding(.trailing, NotchIslandLayout.shoulderPad)
+                    if layout.mediaArtLeft, let media = toy.islandMedia, toy.settings.mediaEnabled {
+                        // The compact live activity: the cover left of
+                        // the notch, the waveform right of it.
+                        mediaCover(media)
+                            .padding(.trailing, NotchIslandLayout.shoulderPad)
+                    } else {
+                        agentRow(summary: summary)
+                            .padding(.trailing, NotchIslandLayout.shoulderPad)
+                    }
                 } else {
                     Color.clear
                 }
@@ -234,7 +301,7 @@ struct NotchIslandView: View {
                             markCount(count, color: .red)
                         case .media:
                             if let media = toy.islandMedia, toy.settings.mediaEnabled {
-                                mediaStrip(media)
+                                mediaStrip(media, withCover: !layout.mediaArtLeft)
                             } else {
                                 Color.clear
                             }
@@ -276,6 +343,12 @@ struct NotchIslandView: View {
         }
     }
 
+    /// The track the compact strip no longer prints: said to VoiceOver.
+    private var mediaSpokenSuffix: String {
+        guard toy.settings.mediaEnabled, let media = toy.islandMedia else { return "" }
+        return " · \(media.playing ? "playing" : "paused") \(media.displayLine)"
+    }
+
     /// The idle face's spoken tail — the privacy dots named, since the
     /// dots themselves are colour alone.
     private var sensorSpokenSuffix: String {
@@ -315,7 +388,7 @@ struct NotchIslandView: View {
                 sensorDots(toy.sensorState)
             }
             if let media = toy.islandMedia, toy.settings.mediaEnabled {
-                mediaStrip(media)
+                mediaStrip(media, withCover: true)
             }
             ForEach(summary.workingProviders.prefix(NotchIsland.dotLimit), id: \.self) { provider in
                 NotchDot(color: ProviderStyle.style(for: provider).accent)
@@ -333,40 +406,38 @@ struct NotchIslandView: View {
         }
     }
 
-    /// The idle capsule's Now Playing half: the artwork thumbnail (or a
-    /// note glyph when the player sent none), "Title — Artist" truncated
-    /// to the strip's fixed width, and the visualizer bars — animated
-    /// only while the track is actually playing; paused and Reduce
-    /// Motion both get still bars, and the frame never asks the player
-    /// for spectrum data it cannot give.
-    private func mediaStrip(_ media: AlcoveMedia) -> some View {
-        HStack(spacing: 5) {
-            Group {
-                // The cover decoded once, small, off the main thread —
-                // this strip redraws on every breath tick.
-                if media.artworkData != nil, let artwork = toy.islandArtwork {
-                    Image(nsImage: artwork)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } else {
-                    Image(systemName: "music.note")
-                        .font(.system(size: 7, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.7))
-                }
-            }
-            .frame(width: 13, height: 13)
-            .clipShape(RoundedRectangle(cornerRadius: 3.5, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 3.5, style: .continuous)
-                .strokeBorder(.white.opacity(0.14), lineWidth: 0.5))
-            Text(media.displayLine)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: 96, alignment: .leading)
-            visualizer(playing: media.playing)
+    /// The track's cover as a small rounded thumbnail (or a note glyph
+    /// when the player sent none), decoded once, small, off the main
+    /// thread: the strip redraws on every breath tick. A new track's cover
+    /// dissolves into the last one's.
+    private func mediaCover(_ media: AlcoveMedia) -> some View {
+        NotchCoverSwap(image: media.artworkData != nil ? toy.islandArtwork : nil) {
+            Image(systemName: "music.note")
+                .font(.system(size: 7, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.7))
         }
-        .padding(.trailing, 6)
+        .frame(width: NotchIsland.mediaArtWidth, height: NotchIsland.mediaArtWidth)
+        .clipShape(RoundedRectangle(cornerRadius: 3.5, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+            .strokeBorder(.white.opacity(0.14), lineWidth: 0.5))
+        .notchTrackSwap(key: media.displayLine)
+        .help(media.displayLine)
+    }
+
+    /// The idle capsule's Now Playing half, Alcove's compact live
+    /// activity: a small waveform, animated only while the track is
+    /// actually playing (paused and Reduce Motion both get still bars,
+    /// and the frame never asks the player for spectrum data it cannot
+    /// give), with the cover beside it when the other shoulder is taken.
+    /// Never the title: that is on the card and in the tooltip, so the
+    /// strip is the same width for every track.
+    private func mediaStrip(_ media: AlcoveMedia, withCover: Bool) -> some View {
+        HStack(spacing: NotchIsland.mediaGap) {
+            if withCover { mediaCover(media) }
+            visualizer(playing: media.playing)
+                .frame(width: NotchIsland.mediaBarsWidth, alignment: .leading)
+        }
+        .help(media.displayLine)
     }
 
     /// The shared decorative bars while the track plays — set dressing,
@@ -379,9 +450,9 @@ struct NotchIslandView: View {
         let utility = toy.cardModel.utility
         return Group {
             if utility.audioTapLive {
-                LiveEqualizer(utility: utility, color: .white.opacity(0.75), barWidth: 2.5, height: 10)
+                LiveEqualizer(utility: utility, color: .white.opacity(0.75), barWidth: 2.4, height: 10)
             } else {
-                DecorativeBars(live: playing && toy.islandVisible, color: .white.opacity(0.75), barWidth: 2.5)
+                DecorativeBars(live: playing && toy.islandVisible, color: .white.opacity(0.75), barWidth: 2.4)
             }
         }
     }
@@ -422,14 +493,13 @@ struct NotchIslandView: View {
             .lineLimit(1)
             .truncationMode(.middle)
         }
+        // While the shape is narrower than the line, it stands as wide as the shape.
+        .scaleEffect(toy.stage.noticeFit)
         .padding(.horizontal, 16)
-        // The line lives in the lip below the notch, centred between the
-        // bezel and a live Screen Bar's housing: the bar's panel sits
-        // above the island and its black climbs up behind the island's
-        // bottom corners, drawing over whatever the lip's foot holds.
-        // The bar's tray above ends at the bezel.
+        // The line clears the notch and persistent wing strip. The
+        // bottom pad keeps its copy above the Screen Bar's housing.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .padding(.top, toy.notchDepth)
+        .padding(.top, toy.noticeTopPad)
         .padding(.bottom, toy.noticeClimb)
         // A tap on news about a session opens it; anything else puts
         // itself away. Neither re-opens the card.
@@ -483,10 +553,11 @@ struct NotchIslandView: View {
                 .fixedSize()
                 .frame(minWidth: 26, alignment: .trailing)
         }
-        .animation(reduceMotion ? nil : .smooth(duration: 0.16), value: fraction)
+        .animation(reduceMotion ? nil : .smooth(duration: NotchMotion.levelFollow), value: fraction)
+        .scaleEffect(toy.stage.noticeFit)
         .padding(.horizontal, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .padding(.top, toy.notchDepth)
+        .padding(.top, toy.noticeTopPad)
         .padding(.bottom, toy.noticeClimb)
         .contentShape(Rectangle())
         .onTapGesture { toy.islandTapped() }
@@ -515,6 +586,9 @@ struct NotchIslandView: View {
         let refusal = toy.cardModel.openRefusals[session] ?? deskNote.flatMap { $0.refused ? $0.text : nil }
         let local = verbs.answers
         let lines = toy.askSummaryLines
+        let plan = toy.askKeyVerbs(for: notice)
+        let engaged = toy.askKeyboardEngaged
+        let focus = engaged ? toy.askFocus.focused : nil
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
                 askMark(notice)
@@ -529,7 +603,8 @@ struct NotchIslandView: View {
                 }
                 if let opened = live?.openedAt ?? notice.ask?.openedAt {
                     TimelineView(.periodic(from: .now, by: 15)) { context in
-                        NotchWaitChip(text: Self.waited(since: opened, now: context.date))
+                        NotchWaitChip(text: Self.waitedText(since: opened, stale: live?.isStale == true,
+                                                            now: context.date))
                     }
                 }
             }
@@ -548,7 +623,13 @@ struct NotchIslandView: View {
             HStack(spacing: 6) {
                 // A held question answers here whatever the keystroke
                 // path says, so its "answer it in its window" is moot.
-                if let line = refusal ?? (live.map(AskVerbs.chooses) == true ? nil : verbs.note) {
+                if engaged, refusal == nil {
+                    Text(pending ? "Sending response" : focus == nil ? "Tab to choose" : "Press Return")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(Color.white.opacity(0.55))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                } else if let line = refusal ?? (live.map(AskVerbs.chooses) == true ? nil : verbs.note) {
                     Text(line)
                         .font(.system(size: 9.5))
                         .foregroundStyle(refusal != nil
@@ -556,6 +637,7 @@ struct NotchIslandView: View {
                                          : AnyShapeStyle(Color.white.opacity(0.4)))
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .help(line)
                 }
                 Spacer(minLength: 4)
                 if let live, desk != nil, !CoreSession.isRemoteID(session),
@@ -565,27 +647,32 @@ struct NotchIslandView: View {
                 if let live, let desk, !CoreSession.isRemoteID(session), AskVerbs.chooses(live) {
                     // A held question: Deny declines it through its hook,
                     // and its options are the answer.
-                    NotchVerbButton(title: "Deny", style: .island, busy: pending) {
-                        Task { await desk.answer(live, .deny) }
+                    NotchVerbButton(title: "Deny", style: .island, busy: pending,
+                                    focused: focus == .deny, hint: Self.askHint(.deny)) {
+                        toy.performAskVerb(.deny)
                     }
-                    NotchAskChoices(ask: live, desk: desk, style: .island, busy: pending)
-                } else if local, let live, let desk, AskVerbs.approves(live) {
-                    NotchVerbButton(title: "Deny", style: .island, busy: pending) {
-                        toy.answerCapsule(approve: false)
+                    NotchAskChoices(ask: live, desk: desk, style: .island, busy: pending, focus: focus)
+                } else if local, let live, desk != nil, AskVerbs.approves(live) {
+                    NotchVerbButton(title: "Deny", style: .island, busy: pending,
+                                    focused: focus == .deny, hint: Self.askHint(.deny)) {
+                        toy.performAskVerb(.deny)
                     }
                     if AskVerbs.alwaysAllows(live) {
-                        NotchVerbButton(title: "Always", style: .island, busy: pending) {
-                            Task { await desk.answer(live, .always) }
+                        NotchVerbButton(title: "Always", style: .island, busy: pending,
+                                        focused: focus == .always, hint: Self.askHint(.always)) {
+                            toy.performAskVerb(.always)
                         }
                         .help("Approve, and let the agent remember the rule it offered")
                     }
-                    NotchVerbButton(title: "Approve", style: .island, prominent: true, busy: pending) {
-                        toy.answerCapsule(approve: true)
+                    NotchVerbButton(title: "Approve", style: .island, prominent: true, busy: pending,
+                                    focused: focus == .approve, hint: Self.askHint(.approve)) {
+                        toy.performAskVerb(.approve)
                     }
                 }
                 if verbs.opens {
-                    NotchVerbButton(title: "Open", style: .island, systemImage: "arrow.up.forward") {
-                        toy.openCapsuleSession()
+                    NotchVerbButton(title: "Open", style: .island, systemImage: "arrow.up.forward",
+                                    focused: focus == .open, hint: Self.askHint(.open)) {
+                        toy.performAskVerb(.open)
                     }
                 }
             }
@@ -593,14 +680,37 @@ struct NotchIslandView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, NotchIslandLayout.askPad)
-        .padding(.top, toy.notchDepth > 0 ? toy.notchDepth : NotchIslandLayout.askFloatingTop)
+        .padding(.top, toy.askTopPad)
         .padding(.bottom, toy.askClimb)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .scaleEffect(toy.stage.noticeFit, anchor: .top)
         .contentShape(Rectangle())
         .onTapGesture { toy.islandTapped() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(notice.title) needs you")
         .accessibilityValue(toy.askSummary(notice))
+        .accessibilityActions { askActions(plan) }
+    }
+
+    /// VoiceOver's way to every verb the face draws: each one is an
+    /// action a person chooses on purpose, through the same door as the
+    /// button and the keyboard.
+    @ViewBuilder
+    private func askActions(_ plan: [NotchAskVerbKey]) -> some View {
+        ForEach(plan, id: \.self) { verb in
+            Button(verb.title) { toy.performAskVerb(verb) }
+        }
+    }
+
+    /// What pressing a verb does, said to VoiceOver on its button.
+    nonisolated static func askHint(_ verb: NotchAskVerbKey) -> String {
+        switch verb {
+        case .deny: return "Declines what the agent asked to do"
+        case .always: return "Approves it and lets the agent remember the rule"
+        case .approve: return "Approves what the agent asked to do"
+        case .open: return "Brings the session's window forward"
+        case .choice: return "Answers the question"
+        }
     }
 
     /// A meeting about to start, in the ask's verb face: which meeting
@@ -654,9 +764,10 @@ struct NotchIslandView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, NotchIslandLayout.askPad)
-        .padding(.top, toy.notchDepth > 0 ? toy.notchDepth : NotchIslandLayout.askFloatingTop)
+        .padding(.top, toy.askTopPad)
         .padding(.bottom, toy.askClimb)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .scaleEffect(toy.stage.noticeFit, anchor: .top)
         .contentShape(Rectangle())
         .onTapGesture { toy.islandTapped() }
         .accessibilityElement(children: .contain)
@@ -674,6 +785,13 @@ struct NotchIslandView: View {
             NotchGlyph(symbol: notice.symbol, tint: .orange, size: 11)
                 .frame(width: NotchIslandLayout.askTitleLine)
         }
+    }
+
+    /// The wait chip's words: "4m", or for an ask that may be stale
+    /// "may be stale · 9 hours" -- still an ask, with its age said plainly.
+    static func waitedText(since openedAt: Double, stale: Bool, now: Date) -> String {
+        guard stale else { return waited(since: openedAt, now: now) }
+        return "may be stale · \(CoreAsk.ageWords(now.timeIntervalSince1970 - openedAt))"
     }
 
     /// "4m", "1h 5m" — how long the ask has waited, off its own

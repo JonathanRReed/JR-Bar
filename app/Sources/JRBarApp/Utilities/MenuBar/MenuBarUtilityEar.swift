@@ -30,15 +30,11 @@ extension MenuBarUtility {
         let feed = MenuBarEarFeed(
             hidden: MenuBarEarFeed.tiles(barItems(), face: { self.glyphFace(for: $0) },
                                          changed: bar.updatedIDs),
-            failure: MenuBarEarFeed.failure(
-                for: engineHealth,
-                osMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion),
             nudge: nudge)
         if feed != earFeed { earFeed = feed }
     }
 
-    /// A glyph clicked in the ear's peek: the Item Bar's own tile press —
-    /// the app alone lifts, the press lands, the full target returns.
+    /// A glyph clicked in the ear's peek: the Item Bar's own tile press.
     func openFromEar(itemID: String) {
         guard let item = (barItems() + listedItems).first(where: { $0.id == itemID }) else { return }
         trigger(item)
@@ -67,16 +63,6 @@ extension MenuBarUtility {
         let step = MenuBarNewcomers.step(candidates: candidates, seen: memory.seen, mapped: mapped,
                                          settling: Date() < startSettleUntil)
         if let remember = step.remember { memory.remember(remember) }
-        // "New menu bar items": straight to a section, no question asked
-        // — the person already answered it in the card.
-        if let section = Self.newcomerSection(settings().curation.newItems) {
-            for app in step.arrivals {
-                guard let item = items.first(where: { $0.bundleID == app }),
-                      applySection(section, to: item) != nil else { continue }
-                MenuBarAssessmentBackend.log.notice("newcomer: \(app, privacy: .public) → \(section.rawValue, privacy: .public)")
-            }
-            return
-        }
         guard !step.arrivals.isEmpty, earAvailable() else { return }
         let rows = MenuBarItemLister.menuBarRows()
         for app in step.arrivals {
@@ -84,8 +70,7 @@ extension MenuBarUtility {
             raiseEarNudge(.newcomer, item: item, detail: nil)
             // Its glyph for the mark: the item is on the row right now,
             // and a new item joining just moved the bar anyway.
-            if Self.photographable(item, among: items, rows: rows,
-                                   concealed: concealer?.concealedApps ?? []) {
+            if Self.photographable(item, among: items, rows: rows) {
                 photograph([item])
             }
         }
@@ -102,17 +87,10 @@ extension MenuBarUtility {
     /// a VPN's glyph — while show for updates is on and the ear is up.
     func noticePictureChange(_ item: MenuBarItem) {
         guard running, settings().showForUpdates, earAvailable() else { return }
-        // The engine's first photographs — the pre-photograph before its
-        // first assertion — settle as the run's do, wherever in the run
-        // the engine came up.
-        let now = Date()
-        let settling = now < startSettleUntil
-            || now.timeIntervalSince(concealerStartedAt) < Self.startSettle
         guard Self.pictureChangeNudges(
-            settling: settling,
+            settling: Date() < startSettleUntil,
             revealed: !hider.revealed.isEmpty,
             barOpen: bar.isOpen,
-            lifted: item.bundleID.map { lifts[$0] != nil } ?? false,
             hidden: barItems().contains(where: { $0.id == item.id }),
             watched: Self.earUpdate(changed: [item], watch: Set(settings().curation.updateWatch)) != nil)
         else { return }
@@ -120,16 +98,15 @@ extension MenuBarUtility {
     }
 
     /// Whether a changed picture is news for the ear — pure so a test
-    /// pins it. Never while settling: the first photographs of a run
-    /// (or of an engine coming up) are held against the last run's, so
-    /// a battery level or a weather glyph that moved since then is only
-    /// time gone by — the title path seeds in silence for the same
-    /// reason. Never while the person is looking at the item already: a
-    /// reveal, a tile's lift, the Item Bar open. Only an item still
-    /// tucked away, and only one the watch list lets through.
+    /// pins it. Never while settling: the first photographs of a run are
+    /// held against the last run's, so a battery level or a weather glyph
+    /// that moved since then is only time gone by — the title path seeds
+    /// in silence for the same reason. Never while the person is looking
+    /// at the item already: a reveal, the Item Bar open. Only an item
+    /// still tucked away, and only one the watch list lets through.
     nonisolated static func pictureChangeNudges(settling: Bool, revealed: Bool, barOpen: Bool,
-                                                lifted: Bool, hidden: Bool, watched: Bool) -> Bool {
-        !settling && !revealed && !barOpen && !lifted && hidden && watched
+                                                hidden: Bool, watched: Bool) -> Bool {
+        !settling && !revealed && !barOpen && hidden && watched
     }
 
     /// Stand a nudge on the ear, or queue it behind the one standing. A

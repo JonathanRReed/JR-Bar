@@ -21,45 +21,8 @@ extension MenuBarUtility {
         let granted = probeAccessibility()
         bar.close()
         guard granted else {
+            // No Accessibility: nothing can press the item.
             item.owner?.activate()
-            return
-        }
-        if concealer != nil, let id = item.bundleID,
-           MenuBarConcealPlan.concealed(apps: liveSettings().concealedApps, revealed: hider.revealed).contains(id) {
-            // Concealed: only this app stands. The assertion's target
-            // narrows by exactly this bundle — every other hidden app
-            // stays concealed, so the bar never lifts — then the item
-            // gets a beat to draw, the press lands on its fresh frame,
-            // and the full target goes back up after the rehide window.
-            let rehide = settings().rehideSeconds
-            // Held past the press and the rehide window; `releaseLift`
-            // ends it once the app's menu is closed.
-            lift(id, until: Date().addingTimeInterval(3 + rehide))
-            Task { [weak self] in
-                guard let self else { return }
-                var fresh = item
-                // Poll up to ~600 ms for the item's real frame — the
-                // agent needs a beat to draw a just-unconcealed item,
-                // and its ghost's frozen frame is not where it lands.
-                for _ in 0..<6 {
-                    try? await Task.sleep(nanoseconds: 100_000_000)
-                    _ = await MenuBarItemLister.refreshAXItems()
-                    if let found = MenuBarItemLister.axItems.first(where: { $0.id == item.id }) {
-                        fresh = found
-                        if MenuBarItemLister.onAnyMenuBarRow(found.bounds) { break }
-                    }
-                }
-                // The press waits on the owner's reply — up to the
-                // messaging timeout twice over — so it runs off the main
-                // actor, as the uncovered path's does; the lift stays here.
-                let target = fresh
-                let pressed = await Task.detached(priority: .userInitiated) {
-                    MenuBarAX.press(target)
-                }.value
-                if !pressed { self.clickFallback(target) }
-                try? await Task.sleep(nanoseconds: UInt64(rehide * 1e9))
-                await self.releaseLift(id, item: fresh)
-            }
             return
         }
         Task.detached { [weak self] in

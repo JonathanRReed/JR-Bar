@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import secrets
 import stat
 import subprocess
 import tempfile
@@ -11,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .private_io import atomic_private_write
 from .provider_usage_sync import MAX_SYNC_PACKET_BYTES
 from .provider_usage_sync_settings import ProviderSyncPeer
 
@@ -82,26 +82,7 @@ def publish_local_packet(packet: bytes, target: Path) -> Path:
     if not isinstance(packet, bytes) or not packet or len(packet) > MAX_SYNC_PACKET_BYTES:
         raise ValueError("invalid provider sync packet")
     target = Path(target).expanduser().absolute()
-    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
-    descriptor = os.open(
-        temporary,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
-    )
-    try:
-        view = memoryview(packet)
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:
-                raise OSError("short provider sync write")
-            view = view[written:]
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    os.replace(temporary, target)
-    os.chmod(target, 0o600)
-    return target
+    return atomic_private_write(target, packet)
 
 
 def fetch_peer_packet(

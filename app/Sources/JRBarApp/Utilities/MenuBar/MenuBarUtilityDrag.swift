@@ -2,356 +2,69 @@ import AppKit
 import CoreGraphics
 import JRBarCore
 
-/// One ⌘-press on the menu bar, held from the press to its release.
-struct MenuBarDragInFlight {
-    let id = UUID()
-    var confirming = false
-    var environment: MenuBarDragEnvironment?
-    var rows: [CGRect] = []
-    /// Where the press landed, in Quartz points.
-    var start: CGPoint
-    var pressedAt: Date
-    /// The item under the press — nil when the press took hold of none.
-    var grabbed: MenuBarItem?
-    /// The icon's span on x as the person saw it at the press.
-    var icon: ClosedRange<CGFloat>?
-    /// The row the press landed on.
-    var row: CGRect
-    /// The listing at the press, before the drag moved anything.
-    var listing: [MenuBarItem] = []
-    /// The apps the live assertion concealed at the press — their nodes
-    /// are ghosts, in both reads.
-    var concealed: Set<String> = []
-    /// The press landed on another display's bar.
-    var otherDisplay = false
-    /// "Reveal while dragging" brought the hidden run in for this drag.
-    var revealedHidden = false
-}
-
-/// ⌘-drag across the icon hides or shows (Bartender, Ice and Hidden Bar
-/// parity) under the macOS 27 concealer. The click bridge's tap — or,
-/// with it down, the reveal's own monitor — reports the person's ⌘-press
-/// and its release; nothing is posted and the pointer never moves. At
-/// the press the utility notes the item under it and freezes the icon
-/// where it stands. At the release it reads which side of that icon the
-/// drop landed on, waits for the agent to persist the move, confirms it
-/// with a fresh listing, and writes exactly one section through the same
-/// path the card's picker takes. A listing that changes on its own —
-/// a reflow, the recording indicator, a relaunch — never writes.
+/// ⌘-drag across the icon. macOS moves the item itself: JR-Bar holds the
+/// bar still for the press and the beat after the drop
+/// (`MenuBarPointerGate`), then reads once where the item landed and says
+/// so (`MenuBarPositionDiff`). It writes nothing and fights nothing; the
+/// press and its release come from the reveal's own monitor (see
+/// `dividerDragPressed` and `dividerDragReleased`), and nothing is posted:
+/// the pointer never moves.
 extension MenuBarUtility {
-    /// Whether a drag holds the icon and the hover reveal right now.
-    var dragFrozen: Bool { dragFrozenMaxX != nil }
-
     /// Every display's menu bar row, the one the icon stands on first.
     func dragBarRows() -> [CGRect] {
         if let dragRows { return dragRows() }
-        let primary = mirrorPlacement()?.row ?? Self.primaryRow()
-        return [primary] + MenuBarItemLister.menuBarRows().filter { $0 != primary }
+        let rows = MenuBarItemLister.menuBarRows()
+        let primary = rows.first ?? MenuBarItemLister.menuBarRow()
+        return [primary] + rows.filter { $0 != primary }
     }
 
-    /// The icon's span on x as the person sees it: the mirror while it
-    /// stands, else the ear's ‹ that stands in for it.
+    /// The icon's span on x as the person sees it: the real icon.
     func currentIconSpan() -> ClosedRange<CGFloat>? {
         if let dragIconSpan { return dragIconSpan() }
-        if iconMirrored, let frame = standingMirrorFrame { return frame.minX...frame.maxX }
-        if let handle = ScreenBarGeometry.menuHandleScreenRect { return handle.minX...handle.maxX }
+        if let frame = host?.boundaryFrame { return frame.minX...frame.maxX }
         return nil
     }
 
     /// A point from AppKit's screen space (the reveal's monitor) in
-    /// Quartz's, where the bridge and the listing measure.
+    /// Quartz's, where the listing measures.
     static func quartzPoint(_ point: NSPoint) -> CGPoint {
         let top = NSScreen.screens.first?.frame.maxY ?? CGDisplayBounds(CGMainDisplayID()).height
         return CGPoint(x: point.x, y: top - point.y)
     }
 
-    // MARK: The press
-
-    /// A ⌘-press somewhere on the Mac. On the icon's bar it may be the
-    /// start of a drag: the item under it is noted and the icon, the
-    /// hover reveal and the rehide clock freeze until the drop is
-    /// settled. Only while the concealer runs and `dragToHide` is on.
-    func commandPressed(at point: CGPoint) {
-        cancelDrag()
-        guard concealer != nil, settings().enabled, settings().curation.dragToHide else { return }
-        let rows = dragBarRows()
-        guard let main = rows.first,
-              let row = rows.first(where: { $0.insetBy(dx: 0, dy: -MenuBarDragLearn.slack).contains(point) })
-        else { return }
-        guard row == main else {
-            // The mirror stands only on the main bar: the drop gets its
-            // note there, and nothing is written.
-            dragInFlight = MenuBarDragInFlight(start: point, pressedAt: Date(), row: row, otherDisplay: true)
-            return
-        }
-        // A relaunch's first seconds: the listing is still the last
-        // run's, and the icon has not settled.
-        guard Date().timeIntervalSince(concealerStartedAt) >= Self.adoptionGrace else {
-            MenuBarAssessmentBackend.log.debug("drag: ignored — the engine is still starting")
-            return
-        }
-        guard let icon = currentIconSpan() else {
-            MenuBarAssessmentBackend.log.debug("drag: ignored — no icon stands to drag across")
-            return
-        }
-        let listing = dragListing()
-        let concealed = concealer?.concealedApps ?? []
-        let grabbed = MenuBarDragLearn.grabbed(at: point, items: listing, concealed: concealed,
-                                               ourPID: ProcessInfo.processInfo.processIdentifier, row: row)
-        // A press that took hold of nothing — the blank stretch, the
-        // icon itself, an app's menus — is no drag: nothing is held, so
-        // nothing waits on its release and a pending thaw still lands.
-        guard grabbed != nil else { return }
-        var drag = MenuBarDragInFlight(start: point, pressedAt: Date(), grabbed: grabbed, icon: icon,
-                                       row: row, listing: listing, concealed: concealed)
-        freezeForDrag(maxX: standingMirrorFrame?.maxX ?? icon.upperBound)
-        if settings().curation.revealWhileDragging, hider.revealed.isEmpty {
-            // Ice's "show hidden items while ⌘-dragging": the run comes
-            // in beside the icon, and the ‹ turns to a divider.
-            drag.revealedHidden = true
-            hider.reveal([.hidden])
-        }
-        drag.rows = rows
-        let environment = MenuBarDragEnvironment()
-        let gestureID = drag.id
-        environment.onInvalidation = { [weak self] in
-            guard self?.dragInFlight?.id == gestureID else { return }
-            self?.cancelDrag()
-        }
-        drag.environment = environment
-        dragInFlight = drag
-        if drag.revealedHidden { faceChanged() }
-        watchForLostRelease(pressedAt: drag.pressedAt)
-    }
-
-    /// A release the tap never delivered (it was disabled mid-drag, say)
-    /// must not leave the icon and the hover reveal frozen: past
-    /// `staleDrag` the press is forgotten and everything thaws.
-    private func watchForLostRelease(pressedAt: Date) {
-        dragStaleTask?.cancel()
-        dragStaleTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(MenuBarDragLearn.staleDrag * 1e9))
-            guard !Task.isCancelled, let self, let drag = self.dragInFlight,
-                  drag.pressedAt == pressedAt else { return }
-            MenuBarAssessmentBackend.log.notice("drag: no release heard — let go")
-            self.endDrag(drag, after: 0)
-        }
-    }
-
-    // MARK: The release
-
-    /// The release that ends a ⌘-press. A drop across the icon, or on
-    /// either side of it, asks for a section; the agent's move is
-    /// confirmed after it settles, and then one write lands. Every drop
-    /// that asked for something and got nothing says why under the icon.
-    func commandReleased(at point: CGPoint, option: Bool) {
-        guard let drag = dragInFlight, !drag.confirming else { return }
-        dragStaleTask?.cancel()
-        dragStaleTask = nil
-        guard Date().timeIntervalSince(drag.pressedAt) < MenuBarDragLearn.staleDrag else {
-            endDrag(drag, after: 0)
-            return
-        }
-        let travel = hypot(point.x - drag.start.x, point.y - drag.start.y)
-        if drag.otherDisplay {
-            if travel >= MenuBarDragLearn.minTravel {
-                MenuBarAssessmentBackend.log.notice("drag: dropped on another display's bar — nothing written")
-                showDropNote(.otherDisplay)
-            }
-            endDrag(drag, after: 0)
-            return
-        }
-        guard let grabbed = drag.grabbed, let icon = drag.icon,
-              let engine = concealer else {
-            endDrag(drag, after: 0)
-            return
-        }
-        let intent = MenuBarDragLearn.intent(from: drag.start, to: point, icon: icon,
-                                             row: drag.row, option: option)
-        let kind = dragKind(of: grabbed)
-        let current = kind == .system ? MenuBarItemSection.shown : effectiveSection(for: grabbed)
-        let appItems = grabbed.bundleID.map { id in
-            drag.listing.filter { $0.bundleID == id && !$0.isNativeOverflowControl }.count
-        } ?? 1
-        let outcome = MenuBarDragLearn.outcome(intent: intent, current: current, grabbed: kind,
-                                               appName: grabbed.ownerName, appItemCount: appItems)
-        let key = Self.dragKey(grabbed)
-        guard let section = outcome.section else {
-            if let note = outcome.note {
-                MenuBarAssessmentBackend.log.notice("drag: \(key, privacy: .public) is macOS's own — ignored")
-                showDropNote(note)
-            }
-            endDrag(drag, after: 0)
-            return
-        }
-        let crossed = MenuBarDragLearn.crossed(from: drag.start, to: point, icon: icon)
-        let settle = dragSettle
-        let releasedAt = Date()
-        dragInFlight?.confirming = true
-        dragConfirmTask = Task { @MainActor [weak self, weak engine] in
-            guard let self else { return }
-            defer { self.endDrag(drag, after: 0) }
-            do {
-                if settle > 0 { try await Task.sleep(nanoseconds: UInt64(settle * 1e9)) }
-                try Task.checkCancellation()
-            } catch { return }
-            guard self.owns(drag, engine: engine) else { return }
-            let fresh = await self.dragFreshListing(MenuBarDragLearn.confirmTimeout)
-            guard !Task.isCancelled, self.owns(drag, engine: engine) else { return }
-            self.settleDrop(drag, grabbed: grabbed, section: section, note: outcome.note,
-                            fresh: fresh, crossed: crossed, releasedAt: releasedAt)
-        }
-    }
-
-    /// Only the current gesture may commit or release the frozen layout.
-    private func owns(_ drag: MenuBarDragInFlight, engine: MenuBarConcealer?) -> Bool {
-        guard let engine, concealer === engine,
-              dragInFlight?.id == drag.id,
-              drag.environment?.isValid == true,
-              settings().enabled, settings().curation.dragToHide else { return false }
-        return dragBarRows() == drag.rows
-    }
-
-    /// Sleep, display changes, a new press, and teardown retire pending input.
-    func cancelDrag() {
-        dragConfirmTask?.cancel()
-        dragConfirmTask = nil
-        dragStaleTask?.cancel()
-        dragStaleTask = nil
-        if let drag = dragInFlight {
-            endDrag(drag, after: 0)
-        } else {
-            thawDrag(after: 0)
-        }
-    }
-
-    /// The confirming read is in: write the one section if the agent
-    /// really moved the item, say why not otherwise.
-    private func settleDrop(_ drag: MenuBarDragInFlight, grabbed: MenuBarItem, section: MenuBarItemSection,
-                            note: MenuBarDropNote?, fresh: [MenuBarItem]?, crossed: Bool, releasedAt: Date) {
-        var verdict = MenuBarDragLearn.verdict(grabbed: grabbed, before: drag.listing, after: fresh,
-                                               crossed: crossed, row: drag.row, concealed: drag.concealed)
-        // Without Accessibility's answer, the granted layout table — read
-        // after the drop — can still say where the agent put the app.
-        if fresh == nil, !verdict.confirmed,
-           layoutTableConfirms(grabbed, section: section, releasedAt: releasedAt) {
-            verdict.confirmed = true
-        }
-        // A whole-bar shift (the recording indicator) holds the icon as
-        // long as the shift lasts, so it never re-seats against it.
-        let hold = verdict.anchorDrifted
-            ? max(dragUnfreezeDelay, MenuBarItemHider.shrinkHold) : dragUnfreezeDelay
-        let key = Self.dragKey(grabbed)
-        let side = MenuBarDragLearn.sideWords(section)
-        guard verdict.confirmed, concealer != nil else {
-            let why = fresh == nil ? "Accessibility did not answer and it never crossed the icon"
-                : (verdict.anchorDrifted ? "the whole bar shifted and it never crossed the icon"
-                   : "macOS did not move it")
-            MenuBarAssessmentBackend.log.notice("drag: \(key, privacy: .public) dropped \(side, privacy: .public)? — \(why, privacy: .public); nothing written")
-            showDropNote(.notMoved)
-            endDrag(drag, after: hold)
-            return
-        }
-        guard let landed = applySection(section, to: grabbed) else {
-            endDrag(drag, after: hold)
-            return
-        }
-        MenuBarAssessmentBackend.log.notice("drag: \(key, privacy: .public) dropped \(side, privacy: .public) (\(landed, privacy: .public))")
-        if let note { showDropNote(note) }
-        endDrag(drag, after: hold)
-    }
-
-    /// What the press took hold of, for the write it can get.
-    func dragKind(of item: MenuBarItem) -> MenuBarDragLearn.Grabbed {
-        if MenuBarItemLister.isProtected(item) { return .system }
-        guard let id = item.bundleID else { return .helper }
-        return canConceal(id) ? .app : .appleExtra
-    }
-
-    /// The name a drop's log line gives the item.
-    nonisolated static func dragKey(_ item: MenuBarItem) -> String {
-        item.bundleID ?? item.identifier ?? item.id
-    }
-
-    // MARK: Freeze and thaw
-
-    /// Hold the icon's right edge, the hover reveal and the rehide clock
-    /// for the drag.
-    func freezeForDrag(maxX: CGFloat) {
-        dragUnfreezeTask?.cancel()
-        dragUnfreezeTask = nil
-        if dragFrozenMaxX == nil { dragFrozenMaxX = maxX }
-    }
-
-    /// The drag is over: fold what "reveal while dragging" brought in,
-    /// and thaw after `delay`.
-    func endDrag(_ drag: MenuBarDragInFlight, after delay: TimeInterval) {
-        guard dragInFlight?.id == drag.id else { return }
-        drag.environment?.finish()
-        dragInFlight = nil
-        if drag.revealedHidden {
-            hider.hide()
-            faceChanged()
-        }
-        thawDrag(after: delay)
-    }
-
-    /// Let the icon re-seat and the hover reveal answer again — not while
-    /// another drag that took hold of an item is in flight; its own
-    /// release thaws. A press on another display's bar holds nothing.
-    func thawDrag(after delay: TimeInterval) {
-        dragUnfreezeTask?.cancel()
-        guard delay > 0 else {
-            dragUnfreezeTask = nil
-            unfreezeDrag()
-            return
-        }
-        dragUnfreezeTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1e9))
-            guard !Task.isCancelled else { return }
-            self?.unfreezeDrag()
-        }
-    }
-
-    private func unfreezeDrag() {
-        guard dragInFlight?.grabbed == nil, dragFrozenMaxX != nil else { return }
-        dragFrozenMaxX = nil
-        updateIconMirror()
-    }
-
-    // MARK: The note under the icon
-
-    /// Say `note` under the icon for `MenuBarDragLearn.noteSeconds` — the
-    /// Item Bar's glass, which already hangs there; no new window.
-    func showDropNote(_ note: MenuBarDropNote) {
-        if let presentDropNote {
-            presentDropNote(note.text)
-        } else {
-            bar.showNote(note.text, for: MenuBarDragLearn.noteSeconds)
-        }
-    }
-
     // MARK: A tile dragged out of the Item Bar
 
     /// An Item Bar tile dropped at `screenPoint` (AppKit): on the bar
-    /// right of the icon it shows its app, left of it tucks it away. A
-    /// drop anywhere else changes nothing. The drag is the Item Bar's own
-    /// session — nothing is posted, the pointer is the person's.
+    /// right of the icon it asks to show its app, left of it to tuck it
+    /// away. A drop anywhere else changes nothing. The drag is the Item
+    /// Bar's own session — nothing is posted, the pointer is the person's.
+    /// A position is the person's to move, so a drop across the icon is
+    /// answered with the ⌘-drag that does it.
     func tileDropped(_ item: MenuBarItem, at screenPoint: NSPoint) {
         guard settings().enabled, settings().provider == .jrbar else { return }
         guard let icon = currentIconSpan(), let row = dragBarRows().first else { return }
         let point = Self.quartzPoint(screenPoint)
-        guard row.insetBy(dx: 0, dy: -MenuBarDragLearn.slack).contains(point) else { return }
-        let intent: MenuBarDragIntent
-        if point.x > icon.upperBound + MenuBarDragLearn.slack {
-            intent = .show
-        } else if point.x < icon.lowerBound - MenuBarDragLearn.slack {
-            intent = .hide(always: false)
-        } else {
-            return
-        }
-        guard let section = MenuBarDragLearn.section(for: intent, current: effectiveSection(for: item)),
-              let landed = applySection(section, to: item) else { return }
-        MenuBarAssessmentBackend.log.notice("drag: \(Self.dragKey(item), privacy: .public) tile dropped \(MenuBarDragLearn.sideWords(section), privacy: .public) (\(landed, privacy: .public))")
+        guard row.insetBy(dx: 0, dy: -MenuBarDragRules.slack).contains(point) else { return }
+        guard let section = MenuBarDragRules.tileDropSection(
+            dropX: point.x, icon: icon, current: effectiveSection(for: item)) else { return }
+        guideDrag(item: item, to: section)
+    }
+}
+
+/// The pure rules of a drop near the icon, so a test pins each one.
+enum MenuBarDragRules {
+    /// A drop this close to the icon's edge is on the icon.
+    nonisolated static let slack: CGFloat = 3
+    /// How long a drop's note stands under the icon.
+    nonisolated static let noteSeconds: TimeInterval = 4
+
+    /// The section a tile dropped at `dropX` asks for against the icon's
+    /// span: right of the icon shows it, left of it tucks it away, on the
+    /// icon nothing. nil when the tile is already there.
+    nonisolated static func tileDropSection(dropX: CGFloat, icon: ClosedRange<CGFloat>,
+                                            current: MenuBarItemSection) -> MenuBarItemSection? {
+        if dropX > icon.upperBound + slack { return current == .shown ? nil : .shown }
+        if dropX < icon.lowerBound - slack { return current == .shown ? .hidden : nil }
+        return nil
     }
 }

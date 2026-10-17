@@ -1,7 +1,9 @@
+import threading
 from types import SimpleNamespace
 
+from jrbar import provider_usage_feedback
 from jrbar.provider_reset_events import ResetChannel, ResetChannelOutcome
-from jrbar.provider_usage_feedback import deliver_reset_channels
+from jrbar.provider_usage_feedback import deliver_reset_channels, play_reset_sound_off_loop
 from jrbar.provider_usage_qol import ResetEvent
 
 
@@ -192,3 +194,56 @@ def test_a_lane_turning_critical_reaches_the_app_as_a_quota_pace_event__and_2_mo
     published, delivered, target = controller(quota_alerts_enabled=False)
     alert_new_critical_pace(target, state(55.0), state(30.0), log=lambda _m: None, signal_kind=None, now=base)
     assert published == [] and delivered == []
+
+
+def test_the_default_reset_sound_is_played_off_the_calling_thread(monkeypatch) -> None:
+    """The first NSSound held the daemon's run loop for 5 s: the call that
+    starts the audio stack must not be made on the thread that asked."""
+    threads: list[threading.Thread] = []
+
+    def fake_play() -> bool:
+        threads.append(threading.current_thread())
+        return True
+
+    monkeypatch.setattr(provider_usage_feedback, "_play_reset_sound", fake_play)
+    controller = SimpleNamespace(quiet_active=lambda: False)
+    event = ResetEvent("codex:weekly:event", "codex", "weekly", "Weekly reset", 1000, "acct", 900)
+
+    receipts = deliver_reset_channels(
+        controller,
+        event,
+        (ResetChannel.SOUND,),
+        now=1001,
+        monotonic_now=50,
+        log=lambda _message: None,
+    )
+
+    assert [(item.outcome, item.reason) for item in receipts] == [(ResetChannelOutcome.DELIVERED, "played")]
+    assert len(threads) == 1
+    assert threads[0] is not threading.current_thread()
+
+
+def test_a_sound_that_is_still_loading_does_not_hold_the_caller() -> None:
+    started: list = []
+    plays: list[str] = []
+
+    def play() -> bool:
+        plays.append("played")
+        return True
+
+    # The worker has not run when the caller's wait ends.
+    assert play_reset_sound_off_loop(play=play, start=started.append, wait_seconds=0.0) is True
+    assert plays == []
+
+    started[0]()
+    assert plays == ["played"]
+
+
+def test_a_sound_that_answers_in_time_reports_its_own_outcome() -> None:
+    assert play_reset_sound_off_loop(play=lambda: False, start=lambda job: job()) is False
+
+    def broken() -> bool:
+        raise RuntimeError("no audio device")
+
+    assert play_reset_sound_off_loop(play=broken, start=lambda job: job()) is False
+    assert play_reset_sound_off_loop(play=lambda: True, start=lambda job: job()) is True

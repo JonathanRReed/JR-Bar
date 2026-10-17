@@ -211,3 +211,16 @@ def test_audit_export_narrows_to_the_rows_on_screen():
         for gap in doc["gaps"]
     )
     assert "Failed · search auth" in reply["text"]
+
+
+def test_a_home_path_inside_a_sentence_is_collapsed_too():
+    from jrbar.audit_export import _redact_text
+
+    home = "/Users/jsmith"
+    assert _redact_text("fix /Users/jsmith/a.py", home=home) == "fix ~/a.py"
+    assert _redact_text("run rm -rf /Users/jsmith/tmp?", home=home) == "run rm -rf ~/tmp?"
+    assert _redact_text("in (/Users/jsmith)", home=home) == "in (~)"
+    # Another account whose name starts the same, and a path that merely
+    # contains the text deeper in, are not this home.
+    assert _redact_text("/Users/jsmith2/a", home=home) == "/Users/jsmith2/a"
+    assert _redact_text("/mnt/Users/jsmith/a", home=home) == "/mnt/Users/jsmith/a"

@@ -12,6 +12,8 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+import pytest
+
 from jrbar import core_server
 from tests.test_core_server import _connect
 from tests.test_core_server_hardening import (
@@ -23,16 +25,19 @@ from tests.test_core_server_hardening import (
 )
 
 
-def test_a_held_sign_in_does_not_delay_a_history_read_or_a_scan(sock_dir: Path) -> None:  # noqa: F811
-    sign_in_running = threading.Event()
-    release_sign_in = threading.Event()
+@pytest.mark.parametrize("action", [
+    "provider_sign_in", "factory_session_profiles", "factory_session_import", "factory_session_disconnect",
+])
+def test_a_held_provider_action_keeps_other_commands_responsive(sock_dir: Path, action: str) -> None:  # noqa: F811
+    action_running = threading.Event()
+    release_action = threading.Event()
     threads: dict[str, str] = {}
 
     def dispatch(name: str, args: dict):
         threads[name] = threading.current_thread().name
-        if name == "provider_sign_in":
-            sign_in_running.set()
-            assert release_sign_in.wait(HANG_BOUND_SECONDS)
+        if name == action:
+            action_running.set()
+            assert release_action.wait(HANG_BOUND_SECONDS)
             return {"outcome": "renewed"}
         return {"name": name}
 
@@ -40,26 +45,26 @@ def test_a_held_sign_in_does_not_delay_a_history_read_or_a_scan(sock_dir: Path) 
     try:
         client = _connect(instance)
         _read_strict(client, 1)
-        client.sendall(_command("fix", "provider_sign_in", {"provider": "claude"}))
-        assert sign_in_running.wait(HANG_BOUND_SECONDS)
+        client.sendall(_command("fix", action, {"provider": "claude"}))
+        assert action_running.wait(HANG_BOUND_SECONDS)
         client.sendall(_command("history", "list_history"))
         client.sendall(_command("doctor", "doctor"))
         client.sendall(_command("timeline", "session_timeline"))
         client.sendall(_command("scan", "usage_graph"))
         client.sendall(_command("ask", "answer_ask"))
-        # Every other command answers with the sign-in still held.
-        replies = _read_strict(client, 5)
-        assert sorted(reply["id"] for reply in replies) == ["ask", "doctor", "history", "scan", "timeline"]
-        assert not release_sign_in.is_set()
-        assert threads["provider_sign_in"] == "JRBarCoreActionLane"
+        client.sendall(_command("ping", "ping"))
+        replies = _read_strict(client, 6)
+        assert sorted(reply["id"] for reply in replies) == ["ask", "doctor", "history", "ping", "scan", "timeline"]
+        assert not release_action.is_set()
+        assert threads[action] == "JRBarCoreActionLane"
         assert threads["list_history"] == threads["doctor"] == "JRBarCoreReadLane"
         assert threads["usage_graph"] == "JRBarCoreScanLane"
-        release_sign_in.set()
+        release_action.set()
         reply = _read_strict(client, 1)[0]
         assert reply["id"] == "fix" and reply["result"] == {"outcome": "renewed"}
         client.close()
     finally:
-        release_sign_in.set()
+        release_action.set()
         instance.stop()
 
 

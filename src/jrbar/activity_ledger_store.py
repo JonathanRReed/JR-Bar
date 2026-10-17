@@ -38,7 +38,7 @@ from .activity_ledger import (
     activity_entry_to_payload,
     bounded_activity_entries,
 )
-from .private_io import atomic_private_write, read_private_text
+from .private_io import atomic_private_write, decode_strict_json, read_private_text
 from .providers import default_state_dir
 
 ACTIVITY_LEDGER_NAME: Final = "activity-ledger.json"
@@ -88,7 +88,7 @@ def load_activity_ledger(path: Path) -> ActivityLedgerRestore:
     """
     try:
         raw = read_private_text(Path(path), max_bytes=_MAX_STORE_BYTES)
-        document = _decode_document(raw)
+        document = decode_strict_json(raw, _CorruptActivityStore)
         ledger = _ledger_from_document(document)
     except FileNotFoundError:
         return _degraded_restore(ActivityRestoreHealth.MISSING)
@@ -145,27 +145,6 @@ def _degraded_restore(health: ActivityRestoreHealth) -> ActivityLedgerRestore:
     return ActivityLedgerRestore(ActivityLedger(), health)
 
 
-def _strict_object(pairs: list[tuple[object, object]]) -> dict[object, object]:
-    result: dict[object, object] = {}
-    for key, value in pairs:
-        if type(key) is not str or key in result:
-            raise _CorruptActivityStore
-        result[key] = value
-    return result
-
-
-def _reject_constant(_value: str) -> None:
-    raise _CorruptActivityStore
-
-
-def _decode_document(raw: str) -> object:
-    return json.loads(
-        raw,
-        object_pairs_hook=_strict_object,
-        parse_constant=_reject_constant,
-    )
-
-
 def _has_exact_fields(value: object, fields: frozenset[str]) -> bool:
     return type(value) is dict and frozenset(value) == fields
 
@@ -195,7 +174,9 @@ def _ledger_from_document(document: object) -> ActivityLedger:
 
 
 def _entry_from_payload(payload: object, fields: frozenset[str]) -> ActivityEntry:
-    if not _has_exact_fields(payload, fields):
+    optional = {"source_instance_id", "instance_label"}
+    if not (type(payload) is dict and fields <= frozenset(payload)
+            and frozenset(payload) <= fields | optional):
         raise _CorruptActivityStore
     kind = payload["kind"]
     subject_id = payload["subject_id"]
@@ -221,6 +202,8 @@ def _entry_from_payload(payload: object, fields: frozenset[str]) -> ActivityEntr
         subject_id,
         detail,
         duration,
+        source_instance_id=payload.get("source_instance_id"),
+        instance_label=payload.get("instance_label"),
     )
 
 

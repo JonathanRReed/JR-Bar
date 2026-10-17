@@ -158,16 +158,7 @@ def test_a_trusted_install_carries_no_warning__and_2_more() -> None:
             exploding
             if check is DiagnosticCheck.PRIVATE_PATH_MODES
             else (
-                lambda c=check: doctor_module._finding(
-                    c,
-                    (
-                        DiagnosticCode.RECOVERING
-                        if c is DiagnosticCheck.ALCOVE_FOLLOW_STATE
-                        else DiagnosticCode.UNAVAILABLE
-                    ),
-                    0,
-                    0,
-                )
+                lambda c=check: doctor_module._finding(c, DiagnosticCode.UNAVAILABLE, 0, 0)
             ),
         )
         for check in DiagnosticCheck

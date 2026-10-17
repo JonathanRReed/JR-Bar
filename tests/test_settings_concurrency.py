@@ -182,12 +182,6 @@ def _read_default_sources() -> object:
     return default_sources()
 
 
-def _read_alcove_following() -> object:
-    from jrbar.doctor import _alcove_following_enabled
-
-    return _alcove_following_enabled()
-
-
 @pytest.mark.parametrize(
     "reader",
     (
@@ -196,7 +190,6 @@ def _read_alcove_following() -> object:
         _read_extra_homes,
         _read_hub_settings,
         _read_default_sources,
-        _read_alcove_following,
     ),
     ids=lambda reader: reader.__name__.removeprefix("_read_"),
 )

@@ -117,6 +117,9 @@ struct ProviderStyle: Hashable, Sendable {
         // `state.usage.providers` (`provider_usage_cli.py`), so the Usage
         // Center needs a name for it that is not "Openai-api". The same
         // blossom as Codex; the colour and the name tell them apart.
+        ProviderStyle(id: "kimi", name: "Kimi Code", accentHex: "#3178D4", glyph: .text("K")),
+        ProviderStyle(id: "kilo", name: "Kilo", accentHex: "#C27C00", glyph: .symbol("bolt.horizontal.fill")),
+        ProviderStyle(id: "factory", name: "Factory", accentHex: "#E76F32", glyph: .symbol("shippingbox.fill")),
         ProviderStyle(id: "openai-api", name: "OpenAI API", accentHex: "#10A37F", glyph: .logo("openai"),
                       fallback: .symbol("key.horizontal.fill")),
         // A usage source the daemon appends to the usage graph when its

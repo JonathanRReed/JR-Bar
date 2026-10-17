@@ -6,12 +6,66 @@ public enum NotchSilhouetteGeometry {
     /// corner. Card content keeps clear of the same bound.
     public static let maximumExpandedRadius: CGFloat = 28
 
+    /// How far the hardware's top corners flare outward where the notch
+    /// meets the screen's top edge: the concave shoulder a grown island
+    /// wears so it reads as the notch swelling, not a tab hung over it.
+    /// Measured ~4 pt on the notched MacBooks.
+    public static let maximumTopFlare: CGFloat = 4
+
+    /// How much body past the notch's side the shoulder takes to reach its
+    /// full size. A shoulder that arrived within a few points of growth
+    /// would pop in at the first frame of every move; this one swells with
+    /// the body, so there is no size at which it is a bump on the bezel.
+    public static let flareRamp: CGFloat = 24
+
+    /// The concave shoulder at each top corner. Zero on the bare housing
+    /// (it IS the notch's rectangle, and the hardware's own flare is
+    /// already black) and on a notch-less pill; it follows how far the
+    /// body reaches past the notch's side, so the shoulder arrives with
+    /// the growth and leaves with it, the same on every frame of an
+    /// interrupted morph. It never exceeds the overhang, so the body
+    /// below it is never narrower than the notch.
+    public static func topFlare(size: CGSize, notchWidth: CGFloat, notchDepth: CGFloat) -> CGFloat {
+        guard notchDepth > 0, notchWidth > 0 else { return 0 }
+        let overhang = (size.width - notchWidth) / 2
+        guard overhang > 0 else { return 0 }
+        let room = min(size.width / 2, size.height / 2)
+        let t = min(1, overhang / flareRamp)
+        let eased = t * t * (3 - 2 * t)
+        return max(0, min(maximumTopFlare * eased, overhang, room))
+    }
+
+    /// The island's body inside its frame: the frame less the shoulders'
+    /// width on each side. The silhouette draws its body that far in from
+    /// the frame's edge (the shoulders stand in the gap, at the top only),
+    /// so anything that continues the island's side downward (the Screen
+    /// Bar's housing under a notice, an ask or the card) must take this
+    /// rect, not the frame, or its sides step out of the island's by the
+    /// shoulder's width.
+    public static func body(of frame: CGRect, notchWidth: CGFloat, notchDepth: CGFloat) -> CGRect {
+        let flare = topFlare(size: frame.size, notchWidth: notchWidth, notchDepth: notchDepth)
+        return frame.insetBy(dx: flare, dy: 0)
+    }
+
+    /// The height, past the notch's own depth, over which the bottom
+    /// corners soften from the hardware's radius to the card's. Long
+    /// enough that the corner is a function of the shape's whole travel,
+    /// not the first few points of it: over 80 points the corner had
+    /// finished growing within two frames of a grow's start.
+    public static let radiusRamp: CGFloat = 165
+
+    /// The bottom corners at `size`: the hardware's own radius on the
+    /// bare housing, the card's (`maximumExpandedRadius`) once the body
+    /// is a card. It reads the shape alone, never the clock, so a morph
+    /// interrupted anywhere wears the corner its present size asks for;
+    /// it eases out (quick as the body starts to hang, settling as it
+    /// lands) so a one-line notice already has a soft foot.
     public static func radius(size: CGSize, notchDepth: CGFloat, restingRadius: CGFloat) -> CGFloat {
         let limit = max(0, min(size.width / 2, size.height / 2))
         guard notchDepth > 0 else { return min(maximumExpandedRadius, limit) }
         let rest = max(0, restingRadius)
-        let progress = min(1, max(0, (size.height - notchDepth - 4) / 80))
-        let eased = progress * progress * (3 - 2 * progress)
+        let progress = min(1, max(0, (size.height - notchDepth - 4) / radiusRamp))
+        let eased = sin(progress * .pi / 2)
         return min(limit, rest + (max(maximumExpandedRadius, rest) - rest) * eased)
     }
 }
@@ -67,10 +121,13 @@ public struct NotchIslandMeter: Equatable, Sendable, Identifiable {
     /// (`CoreProviderUsage.staleFix`, "Reconnect Claude"): a countdown
     /// already past its reset names it instead of waiting for a reading.
     public var fix: String?
+    /// The daemon marks this reading old (`CoreProviderUsage.isStale`): the
+    /// figure is the last good one, and a surface that draws it says so.
+    public var stale: Bool
 
     public init(id: String, provider: String, window: String, percent: Double?,
                 resetsAt: Double? = nil, windowSpan: TimeInterval? = nil, incident: Bool = false,
-                fix: String? = nil) {
+                fix: String? = nil, stale: Bool = false) {
         self.id = id
         self.provider = provider
         self.window = window
@@ -79,6 +136,7 @@ public struct NotchIslandMeter: Equatable, Sendable, Identifiable {
         self.windowSpan = windowSpan
         self.incident = incident
         self.fix = fix
+        self.stale = stale
     }
 
     /// `42%`, or `—` when the provider stated no number.
@@ -192,10 +250,17 @@ public enum NotchIsland {
         s.workingProviders = tally.keys.sorted { a, b in
             tally[a]! != tally[b]! ? tally[a]! > tally[b]! : a < b
         }
+        // Within a state the card reads by name — except the asks, where
+        // the one that has waited longest leads, as in the panel (an
+        // undated ask goes last among them).
+        func waited(_ row: NotchIslandRow) -> Double {
+            row.activity == .waiting ? (row.ask?.openedAt ?? .greatestFiniteMagnitude) : 0
+        }
         s.rows.sort { a, b in
-            a.activity.sortRank != b.activity.sortRank
-                ? a.activity.sortRank < b.activity.sortRank
-                : a.label.localizedCaseInsensitiveCompare(b.label) == .orderedAscending
+            if a.activity.sortRank != b.activity.sortRank { return a.activity.sortRank < b.activity.sortRank }
+            let (waitedA, waitedB) = (waited(a), waited(b))
+            if waitedA != waitedB { return waitedA < waitedB }
+            return a.label.localizedCaseInsensitiveCompare(b.label) == .orderedAscending
         }
         var parts: [String] = []
         if s.working > 0 { parts.append("\(s.working) working") }
@@ -218,7 +283,7 @@ public enum NotchIsland {
                                     resetsAt: window.resetsAt,
                                     windowSpan: UsageWindowLabel.windowSpan(id: window.id, name: window.name),
                                     incident: provider.incident?.isEmpty == false,
-                                    fix: provider.staleFix)
+                                    fix: provider.staleFix, stale: provider.isStale)
         }.prefix(meterLimit).map { $0 }
     }
 
@@ -258,6 +323,10 @@ public struct NotchIdleLayout: Equatable, Sendable {
     public var sensors: NotchSensorState = NotchSensorState()
     /// The idle face is a bare housing — the ears carry the HUD.
     public var bare: Bool = false
+    /// The Now Playing cover stands in the left shoulder, the waveform
+    /// in the right: the compact live activity. Only while the agent HUD
+    /// is not using the left; otherwise both ride the right shoulder.
+    public var mediaArtLeft: Bool = false
 
     public enum Right: Equatable, Sendable {
         case nothing
@@ -319,7 +388,15 @@ extension NotchIsland {
             layout.rightWidth = 5 + 3 + countWidth(summary.failed)
         } else if media != nil {
             layout.right = .media
-            layout.rightWidth = mediaContentWidth
+            if dots == 0 {
+                // The cover left of the notch, the waveform right of it:
+                // each side as wide as its own mark.
+                layout.mediaArtLeft = true
+                layout.leftWidth = mediaArtWidth
+                layout.rightWidth = mediaBarsWidth
+            } else {
+                layout.rightWidth = mediaContentWidth
+            }
         }
         // The privacy dots share the right shoulder rather than
         // competing for it: they sit nearest the notch — the hardware
@@ -386,6 +463,11 @@ public enum NotchIslandLayout {
 
     /// Air around a shoulder's content.
     public static let shoulderPad: CGFloat = 5
+    /// The body stands in from its frame by the top shoulder's width on
+    /// each side (`NotchSilhouetteGeometry.body`), so a shoulder's content
+    /// is given that much more room at its outer end, or its air there is
+    /// the pad less the shoulder and a strip reads cramped against the edge.
+    public static let bodyInset: CGFloat = NotchSilhouetteGeometry.maximumTopFlare
 
     /// The collapsed capsule: the notch plus each shoulder's own width
     /// (`NotchIdleLayout.leftShoulder`/`rightShoulder` — zero while
@@ -404,17 +486,10 @@ public enum NotchIslandLayout {
         CGSize(width: max(idleMinWidth, contentWidth + 24), height: 24)
     }
 
-    /// Where the island's centre sits: always the slot's — every face
-    /// shares it, so a morph never travels sideways.
-    public static func idleCenterX(slotCenterX: CGFloat, leftShoulder: CGFloat,
-                                   rightShoulder: CGFloat) -> CGFloat {
-        slotCenterX
-    }
-
     /// One shoulder's width for its content — the bare shoulder, or the
     /// content plus its air.
     public static func shoulderWidth(contentWidth: CGFloat) -> CGFloat {
-        contentWidth > 0 ? max(shoulder, contentWidth + 2 * shoulderPad) : shoulder
+        contentWidth > 0 ? max(shoulder, contentWidth + 2 * shoulderPad + bodyInset) : shoulder
     }
 
     /// The hover wink — the breath `NotchMotion.hoverDelay` arms: a
@@ -601,235 +676,6 @@ public struct NotchPullGesture: Equatable, Sendable {
             return (abs(translation) >= Self.commitTravel || abs(flick) >= Self.flickVelocity)
                 ? .commit : .retreat
         }
-    }
-}
-
-/// The island's feel in one place — every number that makes the notch
-/// move like Alcove's. The frame spring's grow/fold pairs land on
-/// `NotchFrameSpring`'s named motions; the hover breath, the notice
-/// capsule's slide-and-fade and the expanded card's content-follow
-/// timings are read straight from here. Reduce Motion swaps every
-/// morph for the quiet crossfade — `faceTransition` is the single
-/// branch the tests pin.
-public enum NotchMotion {
-    /// The grow: the island opening into the card, or any swell —
-    /// slow enough to read, loose enough to overshoot ~2%.
-    public static let expand = NotchFrameSpring.Motion(response: 0.42, dampingFraction: 0.78)
-    /// The fold: collapse runs a beat faster than the grow and lands
-    /// damped — a dismissal never bounces.
-    public static let collapse = NotchFrameSpring.Motion(response: 0.32, dampingFraction: 0.9)
-    /// Content-driven nudges — a dot arriving, a row refilling.
-    public static let morph = NotchFrameSpring.Motion(response: 0.30, dampingFraction: 0.9)
-
-    /// The hover breath: a pointer resting on the compact island this
-    /// long earns the tell — a few points of grow and a subtle swell
-    /// of the marks inside.
-    public static let hoverDelay: TimeInterval = 0.12
-    /// An arrival down from the menu bar's row never grows the card
-    /// sooner than this — the pointer that high may only be reaching a
-    /// menu (Boring Notch's floor).
-    public static let barArrivalFloor: TimeInterval = 0.30
-
-    /// The hover's two clocks for the Notch card's "Open after"
-    /// (`NotchSettings.hoverOpenDelay`): the card grows once the pointer
-    /// has rested that long — never sooner than `barArrivalFloor` for an
-    /// arrival down from the menu bar — and the breath lands at the
-    /// standard delay or sooner, so a short setting still tells first.
-    public static func hoverDelays(openAfter: Double, fromBar: Bool) -> (peek: TimeInterval, expand: TimeInterval) {
-        let setting = openAfter.isFinite ? min(1, max(0, openAfter)) : hoverDelay
-        let expand = fromBar ? max(setting, barArrivalFloor) : setting
-        return (min(setting, hoverDelay), expand)
-    }
-    /// The breath's frame half: the island widens and deepens by a
-    /// few points, symmetric on a drawn face, straight down on the
-    /// bare housing.
-    public static let hoverGrowWidth: CGFloat = 4
-    public static let hoverGrowHeight: CGFloat = 2
-    /// The breath's content half — a whisper of a swell, not a pop.
-    public static let hoverContentScale: CGFloat = 1.02
-
-    /// The notice capsule's entrance: the face slides down a few
-    /// points while it fades in.
-    public static let noticeSlide: CGFloat = 6
-    public static let noticeFadeIn: TimeInterval = 0.18
-    /// Dismissal reverses the move, a touch quicker than the entrance.
-    public static let noticeFadeOut: TimeInterval = 0.14
-
-    /// The expanded card's content follows its frame: the header is
-    /// there from the grow's first frame, and the rows under it wait
-    /// until the spring has carried the frame this far toward the
-    /// target, then fade in staggered — frame leads, content follows.
-    public static let contentRevealThreshold: CGFloat = 0.6
-    /// The gap between two rows starting their fade.
-    public static let rowStagger: TimeInterval = 0.02
-    /// The most gaps the stagger takes: a long card's later rows share
-    /// the last step rather than trail in one by one.
-    public static let rowStaggerSteps = 6
-    /// One row's own fade once its stagger lands.
-    public static let rowFade: TimeInterval = 0.12
-
-    /// When the row at `step` starts its fade, counted from the reveal.
-    /// `step` is the row's place among the rows the card draws right
-    /// now, the header not among them.
-    public static func rowRevealDelay(step: Int) -> TimeInterval {
-        let capped = min(max(0, step), rowStaggerSteps)
-        return Double(capped) * rowStagger
-    }
-
-    /// How long after the reveal the card's last row is opaque.
-    public static var revealSpan: TimeInterval {
-        rowRevealDelay(step: rowStaggerSteps) + rowFade
-    }
-
-    /// Reduce Motion's whole vocabulary: a quiet crossfade, no travel.
-    public static let reduceMotionFade: TimeInterval = 0.15
-
-    /// The curve every panel hung from the notch fades on — the glass
-    /// card, the HUD pill, their settles: a quick start and a long, soft
-    /// landing. A cubic Bézier's control points; `NotchSurfaceMotion`
-    /// hands it to Core Animation.
-    public static let panelCurve: (x1: Float, y1: Float, x2: Float, y2: Float) = (0.2, 0.9, 0.3, 1.0)
-
-    /// How a face change moves: the spring morph normally, the quiet
-    /// crossfade under Reduce Motion.
-    public enum FaceTransition: Equatable, Sendable {
-        case morph, crossfade
-    }
-
-    /// The single Reduce Motion branch — the island's every motion
-    /// decision funnels through here so the accessibility path is one
-    /// testable fact, not a scatter of reads.
-    public static func faceTransition(reduceMotion: Bool) -> FaceTransition {
-        reduceMotion ? .crossfade : .morph
-    }
-}
-
-/// The island's interruptible frame motion: four scalar springs — one
-/// per rect edge — integrated on a display link, so a retarget
-/// mid-flight keeps the position and velocity the frame actually has
-/// and bends toward the new target instead of restarting (or snapping,
-/// the way a second `animator().setFrame` does). Pure — the window
-/// drives it on ticks, the tests drive it by hand.
-public struct NotchFrameSpring: Equatable, Sendable {
-    /// One axis of the frame: position and velocity in screen points.
-    public struct Axis: Equatable, Sendable {
-        public var value: CGFloat
-        public var velocity: CGFloat
-
-        public init(value: CGFloat, velocity: CGFloat = 0) {
-            self.value = value
-            self.velocity = velocity
-        }
-    }
-
-    /// How a retarget feels — roughly SwiftUI's `response` /
-    /// `dampingFraction` pair. The grown card swells a touch slower
-    /// than the fold-home — collapse is always the faster gesture, the
-    /// way a dismissal should feel — and content-only nudges sit
-    /// between. Damping stays ≥ 0.86: a swell, never a bounce.
-    public struct Motion: Equatable, Sendable {
-        public var response: CGFloat
-        public var dampingFraction: CGFloat
-
-        public init(response: CGFloat, dampingFraction: CGFloat) {
-            self.response = response
-            self.dampingFraction = dampingFraction
-        }
-    }
-
-    /// The grow: the island opening into the card, or any swell.
-    public static let expandMotion = NotchMotion.expand
-    /// The fold: collapse runs a beat faster than the grow.
-    public static let collapseMotion = NotchMotion.collapse
-    /// Content-driven nudges — a dot arriving, a row refilling.
-    public static let morphMotion = NotchMotion.morph
-
-    /// Which way a frame change reads: growing swells, shrinking folds.
-    public static func motion(from current: CGRect, to target: CGRect) -> Motion {
-        if target.height > current.height + 0.5 || target.width > current.width + 0.5 {
-            return expandMotion
-        }
-        if target.height < current.height - 0.5 || target.width < current.width - 0.5 {
-            return collapseMotion
-        }
-        return morphMotion
-    }
-
-    public private(set) var target: CGRect
-    public var motion: Motion
-    private var xAxis = Axis(value: 0)
-    private var yAxis = Axis(value: 0)
-    private var wAxis = Axis(value: 0)
-    private var hAxis = Axis(value: 0)
-
-    /// A spring sitting at `frame`, aimed at `target` (itself, when
-    /// nil). `motion` is the feel the next retarget runs at.
-    public init(at frame: CGRect, motion: Motion = NotchFrameSpring.morphMotion, target: CGRect? = nil) {
-        self.motion = motion
-        self.target = target ?? frame
-        xAxis = Axis(value: frame.minX)
-        yAxis = Axis(value: frame.minY)
-        wAxis = Axis(value: frame.width)
-        hAxis = Axis(value: frame.height)
-    }
-
-    /// The frame the spring currently draws.
-    public var frame: CGRect {
-        CGRect(x: xAxis.value, y: yAxis.value, width: wAxis.value, height: hAxis.value)
-    }
-
-    /// Aim at a new target: position and velocity carry over — that is
-    /// the whole point, an interrupted morph continues from where it
-    /// visibly was.
-    public mutating func retarget(_ target: CGRect, motion: Motion) {
-        self.target = target
-        self.motion = motion
-    }
-
-    /// One display tick. Semi-implicit Euler at a fixed ~120 Hz
-    /// sub-step — the spring stays stable however late a tick arrives
-    /// (a clamped big `dt` explodes a stiff spring instead; sub-steps
-    /// land it). `dt` itself is capped at half a second so a slept
-    /// display link can't wind the frame up.
-    /// Returns true while the frame is still moving.
-    @discardableResult
-    public mutating func integrate(dt: TimeInterval) -> Bool {
-        var remaining = min(max(dt, 0), 0.5)
-        let omega = 2 * CGFloat.pi / max(motion.response, 0.01)
-        let zeta = motion.dampingFraction
-        func chase(_ axis: inout Axis, toward destination: CGFloat, _ h: CGFloat) {
-            let accel = omega * omega * (destination - axis.value)
-                - 2 * zeta * omega * axis.velocity
-            axis.velocity += accel * h
-            axis.value += axis.velocity * h
-        }
-        while remaining > 0 {
-            let h = CGFloat(min(remaining, 1.0 / 120))
-            chase(&xAxis, toward: target.minX, h)
-            chase(&yAxis, toward: target.minY, h)
-            chase(&wAxis, toward: target.width, h)
-            chase(&hAxis, toward: target.height, h)
-            remaining -= TimeInterval(h)
-        }
-        return !settled
-    }
-
-    /// Still moving = any axis off its edge or still carrying speed.
-    public var settled: Bool {
-        func done(_ axis: Axis, _ destination: CGFloat) -> Bool {
-            abs(axis.velocity) < 0.8 && abs(axis.value - destination) < 0.5
-        }
-        return done(xAxis, target.minX) && done(yAxis, target.minY)
-            && done(wAxis, target.width) && done(hAxis, target.height)
-    }
-
-    /// Land exactly on the target — the last tick's write, so the
-    /// frame can never rest a fraction of a point off.
-    public mutating func snap() {
-        xAxis = Axis(value: target.minX)
-        yAxis = Axis(value: target.minY)
-        wAxis = Axis(value: target.width)
-        hAxis = Axis(value: target.height)
     }
 }
 

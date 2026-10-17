@@ -50,4 +50,11 @@ import Testing
         #expect(AppCommand.requested(by: window, now: now) == nil)
         #expect(AppCommand.requested(by: ask, now: now) == nil)
     }
+
+    @Test func aRequestWithNoTimeCannotProveItIsFreshAndOpensNothing() {
+        let window = CoreEvent(id: "f", kind: CoreEvent.openWindowKind, window: "overview")
+        let ask = CoreEvent(id: "g", kind: CoreEvent.revealAskKind)
+        #expect(AppCommand.requested(by: window, now: now) == nil)
+        #expect(AppCommand.requested(by: ask, now: now) == nil)
+    }
 }

@@ -46,6 +46,12 @@ final class ScreenBarInteraction {
     /// one line to /tmp/jrbar-wings.log per call, but only when the
     /// JRBAR_WING_DEBUG env var is set so a shipping build stays silent.
     private nonisolated static let wingDebug = ProcessInfo.processInfo.environment["JRBAR_WING_DEBUG"] != nil
+    nonisolated static var diagnosticsEnabled: Bool { wingDebug }
+    nonisolated static func diagnosticProvider(_ provider: String?) -> String {
+        guard let provider else { return "none" }
+        return ["codex", "claude", "gemini", "grok", "devin", "pi", "opencode", "antigravity"].contains(provider)
+            ? provider : "other"
+    }
     nonisolated static func diag(_ message: String) {
         guard wingDebug else { return }
         let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
@@ -72,10 +78,12 @@ final class ScreenBarInteraction {
     /// …but a pointer parked on the card or the band keeps it — the card
     /// is reachable, so leaving must not make it vanish mid-crossing.
     static let lifeExtension: TimeInterval = 2.0
-    /// Leaving the hit region gets this long to come back before the peek
+    /// Leaving the glass card's hit region gets this long to come back before it
     /// really goes — covers the dead pixel or two between the band, the
     /// chips and the card.
     static let closeGrace: TimeInterval = 0.30
+    /// The menu's explicit corridor bridges the gap; only brief edge jitter needs grace.
+    static let peekCloseGrace: TimeInterval = 0.12
 
     /// The hover zones in screen coordinates: the band plus each drawn
     /// wing chip — the drawn capsules, so hovering them is hovering us.
@@ -89,6 +97,10 @@ final class ScreenBarInteraction {
     /// it is up: the island is the card's other anchor, so a click on it
     /// must not read as "outside" and dismiss the card it summoned.
     var extraHitRects: @MainActor () -> [NSRect] = { [] }
+    var extraHitTest: @MainActor (NSPoint) -> Bool = { _ in false }
+    var pointerLocation: @MainActor () -> NSPoint = { NSEvent.mouseLocation }
+    private var hoverOwnerIsIsland = false
+    private var lastHoverPoint: NSPoint?
     /// Which drawn wing a screen point is over — the dismiss swipe's
     /// target; the band and empty flank room answer nil.
     var wingSideAt: @MainActor (NSPoint) -> ScreenBarWingSide? = { _ in nil }
@@ -96,6 +108,7 @@ final class ScreenBarInteraction {
     var onWingDismiss: @MainActor (ScreenBarWingSide) -> Void = { _ in }
     /// A horizontal swipe on the band summoned dismissed wings back.
     var onWingRestore: @MainActor () -> Void = {}
+    var canRestoreIslandWings: @MainActor (NSPoint) -> Bool = { _ in false }
     /// An ear is being pulled — it follows the finger with resistance
     /// until the flick commits; `dx` is finger-space, rightward positive.
     var onWingPull: @MainActor (ScreenBarWingSide, CGFloat) -> Void = { _, _ in }
@@ -109,15 +122,9 @@ final class ScreenBarInteraction {
     /// A right-click (or a two-finger click) on an ear at a screen point
     /// — the right ear's keep-awake menu. True when the ear answered.
     var onWingSecondaryClick: @MainActor (ScreenBarWingSide, NSPoint) -> Bool = { _, _ in false }
-    /// The hidden-run handle's slice of the right ear, in screen
-    /// coordinates — a click inside it is the run's toggle, not the
-    /// wing's.
-    var menuHandleAt: @MainActor (NSPoint) -> Bool = { _ in false }
-    /// The handle was clicked — reveal or rehide the run.
-    var onMenuHandle: @MainActor () -> Void = {}
     /// The right ear as the menu bar's surface: whether a screen point is
     /// on the part of it that answers with the black peek of hidden
-    /// glyphs — the whole ear but the ‹ slice — and false while there is
+    /// glyphs, and false while there is
     /// nothing to peek at. That zone is the peek's alone: the card and
     /// the island never arm from it.
     var peekZoneAt: @MainActor (NSPoint) -> Bool = { _ in false }
@@ -133,6 +140,7 @@ final class ScreenBarInteraction {
     var peekCorridorAt: @MainActor (NSPoint) -> Bool = { _ in false }
     /// Whether the peek hangs, and whether a click pinned it there.
     var peekState: @MainActor () -> (shown: Bool, pinned: Bool) = { (false, false) }
+    var peekCanResume: @MainActor () -> Bool = { false }
     /// Hang, pin, toggle or fold the peek.
     var onPeek: @MainActor (ScreenBarPeekIntent) -> Void = { _ in }
     /// How long the pointer rests on the ear before the peek hangs — the
@@ -144,6 +152,10 @@ final class ScreenBarInteraction {
     nonisolated static let peekScrollThreshold: CGFloat = 10
     private var peekShowWork: DispatchWorkItem?
     private var peekHideWork: DispatchWorkItem?
+    var peekHoverTimer: @MainActor (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+    var peekHoverArmed: Bool { peekShowWork != nil }
 
     /// Points of vertical travel before a press-on-the-band becomes a
     /// swipe — small enough that a deliberate pull feels instant, large
@@ -256,7 +268,8 @@ final class ScreenBarInteraction {
             let point = NSEvent.mouseLocation
             Self.diag("global down raw (\(Int(point.x)),\(Int(point.y)))")
             let time = event.timestamp
-            Task { @MainActor [weak self] in self?.pointerDown(at: point, time: time) }
+            let command = event.modifierFlags.contains(.command)
+            Task { @MainActor [weak self] in self?.pointerDown(at: point, time: time, command: command) }
         }) { globalMonitors.append(down) } else {
             Self.diag("global down monitor FAILED")
         }
@@ -272,7 +285,8 @@ final class ScreenBarInteraction {
         if let down = installMonitor(false, [.leftMouseDown], { [weak self] event in
             let point = NSEvent.mouseLocation
             let time = event.timestamp
-            Task { @MainActor [weak self] in self?.pointerDown(at: point, time: time) }
+            let command = event.modifierFlags.contains(.command)
+            Task { @MainActor [weak self] in self?.pointerDown(at: point, time: time, command: command) }
         }) { localMonitors.append(down) }
         if let drag = installMonitor(false, [.leftMouseDragged], { [weak self] event in
             let point = NSEvent.mouseLocation
@@ -296,10 +310,15 @@ final class ScreenBarInteraction {
         // Trackpad swipes arrive as scrollWheel, never as drags — the
         // same stream the island's hosting view reads.
         if let scroll = installMonitor(true, [.scrollWheel], { [weak self] event in
-            Task { @MainActor [weak self] in self?.pointerScrolled(event) }
+            let point = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in self?.pointerScrolled(event, at: point) }
         }) { globalMonitors.append(scroll) }
         if let scroll = installMonitor(false, [.scrollWheel], { [weak self] event in
-            Task { @MainActor [weak self] in self?.pointerScrolled(event) }
+            let point = NSEvent.mouseLocation
+            // AppKit calls local monitors on the main thread before native
+            // dispatch. Admit the gesture now, before the island can change
+            // its frame or dismissed-wing eligibility while handling it.
+            MainActor.assumeIsolated { self?.pointerScrolled(event, at: point) }
         }) { localMonitors.append(scroll) }
     }
 
@@ -426,6 +445,7 @@ final class ScreenBarInteraction {
         localMonitors = []
         disarmPointerWatch()
         hovering = false
+        lastHoverPoint = nil
         swipeStart = nil
         swipeFired = false
         pressOnIsland = false
@@ -449,8 +469,7 @@ final class ScreenBarInteraction {
         // island took the notch meanwhile: the island IS the card then,
         // and re-presenting the glass one would double the surface.
         if islandOwnsNotch() { card.hide() } else { card.geometryChanged() }
-        hovering = false
-        pointerMoved()
+        pointerMoved(geometryOnly: true)
     }
 
     // MARK: Pointer
@@ -460,10 +479,11 @@ final class ScreenBarInteraction {
     /// around each chip is a couple of points so the edge is not a pixel
     /// hunt; the card gets a point too, so brushing its frame does not
     /// count as leaving.
-    private func pointerInHitRegion() -> Bool {
-        let point = NSEvent.mouseLocation
+    private func pointerInHitRegion(at point: NSPoint? = nil) -> Bool {
+        let point = point ?? pointerLocation()
         if hitRects().contains(where: { $0.insetBy(dx: -2, dy: -3).contains(point) }) { return true }
         if extraHitRects().contains(where: { $0.insetBy(dx: -1, dy: -1).contains(point) }) { return true }
+        if extraHitTest(point) { return true }
         guard isTooltipShown else { return false }
         if let frame = card.cardFrame, frame.insetBy(dx: -1, dy: -1).contains(point) { return true }
         // The buddy's HUD frame sits in the corridor between band and
@@ -477,11 +497,22 @@ final class ScreenBarInteraction {
     /// press the island's window answers itself: tap to toggle, pull to
     /// grow or fold. `contains` is exact (no slack inset) — the window
     /// IS the shape, and a point beside it is still the band's.
-    private func onIsland(_ point: NSPoint) -> Bool {
-        extraHitRects().contains { $0.contains(point) }
+    nonisolated static func islandOwnsGesture(wing: ScreenBarWingSide?, onIsland: Bool) -> Bool {
+        wing == nil && onIsland
     }
 
-    private func pointerMoved() {
+    nonisolated static func isWingRestorationHeader(_ point: NSPoint, frame: NSRect,
+                                                   headerHeight: CGFloat = 44) -> Bool {
+        let height = min(max(0, headerHeight), frame.height)
+        return NSRect(x: frame.minX, y: frame.maxY - height,
+                      width: frame.width, height: height).contains(point)
+    }
+
+    private func onIsland(_ point: NSPoint) -> Bool {
+        extraHitRects().contains { $0.contains(point) } || extraHitTest(point)
+    }
+
+    func pointerMoved(geometryOnly: Bool = false) {
         // Under the watcher, whatever this read leaves engaged keeps the
         // poll beside the subscription running.
         defer { keepPollingWhileEngaged() }
@@ -492,16 +523,20 @@ final class ScreenBarInteraction {
         // next pointer event instead of doubling the island — or
         // lingering as the one thing a switched-off utility drew.
         if isTooltipShown, card.surface() != .glass { hideTooltip() }
-        // The right ear's peek zone, the peek and the corridor between
-        // them are the menu bar's surface: the card's machine reads them
-        // as outside, so crossing from the band to the ear hands over
-        // from one surface to the other.
-        let point = NSEvent.mouseLocation
-        let region = Self.pointerRegion(onPeekZone: peekZoneAt(point),
+        // The menu's assigned peek zone and corridor own their hover;
+        // ordinary wings stay with the island.
+        let point = pointerLocation()
+        let mayEnter = lastHoverPoint.map { $0 != point } ?? !geometryOnly
+        lastHoverPoint = point
+        let islandOwner = islandOwnsNotch()
+        // A menu hover cannot replace a grown card, so its wing must
+        // keep that card hovered. A click can attach a menu below it.
+        let region = Self.pointerRegion(onPeekZone: peekZoneAt(point) && !cardPinned(),
                                         onPeek: peekCorridorAt(point),
-                                        inHitRegion: pointerInHitRegion())
-        notePeekHover(region == .peek)
-        let inside = region == .band
+                                        inHitRegion: pointerInHitRegion(at: point))
+        notePeekHover(region == .peek, mayEnter: mayEnter)
+        let menuChild = islandOwner && islandExpanded() && peekState().shown && region == .peek
+        let inside = region == .band || menuChild
         // The ear tell tracks every tick while the pointer is in the
         // region, not just the region's edges — crossing between ears
         // and tray inside it is the whole point of the tell.
@@ -510,24 +545,37 @@ final class ScreenBarInteraction {
             hoveredWing = wing
             onWingHover(wing)
         }
-        guard inside != hovering else {
+        if inside, hovering, islandOwner != hoverOwnerIsIsland, !mayEnter {
+            if hoverOwnerIsIsland { onIslandHover(false, false) }
+            hovering = false
+            hoverOwnerIsIsland = islandOwner
+            showWork?.cancel()
+            showWork = nil
+            hideWork?.cancel()
+            hideWork = nil
+            return
+        }
+        guard !inside || hovering || mayEnter else { return }
+        guard inside != hovering || (inside && islandOwner != hoverOwnerIsIsland) else {
             if inside, isTooltipShown, let current = focus(), current != lastFocus { showTooltip(current) }
             return
         }
+        if hovering && hoverOwnerIsIsland && !islandOwner { onIslandHover(false, false) }
         hovering = inside
+        hoverOwnerIsIsland = islandOwner
         showWork?.cancel()
         showWork = nil
         hideWork?.cancel()
         hideWork = nil
         if inside {
-            if islandOwnsNotch() {
+            if islandOwner {
                 // The island is the peek: hovering an ear is hovering
                 // the island. A leftover glass card goes away. The
                 // arrival reports whether it came by the bar's row —
                 // the island's hover debounce floors longer for a
                 // pointer that may only be crossing the menu bar.
                 if isTooltipShown { hideTooltip() }
-                onIslandHover(true, !onIsland(NSEvent.mouseLocation))
+                onIslandHover(true, !onIsland(point))
             } else if isTooltipShown {
                 // Back inside before the grace fired — the peek never went
                 // anywhere; refresh it if the focus moved on.
@@ -542,7 +590,7 @@ final class ScreenBarInteraction {
                 showWork = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverDelay, execute: work)
             }
-        } else if islandOwnsNotch() {
+        } else if islandOwner {
             onIslandHover(false, false)
         } else if isTooltipShown && !card.isPinned {
             let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.hideTooltip() } }
@@ -553,25 +601,30 @@ final class ScreenBarInteraction {
 
     /// Which surface the pointer is on: the menu bar's peek (the right
     /// ear's zone, the hanging peek, the corridor between), the band's
-    /// card region, or neither. The peek wins where they overlap — the
-    /// ear is in both.
+    /// card region, or neither. The assigned peek and its corridor win
+    /// where they overlap the island's region.
     enum PointerRegion: Equatable { case peek, band, outside }
 
     nonisolated static func pointerRegion(onPeekZone: Bool, onPeek: Bool, inHitRegion: Bool) -> PointerRegion {
-        if onPeekZone || onPeek { return .peek }
+        if onPeek || onPeekZone { return .peek }
         return inHitRegion ? .band : .outside
     }
 
     /// The peek's hover: resting on the ear hangs it after `peekDelay`
     /// — never over a pinned card, which only a click or a pull trades
     /// for it — and leaving the ear and the peek folds an unpinned one
-    /// after the card's own grace.
-    private func notePeekHover(_ onSurface: Bool) {
+    /// after its short grace.
+    private func notePeekHover(_ onSurface: Bool, mayEnter: Bool) {
         let state = peekState()
         if onSurface {
             peekHideWork?.cancel()
             peekHideWork = nil
-            guard !state.shown, peekShowWork == nil, !cardPinned() else { return }
+            guard mayEnter, !state.shown, peekShowWork == nil else { return }
+            if peekCanResume() {
+                requestPeek(.resumeHover)
+                return
+            }
+            guard !cardPinned() else { return }
             let work = DispatchWorkItem { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -581,7 +634,7 @@ final class ScreenBarInteraction {
                 }
             }
             peekShowWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.peekDelay, execute: work)
+            peekHoverTimer(Self.peekDelay, work)
         } else {
             peekShowWork?.cancel()
             peekShowWork = nil
@@ -591,27 +644,27 @@ final class ScreenBarInteraction {
                     guard let self else { return }
                     self.peekHideWork = nil
                     guard !self.pointerOnPeekSurface(), !self.peekState().pinned else { return }
-                    self.onPeek(.close)
+                    self.onPeek(.leave)
                 }
             }
             peekHideWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeGrace, execute: work)
+            peekHoverTimer(Self.peekCloseGrace, work)
         }
     }
 
     /// Whether the pointer is on the ear's zone, the peek, or between.
     private func pointerOnPeekSurface() -> Bool {
-        let point = NSEvent.mouseLocation
+        let point = pointerLocation()
         return peekZoneAt(point) || peekCorridorAt(point)
     }
 
     /// Every gesture that asks for the peek — the rest, the wheel, the
     /// trackpad, the click, the pull — asks here, so the rule holds on
-    /// each: a pinned card or grown island folds only for a click or a
-    /// pull, and a glass card still in its leave grace goes now — one
-    /// surface under the notch at a time.
+    /// each. A menu attaches below a grown island; the separate glass
+    /// card folds first so the two popups never occupy the same space.
     private func requestPeek(_ intent: ScreenBarPeekIntent) {
-        let gesture = Self.peekGesture(intent: intent, cardPinned: cardPinned())
+        let gesture = Self.peekGesture(intent: intent, cardPinned: cardPinned(),
+                                       expandedIsland: islandOwnsNotch() && islandExpanded())
         guard gesture.open else { return }
         if gesture.unpinFirst {
             unpin()
@@ -626,16 +679,17 @@ final class ScreenBarInteraction {
     }
 
     /// What a gesture asking for the peek does about the card — pure: a
-    /// pinned card (or the grown island) is traded for the peek only by
-    /// a deliberate press on the ear, a click or a pull, which folds it
-    /// first; a rest or a scroll leaves it standing and hangs nothing.
+    /// deliberate press opens the menu below an expanded island. A
+    /// glass card folds first. Hover never replaces an open card.
     nonisolated static func peekGesture(intent: ScreenBarPeekIntent,
-                                        cardPinned: Bool) -> (unpinFirst: Bool, open: Bool) {
+                                        cardPinned: Bool,
+                                        expandedIsland: Bool = false) -> (unpinFirst: Bool, open: Bool) {
         guard cardPinned else { return (false, true) }
         switch intent {
         case .hover: return (false, false)
-        case .pin, .toggle: return (true, true)
-        case .close: return (false, true)
+        case .resumeHover: return (false, expandedIsland)
+        case .pin, .toggle: return (!expandedIsland, true)
+        case .close, .leave: return (false, true)
         }
     }
 
@@ -738,14 +792,17 @@ final class ScreenBarInteraction {
     /// "inside", so it can never arm the band's swipe or fire the
     /// outside-click dismissal.
     private var pressOnIsland = false
+    private var pressRestoresWings = false
     /// The drag's flick tracker — travel commits mid-drag, release
     /// speed is the other way a swipe is a swipe.
     private var dragFlick = NotchPullGesture()
 
-    private func pointerDown(at point: NSPoint, time: TimeInterval) {
+    func pointerDown(at point: NSPoint, time: TimeInterval, command: Bool = false) {
+        if peekCanResume() { onPeek(.close) }
         let islandRects = self.extraHitRects().map { String(describing: $0) }.joined(separator: ";")
         Self.diag("down (\(Int(point.x)),\(Int(point.y))) islandRects=\(islandRects)")
         pressOnIsland = false
+        pressRestoresWings = false
         swipeOnPeek = false
         switch Self.peekPress(onPanel: peekPanel()?.contains(point) ?? false,
                               onZone: peekZoneAt(point), peekShown: peekState().shown) {
@@ -761,16 +818,25 @@ final class ScreenBarInteraction {
         case .none:
             break
         }
-        if onIsland(point) {
+        if Self.islandOwnsGesture(wing: wingSideAt(point), onIsland: onIsland(point)) {
             Self.diag("island press unarmed")
             // The island's window answers its own presses — tap to
             // toggle, pull to grow or fold. The press is inside, so it
             // is never the outside-click dismissal either.
             pressOnIsland = true
+            if !command, canRestoreIslandWings(point) {
+                pressRestoresWings = true
+                swipeStart = point
+                swipeRegion = .band
+                swipeFired = false
+                dragFlick = NotchPullGesture()
+                dragFlick.move(translation: 0, at: time)
+                return
+            }
             swipeStart = nil
             return
         }
-        if pointerInHitRegion() {
+        if pointerInHitRegion(at: point) {
             // Inside: the press might become a swipe — the click resolves
             // on release instead.
             swipeStart = point
@@ -796,9 +862,13 @@ final class ScreenBarInteraction {
         }
     }
 
-    private func pointerDragged(to point: NSPoint, at time: TimeInterval) {
+    func pointerDragged(to point: NSPoint, at time: TimeInterval) {
         guard let start = swipeStart, !swipeFired else { return }
         dragFlick.move(translation: point.y - start.y, at: time)
+        if pressRestoresWings, abs(point.x - start.x) <= abs(point.y - start.y) {
+            if dragFlick.engaged { swipeStart = nil }
+            return
+        }
         // The gesture's axis wins: a sideways drag on a wing dismisses
         // it, a sideways drag on the band summons — the vertical
         // expand/collapse only fires when the pull is honestly vertical.
@@ -847,7 +917,7 @@ final class ScreenBarInteraction {
         }
     }
 
-    private func pointerReleased(at time: TimeInterval) {
+    func pointerReleased(at time: TimeInterval) {
         Self.diag("released fired=\(swipeFired) armed=\(swipeStart != nil) island=\(pressOnIsland)")
         let wasSwipe = swipeFired
         let armed = swipeStart != nil
@@ -859,6 +929,7 @@ final class ScreenBarInteraction {
         swipeFired = false
         let onIsland = pressOnIsland
         pressOnIsland = false
+        pressRestoresWings = false
         // A release resolves only a press that armed here — a swipe
         // that already fired, and an island press (the island's window
         // owns its own verdicts), both skip.
@@ -880,10 +951,9 @@ final class ScreenBarInteraction {
         case .none: break
         }
         // A press that never crossed the threshold is the click it always
-        // was — the handle's own toggle gets first claim, then an ear's
-        // own action (the mark's session opens directly), then the pin.
+        // was — an ear's own action first (the mark's session opens
+        // directly), then the pin.
         if case .pin = Self.clickOutcome(pinned: cardPinned(), inside: pointerInHitRegion()) {
-            if menuHandleAt(NSEvent.mouseLocation) { onMenuHandle(); return }
             if let side = wingSideAt(NSEvent.mouseLocation), onWingActivate(side) { return }
             pinCard()
         }
@@ -892,6 +962,7 @@ final class ScreenBarInteraction {
     /// A secondary click: only an ear under the pointer answers it —
     /// anywhere else on the band the click belongs to what is below.
     func pointerSecondaryDown(at point: NSPoint) {
+        if peekCanResume() { onPeek(.close) }
         guard let side = wingSideAt(point) else { return }
         _ = onWingSecondaryClick(side, point)
     }
@@ -914,6 +985,7 @@ final class ScreenBarInteraction {
     /// counts a gesture that began inside the hit region.
     private var scrollAccumY: CGFloat = 0
     private var scrollAccumX: CGFloat = 0
+    private var scrollRestoreOnly = false
     private var scrollLive = false
     private var scrollFired = false
     private var scrollPinnedAtStart = false
@@ -921,13 +993,23 @@ final class ScreenBarInteraction {
     /// The gesture began on the right ear's peek zone.
     private var scrollOnPeek = false
 
-    private func pointerScrolled(_ event: NSEvent) {
+    private func pointerScrolled(_ event: NSEvent, at point: NSPoint) {
+        pointerScrolled(precise: event.hasPreciseScrollingDeltas, phase: event.phase,
+                        deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY,
+                        inverted: event.isDirectionInvertedFromDevice, at: point)
+    }
+
+    func pointerScrolled(precise: Bool, phase: NSEvent.Phase, deltaX: CGFloat,
+                         deltaY: CGFloat, inverted: Bool, at point: NSPoint) {
+        if Self.diagnosticsEnabled {
+            Self.diag("scroll input precise=\(precise) phase=\(phase.rawValue) dx=\(deltaX.rounded()) dy=\(deltaY.rounded())")
+        }
         // A mouse wheel carries no phases: a notch of it on the right
         // ear hangs the peek at once — the menu bar's scroll-to-reveal,
         // answered where the ear stands.
-        if !event.hasPreciseScrollingDeltas {
+        if !precise {
             if Self.scrollOpensPeek(precise: false, beganOnPeek: false,
-                                    onPeekZone: peekZoneAt(NSEvent.mouseLocation),
+                                    onPeekZone: peekZoneAt(point),
                                     accumX: 0, accumY: 0) {
                 requestPeek(.hover)
             }
@@ -935,21 +1017,30 @@ final class ScreenBarInteraction {
         }
         // Only a trackpad gesture carries phases; a gesture's momentum
         // tail arrives with `phase` empty.
-        guard event.phase != [] else { return }
-        if event.phase.contains(.began) {
-            scrollOnPeek = peekZoneAt(NSEvent.mouseLocation)
+        guard phase != [] else { return }
+        if phase.contains(.began) {
+            scrollOnPeek = peekZoneAt(point)
             // A two-finger gesture that began on the island's window is
             // the island's own — its hosting view reads the same scroll
             // stream, so both machines counting one flick would double
             // every swipe.
-            scrollLive = pointerInHitRegion() && !onIsland(NSEvent.mouseLocation)
-            scrollRegion = wingSideAt(NSEvent.mouseLocation).map { .wing($0) } ?? .band
+            let wing = wingSideAt(point)
+            let islandOwns = Self.islandOwnsGesture(wing: wing, onIsland: onIsland(point))
+            scrollRestoreOnly = islandOwns && canRestoreIslandWings(point)
+            scrollLive = pointerInHitRegion(at: point) && (!islandOwns || scrollRestoreOnly)
+            Self.diag("scroll began owner=\(islandOwns ? "island" : (scrollLive ? "band" : "outside")) wing=\(wing.map { String(describing: $0) } ?? "none")")
+            scrollRegion = wing.map { .wing($0) } ?? .band
             scrollPinnedAtStart = cardPinned()
             scrollFired = false
             scrollAccumY = 0
             scrollAccumX = 0
         }
-        if event.phase.contains(.ended) {
+        if phase.contains(.ended) {
+            if scrollLive, !scrollFired {
+                scrollAccumX += Self.scrollFingerDelta(deltaX, inverted: inverted)
+                scrollAccumY += Self.scrollFingerDelta(deltaY, inverted: inverted)
+            }
+            Self.diag("scroll ended live=\(scrollLive) fired=\(scrollFired) horizontal=\(abs(scrollAccumX) > abs(scrollAccumY))")
             // A flick is a gesture that lifts short of the threshold —
             // a fast pull past roughly half commits on release instead
             // of evaporating. `.cancelled` is the OS retracting the
@@ -961,15 +1052,16 @@ final class ScreenBarInteraction {
                                                  threshold: commit) {
                     case .dismiss(let side):
                         onWingPullEnd(side)
+                        Self.diag("scroll dismiss side=\(side)")
                         onWingDismiss(side)
                     case .restore:
                         onWingRestore()
                     case .none:
                         break
                     }
-                } else if scrollOnPeek, abs(scrollAccumY) >= commit {
+                } else if !scrollRestoreOnly, scrollOnPeek, abs(scrollAccumY) >= commit {
                     requestPeek(.hover)
-                } else if abs(scrollAccumY) >= commit {
+                } else if !scrollRestoreOnly, abs(scrollAccumY) >= commit {
                     switch Self.swipeOutcome(pinnedAtDown: scrollPinnedAtStart,
                                              deltaY: scrollAccumY, threshold: commit) {
                     case .expand:
@@ -987,7 +1079,8 @@ final class ScreenBarInteraction {
             scrollAccumX = 0
             return
         }
-        if event.phase.contains(.cancelled) {
+        if phase.contains(.cancelled) {
+            Self.diag("scroll cancelled live=\(scrollLive)")
             if case .wing(let side) = scrollRegion { onWingPullEnd(side) }
             scrollLive = false
             scrollAccumY = 0
@@ -1001,10 +1094,10 @@ final class ScreenBarInteraction {
         // wheel reports finger direction already. The drag path reads
         // the pointer — the same space — so both feeds meet
         // `swipeOutcome`/`wingSwipeOutcome` in one sign convention.
-        scrollAccumY += Self.scrollFingerDelta(event.scrollingDeltaY,
-                                               inverted: event.isDirectionInvertedFromDevice)
-        scrollAccumX += Self.scrollFingerDelta(event.scrollingDeltaX,
-                                               inverted: event.isDirectionInvertedFromDevice)
+        scrollAccumY += Self.scrollFingerDelta(deltaY,
+                                               inverted: inverted)
+        scrollAccumX += Self.scrollFingerDelta(deltaX,
+                                               inverted: inverted)
         // The dominant axis decides which gesture this is — a sideways
         // flick dismisses or summons wings, a vertical pull expands or
         // collapses the card, and a diagonal never fires either until
@@ -1019,6 +1112,7 @@ final class ScreenBarInteraction {
             case .dismiss(let side):
                 scrollFired = true
                 onWingPullEnd(side)
+                Self.diag("scroll dismiss side=\(side)")
                 onWingDismiss(side)
             case .restore:
                 scrollFired = true
@@ -1030,6 +1124,7 @@ final class ScreenBarInteraction {
         }
         // Vertical travel on the right ear hangs the peek, never the
         // card: either direction, a quarter of the way to a commit.
+        guard !scrollRestoreOnly else { return }
         if scrollOnPeek {
             if Self.scrollOpensPeek(precise: true, beganOnPeek: true, onPeekZone: true,
                                     accumX: scrollAccumX, accumY: scrollAccumY) {
@@ -1111,14 +1206,6 @@ final class ScreenBarInteraction {
         return accessibilityPress()
     }
 
-    /// The named hidden-items action is the drawn ‹ handle's own toggle.
-    @discardableResult
-    func accessibilityToggleMenuHandle() -> Bool {
-        guard !parked else { return false }
-        onMenuHandle()
-        return true
-    }
-
     private func unpin() {
         if islandOwnsNotch() {
             onIslandCollapse()
@@ -1130,11 +1217,11 @@ final class ScreenBarInteraction {
     /// ⌃⌥D and `jrbar://shelf` while the glass card is the notch's
     /// surface (`NotchToy.toggleShelf`): the card pinned straight onto
     /// its Shelf page, the band click's own pin, or let go when it is
-    /// already up pinned. nil once it acted, else the sentence a link
+    /// already showing Shelf pinned. nil once it acted, else the sentence a link
     /// says; a card with nothing to hang from leaves no pin and no
     /// Shelf page waiting behind it.
     func toggleShelfCard() -> String? {
-        if card.isShown && card.isPinned {
+        if card.isShown && card.isPinned && card.model.page == .shelf {
             hideTooltip()
             return nil
         }

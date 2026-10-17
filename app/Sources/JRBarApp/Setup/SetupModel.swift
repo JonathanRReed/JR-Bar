@@ -9,7 +9,7 @@ import JRBarCore
 import JRBarUI
 import UserNotifications
 
-/// One row on the Agents step: the same facts the Settings › Agents row
+/// One row on the Agents step: the same facts the Settings › Agents & Usage row
 /// reads (`health.detected`, `health.hooks`), flattened so the step and
 /// the tests never touch a `CoreState`.
 struct SetupAgent: Identifiable, Equatable, Sendable {
@@ -23,18 +23,36 @@ struct SetupAgent: Identifiable, Equatable, Sendable {
     /// daemon reports no hook state at all.
     var hookStatus: String?
 
-    /// The Settings › Agents row's words, shared so the walkthrough and
+    /// The Settings › Agents & Usage row's words, shared so the walkthrough and
     /// the page can never disagree.
     func statusWord(monitorLive: Bool) -> String {
+        guard monitorLive else { return "Monitor offline" }
         switch hookStatus {
         case "ok": return "Live"
         case "missing": return "Not installed"
         case "stale": return "Quiet"
         case "disabled": return "Disabled in provider"
-        case nil: return monitorLive ? "Unknown" : "Monitor offline"
+        case nil: return "Unknown"
         case let other?: return other.capitalized
         }
     }
+}
+
+/// One provider's usage question on the Agents step: "Show Claude usage?"
+/// with the daemon's own sentence under it (`list_providers` →
+/// `usage_consent`), so Setup, Settings and the Usage Center say one thing.
+struct SetupUsageOffer: Identifiable, Equatable, Sendable {
+    /// The provider id, e.g. `"claude"`.
+    var id: String
+    var name: String
+    /// "Show Claude usage?"
+    var question: String
+    /// "JR-Bar will ask Anthropic for your usage with the sign-in Claude
+    /// Code already has. Nothing else is sent."
+    var summary: String
+    /// Whether the person has already said yes (an earlier run, the
+    /// Settings switch, or an upgrade that kept a working provider).
+    var isOn: Bool
 }
 
 /// The reply's own words under a row — the setup page's form of the
@@ -111,11 +129,11 @@ enum SetupPermission: String, CaseIterable, Sendable, Identifiable {
         case .location:
             return "Wi-Fi rules in the Menu Bar utility — macOS only tells apps a network's name with Location on. Nothing reads where you are."
         case .fullDiskAccess:
-            return "Focus sync in the monitor — it reads the Do Not Disturb database so the lights quiet down when a Focus is on."
+            return "Names of active Focus modes for individual dimming, alert and calibration rules. JR-Bar's background helper needs access too."
         case .focusStatus:
-            return "The app's own read of the active Focus — Menu Bar triggers and the status item's moon. Separate from Full Disk Access."
+            return "Whether Focus is on, for React to Focus modes, Menu Bar rules and the status item's moon. Mode names use Full Disk Access."
         case .lidHelper:
-            return "Agents keep running with the lid shut (Notifications & Focus › Power). Copy the command, paste it in Terminal; it asks for your password once."
+            return "Agents keep running with the lid shut (General › Power). Copy the command, paste it in Terminal; it asks for your password once."
         }
     }
 
@@ -215,6 +233,12 @@ struct SetupModel {
     var monitorLive: () -> Bool = { false }
     /// The Agents step's rows — `health.detected` / `health.hooks` flattened.
     var agents: () -> [SetupAgent] = { [] }
+    /// The usage questions for the providers found on this Mac, one each,
+    /// with the daemon's words. Asked when the Agents step opens.
+    var usageOffers: () async throws -> [SetupUsageOffer] = { [] }
+    /// The person's answer for one provider: `true` is "Turn on", `false`
+    /// withdraws it. Never called for "Not now", which asks nothing.
+    var setUsage: (String, Bool) async -> SetupNote = { _, _ in SetupNote("Monitor offline", isError: true) }
     /// `install_hooks` awaited for one provider; the reply's own words
     /// become the row note, the same reading `SettingsStore.runHook` gives.
     var installHooks: (String) async -> SetupNote = { _ in SetupNote("Monitor offline", isError: true) }
@@ -250,7 +274,7 @@ extension SetupModel {
     static let accessibilitySettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
     /// The Notifications pane — the same deep link Settings ›
-    /// Notifications & Focus shows when banners are denied.
+    /// Alerts & Sounds shows when banners are denied.
     static let notificationsSettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!
     /// Calendars privacy, for a denied calendar row.
@@ -302,6 +326,8 @@ extension SetupModel {
         model.installHooks = { [weak core] provider in
             await Self.installHooks(provider, on: core)
         }
+        model.usageOffers = { [weak core] in try await Self.usageOffers(on: core) }
+        model.setUsage = { [weak core] provider, on in await Self.setUsage(provider, on: on, core: core) }
         model.refreshPermissions = { [weak core] in
             var statuses = await Self.probePermissions()
             // The daemon owns the helper's install state (`power.closed_lid`).
@@ -312,6 +338,39 @@ extension SetupModel {
         model.act = { permission in await Self.act(on: permission) }
         model.iconPreview = { [weak core] in Self.iconPreview(core: core) }
         return model
+    }
+
+    /// One question per provider the daemon found on this Mac and has a
+    /// usage switch for. A provider the daemon does not say it found gets
+    /// no question here; Settings › Agents & Usage lists every provider.
+    static func usageOffers(on core: CoreModel?) async throws -> [SetupUsageOffer] {
+        guard let core, core.isLive else { return [] }
+        let rows = try await core.listProviders()
+        let detected = core.state?.health?["detected"]
+        return rows.compactMap { row in
+            guard row.instance == "default", let consent = row.usageConsent,
+                  detected?[row.id]?.boolValue == true else { return nil }
+            return SetupUsageOffer(
+                id: row.id,
+                name: ProviderStyle.style(for: row.id).name,
+                question: consent.question,
+                summary: consent.summary,
+                isOn: consent.granted)
+        }
+    }
+
+    /// `set_provider_usage_consent` with source `setup`, read the way
+    /// `installHooks` reads its reply: the daemon's words on a refusal.
+    static func setUsage(_ provider: String, on: Bool, core: CoreModel?) async -> SetupNote {
+        guard let core, core.isLive else { return SetupNote("Monitor offline", isError: true) }
+        do {
+            try await core.setProviderUsageConsent(provider, enabled: on, source: "setup")
+            return SetupNote(on ? "Usage on" : "Usage off", isError: false)
+        } catch let error as CoreReplyError {
+            return SetupNote(error.message ?? error.code, isError: true)
+        } catch {
+            return SetupNote(String(describing: error), isError: true)
+        }
     }
 
     /// `install_hooks` awaited, read exactly the way
@@ -408,13 +467,36 @@ extension SetupModel {
         }
     }
 
-    /// The install command for this build: the bundled `jrbar-core` in a
-    /// packaged app (whose path Terminal needs, since it is on no PATH),
-    /// else `jrbar` from a source checkout. `sudo` because the helper is a
-    /// sudoers rule; nothing else in JR-Bar ever asks for a password.
-    static func lidHelperCommand(coreExecutable: String?) -> String {
-        let executable = coreExecutable.map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" } ?? "jrbar"
-        return "sudo \(executable) status-bar install-sleep-helper"
+    /// The one-time install command the row copies. It runs `/bin/sh`
+    /// with a fixed script and no program from the app bundle, so the
+    /// root-run step never executes a file the person's own account can
+    /// replace. The script writes the same two-line sudoers rule as
+    /// `lid_sleep.sleep_helper_sudoers_rule`, which names `/usr/bin/pmset`
+    /// only. `sudo` because the helper is a sudoers rule; nothing else in
+    /// JR-Bar ever asks for a password.
+    static func lidHelperCommand() -> String {
+        "sudo /bin/sh -c '\(lidHelperScript())'"
+    }
+
+    /// The script `lidHelperCommand` hands to `sh`. It takes the user from
+    /// `$SUDO_USER` (letters, digits, `.`, `_` and `-` only), checks the
+    /// rule with `visudo -cf` while it still has a dotted temporary name
+    /// that sudo ignores, and only then moves it into place at mode 0440.
+    /// The directory and `visudo` are parameters so a test can run it
+    /// without root; the defaults are the real ones.
+    static func lidHelperScript(sudoersDirectory: String = "/etc/sudoers.d",
+                                visudo: String = "/usr/sbin/visudo") -> String {
+        let rule = #"%s ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset -a disablesleep 1\n"#
+        let target = "\(sudoersDirectory)/jrbar-disablesleep"
+        let steps = [
+            #"case "$SUDO_USER" in ""|*[!A-Za-z0-9._-]*) echo "run this with sudo from your own account" >&2; exit 1;; esac"#,
+            "f=$(/usr/bin/mktemp \(sudoersDirectory)/.jrbar-XXXXXX) || exit 1",
+            #"printf "\#(rule)" "$SUDO_USER" > "$f""#,
+            #"/bin/chmod 440 "$f""#,
+            #"if \#(visudo) -cf "$f" >/dev/null; then /bin/mv "$f" \#(target) && echo "closed-lid helper installed"; "#
+                + #"else /bin/rm -f "$f"; echo "visudo refused the rule" >&2; exit 1; fi"#,
+        ]
+        return steps.joined(separator: "; ")
     }
 
     /// `EKEventStore.authorizationStatus(for: .event)` — the same status
@@ -522,7 +604,12 @@ extension SetupModel {
         case .screenRecording: requestScreenRecording()
         case .audioCapture: NSWorkspace.shared.open(audioCaptureSettingsURL)
         case .bluetooth: NSWorkspace.shared.open(bluetoothSettingsURL)
-        case .accessibility: NSWorkspace.shared.open(accessibilitySettingsURL)
+        case .accessibility:
+            // macOS lists an app in the Accessibility pane only once it has
+            // asked: opening the pane alone can leave the person looking for
+            // a JR-Bar that is not there. The button is the ask.
+            accessibilityPrompt()
+            openSettingsPane(accessibilitySettingsURL)
         case .automation: await requestAutomation()
         case .location: requestLocation()
         case .fullDiskAccess: NSWorkspace.shared.open(fullDiskAccessSettingsURL)
@@ -530,6 +617,15 @@ extension SetupModel {
         case .lidHelper: copyLidHelperCommand()
         }
     }
+
+    /// What registers JR-Bar with Accessibility and shows macOS's own
+    /// request. A test replaces it, so nothing is asked from a suite.
+    nonisolated(unsafe) static var accessibilityPrompt: () -> Void = {
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+    }
+
+    /// How a row opens its System Settings pane.
+    nonisolated(unsafe) static var openSettingsPane: (URL) -> Void = { NSWorkspace.shared.open($0) }
 
     /// Location privacy, for a denied row (and Location Services off).
     static let locationSettingsURL = URL(
@@ -549,7 +645,14 @@ extension SetupModel {
         configuration.activates = false
         configuration.addsToRecentItems = false
         _ = try? await NSWorkspace.shared.openApplication(at: systemEvents, configuration: configuration)
-        _ = await Task.detached { AutomationPermission.systemEvents(ask: true) }.value
+        let answer = await Task.detached { AutomationPermission.systemEvents(ask: true) }.value
+        if let pane = automationFollowUp(afterAsking: answer) { openSettingsPane(pane) }
+    }
+
+    /// The pane to open once the Automation prompt has been answered: a
+    /// "Don't Allow" is only undone there, and the prompt never comes twice.
+    static func automationFollowUp(afterAsking answer: AutomationPermission) -> URL? {
+        answer == .denied ? AutomationPermission.settingsURL : nil
     }
 
     /// The one location manager the prompt needs alive until it is
@@ -567,7 +670,7 @@ extension SetupModel {
     }
 
     static func copyLidHelperCommand() {
-        let command = lidHelperCommand(coreExecutable: CoreSupervisor.bundledCore(in: Bundle.main)?.executable)
+        let command = lidHelperCommand()
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(command, forType: .string)
     }
@@ -575,7 +678,7 @@ extension SetupModel {
     /// NotificationBridge asks with `.alert/.sound/.badge` the first
     /// time a banner is due; the walkthrough asks with the same options
     /// up front instead, and deep-links to the Notifications pane once
-    /// denied — the same link Settings › Notifications & Focus shows.
+    /// denied — the same link Settings › Alerts & Sounds shows.
     static func requestNotifications() async {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let center = UNUserNotificationCenter.current()

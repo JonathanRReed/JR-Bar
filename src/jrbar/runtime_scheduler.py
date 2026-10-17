@@ -39,7 +39,6 @@ class RuntimeFeature(str, Enum):
     FINITE_CUE_DEADLINE = "finite_cue_deadline"
     PRESENTATION_FRAME_FALLBACK = "presentation_frame_fallback"
     PRESENTATION_STATIC_DEADLINE = "presentation_static_deadline"
-    ALCOVE_OBSERVATION = "alcove_observation"
     POINTER_PEEK = "pointer_peek"
     TEST_SIGNAL_DEADLINE = "test_signal_deadline"
 
@@ -48,7 +47,6 @@ class RuntimeWorkerDomain(str, Enum):
     OS_POLL = "os_poll"
     HARDWARE_WRITE = "hardware_write"
     SCREEN_BAR_SAMPLER = "screen_bar_sampler"
-    ALCOVE_OBSERVER = "alcove_observer"
 
 
 class SubmissionDisposition(str, Enum):

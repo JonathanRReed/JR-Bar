@@ -6,7 +6,7 @@ import Testing
 
 /// The Duo look's pure model (`FoldDuoModel`, FoldPortal.swift): the
 /// held picture, the eased motion, the blur and darkening curves, the
-/// end fade — plus the Duo's ends (`FirstFrameCatchUp`, `FoldBlackout`)
+/// end fade — plus the Duo's end (`FoldBlackout`)
 /// and the capture's bar-window rule. No Metal: every number the shader
 /// draws is pinned here first.
 @Suite("Fold Duo model")
@@ -243,44 +243,6 @@ struct FoldDuoModelTests {
         #expect(FoldDuoModel.lod(sigmaPixels: 1e6, levels: 4) == 3)
     }
 
-    @Test("the order-in ramp fades the overlay in over 120 ms")
-    func orderInRamp() {
-        #expect(FoldDuoModel.orderInRamp(elapsed: 0) == 0)
-        #expect(FoldDuoModel.orderInRamp(elapsed: 0.12) == 1)
-        #expect(FoldDuoModel.orderInRamp(elapsed: 5) == 1)
-        let mid = FoldDuoModel.orderInRamp(elapsed: 0.06)
-        #expect(abs(mid - 0.5) < 1e-9)
-    }
-
-    // MARK: First-frame catch-up
-
-    @Test("a late first frame eases the delta up over 150 ms, then steps aside")
-    func catchUpEases() {
-        var catchUp = FirstFrameCatchUp()
-        #expect(catchUp.scale(at: 1) == 1, "nothing to catch up: the live delta")
-        catchUp.begin(liveDelta: 0.3, at: 10)
-        #expect(catchUp.active)
-        #expect(catchUp.scale(at: 10) == 0, "the first frame shows the desktop, not a jump")
-        var last = 0.0
-        for i in 1...14 {
-            let s = catchUp.scale(at: 10 + Double(i) * 0.01)
-            #expect(s >= last)
-            last = s
-        }
-        #expect(catchUp.scale(at: 10.15) == 1)
-        #expect(!catchUp.active, "done means gone")
-        #expect(catchUp.scale(at: 10.16) == 1)
-    }
-
-    @Test("a first frame with almost no travel needs no catch-up")
-    func catchUpThreshold() {
-        var catchUp = FirstFrameCatchUp()
-        catchUp.begin(liveDelta: 1.5 * .pi / 180, at: 3)
-        #expect(!catchUp.active)
-        catchUp.begin(liveDelta: .nan, at: 3)
-        #expect(!catchUp.active)
-    }
-
     // MARK: Blackout
 
     @Test("the black hold lets go on its watchdog if the lid stays shut")
@@ -295,7 +257,7 @@ struct FoldDuoModelTests {
         #expect(hold.deadline == 103)
     }
 
-    @Test("a reopen restarts the watchdog once and releases past 15° with a fresh frame")
+    @Test("a reopen restarts the watchdog once and releases past 15° with a picture in hand")
     func blackoutReopen() {
         var hold = FoldBlackout()
         hold.hold(at: 0)
@@ -305,75 +267,50 @@ struct FoldDuoModelTests {
         #expect(hold.deadline == 5.5, "the reopen gets its own three seconds")
         hold.note(angle: 12, at: 4)
         #expect(hold.deadline == 5.5, "only once")
-        #expect(!hold.releases(angle: 12, freshFrame: true), "not open enough yet")
-        #expect(!hold.releases(angle: 20, freshFrame: false), "no frame since the close")
-        #expect(hold.releases(angle: 15, freshFrame: true))
+        #expect(!hold.releases(angle: 12, pictureReady: true), "not open enough yet")
+        #expect(!hold.releases(angle: 20, pictureReady: false), "no picture to fold")
+        #expect(hold.releases(angle: 15, pictureReady: true))
         hold.end()
         #expect(!hold.active)
-        #expect(!hold.releases(angle: 40, freshFrame: true), "nothing to release once let go")
+        #expect(!hold.releases(angle: 40, pictureReady: true), "nothing to release once let go")
     }
 
-    @Test("the watchdog hands a reopened lid with a frame to the fold, and orders out otherwise")
+    @Test("the watchdog hands a reopened lid with a picture to the fold, and orders out otherwise")
     func blackoutWatchdogHandsOver() {
-        #expect(FoldBlackout.watchdogHandsOver(angle: 10, drawing: true, freshFrame: true))
-        #expect(!FoldBlackout.watchdogHandsOver(angle: 10, drawing: true, freshFrame: false),
-                "no frame, nothing to draw")
-        #expect(!FoldBlackout.watchdogHandsOver(angle: 4, drawing: true, freshFrame: true),
+        #expect(FoldBlackout.watchdogHandsOver(angle: 10, drawing: true, pictureReady: true))
+        #expect(!FoldBlackout.watchdogHandsOver(angle: 10, drawing: true, pictureReady: false),
+                "no picture, nothing to draw")
+        #expect(!FoldBlackout.watchdogHandsOver(angle: 4, drawing: true, pictureReady: true),
                 "still shut")
-        #expect(!FoldBlackout.watchdogHandsOver(angle: 10, drawing: false, freshFrame: true),
+        #expect(!FoldBlackout.watchdogHandsOver(angle: 10, drawing: false, pictureReady: true),
                 "paused or waiting out the resume quiet")
-        #expect(!FoldBlackout.watchdogHandsOver(angle: nil, drawing: true, freshFrame: true))
-        #expect(!FoldBlackout.watchdogHandsOver(angle: .nan, drawing: true, freshFrame: true))
+        #expect(!FoldBlackout.watchdogHandsOver(angle: nil, drawing: true, pictureReady: true))
+        #expect(!FoldBlackout.watchdogHandsOver(angle: .nan, drawing: true, pictureReady: true))
         // Handed over under the release angle, the fold's first frame is
-        // as black as the hold was.
-        let reference = 110.0
+        // as black as the hold was: the glass at the lid's own angle is
+        // under edge-on.
         for lid in [6.0, 10, 14.9] {
-            var chase = DeltaChase()
-            chase.reset(to: FoldDuoModel.reopenDelta(reference: reference, perspective: 0.6))
-            let delta = chase.tick(target: (reference - lid) * .pi / 180, dt: 1.0 / 60)
-            let theta = reference - delta * 180 / .pi
-            #expect(FoldDuoModel.endFade(theta: theta, eye: eye) == 1, "lid \(lid)°")
+            #expect(FoldDuoModel.endFade(theta: lid, eye: eye) == 1, "lid \(lid)°")
         }
     }
 
-    @Test("a reopen from black unfolds: the first frame is still black and the picture comes up over frames")
-    func reopenUnfoldsFromBlack() {
-        let reference = 110.0
-        let seed = FoldDuoModel.reopenDelta(reference: reference, perspective: 0.6)
-        let seedTheta = reference - seed * 180 / .pi
-        #expect(abs(seedTheta - FoldDuoModel.blackAngle(eye: eye)) < 1e-9)
-        #expect(FoldDuoModel.endFade(theta: seedTheta, eye: eye) == 1, "the first frame matches the hold")
-        // The lid is already at 60° (a quick reopen) or back at its rest
-        // by the time a frame lands; the chase unwinds from the seed.
-        for liveLid in [60.0, reference] {
-            var chase = DeltaChase()
-            chase.reset(to: seed)
-            let live = (reference - liveLid) * .pi / 180
-            var lastFade = 1.0
-            var biggestStep = 0.0
-            var frames = 0
-            while frames < 120 {
-                let delta = chase.tick(target: live, dt: 1.0 / 60)
-                frames += 1
-                let fade = FoldDuoModel.endFade(theta: reference - delta * 180 / .pi, eye: eye)
-                #expect(fade <= lastFade, "the picture only ever comes up")
-                biggestStep = max(biggestStep, lastFade - fade)
-                lastFade = fade
-                if chase.atRest { break }
-            }
-            #expect(chase.value == live, "the unfold lands on the lid")
-            #expect(Double(frames) / 60 < 0.5, "and is done within half a second")
-            #expect(lastFade == 0, "clear once it lands above edge-on + 22°")
-            #expect(biggestStep < 0.25, "no frame cuts from black to lit (\(biggestStep))")
+    @Test("a reopen follows the lid up out of black: no frame lights up by more than the lid's own travel")
+    func reopenFollowsTheLid() {
+        // The fold draws the glass at the lid's real angle from the
+        // release at 15°. Walk the lid up a degree at a time: the picture
+        // only ever comes up, and no degree lights more than the end
+        // fade's own slope allows — so a faster lid is a faster fade and
+        // a slower one a slower fade, with no clock in it.
+        var lastFade = 1.0
+        var biggestStep = 0.0
+        for lid in stride(from: FoldBlackout.releaseAngle, through: 110, by: 1) {
+            let fade = FoldDuoModel.endFade(theta: lid, eye: eye)
+            #expect(fade <= lastFade, "the picture only ever comes up")
+            biggestStep = max(biggestStep, lastFade - fade)
+            lastFade = fade
         }
-        // A lid still under the black angle when the frame lands simply
-        // follows the lid: the chase takes the larger delta.
-        var low = DeltaChase()
-        low.reset(to: seed)
-        let under = (reference - 20) * .pi / 180
-        #expect(low.tick(target: under, dt: 1.0 / 60) == under)
-        #expect(FoldDuoModel.reopenDelta(reference: 30, perspective: 0.6) == 0)
-        #expect(FoldDuoModel.reopenDelta(reference: .nan, perspective: 0.6) == 0)
+        #expect(lastFade == 0, "clear once the lid is above edge-on + 22°")
+        #expect(biggestStep < 0.1, "no degree of lid cuts from black to lit (\(biggestStep))")
     }
 
     @Test("one gesture draws from one reference, so a dwell re-seat never flashes black")
@@ -391,6 +328,24 @@ struct FoldDuoModelTests {
         #expect(FoldDuoModel.endFade(theta: 70 - 40, eye: eye) == 1, "the re-seated anchor would flash black")
         let held = FoldDuoModel.drawnReference(held: 110, current: 70, overlayVisible: true) ?? 0
         #expect(FoldDuoModel.endFade(theta: held - 40, eye: eye) == 0)
+    }
+
+    // MARK: A low resting lid
+
+    @Test("a lid resting at or under edge-on has nothing to fold, so the screen never goes black")
+    func lowReferenceDoesNotFold() {
+        let black = FoldDuoModel.blackAngle(eye: FoldDuoModel.eye(perspective: 0.6))
+        #expect(!FoldDuoModel.foldsFrom(reference: black, perspective: 0.6))
+        #expect(!FoldDuoModel.foldsFrom(reference: 30, perspective: 0.6))
+        #expect(!FoldDuoModel.foldsFrom(reference: .nan, perspective: 0.6))
+        #expect(FoldDuoModel.foldsFrom(reference: black + 1, perspective: 0.6))
+        #expect(FoldDuoModel.foldsFrom(reference: 110, perspective: 0.6))
+        // The cause: at a 30 degree resting lid the eye is behind the
+        // resting plane and the glass samples nothing at all, even before
+        // the lid has moved.
+        let source = FoldDuoModel.source(x: 0, h: 0.5, theta: 30, reference: 30, hold: 1,
+                                         eye: FoldDuoModel.eye(perspective: 0.6), aspect: 1.6)
+        #expect(!source.valid)
     }
 
     // MARK: Bar windows

@@ -420,13 +420,6 @@ class GlanceLightPlan:
         elif active_ids != {self.selected_notification_id}:
             raise GlanceLightValidationError("Glance Light surfaces disagree on identity")
 
-    @property
-    def announcer_summary(self) -> str:
-        """Content-free count copy shared by announcer and menu consumers."""
-
-        return self.count_summary
-
-
 def _count_summary(count: int) -> str:
     return f"{count} notification" if count == 1 else f"{count} notifications"
 

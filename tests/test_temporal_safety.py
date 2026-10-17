@@ -251,7 +251,6 @@ def test_invalid_frame_object_fails_closed__and_2_more() -> None:
 
     assert isinstance(result, RefusedTemporalProgram)
     assert result.reason is TemporalSafetyReason.INVALID_PROGRAM
-    assert result.static_fallback.is_static is True
     assert result.static_fallback.semantic_key == "safe_static_state"
 
     # --- scenario: every_result_exposes_a_bounded_static_semantic_fallback
@@ -269,7 +268,6 @@ def test_invalid_frame_object_fails_closed__and_2_more() -> None:
         result = analyze(frames, fallback=fallback)
 
         assert result.static_fallback == fallback
-        assert result.static_fallback.is_static is True
         assert len(result.static_fallback.semantic_key) <= 64
         assert isinstance(result.reason, TemporalSafetyReason)
 

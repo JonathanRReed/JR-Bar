@@ -170,6 +170,15 @@ def test_newest_codex_rollout_age(tmp_path):
     assert newest_codex_rollout_age(tmp_path, 1000.0) == 100.0
 
 
+
+def test_resumed_codex_rollout_in_older_directory_is_the_newest_evidence(tmp_path):
+    now = 1_000_000.0
+    make_rollout(tmp_path, "2026/10/13", "rollout-stale.jsonl", now - 72 * 3600)
+    make_rollout(tmp_path, "2026/10/12", "rollout-resumed.jsonl", now - 30)
+    assert newest_codex_rollout_age(tmp_path, now) == 30
+    assert "rescanning now" in codex_activity_report(tmp_path, now)
+
+
 def test_codex_activity_report_shapes(tmp_path):
     assert "Install the Codex CLI" in codex_activity_report(tmp_path, 1000.0)
     (tmp_path / ".codex" / "sessions").mkdir(parents=True)
@@ -532,15 +541,27 @@ def test_repair_grok_defers_to_a_server_rejection(tmp_path):
     )
 
 
-def test_the_claude_gate_can_lift_when_the_keychain_item_changes__and_1_more() -> None:
+def test_the_claude_gate_can_lift_when_the_keychain_item_changes__and_1_more(monkeypatch) -> None:
     # --- scenario: the_claude_gate_can_lift_when_the_keychain_item_changes
     """The gate fingerprinted ~/.claude/.credentials.json, which does not
     exist on a Keychain-only machine -- so None == None forever and a
     fresh `claude login` was invisible to it."""
+    import subprocess
+
     from jrbar import provider_reconnect
 
+    probes = []
+
+    def attributes_only(argv, **kwargs):
+        probes.append(argv)
+        assert argv == ["/usr/bin/security", "find-generic-password", "-s", "svc"]
+        return subprocess.CompletedProcess(argv, 0,
+            stdout='"mdat"<timedate>="STAMP-A"\n"cdat"<timedate>="CREATED"\n', stderr="")
+
+    monkeypatch.setattr(subprocess, "run", attributes_only)
     provider_reconnect._KEYCHAIN_FINGERPRINT_CACHE.clear()
     before = provider_reconnect.keychain_fingerprint("svc", now=0.0)
+    assert before == (("keychain", "svc", "STAMP-A", "CREATED"),)
     provider_reconnect._KEYCHAIN_FINGERPRINT_CACHE["svc"] = (
         0.0,
         (("keychain", "svc", "STAMP-A", "CREATED"),),
@@ -554,7 +575,7 @@ def test_the_claude_gate_can_lift_when_the_keychain_item_changes__and_1_more() -
         (("keychain", "svc", "STAMP-B", "CREATED"),),
     )
     assert provider_reconnect.keychain_fingerprint("svc", now=30.0) != cached
-    assert isinstance(before, tuple)
+    assert len(probes) == 1, "cached attribute checks must not start another process"
 
     # --- scenario: a_stored_expiry_drives_read_only_sync
     from jrbar.provider_reconnect import claude_token_is_stale
@@ -573,6 +594,18 @@ def test_the_claude_gate_can_lift_when_the_keychain_item_changes__and_1_more() -
     assert claude_token_is_stale(Store(None), now=1000.0), "unknown = stale"
     assert claude_token_is_stale(Store("1200"), now=1000.0), "inside the margin"
     assert not claude_token_is_stale(Store("9000"), now=1000.0)
+
+
+def test_claude_expiry_freshness_rejects_nonfinite_stamps():
+    from jrbar.provider_reconnect import claude_token_is_stale
+
+    for expiry, stale in (
+        ("nan", True), ("inf", True), ("-inf", True),
+        (None, True), ("unreadable", True), ("900", True),
+        ("1200", True), ("9000", False),
+    ):
+        store = FakeStore({("claude", "oauth-expires-at"): expiry})
+        assert claude_token_is_stale(store, now=1000.0) is stale, expiry
 
 
 # --- reconnect_provider: the Usage Center's "Re-sign in" --------------------

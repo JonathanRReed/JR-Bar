@@ -21,17 +21,6 @@ from pathlib import Path
 APP_BUNDLE_NAME = "JR-Bar.app"
 APP_BUNDLE_IDENTIFIER = "com.jonathanreed.jrbar"
 APP_EXECUTABLE_NAME = "JR-Bar"
-# Identifiers the app shipped under before the JR-Bar rename. Uninstallers
-# and the first-run migration still recognise them; nothing new is written
-# under these names.
-LEGACY_APP_BUNDLE_NAME = "SidePulse.app"
-LEGACY_APP_BUNDLE_IDENTIFIER = "io.sidepulse.app"
-LEGACY_APP_EXECUTABLE_NAME = "SidePulse"
-
-
-def default_app_bundle_path(home: Path | None = None) -> Path:
-    base = home or Path.home()
-    return base / "Applications" / APP_BUNDLE_NAME
 
 
 def containing_app_bundle(executable: str | Path | None = None) -> Path | None:

@@ -68,6 +68,16 @@ final class DockUtility {
     private(set) var recoveredHoldNote: String?
 
     static let recoveredHoldLine = "Put your Dock's auto-hide back after an unclean quit"
+    static let recoveredHideLine = "Put your Dock's auto-hide back after an older JR-Bar hid it"
+
+    /// Hands back an auto-hide an older build's Replace bar left in
+    /// `com.apple.dock`, and says so on the card: it restarts the Dock,
+    /// which is not something to do silently.
+    private func restoreLegacyHide() {
+        guard appleDock.restore() else { return }
+        recoveredHoldNote = Self.recoveredHideLine
+        DockEnhanceController.log.notice("handed back a Dock auto-hide an older build left behind")
+    }
 
     func dismissRecoveredHoldNote() { recoveredHoldNote = nil }
 
@@ -212,7 +222,9 @@ final class DockUtility {
     /// `AppleDockControl()` can't be a default value — callers pass
     /// nil and the main-actor body builds it.
     init(appleDock: AppleDockControl? = nil,
-         autohideHold: DockAutohideHold? = nil) {
+         autohideHold: DockAutohideHold? = nil,
+         legacyEnhanceDefaults: UserDefaults? = nil) {
+        self.legacyEnhanceDefaults = legacyEnhanceDefaults ?? .standard
         self.appleDock = appleDock ?? AppleDockControl()
         let hold = autohideHold ?? DockAutohideHold()
         hold.onLog = { DockEnhanceController.log.notice("\($0, privacy: .public)") }
@@ -254,6 +266,7 @@ final class DockUtility {
         switcher.order = { [weak self] in self?.settings().enhance.switcherOrder ?? .recent }
         switcher.showsWindowless = { [weak self] in self?.settings().enhance.switcherShowsWindowless ?? false }
         switcher.stillsWanted = { [weak self] in self?.settings().enhance.switcherStyle != .icons }
+        switcher.excludedBundleIDs = { [weak self] in self?.settings().enhance.switcherExcludedBundleIDs ?? [] }
         // ⌥` needs the watcher — it's the watcher's panel that opens.
         switcher.isFrontAllowed = { [weak self] in
             guard let settings = self?.settings() else { return false }
@@ -279,6 +292,12 @@ final class DockUtility {
         }
     }
 
+    isolated deinit {
+        stop()
+        let center = NSWorkspace.shared.notificationCenter
+        for observer in providerObservers { center.removeObserver(observer) }
+    }
+
     /// Turn the card on. No-op unless the card is on. Apple's Dock is
     /// the stage, so any hide of ours still in place is undone first;
     /// then the watcher and the switcher each start if their own half
@@ -287,7 +306,7 @@ final class DockUtility {
         guard !running else { return }
         guard settings().enabled else { return }
         running = true
-        appleDock.restore()
+        restoreLegacyHide()
         reconcile()
     }
 
@@ -313,7 +332,7 @@ final class DockUtility {
         // A previous life's Replace bar may have left Apple's Dock
         // hidden under our saved values — hand them back regardless of
         // whether the watcher is running.
-        appleDock.restore()
+        restoreLegacyHide()
         let current = settings()
         if current.enabled, !running {
             start()
@@ -354,6 +373,7 @@ final class DockUtility {
     /// True once the pre-schema `UserDefaults` knobs have been folded
     /// into `DockSettings.enhance` — the write itself persists through
     /// the store, so a second pass only ever finds removed keys.
+    @ObservationIgnored private let legacyEnhanceDefaults: UserDefaults
     private var migratedEnhanceDefaults = false
 
     /// Builds before `DockSettings.enhance` wrote two `UserDefaults`
@@ -363,7 +383,7 @@ final class DockUtility {
     private func migrateLegacyEnhanceDefaults() {
         guard !migratedEnhanceDefaults else { return }
         migratedEnhanceDefaults = true
-        let defaults = UserDefaults.standard
+        let defaults = legacyEnhanceDefaults
         let delay = defaults.object(forKey: DockEnhancePreferences.legacyDelayKey) as? Double
         let thumbnails = defaults.object(forKey: DockEnhancePreferences.legacyThumbnailsKey) as? Bool
         guard delay != nil || thumbnails != nil else { return }

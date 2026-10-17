@@ -218,6 +218,28 @@ public struct FoldSettings: Codable, Equatable, Sendable {
         // sits below most of the close a seated eye can see. The stored
         // activation angle stays for anyone who picks "Set angle" again.
         if !c.contains(.look) { anchor = .movement }
+        // A hand-edited or damaged file can hold any finite number. Keep
+        // every knob in the range its slider offers, so nothing downstream
+        // (a percent readout, the renderer, the anchor's deadband) sees a
+        // value no slider could have set.
+        activationAngle = Self.clamp(activationAngle, Self.activationAngleRange, default: 65)
+        perspective = Self.clamp(perspective, 0...1, default: 0.6)
+        blur = Self.clamp(blur, 0...1, default: 0.6)
+        shade = Self.clamp(shade, 0...1, default: 0.67)
+        frost = Self.clamp(frost, 0...1, default: 0)
+        jitterTolerance = Self.clamp(jitterTolerance, Self.jitterToleranceRange, default: 1.5)
+        dwellTimeout = Self.clamp(dwellTimeout, Self.dwellTimeoutRange, default: 0)
+    }
+
+    /// The ranges the Fold card's sliders offer; the decoder keeps the
+    /// stored values inside them.
+    public static let activationAngleRange: ClosedRange<Double> = 60...160
+    public static let jitterToleranceRange: ClosedRange<Double> = 0...5
+    public static let dwellTimeoutRange: ClosedRange<Double> = 0...10
+
+    private static func clamp(_ value: Double, _ range: ClosedRange<Double>, default fallback: Double) -> Double {
+        guard value.isFinite else { return fallback }
+        return min(range.upperBound, max(range.lowerBound, value))
     }
 
     /// `fadeLength` kept inside `fadeLengthRange`; a non-number reads
@@ -311,7 +333,13 @@ public enum DayNightMode: String, Codable, CaseIterable, Sendable {
 
 /// Aquarium: every live session is a fish.
 public struct AquariumSettings: Codable, Equatable, Sendable {
+    public enum Motion: String, Codable, CaseIterable, Sendable {
+        case live, still
+    }
+
     public var enabled: Bool
+    /// Still holds the scenery and swimmers while session facts keep arriving.
+    public var motion: Motion = .live
     /// The always-on name chip, kept in step with `labelStyle` (on only
     /// for `.always`) and still written, so an older build reads it.
     public var showLabels: Bool {
@@ -382,7 +410,7 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, showLabels, density, speciesOverrides, dayNight
+        case enabled, motion, showLabels, density, speciesOverrides, dayNight
         case idleFillMinutes, ambientDisplay, saverClock
         case swimPace, swimSpeed, fishScale
         case labelStyle, sound, maxFish, keepResidents, bubbles, scenery, visitors
@@ -391,6 +419,7 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        motion = (try? c.decodeIfPresent(Motion.self, forKey: .motion)) ?? .live
         showLabels = (try? c.decodeIfPresent(Bool.self, forKey: .showLabels)) ?? true
         let rawDensity = (try? c.decodeIfPresent(Double.self, forKey: .density)) ?? 1.0
         density = Self.clamp(rawDensity, to: Self.densityRange, default: 1.0)
@@ -399,7 +428,7 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         let dayNightRaw = (try? c.decodeIfPresent(String.self, forKey: .dayNight)) ?? nil
         dayNight = dayNightRaw.flatMap(DayNightMode.init(rawValue:)) ?? .realTime
         let idle = (try? c.decodeIfPresent(Int.self, forKey: .idleFillMinutes)) ?? 0
-        idleFillMinutes = Self.idleFillChoices.contains(idle) ? idle : 0
+        idleFillMinutes = Self.snapped(idle, to: Self.idleFillChoices)
         let display = (try? c.decodeIfPresent(String.self, forKey: .ambientDisplay)) ?? nil
         ambientDisplay = display?.isEmpty == false ? display : nil
         saverClock = (try? c.decodeIfPresent(Bool.self, forKey: .saverClock)) ?? true
@@ -418,7 +447,7 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         showLabels = labelStyle == .always
         sound = (try? c.decodeIfPresent(Bool.self, forKey: .sound)) ?? false
         let cap = (try? c.decodeIfPresent(Int.self, forKey: .maxFish)) ?? 0
-        maxFish = Self.maxFishChoices.contains(cap) ? cap : 0
+        maxFish = Self.snapped(cap, to: Self.maxFishChoices)
         keepResidents = (try? c.decodeIfPresent(Bool.self, forKey: .keepResidents)) ?? true
         // Bubbles and scenery split off the old density: a file without
         // them keeps the tank it had.
@@ -429,6 +458,21 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         scenery = sceneryRaw.flatMap(AquariumScenery.init(rawValue:))
             ?? (density < 1 ? .light : .full)
         visitors = (try? c.decodeIfPresent(Bool.self, forKey: .visitors)) ?? true
+    }
+
+    /// `value` when the picker offers it. A positive number it does not
+    /// offer — a newer build's longer saver delay, a bigger fish cap —
+    /// reads as the nearest choice (the smaller on a tie), so a downgrade
+    /// keeps the setting on instead of silently turning it off. Zero and
+    /// below is the first choice, "off" or "all".
+    static func snapped(_ value: Int, to choices: [Int]) -> Int {
+        if choices.contains(value) { return value }
+        guard value > 0 else { return choices.first ?? 0 }
+        let offered = choices.filter { $0 > 0 }
+        // The nearest choice; a tie goes to the smaller.
+        func distance(_ choice: Int) -> Int { abs(choice - value) }
+        let nearest = offered.min { distance($0) < distance($1) || (distance($0) == distance($1) && $0 < $1) }
+        return nearest ?? choices.first ?? 0
     }
 
     /// A finite value pinned to `range`; anything else is `fallback`.
@@ -626,9 +670,14 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     /// Who the status line names: the stored name, or the character's
     /// own when the field is blank or all spaces.
     public var resolvedName: String {
-        let trimmed = buddyName.trimmingCharacters(in: .whitespaces)
-        return trimmed.isEmpty ? resolvedCharacter.defaultName : trimmed
+        let trimmed = buddyName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return resolvedCharacter.defaultName }
+        return String(trimmed.prefix(Self.nameLimit))
     }
+
+    /// The most characters a name shows; a longer one is cut where it is
+    /// read, so a pasted paragraph cannot stretch the card.
+    public static let nameLimit = 40
 
     private enum CodingKeys: String, CodingKey {
         case enabled, character, presentation, buddyName, care, freePosition, tucked, showCaption, scale
@@ -730,7 +779,9 @@ public struct BuddyCare: Codable, Equatable, Sendable {
 
     public func mood(at now: Date = Date()) -> Mood {
         let t = now.timeIntervalSince1970
-        if lastTreatAt > 0, t - lastTreatAt < Self.fedWindow { return .fed }
+        // A stamp from the future (the clock was set back after it was
+        // written) is neither fed nor missing until time catches up.
+        if lastTreatAt > 0, t >= lastTreatAt, t - lastTreatAt < Self.fedWindow { return .fed }
         if lastInteractionAt > 0, t - lastInteractionAt > Self.lonelyAfter { return .missing }
         return .content
     }
@@ -787,16 +838,22 @@ public struct BuddyCare: Codable, Equatable, Sendable {
         case firstMetAt, firstMetIsFloor, crumbsByProvider, longestAskSeconds
     }
 
+    /// A care counter read from a file stays far below `Int.max`, so a
+    /// hand-edited value cannot trap the next pat.
+    private static func counter(_ value: Int?) -> Int {
+        min(1_000_000_000, max(0, value ?? 0))
+    }
+
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         lastInteractionAt = (try? c.decodeIfPresent(Double.self, forKey: .lastInteractionAt)) ?? 0
         lastTreatAt = (try? c.decodeIfPresent(Double.self, forKey: .lastTreatAt)) ?? 0
         lastCrumbAt = (try? c.decodeIfPresent(Double.self, forKey: .lastCrumbAt)) ?? 0
-        petCount = (try? c.decodeIfPresent(Int.self, forKey: .petCount)) ?? 0
-        treatsGiven = (try? c.decodeIfPresent(Int.self, forKey: .treatsGiven)) ?? 0
-        crumbsEaten = (try? c.decodeIfPresent(Int.self, forKey: .crumbsEaten)) ?? 0
+        petCount = Self.counter(try? c.decodeIfPresent(Int.self, forKey: .petCount))
+        treatsGiven = Self.counter(try? c.decodeIfPresent(Int.self, forKey: .treatsGiven))
+        crumbsEaten = Self.counter(try? c.decodeIfPresent(Int.self, forKey: .crumbsEaten))
         let crumbs = (try? c.decodeIfPresent([String: Int].self, forKey: .crumbsByProvider)) ?? [:]
-        crumbsByProvider = crumbs.filter { $0.value > 0 }
+        crumbsByProvider = crumbs.mapValues { Self.counter($0) }.filter { $0.value > 0 }
         let longest = (try? c.decodeIfPresent(Double.self, forKey: .longestAskSeconds)) ?? 0
         longestAskSeconds = longest.isFinite ? max(0, longest) : 0
         if let met = (try? c.decodeIfPresent(Double.self, forKey: .firstMetAt)) ?? nil,
@@ -911,6 +968,8 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
     /// re-folded state can never burst twice. Bookkeeping the toy
     /// maintains, not a control.
     public var firedKeys: [String]
+    /// Reset settlement outlives the shared ring while the daemon can replay it.
+    public private(set) var settledResets: [String: TimeInterval] = [:]
     /// A burst the room held (see `ToysState.hushDuringQuiet`): played
     /// smaller once the room clears, or let go.
     public var whenHeld: ConfettiHeldBurst = .later
@@ -934,6 +993,7 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
     /// The ring's depth: an old key falls off long after the fact it
     /// guarded is history.
     public static let firedKeyLimit = 64
+    public static let settledResetLimit = 4096
 
     public init(enabled: Bool = false, landing: ConfettiLanding = .rest, density: Double = 1.0,
                 duration: Double = 1.0, palette: ConfettiPalette = .provider,
@@ -958,8 +1018,27 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
         }
     }
 
+    public func hasSettledReset(_ id: String, at now: TimeInterval) -> Bool {
+        guard let stamp = settledResets[id] else { return false }
+        return now.isFinite && now - stamp < ConfettiTriggerPolicy.eventFreshnessWindow
+    }
+
+    public mutating func noteSettledReset(_ id: String, at now: TimeInterval) {
+        guard !id.isEmpty, id.utf8.count <= 1024, now.isFinite, now >= 0 else { return }
+        settledResets = settledResets.filter {
+            now - $0.value < ConfettiTriggerPolicy.eventFreshnessWindow
+        }
+        settledResets[id] = now
+        if settledResets.count > Self.settledResetLimit {
+            let oldest = settledResets.min {
+                $0.value == $1.value ? $0.key < $1.key : $0.value < $1.value
+            }
+            if let oldest { settledResets[oldest.key] = nil }
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case enabled, landing, density, duration, palette, shapes, triggers, firedKeys
+        case enabled, landing, density, duration, palette, shapes, triggers, firedKeys, settledResets
         case whenHeld, sound
         case origin, intensity, seasonal, screens, momentStyles
     }
@@ -975,6 +1054,13 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
         triggers = (try? c.decodeIfPresent(ConfettiTriggers.self, forKey: .triggers)) ?? ConfettiTriggers()
         let keys = (try? c.decodeIfPresent([String].self, forKey: .firedKeys)) ?? []
         firedKeys = Array(keys.filter { !$0.isEmpty }.suffix(Self.firedKeyLimit))
+        let resets = (try? c.decodeIfPresent([String: TimeInterval].self, forKey: .settledResets)) ?? [:]
+        let validResets = resets.filter {
+            !$0.key.isEmpty && $0.key.utf8.count <= 1024 && $0.value.isFinite && $0.value >= 0
+        }
+        settledResets = Dictionary(uniqueKeysWithValues: validResets.sorted {
+            $0.value == $1.value ? $0.key < $1.key : $0.value < $1.value
+        }.suffix(Self.settledResetLimit).map { ($0.key, $0.value) })
         whenHeld = (try? c.decodeIfPresent(ConfettiHeldBurst.self, forKey: .whenHeld)) ?? .later
         sound = (try? c.decodeIfPresent(Bool.self, forKey: .sound)) ?? false
         origin = (try? c.decodeIfPresent(ConfettiOrigin.self, forKey: .origin)) ?? .notch
@@ -985,18 +1071,14 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
     }
 }
 
-/// What may fire the burst. The defaults are exactly what the toy has
-/// always done — a weekly refill and nothing else — so a file from
-/// before these keys decodes to the same behaviour and every new
-/// trigger is opt-in.
+/// Confirmed quota resets fire by default. Other triggers are opt-in.
+/// The legacy weekly reset choice seeds the new key when it is absent.
 public struct ConfettiTriggers: Codable, Equatable, Sendable {
     /// An agent finished a run (`completed` events).
     public var sessionCompleted: Bool
-    /// Any provider's weekly quota window refilled (`quota_reset` on a
-    /// `weekly` / `*-weekly` lane).
-    public var weeklyReset: Bool
-    /// Providers whose EVERY lane reset fires it — the five-hour window
-    /// and product-scoped lanes included, not only the weekly one.
+    /// Any provider's confirmed quota window refilled.
+    public var quotaReset: Bool
+    /// Providers whose resets fire when the main quota-reset trigger is off.
     public var perProviderReset: Set<String>
     /// Codex's banked-credit balance (`credits_remaining`) grew.
     public var codexBankedReset: Bool
@@ -1007,30 +1089,42 @@ public struct ConfettiTriggers: Codable, Equatable, Sendable {
     /// (a `milestone` event). Opt-in like every trigger after the first.
     public var milestones: Bool = false
 
-    public init(sessionCompleted: Bool = false, weeklyReset: Bool = true,
+    public init(sessionCompleted: Bool = false, quotaReset: Bool = true,
                 perProviderReset: Set<String> = [], codexBankedReset: Bool = false,
                 allClear: Bool = false) {
         self.sessionCompleted = sessionCompleted
-        self.weeklyReset = weeklyReset
+        self.quotaReset = quotaReset
         self.perProviderReset = perProviderReset
         self.codexBankedReset = codexBankedReset
         self.allClear = allClear
     }
 
     private enum CodingKeys: String, CodingKey {
-        case sessionCompleted, weeklyReset, perProviderReset, codexBankedReset, allClear
+        case sessionCompleted, quotaReset, perProviderReset, codexBankedReset, allClear
+        case legacyWeeklyReset = "weeklyReset"
         case milestones
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         sessionCompleted = (try? c.decodeIfPresent(Bool.self, forKey: .sessionCompleted)) ?? false
-        weeklyReset = (try? c.decodeIfPresent(Bool.self, forKey: .weeklyReset)) ?? true
+        quotaReset = (try? c.decodeIfPresent(Bool.self, forKey: .quotaReset))
+            ?? (try? c.decodeIfPresent(Bool.self, forKey: .legacyWeeklyReset)) ?? true
         perProviderReset = Set(((try? c.decodeIfPresent(Set<String>.self, forKey: .perProviderReset)) ?? [])
             .map { $0.lowercased() })
         codexBankedReset = (try? c.decodeIfPresent(Bool.self, forKey: .codexBankedReset)) ?? false
         allClear = (try? c.decodeIfPresent(Bool.self, forKey: .allClear)) ?? false
         milestones = (try? c.decodeIfPresent(Bool.self, forKey: .milestones)) ?? false
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(sessionCompleted, forKey: .sessionCompleted)
+        try c.encode(quotaReset, forKey: .quotaReset)
+        try c.encode(perProviderReset, forKey: .perProviderReset)
+        try c.encode(codexBankedReset, forKey: .codexBankedReset)
+        try c.encode(allClear, forKey: .allClear)
+        try c.encode(milestones, forKey: .milestones)
     }
 }
 
@@ -1129,14 +1223,6 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     /// A quiet tick when a capsule shows — Alcove's felt edge for the
     /// HUD.
     public var soundEffects: Bool
-    /// The card's weather row — a keyless Open-Meteo read of the
-    /// place `weatherCity` names (the IP's coarse fix only with
-    /// `weatherUseIPLocation`). Off by default: it phones a third-party
-    /// API, so the person turns it on.
-    public var weather: Bool
-    /// A city name to geocode ("London"); empty means no row unless
-    /// `weatherUseIPLocation` allows the IP lookup.
-    public var weatherCity: String
     /// On a screen with no hardware notch, draw a synthetic housing —
     /// the island reads as a notch rather than a floating pill, like
     /// Alcove's notch-on-any-display option. Off is the honest pill.
@@ -1170,10 +1256,6 @@ public struct NotchSettings: Codable, Equatable, Sendable {
     public var calendar: Bool = true
     /// The card's reminders glance — the same rule as `calendar`.
     public var reminders: Bool = true
-    /// With no `weatherCity`, place the weather by a coarse IP lookup
-    /// (ipapi.co). Off by default: it sends the IP to a second third
-    /// party, so an empty city otherwise just means no weather row.
-    public var weatherUseIPLocation: Bool = false
     /// Synced lyrics from LRCLIB under the card's media row. Off by
     /// default: it sends the track's title, artist, album and length to
     /// a third party, so it waits for the person's own switch.
@@ -1247,8 +1329,7 @@ public struct NotchSettings: Codable, Equatable, Sendable {
                 mediaEnabled: Bool = true, capsuleKinds: AlcoveCapsuleKinds = AlcoveCapsuleKinds(),
                 pullGestures: Bool = true, hapticTick: Bool = true,
                 mediaHUD: Bool = true, alerts: Bool = true,
-                soundEffects: Bool = true, weather: Bool = false,
-                weatherCity: String = "", simulateNotch: Bool = false,
+                soundEffects: Bool = true, simulateNotch: Bool = false,
                 mirror: Bool = false, audioVisualizer: Bool = false,
                 replaceSystemHUD: Bool = false,
                 shelfShakeToSummon: Bool = true) {
@@ -1265,8 +1346,6 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         self.mediaHUD = mediaHUD
         self.alerts = alerts
         self.soundEffects = soundEffects
-        self.weather = weather
-        self.weatherCity = weatherCity
         self.simulateNotch = simulateNotch
         self.mirror = mirror
         self.audioVisualizer = audioVisualizer
@@ -1274,15 +1353,16 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         self.shelfShakeToSummon = shelfShakeToSummon
     }
 
+    /// `weather`, `weatherCity` and `weatherUseIPLocation` were the retired
+    /// Weather row's keys; an older file may still carry them and they are ignored.
     private enum CodingKeys: String, CodingKey {
         case enabled, provider, islandEnabled, showUsage, expandOnHover
         case capsuleNotifications, mediaEnabled, capsuleKinds, pullGestures
-        case hapticTick, mediaHUD, alerts, soundEffects, weather, weatherCity
+        case hapticTick, mediaHUD, alerts, soundEffects
         case simulateNotch, mirror, audioVisualizer, replaceSystemHUD
         case shelfShakeToSummon
         case hudDuration
         case calendar, reminders
-        case weatherUseIPLocation
         case lyrics
         case lyricsConsented
         case holdNewsWhileQuiet
@@ -1314,8 +1394,6 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         mediaHUD = (try? c.decodeIfPresent(Bool.self, forKey: .mediaHUD)) ?? true
         alerts = (try? c.decodeIfPresent(Bool.self, forKey: .alerts)) ?? true
         soundEffects = (try? c.decodeIfPresent(Bool.self, forKey: .soundEffects)) ?? true
-        weather = (try? c.decodeIfPresent(Bool.self, forKey: .weather)) ?? false
-        weatherCity = (try? c.decodeIfPresent(String.self, forKey: .weatherCity)) ?? ""
         simulateNotch = (try? c.decodeIfPresent(Bool.self, forKey: .simulateNotch)) ?? false
         mirror = (try? c.decodeIfPresent(Bool.self, forKey: .mirror)) ?? false
         audioVisualizer = (try? c.decodeIfPresent(Bool.self, forKey: .audioVisualizer)) ?? false
@@ -1325,7 +1403,6 @@ public struct NotchSettings: Codable, Equatable, Sendable {
         hudDuration = min(Self.hudDurationRange.upperBound, max(Self.hudDurationRange.lowerBound, hud))
         calendar = (try? c.decodeIfPresent(Bool.self, forKey: .calendar)) ?? true
         reminders = (try? c.decodeIfPresent(Bool.self, forKey: .reminders)) ?? true
-        weatherUseIPLocation = (try? c.decodeIfPresent(Bool.self, forKey: .weatherUseIPLocation)) ?? false
         lyrics = (try? c.decodeIfPresent(Bool.self, forKey: .lyrics)) ?? false
         lyricsConsented = (try? c.decodeIfPresent(Bool.self, forKey: .lyricsConsented)) ?? false
         holdNewsWhileQuiet = (try? c.decodeIfPresent(Bool.self, forKey: .holdNewsWhileQuiet)) ?? true

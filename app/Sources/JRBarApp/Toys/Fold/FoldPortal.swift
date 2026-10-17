@@ -5,13 +5,10 @@ import JRBarCore
 /// The Portal fold's pure model — every rule the renderer and toy
 /// follow, with no Metal, no HID and no timers in the way, so the whole
 /// thing is testable from `JRBarAppTests` (docs/TOYS.md, docs/TOY-PARITY.md
-/// "Duo-style fold"). Four pieces:
+/// "Duo-style fold"). The lid's motion itself — the tracker, the spring,
+/// the rest guard, the gate ease and the entry fade — is in
+/// FoldMotion.swift. The pieces here:
 ///
-/// - `SlewTracker` — the lid's display angle. A critically damped
-///   tracker with a hard cap on the visible angular rate: the 10 Hz,
-///   integer-degree sensor becomes a continuous glide with no
-///   overshoot, and a slammed lid eases shut in ~300 ms instead of
-///   lurching between samples.
 /// - `MoveAnchor` — the movement-anchored reference: where the lid was
 ///   resting when the gesture began. Still for `settleAfter` while flat
 ///   and the rest spot becomes the anchor; a live fold freezes it until
@@ -24,11 +21,6 @@ import JRBarCore
 ///   cooldown so the Screen Recording indicator only shows while a fold
 ///   can actually be on screen, and die at once on a full close. It
 ///   also owns the fold gate's hysteresis at the activation edge.
-/// - `DeltaChase` — the displayed delta's asymmetric follower: instant
-///   while the target grows (closing keeps the old direct-assignment
-///   response), a slew-limited unwind when the target drops — fast
-///   enough to track a real lid opening exactly, so the return trip
-///   retraces the close; only a gate snap ever sees the rate limit.
 /// - `PortalDepth` — window z-order → depth buckets and normalized card
 ///   rects for the shader's layered room.
 /// - `FoldPortalModel` — the Room look's settings+delta → shader-params
@@ -38,15 +30,13 @@ import JRBarCore
 /// - `FoldDuoModel` — the Duo look: one picture held still in space
 ///   while the glass swings through it, softening and darkening away
 ///   from the hinge until a seated eye loses the glass.
-/// - `EdgeInterpolator` — draws the 10 Hz sensor one period in the
-///   past, gliding between its edges, so a steady close moves at a
-///   steady speed instead of pulsing ten times a second.
-/// - `FirstFrameCatchUp` and `FoldBlackout` — the Duo's ends: no pop
-///   when the first captured frame lands late, and black held across
-///   the closed-lid pause so a reopen unfolds from black.
+/// - `FoldBlackout` — the Duo's closed-lid end: black held across the
+///   closed-lid pause, so a reopen unfolds from black.
 
-// MARK: - SlewTracker
+// MARK: - FoldFrameClock
 
+/// The display link's elapsed time, kept between sensor and display
+/// callbacks so each moves the motion by only the time since the last.
 struct FoldFrameClock: Sendable {
     private var previous: TimeInterval?
 
@@ -57,90 +47,6 @@ struct FoldFrameClock: Sendable {
     }
 
     mutating func reset() { previous = nil }
-}
-
-/// A slew-limited critically damped tracker for the lid angle.
-///
-/// The hinge sensor reports integer degrees at ~10 Hz; a real close
-/// arrives as a staircase of 9–13° steps. Feeding those steps straight
-/// to a spring lurches; extrapolating past them overshoots. This tracker
-/// instead chases the newest sample with a critically damped second-
-/// order step whose velocity is hard-capped: between samples the render
-/// angle moves in sub-degree increments at a bounded rate, and a slammed
-/// lid settles in ~250–350 ms — the cap, not the sensor's cadence, sets
-/// the visible pace. It can never overshoot: the crossing guard snaps
-/// the position onto the target the moment a step would pass it, which
-/// is also what lets a parked lid hold dead still.
-struct SlewTracker: Sendable {
-    /// What the renderer should draw, in degrees. Continuous and
-    /// monotone toward the target — never ahead of it.
-    private(set) var angle = 0.0
-    /// The visible angular rate in deg/s. Diagnostic only — nothing
-    /// downstream differentiates it (the old velocity-driven motion
-    /// smear is gone by design).
-    private(set) var velocity = 0.0
-    /// True once a real measurement has primed the tracker.
-    private(set) var primed = false
-    private var target = 0.0
-
-    /// Critical-damping stiffness. 20 tracks a slow staircase with
-    /// under a half-degree of lag; the slew cap, not this, owns the
-    /// slam pace.
-    var omega = 20.0
-    /// The visible-rate ceiling in deg/s. A full slam crosses the fold's
-    /// ~40° working range in ~300 ms at this cap.
-    var maxRate = 150.0
-    /// A single tick larger than this is a stall (a slept display, a
-    /// wedged runloop), not a frame — clamped so a huge dt can't fire
-    /// the tracker past its target in one step.
-    var maxDt = 0.05
-
-    init() {}
-
-    mutating func reset() { self = SlewTracker() }
-
-    /// The newest measured lid position. Repeat values are cheap no-ops
-    /// — the tracker's own state carries the continuity between them.
-    mutating func feed(_ raw: Double) {
-        guard raw.isFinite else { return }
-        if !primed {
-            primed = true
-            angle = raw
-            velocity = 0
-        }
-        target = raw
-    }
-
-    /// One render-frame step. Semi-implicit Euler stays stable at any
-    /// vsync cadence; the velocity is capped each step so the visible
-    /// rate never exceeds `maxRate`, and the crossing guard makes
-    /// overshoot structurally impossible.
-    mutating func tick(dt rawDt: Double) {
-        guard primed, rawDt.isFinite, rawDt > 0 else { return }
-        let dt = min(rawDt, maxDt)
-        var v = velocity
-            + (-omega * omega * (angle - target) - 2 * omega * velocity) * dt
-        v = max(-maxRate, min(maxRate, v))
-        var next = angle + v * dt
-        if (next - target) * (angle - target) < 0 {
-            // The step would cross the target — land on it instead.
-            next = target
-            v = 0
-        } else if abs(next - target) < 0.02 && abs(v) < 1.0 {
-            // Arrival snap: a critically damped approach is asymptotic,
-            // so without this epsilon the tracker creeps forever and
-            // `atRest` never goes true.
-            next = target
-            v = 0
-        }
-        if next == target, abs(v) < 1 { v = 0 }
-        angle = next
-        velocity = v
-    }
-
-    /// Parked means exactly on the last measurement with no rate left —
-    /// the toy's vsync link stands down only from here.
-    var atRest: Bool { !primed || (angle == target && velocity == 0) }
 }
 
 // MARK: - MoveAnchor
@@ -177,9 +83,10 @@ struct MoveAnchor: Sendable {
     var tolerance = 1.5
     /// How far off the anchor counts as a real move — what arms the
     /// capture. nil uses `tolerance`, either way off the anchor. The toy
-    /// sets 3° in both looks and counts only a move down: a nudge never
-    /// flashes the Screen Recording indicator, and neither does tilting
-    /// the screen back, which has nothing to fold.
+    /// sets half a degree in both looks and counts only a move down: a
+    /// parked lid's whole-degree flicker is absorbed into the anchor and
+    /// so never reaches it, the second whole degree of a close does, and
+    /// tilting the screen back, which has nothing to fold, never does.
     var armThreshold: Double?
     /// How far below the anchor counts as folded: past this the
     /// reference freezes until the lid returns.
@@ -470,114 +377,6 @@ struct FoldArming: Sendable {
     }
 }
 
-// MARK: - DeltaChase
-
-/// The displayed delta's asymmetric follower.
-///
-/// `targetDelta` is not always honest motion: when the lid swings back
-/// past activation + hysteresis the fold gate shuts and the target
-/// snaps to 0 while the room is visibly mid-fold. Assigning it straight
-/// to `displayedDelta` — what the toy used to do — cut the overlay to
-/// black mid-swing ("going up just snaps"). So the chase splits the
-/// directions:
-///
-/// - A growing target is followed in the same tick. Closing keeps the
-///   old direct-assignment response bit for bit — no added lag on the
-///   gesture that matters.
-/// - A dropping target unwinds at a bounded rate — `unwindRate` rad/s,
-///   never a spring. The rate sits just above the tracker's own
-///   `maxRate` (150°/s ≈ 2.62 rad/s), so a real lid opening drops the
-///   target no faster than the chase can follow: the unwind lands on
-///   the target every tick and the return trip retraces the close
-///   pixel for pixel. Only a gate snap — the target leaping to 0 faster
-///   than any hinge can move — ever sees the rate limit, and there the
-///   slew IS the easing: a monotone counter-rotation through the hinge,
-///   ~300 ms for a full working-range unwind, pinned at the target so
-///   it can never swing below 0.
-struct DeltaChase: Sendable {
-    /// What the renderer should draw, in radians. Monotone downward
-    /// during an unwind — never below the target.
-    private(set) var value = 0.0
-    /// The unwind rate in rad/s. Diagnostic only.
-    private(set) var velocity = 0.0
-    /// The newest target the chase has seen.
-    private(set) var target = 0.0
-
-    /// The unwind's speed in rad/s. Just above the fastest real lid
-    /// opening (the tracker's 150°/s cap is ~2.62 rad/s), so ordinary
-    /// opening motion is followed exactly — the same angle always draws
-    /// the same image — while a gate snap still eases back in ~300 ms
-    /// instead of cutting to black.
-    var unwindRate = 3.0
-    /// A single tick larger than this is a stall (a slept display), not
-    /// a frame — clamped so a huge dt can't fire the chase past its
-    /// target in one step.
-    var maxDt = 0.05
-
-    private var releaseFrom: Double?
-    private var releaseElapsed = 0.0
-    private var releaseDuration = 0.0
-
-    init() {}
-
-    /// Parked on a value with no rate left — resets plant the chase so
-    /// a stale unwind can't resurrect after a pause or a provider swap.
-    mutating func reset(to newValue: Double = 0) {
-        self = DeltaChase()
-        value = newValue
-        target = newValue
-    }
-
-    /// Tracks physical opening at `unwindRate`. A jump to flat uses a
-    /// short eased release instead of cutting the last few degrees off.
-    @discardableResult
-    mutating func tick(target newTarget: Double, dt rawDt: Double) -> Double {
-        guard newTarget.isFinite else { return value }
-        let wasFlat = target == 0
-        target = max(0, newTarget)
-        if target >= value {
-            // Closing (or aligned): the old direct assignment, unchanged.
-            value = target
-            velocity = 0
-            releaseFrom = nil
-            return value
-        }
-        guard rawDt.isFinite, rawDt > 0 else { return value }
-        let dt = min(rawDt, maxDt)
-        if target == 0 {
-            if releaseFrom == nil, !wasFlat, value > unwindRate * dt {
-                releaseFrom = value
-                releaseElapsed = 0
-                releaseDuration = min(0.45, max(0.28, 1.5 * value / unwindRate))
-            }
-            if let start = releaseFrom {
-                releaseElapsed = min(releaseDuration, releaseElapsed + dt)
-                let progress = releaseElapsed / releaseDuration
-                let eased = progress * progress * (3 - 2 * progress)
-                let next = max(0, start * (1 - eased))
-                velocity = (next - value) / dt
-                value = next
-                if releaseElapsed == releaseDuration {
-                    value = 0
-                    velocity = 0
-                    releaseFrom = nil
-                }
-                return value
-            }
-        } else {
-            releaseFrom = nil
-        }
-        let next = max(target, value - unwindRate * dt)
-        velocity = next == target ? 0 : (next - value) / dt
-        value = next
-        return value
-    }
-
-    /// Rest means exactly on the last target with no rate left — the
-    /// toy's vsync link stands down only from here.
-    var atRest: Bool { value == target && velocity == 0 }
-}
-
 // MARK: - PortalDepth
 
 /// Window z-order → depth buckets and card rects.
@@ -779,9 +578,6 @@ enum FoldDuoModel {
     static let endFadeSpan = 20.0
     /// Degrees of travel over which the overlay fades in at the start.
     static let alphaSpan = 2.0
-    /// Seconds the overlay takes to fade in the first time it orders in
-    /// for a gesture — a late first frame never pops.
-    static let orderInDuration: TimeInterval = 0.12
     /// Gaussian pyramid levels the renderer builds.
     static let pyramidLevels = 8
     /// Pyramid level L, read as a cubic B-spline, carries σ ≈ 0.82·2^L
@@ -880,15 +676,13 @@ enum FoldDuoModel {
         edgeOn(eye: eye) + endFadeFrom
     }
 
-    /// Where a reopen from the black hold starts its unfold, as a delta
-    /// in radians: the glass drawn at the last angle that is still all
-    /// black. The first frame after the hold matches it, and the unwind
-    /// down to the live lid brings the picture up out of black instead
-    /// of cutting straight to a half-lit desktop. 0 for a reference at
-    /// or under that angle.
-    static func reopenDelta(reference: Double, perspective: Double) -> Double {
-        guard reference.isFinite else { return 0 }
-        return radians(max(0, reference - blackAngle(eye: eye(perspective: perspective))))
+    /// Whether a lid resting at `reference` has a picture to fold: above
+    /// the angle the end fade draws all black. At or below it the seated
+    /// eye is behind the resting plane, every pixel is invalid, and the
+    /// whole screen would go black the moment the overlay ordered in.
+    static func foldsFrom(reference: Double, perspective: Double) -> Bool {
+        guard reference.isFinite else { return false }
+        return reference > blackAngle(eye: eye(perspective: perspective))
     }
 
     /// The reference a Duo frame draws from: taken when the overlay
@@ -904,12 +698,6 @@ enum FoldDuoModel {
     static func alpha(delta: Double) -> Double {
         guard delta.isFinite else { return 0 }
         return min(1, max(0, delta / alphaSpan))
-    }
-
-    /// The order-in fade, 0…1, `elapsed` seconds after the overlay first
-    /// ordered in for this gesture.
-    static func orderInRamp(elapsed: TimeInterval) -> Double {
-        smoothstep(0, orderInDuration, elapsed)
     }
 
     /// The pyramid level that carries `sigmaPixels` of blur.
@@ -950,135 +738,20 @@ enum FoldDuoModel {
     }
 }
 
-// MARK: - EdgeInterpolator
-
-/// The 10 Hz hinge sensor, drawn one period in the past.
-///
-/// The sensor reports whole degrees about every 100 ms, so a steady
-/// close arrives as a staircase. A tracker chasing each step speeds up
-/// right after it and slows before the next — a ±25 % pulse ten times a
-/// second that reads as judder. This draws the lid `delay` in the past
-/// instead, straight between the edges it has already seen, so the
-/// visible speed is the lid's real speed, at the same ~150 ms latency
-/// the old path had. Past the last edge it holds; a reversal is just
-/// another segment. A lid leaving rest back-dates its first segment by
-/// one period, so motion starts at once instead of stretching across
-/// the whole rest.
-struct EdgeInterpolator: Sendable {
-    struct Edge: Equatable, Sendable {
-        var at: TimeInterval
-        var value: Double
-    }
-
-    /// The sensor's own cadence.
-    var period: TimeInterval = 0.1
-    /// How far in the past the lid is drawn.
-    var delay: TimeInterval = 0.1
-    /// The newest edges, oldest first. Four covers the delay with room
-    /// for a poll's timing wobble.
-    private(set) var edges: [Edge] = []
-    private static let keep = 4
-
-    init() {}
-
-    mutating func reset() { edges = [] }
-
-    /// A reading. Repeats are not edges; the first reading seats the
-    /// lid where it is.
-    mutating func feed(_ value: Double, at t: TimeInterval) {
-        guard value.isFinite, t.isFinite else { return }
-        guard let last = edges.last else {
-            edges = [Edge(at: t - period, value: value), Edge(at: t, value: value)]
-            return
-        }
-        guard value != last.value else { return }
-        guard t > last.at else {
-            // Out of order (a clock hiccup): take the value, keep time.
-            edges[edges.count - 1].value = value
-            return
-        }
-        if t - last.at > period * 1.5 {
-            // Leaving rest: the lid began to move about one period
-            // before this edge showed it.
-            edges.append(Edge(at: t - period, value: last.value))
-        }
-        edges.append(Edge(at: t, value: value))
-        if edges.count > Self.keep { edges.removeFirst(edges.count - Self.keep) }
-    }
-
-    /// The lid to draw at host time `t`, or nil before any reading.
-    func value(at t: TimeInterval) -> Double? {
-        guard let first = edges.first, let last = edges.last else { return nil }
-        let q = t - delay
-        if q <= first.at { return first.value }
-        if q >= last.at { return last.value }
-        for i in 1..<edges.count where q <= edges[i].at {
-            let a = edges[i - 1], b = edges[i]
-            let span = b.at - a.at
-            guard span > 0 else { return b.value }
-            return a.value + (b.value - a.value) * (q - a.at) / span
-        }
-        return last.value
-    }
-
-    /// True once the drawn lid has reached the newest edge — nothing
-    /// left to glide until the sensor speaks again.
-    func settled(at t: TimeInterval) -> Bool {
-        guard let last = edges.last else { return true }
-        return t - delay >= last.at
-    }
-}
-
-// MARK: - FirstFrameCatchUp
-
-/// The movement fold's first-frame ease. The capture starts with the
-/// gesture and its first frame lands 200–300 ms later, by which time a
-/// quick close is already 10–20° in. Jumping straight there pops; this
-/// eases the displayed delta from 0 up to the live one over 150 ms
-/// instead, and then steps aside for good.
-struct FirstFrameCatchUp: Sendable {
-    static let duration: TimeInterval = 0.15
-    /// Below this much travel (radians) there is nothing to catch up.
-    static let threshold = 2.0 * Double.pi / 180
-    private(set) var startedAt: TimeInterval?
-
-    init() {}
-
-    var active: Bool { startedAt != nil }
-
-    mutating func reset() { startedAt = nil }
-
-    /// The first frame just landed with `liveDelta` already on the lid.
-    mutating func begin(liveDelta: Double, at t: TimeInterval) {
-        guard liveDelta.isFinite, liveDelta > Self.threshold, t.isFinite else { return }
-        startedAt = t
-    }
-
-    /// The share of the live delta to show at `t`; 1 once done, and
-    /// the ease retires itself there.
-    mutating func scale(at t: TimeInterval) -> Double {
-        guard let s = startedAt else { return 1 }
-        let u = (t - s) / Self.duration
-        if u >= 1 || !u.isFinite {
-            startedAt = nil
-            return 1
-        }
-        return FoldDuoModel.smoothstep(0, 1, max(0, u))
-    }
-}
-
 // MARK: - FoldBlackout
 
 /// The Duo's closed-lid hold. By the time the lid reaches the closed
 /// line the Duo picture is already black; ordering the overlay out there
 /// would flash the sharp desktop, and a reopen would pop straight to it.
-/// So the overlay stays up as a flat black pass with capture stopped,
-/// and lets go on the first of: `watchdog` seconds (restarted once when
-/// the lid reopens, so the reopen gets its own time to land a frame),
-/// the lid back past `releaseAngle` with a fresh frame in hand (the fold
-/// then unfolds from black), or anything that means nobody is looking
-/// at this desktop — the owner checks sleep, lock and session itself.
-/// It never draws above the lock screen and never uses private spaces.
+/// So the overlay stays up as a flat black pass with capture stopped and
+/// the last picture held in the renderer, and lets go on the first of:
+/// `watchdog` seconds (restarted once when the lid reopens, so the
+/// reopen gets its own time), the lid back past `releaseAngle` with a
+/// picture in hand (the fold then follows the lid up out of black, from
+/// the held picture, with no wait for a new capture), or anything that
+/// means nobody is looking at this desktop — the owner checks sleep,
+/// lock and session itself. It never draws above the lock screen and
+/// never uses private spaces.
 struct FoldBlackout: Sendable {
     static let watchdog: TimeInterval = 3
     /// 10° above the closed line.
@@ -1110,10 +783,10 @@ struct FoldBlackout: Sendable {
 
     func expired(at now: TimeInterval) -> Bool { active && now >= deadline }
 
-    /// The lid is open enough and a frame captured after the close is
-    /// in hand: the fold can take over from black.
-    func releases(angle: Double?, freshFrame: Bool) -> Bool {
-        guard active, freshFrame, let a = angle, a.isFinite else { return false }
+    /// The lid is open enough and there is a picture to fold — the one
+    /// held from the close is enough: the fold can take over from black.
+    func releases(angle: Double?, pictureReady: Bool) -> Bool {
+        guard active, pictureReady, let a = angle, a.isFinite else { return false }
         return a >= Self.releaseAngle
     }
 
@@ -1121,12 +794,12 @@ struct FoldBlackout: Sendable {
 
     /// What the watchdog does when it fires: true hands the overlay to
     /// the live fold the way a release does, false orders it out. A lid
-    /// open again, drawing, with a frame in hand hands over: under the
+    /// open again, drawing, with a picture in hand hands over: under the
     /// release angle the fold draws black too, so the sharp desktop
-    /// never shows through a fresh order-in. With no frame there is
+    /// never shows through a fresh order-in. With no picture there is
     /// nothing to draw.
-    static func watchdogHandsOver(angle: Double?, drawing: Bool, freshFrame: Bool) -> Bool {
-        guard drawing, freshFrame, let a = angle, a.isFinite else { return false }
+    static func watchdogHandsOver(angle: Double?, drawing: Bool, pictureReady: Bool) -> Bool {
+        guard drawing, pictureReady, let a = angle, a.isFinite else { return false }
         return a > FoldPause.closedAngle
     }
 }

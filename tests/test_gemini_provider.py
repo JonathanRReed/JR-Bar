@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from jrbar.install import install_gemini_hooks, uninstall_gemini_hooks
 from jrbar.models import AgentMode
 from jrbar.providers import (
@@ -185,3 +187,96 @@ def test_ingress_accepts_the_new_providers() -> None:
         from jrbar.hook_ingress_protocol import _HOOK_PROVIDERS
 
         assert provider in _HOOK_PROVIDERS
+
+
+@pytest.mark.parametrize("settings", [
+    {"enabled": False},
+    {"disabled": [GEMINI_HOOK_NAME]},
+    {"enabled": False, "disabled": [GEMINI_HOOK_NAME]},
+])
+def test_detection_reports_managed_gemini_hooks_disabled(tmp_path: Path, settings: dict) -> None:
+    config = tmp_path / ".gemini" / "settings.json"
+    install_gemini_hooks(tmp_path / "gemini.jsonl", config, python_executable=sys.executable)
+    data = json.loads(config.read_text())
+    data["hooksConfig"] = settings
+    config.write_text(json.dumps(data))
+
+    detected = detect_gemini_config(tmp_path)
+
+    assert detected.managed and detected.hook_events and detected.log_paths
+    assert not detected.hooks_enabled
+
+
+def test_explicit_install_enables_only_managed_gemini_names(tmp_path: Path) -> None:
+    config = tmp_path / ".gemini" / "settings.json"
+    install_gemini_hooks(tmp_path / "gemini.jsonl", config, python_executable=sys.executable)
+    data = json.loads(config.read_text())
+    data["hooksConfig"] = {"enabled": False, "disabled": ["foreign", GEMINI_HOOK_NAME], "notifications": False}
+    config.write_text(json.dumps(data))
+
+    result = install_gemini_hooks(tmp_path / "gemini.jsonl", config, python_executable=sys.executable)
+
+    assert result.changed
+    assert json.loads(config.read_text())["hooksConfig"] == {
+        "enabled": True, "disabled": ["foreign"], "notifications": False,
+    }
+    assert detect_gemini_config(tmp_path).hooks_enabled
+    assert not install_gemini_hooks(tmp_path / "gemini.jsonl", config, python_executable=sys.executable).changed
+
+
+@pytest.mark.parametrize("disabled_name", [GEMINI_HOOK_NAME, "old-jrbar-name", None])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_refresh_keeps_gemini_disable_choices(tmp_path: Path, disabled_name: str | None, enabled: bool) -> None:
+    from jrbar.install import refresh_managed_hooks
+
+    config = tmp_path / ".gemini" / "settings.json"
+    log = tmp_path / "gemini.jsonl"
+    command = f"/tmp/jrbar-hook --provider gemini --log {log}"
+    name = disabled_name or command
+    config.parent.mkdir()
+    config.write_text(json.dumps({
+        "hooksConfig": {"enabled": enabled, "disabled": ["foreign", name]},
+        "hooks": {"SessionStart": [{"hooks": [{
+            "type": "command", "command": command, **({"name": disabled_name} if disabled_name else {}),
+        }]}]},
+    }))
+
+    result = refresh_managed_hooks(home=tmp_path, state_dir=tmp_path / "state", python_executable=sys.executable)
+
+    assert result["gemini"].provider == "gemini"
+    settings = json.loads(config.read_text())["hooksConfig"]
+    assert settings["enabled"] is enabled
+    assert "foreign" in settings["disabled"] and name in settings["disabled"]
+    assert GEMINI_HOOK_NAME in settings["disabled"]
+    assert detect_gemini_config(tmp_path).managed and not detect_gemini_config(tmp_path).hooks_enabled
+    first = config.read_bytes()
+    refresh_managed_hooks(home=tmp_path, state_dir=tmp_path / "state", python_executable=sys.executable)
+    assert config.read_bytes() == first
+
+
+@pytest.mark.parametrize("settings", [[], {"enabled": "false"}, {"disabled": GEMINI_HOOK_NAME}, {"disabled": [1]}])
+def test_install_refuses_invalid_gemini_activation_settings_without_writes(tmp_path: Path, settings) -> None:
+    config = tmp_path / ".gemini" / "settings.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps({"hooksConfig": settings}))
+    original = config.read_bytes()
+    log = tmp_path / "gemini.jsonl"
+
+    with pytest.raises(ValueError, match="hooksConfig"):
+        install_gemini_hooks(log, config, python_executable=sys.executable)
+
+    assert config.read_bytes() == original
+    assert not log.exists()
+    assert not list(config.parent.glob("*.bak.*"))
+
+
+@pytest.mark.parametrize("payload", [[], None, {"hooks": {"SessionStart": [{"hooks": 3}]}}])
+def test_invalid_json_hook_config_does_not_break_detection(tmp_path: Path, payload) -> None:
+    config = tmp_path / ".gemini" / "settings.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps(payload))
+
+    detected = detect_gemini_config(tmp_path)
+
+    assert detected.exists
+    assert not detected.managed and not detected.hooks_enabled

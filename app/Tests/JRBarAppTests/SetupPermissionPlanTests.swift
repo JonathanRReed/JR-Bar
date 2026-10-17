@@ -39,6 +39,43 @@ struct SetupPermissionPlanTests {
         #expect(external.active == [.notifications, .screenRecording, .accessibility])
     }
 
+    @Test("Follow Focus needs both grants even when utilities are disabled")
+    func followFocusWithoutUtilities() {
+        let document = SettingsDocument(.object(["focus_sync_enabled": .bool(true)]))
+        let plan = SetupPermissionPlan.features(toys: ToysState(),
+                                               utilities: UtilitiesState(enabled: false),
+                                               document: document, followsAlcove: false)
+        #expect(plan.active == [.notifications, .fullDiskAccess, .focusStatus])
+        #expect(!plan.optional.contains(.fullDiskAccess))
+        #expect(!plan.optional.contains(.focusStatus))
+    }
+
+    @Test("disabled or unset Follow Focus leaves both grants optional")
+    func followFocusOff() {
+        let disabled = SettingsDocument(.object(["focus_sync_enabled": .bool(false)]))
+        for document in [empty, disabled] {
+            let plan = SetupPermissionPlan.features(toys: ToysState(),
+                                                   utilities: UtilitiesState(enabled: false),
+                                                   document: document, followsAlcove: false)
+            #expect(plan.active == [.notifications])
+            #expect(plan.optional.contains(.fullDiskAccess))
+            #expect(plan.optional.contains(.focusStatus))
+        }
+    }
+
+    @Test("a Focus menu rule needs Focus Status without Follow Focus")
+    func focusRuleWithoutSync() {
+        var utilities = UtilitiesState()
+        utilities.menuBar.enabled = true
+        utilities.menuBar.triggerRules = [
+            MenuBarTriggerRule(trigger: .focusEnabled, action: .hideAll),
+        ]
+        let plan = SetupPermissionPlan.features(toys: ToysState(), utilities: utilities,
+                                               document: empty, followsAlcove: false)
+        #expect(plan.active == [.notifications, .accessibility, .focusStatus])
+        #expect(plan.optional.contains(.fullDiskAccess))
+    }
+
     @Test("active daemon signals and menu rules contribute their specific grants")
     func daemonAndRuleFeatures() {
         let document = SettingsDocument(.object([

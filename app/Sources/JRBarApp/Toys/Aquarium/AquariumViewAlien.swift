@@ -29,9 +29,9 @@ extension AquariumView {
     }
 
     func drawAlien(canvas: inout GraphicsContext, size: CGSize, t: Double, x: Double,
-                   presence: Double) {
+                   presence: Double, now: Date? = nil) {
         let m = motion
-        let now = Date(timeIntervalSince1970: t)
+        let now = now ?? Date(timeIntervalSince1970: t)
         // A new visit forgets the last one's taps and shoo.
         if let visit = m.activeVisitor, let shooed = m.alienShooedAt, shooed < visit.startedAt {
             m.alienShooedAt = nil
@@ -39,6 +39,7 @@ extension AquariumView {
         var center = alienCenter(size: size, t: t, x: x)
         var scale = 1.0
         var alpha = min(1, presence * 1.6)
+        if isStill, m.alienShooedAt != nil { m.alienBox = nil; return }
         if let shooed = m.alienShooedAt, let from = m.alienBox.map({ CGPoint(x: $0.midX, y: $0.midY) }) {
             // Zipping off: up and away, shrinking into the distance.
             let z = min(1, max(0, now.timeIntervalSince(shooed) / Self.alienZipSeconds))

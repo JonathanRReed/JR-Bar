@@ -32,8 +32,8 @@ just made (`jrbar doctor` reports the daemon's commit).
 ## Where things live
 
 - `app/` is the Swift app. It owns every pixel and asks the daemon for
-  every fact. Anything it decides on its own is listed at the end of
-  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+  every fact. Anything it decides on its own is listed under "What the app
+  decides on its own" in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - `src/jrbar/` is the daemon. New behaviour lands as a protocol document
   or command in [docs/CORE-PROTOCOL.md](docs/CORE-PROTOCOL.md) first; the
   app never reads the daemon's files behind its back. Additive fields are

@@ -10,6 +10,10 @@ install it. This page lists everything else.
 - [Recovery](user/recovery.md): monitor offline, stale quota, missing hooks,
   macOS permissions, and a saved file that could not be read
 - [Install and remove](user/install.md)
+- [Finding a setting](user/settings.md): the seven Settings pages, what sits
+  behind Advanced, and where the older pages went
+- [Updating a SidePulse's firmware](user/firmware.md): one click, checked
+  download, honest result
 - [The command line](user/cli.md): `jrbar usage`, `jrbar status`,
   `jrbar hooks doctor`, settings by dot path, `jrbar://` links
 - [Providers](user/providers.md): hooks, usage cards and what each state
@@ -20,13 +24,13 @@ install it. This page lists everything else.
   runs low or resets
 - [Claude Code's status line](user/claude-statusline.md) as a quota source
 - [CLIProxyAPI as a usage hub](user/cliproxy-hub.md)
+- [A line on your phone](user/phone-alert.md): the ntfy alert, off until you
+  turn it on
 - [Scripts, status bars and launchers](user/scripts-and-status.md):
   `jrbar serve`, xbar and SwiftBar, Raycast, and the
   [examples](../examples/README.md)
 - [Toys](TOYS.md) and [Utilities](UTILITIES.md); [toy parity](TOY-PARITY.md)
-  measures each native surface against the app it stands in for, and
-  [archive lifetime](ARCHIVE-LIFECYCLE.md) says how Data Hoarder opens,
-  closes and reads its archive
+  measures each native surface against the app it stands in for
 - [Control Center](CONTROL-CENTER.md) for the Creator Micro 2, and its
   [adapter](creator-micro-2.md)
 - [Integrations](INTEGRATIONS.md): T3 Code and Alcove, read-only

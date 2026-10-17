@@ -59,7 +59,7 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
     public var subtitle: String {
         switch self {
         case .agents: return "One dot per live session, coloured by what it is doing; the mark alone when nothing runs."
-        case .meters: return "A column per provider checked under Settings › Usage, plus a state dot."
+        case .meters: return "A column per provider checked under Settings › Agents & Usage, plus a state dot."
         case .metersPercent: return "The same columns, with the first provider's remaining percent — or its reset countdown when that is the more urgent number."
         case .compactPercent: return "The tightest window's remaining percent beside its provider's mark, tinted by pace; shows the reset countdown when it is nearly spent or nearly due."
         case .glyph: return "The JR-Bar mark, tinted by what the agents are doing."
@@ -132,8 +132,11 @@ public struct StatusMeter: Hashable, Sendable {
     /// The window exists and nobody said how full it is.
     public var isUnknown: Bool { fraction == nil }
 
+    /// A spent window is known state, not an approaching-limit warning.
+    public var isExhausted: Bool { paceVerdict == .exhausted || (fraction ?? 0) >= 1 }
+
     public var warning: StatusIconSpec.RingWarning {
-        guard let fraction, !stale else { return .none }
+        guard let fraction, !stale, !isExhausted else { return .none }
         if fraction >= 0.95 { return .red }
         if fraction >= 0.80 { return .amber }
         return .none
@@ -180,19 +183,18 @@ public enum StatusDotState: String, Hashable, Sendable, CaseIterable {
     case working
     /// An ask is open: the dot pulses amber.
     case ask
-    /// Something failed: the dot blinks red. Its own state since
+    /// Something failed: the dot holds red. Its own state since
     /// 2026-09-10 -- a failed session used to show as whatever else was
     /// running, or as nothing at all.
     case error
     /// A run finished in the last few seconds: the dot holds green.
     case done
 
-    /// Only these three move, so only these three run the redraw timer.
-    public var animates: Bool { self == .working || self == .ask || self == .error }
+    /// Working and open asks move; standing failures hold still.
+    public var animates: Bool { self == .working || self == .ask }
 
-    /// In the `agents` strip only asks and failures move: a working dot
-    /// holds still so a busy menu bar stays calm.
-    public var breathes: Bool { self == .ask || self == .error }
+    /// In the `agents` strip only open asks move.
+    public var breathes: Bool { self == .ask }
 
     /// What the dot at the left is saying, in one line, so its meaning is
     /// somewhere other than this file. The tooltip's second line.
@@ -228,10 +230,15 @@ public struct StatusIconSpec: Hashable, Sendable {
     public var sessions: [SessionDot]
     /// 0…1 breathing phase for the moving dots; steady dots ignore it.
     public var phase: Double
+    /// Draw each dot state as its own shape (ring, circle, bullseye, square,
+    /// tick) so no state depends on colour or on motion to be told apart:
+    /// for Reduce Motion and Differentiate Without Color.
+    public var shapes: Bool
 
     public init(style: StatusIconStyle, ringFraction: Double? = nil, tintHex: String? = nil,
                 meters: [StatusMeter] = [], overflow: Int = 0, dot: StatusDotState = .idle,
-                sessions: [SessionDot] = [], phase: Double = 0) {
+                sessions: [SessionDot] = [], phase: Double = 0, shapes: Bool = false) {
+        self.shapes = shapes
         self.style = style
         self.ringFraction = ringFraction.map { max(0, min(1, $0)) }
         self.tintHex = tintHex
@@ -260,7 +267,8 @@ public struct StatusIconSpec: Hashable, Sendable {
     }
 
     public var ringWarning: RingWarning {
-        guard style == .glyphRing || style == .orbit, let ringFraction else { return .none }
+        guard style == .glyphRing || style == .orbit, let ringFraction, ringFraction < 1 else { return .none }
+        if let lead = meters.first, !lead.stale, lead.isExhausted { return .none }
         if ringFraction >= 0.95 { return .red }
         if ringFraction >= 0.80 { return .amber }
         return .none
@@ -366,7 +374,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
             width += CGFloat(spec.meters.count) * meterBarWidth + CGFloat(spec.meters.count - 1) * meterBarGap
         }
         // The percent style spells out the leading provider — the one at
-        // the top of Settings › Usage. Every figure is in the tooltip;
+        // the top of Settings › Agents & Usage. Every figure is in the tooltip;
         // printing them all is what made the strip too wide to survive.
         if spec.style == .metersPercent, let leading = spec.meters.first {
             width += percentGap + glyphBox + glyphGap + percentWidth(leading)
@@ -437,15 +445,16 @@ public final class StatusIconRenderer: @unchecked Sendable {
     }
 
     /// The compact strip's tint: the pace verdict's colour when the
-    /// window is heading somewhere bad — exhausted red, running out
-    /// amber — then the meter's own warning, then the provider accent;
+    /// window is running out, then the meter's own warning, then the provider
+    /// accent. A known spent window keeps its normal appearance;
     /// nil leaves a template image to follow the menu bar's colour.
     static func compactColor(_ meter: StatusMeter?) -> NSColor? {
         // A stale figure says nothing about where the window is heading
         // now, so it takes no colour at all.
         guard let meter, !meter.stale else { return nil }
+        if meter.isExhausted { return meter.accentHex.flatMap(NSColor.init(hex:)) }
         switch meter.paceVerdict {
-        case .exhausted: return .systemRed
+        case .exhausted: break
         case .runsOut: return .systemOrange
         case .comfortable, .guarded, .unknown: break
         }
@@ -618,6 +627,10 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// same way with a halo; done and idle hold still.
     static func drawDot(_ spec: StatusIconSpec, rect: NSRect, color: NSColor?, ink: NSColor) {
         let breath = 0.5 - 0.5 * cos(spec.phase * 2 * .pi)      // 0 → 1 → 0
+        if spec.shapes {
+            drawShapedDot(spec.dot, rect: rect, color: color, ink: ink, breath: breath, phase: spec.phase)
+            return
+        }
         switch spec.dot {
         case .idle:
             ink.withAlphaComponent(0.28).setFill()
@@ -633,14 +646,51 @@ public final class StatusIconRenderer: @unchecked Sendable {
             (color ?? ink).setFill()
             NSBezierPath(ovalIn: rect).fill()
         case .error:
-            // A hard square, like the strip's: on for half the cycle, off
-            // for half, no easing. The ask's halo swells; this one snaps,
-            // so the two are told apart by rhythm as well as by colour.
-            (color ?? ink).withAlphaComponent(spec.phase < 0.5 ? 1.0 : 0.30).setFill()
+            // A known failure stays visible without replaying an alarm.
+            (color ?? ink).setFill()
             NSBezierPath(ovalIn: rect).fill()
         case .done:
             (color ?? ink).setFill()
             NSBezierPath(ovalIn: rect).fill()
+        }
+    }
+
+    /// A dot told apart by its outline alone: idle a thin ring, working a
+    /// solid circle, an ask a ring with a centre (a target), a failure a
+    /// square, done a tick. Colour and breathing still ride on top, but
+    /// nothing needs them.
+    static func drawShapedDot(_ state: StatusDotState, rect: NSRect, color: NSColor?, ink: NSColor,
+                              breath: Double, phase: Double, alpha: CGFloat = 1) {
+        let fill = color ?? ink
+        switch state {
+        case .idle:
+            ink.withAlphaComponent(0.55 * alpha).setStroke()
+            let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 0.7, dy: 0.7))
+            ring.lineWidth = 1.2
+            ring.stroke()
+        case .working:
+            fill.withAlphaComponent((0.35 + 0.65 * breath) * alpha).setFill()
+            NSBezierPath(ovalIn: rect).fill()
+        case .ask:
+            fill.withAlphaComponent(alpha).setStroke()
+            let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 0.7, dy: 0.7))
+            ring.lineWidth = 1.4
+            ring.stroke()
+            fill.withAlphaComponent(alpha).setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: rect.width * 0.3, dy: rect.height * 0.3)).fill()
+        case .error:
+            fill.withAlphaComponent(alpha).setFill()
+            NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5)).fill()
+        case .done:
+            fill.withAlphaComponent(alpha).setStroke()
+            let tick = NSBezierPath()
+            tick.lineWidth = 1.8
+            tick.lineCapStyle = .round
+            tick.lineJoinStyle = .round
+            tick.move(to: NSPoint(x: rect.minX + rect.width * 0.1, y: rect.minY + rect.height * 0.5))
+            tick.line(to: NSPoint(x: rect.minX + rect.width * 0.4, y: rect.minY + rect.height * 0.15))
+            tick.line(to: NSPoint(x: rect.minX + rect.width * 0.95, y: rect.minY + rect.height * 0.9))
+            tick.stroke()
         }
     }
 
@@ -676,7 +726,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
                 let shown = over ? maxSessionDots - 1 : spec.sessions.count
                 for session in spec.sessions.prefix(shown) {
                     let rect = NSRect(x: x, y: midY - sessionDot / 2, width: sessionDot, height: sessionDot)
-                    drawSessionDot(session, phase: spec.phase, rect: rect, ink: ink)
+                    drawSessionDot(session, phase: spec.phase, rect: rect, ink: ink, shapes: spec.shapes)
                     x += sessionDot + sessionDotGap
                 }
                 if over {
@@ -698,7 +748,8 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// dot: asks and failures breathe with the strip's phase, everything
     /// else holds still (a working dot is steady — the accent, not the
     /// motion, is what says it is running).
-    static func drawSessionDot(_ session: SessionDot, phase: Double, rect: NSRect, ink: NSColor) {
+    static func drawSessionDot(_ session: SessionDot, phase: Double, rect: NSRect, ink: NSColor,
+                               shapes: Bool = false) {
         let color: NSColor?
         switch session.state {
         case .idle: color = nil
@@ -708,13 +759,18 @@ public final class StatusIconRenderer: @unchecked Sendable {
         case .done: color = .systemGreen
         }
         if session.dimmed {
+            if shapes {
+                drawShapedDot(session.state, rect: rect, color: color, ink: ink, breath: 1, phase: 0, alpha: 0.38)
+                return
+            }
             // Snoozed: the state colour at a murmur, no halo, no clock.
             (color ?? ink).withAlphaComponent(0.38).setFill()
             NSBezierPath(ovalIn: rect).fill()
             return
         }
         let phase = session.state.breathes ? phase : 0.5
-        drawDot(StatusIconSpec(style: .agents, dot: session.state, phase: phase), rect: rect, color: color, ink: ink)
+        drawDot(StatusIconSpec(style: .agents, dot: session.state, phase: phase, shapes: shapes),
+                rect: rect, color: color, ink: ink)
     }
 
     static func meterColor(_ meter: StatusMeter, ink: NSColor, template: Bool) -> NSColor {

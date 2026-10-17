@@ -20,7 +20,6 @@ from jrbar.reset_policy import (
     ResetBoundaryPlan,
     ResetCountdown,
     derive_reset_countdown,
-    format_reset_countdown,
     parse_reset_epoch,
     plan_reset_boundary_refresh,
 )
@@ -204,34 +203,6 @@ def test_parse_reset_epoch_rejects_malformed_nonfuture_and_implausible_values(
     value,
 ) -> None:
     assert parse_reset_epoch(value, now=1_000.0) is None
-
-
-@pytest.mark.parametrize(
-    ("reset_epoch", "expected"),
-    (
-        (None, None),
-        (999.0, None),
-        (1_000.0, None),
-        (1_000.001, "now"),
-        (1_059.999, "now"),
-        (1_060.0, "in 1m"),
-        (1_060.001, "in 2m"),
-        (4_599.999, "in 1h"),
-        (4_600.0, "in 1h"),
-        (4_600.001, "in 1h 1m"),
-        (87_399.999, "in 1d"),
-        (87_400.0, "in 1d"),
-        (91_000.0, "in 1d 1h"),
-        (92_800.0, "in 1d 2h"),
-        (177_400.0, "in 2d 1h"),
-        (178_300.0, "in 2d 2h"),
-    ),
-)
-def test_reset_countdown_uses_literal_ceil_minute_boundaries(
-    reset_epoch: float | None,
-    expected: str | None,
-) -> None:
-    assert format_reset_countdown(reset_epoch, now=1_000.0) == expected
 
 
 def test_reset_plan_groups_every_provider_at_the_earliest_shared_boundary__and_2_more() -> None:

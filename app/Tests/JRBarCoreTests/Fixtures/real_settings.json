@@ -3,6 +3,8 @@
   "active_scene": "calm",
   "agent_keep_awake_enabled": true,
   "alert_burst": 3,
+  "ask_expire_after_days": 7.0,
+  "ask_stale_after_hours": 6.0,
   "auto_dim": {
    "ambient": {
     "lux_ceiling": 400.0,

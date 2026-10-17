@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
+import json
 import os
 import re
 import stat
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -17,7 +19,35 @@ from pathlib import Path
 
 PRIVATE_DIRECTORY_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
-REDACTION_MARKER = "[REDACTED]"
+
+
+def document_digest(document: dict[str, object]) -> str:
+    """Return the SHA-256 of a JSON document in one canonical encoding."""
+    encoded = json.dumps(
+        document,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def decode_strict_json(raw: str, error: type[Exception]) -> object:
+    """Parse JSON, raising ``error`` for a repeated or non-string key or a NaN."""
+
+    def strict_object(pairs: list[tuple[object, object]]) -> dict[object, object]:
+        result: dict[object, object] = {}
+        for key, value in pairs:
+            if type(key) is not str or key in result:
+                raise error
+            result[key] = value
+        return result
+
+    def reject_constant(_value: str) -> None:
+        raise error
+
+    return json.loads(raw, object_pairs_hook=strict_object, parse_constant=reject_constant)
 
 
 def _lstat(path: Path) -> os.stat_result | None:
@@ -29,6 +59,22 @@ def _lstat(path: Path) -> os.stat_result | None:
 
 def _chmod(path: Path, mode: int) -> None:
     os.chmod(path, mode, follow_symlinks=False)
+
+
+# A chmod that changes nothing still rewrites the inode, and a read that made
+# three of them (the folder twice, the file once) cost 5.1 ms against 0.14 ms
+# without. The daemon's run loop did that for every session record on every
+# state build and stalled for seconds in the folder's chmod when the disk was
+# busy (2026-10-08). Tightening is unchanged: a mode that is already private is
+# left alone, any other is set.
+def _chmod_if_needed(path: Path, mode: int, info: os.stat_result) -> None:
+    if stat.S_IMODE(info.st_mode) != mode:
+        _chmod(path, mode)
+
+
+def _fchmod_if_needed(descriptor: int, mode: int, info: os.stat_result) -> None:
+    if stat.S_IMODE(info.st_mode) != mode:
+        os.fchmod(descriptor, mode)
 
 
 def _require_directory(path: Path, info: os.stat_result) -> None:
@@ -80,8 +126,10 @@ def _create_directory_chain(path: Path, *, tighten_existing: bool = True) -> Non
             created = False
             info = directory.lstat()
             _require_directory(directory, info)
-        if created or tighten_existing:
+        if created:
             _chmod(directory, PRIVATE_DIRECTORY_MODE)
+        elif tighten_existing:
+            _chmod_if_needed(directory, PRIVATE_DIRECTORY_MODE, info)
 
 
 def ensure_private_directory(path: Path, *, tighten_existing: bool = True) -> Path:
@@ -94,7 +142,7 @@ def ensure_private_directory(path: Path, *, tighten_existing: bool = True) -> Pa
     else:
         _require_directory(target, info)
         if tighten_existing:
-            _chmod(target, PRIVATE_DIRECTORY_MODE)
+            _chmod_if_needed(target, PRIVATE_DIRECTORY_MODE, info)
     return target
 
 
@@ -147,7 +195,7 @@ def _private_parent(
         ):
             raise OSError(f"private parent changed while opening: {target.parent}")
         if tighten:
-            os.fchmod(descriptor, PRIVATE_DIRECTORY_MODE)
+            _fchmod_if_needed(descriptor, PRIVATE_DIRECTORY_MODE, opened)
         yield target, descriptor, target.name
     finally:
         os.close(descriptor)
@@ -912,7 +960,7 @@ def append_private_text_at(
             _require_opened_leaf(target, expected, opened)
             if opened.st_uid != os.getuid():
                 raise OSError(f"refusing private append to foreign-owned file: {target}")
-            os.fchmod(descriptor, PRIVATE_FILE_MODE)
+            _fchmod_if_needed(descriptor, PRIVATE_FILE_MODE, opened)
             data = str(text).encode("utf-8")
             written = os.write(descriptor, data) if data else 0
             whole = written == len(data)
@@ -974,7 +1022,7 @@ def read_private_bytes_with_identity(
             opened = os.fstat(descriptor)
             _require_opened_leaf(target, expected, opened)
             if tighten:
-                os.fchmod(descriptor, PRIVATE_FILE_MODE)
+                _fchmod_if_needed(descriptor, PRIVATE_FILE_MODE, opened)
             if max_bytes is not None and opened.st_size > max_bytes:
                 if not tail:
                     raise OSError("private file exceeds maximum size")
@@ -1078,7 +1126,7 @@ def read_private_log_slice(
             opened = os.fstat(descriptor)
             _require_opened_leaf(target, expected, opened)
             if tighten:
-                os.fchmod(descriptor, PRIVATE_FILE_MODE)
+                _fchmod_if_needed(descriptor, PRIVATE_FILE_MODE, opened)
             identity = (opened.st_dev, opened.st_ino)
             size = opened.st_size
             start = 0
@@ -1132,81 +1180,6 @@ def read_private_text_with_identity(
         max_bytes=max_bytes,
     )
     return payload.decode(encoding, errors), identity
-
-
-_SENSITIVE_EXACT_KEYS = {
-    "args",
-    "arguments",
-    "body",
-    "command",
-    "content",
-    "input",
-    "output",
-    "payload",
-    "prompt",
-    "raw",
-    "request",
-    "response",
-    "text",
-    "toolargs",
-    "toolarguments",
-    "toolinput",
-    "tooloutput",
-    "toolresponse",
-    "toolresult",
-    "tooluseresult",
-    "lastassistantmessage",
-    "transcriptpath",
-}
-_SENSITIVE_KEY_FRAGMENTS = (
-    "authorization",
-    "apikey",
-    "cookie",
-    "credential",
-    "password",
-    "privatekey",
-    "secret",
-    "token",
-    "webhook",
-)
-
-
-def _normalized_key(key: object) -> str:
-    return "".join(character for character in str(key).casefold() if character.isalnum())
-
-
-def _sensitive_key(key: object) -> bool:
-    normalized = _normalized_key(key)
-    return normalized in _SENSITIVE_EXACT_KEYS or any(
-        fragment in normalized for fragment in _SENSITIVE_KEY_FRAGMENTS
-    ) or normalized.endswith("body")
-
-
-def _event_name(mapping: Mapping) -> str:
-    for key, value in mapping.items():
-        if _normalized_key(key) in {"eventname", "hookeventname"}:
-            return _normalized_key(value)
-    return ""
-
-
-def redact_event_payload(payload: object) -> object:
-    """Return a recursively redacted copy of one untrusted event payload."""
-    if isinstance(payload, Mapping):
-        notification = _event_name(payload) == "notification"
-        return {
-            key: (
-                REDACTION_MARKER
-                if _sensitive_key(key)
-                or (_normalized_key(key) == "message" and not notification)
-                else redact_event_payload(value)
-            )
-            for key, value in payload.items()
-        }
-    if isinstance(payload, list):
-        return [redact_event_payload(value) for value in payload]
-    if isinstance(payload, tuple):
-        return tuple(redact_event_payload(value) for value in payload)
-    return payload
 
 
 @dataclass(frozen=True, slots=True)

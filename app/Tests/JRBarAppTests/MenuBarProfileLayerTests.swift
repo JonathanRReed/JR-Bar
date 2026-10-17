@@ -112,21 +112,6 @@ struct MenuBarProfileLayerTests {
 
     // MARK: Where a pick lands
 
-    @Test("an app pick lands on the profile only when the profile already speaks for the app")
-    func appPickRouting() {
-        var settings = MenuBarSettings()
-        settings.profiles = [profile("work", apps: ["zoom": .hidden])]
-        #expect(!MenuBarProfiles.pickTargetsProfile(appID: "zoom", in: settings),
-                "no active profile: every pick is your bar's")
-        settings.curation.activeProfileID = "work"
-        #expect(MenuBarProfiles.pickTargetsProfile(appID: "zoom", in: settings))
-        #expect(!MenuBarProfiles.pickTargetsProfile(appID: "slack", in: settings))
-        MenuBarProfiles.setDelta(appID: "zoom", to: .shown, profileID: "work", in: &settings)
-        #expect(settings.profiles[0].concealedApps == ["zoom": .shown])
-        MenuBarProfiles.setDelta(appID: "zoom", to: nil, profileID: "work", in: &settings)
-        #expect(settings.profiles[0].concealedApps.isEmpty)
-    }
-
     @MainActor
     @Test("a cover pick through the utility follows the same routing, and a delta keeps its Shown")
     func coverPickRouting() {
@@ -136,6 +121,7 @@ struct MenuBarProfileLayerTests {
         state.curation.activeProfileID = "work"
         utility.settings = { state }
         utility.onSettingsChange = { state = $0 }
+        utility.hider.listingIsComplete = { true }
         utility.hider.listItems = { [] }
         utility.hider.onPlan = nil
         // The profile speaks for Weather: its delta takes the pick, and a
@@ -150,6 +136,135 @@ struct MenuBarProfileLayerTests {
         // The editor's "Your bar" drops the delta.
         utility.setProfileDelta(nil, forItem: "Weather", profileID: "work")
         #expect(state.profiles[0].sections.isEmpty)
+    }
+
+    @MainActor
+    @Test("a trigger keeps finding a profile after a save changes only its name's case")
+    func triggerAfterCaseOnlySave() {
+        let utility = MenuBarUtility()
+        var state = MenuBarSettings(enabled: false)
+        state.sections = ["Base": .hidden]
+        state.concealedApps = ["base-app": .alwaysHidden]
+        state.profiles = [profile("work", apps: ["profile-app": .hidden],
+                                  sections: ["Profile": .shown])]
+        utility.settings = { state }
+        utility.onSettingsChange = { state = $0 }
+
+        let savedID = utility.saveProfileAs("WORK")
+        #expect(savedID == "work")
+        #expect(state.profiles.count == 1)
+        #expect(state.profiles[0].name == "WORK")
+        let savedProfiles = state.profiles
+        utility.menuBarActions(utility.actions, applyProfile: "Work")
+
+        #expect(state.curation.activeProfileID == "work")
+        #expect(state.sections == ["Base": .hidden])
+        #expect(state.concealedApps == ["base-app": .alwaysHidden])
+        #expect(state.profiles == savedProfiles)
+    }
+
+    @MainActor
+    @Test("profile trigger names accept None's case and leave unknown names alone")
+    func triggerNameControls() {
+        let utility = MenuBarUtility()
+        var state = MenuBarSettings(enabled: false)
+        state.sections = ["Base": .hidden]
+        state.concealedApps = ["base-app": .hidden]
+        state.profiles = [profile("work")]
+        utility.settings = { state }
+        utility.onSettingsChange = { state = $0 }
+
+        utility.menuBarActions(utility.actions, applyProfile: "Work")
+        #expect(state.curation.activeProfileID == "work")
+        let selected = state
+        utility.menuBarActions(utility.actions, applyProfile: "Missing")
+        #expect(state == selected)
+        utility.menuBarActions(utility.actions, applyProfile: "none")
+        #expect(state.curation.activeProfileID == nil)
+        #expect(state.sections == selected.sections)
+        #expect(state.concealedApps == selected.concealedApps)
+        #expect(state.profiles == selected.profiles)
+        utility.menuBarActions(utility.actions, applyProfile: "Work")
+        utility.menuBarActions(utility.actions, applyProfile: "None")
+        #expect(state.curation.activeProfileID == nil)
+    }
+
+    @MainActor
+    @Test("renaming through the utility keeps saved rule targets and unrelated settings")
+    func renameKeepsRuleTargets() {
+        let utility = MenuBarUtility()
+        var state = MenuBarSettings(enabled: false)
+        state.profiles = [profile("work"), profile("travel")]
+        state.sections = ["Base": .hidden]
+        state.concealedApps = ["base-app": .alwaysHidden]
+        state.displayProfiles = ["display": "work"]
+        state.triggerRules = [
+            MenuBarTriggerRule(id: "active", trigger: .focusEnabled,
+                               action: .applyProfile(name: "work")),
+            MenuBarTriggerRule(id: "disabled", enabled: false, trigger: .focusDisabled,
+                               action: .applyProfile(name: "WORK")),
+            MenuBarTriggerRule(id: "other", trigger: .screenLocked,
+                               action: .applyProfile(name: "Travel")),
+            MenuBarTriggerRule(id: "unknown", trigger: .screenUnlocked,
+                               action: .applyProfile(name: "Missing")),
+        ]
+        state.curation.stateRules = [
+            MenuBarStateRule(id: "hold", condition: .microphoneLive,
+                             effects: [.quietBar, .useProfile(name: "Work")]),
+            MenuBarStateRule(id: "disabled-hold", enabled: false, condition: .microphoneLive,
+                             effects: [.useProfile(name: "WORK")]),
+            MenuBarStateRule(id: "other-hold", condition: .microphoneLive,
+                             effects: [.useProfile(name: "Travel"), .useProfile(name: "Missing")]),
+        ]
+        utility.settings = { state }
+        utility.onSettingsChange = { state = $0 }
+        let before = state
+        for name in ["Travel", "travel", "None", "", "   "] {
+            utility.renameProfile(id: "work", to: name)
+            #expect(state == before)
+        }
+        utility.renameProfile(id: "missing", to: "Office")
+        #expect(state == before)
+        utility.actions.commandBar.onAction(.renameProfile(id: "work", name: " Office "))
+
+        var expected = before
+        expected.profiles[0].name = "Office"
+        expected.triggerRules[0].action = .applyProfile(name: "Office")
+        expected.triggerRules[1].action = .applyProfile(name: "Office")
+        expected.curation.stateRules[0].effects = [.quietBar, .useProfile(name: "Office")]
+        expected.curation.stateRules[1].effects = [.useProfile(name: "Office")]
+        #expect(state == expected)
+        if case .applyProfile(let name) = state.triggerRules[0].action {
+            utility.menuBarActions(utility.actions, applyProfile: name)
+        }
+        #expect(state.curation.activeProfileID == "work")
+        let selected = state
+        utility.menuBarActions(utility.actions, applyProfile: "Missing")
+        #expect(state == selected)
+    }
+
+    @MainActor
+    @Test("renaming a malformed None profile leaves built-in None rule targets alone")
+    func renameMalformedNone() {
+        let utility = MenuBarUtility()
+        var state = MenuBarSettings(enabled: false)
+        state.profiles = [MenuBarSettings.Profile(id: "malformed", name: "None")]
+        state.triggerRules = [MenuBarTriggerRule(trigger: .focusEnabled,
+                                               action: .applyProfile(name: "none"))]
+        state.curation.stateRules = [MenuBarStateRule(condition: .microphoneLive,
+                                                     effects: [.useProfile(name: "NONE")])]
+        utility.settings = { state }
+        utility.onSettingsChange = { state = $0 }
+        utility.stateRules.rules = { state.curation.stateRules }
+        let acquired = Date(timeIntervalSince1970: 100)
+        utility.stateRules.absorb(.micInUse(true), now: acquired)
+        let before = state
+        utility.renameProfile(id: "malformed", to: "Office")
+        var expected = before
+        expected.profiles[0].name = "Office"
+        #expect(state == expected)
+        #expect(utility.stateRules.outcome.profileName == "NONE")
+        #expect(utility.stateRules.profileSince == acquired)
     }
 
     // MARK: Cycling and the menu

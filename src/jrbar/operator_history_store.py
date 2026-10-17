@@ -5,7 +5,6 @@ from __future__ import annotations
 import fcntl
 import json
 import math
-import os
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -26,9 +25,9 @@ from .operator_history import (
 )
 from .private_io import (
     _private_parent,
-    _require_private_leaf,
     atomic_private_write,
     read_private_text,
+    unlink_private_file_if_unchanged,
 )
 from .provider_contracts import ProviderIdentifier
 
@@ -212,23 +211,9 @@ def _encode_state(state: OperatorHistoryState) -> str:
     return json.dumps(document, allow_nan=False, separators=(",", ":"), sort_keys=True) + "\n"
 
 
-def _secure_unlink(path: Path) -> bool:
-    with _private_parent(path, tighten=False) as (
-        target,
-        parent_descriptor,
-        name,
-    ):
-        info = _require_private_leaf(target, parent_descriptor, name)
-        if info is None:
-            return False
-        os.unlink(name, dir_fd=parent_descriptor)
-        os.fsync(parent_descriptor)
-        return True
-
-
 def _discard_and_diagnose(path: Path) -> None:
     try:
-        _secure_unlink(path)
+        unlink_private_file_if_unchanged(path)
     except OSError:
         return
     payload = json.dumps(
@@ -342,7 +327,7 @@ def save_operator_history(
     if retention == 0:
         with _merge_lock(target):
             try:
-                _secure_unlink(target)
+                unlink_private_file_if_unchanged(target)
             except FileNotFoundError:
                 pass
         return OperatorHistoryState()
@@ -491,7 +476,7 @@ class OperatorHistoryStore:
         with _merge_lock(self.path):
             had_memory = self.state != OperatorHistoryState() or self._dirty
             try:
-                removed = _secure_unlink(self.path)
+                removed = unlink_private_file_if_unchanged(self.path)
             except FileNotFoundError:
                 removed = False
             self.state = OperatorHistoryState()

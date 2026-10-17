@@ -25,7 +25,10 @@ struct SetupPermissionPlan: Equatable {
         }
         if document.bool("calendar_alerts_enabled") == true { active.insert(.calendar) }
         if document.bool("reminder_alerts_enabled") == true { active.insert(.reminders) }
-        if document.bool("focus_sync_enabled") == true { active.insert(.fullDiskAccess) }
+        if document.bool("focus_sync_enabled") == true {
+            active.insert(.fullDiskAccess)
+            active.insert(.focusStatus)
+        }
         if (document.string("closed_lid_awake_policy") ?? "never") != "never" { active.insert(.lidHelper) }
         if followsAlcove { active.insert(.accessibility) }
         if utilities.enabled {

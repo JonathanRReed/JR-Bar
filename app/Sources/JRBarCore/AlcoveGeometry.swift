@@ -48,7 +48,7 @@ public enum AlcoveGeometry {
     /// `CGWindowList` reports an owner name, not a bundle id.
     public static let ownerName = "Alcove"
     public static let bundleIdentifier = "com.henrikruscon.Alcove"
-    /// `ALCOVE_MAX_WIDTH`: wider than this is not a capsule.
+    /// Wider than this is not a capsule.
     public static let maxWidth: CGFloat = 520
     /// An expanded live activity runs a few times the notch's depth; a
     /// window deeper than this is a panel, not the capsule.

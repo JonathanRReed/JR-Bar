@@ -10,6 +10,128 @@ import JRBarCore
 @Suite("Screen Bar right-ear peek")
 @MainActor
 struct ScreenBarPeekTests {
+    @Test("an unpinned menu begins closing within 130 ms after leaving")
+    func menuLeaveClosesPromptly() {
+        let timers = ManualTimers()
+        var point = CGPoint(x: 120, y: 120)
+        var shown = true
+        let presenter = NotchCardPresenter(model: makeTestCardModel())
+        presenter.presentationEnabled = false
+        let interaction = ScreenBarInteraction(card: presenter, hitRects: { [] }, focus: { nil })
+        interaction.pointerLocation = { point }
+        interaction.peekState = { (shown: shown, pinned: false) }
+        interaction.peekZoneAt = { CGRect(x: 100, y: 100, width: 40, height: 40).contains($0) }
+        interaction.peekHoverTimer = { delay, work in timers.arm(delay, work) }
+        interaction.onPeek = { if $0 == .close || $0 == .leave { shown = false } }
+        defer { interaction.stop() }
+        interaction.pointerMoved()
+        point = CGPoint(x: 300, y: 300)
+        interaction.pointerMoved()
+        timers.advance(by: 0.11)
+        #expect(shown)
+        timers.advance(by: 0.02)
+        #expect(!shown)
+    }
+
+    @Test("returning within the menu grace cancels closing and a pinned menu stays open")
+    func menuReturnAndPinKeepItOpen() {
+        let timers = ManualTimers()
+        var point = CGPoint(x: 120, y: 120)
+        var pinned = false
+        var closes = 0
+        let presenter = NotchCardPresenter(model: makeTestCardModel())
+        presenter.presentationEnabled = false
+        let interaction = ScreenBarInteraction(card: presenter, hitRects: { [] }, focus: { nil })
+        interaction.pointerLocation = { point }
+        interaction.peekState = { (shown: true, pinned: pinned) }
+        interaction.peekZoneAt = { CGRect(x: 100, y: 100, width: 40, height: 40).contains($0) }
+        interaction.peekHoverTimer = { delay, work in timers.arm(delay, work) }
+        interaction.onPeek = { if $0 == .close || $0 == .leave { closes += 1 } }
+        defer { interaction.stop() }
+        interaction.pointerMoved()
+        point = CGPoint(x: 300, y: 300)
+        interaction.pointerMoved()
+        timers.advance(by: 0.10)
+        point = CGPoint(x: 120, y: 120)
+        interaction.pointerMoved()
+        timers.advance(by: 1)
+        #expect(closes == 0)
+        point = CGPoint(x: 300, y: 300)
+        interaction.pointerMoved()
+        pinned = true
+        timers.advance(by: 1)
+        #expect(closes == 0)
+    }
+
+    @Test("returning during automatic dismissal resumes without a new dwell")
+    func hoverReturnResumesImmediately() {
+        let timers = ManualTimers()
+        var point = CGPoint(x: 120, y: 120)
+        var shown = true
+        var resumable = false
+        var intents: [ScreenBarPeekIntent] = []
+        let presenter = NotchCardPresenter(model: makeTestCardModel())
+        presenter.presentationEnabled = false
+        let interaction = ScreenBarInteraction(card: presenter, hitRects: { [] }, focus: { nil })
+        interaction.pointerLocation = { point }
+        interaction.peekState = { (shown: shown, pinned: false) }
+        interaction.peekCanResume = { resumable }
+        interaction.peekZoneAt = { CGRect(x: 100, y: 100, width: 40, height: 40).contains($0) }
+        interaction.peekHoverTimer = { delay, work in timers.arm(delay, work) }
+        interaction.onPeek = {
+            intents.append($0)
+            switch $0 {
+            case .leave: shown = false; resumable = true
+            case .resumeHover: shown = true; resumable = false
+            case .close: shown = false; resumable = false
+            default: break
+            }
+        }
+        defer { interaction.stop() }
+        interaction.pointerMoved()
+        point = CGPoint(x: 300, y: 300)
+        interaction.pointerMoved()
+        timers.advance(by: 0.13)
+        #expect(!shown && resumable)
+        point = CGPoint(x: 120, y: 120)
+        interaction.pointerMoved()
+        #expect(shown && !resumable)
+        #expect(intents == [.leave, .resumeHover])
+    }
+
+    @Test("geometry changes cannot resume a fading menu and deliberate presses retire it")
+    func resumeNeedsMovementAndNoPress() {
+        var resumable = true
+        var intents: [ScreenBarPeekIntent] = []
+        let presenter = NotchCardPresenter(model: makeTestCardModel())
+        presenter.presentationEnabled = false
+        let interaction = ScreenBarInteraction(card: presenter, hitRects: { [] }, focus: { nil })
+        interaction.pointerLocation = { CGPoint(x: 120, y: 120) }
+        interaction.peekState = { (shown: false, pinned: false) }
+        interaction.peekCanResume = { resumable }
+        interaction.peekCorridorAt = { _ in true }
+        interaction.onPeek = {
+            intents.append($0)
+            if $0 == .close { resumable = false }
+        }
+        defer { interaction.stop() }
+        interaction.pointerMoved(geometryOnly: true)
+        #expect(intents.isEmpty && resumable)
+        interaction.pointerDown(at: CGPoint(x: 300, y: 300), time: 0)
+        #expect(intents == [.close] && !resumable)
+        resumable = true
+        interaction.pointerSecondaryDown(at: CGPoint(x: 300, y: 300))
+        #expect(intents == [.close, .close] && !resumable)
+    }
+
+    @Test("hover resume preserves an expanded island and cannot replace pinned glass")
+    func resumeKeepsItsParent() {
+        let island = ScreenBarInteraction.peekGesture(intent: .resumeHover, cardPinned: true, expandedIsland: true)
+        #expect(island.open && !island.unpinFirst)
+        let glass = ScreenBarInteraction.peekGesture(intent: .resumeHover, cardPinned: true)
+        #expect(!glass.open && !glass.unpinFirst)
+    }
+
     private func item(_ id: String, owner: String = "Example", title: String? = nil,
                       bundle: String? = "com.example.app") -> MenuBarItem {
         MenuBarItem(id: id, ownerPID: 1, ownerName: owner,
@@ -64,37 +186,6 @@ struct ScreenBarPeekTests {
         #expect(!ScreenBarController.sameWingSubject(resting, sensorsOnly))
         #expect(ScreenBarController.sameWingSubject(resting, grown),
                 "the run growing is the same ear still dismissed")
-    }
-
-    // MARK: When hiding stops
-
-    @Test func onlyARealFailureIsAnAlert() throws {
-        let failing = try #require(MenuBarEarFeed.failure(for: .concealerFailing, osMajor: 27))
-        #expect(failing == MenuBarEngineHealth.concealerFailing.line(), "the card's own reason, in the peek")
-        #expect(MenuBarEarFeed.failure(for: .spacer(.frameworkMissing), osMajor: 27)?
-                    .contains("spacer engine") == true, "a 27 point release that lost the framework")
-        #expect(MenuBarEarFeed.failure(for: .spacer(.frameworkMissing), osMajor: 26) == nil,
-                "on macOS 26 the spacer engine is simply the engine")
-        for calm: MenuBarEngineHealth in [.parked, .concealer(hidden: 3), .concealer(hidden: 0), .concealerStarting,
-                                          .spacer(.forced), .spacer(.notNotarized), .spacer(.pending)] {
-            #expect(MenuBarEarFeed.failure(for: calm, osMajor: 27) == nil, "\(calm) is no failure")
-        }
-    }
-
-    @Test func aFailureTakesTheEarInTheAlertTone() throws {
-        let meter = ScreenBarWingSlot(text: "42%", provider: "codex", meter: 0.42)
-        let marks = ScreenBarMenuBarMarks(hiddenCount: 4, failure: "The concealer is failing")
-        let dressed = ScreenBarMenuBarMarks.apply(marks, to: ScreenBarWings(left: nil, right: meter))
-        let right = try #require(dressed.right)
-        #expect(right.symbol == ScreenBarMenuBarMarks.failureSymbol, "the menu bar's own mark")
-        #expect(right.tone == .alert)
-        #expect(right.meter == nil && right.provider == nil, "one mark, not a stack of them")
-        #expect(right.text == "The concealer is failing", "the reason is VoiceOver's and the peek's")
-        #expect(!ScreenBarController.sameWingSubject(right, meter), "a failure revives a dismissed meter ear")
-        #expect(right.symbol != "exclamationmark.triangle.fill", "never mistaken for the band's refused program")
-        // With the reason alone, the ear still opens a peek to say it.
-        #expect(!MenuBarEarFeed(failure: "why").isEmpty)
-        #expect(ScreenBarMenuBarMarks(feed: MenuBarEarFeed(failure: "why")).failure == "why")
     }
 
     // MARK: The feed
@@ -165,35 +256,20 @@ struct ScreenBarPeekTests {
         #expect(tooWide.minX == screen.minX + ScreenBarPeekLayout.edgeMargin)
     }
 
-    @Test func theZoneStopsShortOfTheHandleSliceSlackIncluded() throws {
-        let ear = CGRect(x: 300, y: 0, width: 52, height: 32)
-        let handle = CGRect(x: 336, y: 0, width: 16, height: 32)
-        let zone = try #require(ScreenBarController.peekZoneRect(ear: ear, handle: handle))
-        #expect(zone.minX == ear.minX)
-        // Both hit tests widen by 2 pt: they still never share a point.
-        #expect(zone.insetBy(dx: -2, dy: 0).maxX <= handle.insetBy(dx: -2, dy: 0).minX)
-        #expect(ScreenBarController.peekZoneRect(ear: ear, handle: nil) == ear)
-        #expect(ScreenBarController.peekZoneRect(ear: CGRect(x: 0, y: 0, width: 16, height: 32),
-                                                 handle: CGRect(x: 0, y: 0, width: 16, height: 32)) == nil,
-                "a handle-only ear is the handle's")
-    }
-
-    @Test func theHangingPeeksCorridorLeavesTheHandleItsOwn() {
-        // The right ear with its ‹ at the outer end, and a peek hanging
-        // under the band, right edge on the ear's.
-        let ear = CGRect(x: 850, y: 950, width: 52, height: 32)
-        let handle = CGRect(x: 886, y: 950, width: 16, height: 32)
-        let panel = CGRect(x: 760, y: 880, width: 142, height: 60)
-        let corridor = panel.union(ear)
-        func on(_ x: CGFloat, _ y: CGFloat) -> Bool {
-            ScreenBarController.peekCorridor(corridor, contains: CGPoint(x: x, y: y), handle: handle)
-        }
-        #expect(on(870, 945), "the band's stretch between the ear and the peek")
-        #expect(on(800, 900), "the peek itself")
-        #expect(!on(handle.midX, handle.midY), "the ‹ keeps its hover reveal while the peek hangs")
-        #expect(!on(700, 900), "outside the box is outside")
-        #expect(ScreenBarController.peekCorridor(corridor, contains: CGPoint(x: handle.midX, y: handle.midY),
-                                                 handle: nil), "no handle drawn: the whole ear is the peek's")
+    @Test("a menu below a tall parent flips inside the display and caps oversized content")
+    func tallParentMenuStaysOnScreen() {
+        let screen = CGRect(x: 1000, y: 2000, width: 800, height: 400)
+        let ear = CGRect(x: 1500, y: 2368, width: 32, height: 32)
+        let band = CGRect(x: 1250, y: 2008, width: 320, height: 4)
+        let frame = ScreenBarPeekLayout.frame(size: CGSize(width: 270, height: 120),
+                                              ear: ear, band: band, screen: screen)
+        #expect(frame.minY >= band.maxY)
+        #expect(frame.maxY <= ear.minY)
+        #expect(screen.contains(frame))
+        let tall = ScreenBarPeekLayout.frame(size: CGSize(width: 270, height: 500),
+                                             ear: ear, band: band, screen: screen)
+        #expect(tall.height == ear.minY - screen.minY - ScreenBarPeekLayout.edgeMargin)
+        #expect(screen.contains(tall))
     }
 
     // MARK: The pointer
@@ -221,7 +297,7 @@ struct ScreenBarPeekTests {
             #expect(free.open && !free.unpinFirst, "\(intent) with nothing pinned")
         }
         // A rest, a wheel notch or a trackpad scroll over a pinned card
-        // (or the grown island) hangs nothing — never a second surface.
+        // hangs nothing. Only a deliberate press opens another surface.
         let scroll = ScreenBarInteraction.peekGesture(intent: .hover, cardPinned: true)
         #expect(!scroll.open && !scroll.unpinFirst, "a scroll leaves the pinned card standing, alone")
         // A pull folds the card first, then pins the peek; so does a click.
@@ -229,6 +305,10 @@ struct ScreenBarPeekTests {
         #expect(pull.unpinFirst && pull.open, "one pinned surface at a time")
         let click = ScreenBarInteraction.peekGesture(intent: .toggle, cardPinned: true)
         #expect(click.unpinFirst && click.open)
+        for intent: ScreenBarPeekIntent in [.pin, .toggle] {
+            let attached = ScreenBarInteraction.peekGesture(intent: intent, cardPinned: true, expandedIsland: true)
+            #expect(attached.open && !attached.unpinFirst)
+        }
         // Folding the peek never touches the card.
         let close = ScreenBarInteraction.peekGesture(intent: .close, cardPinned: true)
         #expect(!close.unpinFirst)
@@ -266,5 +346,53 @@ struct ScreenBarPeekTests {
         let text = try String(contentsOf: source, encoding: .utf8)
         #expect(text.contains("UnseenDot()"))
         #expect(!text.contains("Circle().fill(Color.accentColor)"))
+    }
+
+    @Test func anAgentThatStartsAskingRevivesAFlickedAwayEar() {
+        let working = ScreenBarWingSlot(text: "Working", provider: "claude", tone: .neutral)
+        let asking = ScreenBarWingSlot(text: "Needs you", provider: "claude", tone: .attention)
+        let failed = ScreenBarWingSlot(text: "Failed", provider: "claude", tone: .alert)
+        // Dismissed while working: asking or failing is news.
+        #expect(!ScreenBarController.sameWingSubject(asking, working))
+        #expect(!ScreenBarController.sameWingSubject(failed, working))
+        #expect(!ScreenBarController.sameWingSubject(failed, asking))
+        // Dismissed while asking: calming down does not bring it back, and
+        // the same agent's words churning is still one ear.
+        #expect(ScreenBarController.sameWingSubject(working, asking))
+        #expect(ScreenBarController.sameWingSubject(asking, ScreenBarWingSlot(text: "Needs you ·2", provider: "claude", tone: .attention)))
+    }
+
+    @Test func aGhostFromAnotherDisplayIsNotKept() {
+        let here = CGRect(x: 0, y: 900, width: 1440, height: 40)
+        let rects: [ScreenBarWingSide: CGRect] = [.left: CGRect(x: 500, y: 910, width: 120, height: 24),
+                                                 .right: CGRect(x: 3000, y: 910, width: 120, height: 24)]
+        let kept = ScreenBarController.ghostRectsKept(rects, onWindow: here)
+        #expect(Set(kept.keys) == [.left])
+    }
+
+    @Test func workingProviderTurnsKeepAWingDismissed() {
+        var dismissed = ScreenBarWingSlot(text: "Working", provider: "claude")
+        dismissed.workingActivity = true
+        var next = ScreenBarWingSlot(text: "Working", provider: "codex")
+        next.workingActivity = true
+        #expect(ScreenBarController.sameWingSubject(next, dismissed))
+        #expect(ScreenBarController.sameWingSubject(dismissed, next))
+        #expect(!ScreenBarController.sameWingSubject(
+            ScreenBarWingSlot(text: "Needs you", provider: "codex", tone: .attention), dismissed))
+        #expect(!ScreenBarController.sameWingSubject(
+            ScreenBarWingSlot(text: "Failed", provider: "codex", tone: .alert), dismissed))
+        #expect(!ScreenBarController.sameWingSubject(
+            ScreenBarWingSlot(text: "Done", provider: "codex"), dismissed))
+        #expect(!ScreenBarController.sameWingSubject(
+            ScreenBarWingSlot(text: "Working", provider: "codex"), dismissed))
+        #expect(!ScreenBarController.sameWingSubject(
+            ScreenBarWingSlot(text: "42%", provider: "codex", meter: 0.42), dismissed))
+        #expect(!ScreenBarController.sameWingSubject(
+            ScreenBarWingSlot(text: "Working", provider: "codex", symbol: "bolt.fill"), dismissed))
+        var changedMark = next
+        changedMark.markID = "fixture-new-mark"
+        #expect(!ScreenBarController.sameWingSubject(changedMark, dismissed))
+        #expect(!ScreenBarController.sameWingSubject(
+            ScreenBarWingSlot(text: "Working"), dismissed))
     }
 }

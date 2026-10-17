@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import JRBarLEDS
 import Testing
@@ -323,6 +324,38 @@ struct ScreenBarAsynchronousPlanningTests {
         await controller.waitForPlanBuilds()
         #expect(controller.motionDescription == "still (Reduce Motion)")
         #expect(!controller.clockRunning)
+    }
+
+    @Test("sleep parks keyframes and waking restores the same plan")
+    func sleepParksKeyframes() async throws {
+        let controller = ScreenBarController(reduceMotionOverride: false)
+        controller.show()
+        defer { controller.hide() }
+        controller.apply(programText: moving)
+        await controller.waitForPlanBuilds()
+        #expect(controller.keyframesRunning)
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.screensDidSleepNotification, object: nil)
+        #expect(!controller.keyframesRunning)
+        #expect(!controller.clockRunning)
+        // An anchor update received while asleep must not restart animation.
+        controller.apply(programText: moving, anchorEpoch: Date().timeIntervalSince1970 - 1)
+        #expect(!controller.keyframesRunning)
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
+        #expect(controller.keyframesRunning)
+        #expect(controller.planBuildStarts == 1)
+    }
+
+    @Test("a wake never restarts the fallback while Reduce Motion holds it")
+    func wakeKeepsHeldFallbackParked() {
+        let controller = ScreenBarController(reduceMotionOverride: true)
+        controller.show()
+        defer { controller.hide() }
+        controller.apply(programText: moving)
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.screensDidSleepNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
+        #expect(!controller.clockRunning)
+        #expect(!controller.keyframesRunning)
+        #expect(controller.planBuildStarts == 0)
     }
 
     @Test("hiding during an active render drops pending work and show resumes only the latest")

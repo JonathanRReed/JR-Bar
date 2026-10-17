@@ -261,6 +261,8 @@ def scan_usage_all_homes(
     home: Path | str | None = None,
     extras: Mapping[str, Iterable[str]] | None = None,
     scan=None,
+    budget=None,
+    resolved_capture=None,
 ):
     """``usage_stats.scan_usage`` over every Claude and Codex home.
 
@@ -270,16 +272,24 @@ def scan_usage_all_homes(
     same real folder as another is scanned once. The Codex quota evidence
     stays the primary account's: another home's rate limits belong to a
     different account and must not stand in for this one's.
+
+    ``budget`` (a ``usage_stats.ScanBudget``) bounds the whole call to one
+    pass; the homes take turns at what is left of it.
     """
     from . import usage_stats
 
     run = usage_stats.scan_usage if scan is None else scan
+    # A fake ``scan`` that predates budgets is only given one when it is used.
+    options = {} if budget is None else {"budget": budget}
+    if resolved_capture is not None:
+        options["resolved_capture"] = resolved_capture
     primary = run(
         primary_claude_projects(env=env, home=home),
         cache_path,
         since_epoch=since_epoch,
         codex_root=primary_codex_sessions(env=env, home=home),
         provider_ids=provider_ids,
+        **options,
     )
     configured = configured_extra_homes() if extras is None else normalized_extra_homes(extras)
     parts = [primary]
@@ -292,9 +302,12 @@ def scan_usage_all_homes(
         ):
             part_cache = _home_cache_path(cache_path, root)
             if provider_id == "claude":
-                part = run(root, part_cache, since_epoch=since_epoch, provider_ids=("claude",))
+                part = run(root, part_cache, since_epoch=since_epoch, provider_ids=("claude",), **options)
             else:
-                part = run(missing, part_cache, since_epoch=since_epoch, codex_root=root, provider_ids=("codex",))
+                part = run(
+                    missing, part_cache, since_epoch=since_epoch, codex_root=root,
+                    provider_ids=("codex",), **options,
+                )
             parts.append(part)
     if len(parts) == 1:
         return primary

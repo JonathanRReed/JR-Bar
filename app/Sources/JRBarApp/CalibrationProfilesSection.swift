@@ -1,7 +1,7 @@
 import JRBarCore
 import SwiftUI
 
-/// Settings › Devices › Calibration profiles: the daemon's Day, Night and
+/// Settings › Devices & Lighting › Advanced › Calibration profiles: the daemon's Day, Night and
 /// Travel slots, and the Focus rules that apply one when that Focus
 /// starts. A profile is a snapshot of every device's brightness, channel
 /// gains and resting glow; applying it restores brightness and gains —

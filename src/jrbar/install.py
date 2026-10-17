@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import glob
 import json
 import os
 import queue
@@ -61,6 +62,7 @@ from .providers import (
     PI_EXTENSION_MARKER,
     PI_NATIVE_EVENT_NAMES,
     PROVIDER_REGISTRY,
+    _command_hook_handlers,
     _is_jrbar_hook_invocation,
     default_antigravity_config_path,
     default_claude_config_path,
@@ -97,6 +99,13 @@ LEGACY_MANAGED_START = "# >>> agent-monitor hooks >>>"
 LEGACY_MANAGED_END = "# <<< agent-monitor hooks <<<"
 MANAGED_MARKERS = frozenset({MANAGED_START, MANAGED_END, LEGACY_MANAGED_START, LEGACY_MANAGED_END})
 BACKUP_MAX_FILES = 5
+
+
+def _backup_pattern(name: str) -> str:
+    """The glob that matches only the backups ``_backup_path`` names:
+    ``<name>.bak.<UTC stamp>.<pid>.<thread>.<32 hex digits>``. A copy a person
+    made by hand (``<name>.bak.before-experiment``) is not ours to trim."""
+    return f"{glob.escape(name)}.bak.????????T??????.??????Z.*.*.{'?' * 32}"
 MAX_CONFIG_BYTES = 1024 * 1024
 # The decide lane (answer_decisions.py): Claude's and Codex's
 # PermissionRequest hook runs the shim as ``--decide`` so an Approve or Deny
@@ -254,7 +263,7 @@ def _finish_backup_retention(path: Path) -> None:
         path.parent,
         RetentionPolicy(
             max_files=BACKUP_MAX_FILES,
-            patterns=(f"{path.name}.bak.*",),
+            patterns=(_backup_pattern(path.name),),
             recursive=False,
         ),
     )
@@ -385,8 +394,7 @@ class CodexHookTrust:
     def __post_init__(self) -> None:
         if type(self.status) is not CodexHookTrustStatus:
             raise ValueError("invalid codex hook trust status")
-        # The pairing is enforced rather than documented, for the same
-        # reason AlcoveCaptureOutcome enforces its own: a status that can
+        # The pairing is enforced rather than documented: a status that can
         # disagree with its payload is the defect coming back.
         if (self.status is CodexHookTrustStatus.TRUSTED) != bool(self.hashes):
             raise ValueError("only a trusted handshake carries hashes")
@@ -895,7 +903,7 @@ def uninstall_cursor_hooks(
 ) -> InstallResult:
     config = config_path or default_cursor_config_path()
     target_log = (log_path or detect_log_path("cursor")).expanduser()
-    data = read_json_config(config, tighten=not dry_run)
+    data = read_json_config(config, tighten=False)
 
     original = json.dumps(data, sort_keys=True)
     hooks = data.get("hooks")
@@ -1002,7 +1010,7 @@ def uninstall_hermes_hooks(
     config = config_path or default_hermes_config_path()
     target_log = (log_path or detect_log_path("hermes")).expanduser()
     yaml = _hermes_yaml()
-    original_text = _read_optional_text(config, tighten=not dry_run)
+    original_text = _read_optional_text(config, tighten=False)
     if original_text:
         data = yaml.load(original_text)
         if data is None:
@@ -1201,7 +1209,7 @@ def uninstall_openclaw_hooks(
     )
     legacy_managed = _openclaw_dir_is_managed(legacy_dir)
     hook_info = _existing_directory_kind(hook_dir)
-    data = read_json_config(config, tighten=not dry_run)
+    data = read_json_config(config, tighten=False)
 
     original = json.dumps(data, sort_keys=True)
     internal = (data.get("hooks") or {}).get("internal")
@@ -1368,6 +1376,7 @@ def install_gemini_hooks(
     config_path: Path | None = None,
     dry_run: bool = False,
     python_executable: str | None = None,
+    preserve_activation: bool = False,
 ) -> InstallResult:
     """Adds JR-Bar's command under ``hooks`` in ~/.gemini/settings.json
     (a shared user-level file: every other key is preserved untouched).
@@ -1380,6 +1389,34 @@ def install_gemini_hooks(
 
     original = json.dumps(data, sort_keys=True)
     hooks = _strict_hooks_object(data, path=config)
+    settings = data.get("hooksConfig", {})
+    if not isinstance(settings, dict):
+        raise ValueError(f"Expected hooksConfig object in {config}")
+    if "enabled" in settings and type(settings["enabled"]) is not bool:
+        raise ValueError(f"Expected hooksConfig.enabled boolean in {config}")
+    disabled = settings.get("disabled", [])
+    if not isinstance(disabled, list) or not all(isinstance(name, str) for name in disabled):
+        raise ValueError(f"Expected hooksConfig.disabled string array in {config}")
+    owned_names = {GEMINI_HOOK_NAME}
+    for entries in hooks.values():
+        if not isinstance(entries, list):
+            continue
+        for handler in _command_hook_handlers(entries):
+            prior_command = handler.get("command")
+            if isinstance(prior_command, str) and is_jrbar_hook_command(prior_command, "gemini"):
+                prior_name = handler.get("name") or prior_command
+                if isinstance(prior_name, str):
+                    owned_names.add(prior_name)
+    if preserve_activation:
+        # Refresh changes old command names to the stable managed name.
+        # Keep a disabled older hook disabled after that migration.
+        if any(name in owned_names for name in disabled) and GEMINI_HOOK_NAME not in disabled:
+            settings["disabled"] = [*disabled, GEMINI_HOOK_NAME]
+    else:
+        if settings.get("enabled") is False:
+            settings["enabled"] = True
+        if any(name in owned_names for name in disabled):
+            settings["disabled"] = [name for name in disabled if name not in owned_names]
     command = hook_command("gemini", target_log, python_executable)
 
     for event_name in GEMINI_EVENTS:
@@ -1409,7 +1446,7 @@ def uninstall_gemini_hooks(
 ) -> InstallResult:
     config = config_path or default_gemini_config_path()
     target_log = (log_path or detect_log_path("gemini")).expanduser()
-    data = read_json_config(config, tighten=not dry_run)
+    data = read_json_config(config, tighten=False)
 
     original = json.dumps(data, sort_keys=True)
     hooks = data.get("hooks")
@@ -1467,6 +1504,70 @@ def hook_shim_path() -> Path | None:
     return None
 
 
+#: Where the launcher that stands in for a bundled shim lives, under the
+#: person's home. A dev layout keeps its own copy at ``<prefix>/bin``.
+STABLE_HOOK_SHIM_DIRECTORY = "~/.local/share/jrbar/hook"
+
+
+def stable_hook_shim(real: Path | None = None) -> Path | None:
+    """The path provider configs should run, or None when there is no shim.
+
+    A packaged shim sits inside ``JR-Bar.app``, so a config that named it
+    broke the moment the app was trashed or moved: every tool call in every
+    agent then ran a missing program and exited 127. For a shim inside an app
+    bundle this writes a small launcher under the home directory that runs
+    the bundled shim and exits 0 when the bundle is gone, and returns the
+    launcher's path. Any other shim (a dev layout, a source build) is
+    returned as it is. If the launcher cannot be written, the bundled shim
+    is returned, which is what the hooks used to name.
+    """
+    real = hook_shim_path() if real is None else real
+    if real is None or not any(parent.suffix == ".app" for parent in real.parents):
+        return real
+    launcher = Path(STABLE_HOOK_SHIM_DIRECTORY).expanduser() / HOOK_SHIM_NAME
+    body = (
+        "#!/bin/sh\n"
+        "# JR-Bar's hook launcher. Provider configs run this path so that a\n"
+        "# moved or removed JR-Bar.app never makes an agent's tool call fail.\n"
+        f"target={shlex.quote(str(real))}\n"
+        '[ -x "$target" ] || exit 0\n'
+        'exec "$target" "$@"\n'
+    )
+    try:
+        if launcher.is_file() and not launcher.is_symlink() and launcher.read_text(encoding="utf-8") == body \
+                and os.access(launcher, os.X_OK):
+            return launcher
+        launcher.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        scratch = launcher.with_name(f".{launcher.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        try:
+            descriptor = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o755)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(body)
+            os.chmod(scratch, 0o755)
+            os.replace(scratch, launcher)
+        finally:
+            scratch.unlink(missing_ok=True)
+    except OSError:
+        return real
+    return launcher
+
+
+def remove_stable_hook_shim() -> bool:
+    """Take the launcher away (``agent-monitor uninstall all``). True if one was removed."""
+    launcher = Path(STABLE_HOOK_SHIM_DIRECTORY).expanduser() / HOOK_SHIM_NAME
+    try:
+        if launcher.is_symlink() or launcher.is_file():
+            launcher.unlink()
+            try:
+                launcher.parent.rmdir()
+            except OSError:
+                pass
+            return True
+    except OSError:
+        pass
+    return False
+
+
 def hook_command_arguments(
     provider: str,
     log_path: Path,
@@ -1481,7 +1582,7 @@ def hook_command_arguments(
     executable = python_executable or sys.executable or "python3"
     target_log = str(log_path.expanduser())
     if python_executable is None:
-        shim = hook_shim_path()
+        shim = stable_hook_shim()
         if shim is not None:
             return [str(shim), "--provider", provider, "--log", target_log]
     if getattr(sys, "frozen", False) and python_executable is None:
@@ -1840,7 +1941,7 @@ def uninstall_antigravity_hooks(
 ) -> InstallResult:
     config = config_path or default_antigravity_config_path()
     target_log = (log_path or detect_log_path("antigravity")).expanduser()
-    data = read_json_config(config, tighten=not dry_run)
+    data = read_json_config(config, tighten=False)
 
     original = json.dumps(data, sort_keys=True)
     entry = data.get(ANTIGRAVITY_HOOK_NAME)
@@ -1867,7 +1968,7 @@ def uninstall_codex_hooks(
 ) -> InstallResult:
     config = config_path or default_codex_config_path()
     target_log = (log_path or detect_log_path("codex")).expanduser()
-    original = _read_optional_text(config, tighten=not dry_run)
+    original = _read_optional_text(config, tighten=False)
 
     text = strip_managed_block(original)
     text = remove_codex_hook_blocks_for_log(text, target_log)
@@ -1890,7 +1991,7 @@ def uninstall_claude_hooks(
     config = config_path or default_claude_config_path()
     target_log = (log_path or detect_log_path("claude")).expanduser()
 
-    original_text = _read_optional_text(config, tighten=not dry_run)
+    original_text = _read_optional_text(config, tighten=False)
     if original_text:
         data = json.loads(original_text)
     else:
@@ -1929,7 +2030,7 @@ def uninstall_grok_hooks(
 ) -> InstallResult:
     config = config_path or default_grok_hook_config_path()
     target_log = (log_path or detect_log_path("grok")).expanduser()
-    data = read_json_config(config, tighten=not dry_run)
+    data = read_json_config(config, tighten=False)
 
     original = json.dumps(data, sort_keys=True)
     hooks = data.get("hooks")
@@ -1971,7 +2072,7 @@ def uninstall_devin_hooks(
 ) -> InstallResult:
     config = config_path or default_devin_config_path()
     target_log = (log_path or detect_log_path("devin")).expanduser()
-    data = read_json_config(config, tighten=not dry_run)
+    data = read_json_config(config, tighten=False)
 
     original = json.dumps(data, sort_keys=True)
     hooks = data.get("hooks")
@@ -2088,22 +2189,17 @@ def _probe_registration_command(provider: str, python_executable: str | None) ->
             Path(scratch) / "probe.jsonl",
             python_executable,
         )
-        # Only the compiled shim honours JRBAR_STATE_DIR (hook/jrbar-hook.c
-        # state_dir()). Without it the probe found the real ingress socket:
-        # in the daemon, which runs installs, that left a resident
-        # deduplicator and an open file per scratch log for the daemon's
-        # whole life, and with the daemon down it spooled the fake session
-        # for the next start to replay into the real log. The Python client
-        # reads XDG_STATE_HOME and always also tries ~/.local/state/jrbar,
-        # so this cannot isolate it, and overriding HOME could fail a
-        # probe that would have run, which blocks registration. With the
-        # daemon down it writes the scratch log, not the spool; with the
-        # daemon up it still reaches it.
-        env = (
-            {**os.environ, "JRBAR_STATE_DIR": scratch}
-            if Path(arguments[0]).name == HOOK_SHIM_NAME
-            else None
-        )
+        # The Python client probes both XDG state and HOME's fallback;
+        # the shim uses JRBAR_STATE_DIR. Isolate all three so a synthetic
+        # SessionStart can never reach the installed daemon or its spool.
+        env = {
+            **os.environ,
+            "JRBAR_STATE_DIR": scratch,
+            "XDG_STATE_HOME": str(Path(scratch) / "state"),
+            "XDG_CONFIG_HOME": str(Path(scratch) / "config"),
+            "XDG_CACHE_HOME": str(Path(scratch) / "cache"),
+            "HOME": scratch,
+        }
         error = verify_hook_command(arguments, env=env)
     if error is not None:
         raise HookVerificationError(
@@ -2178,7 +2274,7 @@ def refresh_managed_hooks(
             }
             path_key = _refresh_path_argument(provider)
             kwargs[path_key] = spec.config_path(home)
-            if provider in {"codex", "claude", "openclaw", "antigravity"}:
+            if provider in {"codex", "claude", "openclaw", "antigravity", "gemini"}:
                 kwargs["preserve_activation"] = True
             try:
                 results[provider] = _install_provider_hooks_unlocked(provider, **kwargs)
@@ -2356,8 +2452,8 @@ def resolve_codex_hook_hashes(
         return True
 
     def wait_for_id(message_id: int) -> dict[str, Any] | None:
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
             try:
                 name, line = messages.get(timeout=0.1)
             except queue.Empty:
@@ -2678,7 +2774,7 @@ def backup_file(path: Path) -> Path | None:
         path.parent,
         RetentionPolicy(
             max_files=BACKUP_MAX_FILES,
-            patterns=(f"{path.name}.bak.*",),
+            patterns=(_backup_pattern(path.name),),
             recursive=False,
         ),
     )

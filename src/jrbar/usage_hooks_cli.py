@@ -223,6 +223,19 @@ def _render_list(document: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _save(store: _Store, hooks: dict[str, Any], stderr: TextIO) -> bool:
+    """Save the rules; say so plainly when the running JR-Bar will not take
+    them from a terminal (a hook runs a program, so only the app may set it)."""
+    from .cli_control import ControlError
+
+    try:
+        store.save(hooks)
+    except ControlError as error:
+        print(f"jrbar usage-hooks: {error}", file=stderr)
+        return False
+    return True
+
+
 def main(argv: list[str] | None = None, *, stdout: TextIO = sys.stdout, stderr: TextIO = sys.stderr) -> int:
     options = build_parser().parse_args(argv)
     store = _Store()
@@ -246,7 +259,8 @@ def main(argv: list[str] | None = None, *, stdout: TextIO = sys.stdout, stderr: 
                 print(f"no usage hook rule {options.rule!r}", file=stderr)
                 return 1
             matched[0]["enabled"] = value
-        store.save(hooks)
+        if not _save(store, hooks, stderr):
+            return 1
         target = "usage hooks" if options.rule is None else f"rule {options.rule}"
         print(f"{target} {'on' if value else 'off'}", file=stdout)
         return 0
@@ -278,7 +292,8 @@ def main(argv: list[str] | None = None, *, stdout: TextIO = sys.stdout, stderr: 
                 "argv": "json",
             }
         )
-        store.save(hooks)
+        if not _save(store, hooks, stderr):
+            return 1
         problem = rule_problem(UsageHookRule.from_dict(normalize_usage_hooks(hooks)["rules"][-1]))
         print(f"added rule {rule_id}" + ("" if hooks["enabled"] else " (usage hooks are off: jrbar usage-hooks enable)"), file=stdout)
         if problem:
@@ -290,7 +305,8 @@ def main(argv: list[str] | None = None, *, stdout: TextIO = sys.stdout, stderr: 
             print(f"no usage hook rule {options.rule!r}", file=stderr)
             return 1
         hooks["rules"] = kept
-        store.save(hooks)
+        if not _save(store, hooks, stderr):
+            return 1
         print(f"removed rule {options.rule}", file=stdout)
         return 0
     # test

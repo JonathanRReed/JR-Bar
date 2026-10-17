@@ -321,12 +321,16 @@ class _Clock:
         return self.now
 
 
+def _inline(job) -> None:
+    job()
+
+
 def test_a_refresh_burst_reads_the_system_once_and_authorization_lives_longer() -> None:
     """Each read is a pair of TCC round trips on the caller's thread; the
     daemon's refresh burst asked 2-4 times every ~15 s."""
     center = _Center(authorization=3, focused=True)
     clock = _Clock()
-    client = MacOSFocusStatusClient(center=center, monotonic=clock)
+    client = MacOSFocusStatusClient(center=center, monotonic=clock, refresh_runner=_inline)
 
     for _ in range(4):
         assert client.observe().activity is FocusActivity.ACTIVE
@@ -338,14 +342,17 @@ def test_a_refresh_burst_reads_the_system_once_and_authorization_lives_longer() 
     assert client.observe().activity is FocusActivity.INACTIVE
     assert (center.authorization_reads, center.focus_reads) == (1, 2)
 
-    # Past the long TTL a revoked permission shows up.
+    # Past the long TTL a revoked permission shows up: asked again on the
+    # worker, so it is the next observation that carries the answer.
     center.authorization = 2
     clock.now += FOCUS_AUTHORIZATION_TTL_SECONDS
+    client.observe()
+    clock.now += FOCUS_OBSERVATION_TTL_SECONDS
     assert client.observe() == FocusStatusObservation(
         FocusAuthorization.DENIED,
         FocusActivity.UNAVAILABLE,
     )
-    assert (center.authorization_reads, center.focus_reads) == (2, 2)
+    assert center.authorization_reads == 2
 
 
 def test_invalidate_and_an_authorization_answer_force_a_fresh_read() -> None:
@@ -380,3 +387,74 @@ def test_a_failed_authorization_read_is_not_kept_for_the_long_ttl() -> None:
     center.authorization = 3
     clock.now += FOCUS_OBSERVATION_TTL_SECONDS
     assert client.observe().authorization is FocusAuthorization.AUTHORIZED
+
+
+def test_an_expired_authorization_is_served_while_a_worker_asks_again() -> None:
+    """tccd held the run loop for 1-4 s on nine refreshes in one day: the
+    expiry of the long TTL must not make the caller wait for the system."""
+    center = _Center(authorization=3, focused=True)
+    clock = _Clock()
+    jobs: list = []
+    client = MacOSFocusStatusClient(center=center, monotonic=clock, refresh_runner=jobs.append)
+    assert client.observe().authorization is FocusAuthorization.AUTHORIZED
+    assert center.authorization_reads == 1
+
+    clock.now += FOCUS_AUTHORIZATION_TTL_SECONDS
+    center.authorization = 2
+    stale = client.observe()
+    # The caller never asked tccd: the old answer came back, a job was queued.
+    assert stale.authorization is FocusAuthorization.AUTHORIZED
+    assert center.authorization_reads == 1
+    assert len(jobs) == 1
+
+    # Another observation while the worker is out does not queue a second ask.
+    clock.now += FOCUS_OBSERVATION_TTL_SECONDS
+    client.observe()
+    assert len(jobs) == 1
+
+    jobs[0]()
+    assert center.authorization_reads == 2
+    assert client.observe().authorization is FocusAuthorization.DENIED
+    assert len(jobs) == 1
+
+
+def test_the_first_authorization_read_still_waits_for_the_system() -> None:
+    center = _Center(authorization=3, focused=False)
+    jobs: list = []
+    client = MacOSFocusStatusClient(center=center, monotonic=_Clock(), refresh_runner=jobs.append)
+    assert client.observe().authorization is FocusAuthorization.AUTHORIZED
+    assert (center.authorization_reads, jobs) == (1, [])
+
+
+def test_a_worker_answer_that_lost_a_race_with_invalidate_is_dropped() -> None:
+    center = _Center(authorization=3, focused=True)
+    clock = _Clock()
+    jobs: list = []
+    client = MacOSFocusStatusClient(center=center, monotonic=clock, refresh_runner=jobs.append)
+    client.observe()
+    clock.now += FOCUS_AUTHORIZATION_TTL_SECONDS
+    client.observe()
+    assert len(jobs) == 1
+
+    # The person answered the prompt while the worker was out; its older
+    # reading must not overwrite what that answer made current.
+    client.invalidate()
+    center.authorization = 2
+    jobs[0]()
+    center.authorization = 3
+    assert client.observe().authorization is FocusAuthorization.AUTHORIZED
+
+
+def test_a_worker_that_fails_leaves_the_last_answer_and_asks_again_later() -> None:
+    center = _Center(authorization=3, focused=True)
+    clock = _Clock()
+    jobs: list = []
+    client = MacOSFocusStatusClient(center=center, monotonic=clock, refresh_runner=jobs.append)
+    client.observe()
+    clock.now += FOCUS_AUTHORIZATION_TTL_SECONDS
+    center.authorization = RuntimeError("tccd busy")
+    client.observe()
+    jobs.pop()()
+    clock.now += FOCUS_OBSERVATION_TTL_SECONDS
+    assert client.observe().authorization is FocusAuthorization.AUTHORIZED
+    assert len(jobs) == 1

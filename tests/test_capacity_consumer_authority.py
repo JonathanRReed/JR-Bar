@@ -267,10 +267,9 @@ def test_unauthoritative_capacity_cannot_reach_any_consumer__and_2_more(controll
         set_program=MagicMock(),
     )
     target.virtual_status_device = virtual
-    target.settings = (
-        target.settings.with_virtual_status_device(True).with_screen_bar_gauges_enabled(
-            True
-        )
+    target.settings = replace(
+        replace(target.settings, virtual_status_device_enabled=True),
+        screen_bar_gauges_enabled=True,
     )
     target.quota_last_percents = {"Codex weekly": 95.0}
     device = status_bar.StatusBarDevice(

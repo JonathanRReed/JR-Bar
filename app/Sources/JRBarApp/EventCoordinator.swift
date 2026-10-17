@@ -60,13 +60,25 @@ final class EventCoordinator {
     /// The daemon's last word on whether the owner is watching an asking
     /// session, and under which frontmost app it was read.
     private(set) var inFrontVerdict: AskingPane.Verdict?
-    /// The verdict a check in flight is for, so one ask never asks twice.
-    private var inFrontAsking: String?
+    /// One check per session and frontmost app. A newer check or a closed
+    /// ask discards the old reply, including after a reconnect.
+    private struct WatchingCheck: Equatable {
+        let token = UUID()
+        let frontmostPID: Int32?
+        let request: String?
+        let askID: String?
+    }
+    private var inFrontChecks: [String: WatchingCheck] = [:]
     /// Where a closed-lid sleep failure is remembered as said, so one
     /// failure is said once across launches; a test hands in its own suite.
     var sleepErrorDefaults: UserDefaults = .standard
     /// Where it is said: the panel's notice queue and a local banner.
     var notices: LaunchNotices = .shared
+    /// Which quiet stretches have been said, so each is said once.
+    private(set) var silenceWatcher = SilentSessionWatcher()
+    /// How often the clock alone is allowed to notice a silence: no state
+    /// arrives while a session says nothing.
+    static let silenceTick: TimeInterval = 60
     nonisolated static let sleepErrorKey = "jrbar.closedLidSleepErrorNoticed"
 
     init(core: CoreModel, hudAnchor: @escaping @MainActor () -> NSRect?) {
@@ -77,6 +89,9 @@ final class EventCoordinator {
             return AskingPane.inFront(from: reply)
         }
         hud = NotchHUD(anchorRect: hudAnchor)
+        // The chime rings on its own timer: quiet that begins while it rings
+        // has to stop it, not wait for the next event.
+        sounds.isHeld = { [weak core] in EventPolicy.soundsHeld(by: core?.state?.focus) }
         sounds.onMissing = { [weak core] name in core?.appendLocalLog(level: "warn", "no system sound named \(name)") }
         notifications.onLog = { [weak core] line in core?.appendLocalLog(line) }
         notifications.onOpenSession = { [weak self] session in self?.openFromBanner(session) }
@@ -106,7 +121,34 @@ final class EventCoordinator {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.reapplyEscalationNoise() }
         }
+        // A silent session sends no state, so a slow tick counts the quiet.
+        _ = Timer.scheduledTimer(withTimeInterval: Self.silenceTick, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkSilentSessions() }
+        }
         trackState()
+    }
+
+    /// One banner for each stretch a working session has been silent past
+    /// `SilentSession.threshold` with no tool open, while the person has
+    /// asked for it. Held by quiet modes like any courtesy banner; left
+    /// unsaid, to be said later, while the person's own terminal for that
+    /// session is in front or they have snoozed it.
+    func checkSilentSessions(now: Date = Date()) {
+        guard let state = core.state else { return }
+        let settings = core.settings.map { SettingsDocument($0.document) }
+        guard settings?.bool("silent_session_banner_enabled") == true else {
+            silenceWatcher = SilentSessionWatcher()
+            return
+        }
+        let found = silenceWatcher.observe(state.mainSessions, now: now, muted: { [self] session in
+            if let until = session.snoozedUntil, until > now.timeIntervalSince1970 { return true }
+            return askingPaneFrontmost(sessionID: session.id)
+        })
+        for notice in found {
+            let banner = SilentSessionWatcher.banner(for: notice, focus: state.focus)
+            if let banner { notifications.deliver(banner) }
+            core.appendLocalLog("session \(notice.label) quiet for \(Int(notice.seconds / 60)) min" + (banner == nil ? " (held)" : " → banner"))
+        }
     }
 
     /// A banner's click opens its session through `SessionOpener`, so a
@@ -125,6 +167,9 @@ final class EventCoordinator {
     /// request pin, its one pending set. nil once the answer landed.
     func answerFromBanner(session: String, request: String?, approve: Bool) async -> String? {
         guard let askDesk else { return SessionOpener.notAnswering }
+        // A banner that was not pinned to one request would answer whatever
+        // the session asks next, long after the person last saw it.
+        guard request != nil else { return NotificationBridge.unpinnedLine }
         guard let ask = NotificationBridge.liveAsk(session: session, request: request, in: core.openAsks) else {
             return NotificationBridge.replacedLine
         }
@@ -133,11 +178,13 @@ final class EventCoordinator {
     }
 
     /// An ask's banner offers Approve and Deny only while Approve would
-    /// land — `AskVerbs.approves` on the live ask. A held question, an ask
-    /// that wants a typed reply, or one the daemon cannot answer from here
-    /// gets a plain banner, whose click opens the session.
+    /// land — `AskVerbs.approves` on the live ask — and the banner can be
+    /// pinned to its request. A held question, an ask that wants a typed
+    /// reply, one the daemon cannot answer from here or one with no
+    /// request to pin gets a plain banner, whose click opens the session.
     nonisolated static func bannerCategory(for ask: CoreAsk?) -> EventDelivery.Notification.Category {
-        ask.map(AskVerbs.approves) == true ? .ask : .plain
+        guard let ask, ask.request != nil else { return .plain }
+        return AskVerbs.approves(ask) ? .ask : .plain
     }
 
     /// Posts an ask banner once the state carrying its ask has landed (or
@@ -174,6 +221,7 @@ final class EventCoordinator {
         _ = core.allSessions
         _ = core.focus
         _ = core.power
+        _ = core.connection
     }
 
     /// Re-arms an observation of the applied state after every document
@@ -188,6 +236,9 @@ final class EventCoordinator {
             // document after a hop, like every other observe loop does.
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                if case .connected = self.core.connection {} else {
+                    self.toys?.confetti.noteConnectionLost()
+                }
                 if let state = self.core.state {
                     self.toys?.confetti.noteState(state)
                     self.toys?.notchBuddy.noteState(state)
@@ -196,6 +247,7 @@ final class EventCoordinator {
                     self.hud.announcements.noteDaemonFocus(mode: state.focus?.mode,
                                                            source: state.focus?.source)
                     self.noteClosedLid(state.power?.closedLid)
+                    self.checkSilentSessions()
                 }
                 self.trackState()
             }
@@ -213,7 +265,9 @@ final class EventCoordinator {
         sleepErrorDefaults.set(identity, forKey: Self.sleepErrorKey)
         let text = Self.sleepErrorText(error)
         notices.say(.init(key: "sleep-error", text: text, actionTitle: "Power") {
-            AppCommandRouter.shared.perform(.settings(page: SettingsStore.Page.notifications.rawValue))
+            _ = Task {
+                await AppCommandRouter.shared.perform(.settings(page: SettingsStore.Chapter.notifications.rawValue))
+            }
         })
         notices.deliverBanner("sleep-error", "The Mac did not sleep", text)
     }
@@ -231,6 +285,19 @@ final class EventCoordinator {
     }
 
     func handle(_ event: CoreEvent) {
+        if let session = event.session {
+            if event.kind == "ask_opened" {
+                inFrontChecks[session] = nil
+                if inFrontVerdict?.session == session { inFrontVerdict = nil }
+            } else if event.kind == "ask_resolved" {
+                // A delayed resolution for an older request leaves the new
+                // ask's check alone. Older daemons omit the request.
+                if event.request == nil || inFrontChecks[session]?.request == event.request {
+                    inFrontChecks[session] = nil
+                }
+                if inFrontVerdict?.session == session { inFrontVerdict = nil }
+            }
+        }
         let settings = core.settings.map { SettingsDocument($0.document) }
         let watching = askingPaneFrontmost(sessionID: event.session)
         let delivery = deliveryRules(EventPolicy.delivery(for: event, state: core.state, settings: settings,
@@ -339,22 +406,28 @@ final class EventCoordinator {
     /// an ask whose sound the app rule kept down chimes after all (the
     /// owner is in another tab), a stage re-decides its pulse and chime.
     /// Only while "quiet while watching" is on, for a local session,
-    /// once per session while a check is out.
+    /// once per session and frontmost app while a check is out.
     private func confirmWatching(_ event: CoreEvent, decidedWatching: Bool) {
         guard event.kind == "ask_opened" || event.kind == "escalation_stage",
               quietWhenPaneFrontmost(), let sessionID = event.session,
-              let session = core.state?.session(withID: sessionID), !session.remote,
-              inFrontAsking != sessionID else { return }
+              let session = core.state?.session(withID: sessionID), !session.remote else { return }
         let front = frontmostApp().pid
+        if let pending = inFrontChecks[sessionID], pending.frontmostPID == front { return }
         if let verdict = inFrontVerdict, verdict.speaks(for: sessionID, frontmostPID: front, now: Date()) { return }
         // Another app is in front of a session whose process is known:
         // the daemon could only say no, and the app's rule already does.
         if AskingPane.frontmostElsewhere(sessionPID: session.pid, frontmostPID: front, parentPID: parentPID) { return }
-        inFrontAsking = sessionID
+        let ask = core.openAsks.first { $0.session == sessionID }
+        let check = WatchingCheck(frontmostPID: front, request: event.request ?? ask?.request, askID: ask?.id)
+        inFrontChecks[sessionID] = check
         Task { [weak self] in
             guard let self else { return }
             let inFront = await self.sessionInFront(sessionID)
-            self.inFrontAsking = nil
+            guard self.inFrontChecks[sessionID] == check else { return }
+            self.inFrontChecks[sessionID] = nil
+            guard self.quietWhenPaneFrontmost(), self.frontmostApp().pid == front,
+                  let liveAsk = self.core.openAsks.first(where: { $0.session == sessionID }),
+                  check.request.map({ $0 == liveAsk.request }) ?? (check.askID == liveAsk.id) else { return }
             self.inFrontVerdict = AskingPane.Verdict(session: sessionID, inFront: inFront,
                                                      frontmostPID: front, at: Date())
             let watching = self.askingPaneFrontmost(sessionID: sessionID)
@@ -410,6 +483,7 @@ final class EventCoordinator {
     func reset() {
         lastEscalation = nil
         inFrontVerdict = nil
+        inFrontChecks.removeAll()
         sounds.stopChime()
         toys?.notch.releaseTakeover()
         if isPulsing {

@@ -12,6 +12,7 @@ duration is unknown gets no pace reading rather than a guessed one.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Final
 
@@ -137,7 +138,19 @@ __all__ = [
     "critical_pace_transitions",
     "lane_pace",
     "pace_phrase",
+    "pace_window_key",
 ]
+
+
+def pace_window_key(snapshot, lane) -> str:
+    """Scope one alert window without publishing a private account identity."""
+    instance = getattr(snapshot, "source_instance_id", "default") or "default"
+    account = getattr(snapshot, "account_discriminator", None)
+    scope = snapshot.provider_id
+    if instance != "default" or account is not None:
+        digest = hashlib.sha256(f"{instance}\0{account or ''}".encode()).hexdigest()
+        scope += f":v2-{digest}"
+    return f"{scope}:{lane.lane_id}:{int(lane.reset_at or 0)}"
 
 
 def critical_pace_transitions(
@@ -168,16 +181,17 @@ def critical_pace_transitions(
                 )
                 if pace is None:
                     continue
-                key = (
-                    f"{snapshot.provider_id}:{lane.lane_id}:"
-                    f"{int(lane.reset_at or 0)}"
-                )
+                key = pace_window_key(snapshot, lane)
                 found[key] = pace.verdict
         return found
 
     before = verdicts(previous_snapshots)
     alerts: list[tuple[str, str, str]] = []
     for snapshot in current_snapshots:
+        # A stale snapshot's numbers were read earlier; projected to now they
+        # would announce a window running dry that nobody has just observed.
+        if getattr(getattr(snapshot, "state", None), "value", "ready") != "ready":
+            continue
         for lane in getattr(snapshot, "lanes", ()):
             pace = lane_pace(
                 remaining_percent=lane.remaining_percent,
@@ -187,10 +201,7 @@ def critical_pace_transitions(
             )
             if pace is None or pace.verdict not in {PACE_CRITICAL, PACE_OUT}:
                 continue
-            key = (
-                f"{snapshot.provider_id}:{lane.lane_id}:"
-                f"{int(lane.reset_at or 0)}"
-            )
+            key = pace_window_key(snapshot, lane)
             if key in seen_keys:
                 continue
             if before.get(key) in {PACE_CRITICAL, PACE_OUT}:

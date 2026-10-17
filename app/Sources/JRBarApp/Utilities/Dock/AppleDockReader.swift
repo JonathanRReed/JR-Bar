@@ -52,6 +52,16 @@ struct DockAXItem {
     }
 }
 
+/// One walk of the Dock's list, carried back from the lane: the AX
+/// handles in it are immutable references (`DockAXElement` explains).
+struct DockTileReading: @unchecked Sendable {
+    let list: DockAXElement
+    let frame: CGRect
+    let items: [DockAXItem]
+}
+
+extension DockAXItem: @unchecked Sendable {}
+
 /// The Dock's pid, kept rather than asked for: the preview tick re-reads
 /// the Dock's list up to twenty times a second, and each read looked the
 /// Dock up among every running app first. The workspace's launch and
@@ -160,6 +170,15 @@ enum AppleDockReader {
     }
 
     static func frame(of element: AXUIElement) -> CGRect? { axFrame(element) }
+
+    /// The Dock's list, its frame and its tiles in one walk — what a
+    /// gesture or ⌥` needs before it can name a tile. The whole read is
+    /// Accessibility calls into the Dock, so it belongs on the preview lane
+    /// (`DockPreviewAX.dockTiles`), never on main.
+    static func readTiles(pid: pid_t) -> DockTileReading? {
+        guard let list = dockList(pid: pid), let frame = frame(of: list) else { return nil }
+        return DockTileReading(list: DockAXElement(element: list), frame: frame, items: items(list: list))
+    }
 
     /// Repeated AX references are one window; matching titles and frames
     /// are not. Stacked untitled windows must each keep their own card.

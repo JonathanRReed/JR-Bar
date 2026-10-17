@@ -603,7 +603,7 @@ def test_a_t3_0_0_43_schema_stays_compatible(tmp_path: Path) -> None:
 
     assert snapshot.compatible is True
     assert [thread.thread_id for thread in snapshot.threads] == ["thread-1"]
-    assert t3_compat.T3_MAXIMUM_TESTED_VERSION == "0.0.43"
+    assert t3_compat.T3_MAXIMUM_TESTED_VERSION == "0.0.46"
 
 
 def _stamp(index: int) -> str:

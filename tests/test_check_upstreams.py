@@ -62,3 +62,21 @@ def test_a_newer_review_doc_supplies_the_refs(tmp_path: Path) -> None:
 
     assert script.latest_review(tmp_path) == review
     assert script.recorded_refs(review) == {"steipete/CodexBar": sha}
+
+
+def test_the_sidepulse_siblings_are_followed_and_keep_their_own_refs(tmp_path: Path) -> None:
+    script = _script()
+    names = [row[0] for row in script.UPSTREAMS]
+    assert "inteliwear/sidepulse-bridge" in names and "inteliwear/sidepulse-ios" in names
+
+    main_sha, bridge_sha = "b" * 40, "c" * 40
+    review = tmp_path / "docs" / "archive" / "UPSTREAM-REFRESH-2026-10-30.md"
+    review.parent.mkdir(parents=True)
+    review.write_text(
+        f"| Bridge | `inteliwear/sidepulse-bridge` at `{bridge_sha}` |\n"
+        f"| Original | `inteliwear/sidepulse` `main` at `{main_sha}` |\n"
+    )
+    refs = script.recorded_refs(review)
+    assert refs["inteliwear/sidepulse"] == main_sha
+    assert refs["inteliwear/sidepulse-bridge"] == bridge_sha
+    assert "inteliwear/sidepulse-ios" not in refs

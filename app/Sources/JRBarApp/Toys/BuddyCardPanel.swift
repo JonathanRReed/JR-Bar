@@ -214,6 +214,9 @@ final class BuddyCardPanel: NSPanel {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
     override func cancelOperation(_ sender: Any?) { orderOut(nil) }
 
+    /// The buddy went away under the card.
+    func dismiss() { orderOut(nil) }
+
     /// Open under `frame` (the pill's), clamped onto its screen.
     func present(near frame: NSRect?, character: BuddyCharacter, name: String, card: BuddyPalCard) {
         hosting.rootView = AnyView(BuddyCardView(character: character, name: name, card: card))

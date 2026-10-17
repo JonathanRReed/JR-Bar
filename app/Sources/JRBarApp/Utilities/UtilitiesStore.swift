@@ -30,15 +30,16 @@ final class UtilitiesStore {
     var state: UtilitiesState {
         didSet {
             scheduleSave()
-            if state.menuBar != oldValue.menuBar { menuBar.applySettings() }
+            if state.menuBar.requiresReapply(comparedTo: oldValue.menuBar) {
+                menuBar.applySettings()
+            } else if state.menuBar.curation.searchNames != oldValue.menuBar.curation.searchNames {
+                menuBar.bar.syncItems()
+            }
+            if state.menuBar.itemHotkeyBindings != oldValue.menuBar.itemHotkeyBindings {
+                menuBar.reconcileItemHotkeys()
+            }
             if state.dock != oldValue.dock { dock.applySettings() }
             if state.agents != oldValue.agents { agents.applySettings() }
-            if state.dataHoarderEnabled != oldValue.dataHoarderEnabled {
-                dataHoarder.model.enabled = state.dataHoarderEnabled
-            }
-            if state.dataHoarder != oldValue.dataHoarder {
-                dataHoarder.model.applyCaptureSettings(state.dataHoarder)
-            }
         }
     }
 
@@ -53,7 +54,6 @@ final class UtilitiesStore {
     /// `dismiss_session`, `clear_completed`, `snooze`) live in the panel
     /// and the Overview, not on the card.
     let agents: AgentUtility
-    let dataHoarder = DataHoarderUtility()
 
     /// Drops `state` into the delegate's `AppState` and writes the file.
     var onPersist: (@MainActor (UtilitiesState) -> Void)?
@@ -70,34 +70,9 @@ final class UtilitiesStore {
         self.dock = dock
         let agents = AgentUtility(core: core)
         self.agents = agents
-        dataHoarder.model.enabled = state.dataHoarderEnabled
-        dataHoarder.onEnabledChange = { [weak self] enabled in
-            self?.state.dataHoarderEnabled = enabled
-        }
-        dataHoarder.model.applyCaptureSettings(state.dataHoarder)
-        dataHoarder.model.onCaptureSettingsChange = { [weak self] updated in
-            guard let self, self.state.dataHoarder != updated else { return }
-            self.state.dataHoarder = updated
-        }
-        // The roster's `agent_id` is `provider:session:<uuid>`; a captured
-        // record whose probed session uuid still ends a live row can be
-        // opened — anything else leaves the button disabled.
-        dataHoarder.model.sessionResolver = { [weak self] record in
-            guard let self, let sessionID = record.sessionID, !sessionID.isEmpty,
-                  let provider = record.provider else { return nil }
-            return self.core.state?.sessions.first {
-                !$0.remote && $0.provider == provider && $0.id.hasSuffix(sessionID)
-            }?.id
-        }
-        dataHoarder.model.sessionOpener = { [weak self] id in
-            Task { @MainActor [weak self] in
-                guard let model = self?.dataHoarder.model else { return }
-                await Self.openArchived(id, via: SessionOpener.wiring, on: model)
-            }
-        }
-        dataHoarder.model.applyCapture()
         // The utility reads and writes the persisted blob through these;
         // the store stays the single owner of `state`.
+        menuBar.onOpenShortcuts = { [weak settings] in settings?.revealHome(.hotkeys) }
         menuBar.settings = { [weak self] in self?.state.menuBar ?? MenuBarSettings() }
         menuBar.onSettingsChange = { [weak self] updated in
             self?.state.menuBar = updated
@@ -128,17 +103,6 @@ final class UtilitiesStore {
         agents.applySettings()
     }
 
-    /// An archived record's session, opened the way the panel opens a
-    /// row (`SessionOpener`): the daemon's `open_session`, awaited, and
-    /// the Dock's window locator for a live session whose window the
-    /// daemon can't find. A refusal becomes the archive's line instead
-    /// of vanishing.
-    static func openArchived(_ id: String, via wiring: SessionOpener.Wiring?,
-                             on model: DataHoarderModel) async {
-        guard let line = await SessionOpener.open(id, via: wiring) else { return }
-        model.message = line
-    }
-
     /// Raise the exact window a live agent session runs in, if one
     /// window exclusively hosts it (`SessionWindowLocator`). True when
     /// that window is now in front; false leaves the caller's fallback
@@ -158,7 +122,6 @@ final class UtilitiesStore {
         menuBar.stop()
         dock.stop()
         dock.appleDock.restore()
-        dataHoarder.model.stopCapture()
     }
 
     // MARK: Persistence

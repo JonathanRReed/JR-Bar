@@ -42,8 +42,6 @@ from .presentation_policy import (
 )
 from .product_identity import PRODUCT_DISPLAY_NAME
 
-PANEL_TITLE: Final = "Why Is It Doing That?"
-MENU_ITEM_TITLE: Final = "Why Is It Doing That?"
 _CONTENT_PLEDGE: Final = (
     "This panel explains the decision. It never shows what an agent said."
 )

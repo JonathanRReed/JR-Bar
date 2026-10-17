@@ -21,13 +21,25 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from .ask_lifetime import (
+    ASK_EXPIRED_REASON,
+    ASK_EXPIRES_UNANSWERED_SECONDS,
+    ASK_MAY_BE_STALE_SECONDS,
+    AskStanding,
+    ask_standing,
+)
 from .hook import process_hook_payload
 from .models import AgentMode, AgentStatus, worker_id
-from .process_registry import DeadAgentProcess, ProcessSweeper
+from .process_registry import (
+    ClaudeSessionActivity,
+    DeadAgentProcess,
+    ProcessSweeper,
+    claude_session_activity,
+)
 from .providers import detect_log_path
 
 LIVE_MODES = frozenset(
@@ -42,6 +54,13 @@ LIVE_MODES = frozenset(
     }
 )
 SYNTHETIC_REASON_PREFIX = "jrbar_process_"
+IDLE_REASON = "jrbar_claude_session_idle"
+#: A session file that turns idle within this long of the last hook is the
+#: normal end of a turn whose Stop is still in flight, not a missed one.
+IDLE_GRACE_SECONDS = 3.0
+_WORKING_SHAPED = frozenset(
+    {AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +79,14 @@ class SweepResult:
     # a failure is now a delay instead of a loss; the count exists so the
     # caller can log that delay instead of swallowing it.
     failed_sends: int = 0
+    # Claude turns the person stopped with Esc, which fire no hook: the pid
+    # file says the session went idle after the last hook, and the turn was
+    # ended here.
+    idled_sessions: int = 0
+    # Asks closed by age: unanswered past ``ask_lifetime``'s outer bound with
+    # no running process behind them. Each one was ended through the ordinary
+    # hook pipeline and is recorded in History as "expired unanswered".
+    expired_asks: tuple[AgentStatus, ...] = ()
 
 
 def _subagent_worker_id(status: AgentStatus) -> str | None:
@@ -112,6 +139,29 @@ def synthetic_end_payloads(
     return payloads
 
 
+def expired_ask_payloads(status: AgentStatus, *, now: float) -> list[str]:
+    """The hook-shaped end of a session whose ask expired unanswered.
+
+    A worker's ask ends that worker (``SubagentStop``); a main session's ends
+    the session. ``reason`` names the cause so the panel never says the agent
+    finished, and ``jrbar_synthetic`` marks it as the Mac's own record.
+    """
+    worker = _subagent_worker_id(status)
+    event = "SubagentStop" if worker is not None else "SessionEnd"
+    payload: dict[str, object] = {
+        "hook_event_name": event,
+        "session_id": status.session_id,
+        "reason": ASK_EXPIRED_REASON,
+        "jrbar_synthetic": True,
+        "occurred_at_epoch": now,
+    }
+    if worker is not None:
+        payload["agent_id"] = worker
+    else:
+        payload["cwd"] = status.cwd
+    return [json.dumps(payload, separators=(",", ":"))]
+
+
 def reap_dead_agents(
     statuses: Iterable[AgentStatus],
     *,
@@ -119,6 +169,10 @@ def reap_dead_agents(
     refresh_hint_handler: Callable[[object], object] | None,
     process_payload: Callable[..., object] = process_hook_payload,
     log_path_for: Callable[[str], Path] = detect_log_path,
+    claude_activity_loader: Callable[[], Mapping[str, ClaudeSessionActivity]] = claude_session_activity,
+    now: float | None = None,
+    ask_stale_after_seconds: float = ASK_MAY_BE_STALE_SECONDS,
+    ask_expire_after_seconds: float = ASK_EXPIRES_UNANSWERED_SECONDS,
 ) -> SweepResult:
     rows = [status for status in statuses if status.mode in LIVE_MODES and status.session_id]
     sessions = [(status.provider, status.session_id) for status in rows if status.session_id]
@@ -141,7 +195,104 @@ def reap_dead_agents(
                 synthesized += 1
             except Exception:
                 failed += 1
-    return SweepResult(tuple(dead), synthesized, frozenset(live), failed)
+    idled = 0
+    for status, changed_at in _idle_claude_turns(rows, live, claude_activity_loader):
+        payload = json.dumps(
+            {
+                "hook_event_name": "Interrupt",
+                "session_id": status.session_id,
+                "cwd": status.cwd,
+                "reason": IDLE_REASON,
+                "jrbar_synthetic": True,
+                "occurred_at_epoch": changed_at,
+            },
+            separators=(",", ":"),
+        )
+        try:
+            process_payload(
+                status.provider,
+                log_path_for(status.provider),
+                payload,
+                refresh_hint_handler=refresh_hint_handler,
+            )
+            idled += 1
+        except Exception:
+            failed += 1
+    expired: list[AgentStatus] = []
+    stamp = time.time() if now is None else float(now)
+    dead_sessions = {(item.record.provider, item.record.session_id) for item in dead}
+    for status in rows:
+        session = (status.provider, status.session_id)
+        if (
+            status.stale
+            or not status.is_hard_ask
+            or session in dead_sessions
+            or ask_standing(
+                opened_at_epoch=status.updated_at.timestamp(),
+                last_activity_epoch=status.updated_at.timestamp(),
+                now_epoch=stamp,
+                process_alive=session in live,
+                stale_after_seconds=ask_stale_after_seconds,
+                expire_after_seconds=ask_expire_after_seconds,
+            )
+            is not AskStanding.EXPIRED
+        ):
+            continue
+        sent = False
+        for payload in expired_ask_payloads(status, now=stamp):
+            try:
+                process_payload(
+                    status.provider,
+                    log_path_for(status.provider),
+                    payload,
+                    refresh_hint_handler=refresh_hint_handler,
+                )
+                sent = True
+            except Exception:
+                failed += 1
+        if sent:
+            expired.append(status)
+    return SweepResult(tuple(dead), synthesized, frozenset(live), failed, idled, tuple(expired))
 
 
-__all__ = ["LIVE_MODES", "SweepResult", "reap_dead_agents", "synthetic_end_payloads"]
+def _idle_claude_turns(
+    rows: Iterable[AgentStatus],
+    live: Iterable[tuple[str, str]],
+    loader: Callable[[], Mapping[str, ClaudeSessionActivity]],
+) -> list[tuple[AgentStatus, float]]:
+    """Working Claude sessions whose own pid file went idle after the last hook."""
+    candidates = [
+        status
+        for status in rows
+        if status.provider == "claude"
+        and status.mode in _WORKING_SHAPED
+        and status.session_id
+        and _subagent_worker_id(status) is None
+    ]
+    live = frozenset(live)
+    candidates = [status for status in candidates if ("claude", status.session_id) in live]
+    if not candidates:
+        return []
+    try:
+        activity = loader()
+    except Exception:
+        return []
+    ended: list[tuple[AgentStatus, float]] = []
+    for status in candidates:
+        seen = activity.get(status.session_id or "")
+        if (
+            seen is not None
+            and seen.status == "idle"
+            and seen.changed_at > status.updated_at.timestamp() + IDLE_GRACE_SECONDS
+        ):
+            ended.append((status, seen.changed_at))
+    return ended
+
+
+__all__ = [
+    "LIVE_MODES",
+    "SweepResult",
+    "expired_ask_payloads",
+    "reap_dead_agents",
+    "synthetic_end_payloads",
+]

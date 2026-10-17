@@ -1,0 +1,168 @@
+{
+  "archive_sha256": "04b8c175a01e60ff081088294ac486e814bc621902517bf1a29ff65c5d075695",
+  "build_options": "pgo+lto",
+  "build_release": "20260602",
+  "notices": [
+    {
+      "extensions": [
+        "_bz2"
+      ],
+      "file": "LICENSE.bzip2.txt",
+      "libraries": [
+        "bz2"
+      ],
+      "licenses": [
+        "bzip2-1.0.6"
+      ],
+      "sha256": "1f38bbc7caacafd65169276d759c0d88c991b753b643ce35d0e45ea1971dd441"
+    },
+    {
+      "extensions": [
+        "_elementtree",
+        "pyexpat"
+      ],
+      "file": "LICENSE.expat.txt",
+      "libraries": [
+        "expat"
+      ],
+      "licenses": [
+        "MIT"
+      ],
+      "sha256": "122f2c27000472a201d337b9b31f7eb2b52d091b02857061a8880371612d9534"
+    },
+    {
+      "extensions": [
+        "_ctypes"
+      ],
+      "file": "LICENSE.libffi.txt",
+      "libraries": [
+        "ffi"
+      ],
+      "licenses": [
+        "MIT"
+      ],
+      "sha256": "deaf3a42effb551a5b140fa9afefed183a27f1341c6d1bf430d106a5e6931fc0"
+    },
+    {
+      "extensions": [
+        "_lzma"
+      ],
+      "file": "LICENSE.liblzma.txt",
+      "libraries": [
+        "lzma"
+      ],
+      "licenses": [
+        "0BSD"
+      ],
+      "sha256": "9a4062de0a2c388a98cf35a35d348b62fa97c838a71c3c28ee1a2d7d0a565b02"
+    },
+    {
+      "extensions": [
+        "_uuid"
+      ],
+      "file": "LICENSE.libuuid.txt",
+      "libraries": [
+        "uuid"
+      ],
+      "licenses": [
+        "BSD-3-Clause"
+      ],
+      "sha256": "122ee1f7e258f2c3c0e538a75c037684f420454bf3850ddc74ce750bbf5fe86b"
+    },
+    {
+      "extensions": [
+        "_decimal"
+      ],
+      "file": "LICENSE.mpdecimal.txt",
+      "libraries": [
+        "mpdec"
+      ],
+      "licenses": [
+        "BSD-2-Clause"
+      ],
+      "sha256": "669512af7219f58be03a398766d7c9da11a3b3df9d3f05cb74c5ceca25c8da3b"
+    },
+    {
+      "extensions": [
+        "_hashlib",
+        "_ssl"
+      ],
+      "file": "LICENSE.openssl-1.1.txt",
+      "libraries": [
+        "crypto",
+        "ssl"
+      ],
+      "licenses": [
+        "Apache-2.0",
+        "OpenSSL"
+      ],
+      "sha256": "9c04cce50c4989d5601dd8b07f6ab922c40388b66ac736c9007cb1ed9d9dd560"
+    },
+    {
+      "extensions": [
+        "_hashlib",
+        "_ssl"
+      ],
+      "file": "LICENSE.openssl-3.txt",
+      "libraries": [
+        "crypto",
+        "ssl"
+      ],
+      "licenses": [
+        "Apache-2.0",
+        "OpenSSL"
+      ],
+      "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"
+    },
+    {
+      "extensions": [
+        "_sqlite3"
+      ],
+      "file": "LICENSE.sqlite.txt",
+      "libraries": [
+        "sqlite3"
+      ],
+      "licenses": [],
+      "sha256": "38bef3d28b24f145ea293bd3b6eb4b20396982abc8303128fb493986ea5bc719"
+    }
+  ],
+  "python_version": "3.12.13",
+  "schema": 1,
+  "source_manifest_sha256": "9f353eba8f1240f161c198998eb1e2753c2cd241ac3e1331aef5e3759c37e44f",
+  "source_url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260602/cpython-3.12.13%2B20260602-aarch64-apple-darwin-pgo%2Blto-full.tar.zst",
+  "target_triple": "aarch64-apple-darwin",
+  "text_sections": {
+    "__const": {
+      "bytes": 3577969,
+      "sha256": "2df0dbc3a502f315f5bfd5b0c20d7782c64f2cabeb118b6c6e697c5643b6084b"
+    },
+    "__cstring": {
+      "bytes": 590979,
+      "sha256": "8d68fc1dac08742e5792641d6079045c769790c301fa078467493a07c94cca79"
+    },
+    "__eh_frame": {
+      "bytes": 1856,
+      "sha256": "eef705572db8ead9322175fcf66e2df0b98e77e2cc57dce870fa6e54f70e2036"
+    },
+    "__literals": {
+      "bytes": 6568,
+      "sha256": "cf12a8e06138285b024cbc71187110615697368297c25830dfa46307f673dec3"
+    },
+    "__stub_helper": {
+      "bytes": 8088,
+      "sha256": "aef51f5149fbe1da2ecfde2ab09c65c27244e4a429f5786356f4242efbf7148d"
+    },
+    "__stubs": {
+      "bytes": 8064,
+      "sha256": "578f69bb652171c834f562c147ed4fb1d7a7efb1878f9d42b88bda6bf00d952a"
+    },
+    "__text": {
+      "bytes": 8970012,
+      "sha256": "433dd29c95d3229617100334a81b83b761bd75901c742730e1ec00c524492442"
+    },
+    "__unwind_info": {
+      "bytes": 70160,
+      "sha256": "3636a32910713f36fc81fbc4a1e3933f94c9c85232ddbbf89c660fb17f68278c"
+    }
+  }
+}

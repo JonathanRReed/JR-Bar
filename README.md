@@ -34,7 +34,7 @@ make clean-install
 ```
 
 This builds `dist/JR-Bar-<version>.pkg`, installs the app in
-`~/Applications`, and opens it. Go to **Settings > Agents** to choose which
+`~/Applications`, and opens it. Go to **Settings > Agents & Usage** to choose which
 detected providers receive hooks. The [quick start](docs/user/quick-start.md)
 covers the first useful checks.
 
@@ -53,7 +53,7 @@ covers the first useful checks.
   panel with Approve and Deny (⌘↩ / ⌘D) and arrive as banners with the same
   two actions. Left unanswered, an ask steps up: the light brightens after
   30 s and the menu-bar icon pulses after 2 min. If you choose Chime or
-  Take over in **Settings > Notifications & Focus > Escalation > Loudest
+  Take over in **Settings > Alerts & Sounds > Advanced > Escalation > Loudest
   stage**, a chime repeats every 30 s from 5 min on until you answer, and
   Take over also grows the ask out of the notch. By default it stops at the
   menu-bar pulse. The three delays are editable in the same group. A failed
@@ -65,7 +65,8 @@ covers the first useful checks.
   one gradient (never a row of segments). Hover shows the top session and a
   plain-language line about the light. Click the band to pin its card. Click
   the session mark on the left wing to open that session. It follows
-  Alcove's capsule width and stays up over full-screen apps.
+  stays up over full-screen apps, and follows Alcove's capsule width when
+  the Notch utility hands the notch to Alcove.
 
 <p align="center">
   <img src="media/screen-bar.png" alt="The Screen Bar under the notch after a completion, with the hover pill naming the session" width="700">
@@ -103,8 +104,9 @@ covers the first useful checks.
   keeps a clamshell Mac running through a long task and lets it sleep when
   the task ends or the quota is gone.
 - **Away from the desk.** Calendar and Reminders glows; a webhook that POSTs
-  JSON moments (blocked for minutes, finished, quota crossed) to ntfy, Home
-  Assistant or anything with a URL; a read-only view of another Mac's
+  JSON to ntfy, Home Assistant or anything with a URL when an ask reaches
+  its last escalation stage, and optionally when a session finishes or
+  fails, an ask opens or a quota is crossed; a read-only view of another Mac's
   sessions over Tailscale and SFTP; HMAC-signed usage sync between Macs; a
   loopback ingest listener so cloud-hosted agents can report in.
 - **Creator Micro 2 Control Center.** Thirteen session keys with pins and
@@ -117,11 +119,20 @@ covers the first useful checks.
   a Doctor checklist and `jrbar hooks doctor`; Sparkle updates from this
   repository's releases, manual until you turn automatic checks on, with a
   beta channel.
-- **Desktop utilities.** Data Hoarder keeps a local, searchable archive of
-  sources you choose. Dock tools can hold or enhance the Dock, and Menu Bar
-  tools can arrange or conceal items. Menu Bar is enabled by default but
-  hides nothing until you arrange items. Dock enhancements and archive
-  capture are opt-in. Each control explains its macOS permissions.
+- **Desktop utilities.** Dock tools can hold or enhance the Dock, and Menu Bar
+  tools can hide items behind JR-Bar's icon: hold ⌘ and drag an item left
+  of the icon to hide it, right of it to show it. Menu Bar is enabled by
+  default but hides nothing until you drag items over. One status
+  line on its card says why hiding is paused or impossible and offers the
+  fix; Show everything always shows everything. Dock enhancements and
+  archive capture are opt-in. Each control explains its macOS permissions.
+- **Notch island, toys and the Overview.** An optional island around the
+  notch (the Notch utility, off until you turn it on) shows live counts, a
+  hover card, event capsules, media and the shelf. The toys (Fold, Aquarium,
+  Notch Buddy and Confetti) are all off until you turn them on in
+  **Settings > Utilities & Toys**. The Overview window (⌘O from the panel or the status
+  item's menu) lists every session by state, and ⇧⌘K opens the command
+  palette.
 
 <p align="center">
   <img src="media/usage-center.png" alt="Usage Center: Claude's 5h, 7d and 30d rings, a comfortable forecast, tokens by day with cost and cache savings; Gemini near its limit with a run-out time" width="640">
@@ -151,7 +162,7 @@ them, the Screen Bar is the light.
 | Neighbours, not providers | T3 Code (read-only session projection, [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)); Alcove (the Screen Bar matches its capsule) |
 
 The app detects providers without changing their configs. Install, reinstall,
-or remove hooks one provider at a time in Settings › Agents. On an upgrade,
+or remove hooks one provider at a time in Settings › Agents & Usage. On an upgrade,
 JR-Bar refreshes only hooks its detector can prove JR-Bar already manages;
 inactive hooks stay inactive and custom log paths stay in place. Codex's
 trust hash is recomputed locally for the exact command written. How each
@@ -169,9 +180,9 @@ installed on the system. The download and the build from source are under
 `sudo installer -pkg dist/JR-Bar-<version>.pkg -target /` puts it in
 `/Applications` instead. On first launch the app starts its daemon, records
 the installed build, and registers itself as a login item. It does not edit
-provider hooks until you choose them in Settings › Agents. Click the icon for
+provider hooks until you choose them in Settings › Agents & Usage. Click the icon for
 the panel; right-click for the menu. The command
-line lives inside the bundle; **Settings › Shortcuts › Command line ›
+line lives inside the bundle; **Settings › Shortcuts › Advanced › Command line ›
 Install** links it as `~/.local/bin/jrbar` (put `~/.local/bin` on your
 `PATH` if it is not already). The link follows the app when you update it,
 and Remove takes it away again.
@@ -206,8 +217,9 @@ Claude Code's status line (putting back the one you had), the helpers,
 the `jrbar` link and the app, wherever they were installed
 (`~/Applications` or `/Applications`; `~/.local/bin` or `/usr/local/bin`),
 and leaves any file it did not put there alone. `--dry-run` shows the
-steps without taking them, `--keep-app` keeps the app and `--purge-state`
-also removes settings and history. By hand: quit the app, run
+steps without taking them, `--keep-app` keeps the app, `--purge-state`
+also removes settings and history, and `--purge-keychain` also deletes the
+provider keys JR-Bar saved in the login Keychain. By hand: quit the app, run
 `jrbar agent-monitor uninstall all` (it also puts back Claude Code's
 status line; it tries every provider, names any config it could not clean
 and exits 1 after the last one), then delete `JR-Bar.app`.
@@ -220,14 +232,16 @@ they need when you turn them on.
 | Permission | Unlocks | Asked when |
 | --- | --- | --- |
 | Notifications | Ask and completion banners, with Approve / Deny on asks | The first time a banner is due, never at launch |
-| Accessibility | Answering an ask by keystroke into the session's terminal (a Creator Micro 2 key, or Approve / Deny when the terminal is frontmost); the Screen Bar following Alcove's capsule; Menu Bar arrange and click-through | The first time a feature needs it |
+| Accessibility | Answering an ask by keystroke into the session's terminal (a Creator Micro 2 key, or Approve / Deny when the terminal is frontmost); Menu Bar tiles, search and click-through. The Screen Bar's read of Alcove's capsule uses it only if it is already granted | The first time a feature needs it |
+| Automation | Opening a reviewed resume command in Terminal or iTerm2 when you choose Open | The first time you choose Open |
+| Location Services | The Wi-Fi network name for Menu Bar rules that watch Wi-Fi; JR-Bar never reads or sends where you are | When you add a Wi-Fi rule |
 | Calendar, Reminders | Event and reminder glows; the shelf's calendar row and reminder list | When you enable those signals |
 | Camera | The notch card's Mirror row | When you turn the row on |
 | Screen Recording | The Fold toy's desktop capture; live previews in the Dock and Menu Bar utilities | When you turn Fold on; the utilities fall back to icons without it |
 | System Audio | The media row's live visualizer (a Core Audio tap on the playing app) | The first time the visualizer starts |
 | Bluetooth | The notch's device-connect announcements | When the announcements run |
-| Focus Status | The app's own read of the active Focus — Menu Bar triggers and the status item's moon | When a feature that reads it is turned on |
-| Full Disk Access | macOS Focus following in the monitor (reads the Do Not Disturb database) — a grant apart from Focus Status | When you turn Focus following on |
+| Focus Status | Whether Focus is on, for React to Focus modes, Menu Bar rules and the status item's moon | When a feature that reads it is turned on |
+| Full Disk Access | Names of active Focus modes for individual dimming, alert and calibration rules; the background helper needs access too | When you turn React to Focus modes on |
 | An administrator password, once | The closed-lid sleep helper (`/etc/sudoers.d/jrbar-disablesleep`) | When you set the closed-lid policy |
 
 Grants are keyed to the signed `JR-Bar.app`; a development build signed
@@ -236,7 +250,7 @@ differently is a different app to macOS and asks again.
 ## Screenshots
 
 <p align="center">
-  <img src="media/settings-devices.png" alt="Settings › Devices &amp; Screen Bar: the SidePulse strip with display mode, brightness, auto-brightness, provider pin, asks-only and colour calibration; the PulseDot below it" width="720">
+  <img src="media/settings-devices.png" alt="Settings › Devices &amp; Lighting: the SidePulse strip with display mode, brightness, auto-brightness, provider pin, asks-only and colour calibration; the PulseDot below it" width="720">
 </p>
 <p align="center">
   <img src="media/effect-studio.png" alt="Effect Studio: the effect library, the Beacon pack effect with its 8-LED preview, safety chips, cadence and colour parameters, and the assignment list by scope" width="720">

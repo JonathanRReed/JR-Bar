@@ -14,6 +14,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import datetime
 from enum import Enum
 from typing import Final
@@ -147,6 +148,7 @@ class ProviderAdapterValidationError(ValueError):
 class ProviderEventName(str, Enum):
     SESSION_START = "session_start"
     USER_PROMPT_SUBMIT = "user_prompt_submit"
+    ACTIVITY_PROGRESS = "activity_progress"
     PRE_TOOL_USE = "pre_tool_use"
     POST_TOOL_USE = "post_tool_use"
     POST_TOOL_USE_FAILURE = "post_tool_use_failure"
@@ -189,6 +191,7 @@ class NormalizedProviderRecord:
     notification_kind: NotificationKind | None
     sequence: int | None
     terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE
+    _terminal_provenance: object | None = dataclass_field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         sequence_valid = self.sequence is None or (
@@ -217,6 +220,11 @@ class NormalizedProviderRecord:
             raise ProviderAdapterValidationError("invalid normalized provider parent")
         if self.terminal_cause is ProviderTerminalCause.CODEX_USAGE_LIMIT and not (
             self.source_key.provider_id == "codex"
+            and self.event_name is ProviderEventName.STOP_FAILURE
+        ):
+            raise ProviderAdapterValidationError("invalid normalized terminal cause")
+        if self.terminal_cause is ProviderTerminalCause.CLAUDE_RATE_LIMIT and not (
+            self.source_key.provider_id == "claude"
             and self.event_name is ProviderEventName.STOP_FAILURE
         ):
             raise ProviderAdapterValidationError("invalid normalized terminal cause")
@@ -280,6 +288,12 @@ _USER_PROMPT = _rule(
     WorkLifecycle.ACTIVE,
     NextActor.PROVIDER,
     20,
+)
+_ACTIVITY_PROGRESS = _rule(
+    ProviderEventName.ACTIVITY_PROGRESS,
+    WorkLifecycle.ACTIVE,
+    NextActor.PROVIDER,
+    21,
 )
 _PRE_TOOL = _rule(
     ProviderEventName.PRE_TOOL_USE,
@@ -457,6 +471,7 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
     "codex": {
         "SessionStart": _SESSION_START,
         "UserPromptSubmit": _USER_PROMPT,
+        "ActivityProgress": _ACTIVITY_PROGRESS,
         "PreToolUse": _PRE_TOOL,
         "PostToolUse": _POST_TOOL,
         "PermissionRequest": _PERMISSION_REQUEST,
@@ -483,6 +498,10 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
         "SubagentStop": _SUBAGENT_STOP,
         "Stop": _STOP,
         "StopFailure": _STOP_FAILURE,
+        # Claude fires no hook when the person stops a turn with Esc. The
+        # liveness sweep ends it from the session's own pid file and sends
+        # this event, the way Codex's real Interrupt reduces.
+        "Interrupt": _INTERRUPT,
         "SessionEnd": _SESSION_END,
         "Elicitation": _ELICITATION,
         "ElicitationResult": _ELICITATION_RESULT,
@@ -1508,6 +1527,7 @@ def minimize_hook_event(
         safe_label=safe_label,
         notification_kind=notification_kind,
         sequence=sequence,
+        _terminal_provenance=record._terminal_provenance,
         terminal_cause=(
             ProviderTerminalCause.CODEX_USAGE_LIMIT
             if (
@@ -1516,6 +1536,11 @@ def minimize_hook_event(
                 and record._terminal_provenance
                 is _CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE
             )
+            else ProviderTerminalCause.CLAUDE_RATE_LIMIT
+            if (source_key.provider_id == "claude"
+                and rule.event_name is ProviderEventName.STOP_FAILURE
+                and record.raw.get("error") == "rate_limit"
+                and type(record.raw.get("error")) is str)
             else ProviderTerminalCause.NONE
         ),
     )
@@ -1665,11 +1690,8 @@ def provider_facts_for_record(
                     safe_label=record.safe_label,
                     parent_key=parent_key,
                     next_actor=rule.next_actor,
-                    terminal_cause=(
-                        ProviderTerminalCause.CODEX_USAGE_LIMIT
-                        if record.terminal_cause is ProviderTerminalCause.CODEX_USAGE_LIMIT
-                        else ProviderTerminalCause.NONE
-                    ),
+                    terminal_cause=record.terminal_cause,
+                    _terminal_provenance=record._terminal_provenance,
                     # "stop" ends a turn, "session_end" ends the session --
                     # the reducer needs the name, not just the lifecycle.
                     terminal_event=(
@@ -1678,6 +1700,7 @@ def provider_facts_for_record(
                         in {WorkLifecycle.COMPLETED, WorkLifecycle.FAILED}
                         else None
                     ),
+                    starts_turn=rule.event_name is ProviderEventName.USER_PROMPT_SUBMIT,
                 ),
             )
 
@@ -1781,6 +1804,8 @@ def normalized_provider_record_to_payload(
                 None if record.notification_kind is None else record.notification_kind.value
             ),
             "sequence": record.sequence,
+            **({"terminal_cause": record.terminal_cause.value}
+               if record.terminal_cause is not ProviderTerminalCause.NONE else {}),
         }
     if type(record) is InertProviderRecord:
         return {
@@ -1862,6 +1887,8 @@ def normalized_provider_record_from_payload(
         if kind == "inert"
         else None
     )
+    if kind == "normalized" and "terminal_cause" in payload:
+        expected_fields = _NORMALIZED_FIELDS | {"terminal_cause"}
     if expected_fields is None or not _has_exact_fields(payload, expected_fields):
         return None
     if not _valid_version(payload["version"]):
@@ -1917,6 +1944,7 @@ def normalized_provider_record_from_payload(
                 None if notification_kind is None else NotificationKind(notification_kind)
             ),
             sequence=sequence,
+            terminal_cause=ProviderTerminalCause(payload.get("terminal_cause", "none")),
         )
     except (
         ContractValidationError,

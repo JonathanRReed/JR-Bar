@@ -26,7 +26,7 @@
 #
 # External steps are behind overridable seams so the contract test can run
 # the whole script with doubles: APP_BUILD_SCRIPT, HOOK_BUILD_SCRIPT,
-# SECURITY_TOOL, CODESIGN_TOOL, XCRUN_TOOL, LSREGISTER_TOOL, BUILD_PYTHON,
+# SECURITY_TOOL, CODESIGN_TOOL, XCRUN_TOOL, XATTR_TOOL, LSREGISTER_TOOL, BUILD_PYTHON,
 # BUILD_ROOT, OUTPUT_ROOT.
 set -euo pipefail
 
@@ -66,12 +66,111 @@ HOOK_BUILD_SCRIPT="${HOOK_BUILD_SCRIPT:-$ROOT_DIR/hook/build.sh}"
 SECURITY_TOOL="${SECURITY_TOOL:-/usr/bin/security}"
 CODESIGN_TOOL="${CODESIGN_TOOL:-/usr/bin/codesign}"
 XCRUN_TOOL="${XCRUN_TOOL:-/usr/bin/xcrun}"
+XATTR_TOOL="${XATTR_TOOL:-/usr/bin/xattr}"
 LSREGISTER_TOOL="${LSREGISTER_TOOL:-/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister}"
 
 APP_SIGN_IDENTITY="${APP_SIGN_IDENTITY:-}"
 INSTALLER_SIGN_IDENTITY="${INSTALLER_SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-jrbar-notary}"
 ALLOW_UNSIGNED="${ALLOW_UNSIGNED:-0}"
+# Explicit opt-in for a reviewed local distribution candidate, not publication.
+JRBAR_PRODUCTION_CANDIDATE="${JRBAR_PRODUCTION_CANDIDATE:-0}"
+NOTARY_NO_S3_ACCELERATION="${NOTARY_NO_S3_ACCELERATION:-0}"
+EMBEDDED_SOURCE_VERIFY_SCRIPT="${EMBEDDED_SOURCE_VERIFY_SCRIPT:-}"
+
+require_production_candidate() {
+    [ "$JRBAR_PRODUCTION_CANDIDATE" = "1" ] || return 0
+    if [ "$ALLOW_UNSIGNED" = "1" ] ||
+        [[ "$APP_SIGN_IDENTITY" != "Developer ID Application: "* ]] ||
+        [[ "$INSTALLER_SIGN_IDENTITY" != "Developer ID Installer: "* ]] ||
+        [ "$NOTARIZE" != "1" ]; then
+        echo "Production candidate requires explicit Developer ID app and installer identities and notarization." >&2
+        return 1
+    fi
+    if [ -z "$EMBEDDED_SOURCE_VERIFY_SCRIPT" ] || [ ! -f "$EMBEDDED_SOURCE_VERIFY_SCRIPT" ]; then
+        echo "Production candidate requires EMBEDDED_SOURCE_VERIFY_SCRIPT." >&2
+        return 1
+    fi
+}
+
+verify_embedded_source() {
+    [ -n "$EMBEDDED_SOURCE_VERIFY_SCRIPT" ] || return 0
+    "$BUILD_PYTHON" -c 'import subprocess,sys; subprocess.run([sys.executable, *sys.argv[1:]], check=True, timeout=60)' \
+        "$EMBEDDED_SOURCE_VERIFY_SCRIPT" "$HELPERS/jrbar-core.app/Contents/MacOS/jrbar-core" \
+        "$ROOT_DIR/src" "$RAW_EVIDENCE_DIR/embedded-source-verification.json"
+}
+
+validate_build_inputs() {
+    "$BUILD_PYTHON" "$ROOT_DIR/packaging/build_input_manifest.py" validate "$ROOT_DIR" \
+        --exclude "$BUILD_DIR" --exclude "$DIST_DIR"
+}
+
+capture_build_inputs() {
+    local deleted_arg=""
+    if [ "${JRBAR_ALLOW_DELETED_BUILD_INPUTS:-0}" = "1" ]; then
+        deleted_arg="--allow-deleted"
+    fi
+    "$BUILD_PYTHON" "$ROOT_DIR/packaging/build_input_manifest.py" capture "$ROOT_DIR" \
+        "$RAW_EVIDENCE_DIR/build-inputs.json" --exclude "$BUILD_DIR" --exclude "$DIST_DIR" ${deleted_arg:+"$deleted_arg"}
+}
+
+verify_build_inputs() {
+    "$BUILD_PYTHON" "$ROOT_DIR/packaging/build_input_manifest.py" verify "$ROOT_DIR" \
+        "$RAW_EVIDENCE_DIR/build-inputs.json"
+}
+
+clear_candidate_metadata() {
+    "$XATTR_TOOL" -cr "$APP_PATH"
+}
+
+# Submits one file for notarization and waits for the verdict, writing the
+# final `notarytool info` JSON to the second argument. `notarytool submit
+# --wait` crashes on macOS 27 (a stack overflow formatting its wait output,
+# seen on files of a few megabytes and up), so this uploads with --no-wait and
+# polls `info`, which does not.
+notarize_and_wait() {
+    local file="$1" response="$2"
+    local submitted submit_errors submit_exit info id status="In Progress" waited=0
+    local upload_flag=""
+    if [ "$NOTARY_NO_S3_ACCELERATION" = "1" ]; then
+        upload_flag="--no-s3-acceleration"
+    fi
+    submitted="$(/usr/bin/mktemp "${response}.upload-stdout.XXXXXX")"
+    submit_errors="$(/usr/bin/mktemp "${response}.upload-stderr.XXXXXX")"
+    if {
+        "$XCRUN_TOOL" notarytool submit "$file" \
+            --keychain-profile "$NOTARY_PROFILE" \
+            --no-progress \
+            ${upload_flag:+"$upload_flag"} \
+            --no-wait \
+            --output-format json > "$submitted"
+    } 2> "$submit_errors"; then
+        :
+    else
+        submit_exit=$?
+        echo "Notary upload failed (exit $submit_exit)." >&2
+        printf 'Upload stdout: %s\nUpload stderr: %s\n' "$submitted" "$submit_errors" >&2
+        echo "Check notarytool history before any retry; Apple may have created a submission." >&2
+        return "$submit_exit"
+    fi
+    id="$("$BUILD_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$submitted")"
+    info="$(/usr/bin/mktemp)"
+    while [ "$status" = "In Progress" ]; do
+        if [ "$waited" -ge 7200 ]; then
+            echo "notarization of $file did not finish in two hours (submission $id)" >&2
+            return 1
+        fi
+        /bin/sleep 15
+        waited=$((waited + 15))
+        if "$XCRUN_TOOL" notarytool info "$id" \
+            --keychain-profile "$NOTARY_PROFILE" \
+            --output-format json > "$info" 2>/dev/null; then
+            status="$("$BUILD_PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status",""))' "$info" 2>/dev/null || echo "In Progress")"
+        fi
+    done
+    /bin/cp "$info" "$response"
+    /bin/rm -f "$info"
+}
 SPARKLE_ARCHIVE="${SPARKLE_ARCHIVE:-}"
 SPARKLE_KEY_ACCOUNT="${SPARKLE_KEY_ACCOUNT:-}"
 RELEASE_CHANNEL="${JRBAR_RELEASE_CHANNEL:-stable}"
@@ -243,6 +342,7 @@ if [ "$SIGN_KIND" = "developer-id" ] && [ "$ALLOW_UNSIGNED" != "1" ] && \
     "$XCRUN_TOOL" notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
     NOTARIZE=1
 fi
+require_production_candidate
 COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
 if [ -n "$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null || true)" ]; then
     COMMIT="$COMMIT-dirty"
@@ -288,6 +388,7 @@ else
     echo "notarization: not notarized (no '$NOTARY_PROFILE' keychain profile, or not Developer ID signed)"
 fi
 
+validate_build_inputs
 /bin/rm -rf "$BUILD_DIR"
 /bin/mkdir -p "$BUILD_DIR" "$DIST_DIR"
 
@@ -311,6 +412,7 @@ unregister_build_copies() {
 trap unregister_build_copies EXIT
 
 /bin/mkdir -m 700 "$RAW_EVIDENCE_DIR"
+capture_build_inputs
 export PIP_CACHE_DIR="$BUILD_DIR/pip-cache"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 export PIP_CONSTRAINT="$CONSTRAINTS"
@@ -374,7 +476,10 @@ echo "==> daemon (PyInstaller $PINNED_PYINSTALLER, onedir app bundle)"
     --collect-submodules jrbar \
     --collect-submodules Cocoa \
     --collect-data jrbar.resources \
-    --copy-metadata jrbar \
+    --recursive-copy-metadata jrbar \
+    --copy-metadata setuptools \
+    --copy-metadata wheel \
+    --copy-metadata packaging \
     --hidden-import jrbar.creator_micro_adapter \
     --hidden-import jrbar.creator_micro_hidapi \
     --hidden-import hid \
@@ -384,24 +489,14 @@ if [ ! -x "$CORE_APP/Contents/MacOS/jrbar-core" ]; then
     exit 1
 fi
 
+"$VENV_DIR/bin/python" "$ROOT_DIR/packaging/strip_build_origin.py" --core-app "$CORE_APP"
+
 echo "==> assembling $APP_PATH"
 /bin/mkdir -p "$(/usr/bin/dirname "$APP_PATH")"
 /usr/bin/ditto "$SWIFT_APP" "$APP_PATH"
 /bin/mkdir -p "$HELPERS"
 /usr/bin/ditto "$CORE_APP" "$HELPERS/jrbar-core.app"
 /usr/bin/install -m 755 "$HOOK_DIR/jrbar-hook" "$HELPERS/jrbar-hook"
-# The menu-bar assertion holder ships inside the app bundle — the app
-# build script puts it there (Contents/Helpers/jrbar-asserter.app, its own
-# bundle id, toolchain rpaths stripped). It must be its own .app: a bare
-# binary inside our bundle resolves Bundle.main to com.jonathanreed.jrbar,
-# which makes the agent read the holder as *us* and hide our icon again
-# (measured 2026-09-21). Verify, never rebuild — building it here would
-# bypass the APP_BUILD_SCRIPT seam the contract tests drive.
-ASSERTER_APP="$APP_PATH/Contents/Helpers/jrbar-asserter.app"
-if [ ! -x "$ASSERTER_APP/Contents/MacOS/jrbar-asserter" ]; then
-    echo "the app build did not produce $ASSERTER_APP/Contents/MacOS/jrbar-asserter" >&2
-    exit 1
-fi
 # The daemon is headless: never a Dock tile, never a window. It inherits the
 # app's Automation grant through the process tree, but TCC reads the usage
 # strings from the bundle it finds first, so it carries them too.
@@ -429,6 +524,8 @@ fi
 /bin/mkdir -p \
     "$APP_PATH/Contents/Frameworks" \
     "$APP_PATH/Contents/Resources/ThirdPartyLicenses"
+"$VENV_DIR/bin/python" "$ROOT_DIR/packaging/copy_runtime_notices.py" \
+    --output "$APP_PATH/Contents/Resources/ThirdPartyLicenses"
 # ditto preserves the framework's reviewed relative symlinks and executable bits.
 /usr/bin/ditto \
     "$SPARKLE_DISTRIBUTION/Sparkle.framework" \
@@ -488,7 +585,7 @@ fi
 
 # Downloads and copied workspace resources can carry Finder or provenance
 # metadata that codesign rejects. Limit cleanup to the isolated candidate.
-/usr/bin/xattr -cr "$APP_PATH"
+clear_candidate_metadata
 
 sign_args=("$APP_PATH" --identity "$SIGN_IDENTITY" --entitlements "$ROOT_DIR/packaging/entitlements.plist")
 if [ "$HARDENED" != "1" ]; then
@@ -523,6 +620,9 @@ fi
 
 export COPYFILE_DISABLE=1
 
+verify_embedded_source
+verify_build_inputs
+
 if [ "$NOTARIZE" = "1" ]; then
     echo "==> notarizing the app"
     /usr/bin/ditto -c -k --keepParent "$APP_PATH" "$APP_NOTARY_ZIP"
@@ -531,10 +631,7 @@ if [ "$NOTARIZE" = "1" ]; then
     app_submitted_sha="$RAW_EVIDENCE_DIR/app-notary-submitted-zip.sha256"
     /usr/bin/shasum -a 256 "$APP_NOTARY_ZIP" \
         | /usr/bin/awk '{print $1}' > "$app_submitted_sha"
-    "$XCRUN_TOOL" notarytool submit "$APP_NOTARY_ZIP" \
-        --keychain-profile "$NOTARY_PROFILE" \
-        --wait \
-        --output-format json > "$app_notary_response"
+    notarize_and_wait "$APP_NOTARY_ZIP" "$app_notary_response"
     app_submission_id="$("$BUILD_PYTHON" "$ROOT_DIR/scripts/release_evidence.py" \
         notary-submission-id \
         --response "$app_notary_response")"
@@ -543,6 +640,8 @@ if [ "$NOTARIZE" = "1" ]; then
         "$app_notary_log"
     /bin/chmod 600 "$app_notary_response" "$app_notary_log" "$app_submitted_sha"
     "$XCRUN_TOOL" stapler staple "$APP_PATH"
+    # Finder metadata can return while the app waits for notarization.
+    clear_candidate_metadata
     "$XCRUN_TOOL" stapler validate "$APP_PATH"
 
     "$VENV_DIR/bin/python" "$ROOT_DIR/packaging/verify_macos_app.py" "$APP_PATH"
@@ -570,20 +669,19 @@ package_args=(
 if [ -n "$INSTALLER_IDENTITY" ]; then
     package_args+=(--installer-sign-identity "$INSTALLER_IDENTITY")
 fi
+verify_build_inputs
 "$VENV_DIR/bin/python" "$ROOT_DIR/scripts/package_macos_artifact.py" \
     "${package_args[@]}"
 
 if [ "$NOTARIZE" = "1" ] && [ -n "$INSTALLER_IDENTITY" ]; then
+    verify_build_inputs
     echo "==> notarizing the package"
     notary_response="$RAW_EVIDENCE_DIR/notary-submission.json"
     notary_log="$RAW_EVIDENCE_DIR/notary-log.json"
     submitted_sha="$RAW_EVIDENCE_DIR/notary-submitted-pkg.sha256"
     /usr/bin/shasum -a 256 "$OUTPUT_PKG" \
         | /usr/bin/awk '{print $1}' > "$submitted_sha"
-    "$XCRUN_TOOL" notarytool submit "$OUTPUT_PKG" \
-        --keychain-profile "$NOTARY_PROFILE" \
-        --wait \
-        --output-format json > "$notary_response"
+    notarize_and_wait "$OUTPUT_PKG" "$notary_response"
     submission_id="$("$BUILD_PYTHON" "$ROOT_DIR/scripts/release_evidence.py" \
         notary-submission-id \
         --response "$notary_response")"
@@ -641,6 +739,7 @@ else
 fi
 
 echo
+verify_build_inputs
 echo "JR-Bar $VERSION (build $BUILD_NUMBER, $COMMIT)"
 echo "  app:        $APP_PATH"
 for artifact in "$OUTPUT_PKG" "$OUTPUT_ZIP" "$OUTPUT_APPCAST" "$OUTPUT_CHANNEL_METADATA"; do

@@ -722,7 +722,7 @@ def test_open_session_raises_a_live_session_instead_of_resuming_it__and_4_more(t
             process_table=lambda: _table(_entry(500, 1, "/bin/codex")),
         )
     assert error.value.code == "not_found"
-    assert "nothing new was started" in str(error.value)
+    assert "Nothing new was started." in str(error.value)
 
 
 def _ended(tmp_path: Path, host: str | None, action=None):
@@ -1040,7 +1040,7 @@ def test_history_resumes_a_session_the_list_no_longer_shows__and_5_more(tmp_path
             record_is_live=lambda record: True,
             process_table=lambda: _table(_entry(500, 1, "/bin/codex")),
         )
-    assert error.value.code == "not_found" and "nothing new was started" in str(error.value)
+    assert error.value.code == "not_found" and "Nothing new was started." in str(error.value)
 
     # --- scenario: a registry record that was left open but whose process is gone resumes
     runner = FakeRunner()

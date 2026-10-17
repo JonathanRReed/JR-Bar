@@ -299,26 +299,6 @@ def _drifted_limits():
     }
 
 
-def _capacity_copy(target, status_bar):
-    """The capacity row's primary line, its secondary line and one line per
-    further window, as the copy rules write them for the current model."""
-    model = target._usage_provider_models["codex"]
-    epoch = time.time()
-    primary, secondary = status_bar.capacity_menu_lines(
-        model,
-        monotonic_now=time.monotonic(),
-        epoch_now=epoch,
-    )
-    return primary, secondary, status_bar.capacity_window_lines(model, epoch_now=epoch)
-
-
-def _rendered_capacity_text(target, status_bar) -> str:
-    """Every string the capacity copy rules can produce for this model."""
-    primary, secondary, rows = _capacity_copy(target, status_bar)
-    model = target._usage_provider_models["codex"]
-    return " | ".join((primary, secondary, *rows, model.menu_line, model.settings_text))
-
-
 def test_a_codex_refresh_publishes_contract_stamped_observations(controller) -> None:
     """The worker's result carries typed observations and no raw list at all."""
     target, status_bar = controller
@@ -349,8 +329,8 @@ def test_a_codex_refresh_publishes_contract_stamped_observations(controller) -> 
     assert len(state.last_known_good.lanes) == 2
 
 
-def test_every_codex_ceiling_reaches_the_capacity_copy_named_and_numbered__and_2_more(controller,) -> None:
-    # --- scenario: every_codex_ceiling_reaches_the_capacity_copy_named_and_numbered
+def test_every_codex_ceiling_reaches_the_capacity_model_named_and_numbered__and_2_more(controller,) -> None:
+    # --- scenario: every_codex_ceiling_reaches_the_capacity_model_named_and_numbered
     target, status_bar = controller
 
     _run_codex_refresh(target, status_bar, _live_limits())
@@ -361,12 +341,14 @@ def test_every_codex_ceiling_reaches_the_capacity_copy_named_and_numbered__and_2
     assert {window.lane_key.pool for window in model.windows} == {"codex-chatgpt-plan"}
     assert {window.lane_key.opaque_scope for window in model.windows} == {"all"}
 
-    primary, secondary, rows = _capacity_copy(target, status_bar)
-
-    assert primary == "Codex · 5h 75% left"
-    assert "resets in" in secondary
-    assert rows == ("Weekly 30% left · resets in 1d 1h",)
-    assert model.settings_text == "5h 75% left · 7d 30% left"
+    first, second = model.windows
+    assert (first.duration_text, first.percent_remaining, first.reset_known) == ("5h", 75.0, True)
+    assert (second.label, second.duration_text, second.percent_remaining, second.reset_known) == (
+        "Weekly",
+        "7d",
+        30.0,
+        True,
+    )
 
     # --- scenario: a_drifted_codex_payload_renders_nothing_rather_than_raw_percentages
     """The provider in daily use must not publish an unauthorised percentage.
@@ -391,16 +373,9 @@ def test_every_codex_ceiling_reaches_the_capacity_copy_named_and_numbered__and_2
     assert model.windows == ()
     assert model.error_text == status_bar.CAPACITY_UNAUTHORISED_COPY
 
-    rendered = _rendered_capacity_text(target, status_bar)
-    primary, _secondary, rows = _capacity_copy(target, status_bar)
-    assert primary == "Codex · Capacity reading unavailable"
-    assert rows == ()
-    assert model.settings_text == status_bar.CAPACITY_UNAUTHORISED_COPY
     # No number, no label the contract never declared, no invented countdown.
-    assert "%" not in rendered
-    assert "Spark" not in rendered
-    assert "Fable" not in rendered
-    assert "resets in" not in rendered.lower()
+    assert model.windows == ()
+    assert model.missing is True
 
     # --- scenario: one_refused_lane_is_counted_beside_the_one_that_survived
     """A row that vanishes silently is worse than a row that says why."""
@@ -473,7 +448,7 @@ def test_every_codex_ceiling_reaches_the_capacity_copy_named_and_numbered__and_2
     model = target._usage_provider_models["codex"]
     assert tuple(window.label for window in model.windows) == ("5-hour",)
     assert model.error_text == "1 window unavailable"
-    assert "70" not in model.settings_text
+    assert [window.percent_remaining for window in model.windows] == [75.0]
 
 
 
@@ -496,7 +471,6 @@ def test_turning_codex_percent_off_is_not_reported_as_a_fault(controller) -> Non
     model = target._usage_provider_models["codex"]
     assert model.windows == ()
     assert model.error_text is None
-    assert status_bar.CAPACITY_UNAUTHORISED_COPY not in model.settings_text
 
 
 def test_the_publish_path_refuses_a_result_that_still_carries_raw_windows__and_1_more(controller,) -> None:
@@ -550,7 +524,6 @@ def test_the_publish_path_refuses_a_result_that_still_carries_raw_windows__and_1
     assert target._usage_provider_states["codex"].consecutive_failures == 1
     model = target._usage_provider_models["codex"]
     assert model.windows == ()
-    assert "3%" not in model.settings_text
 
     # --- scenario: a_capacity_result_with_no_observations_key_never_publishes
     """A producer that never ran is not a producer that authorised nothing."""
@@ -709,16 +682,10 @@ def test_the_display_gate_carries_the_freshness_it_decided__and_2_more(controlle
         assert model.windows[0].percent_remaining == 60.0
         # And it is visibly old, in the card's own existing vocabulary.
         assert model.stale is True
-        assert "stale" in model.menu_line
-        assert "Stale" in model.settings_text
         # A countdown taken from a reading the source can no longer stand behind
         # is exactly the thing the stale reset state exists to suppress.
         assert model.windows[0].reset_state is ResetState.STALE
         assert model.windows[0].reset_known is False
-
-        _primary, secondary, _rows = _capacity_copy(target, status_bar)
-        assert "stale" in secondary
-        assert "resets" not in secondary
 
 
 
@@ -730,8 +697,6 @@ def test_a_healthy_reading_publishes_without_the_stale_marker(controller) -> Non
 
     model = target._usage_provider_models["codex"]
     assert model.stale is False
-    assert "stale" not in model.menu_line
-    assert "Stale" not in model.settings_text
 
 
 # --------------------------------------------------------------------------

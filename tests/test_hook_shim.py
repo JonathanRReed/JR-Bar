@@ -307,7 +307,14 @@ def test_shim_waits_on_a_stuck_spool_lock_only_until_its_budget_runs_out(shim: P
     finally:
         os.close(holder)
     assert 0.2 <= elapsed < 2.0
-    rows = [json.loads(line) for line in pending.read_text().splitlines()]
+    assert pending.read_bytes() == b""
+    from jrbar.hook_pending import pending_hook_files
+
+    published = [path for path in pending_hook_files(sock_dir) if path != pending]
+    assert len(published) == 1
+    assert published[0].stat().st_mode & 0o777 == 0o600
+    assert set(sock_dir.iterdir()) == {pending, published[0]}
+    rows = [json.loads(line) for line in published[0].read_text().splitlines()]
     assert [row["payload"] for row in rows] == [payload]
 
 
@@ -327,13 +334,21 @@ def test_shim_spools_a_frame_the_budget_cut_short(shim: Path, sock_dir: Path) ->
     assert [row["payload"] for row in rows] == [payload]
 
 
-def _write_interposer(tmp_path: Path) -> Path:
+def _write_interposer(tmp_path: Path, *, include_staging: bool = False) -> Path:
     interposer = tmp_path / "hook-write-interpose.dylib"
+    source = Path(__file__).parent / "fixtures" / "hook_write_interpose.c"
+    if include_staging:
+        text = source.read_text().replace(
+            "size_t length = strlen(path);",
+            'if (strstr(path, ".pending-stage-") != NULL) return 1;\n    size_t length = strlen(path);',
+        )
+        source = tmp_path / "hook-stage-write-interpose.c"
+        source.write_text(text)
     subprocess.run(
         [
             "/usr/bin/clang",
             "-dynamiclib",
-            str(Path(__file__).parent / "fixtures" / "hook_write_interpose.c"),
+            str(source),
             "-o",
             str(interposer),
         ],
@@ -342,6 +357,72 @@ def _write_interposer(tmp_path: Path) -> Path:
         timeout=20,
     )
     return interposer
+
+
+def test_shim_publishes_separate_complete_records_under_shared_lock_contention(
+    shim: Path, sock_dir: Path
+) -> None:
+    from jrbar.hook_pending import pending_hook_files
+
+    pending = sock_dir / "claude.pending.jsonl"
+    pending.write_text("held record\n")
+    holder = os.open(pending, os.O_RDONLY)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    payloads = [json.dumps({"session_id": f"contended-{index}", "body": "x" * 4096}) for index in range(6)]
+    processes = []
+    try:
+        for payload in payloads:
+            process = subprocess.Popen(
+                [str(shim), "--provider", "claude"], stdin=subprocess.PIPE,
+                env=dict(os.environ, JRBAR_STATE_DIR=str(sock_dir)),
+            )
+            processes.append(process)
+            process.stdin.write(payload.encode())
+            process.stdin.close()
+        assert all(process.wait(timeout=5) == 0 for process in processes)
+    finally:
+        os.close(holder)
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+    assert pending.read_text() == "held record\n"
+    published = [path for path in pending_hook_files(sock_dir) if path != pending]
+    assert len(published) == len(payloads)
+    rows = []
+    for path in published:
+        assert path.stat().st_mode & 0o777 == 0o600
+        lines = path.read_text().splitlines()
+        assert len(lines) == 1
+        rows.append(json.loads(lines[0]))
+    assert sorted(row["payload"] for row in rows) == sorted(payloads)
+    assert set(sock_dir.iterdir()) == {pending, *published}
+
+
+def test_shim_never_publishes_an_incomplete_private_record(
+    shim: Path, sock_dir: Path, tmp_path: Path
+) -> None:
+    from jrbar.hook_pending import pending_hook_files
+
+    interposer = _write_interposer(tmp_path, include_staging=True)
+    pending = sock_dir / "claude.pending.jsonl"
+    pending.write_bytes(b"")
+    holder = os.open(pending, os.O_RDONLY)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        result = subprocess.run(
+            [str(shim), "--provider", "claude"],
+            input=b'{"session_id":"incomplete-private"}', capture_output=True,
+            env=dict(os.environ, JRBAR_STATE_DIR=str(sock_dir),
+                     DYLD_INSERT_LIBRARIES=str(interposer), JRBAR_TEST_WRITE_MODE="hard-error"),
+            timeout=5,
+        )
+    finally:
+        os.close(holder)
+    assert result.returncode == 0
+    assert pending.read_bytes() == b""
+    assert pending_hook_files(sock_dir) == [pending]
+    assert set(sock_dir.iterdir()) == {pending}
 
 
 def test_shim_completes_a_spool_line_after_eintr_and_short_writes(
@@ -389,6 +470,13 @@ def test_shim_rolls_back_a_partial_spool_line_after_a_hard_write_error(
     assert result.returncode == 0
     assert (sock_dir / "claude.pending.jsonl").read_bytes() == b""
 
+    from jrbar.hook_pending import pending_hook_files
+
+    private = [path for path in pending_hook_files(sock_dir) if path.name != "claude.pending.jsonl"]
+    assert len(private) == 1
+    record = json.loads(private[0].read_text())
+    assert json.loads(record["payload"])["session_id"] == "hard-error"
+
 
 def test_shim_stops_retrying_an_interrupted_spool_at_its_deadline(
     shim: Path, sock_dir: Path, tmp_path: Path
@@ -400,7 +488,10 @@ def test_shim_stops_retrying_an_interrupted_spool_at_its_deadline(
         DYLD_INSERT_LIBRARIES=str(interposer),
         JRBAR_TEST_WRITE_MODE="always-eintr",
     )
-    started = time.monotonic()
+    # A shim that ignored its 250 ms budget would retry the interrupted write
+    # forever, so the run ending inside `timeout` is the proof. The elapsed
+    # time is not asserted: a loaded machine can take seconds to start a
+    # process, which says nothing about the budget.
     result = subprocess.run(
         [str(shim), "--provider", "claude"],
         input=b'{"hook_event_name":"Stop","session_id":"interrupted"}',
@@ -409,7 +500,6 @@ def test_shim_stops_retrying_an_interrupted_spool_at_its_deadline(
         timeout=5,
     )
     assert result.returncode == 0
-    assert time.monotonic() - started < 2.0
     assert (sock_dir / "claude.pending.jsonl").read_bytes() == b""
 
 
@@ -585,3 +675,18 @@ def test_statusline_then_drains_output_while_feeding_large_stdin(
     result = _run_statusline(shim, sock_dir, payload, "--then", command)
     assert result.returncode == 0
     assert time.monotonic() - started < 8.0
+
+
+def test_shim_does_not_hang_on_a_fifo_planted_where_it_reads_or_spools(shim: Path, sock_dir: Path) -> None:
+    """Fail-open: a named pipe at the spool or the status text must not hold
+    the agent's hook until the agent's own timeout. Neither has a peer on
+    the other end, so a blocking open would never return."""
+    os.mkfifo(sock_dir / "statusline.txt")
+    result = _run_statusline(shim, sock_dir, json.dumps({"session_id": "s"}))
+    assert result.returncode == 0
+    assert result.stdout == b""
+
+    os.mkfifo(sock_dir / "claude.pending.jsonl")
+    # No daemon is listening, so the shim goes to spool the line.
+    result = _run(shim, sock_dir, "claude", json.dumps({"hook_event_name": "Stop", "session_id": "s"}))
+    assert result.returncode == 0

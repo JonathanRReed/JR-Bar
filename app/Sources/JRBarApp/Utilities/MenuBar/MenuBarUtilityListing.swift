@@ -16,6 +16,7 @@ extension MenuBarUtility {
     /// so everything on the row reports as it sits.
     func refreshListing() {
         probeAccessibility()
+        refreshInventoryState()
         guard !running else { return }
         guard accessibilityGranted else {
             lastPlan = MenuBarItemHider.unzonedPlan(
@@ -25,6 +26,7 @@ extension MenuBarUtility {
         Task { [weak self] in
             _ = await MenuBarItemLister.refreshAXItems()
             guard let self, !self.running else { return }
+            self.refreshInventoryState()
             self.lastPlan = MenuBarItemHider.unzonedPlan(
                 items: MenuBarItemLister.axItems, rows: MenuBarItemLister.menuBarRows())
         }
@@ -32,12 +34,33 @@ extension MenuBarUtility {
 
     /// Every item the card lists, in bar order.
     var listedItems: [MenuBarItem] {
-        lastPlan.shown + lastPlan.hidden + lastPlan.alwaysHidden
+        MenuBarSearchNames.applying(settings().curation.searchNames, to: searchNameInventory)
     }
 
     /// The Item Bar's tiles: both hidden runs.
     func barItems() -> [MenuBarItem] {
-        lastPlan.hidden + lastPlan.alwaysHidden
+        MenuBarSearchNames.applying(settings().curation.searchNames,
+                                    to: lastPlan.hidden + lastPlan.alwaysHidden,
+                                    inventory: searchNameInventory)
+    }
+
+    private var searchNameInventory: [MenuBarItem] {
+        lastPlan.shown + lastPlan.hidden + lastPlan.alwaysHidden
+    }
+
+    func searchNameKey(for item: MenuBarItem) -> String? {
+        MenuBarSearchNames.uniqueKey(for: item, inventory: searchNameInventory)
+    }
+
+    func setSearchName(_ name: String, for item: MenuBarItem) {
+        guard let key = searchNameKey(for: item),
+              let normalized = MenuBarSearchNames.normalized(name) else { return }
+        let value: String? = normalized.isEmpty ? nil : normalized
+        guard settings().curation.searchNames[key] != value else { return }
+        update { draft in
+            draft.curation.searchNames[key] = value
+        }
+        bar.syncItems()
     }
 
     /// The `.bar` reveal surface for a gesture — a hover, a click on the
@@ -89,7 +112,7 @@ extension MenuBarUtility {
     }
 
     /// `concealedApps` entries whose bundle identifier no longer
-    /// resolves — uninstalled apps the map still carries. A quit app's
+    /// resolves — uninstalled apps the record still carries. A quit app's
     /// id still resolves on disk, so only genuinely gone entries are
     /// dropped; the user's choices survive an app merely not running.
     /// Runs after every plan, so the cheap answers go first — the
@@ -101,15 +124,7 @@ extension MenuBarUtility {
         guard !apps.isEmpty else { return }
         let running = RunningApps.shared
         let stale = apps.keys.filter { id in
-            // The clock's and Control Center's keys are items, not apps:
-            // nothing installs them, and nothing uninstalls them.
-            MenuBarConcealPlan.concealableSystemItems[id] == nil
-                && !running.isRunning(bundleID: id)
-                // A helper bundled inside another app resolves neither
-                // lookup but is installed and will be back — an id that
-                // owned an item this session is not "uninstalled".
-                && knownItems[id] == nil
-                && !installedApps.isInstalled(id)
+            !running.isRunning(bundleID: id) && !installedApps.isInstalled(id)
         }
         guard !stale.isEmpty else { return }
         update { draft in
@@ -126,9 +141,8 @@ extension MenuBarUtility {
     /// Our own family's bundle identifiers — the app's
     /// (`com.jonathanreed.jrbar`) and every helper it ships, the daemon
     /// `com.jonathanreed.jrbar.core` included. Their items are never
-    /// conceal candidates: the agent would take them, and hiding our
-    /// own meter behind our own utility is exactly the self-inflicted
-    /// wound the running-set sweep once caused.
+    /// hide candidates: hiding our own meter behind our own utility is
+    /// exactly the self-inflicted wound a running-set sweep once caused.
     nonisolated static func isOwnFamily(_ id: String?) -> Bool {
         guard let id, let own = Bundle.main.bundleIdentifier else { return false }
         return id == own || id.hasPrefix(own + ".")
@@ -143,23 +157,12 @@ extension MenuBarUtility {
         // the reveal, not a click on an item. Our own items are the
         // boundary and the controls: the host's frame spans the whole
         // blank stretch, which is exactly the zone a gesture lands on.
-        var frames = lastPlan.shown.filter {
+        return lastPlan.shown.filter {
             !$0.isNativeOverflowControl && Self.isForeignOwner($0.ownerName)
         }.map {
             NSRect(x: $0.bounds.minX, y: height - $0.bounds.maxY,
                    width: $0.bounds.width, height: $0.bounds.height)
         }
-        // The extra items (spacers, agent, combined): their own actions
-        // answer the click — it must not ALSO land as a blank-stretch
-        // reveal, or a hide click double-fires.
-        for item in spacerItems.values + [agentItem, combinedItem.item].compactMap({ $0 }) {
-            if let quartz = Self.quartzFrame(of: item) {
-                let height = CGDisplayBounds(CGMainDisplayID()).height
-                frames.append(NSRect(x: quartz.minX, y: height - quartz.maxY,
-                                     width: quartz.width, height: quartz.height))
-            }
-        }
-        return frames
     }
 }
 

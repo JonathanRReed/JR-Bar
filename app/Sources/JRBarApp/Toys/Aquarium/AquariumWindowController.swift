@@ -12,13 +12,19 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
     /// needs it alive — and the cycle breaks when the window closes
     /// (`toy.windowDidClose` drops this controller).
     private let toy: AquariumToy
-    private var window: AquariumWindow?
+    private var window: NSWindow?
+    private let notificationCenter: NotificationCenter
+    private let bringWindow: @MainActor (NSWindow) -> Void
+    private let screenFrame: @MainActor (NSWindow) -> NSRect?
+    private let visibleFrames: @MainActor () -> [NSRect]
     private var escMonitor: Any?
     private var occlusionObserver: NSObjectProtocol?
+    private var screenObserver: NSObjectProtocol?
     /// While filled, resigning active restores the window — a
     /// screenSaver-level tank would otherwise keep covering the display
     /// after a Cmd-Tab, with its Esc only listening locally.
     private var resignObserver: NSObjectProtocol?
+    private var mainWindowObserver: NSObjectProtocol?
 
     /// What Fill screen suspended, to put back on Esc.
     private var savedFrame: NSRect?
@@ -31,9 +37,18 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
                                                 .fullSizeContentView]
     private(set) var filled = false
 
-    init(toy: AquariumToy) {
+    init(toy: AquariumToy, window: NSWindow? = nil, notificationCenter: NotificationCenter = .default,
+         bring: @escaping @MainActor (NSWindow) -> Void = { WindowFront.bring($0) },
+         screenFrame: @escaping @MainActor (NSWindow) -> NSRect? = { ($0.screen ?? NSScreen.main)?.frame },
+         visibleFrames: @escaping @MainActor () -> [NSRect] = { NSScreen.screens.map(\.visibleFrame) }) {
         self.toy = toy
+        self.window = window
+        self.notificationCenter = notificationCenter
+        self.bringWindow = bring
+        self.screenFrame = screenFrame
+        self.visibleFrames = visibleFrames
         super.init()
+        if let window { observeWindow(window) }
     }
 
     func show(activate: Bool) {
@@ -44,7 +59,7 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
         // (`WindowFront`). Left on at quit, it comes back at launch
         // without taking focus.
         if activate {
-            WindowFront.bring(window)
+            bringWindow(window)
         } else {
             window.orderFront(nil)
         }
@@ -70,15 +85,30 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
         window.contentView = NSHostingView(rootView: AquariumView(toy: toy))
         window.minSize = NSSize(width: 480, height: 300)
         window.isReleasedWhenClosed = false
-        window.delegate = self
         window.center()
         window.setFrameAutosaveName("JRBarAquarium")
-        occlusionObserver = NotificationCenter.default.addObserver(
+        observeWindow(window)
+        return window
+    }
+
+    private func observeWindow(_ window: NSWindow) {
+        window.delegate = self
+        occlusionObserver = notificationCenter.addObserver(
             forName: NSWindow.didChangeOcclusionStateNotification,
             object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.noteOcclusion() }
             }
-        return window
+        screenObserver = notificationCenter.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.screenParametersChanged() }
+            }
+    }
+
+    private func screenParametersChanged() {
+        guard filled, let window, let frame = screenFrame(window) else { return }
+        window.setFrame(frame, display: true)
+        noteOcclusion()
     }
 
     private func noteOcclusion() {
@@ -91,17 +121,16 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
     /// Borderless across the window's own screen (the main screen only
     /// when the window hasn't landed on one yet); Esc puts it back.
     func fillScreen() {
-        guard let window, !filled, let screen = window.screen ?? NSScreen.main else { return }
+        guard let window, !filled, let frame = screenFrame(window) else { return }
         savedFrame = window.frame
         savedLevel = window.level
         savedMask = window.styleMask
         filled = true
         window.styleMask = [.borderless]
         window.level = .screenSaver
-        window.setFrame(screen.frame, display: true)
-        WindowFront.bring(window)
+        window.setFrame(frame, display: true)
         installEscMonitor()
-        resignObserver = NotificationCenter.default.addObserver(
+        resignObserver = notificationCenter.addObserver(
             forName: NSApplication.didResignActiveNotification,
             object: nil, queue: .main) { [weak self] _ in
                 // The fill only lives while the app is active: a switch
@@ -109,25 +138,66 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
                 // display under a window that can't take keys elsewhere.
                 MainActor.assumeIsolated { self?.restoreScreen() }
             }
+        mainWindowObserver = notificationCenter.addObserver(
+            forName: NSWindow.didBecomeMainNotification,
+            object: nil, queue: .main) { [weak self] note in
+                guard let other = note.object as? NSWindow else { return }
+                let identity = ObjectIdentifier(other)
+                MainActor.assumeIsolated {
+                    guard let self, let window = self.window,
+                          identity != ObjectIdentifier(window) else { return }
+                    self.restoreScreen(keepFocus: false)
+                }
+            }
+        bringWindow(window)
         noteOcclusion()
     }
 
-    func restoreScreen() {
+    func restoreScreen(keepFocus: Bool = true) {
         guard let window, filled else { return }
+        let restoreFocus = keepFocus && NSApp.isActive && window.isKeyWindow
         filled = false
         removeEscMonitor()
-        if let resignObserver {
-            NotificationCenter.default.removeObserver(resignObserver)
-            self.resignObserver = nil
-        }
+        removeFillObservers()
         window.styleMask = savedMask
         window.level = savedLevel
         if let savedFrame {
-            window.setFrame(savedFrame, display: true)
+            let frame = Self.restoreFrame(savedFrame, visibleScreens: visibleFrames())
+            window.setFrame(frame, display: true)
             self.savedFrame = nil
         }
-        window.makeKeyAndOrderFront(nil)
+        if restoreFocus { window.makeKeyAndOrderFront(nil) }
         noteOcclusion()
+    }
+
+    private func removeFillObservers() {
+        if let resignObserver {
+            notificationCenter.removeObserver(resignObserver)
+            self.resignObserver = nil
+        }
+        if let mainWindowObserver {
+            notificationCenter.removeObserver(mainWindowObserver)
+            self.mainWindowObserver = nil
+        }
+    }
+
+    /// Keep the saved position while enough title bar remains usable to drag it.
+    static func restoreFrame(_ frame: NSRect, visibleScreens: [NSRect]) -> NSRect {
+        let titleHeight = min(28, frame.height)
+        let titleBar = NSRect(x: frame.minX, y: frame.maxY - titleHeight,
+                             width: frame.width, height: titleHeight)
+        let draggableWidth = min(120, frame.width)
+        guard !visibleScreens.contains(where: {
+                  let visibleTitle = $0.intersection(titleBar)
+                  return visibleTitle.width >= draggableWidth && visibleTitle.height >= titleHeight
+              }),
+              let screen = visibleScreens.min(by: {
+                  hypot($0.midX - frame.midX, $0.midY - frame.midY)
+                      < hypot($1.midX - frame.midX, $1.midY - frame.midY)
+              }) else { return frame }
+        let size = NSSize(width: min(frame.width, screen.width), height: min(frame.height, screen.height))
+        return NSRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2,
+                      width: size.width, height: size.height)
     }
 
     private func installEscMonitor() {
@@ -153,13 +223,14 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         removeEscMonitor()
-        if let resignObserver {
-            NotificationCenter.default.removeObserver(resignObserver)
-            self.resignObserver = nil
-        }
+        removeFillObservers()
         if let occlusionObserver {
-            NotificationCenter.default.removeObserver(occlusionObserver)
+            notificationCenter.removeObserver(occlusionObserver)
             self.occlusionObserver = nil
+        }
+        if let screenObserver {
+            notificationCenter.removeObserver(screenObserver)
+            self.screenObserver = nil
         }
         filled = false
         window = nil

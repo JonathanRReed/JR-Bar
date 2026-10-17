@@ -18,8 +18,9 @@ NOW = datetime(2026, 9, 24, 12, 0, 0)
 YESTERDAY = (NOW - timedelta(days=1)).timestamp()
 DAY = (NOW - timedelta(days=1)).date().isoformat()
 
-# input, cached input, cache write, output
-TOKENS = (1_000_000, 500_000, 200_000, 100_000)
+# input, cached input, cache write, output. A 170K prompt: under OpenAI's
+# 272K long-context line, so these tests price the table rows themselves.
+TOKENS = (100_000, 50_000, 20_000, 10_000)
 
 
 def _record(provider: str, model: str, *, tokens=TOKENS, dedupe: str | None = None) -> tuple:
@@ -127,6 +128,125 @@ def test_the_graph_model_passes_the_disclosure_through() -> None:
     )
 
     assert unpriced == {"grok-4": sum(TOKENS)}
+
+
+def test_cost_coverage_counts_only_selected_in_range_deduplicated_positive_records():
+    def record(provider, model, tokens, key, *, epoch=YESTERDAY):
+        return (provider, "shared-session", model, epoch, *tokens, key)
+
+    missing = record("opencode", "future-model", (1, 2, 3, 4), "missing-2")
+    records = [
+        record("opencode", "gpt-5.6-sol", (1, 2, 3, 4), "priced"),
+        record("opencode", "future-model", (10, 20, 30, 40), "missing-1"),
+        missing, missing,
+        record("grok", "future-model", (5, 6, 7, 8), "missing-3"),
+        record("opencode", "future-model", (0, 0, 0, 0), "zero-unpriced"),
+        record("opencode", "gpt-5.6-sol", (0, 0, 0, 0), "zero-priced"),
+        record("opencode", "future-model", (99, 99, 99, 99), "old",
+               epoch=(NOW - timedelta(days=40)).timestamp()),
+        record("claude", "future-model", (99, 99, 99, 99), "not-selected"),
+    ]
+    coverage = {}
+    unpriced = {}
+    usage_graph_model(records, days=7, metric="cost", provider_ids=("opencode", "grok"),
+                      now=NOW, unpriced=unpriced, cost_coverage=coverage)
+    assert coverage == {
+        "observed_records": 4, "priced_records": 1, "unpriced_records": 3,
+        "unpriced_sessions": 2,
+        "token_categories": {"input": 16, "cached_input": 28, "cache_creation": 40, "output": 52},
+    }
+    assert coverage["priced_records"] + coverage["unpriced_records"] == coverage["observed_records"]
+    assert unpriced == {"future-model": 136}
+
+
+def test_cached_only_unpriced_record_is_counted_without_inventing_a_price():
+    coverage = {}
+    buckets = daily_buckets([_record("opencode", "future-model", tokens=(0, 9, 7, 0))],
+                            days=7, now=NOW, cost_coverage=coverage)
+    assert coverage == {
+        "observed_records": 1, "priced_records": 0, "unpriced_records": 1,
+        "unpriced_sessions": 1,
+        "token_categories": {"input": 0, "cached_input": 9, "cache_creation": 7, "output": 0},
+    }
+    assert buckets[DAY]["providers"]["opencode"]["cost"] == 0
+
+
+def test_empty_cost_coverage_has_zero_counts_and_all_categories():
+    coverage = {}
+    daily_buckets([], days=7, now=NOW, cost_coverage=coverage)
+    assert coverage == {
+        "observed_records": 0, "priced_records": 0, "unpriced_records": 0,
+        "unpriced_sessions": 0,
+        "token_categories": {"input": 0, "cached_input": 0, "cache_creation": 0, "output": 0},
+    }
+
+
+def test_deselected_provider_cannot_consume_a_selected_records_dedupe_key():
+    coverage = {}
+    usage_graph_model([
+        _record("claude", "future-model", dedupe="shared"),
+        _record("opencode", "future-model", tokens=(1, 2, 3, 4), dedupe="shared"),
+    ], days=7, metric="cost", provider_ids=("opencode",), now=NOW, cost_coverage=coverage)
+    assert coverage["observed_records"] == coverage["unpriced_records"] == 1
+    assert coverage["token_categories"] == {"input": 1, "cached_input": 2, "cache_creation": 3, "output": 4}
+
+
+def test_unknown_only_cost_day_is_a_gap_while_empty_days_stay_zero():
+    model = usage_graph_model([_record("t3code", "t3code", tokens=(5, 0, 0, 4))],
+        days=7, metric="cost", provider_ids=("t3code",), now=NOW)
+    values = model["series"][0]["values"]
+    assert values[-2] == -1.0
+    assert all(value == 0 for index, value in enumerate(values) if index != len(values) - 2)
+    assert model["scale_max"] > 0
+    assert model["series"][0]["has_priced_usage"] is False
+
+
+def test_unknown_day_next_to_a_known_day_does_not_draw_zero_dollars():
+    known = _record("opencode", "gpt-5.6-sol", dedupe="known")
+    unknown = ("opencode", "other", "future-model", NOW.timestamp(), 5, 0, 0, 4, "unknown")
+    model = usage_graph_model([known, unknown], days=7, metric="cost", provider_ids=("opencode",), now=NOW)
+    assert model["series"][0]["values"][-2] > 0
+    assert model["series"][0]["values"][-1] == -1.0
+
+
+def test_explicitly_priced_free_usage_is_zero_not_an_unknown_gap(monkeypatch):
+    monkeypatch.setattr(usage_stats, "rates_for_record", lambda *_args: usage_stats.RecordRates(0, 0, 1))
+    coverage = {}
+    model = usage_graph_model([_record("opencode", "free-model")], days=7, metric="cost",
+                             provider_ids=("opencode",), now=NOW, cost_coverage=coverage)
+    assert model["series"][0]["values"] == (0,) * 7
+    assert coverage["observed_records"] == coverage["priced_records"] == 1
+    assert coverage["unpriced_records"] == 0
+    assert model["series"][0]["has_priced_usage"] is True
+
+
+def test_mixed_cost_day_keeps_known_subtotal_and_missing_price_counts():
+    known = _record("opencode", "gpt-5.6-sol", dedupe="known")
+    missing = _record("opencode", "future-model", dedupe="missing")
+    coverage = {}
+    model = usage_graph_model([missing, known], days=7, metric="cost", provider_ids=("opencode",),
+                             now=NOW, cost_coverage=coverage)
+    assert model["series"][0]["values"][-2] == _cost("opencode", "gpt-5.6-sol")
+    assert coverage["observed_records"] == 2
+    assert coverage["priced_records"] == coverage["unpriced_records"] == 1
+    assert model["series"][0]["has_priced_usage"] is True
+
+
+def test_unpriced_gap_evidence_respects_selected_providers_and_range():
+    old = ("opencode", "old", "future-model", (NOW - timedelta(days=40)).timestamp(), 1, 0, 0, 0, "old")
+    zero = _record("opencode", "future-model", tokens=(0, 0, 0, 0), dedupe="zero")
+    hidden = _record("t3code", "t3code", dedupe="hidden")
+    model = usage_graph_model([old, zero, hidden], days=7, metric="cost", provider_ids=("opencode",), now=NOW)
+    assert model["series"] == ()
+
+
+@pytest.mark.parametrize("metric", ["tokens", "sessions"])
+def test_unpriced_records_keep_token_and_session_graphs(metric):
+    model = usage_graph_model([_record("t3code", "t3code", tokens=(5, 0, 0, 4))],
+        days=7, metric=metric, provider_ids=("t3code",), now=NOW)
+    assert model["series"][0]["values"][-2] == (9 if metric == "tokens" else 1)
+    assert -1 not in model["series"][0]["values"]
+    assert "has_priced_usage" not in model["series"][0]
 
 
 def test_the_cost_summary_names_the_models_it_could_not_price(monkeypatch) -> None:

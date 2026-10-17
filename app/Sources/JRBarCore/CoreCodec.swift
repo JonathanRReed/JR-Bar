@@ -112,6 +112,33 @@ public enum CoreCodec {
         }
     }
 
+    /// The frame's `t`, read from its first bytes without decoding it, for a
+    /// frame that is too big or too broken to decode: which kind of message
+    /// was lost. Nil when the first 256 bytes do not show one.
+    public static func declaredType(ofFrame frame: Data) -> String? {
+        let head = Array(frame.prefix(256))
+        var index = 0
+        while index + 2 < head.count {
+            // Find `"t"`, then `:`, then a quoted value.
+            guard head[index] == 0x22, head[index + 1] == 0x74, head[index + 2] == 0x22 else {
+                index += 1
+                continue
+            }
+            var cursor = index + 3
+            while cursor < head.count, head[cursor] == 0x20 { cursor += 1 }
+            guard cursor < head.count, head[cursor] == 0x3A else { index += 1; continue }
+            cursor += 1
+            while cursor < head.count, head[cursor] == 0x20 { cursor += 1 }
+            guard cursor < head.count, head[cursor] == 0x22 else { index += 1; continue }
+            cursor += 1
+            let start = cursor
+            while cursor < head.count, head[cursor] != 0x22, head[cursor] != 0x5C { cursor += 1 }
+            guard cursor < head.count, head[cursor] == 0x22 else { return nil }
+            return String(bytes: head[start..<cursor], encoding: .utf8)
+        }
+        return nil
+    }
+
     public static func decode(line: String) throws -> CoreMessage {
         try decode(frame: Data(line.utf8))
     }
@@ -136,6 +163,8 @@ public enum CoreCodec {
 public struct NDJSONSplitter: Sendable {
     private var buffer = Data()
     public private(set) var droppedOversizedFrames = 0
+    /// The `t` of the frame that was dropped last, when its start showed one.
+    public private(set) var lastDroppedOversizedType: String?
 
     public init() {}
 
@@ -152,6 +181,7 @@ public struct NDJSONSplitter: Sendable {
             frames.append(Data(trimmed))
         }
         if buffer.count > CoreCodec.maxFrameBytes {
+            lastDroppedOversizedType = CoreCodec.declaredType(ofFrame: buffer)
             buffer.removeAll(keepingCapacity: false)
             droppedOversizedFrames += 1
         }

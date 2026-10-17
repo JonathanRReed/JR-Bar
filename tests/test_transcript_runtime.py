@@ -37,6 +37,20 @@ def _record(value: int) -> _Record:
     return _Record(datetime.fromtimestamp(value, timezone.utc), value)
 
 
+def test_callback_that_closes_service_retires_other_callbacks() -> None:
+    class DeferredService(TranscriptFallbackService):
+        def _start_locked(self, request):
+            self._in_flight = request
+
+    later_calls = []
+    service = DeferredService()
+    monitor = _Monitor("changed", [_record(1)])
+    service.request(monitor, known_signature=None, callback=lambda _batch: service.close())
+    service.request(monitor, known_signature=None, callback=later_calls.append)
+    service._run(service._in_flight)
+    assert later_calls == []
+
+
 def test_scan_runs_off_caller_and_sorts_records__and_2_more() -> None:
     # --- scenario: scan_runs_off_caller_and_sorts_records
     completed = threading.Event()

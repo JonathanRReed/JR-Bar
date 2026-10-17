@@ -79,6 +79,8 @@ PENDING_STARTUP_BUDGET_SECONDS: Final = 1.5
 
 _drainers_lock = threading.Lock()
 _running_drainers: set[PendingHookDrainer] = set()
+_deferred_files_lock = threading.Lock()
+_deferred_files: set[Path] = set()
 
 
 def pending_hook_files(state_dir: Path | None = None) -> list[Path]:
@@ -133,11 +135,16 @@ def orphaned_drain_files(state_dir: Path | None = None) -> list[Path]:
         entries = list(base.iterdir())
     except OSError:
         return []
+    with _deferred_files_lock:
+        _deferred_files.difference_update(
+            path for path in tuple(_deferred_files) if path.parent == base and path not in entries
+        )
+        deferred = set(_deferred_files)
     for path in entries:
         if not path.is_file() or path.is_symlink():
             continue
         owner = _drain_owner_pid(path.name)
-        if owner is None or _pid_alive(owner):
+        if owner is None or (_pid_alive(owner) and path not in deferred):
             continue
         orphans.append(path)
     return sorted(orphans)
@@ -282,7 +289,7 @@ def _names(path: Path, descriptor: int) -> bool:
     return (at.st_dev, at.st_ino) == (held.st_dev, held.st_ino)
 
 
-def _settle(path: Path) -> None:
+def _settle(path: Path) -> bool:
     """Wait out every append already under way into ``path``, a spool file
     this drain just renamed.
 
@@ -295,7 +302,7 @@ def _settle(path: Path) -> None:
     renamed file, never the live one, so no shim waits on this process."""
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
-        _lock(descriptor, fcntl.LOCK_EX)
+        return _lock(descriptor, fcntl.LOCK_EX)
     finally:
         os.close(descriptor)
 
@@ -315,11 +322,13 @@ def _append_lines(path: Path, lines: list[str], *, rotate_to: Path | None = None
         except OSError:
             return False
         try:
-            # A shim rotated the file between the open and the lock: reopen.
-            # Past the attempts the lines go in without the lock, not away.
+            # Never follow a moved inode or append beside an active writer.
+            # The caller retains its source file or uses its hook fallback.
             locked = _lock(descriptor, fcntl.LOCK_EX)
+            if not locked:
+                return False
             last = attempt + 1 >= _APPEND_ATTEMPTS
-            if locked and not _names(path, descriptor) and not last:
+            if not _names(path, descriptor):
                 continue
             if locked and rotate_to is not None and not last:
                 size = os.fstat(descriptor).st_size
@@ -332,9 +341,14 @@ def _append_lines(path: Path, lines: list[str], *, rotate_to: Path | None = None
                         continue
             view = memoryview(data)
             while view:
-                view = view[os.write(descriptor, view) :]
+                written = os.write(descriptor, view)
+                if written <= 0:
+                    raise OSError("spool write made no progress")
+                view = view[written:]
             return True
         except OSError:
+            # The C deadline fallback can still append without this lock.
+            # Truncating a partial write could erase its completed record.
             return False
         finally:
             os.close(descriptor)
@@ -438,7 +452,13 @@ class _PendingDrain:
                     return True
                 if out_of_time():
                     return False
-                self._current = self._open(self._paths.popleft())
+                opened = self._open(self._paths.popleft())
+                if isinstance(opened, Path):
+                    # Keep the blocked file ahead of newer records. A
+                    # resumed startup pass retains its live-hook barrier.
+                    self._paths.appendleft(opened)
+                    return False
+                self._current = opened
                 if self._current is None:
                     continue
             spool = self._current
@@ -478,7 +498,7 @@ class _PendingDrain:
         if spool is not None:
             self._finish(spool)
 
-    def _open(self, path: Path) -> _SpoolFile | None:
+    def _open(self, path: Path) -> _SpoolFile | Path | None:
         adopted = DRAINING_INFIX in path.name
         draining = path.with_name(
             f"{path.name}{DRAINING_INFIX}{os.getpid()}-{int(time.time() * 1000)}"
@@ -488,7 +508,25 @@ class _PendingDrain:
         try:
             if not adopted:
                 path.rename(draining)
-                _settle(draining)
+            if not _settle(draining):
+                # Owner zero is discoverable on the next pass even though
+                # this process remains alive. The writer retains its inode.
+                deferred = draining.with_name(
+                    f"{_pending_name(draining.name)}{DRAINING_INFIX}0-{time.time_ns()}"
+                )
+                try:
+                    draining.rename(deferred)
+                except OSError:
+                    with _deferred_files_lock:
+                        _deferred_files.add(draining)
+                    self._log(f"hook_pending could not rename {draining.name}; retained for retry")
+                    return draining
+                with _deferred_files_lock:
+                    _deferred_files.discard(draining)
+                self._log(f"hook_pending append still active; deferred {deferred.name}")
+                return deferred
+            with _deferred_files_lock:
+                _deferred_files.discard(draining)
             text, head_bytes = _read_newest(draining, MAX_PENDING_FILE_BYTES)
         except OSError:
             return None
@@ -514,12 +552,17 @@ class _PendingDrain:
                 pass
             if not _append_lines(rejected_path, spool.rejected):
                 self._log(f"hook_pending could not retain {len(spool.rejected)} rejected lines for {rejected_path.name}")
+                with _deferred_files_lock:
+                    _deferred_files.add(draining)
+                return
         if retry:
             pending_path = draining.with_name(_pending_name(draining.name))
             if not _append_lines(pending_path, retry):
                 # The write failed -- keep the draining file so the records
                 # survive as an orphan for the next drain to adopt.
                 self._log(f"hook_pending could not requeue {len(retry)} lines; keeping {draining.name}")
+                with _deferred_files_lock:
+                    _deferred_files.add(draining)
                 return
         if spool.head_bytes:
             overflow = _sibling(draining, OVERFLOW_SUFFIX)
@@ -637,7 +680,10 @@ class PendingHookDrainer:
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout_seconds)
-        self._thread = None
+        # A timed-out worker still owns its pass. Keep its handle so start
+        # cannot clear the stop signal and launch a second worker beside it.
+        if thread is None or not thread.is_alive():
+            self._thread = None
         # A first pass nobody finished (the worker never started): put back
         # what it never reached and let the live hooks go.
         drain = self._take_resume()
@@ -725,8 +771,10 @@ class PendingHookDrainer:
         if drain is None:
             return
         try:
-            if not drain.run(out_of_time=self._stop.is_set, after_file=self._after_pass):
-                drain.abandon()
+            while not drain.run(out_of_time=self._stop.is_set, after_file=self._after_pass):
+                if self._stop.wait(PENDING_NUDGE_SETTLE_SECONDS):
+                    drain.abandon()
+                    break
         except BaseException as exc:
             self._log(f"hook_pending startup drain failed: {exc!r}")
             try:

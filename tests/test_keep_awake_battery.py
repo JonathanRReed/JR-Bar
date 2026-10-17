@@ -3,6 +3,8 @@ hold when the owner opted out; an unknown power state never does."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from jrbar.keep_awake import KeepAwakeController
 from jrbar.models import AgentMode
 
@@ -50,7 +52,7 @@ def test_settings_round_trip_keep_awake_on_battery(tmp_path) -> None:
     from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
     path = tmp_path / "settings.json"
-    saved = AgentMonitorSettings().with_keep_awake_on_battery(False)
+    saved = replace(AgentMonitorSettings(), keep_awake_on_battery=False)
     save_settings(saved, path)
     assert load_settings(path).keep_awake_on_battery is False
 
@@ -154,3 +156,60 @@ def test_the_low_power_setting_round_trips(tmp_path) -> None:
     assert loaded.keep_awake_yield_low_power_mode is False
     save_settings(loaded, target)
     assert json.loads(target.read_text())["keep_awake_yield_low_power_mode"] is False
+
+
+def test_a_stale_battery_reading_never_drives_the_yield__and_3_more(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from jrbar.battery_runtime import BatteryObservation
+    from jrbar.keep_awake import (
+        BATTERY_READING_MAX_AGE_SECONDS,
+        battery_yields_hold,
+        fresh_battery_snapshot,
+    )
+
+    low = SimpleNamespace(battery_present=True, is_plugged=False, percent=3.0)
+    settings = SimpleNamespace(low_battery_threshold_percent=5.0)
+
+    def observation(snapshot, observed_at):
+        return BatteryObservation(snapshot, observed_at, observed_at, None, False)
+
+    # --- scenario: a_fresh_reading_is_used
+    fresh = observation(low, 1000.0)
+    assert fresh_battery_snapshot(fresh, now=1000.0 + 5) is low
+    assert battery_yields_hold(fresh_battery_snapshot(fresh, now=1005.0), settings)
+
+    # --- scenario: a_reading_past_its_age_is_unknown_not_a_floor
+    old = observation(low, 1000.0)
+    later = 1000.0 + BATTERY_READING_MAX_AGE_SECONDS + 1
+    assert fresh_battery_snapshot(old, now=later) is None
+    assert not battery_yields_hold(fresh_battery_snapshot(old, now=later), settings)
+
+    # --- scenario: no_observation_or_no_stamp_is_unknown
+    assert fresh_battery_snapshot(None, now=1000.0) is None
+    assert fresh_battery_snapshot(observation(low, None), now=1000.0) is None
+    assert fresh_battery_snapshot(observation(None, 1000.0), now=1000.0) is None
+
+    # --- scenario: the_core_power_floor_reads_only_fresh_readings
+    from jrbar import core_power
+
+    monkeypatch.setattr(core_power.keep_awake_module, "read_thermal_state", lambda: None)
+    monkeypatch.setattr(core_power.keep_awake_module, "read_low_power_mode", lambda: False)
+    stale_controller = SimpleNamespace(
+        _production_battery_observation=observation(low, 1000.0),
+        settings=settings,
+    )
+    seen = {}
+
+    class _Keep:
+        def observe_environment(self, **kwargs):
+            seen.update(kwargs)
+
+    stale_controller.keep_awake = _Keep()
+    stale_controller.last_snapshot = None
+    stale_controller.last_lid_closed = None
+    core_power.observe_environment(stale_controller, monotonic=lambda: later)
+    assert seen["battery_floor"] is False
+    seen.clear()
+    core_power.observe_environment(stale_controller, monotonic=lambda: 1002.0)
+    assert seen["battery_floor"] is True

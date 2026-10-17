@@ -231,6 +231,21 @@ struct ToysStateTests {
         #expect(FoldSettings.clampFadeLength(.nan) == 0.55)
     }
 
+    @Test("Fold knobs from a damaged file stay inside what the sliders offer")
+    func foldKnobsAreClamped() throws {
+        let wild = try decode(FoldSettings.self, """
+        {"look": "duo", "anchor": "angle", "activationAngle": 1e30, "perspective": 1e30,
+         "blur": -3, "shade": 2, "frost": 9, "jitterTolerance": -1, "dwellTimeout": 1e30}
+        """)
+        #expect(wild.activationAngle == 160)
+        #expect(wild.perspective == 1 && wild.blur == 0 && wild.shade == 1 && wild.frost == 1)
+        #expect(wild.jitterTolerance == 0)
+        #expect(wild.dwellTimeout == 10)
+        let low = try decode(FoldSettings.self, #"{"look": "duo", "activationAngle": -50, "jitterTolerance": 99}"#)
+        #expect(low.activationAngle == 60)
+        #expect(low.jitterTolerance == 5)
+    }
+
     // MARK: lane aquarium-swim
 
     @Test("the swim settings default to Natural at 1× and round-trip")
@@ -295,7 +310,10 @@ struct ToysStateTests {
                               #"{"density": 9, "bubbles": -3, "maxFish": 7, "labelStyle": "sometimes", "scenery": 4, "sound": "yes"}"#)
         #expect(wild.density == AquariumSettings.densityRange.upperBound)
         #expect(wild.bubbles == 0)
-        #expect(wild.maxFish == 0, "an unknown cap means all")
+        #expect(wild.maxFish == 6, "an unknown cap reads as the nearest the card offers")
+        #expect(try decode(AquariumSettings.self, #"{"maxFish": 40}"#).maxFish == 24)
+        #expect(try decode(AquariumSettings.self, #"{"maxFish": -1}"#).maxFish == 0)
+        #expect(try decode(AquariumSettings.self, #"{"maxFish": "many"}"#).maxFish == 0)
         #expect(wild.labelStyle == .always, "an unknown style falls back to the old switch")
         #expect(wild.scenery == .full)
         #expect(wild.sound == false)

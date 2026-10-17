@@ -193,3 +193,117 @@ def test_record_state_reads_every_lane_of_a_provider_usage_state() -> None:
     assert buffer.record_state(state, now=NOW) == 1
     assert buffer.samples("claude", "five-hour") == [UsageSample(NOW, 42.0)]
     assert buffer.record_state(None, now=NOW) == 0
+
+
+def _snapshot(instance: str, remaining: float, state: str = "ready") -> SimpleNamespace:
+    return SimpleNamespace(
+        provider_id="claude",
+        source_instance_id=instance,
+        state=SimpleNamespace(value=state),
+        lanes=(SimpleNamespace(lane_id="five-hour", remaining_percent=remaining),),
+    )
+
+
+@pytest.mark.parametrize("instance", ["default", "work"])
+def test_known_account_switch_cannot_borrow_forecast_history(instance: str) -> None:
+    buffer = UsageSampleBuffer()
+    for row in climb(20.0, 6.0):
+        old = _snapshot(instance, 100.0 - row.used_pct)
+        old.account_discriminator = "opaque-account-A"
+        assert buffer.record_state(SimpleNamespace(snapshots=(old,)), now=row.at) == 1
+        buffer.record("claude", "five-hour", row.used_pct, at=row.at, instance=instance)
+    current = _snapshot(instance, 74.0)
+    current.account_discriminator = "opaque-account-B"
+    buffer.record_state(SimpleNamespace(snapshots=(current,)), now=NOW)
+    switched = buffer.forecast("claude", "five-hour", used_pct=26.0, resets_at=None,
+                               now=NOW, instance=instance, account_discriminator="opaque-account-B")
+    assert switched["pace"] == "guarded"
+    assert switched["reason"] == "insufficient_samples" and switched["samples"] == 1
+    stable = buffer.forecast("claude", "five-hour", used_pct=26.0, resets_at=None,
+                             now=NOW, instance=instance, account_discriminator="opaque-account-A")
+    assert stable["rate_pct_per_hour"] == pytest.approx(6.0)
+    assert stable["samples"] == 13
+    assert buffer.samples("claude", "five-hour", instance, account_discriminator="unseen") == []
+
+
+def test_account_scoped_history_round_trips_without_private_key_material(tmp_path: Path) -> None:
+    path = tmp_path / "samples.json"
+    buffer = UsageSampleBuffer(path)
+    private_identity = "synthetic-private-account@example.invalid"
+    for instance, used in ((None, 10.0), ("work", 20.0)):
+        buffer.record("grok", "daily", used, at=NOW, instance=instance,
+                      account_discriminator=private_identity)
+    buffer.record("grok", "daily", 30.0, at=NOW)
+    assert buffer.save(now=0.0)
+    text = path.read_text()
+    assert private_identity not in text
+    loaded = UsageSampleBuffer.load(path)
+    assert loaded.samples("grok", "daily", "default", account_discriminator=private_identity) == [UsageSample(NOW, 10.0)]
+    assert loaded.samples("grok", "daily", "work", account_discriminator=private_identity) == [UsageSample(NOW, 20.0)]
+    assert loaded.samples("grok", "daily") == [UsageSample(NOW, 30.0)]
+    assert "grok|daily" in loaded.to_document()["windows"]
+
+
+def test_account_scoped_windows_preserve_sample_and_window_bounds() -> None:
+    buffer = UsageSampleBuffer()
+    for index in range(samples_module.MAX_WINDOWS + 1):
+        buffer.record("claude", "weekly", 1.0, at=NOW + index,
+                      account_discriminator=f"account-{index}")
+    assert len(buffer.to_document()["windows"]) == samples_module.MAX_WINDOWS
+    assert buffer.samples("claude", "weekly", account_discriminator="account-0") == []
+    newest = f"account-{samples_module.MAX_WINDOWS}"
+    for index in range(samples_module.SAMPLE_LIMIT + 1):
+        buffer.record("claude", "weekly", float(index), at=NOW + 1000 + index,
+                      account_discriminator=newest)
+    assert len(buffer.samples("claude", "weekly", account_discriminator=newest)) == samples_module.SAMPLE_LIMIT
+
+
+def test_two_instances_of_one_provider_keep_their_own_samples() -> None:
+    # Account "work" burns 6 points an hour while "default" sits idle. Their
+    # alternating readings must not read as a reset of one shared window.
+    buffer = UsageSampleBuffer()
+    for step in range(0, 61, 5):
+        at = NOW - (60 - step) * 60.0
+        work = 80.0 - 6.0 * step / 60.0
+        state = SimpleNamespace(snapshots=(_snapshot("work", work), _snapshot("default", 90.0)))
+        buffer.record_state(state, now=at)
+    work_forecast = buffer.forecast("claude", "five-hour", used_pct=26.0, resets_at=None, now=NOW, instance="work")
+    default_forecast = buffer.forecast("claude", "five-hour", used_pct=10.0, resets_at=None, now=NOW, instance="default")
+    assert work_forecast["rate_pct_per_hour"] == pytest.approx(6.0, abs=0.1)
+    assert default_forecast["pace"] == "under"
+    assert default_forecast["rate_pct_per_hour"] == 0.0
+    # The default instance keeps the key older builds saved.
+    assert "claude|five-hour" in buffer.to_document()["windows"]
+    assert "claude:work|five-hour" in buffer.to_document()["windows"]
+
+
+def test_a_stale_reading_is_not_sampled_as_a_fresh_one() -> None:
+    buffer = UsageSampleBuffer()
+    assert buffer.record_state(SimpleNamespace(snapshots=(_snapshot("default", 50.0, "stale"),)), now=NOW) == 0
+    assert buffer.samples("claude", "five-hour") == []
+    assert buffer.record_state(SimpleNamespace(snapshots=(_snapshot("default", 50.0, "ready"),)), now=NOW) == 1
+
+
+def test_a_samples_file_of_the_wrong_shape_loads_as_far_as_it_makes_sense(tmp_path: Path) -> None:
+    path = tmp_path / "usage-samples.json"
+    for text in (
+        '{"schema":1,"windows":{"claude|five-hour":[{"x":1}]}}',
+        '{"schema":1,"windows":{"claude|five-hour":[[NaN,5],[Infinity,6],[1,NaN]]}}',
+        "[" * 60_000,
+        '{"schema":1,"windows":[]}',
+    ):
+        path.write_text(text)
+        assert UsageSampleBuffer.load(path).is_empty, text[:40]
+    path.write_text('{"schema":1,"windows":{"claude|five-hour":[{"x":1},[100.0,5],[NaN,7]]}}')
+    assert UsageSampleBuffer.load(path).samples("claude", "five-hour") == [UsageSample(100.0, 5.0)]
+
+
+def test_windows_nobody_records_any_more_do_not_pile_up() -> None:
+    buffer = UsageSampleBuffer()
+    for index in range(samples_module.MAX_WINDOWS + 40):
+        buffer.record("claude", "five-hour", 10.0, at=NOW + index, instance=f"hub-{index}")
+    document = buffer.to_document()["windows"]
+    assert len(document) == samples_module.MAX_WINDOWS
+    newest = f"claude:hub-{samples_module.MAX_WINDOWS + 39}|five-hour"
+    assert newest in document, "the newest window is the one kept"
+    assert "claude:hub-0|five-hour" not in document

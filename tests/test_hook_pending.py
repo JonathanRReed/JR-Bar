@@ -298,7 +298,7 @@ def test_the_drain_waits_out_an_append_already_under_way(tmp_path, monkeypatch) 
     assert list(tmp_path.iterdir()) == []
 
 
-def test_a_fresh_replay_is_stamped_on_arrival_and_only_history_keeps_its_queued_time(
+def test_replay_keeps_event_time_and_only_recent_records_receive_admission(
     monkeypatch,
 ) -> None:
     import time
@@ -324,12 +324,13 @@ def test_a_fresh_replay_is_stamped_on_arrival_and_only_history_keeps_its_queued_
     processor(request(now - PENDING_REPLAY_HORIZON_SECONDS - 60.0))
 
     live, fresh, stale = calls
-    # A live delivery, and a replay inside the horizon, are stamped on
-    # arrival and refresh: the monitor's watermark is per provider source,
-    # so a queued stamp older than another session's live hook is skipped.
+    # Recent replays keep event time for ordering and receive an internal
+    # admission path. Live deliveries still use arrival time.
     handlers = {"refresh_hint_handler", "appended_handler", "deduplicator_for"}
     assert set(live) == handlers
-    assert set(fresh) == handlers
+    assert set(fresh) == handlers | {"logged_at", "_recent_replay"}
+    assert fresh["logged_at"] == hook.hook_logged_at(now - 60.0)
+    assert fresh["_recent_replay"] is True
     # Past the horizon the record is history: its queued time, no refresh.
     assert stale["logged_at"] == hook.hook_logged_at(now - PENDING_REPLAY_HORIZON_SECONDS - 60.0)
     assert stale["refresh"] is False
@@ -615,3 +616,246 @@ def test_pending_line_count_counts_records_not_separators(tmp_path: Path) -> Non
     assert pending_line_count(spool) == 2
     with pytest.raises(OSError):
         pending_line_count(tmp_path / "missing.pending.jsonl")
+
+
+def test_stop_timeout_keeps_worker_owned_until_it_exits(tmp_path) -> None:
+    from jrbar.hook_pending import PendingHookDrainer
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    class HeldDrainer(PendingHookDrainer):
+        def _run(self) -> None:
+            entered.set()
+            assert release.wait(5.0)
+
+    drainer = HeldDrainer(lambda _request: None, state_dir=tmp_path)
+    drainer.start()
+    worker = drainer._thread
+    try:
+        assert entered.wait(5.0)
+        assert worker is not None
+        drainer.stop(timeout_seconds=0)
+        assert drainer._thread is worker
+        drainer.start()
+        assert drainer._thread is worker
+        assert drainer._stop.is_set()
+    finally:
+        release.set()
+        if worker is not None:
+            worker.join(5.0)
+        drainer.stop()
+    assert drainer._thread is None
+
+    entered.clear()
+    drainer.start()
+    try:
+        assert entered.wait(5.0)
+        assert drainer._thread is not worker
+    finally:
+        drainer.stop()
+
+
+@pytest.mark.parametrize("adopted", [False, True])
+def test_drain_defers_a_file_when_its_appender_lock_times_out(tmp_path, monkeypatch, adopted) -> None:
+    from jrbar import hook_pending
+
+    pending = tmp_path / f"claude{PENDING_SUFFIX}"
+    path = pending if not adopted else pending.with_name(pending.name + ".draining-999999-1")
+    path.write_text(_line(payload='{"n":1}') + "\n")
+    if adopted:
+        pending.write_text(_line(payload='{"n":3}') + "\n")
+    shim = os.open(path, os.O_WRONLY | os.O_APPEND)
+    fcntl.flock(shim, fcntl.LOCK_EX)
+    real_lock = hook_pending._lock
+    monkeypatch.setattr(hook_pending, "_lock", lambda *_args: False)
+    seen: list[str] = []
+    try:
+        count = drain_pending_hooks(lambda request: seen.append(request.payload_text), state_dir=tmp_path)
+        assert count == 0
+        assert seen == []
+        assert os.fstat(shim).st_nlink == 1
+        os.write(shim, (_line(payload='{"n":2}') + "\n").encode())
+        pending.write_text(_line(payload='{"n":3}') + "\n")
+    finally:
+        os.close(shim)
+        monkeypatch.setattr(hook_pending, "_lock", real_lock)
+    assert drain_pending_hooks(lambda request: seen.append(request.payload_text), state_dir=tmp_path) == 3
+    assert seen == ['{"n":1}', '{"n":2}', '{"n":3}']
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_startup_keeps_live_hooks_held_until_a_deferred_append_is_drained(tmp_path, monkeypatch) -> None:
+    from jrbar import hook_pending
+
+    pending = tmp_path / f"claude{PENDING_SUFFIX}"
+    pending.write_text(_line(payload='{"n":1}') + "\n")
+    real_lock = hook_pending._lock
+    attempts = 0
+
+    def lock(descriptor, operation):
+        nonlocal attempts
+        attempts += 1
+        return False if attempts == 1 else real_lock(descriptor, operation)
+
+    monkeypatch.setattr(hook_pending, "_lock", lock)
+    events: list[str] = []
+    drainer = hook_pending.PendingHookDrainer(
+        lambda request: events.append(request.payload_text),
+        state_dir=tmp_path,
+        first_pass_budget_seconds=10,
+        hold_live=lambda: events.append("hold"),
+        release_live=lambda: events.append("release"),
+    )
+    assert drainer.drain_now() == 0
+    assert events == ["hold"]
+    pending.write_text(_line(payload='{"n":2}') + "\n")
+    drainer._finish_first_pass()
+    assert events == ["hold", '{"n":1}', "release"]
+    assert drainer.drain_now() == 1
+    assert events[-1] == '{"n":2}'
+
+
+def test_failed_defer_rename_is_retried_by_a_later_regular_pass(tmp_path, monkeypatch) -> None:
+    from jrbar import hook_pending
+
+    pending = tmp_path / f"claude{PENDING_SUFFIX}"
+    pending.write_text(_line() + "\n")
+    real_lock = hook_pending._lock
+    real_rename = Path.rename
+
+    def rename(path, target):
+        if ".draining-0-" in str(target):
+            raise PermissionError("synthetic rename failure")
+        return real_rename(path, target)
+
+    monkeypatch.setattr(hook_pending, "_lock", lambda *_args: False)
+    monkeypatch.setattr(Path, "rename", rename)
+    assert drain_pending_hooks(lambda _request: None, state_dir=tmp_path) == 0
+    retained = next(tmp_path.iterdir())
+    assert hook_pending._drain_owner_pid(retained.name) == os.getpid()
+    monkeypatch.setattr(hook_pending, "_lock", real_lock)
+    monkeypatch.setattr(Path, "rename", real_rename)
+    seen = []
+    assert drain_pending_hooks(seen.append, state_dir=tmp_path) == 1
+    assert len(seen) == 1
+    assert not retained.exists()
+    assert retained not in hook_pending._deferred_files
+
+
+def test_append_stops_after_a_zero_byte_write(tmp_path, monkeypatch) -> None:
+    from jrbar import hook_pending
+
+    writes = 0
+
+    def write(_descriptor, _data):
+        nonlocal writes
+        writes += 1
+        if writes == 1:
+            return 0
+        raise OSError("stop the broken retry loop")
+
+    monkeypatch.setattr(os, "write", write)
+    assert not hook_pending._append_lines(tmp_path / "claude.pending.jsonl", [_line()])
+    assert writes == 1
+
+
+def test_append_never_writes_without_its_lock(tmp_path, monkeypatch) -> None:
+    from jrbar import hook_pending
+
+    pending = tmp_path / "claude.pending.jsonl"
+    pending.write_bytes(b"")
+    monkeypatch.setattr(hook_pending, "_lock", lambda *_args: False)
+    assert not hook_pending._append_lines(pending, [_line()])
+    assert pending.read_bytes() == b""
+
+
+def test_last_append_attempt_never_follows_a_moved_inode(tmp_path, monkeypatch) -> None:
+    from jrbar import hook_pending
+
+    pending = tmp_path / "claude.pending.jsonl"
+    moved = tmp_path / "claude.overflow.jsonl"
+    pending.write_bytes(b"")
+    monkeypatch.setattr(hook_pending, "_APPEND_ATTEMPTS", 1)
+
+    def lock(_descriptor, _operation):
+        pending.rename(moved)
+        return True
+
+    monkeypatch.setattr(hook_pending, "_lock", lock)
+    assert not hook_pending._append_lines(pending, [_line()])
+    assert moved.read_bytes() == b""
+
+
+def test_partial_append_failure_keeps_the_previous_file_bytes(tmp_path, monkeypatch) -> None:
+    from jrbar import hook_pending
+
+    pending = tmp_path / "claude.pending.jsonl"
+    previous = (_line(payload='{"n":1}') + "\n").encode()
+    pending.write_bytes(previous)
+    real_write = os.write
+    writes = 0
+
+    def write(descriptor, data):
+        nonlocal writes
+        writes += 1
+        if writes == 1:
+            return real_write(descriptor, data[:4])
+        raise OSError("synthetic disk failure")
+
+    monkeypatch.setattr(os, "write", write)
+    assert not hook_pending._append_lines(pending, [_line(payload='{"n":2}')])
+    assert pending.read_bytes().startswith(previous)
+
+
+@pytest.mark.parametrize("rejected", [False, True])
+def test_failed_retention_keeps_the_drain_discoverable(tmp_path, monkeypatch, rejected) -> None:
+    from jrbar import hook_pending
+
+    pending = tmp_path / "claude.pending.jsonl"
+    pending.write_text("broken row\n" if rejected else _line() + "\n")
+    real_append = hook_pending._append_lines
+    monkeypatch.setattr(hook_pending, "_append_lines", lambda *_args, **_kwargs: False)
+
+    def refuse(_request):
+        raise RuntimeError("synthetic full queue")
+
+    assert drain_pending_hooks(refuse, state_dir=tmp_path) == 0
+    retained = next(tmp_path.iterdir())
+    assert retained in hook_pending.orphaned_drain_files(tmp_path)
+    monkeypatch.setattr(hook_pending, "_append_lines", real_append)
+    seen = []
+    assert drain_pending_hooks(seen.append, state_dir=tmp_path) == (0 if rejected else 1)
+    assert not retained.exists()
+    if rejected:
+        assert (tmp_path / "claude.rejected.jsonl").read_text() == "broken row\n"
+    else:
+        assert len(seen) == 1
+
+
+def test_partial_append_failure_keeps_another_writers_completed_record(tmp_path, monkeypatch) -> None:
+    from jrbar import hook_pending
+
+    pending = tmp_path / "claude.pending.jsonl"
+    previous = (_line(payload='{"n":1}') + "\n").encode()
+    other = (_line(payload='{"n":3}') + "\n").encode()
+    pending.write_bytes(previous)
+    real_write = os.write
+    writes = 0
+
+    def write(descriptor, data):
+        nonlocal writes
+        writes += 1
+        if writes == 1:
+            real_write(descriptor, other)
+            return real_write(descriptor, data[:4])
+        raise OSError("synthetic disk failure")
+
+    monkeypatch.setattr(os, "write", write)
+
+    def truncate(*_args):
+        raise AssertionError("legacy unlocked writers make truncation unsafe")
+
+    monkeypatch.setattr(os, "ftruncate", truncate)
+    assert not hook_pending._append_lines(pending, [_line(payload='{"n":2}')])
+    assert pending.read_bytes().startswith(previous + other)

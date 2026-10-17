@@ -156,3 +156,14 @@ def test_definition_validates_contract() -> None:
     for kwargs in [{"safety": "danger"}, {"energy": "extreme"}, {"version": 0}]:
         with pytest.raises(EffectRegistryError):
             EffectDefinition("x", "X", "x", "x", **kwargs)
+
+
+def test_unrepresentable_numeric_parameters_fail_with_registry_errors() -> None:
+    enormous = 10**400
+    with pytest.raises(EffectRegistryError, match="bounds"):
+        EffectParameter("speed", "number", 1, "Speed multiplier.", maximum=enormous)
+    with pytest.raises(EffectRegistryError, match="default"):
+        EffectParameter("speed", "number", enormous, "Speed multiplier.")
+    parameter = EffectParameter("speed", "number", 1, "Speed multiplier.")
+    with pytest.raises(EffectRegistryError, match="finite"):
+        parameter.normalize(enormous)

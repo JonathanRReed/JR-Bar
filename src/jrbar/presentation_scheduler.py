@@ -14,16 +14,8 @@ from typing import Final
 from .runtime_scheduler import RuntimeFeature, RuntimeTimerIntent
 
 FRAME_FALLBACK_INTERVAL_SECONDS: Final = 1.0 / 60.0
-ALCOVE_INTERVAL_SECONDS: Final = 1.5
 POINTER_INTERVAL_SECONDS: Final = 0.2
 MAX_REPEATING_TOLERANCE_SECONDS: Final = 0.25
-ALCOVE_TOLERANCE_SECONDS: Final = round(
-    min(
-        MAX_REPEATING_TOLERANCE_SECONDS,
-        ALCOVE_INTERVAL_SECONDS * 0.1,
-    ),
-    9,
-)
 POINTER_TOLERANCE_SECONDS: Final = round(
     min(
         MAX_REPEATING_TOLERANCE_SECONDS,
@@ -52,8 +44,6 @@ class PresentationSchedulerInputs:
     app_terminating: bool
     animation_active: bool
     next_visual_change_at: float | None
-    alcove_enabled: bool
-    alcove_relevant: bool
     pointer_interaction_relevant: bool
     #: The surface's REAL frame interval while animating (seconds).
     #: None keeps the historical 60 Hz fallback. A surface that knows its
@@ -69,8 +59,6 @@ class PresentationSchedulerInputs:
             "display_asleep",
             "app_terminating",
             "animation_active",
-            "alcove_enabled",
-            "alcove_relevant",
             "pointer_interaction_relevant",
         ):
             _require_bool(getattr(self, field_name), field_name)
@@ -211,15 +199,6 @@ def plan_presentation_schedule(
                 interval=None,
                 tolerance=0.0,
                 common_modes=True,
-            )
-        )
-    if inputs.alcove_enabled and inputs.alcove_relevant:
-        intents.append(
-            _repeating_intent(
-                RuntimeFeature.ALCOVE_OBSERVATION,
-                now=clock,
-                interval=ALCOVE_INTERVAL_SECONDS,
-                tolerance=ALCOVE_TOLERANCE_SECONDS,
             )
         )
     if inputs.pointer_interaction_relevant:

@@ -23,17 +23,17 @@ struct DockRailDecidedAskTests {
         }
     }
 
-    @Test("the Dock row is unchanged for an open ask, a held question and an ask it cannot type into")
+    @Test("the Dock row is unchanged for an open ask and a held question, and an ask it cannot type into draws no verb")
     func dockRowIsUnchangedOtherwise() {
         let open = Fixture.openAsk()
-        #expect(DockAskVerbSet.resolve(ask: open, hasDesk: true, note: nil) == .verdicts(answerable: true))
+        #expect(DockAskVerbSet.resolve(ask: open, hasDesk: true, note: nil) == .verdicts)
         let question = Fixture.heldQuestion()
         #expect(DockAskVerbSet.resolve(ask: question, hasDesk: true, note: nil) == .choices)
         let sealed = CoreAsk(session: Fixture.session, summary: "Bash", answerable: false)
-        #expect(DockAskVerbSet.resolve(ask: sealed, hasDesk: true, note: nil) == .verdicts(answerable: false),
-                "an undecided ask that cannot be typed into keeps its disabled verbs")
+        #expect(DockAskVerbSet.resolve(ask: sealed, hasDesk: true, note: nil) == .elsewhere,
+                "an undecided ask that cannot be typed into says where to answer and draws no verb")
         let typed = CoreAsk(session: Fixture.session, summary: "Reply", answerable: true, replyable: true)
-        #expect(DockAskVerbSet.resolve(ask: typed, hasDesk: true, note: nil) == .verdicts(answerable: false))
+        #expect(DockAskVerbSet.resolve(ask: typed, hasDesk: true, note: nil) == .elsewhere)
         #expect(DockAskVerbSet.resolve(ask: open, hasDesk: false, note: nil) == .none, "no desk, no verbs")
         #expect(DockAskVerbSet.resolve(ask: nil, hasDesk: true, note: nil) == .none)
     }

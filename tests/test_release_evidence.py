@@ -12,6 +12,7 @@ import pytest
 
 from scripts import (
     capture_installed_release_baseline,
+    generate_sbom,
     release_evidence,
     verify_uninstalled_candidate,
 )
@@ -80,6 +81,10 @@ def _fixture(tmp_path: Path) -> dict[str, object]:
         + "\n",
         encoding="utf-8",
     )
+    sbom.write_text(json.dumps(generate_sbom.build_sbom(
+        application_version="0.5.0", app=app, root=tmp_path,
+        artifacts=(pkg, update_archive, appcast, channel_metadata, performance),
+    )), encoding="utf-8")
     return {
         "root": tmp_path,
         "pkg": pkg,
@@ -885,7 +890,7 @@ def test_uninstall_verifier_detects_an_xdg_user_guard_left_behind(
 ) -> None:
     home = tmp_path / "home"
     data_home = tmp_path / "xdg-data"
-    guard = data_home / "jrbar" / "sd-eject-guard" / "SidePulse Pro Eject Prevention"
+    guard = data_home / "jrbar" / "sd-eject-guard" / "JR-Bar SD Eject Guard"
     guard.parent.mkdir(parents=True)
     guard.write_bytes(b"owned")
     monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
@@ -981,3 +986,55 @@ def test_upgrade_baseline_reads_the_home_install_receipt(tmp_path: Path) -> None
         b"package-id: com.jonathanreed.jrbar\n"
     ).hexdigest()
 
+
+
+def test_manifest_rejects_header_only_sbom(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    fixture['sbom'].write_text('{"bomFormat":"CycloneDX"}\n', encoding='utf-8')
+    with pytest.raises(release_evidence.EvidenceError, match='SBOM'):
+        _manifest(fixture, _receipts(fixture))
+
+
+@pytest.mark.parametrize('mutation', ['header', 'wrong-app'])
+def test_checksums_reject_self_consistent_invalid_sbom(tmp_path: Path, mutation: str) -> None:
+    from scripts import generate_release_checksums
+
+    fixture = _fixture(tmp_path)
+    document = _manifest(fixture, _receipts(fixture))
+    sbom = json.loads(fixture['sbom'].read_text())
+    if mutation == 'header':
+        sbom = {'bomFormat': 'CycloneDX'}
+    else:
+        properties = sbom['metadata']['component']['properties']
+        next(p for p in properties if p['name'] == 'jrbar:app:sha256')['value'] = '0' * 64
+    fixture['sbom'].write_text(json.dumps(sbom), encoding='utf-8')
+    record = release_evidence.artifact_record(fixture['sbom'], root=tmp_path)
+    document['sbom'] = record
+    document['artifacts'] = [record if item['path'] == record['path'] else item
+                             for item in document['artifacts']]
+    evidence = tmp_path / 'dist/release-verification.json'
+    evidence.write_text(json.dumps(document), encoding='utf-8')
+    output = tmp_path / 'dist/SHA256SUMS'
+    output.write_text('previous evidence\n')
+    artifacts = (*(tmp_path / item['path'] for item in document['artifacts']), evidence)
+    with pytest.raises(generate_release_checksums.ChecksumManifestError, match='SBOM'):
+        generate_release_checksums.write_checksum_manifest(
+            root=tmp_path, output=output, artifacts=artifacts, evidence_manifest=evidence,
+        )
+    assert output.read_text() == 'previous evidence\n'
+
+
+def test_checksums_accept_candidate_bound_sbom(tmp_path: Path) -> None:
+    from scripts import generate_release_checksums
+
+    fixture = _fixture(tmp_path)
+    document = _manifest(fixture, _receipts(fixture))
+    evidence = tmp_path / 'dist/release-verification.json'
+    evidence.write_text(json.dumps(document), encoding='utf-8')
+    artifacts = (*(tmp_path / item['path'] for item in document['artifacts']), evidence)
+    output = generate_release_checksums.write_checksum_manifest(
+        root=tmp_path, output=tmp_path / 'dist/SHA256SUMS', artifacts=artifacts,
+        evidence_manifest=evidence,
+    )
+    assert 'dist/jrbar-sbom.cdx.json' in output.read_text()
+    assert len(output.read_text().splitlines()) == len(artifacts)

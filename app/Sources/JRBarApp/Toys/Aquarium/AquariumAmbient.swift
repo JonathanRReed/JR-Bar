@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import IOKit.pwr_mgt
 import JRBarCore
+import JRBarUI
 import SwiftUI
 
 /// The tank outside its window (docs/TOYS.md), in two opt-in forms:
@@ -19,10 +20,10 @@ import SwiftUI
 final class AquariumAmbientController {
     private weak var toy: AquariumToy?
     private var wallpaper: AquariumAmbientPanel?
-    private var wallpaperName: String?
+    private var wallpaperDisplay: AquariumAmbientDisplays.Display?
     private var savers: [AquariumAmbientPanel] = []
     /// When the screensaver went up — any input after this puts it away.
-    private var shownAt: Date?
+    private var idleBaseline: AquariumScreensaver.IdleBaseline?
     /// Armed once the idle clock has been seen under the threshold: a
     /// real touch since the last showing. A saver put away by a lock or
     /// a sleeping display stays away until someone is back, instead of
@@ -93,14 +94,20 @@ final class AquariumAmbientController {
 
     private func syncWallpaper() {
         let name = settings.ambientDisplay
+        let screens = NSScreen.screens
+        let displays = screens.map {
+            AquariumAmbientDisplays.Display(id: ScreenBarGeometry.displayID(of: $0), name: $0.localizedName)
+        }
         guard let toy, let name,
-              let screen = NSScreen.screens.first(where: { $0.localizedName == name }) else {
+              let chosen = AquariumAmbientDisplays.wallpaper(named: name, among: displays),
+              let screen = screens.first(where: { ScreenBarGeometry.displayID(of: $0) == chosen.id }) else {
             wallpaper?.orderOut(nil)
             wallpaper = nil
-            wallpaperName = nil
+            wallpaperDisplay = nil
             return
         }
-        if let wallpaper, wallpaperName == name {
+        if let wallpaper, wallpaperDisplay?.name == name {
+            wallpaperDisplay = chosen
             wallpaper.setFrame(screen.frame, display: true)
             return
         }
@@ -108,7 +115,7 @@ final class AquariumAmbientController {
         let panel = AquariumAmbientPanel(screen: screen, toy: toy, mode: .wallpaper)
         panel.orderFrontRegardless()
         wallpaper = panel
-        wallpaperName = name
+        wallpaperDisplay = chosen
     }
 
     // MARK: Screensaver
@@ -139,7 +146,11 @@ final class AquariumAmbientController {
         guard ok else { return }
         // The live-wallpaper display keeps its wallpaper; every other
         // free screen gets the tank.
-        savers = screens.filter { $0.localizedName != wallpaperName }.map {
+        let displays = screens.map {
+            AquariumAmbientDisplays.Display(id: ScreenBarGeometry.displayID(of: $0), name: $0.localizedName)
+        }
+        let saverIDs = Set(AquariumAmbientDisplays.saverIDs(displays, wallpaper: wallpaperDisplay))
+        savers = screens.filter { saverIDs.contains(ScreenBarGeometry.displayID(of: $0)) }.map {
             let panel = AquariumAmbientPanel(screen: $0, toy: toy, mode: .screensaver)
             panel.onTouch = { [weak self] in self?.dismissSaver() }
             panel.alphaValue = 0
@@ -155,7 +166,8 @@ final class AquariumAmbientController {
         // hands the keyboard back to the window that had it.
         savers.first?.makeKey()
         armed = false
-        shownAt = Date()
+        idleBaseline = AquariumScreensaver.IdleBaseline(idleSeconds: idle,
+                                                       uptime: ProcessInfo.processInfo.systemUptime)
         let watch = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.watchForInput() }
         }
@@ -166,9 +178,9 @@ final class AquariumAmbientController {
     /// Up: any key, click or move since it showed puts it away. The idle
     /// clock resets on input we never see — that is the whole trick.
     private func watchForInput() {
-        guard let shownAt else { return }
-        if AquariumScreensaver.inputSinceShowing(idleSeconds: Self.idleSeconds(),
-                                                 shownFor: Date().timeIntervalSince(shownAt)) {
+        guard let idleBaseline else { return }
+        if idleBaseline.inputSinceShowing(idleSeconds: Self.idleSeconds(),
+                                          uptime: ProcessInfo.processInfo.systemUptime) {
             dismissSaver()
         }
     }
@@ -176,7 +188,7 @@ final class AquariumAmbientController {
     func dismissSaver() {
         watchTimer?.invalidate()
         watchTimer = nil
-        shownAt = nil
+        idleBaseline = nil
         for panel in savers { panel.orderOut(nil) }
         savers = []
     }
@@ -188,12 +200,38 @@ final class AquariumAmbientController {
         idleTimer = nil
         wallpaper?.orderOut(nil)
         wallpaper = nil
-        wallpaperName = nil
+        wallpaperDisplay = nil
+    }
+}
+
+enum AquariumAmbientDisplays {
+    struct Display: Equatable {
+        let id: CGDirectDisplayID
+        let name: String
+    }
+
+    static func wallpaper(named name: String?, among displays: [Display]) -> Display? {
+        guard let name else { return nil }
+        return displays.first { $0.name == name }
+    }
+
+    static func saverIDs(_ displays: [Display], wallpaper: Display?) -> [CGDirectDisplayID] {
+        displays.filter { $0.id != wallpaper?.id }.map(\.id)
     }
 }
 
 /// The screensaver's rules, pure so they can be pinned.
 enum AquariumScreensaver {
+    struct IdleBaseline {
+        let idleSeconds: Double
+        let uptime: TimeInterval
+
+        func inputSinceShowing(idleSeconds: Double, uptime: TimeInterval) -> Bool {
+            AquariumScreensaver.inputSinceShowing(idleSeconds: idleSeconds,
+                                                   shownFor: uptime - self.uptime,
+                                                   idleAtShow: self.idleSeconds)
+        }
+    }
     /// The idle clock alone: at or past the chosen minutes. Cheap, so it
     /// runs every poll; the room is only read once this says yes.
     static func isIdle(idleSeconds: Double, minutes: Int) -> Bool {
@@ -210,12 +248,17 @@ enum AquariumScreensaver {
             && !locked && !someoneWatching && freeScreens > 0
     }
 
-    /// The idle clock ran on from when the tank went up unless something
-    /// touched the Mac: an idle time shorter than the time it's been up
-    /// means input landed since. A quarter second of slack covers the
-    /// poll's own timing.
-    static func inputSinceShowing(idleSeconds: Double, shownFor: Double) -> Bool {
-        idleSeconds + 0.25 < shownFor
+    /// Without input, idle time grows from its value when the tank showed.
+    /// A reset falls below that baseline, even during the first poll.
+    /// A quarter second of slack covers the poll's own timing.
+    static func inputSinceShowing(idleSeconds: Double, shownFor: Double,
+                                  idleAtShow: Double) -> Bool {
+        guard idleSeconds.isFinite, idleSeconds >= 0,
+              shownFor.isFinite, shownFor >= 0,
+              idleAtShow.isFinite, idleAtShow >= 0 else { return false }
+        let expectedIdle = idleAtShow + shownFor
+        guard expectedIdle.isFinite else { return false }
+        return idleSeconds + 0.25 < expectedIdle
     }
 
     /// One power assertion as the system lists it.

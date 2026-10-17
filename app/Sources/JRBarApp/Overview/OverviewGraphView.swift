@@ -20,10 +20,13 @@ struct OverviewGraphView: View {
     var frozenTime: TimeInterval?
     /// A hover drawn without a pointer, for render proofs. Nil in the app.
     var pinnedHover: OverviewGraphLayout.Target?
+    /// Render fixtures can request the system's resting presentation.
+    /// Nil keeps the app on the person's accessibility setting.
+    var reduceMotionOverride: Bool? = nil
 
     var body: some View {
         let nodes = store.graphNodes
-        let layout = OverviewGraphLayout.make(nodes)
+        let layout = OverviewGraphLayout.make(nodes, presentation: store.graphPresentation)
         VStack(spacing: 0) {
             GraphHeader(store: store, nodes: nodes, layout: layout)
             if !store.isLive, !store.roster.isEmpty {
@@ -41,7 +44,7 @@ struct OverviewGraphView: View {
                 emptyState
             } else {
                 OverviewGraphCanvas(store: store, layout: layout, nodes: nodes, frozenTime: frozenTime,
-                                    pinnedHover: pinnedHover)
+                                    pinnedHover: pinnedHover, reduceMotionOverride: reduceMotionOverride)
                     .opacity(store.isLive ? 1 : 0.6)
             }
         }
@@ -81,33 +84,35 @@ private struct GraphHeader: View {
 
     var body: some View {
         let counts = Dictionary(grouping: nodes, by: \.activity).mapValues(\.count)
-        HStack(spacing: 12) {
-            Picker("Show", selection: $store.graphScope) {
-                ForEach(OverviewStore.GraphScope.allCases) { Text($0.rawValue).tag($0) }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Picker("Show", selection: $store.graphScope) {
+                    ForEach(OverviewStore.GraphScope.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .help("Active: live sessions and the last hour's finishes · Everything: every session on record")
+                Picker("Layout", selection: $store.graphPresentation) {
+                    ForEach(OverviewGraphLayout.Presentation.allCases) { Text($0.displayTitle).tag($0) }
+                }
+                .pickerStyle(.menu).labelsHidden().fixedSize()
+                .help("Cabinet groups sessions by project. Radial shows provider and parent-worker links.")
+                Spacer(minLength: 0)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .help("Active: live sessions and the last hour's finishes · Everything: every session on record")
-            // The words while they fit, then the counts alone.
-            ViewThatFits(in: .horizontal) {
-                chips(counts, words: true)
-                chips(counts, words: false)
+            HStack(spacing: 8) {
+                ViewThatFits(in: .horizontal) {
+                    chips(counts, words: true)
+                    chips(counts, words: false)
+                }
+                Spacer(minLength: 0)
+                ViewThatFits(in: .horizontal) {
+                    Text("Scroll to pan · pinch to zoom · double-click to open")
+                        .font(.system(size: 10)).foregroundStyle(.tertiary).fixedSize()
+                    Color.clear.frame(width: 0, height: 0)
+                }
+                .layoutPriority(-1)
             }
-            Spacer(minLength: 8)
-            // Whole or not at all: a narrow window drops the hint rather
-            // than cutting it off.
-            ViewThatFits(in: .horizontal) {
-                Text("Scroll to pan · pinch to zoom · double-click to open")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                Color.clear.frame(width: 0, height: 0)
-            }
-            .layoutPriority(-1)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 12).padding(.vertical, 8)
     }
 
     private func chips(_ counts: [SessionActivity: Int], words: Bool) -> some View {
@@ -173,16 +178,6 @@ private struct GraphStateChip: View {
 
 // MARK: - Canvas
 
-/// How the camera is chosen: the opening view (the whole map when it
-/// reads, else its readable middle), the whole map at any scale (⌘0), or
-/// wherever the person put it. The first two follow the map as it grows
-/// and shrinks; a pan or a zoom makes it the person's.
-enum GraphFraming: Equatable {
-    case opening
-    case whole
-    case manual(GraphCamera)
-}
-
 /// The map itself: the scene, the camera over it, and everything the
 /// pointer and keyboard do to it.
 struct OverviewGraphCanvas: View {
@@ -191,7 +186,9 @@ struct OverviewGraphCanvas: View {
     let nodes: [OverviewGraphNode]
     var frozenTime: TimeInterval?
     var pinnedHover: OverviewGraphLayout.Target?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var reduceMotionOverride: Bool? = nil
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    private var reduceMotion: Bool { reduceMotionOverride ?? systemReduceMotion }
     @ViewState private var framing = GraphFraming.opening
     @ViewState private var dragFrom: GraphCamera?
     @ViewState private var hovered: OverviewGraphLayout.Target?
@@ -221,9 +218,10 @@ struct OverviewGraphCanvas: View {
         let current = shown ?? fresh
         GeometryReader { proxy in
             let size = proxy.size
-            let whole = GraphCamera.fit(current.layout.bounds, in: size, inset: 16)
-            let focus = Self.focus(current)
-            let view = camera(current, size: size, whole: whole, focus: focus)
+            let whole = GraphFraming.whole.camera(for: current.layout, in: size)
+            let focus = current.layout.presentation == .network
+                ? store.selectedID ?? Self.focus(current) : Self.focus(current)
+            let view = framing.camera(for: current.layout, in: size, focus: focus)
             let scene = model(current)
             ZStack(alignment: .topLeading) {
                 GraphScene(model: scene, camera: view, settle: Double(generation),
@@ -315,8 +313,8 @@ struct OverviewGraphCanvas: View {
                 return .handled
             }
             .onChange(of: store.selectedID) { _, id in
-                guard let id, let rect = current.layout.nodes[id]?.frame,
-                      let moved = live(view).revealing(rect.insetBy(dx: -8, dy: -8), in: size) else { return }
+                guard let id,
+                      let moved = Self.selectionCamera(live(view), layout: current.layout, id: id, size: size) else { return }
                 animate { framing = .manual(moved) }
             }
             .accessibilityElement(children: .contain)
@@ -331,22 +329,22 @@ struct OverviewGraphCanvas: View {
         .onChange(of: store.now) { refreshUsage(current) }
     }
 
+    static func selectionCamera(_ drawn: GraphCamera, layout: OverviewGraphLayout,
+                                id: String, size: CGSize) -> GraphCamera? {
+        guard let frame = layout.nodes[id]?.frame else { return nil }
+        var base = drawn
+        if layout.presentation == .network, base.scale < GraphCamera.readableScale {
+            let anchor = CGPoint(x: size.width / 2, y: size.height / 2)
+            base = base.zoomed(by: GraphCamera.readableScale / base.scale, about: anchor)
+        }
+        let result = base.revealing(frame.insetBy(dx: -8, dy: -8), in: size) ?? base
+        return result == drawn ? nil : result
+    }
+
     /// The first session waiting on you, which the opening view keeps in
     /// sight.
     static func focus(_ current: Shown) -> String? {
         current.layout.order.first { current.nodes[$0]?.activity == .waiting }
-    }
-
-    /// The camera the framing asks for at this size.
-    private func camera(_ current: Shown, size: CGSize, whole: GraphCamera, focus: String?) -> GraphCamera {
-        switch framing {
-        case .opening:
-            return GraphCamera.opening(current.layout.bounds, in: size,
-                                       focus: focus.flatMap { current.layout.nodes[$0]?.frame.insetBy(dx: -12, dy: -12) },
-                                       inset: 16)
-        case .whole: return whole
-        case .manual(let camera): return camera
-        }
     }
 
     /// The camera now: a pan or pinch between two renders must build on
@@ -421,6 +419,15 @@ struct OverviewGraphCanvas: View {
     /// one that only changes a state shows at once.
     private func settle(to new: Shown, from old: Shown) {
         let from = shown ?? old
+        if new.layout.presentation != from.layout.presentation {
+            hovered = nil
+            lit = nil
+            previous = nil
+            dragFrom = nil
+            framing = .opening
+            shown = new
+            return
+        }
         guard !reduceMotion else {
             shown = new
             previous = nil
@@ -550,7 +557,7 @@ struct OverviewGraphCanvas: View {
                         .frame(width: rect.width, height: rect.height)
                         .offset(x: rect.minX, y: rect.minY)
                         .accessibilityElement()
-                        .accessibilityLabel("\(node.label), \(ProviderStyle.style(for: node.provider).name), \(node.activity.word)")
+                        .accessibilityLabel("\(node.label), \(ProviderStyle.style(for: node.provider).name), \(node.activity.word)\(node.provenance.map { ", " + $0 } ?? "")")
                         .accessibilityAddTraits(store.selectedID == id ? [.isButton, .isSelected] : .isButton)
                         .accessibilityAction { store.selectInGraph(id) }
                         .accessibilityAction(named: "Open") { open(id) }
@@ -647,6 +654,7 @@ private struct GraphHoverCard: View {
                     .monospacedDigit()
                     .foregroundStyle(node.activity.wordIsLoud ? node.activity.tint : .primary)
             }
+            if let provenance = node.provenance { row("square.stack", provenance) }
             if let ask = session.ask {
                 Text(ask.summary ?? ask.preview ?? "Waiting on you")
                     .font(.system(size: 10.5))

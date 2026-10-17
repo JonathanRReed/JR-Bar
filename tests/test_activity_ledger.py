@@ -796,3 +796,32 @@ def test_a_forgiven_reading_never_becomes_a_crossing(controller) -> None:
         occurred_at=NOW,
     )
     assert [entry.detail for entry in fresh] == ["90%", "95%"]
+
+
+def test_named_accounts_crossing_together_keep_both_history_entries(controller) -> None:
+    from dataclasses import replace
+
+    target, status_bar, _path = controller
+
+    def capacity(used):
+        lanes = []
+        for instance in ("work", "personal"):
+            lane = _lane(used)
+            source = replace(lane.key.source, source_instance_id=instance)
+            lanes.append(replace(
+                lane,
+                key=replace(lane.key, source=source),
+                source_health=replace(lane.source_health, source=source),
+                account_discriminator=f"fixture-{instance}",
+            ))
+        return status_bar.AuthorisedCapacity(
+            lanes=tuple(lanes), withheld=(), freshness=(("5-hour", ObservationState.OBSERVED),),
+        )
+
+    assert target.record_capacity_threshold_crossings(capacity(85), occurred_at=NOW) == ()
+    entries = target.record_capacity_threshold_crossings(capacity(96), occurred_at=NOW + 1)
+    assert len(entries) == 4
+    assert {entry.source_instance_id for entry in entries} == {"work", "personal"}
+    ledger = record_activities(ActivityLedger(), entries)
+    assert len(ledger.entries) == 4
+    assert target.record_capacity_threshold_crossings(capacity(96), occurred_at=NOW + 2) == ()

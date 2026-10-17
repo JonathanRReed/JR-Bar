@@ -84,12 +84,59 @@ public struct AppStateFile: Sendable {
         FileManager.default.fileExists(atPath: url.path)
     }
 
+    /// How a load went, so a file that could not be read is told to the
+    /// person rather than silently replaced by the defaults.
+    public enum LoadOutcome: Equatable, Sendable {
+        /// There was no file: a first launch.
+        case missing
+        case loaded
+        /// The file was there and could not be used; the defaults stand in,
+        /// and the next save keeps the old bytes as a recovery copy first.
+        case unreadable(String)
+    }
+
     /// The stored state, or the defaults when the file is missing or not
     /// readable as JSON. Never throws: a broken file must not stop a launch.
-    public func load() -> AppState {
-        guard let data = try? Data(contentsOf: url) else { return AppState() }
-        return (try? JSONDecoder().decode(AppState.self, from: data)) ?? AppState()
+    public func load() -> AppState { loadChecked().state }
+
+    /// `load`, and what happened.
+    public func loadChecked() -> (state: AppState, outcome: LoadOutcome) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return (AppState(), .missing) }
+        let data: Data
+        do { data = try Data(contentsOf: url) } catch {
+            return (AppState(), .unreadable("the file could not be read: \(error.localizedDescription)"))
+        }
+        do {
+            return (try JSONDecoder().decode(AppState.self, from: data), .loaded)
+        } catch {
+            return (AppState(), .unreadable("the file is not valid JSON for this app"))
+        }
     }
+
+    /// Keys this app wrote once and no longer does, as dotted paths. A file
+    /// that still carries one is an old file, not a damaged one: dropping the
+    /// key on the next save loses nothing anyone reads, so it must not cut a
+    /// recovery copy. Add a path here when a key is retired.
+    public static let retiredKeyPaths: Set<String> = [
+        "utilities.menuBar.agentStatusItem",
+        "utilities.menuBar.combinedSystemItem",
+        "utilities.menuBar.combinedStatusItem",
+        "utilities.menuBar.spacers",
+        "utilities.menuBar.arrangeOrder",
+        "utilities.menuBar.curation.forceSpacerEngine",
+        "utilities.agents.grouping",
+        "utilities.agents.rowLimit",
+        "utilities.agents.showElapsed",
+        "utilities.agents.showEnded",
+        "utilities.agents.showIdle",
+        "utilities.agents.showRemote",
+        "utilities.dataHoarderEnabled",
+        "utilities.dataHoarder",
+        "toys.fold.holdPicture",
+        "toys.notch.weather",
+        "toys.notch.weatherCity",
+        "toys.notch.weatherUseIPLocation",
+    ]
 
     /// Writes the state, creating the directory when needed.
     public func save(_ state: AppState) throws {
@@ -107,7 +154,7 @@ public struct AppStateFile: Sendable {
             let normalizedJSON = try normalized.map { try decoder.decode(JSONValue.self, from: $0) }
             let preserved: Bool
             if let previousJSON, let normalizedJSON {
-                preserved = Self.preserves(previousJSON, in: normalizedJSON)
+                preserved = Self.preserves(previousJSON, in: normalizedJSON, at: "")
             } else {
                 preserved = false
             }
@@ -144,15 +191,29 @@ public struct AppStateFile: Sendable {
 
     /// Missing fields may gain defaults. Values and fields present in the
     /// original must survive, including unknown fields from a newer app.
-    private static func preserves(_ original: JSONValue, in normalized: JSONValue) -> Bool {
+    private static func preserves(_ original: JSONValue, in normalized: JSONValue, at path: String) -> Bool {
         switch (original, normalized) {
         case let (.object(before), .object(after)):
             return before.allSatisfy { key, value in
-                after[key].map { preserves(value, in: $0) } ?? false
+                let here = path.isEmpty ? key : path + "." + key
+                // A retired key is gone on purpose.
+                if retiredKeyPaths.contains(here) { return true }
+                return after[key].map { preserves(value, in: $0, at: here) } ?? false
             }
         case let (.array(before), .array(after)):
-            return before.count == after.count
-                && zip(before, after).allSatisfy { preserves($0.0, in: $0.1) }
+            guard before.count == after.count else { return false }
+            if zip(before, after).allSatisfy({ preserves($0.0, in: $0.1, at: path) }) { return true }
+            // A set of words (the providers a trigger names) comes back
+            // in whatever order this process hashes it: the same words in
+            // another order lose nothing, so it is not a damaged file.
+            let wordsBefore = before.compactMap { value -> String? in
+                if case .string(let word) = value { return word } else { return nil }
+            }
+            let wordsAfter = after.compactMap { value -> String? in
+                if case .string(let word) = value { return word } else { return nil }
+            }
+            return wordsBefore.count == before.count && wordsAfter.count == after.count
+                && wordsBefore.sorted() == wordsAfter.sorted()
         default:
             return original == normalized
         }

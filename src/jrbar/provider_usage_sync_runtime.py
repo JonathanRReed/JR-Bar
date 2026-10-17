@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .private_io import read_private_bytes
 from .provider_feature_settings import ProviderInstanceSharingProjection
 from .provider_instances import REMOTE_SHARING_STATUS_ONLY
 from .provider_usage_platform import ProviderSourceState
@@ -171,15 +172,28 @@ class ProviderSyncRuntime:
         settings = self._settings()
         if not settings.enabled:
             return ProviderSyncRefresh(False, None, (), None, (), refreshed_at)
+        sharing = self._sharing()
         local_packet = build_local_sync_packet(
             state,
             settings,
             generated_at=refreshed_at,
-            sharing=self._sharing(),
+            sharing=sharing,
         )
+
+        def still_authorized() -> bool:
+            try:
+                return self._settings() == settings and self._sharing() == sharing
+            except Exception:
+                return False
+
+        def revoked() -> ProviderSyncRefresh:
+            return ProviderSyncRefresh(False, None, (), None, (), refreshed_at)
+
         remotes = []
         health = []
         for peer in settings.peers:
+            if not still_authorized():
+                return revoked()
             secret = _secret(self._credentials, peer.secret_account)
             if secret is None:
                 health.append(
@@ -193,6 +207,8 @@ class ProviderSyncRuntime:
                 continue
             try:
                 encoded_local = encode_signed_packet(local_packet, secret)
+                if not still_authorized():
+                    return revoked()
                 self._publisher(
                     encoded_local,
                     self._local_directory / f"{peer.peer_id}.packet",
@@ -202,6 +218,8 @@ class ProviderSyncRuntime:
                     PeerSyncHealth(peer.peer_id, False, "local_publish_failed", None)
                 )
                 continue
+            if not still_authorized():
+                return revoked()
             try:
                 fetched = self._fetcher(peer)
             except Exception:
@@ -211,6 +229,8 @@ class ProviderSyncRuntime:
                     None,
                     "sftp_unavailable",
                 )
+            if not still_authorized():
+                return revoked()
             if type(fetched) is not SftpFetchResult or not fetched.reachable:
                 health.append(
                     PeerSyncHealth(
@@ -255,6 +275,8 @@ class ProviderSyncRuntime:
                 PeerSyncHealth(peer.peer_id, True, None, remote.generated_at)
             )
         remote_packets = tuple(remotes)
+        if not still_authorized():
+            return revoked()
         merged = merge_provider_sync(local_packet, remote_packets)
         return ProviderSyncRefresh(
             True,
@@ -311,9 +333,8 @@ def load_cached_merged_sync(
             continue
         cached = directory / f"{peer.peer_id}.remote.packet"
         try:
-            if cached.stat().st_size > MAX_SYNC_PACKET_BYTES:
-                continue
-            remote = decode_signed_packet(cached.read_bytes(), secret, now=current)
+            packet = read_private_bytes(cached, tighten=False, max_bytes=MAX_SYNC_PACKET_BYTES)
+            remote = decode_signed_packet(packet, secret, now=current)
         except (OSError, ValueError):
             continue
         if remote.device_id == peer.peer_id:

@@ -122,10 +122,6 @@ class BatterySnapshot:
             return max(profile.watts for profile in self.pd_profiles)
         return 0.0
 
-    @property
-    def battery_power_magnitude(self) -> float:
-        return abs(self.battery_watts)
-
     def charge_speed_ratio(self, full_charge_watts: float | None = None) -> float:
         baseline = full_charge_watts or self.full_charge_watts
         if baseline <= 0:

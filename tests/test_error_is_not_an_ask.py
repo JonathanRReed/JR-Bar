@@ -30,8 +30,6 @@ from jrbar.colors import (
     MODE_IDLE,
     MODE_WORKING,
     ColorSettings,
-    mode_color_row,
-    mode_color_rows,
     perceptual_gap,
     program_for_snapshot,
     separated_error_color,
@@ -68,7 +66,7 @@ def test_error_is_a_first_class_mode_colour__and_2_more() -> None:
 
 
 
-def test_a_settings_file_written_before_the_key_existed_still_loads__and_1_more() -> None:
+def test_a_settings_file_written_before_the_key_existed_still_loads() -> None:
     # --- scenario: a_settings_file_written_before_the_key_existed_still_loads
     """The upgrade path: every JR-Bar installed before 2026-09-10 has a
     settings file with four mode colours and no ``error``."""
@@ -89,18 +87,6 @@ def test_a_settings_file_written_before_the_key_existed_still_loads__and_1_more(
     # And the hand-set colours it did carry are untouched.
     assert loaded.mode_color(MODE_IDLE) == "#010203"
 
-    # --- scenario: the_settings_row_is_named_and_offered_like_the_others
-    rows = mode_color_rows(ColorSettings.defaults())
-    assert [row.key for row in rows] == list(MODE_COLOR_KEYS)
-    row = mode_color_row(MODE_ERROR, ColorSettings.defaults())
-    assert row.label == "Error (something broke)"
-    assert row.current_hex == ERROR_RED
-    # The shipped colour leads the row as a ringed "Default" chip, the same
-    # contract every other state row has.
-    default_group = row.group("default")
-    assert default_group is not None
-    assert [swatch.hex for swatch in default_group.swatches] == [ERROR_RED]
-    assert default_group.swatches[0].selected
 
 
 

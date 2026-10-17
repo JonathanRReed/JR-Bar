@@ -3,7 +3,7 @@ import JRBarCore
 import Testing
 @testable import JRBarApp
 
-/// Settings › Agents' Update button and "Check for agent updates" switch, and the Usage
+/// Settings › Agents & Usage' Update button and "Check for agent updates" switch, and the Usage
 /// Center's Fix sign-in: the words they show, the key the switch writes (off until
 /// turned on), and that nothing here runs by itself.
 @Suite struct ProviderUpdateAgentsTests {
@@ -76,15 +76,15 @@ import Testing
     }
 
     @Test func updateIsOfferedOnlyWhereTheDaemonHasAnUpdater() {
-        for provider in ["claude", "codex", "grok", "devin", "opencode"] {
+        for provider in ["claude", "codex", "grok", "devin", "opencode", "gemini"] {
             #expect(ProviderUpdateWords.hasUpdater(provider), "\(provider) has an updater")
             #expect(ProviderUpdateWords.isRelevant(provider))
         }
-        // Gemini CLI has none: its row carries the advice and no button.
-        #expect(!ProviderUpdateWords.hasUpdater("gemini"))
+        // The daemon resolves Gemini's installation manager after the click.
+        #expect(ProviderUpdateWords.hasUpdater("gemini"))
         #expect(ProviderUpdateWords.isRelevant("gemini"))
-        #expect(ProviderUpdateWords.geminiAdvice.contains("brew upgrade gemini-cli"))
-        #expect(ProviderUpdateWords.geminiAdvice.contains("npm install -g @google/gemini-cli"))
+        #expect(ProviderUpdateWords.geminiAdvice.contains("Homebrew"))
+        #expect(ProviderUpdateWords.geminiAdvice.contains("npm"))
         for provider in ["cursor", "antigravity", "pi", "hermes", "kiro", "openclaw", "claude; rm -rf ~"] {
             #expect(!ProviderUpdateWords.hasUpdater(provider))
             #expect(!ProviderUpdateWords.isRelevant(provider))
@@ -98,7 +98,76 @@ import Testing
         #expect(!ProviderUpdateWords.canUpdate(provider: "claude", status: nil, live: false, busy: false))
         #expect(!ProviderUpdateWords.canUpdate(provider: "claude", status: nil, live: true, busy: true))
         #expect(!ProviderUpdateWords.canUpdate(provider: "claude", status: running, live: true, busy: false))
-        #expect(!ProviderUpdateWords.canUpdate(provider: "gemini", status: nil, live: true, busy: false))
+        #expect(ProviderUpdateWords.canUpdate(provider: "gemini", status: nil, live: true, busy: false))
+    }
+
+    @Test func installationCapabilityIsOptionalAndControlsTheAction() throws {
+        let data = Data(#"{"phase":"idle","updatable":false,"update_advice":"Use the original installer."}"#.utf8)
+        let unsupported = try JSONDecoder().decode(ProviderUpdateStatus.self, from: data)
+        #expect(unsupported.updatable == false)
+        #expect(unsupported.updateAdvice == "Use the original installer.")
+        #expect(!ProviderUpdateWords.showsUpdate(provider: "codex", status: unsupported))
+        var available = unsupported
+        available.latestVersion = "2.0.0"
+        #expect(!ProviderUpdateWords.canUpdate(provider: "codex", status: available, live: true, busy: false))
+        available.updatable = true
+        #expect(ProviderUpdateWords.canUpdate(provider: "codex", status: available, live: true, busy: false))
+        var running = unsupported
+        running.phase = .running
+        #expect(ProviderUpdateWords.showsUpdate(provider: "codex", status: running))
+        #expect(!ProviderUpdateWords.canUpdate(provider: "codex", status: running, live: true, busy: false))
+        let legacy = try JSONDecoder().decode(ProviderUpdateStatus.self, from: Data(#"{"phase":"failed"}"#.utf8))
+        #expect(legacy.updatable == nil && legacy.updateAdvice == nil)
+        #expect(ProviderUpdateWords.showsUpdate(provider: "codex", status: legacy))
+    }
+
+    @Test func confirmedCurrentVersionsDoNotOfferAnotherUpdate() {
+        let current = ProviderUpdateStatus(phase: .unchanged, fromVersion: "2.1.301",
+            toVersion: "2.1.301", message: "Already up to date (2.1.301)")
+        let updated = ProviderUpdateStatus(phase: .updated, fromVersion: "2.1.300", toVersion: "2.1.301")
+        for status in [current, updated] {
+            #expect(!ProviderUpdateWords.canUpdate(provider: "claude", status: status, live: true, busy: false))
+            #expect(!ProviderUpdateWords.showsUpdate(provider: "claude", status: status))
+        }
+        var available = current
+        available.latestVersion = "2.1.302"
+        #expect(ProviderUpdateWords.canUpdate(provider: "claude", status: available, live: true, busy: false))
+        #expect(ProviderUpdateWords.showsUpdate(provider: "claude", status: available))
+        #expect(ProviderUpdateWords.resultLine(current, now: Date()) == "Already up to date (2.1.301)")
+    }
+
+    @Test func unknownVersionsAndErrorsRetainAnExplicitRetry() {
+        for phase in [ProviderUpdatePhase.idle, .failed, .needsTerminal, .unchanged] {
+            let status = ProviderUpdateStatus(phase: phase)
+            #expect(ProviderUpdateWords.showsUpdate(provider: "claude", status: status))
+            #expect(ProviderUpdateWords.canUpdate(provider: "claude", status: status, live: true, busy: false))
+        }
+        #expect(ProviderUpdateWords.showsUpdate(provider: "claude", status: .init(phase: .running)))
+        #expect(!ProviderUpdateWords.showsUpdate(provider: "unknown", status: nil))
+    }
+
+    @Test func registryCurrentRequiresTheSameDoctorVersion() throws {
+        let data = Data(#"{"phase":"idle","up_to_date_version":"2.1.301"}"#.utf8)
+        let current = try JSONDecoder().decode(ProviderUpdateStatus.self, from: data)
+        #expect(current.upToDateVersion == "2.1.301")
+        #expect(!ProviderUpdateWords.showsUpdate(provider: "claude", status: current, installed: "2.1.301"))
+        #expect(!ProviderUpdateWords.canUpdate(provider: "claude", status: current,
+            live: true, busy: false, installed: "2.1.301"))
+        let versions: [String?] = [nil, "", "2.1.300", "2.1.302"]
+        for version in versions {
+            #expect(ProviderUpdateWords.showsUpdate(provider: "claude", status: current, installed: version))
+        }
+        for phase in [ProviderUpdatePhase.running, .failed, .needsTerminal] {
+            var retry = current
+            retry.phase = phase
+            #expect(ProviderUpdateWords.showsUpdate(provider: "claude", status: retry, installed: "2.1.301"))
+        }
+        var available = current
+        available.latestVersion = "2.1.302"
+        #expect(ProviderUpdateWords.showsUpdate(provider: "claude", status: available, installed: "2.1.301"))
+        let legacy = try JSONDecoder().decode(ProviderUpdateStatus.self, from: Data(#"{"phase":"idle"}"#.utf8))
+        #expect(legacy.upToDateVersion == nil)
+        #expect(ProviderUpdateWords.showsUpdate(provider: "claude", status: legacy, installed: "2.1.301"))
     }
 
     // MARK: the switch
@@ -127,7 +196,7 @@ import Testing
         #expect(words.contains("nothing is contacted until you turn it on"))
         let row = SettingsSearch.rows.first { $0.title == "Check for agent updates" }
         #expect(row?.subtitle == words, "the search index shares the page's words")
-        #expect(row?.page == .agents)
+        #expect(row?.chapter == .agents)
     }
 
     // MARK: nothing runs by itself
@@ -216,7 +285,7 @@ import Testing
         #expect(CoreModel.signInArgs(provider: "devin") == ["provider": .string("devin")])
     }
 
-    @Test func theHelpNamesOnlyWhatTheDaemonDoesForEachProvider() {
+    @Test @MainActor func theHelpNamesOnlyWhatTheDaemonDoesForEachProvider() {
         #expect(FixSignInButton.help(for: "claude").contains("renew its own sign-in"))
         #expect(FixSignInButton.help(for: "grok").contains("grok login"))
         #expect(FixSignInButton.help(for: "codex").contains("codex login"))

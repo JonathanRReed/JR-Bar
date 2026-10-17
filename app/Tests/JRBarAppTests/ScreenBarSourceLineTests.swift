@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import JRBarApp
 
-/// Settings › Devices › Screen Bar's "Right now" line: whose clock the
+/// Settings › Devices & Lighting › Screen Bar's "Right now" line: whose clock the
 /// band is on, whether it refused a program, and why it may be still.
 @Suite("Screen Bar right-now line")
 @MainActor

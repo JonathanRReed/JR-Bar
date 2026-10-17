@@ -200,6 +200,9 @@ class TranscriptFallbackService:
         # Identical refresh requests share one scan. A genuinely newer request
         # supersedes the old result before it can reach the controller.
         for callback in callbacks:
+            with self._lock:
+                if self._closed or request.generation != self._generation:
+                    break
             try:
                 callback(batch)
             except Exception:

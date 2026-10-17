@@ -12,6 +12,8 @@ permission prompt is presentable without another re-sign.
 
 from __future__ import annotations
 
+from math import isfinite
+
 AUTH_AUTHORIZED = "authorized"
 AUTH_DENIED = "denied"
 AUTH_NOT_DETERMINED = "not_determined"
@@ -95,6 +97,12 @@ def adopt_app_reminders(identifiers: object, *, now: float) -> None:
     """Record the identifiers of the reminders due now, as the app read
     them. ``ValueError`` for anything but a short list of short ids."""
     global _app_due
+    try:
+        now = float(now)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("reminders report time must be finite") from exc
+    if not isfinite(now):
+        raise ValueError("reminders report time must be finite")
     if isinstance(identifiers, (str, bytes)) or not isinstance(identifiers, (list, tuple)):
         raise ValueError("reminders_due must be a list of reminder ids")
     if len(identifiers) > MAX_APP_REMINDERS:
@@ -104,7 +112,7 @@ def adopt_app_reminders(identifiers: object, *, now: float) -> None:
         if type(item) is not str or not item.strip() or len(item) > MAX_APP_REMINDER_ID_LENGTH:
             raise ValueError("reminders_due must be a list of reminder ids")
         cleaned.append(item.strip())
-    _app_due = (float(now), tuple(dict.fromkeys(cleaned)))
+    _app_due = (now, tuple(dict.fromkeys(cleaned)))
 
 
 def forget_app_reminders() -> None:
@@ -126,10 +134,18 @@ def fetch_due(lookback_seconds: float, completion) -> None:
     """Async: ``completion(items)`` where items is a list of
     (calendar_item_identifier, title) for INCOMPLETE reminders whose due
     date fell inside [now - lookback, now]. Called on an EventKit queue;
-    on any setup failure this raises synchronously instead. The app's
-    recent report answers synchronously, without EventKit."""
+    on any setup failure this raises synchronously instead. A failed
+    fetch or revoked access leaves the caller's timeout to mark the read
+    unavailable. The app's recent report wins, including when it arrives
+    while an EventKit fetch is pending."""
     import time
 
+    try:
+        lookback = max(0.0, float(lookback_seconds))
+        if not isfinite(float(lookback_seconds)):
+            raise ValueError("reminder lookback must be finite")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise RemindersUnavailableError("invalid reminder lookback") from exc
     reported = app_due_reminders(now=time.time())
     if reported is not ...:
         try:
@@ -137,23 +153,34 @@ def fetch_due(lookback_seconds: float, completion) -> None:
         except Exception:
             pass
         return
-    from Foundation import NSDate
-
     if authorization_status() != AUTH_AUTHORIZED:
         raise RemindersUnavailableError("reminders access not granted")
-    store = _shared_store()
-    start = NSDate.dateWithTimeIntervalSinceNow_(-max(0.0, float(lookback_seconds)))
-    end = NSDate.date()
 
     def _handler(reminders):
+        reported = app_due_reminders(now=time.time())
+        if reported is not ...:
+            try:
+                completion(reported)
+            except Exception:
+                pass
+            return
+        try:
+            if reminders is None or authorization_status() != AUTH_AUTHORIZED:
+                return
+        except RemindersUnavailableError:
+            return
         items: list[tuple[str, str]] = []
+        seen: set[str] = set()
         for reminder in reminders or []:
             try:
+                if reminder.isCompleted():
+                    continue
                 identifier = str(reminder.calendarItemIdentifier() or "")
                 title = str(reminder.title() or "Reminder")
             except Exception:
                 continue
-            if identifier:
+            if identifier and identifier not in seen:
+                seen.add(identifier)
                 items.append((identifier, title))
         try:
             completion(items)
@@ -161,6 +188,11 @@ def fetch_due(lookback_seconds: float, completion) -> None:
             pass
 
     try:
+        from Foundation import NSDate
+
+        store = _shared_store()
+        end = NSDate.date()
+        start = NSDate.dateWithTimeIntervalSince1970_(float(end.timeIntervalSince1970()) - lookback)
         predicate = store.predicateForIncompleteRemindersWithDueDateStarting_ending_calendars_(
             start, end, None
         )

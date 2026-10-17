@@ -5,7 +5,7 @@ import JRBarCore
 /// The tank's little voice (Aquarium card › Sound, off by default): five
 /// short sounds synthesized once into in-memory WAVs — no bundled asset,
 /// no permission — and played quietly through AVAudioPlayer at the
-/// Settings › Sounds volume. The toy decides when: only for a tap or a
+/// Settings › Alerts & Sounds volume. The toy decides when: only for a tap or a
 /// window event, never on the wallpaper or the screensaver, never while
 /// the room is quiet or the window is covered.
 @MainActor
@@ -59,7 +59,7 @@ enum AquariumSound {
     /// Focus, JR-Bar's quiet or a call (the room's own reading, whether
     /// or not the Toys page hushes the toys, since a sound reaches you
     /// where a toast doesn't), the daemon saying sounds are off, or —
-    /// while Settings › Sounds keeps quiet on calls — another app
+    /// while Settings › Alerts & Sounds keeps quiet on calls — another app
     /// capturing from a microphone. `micLive` is only read when it
     /// matters.
     nonisolated static func held(focus: CoreFocus?, onCall: Bool, quietOnCalls: Bool,

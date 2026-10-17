@@ -77,6 +77,13 @@ enum UsageSourceNotes {
         return instanceBadge(instance)
     }
 
+    /// A provider's name with its account told when it is not the Mac's own
+    /// default: "Claude", or "Claude · work". Two rows of one provider must
+    /// never read the same.
+    static func displayName(_ name: String, instance: String?) -> String {
+        rowTag(instance).map { "\(name) · \($0)" } ?? name
+    }
+
     /// "1 reset credit" / "3 reset credits": unused limit resets the
     /// provider reports, shown as a count. The app never redeems one.
     static func resetCreditsText(_ count: Int?) -> String? {

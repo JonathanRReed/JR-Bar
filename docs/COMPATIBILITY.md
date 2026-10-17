@@ -29,9 +29,9 @@ effort" when the code recognises the input and nothing more is claimed.
 
 | Provider | Hooks | Session truth | Usage | Claim |
 | --- | --- | --- | --- | --- |
-| Claude Code | `~/.claude/settings.json` | hook + `~/.claude/sessions/<pid>.json` + process liveness | official endpoint (opt-in), transcripts | Verified |
-| Codex CLI and desktop | `~/.codex/config.toml` (trust hash computed locally) | hook + SessionEnd/interrupt + rollout tail + liveness | native | Reviewed; real turns are still to be exercised, see [ROADMAP.md](ROADMAP.md) |
-| Gemini CLI | `~/.gemini/settings.json` (`hooks`) | hook + `~/.gemini/tmp/*/chats` tail | derived tier | Verified on the derived tier; higher tiers reviewed |
+| Claude Code | `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`) | hook + `~/.claude/sessions/<pid>.json` + process liveness | official endpoint (opt-in), Claude Code status line (opt-in), transcripts | Verified |
+| Codex CLI and desktop | `~/.codex/config.toml` (or `$CODEX_HOME`; trust hash computed locally) | hook + SessionEnd/interrupt + rollout tail + liveness | native | Reviewed; real turns are still to be exercised, see [ROADMAP.md](ROADMAP.md) |
+| Gemini CLI | `~/.gemini/settings.json` (`hooks`) | hook + `~/.gemini/tmp/*/chats` tail | Code Assist quota buckets (detail lanes only), session-file tokens | Quota verified live 2026-09-13; hooks reviewed (the CLI refuses a scripted endpoint), so real use is the check |
 | Pi | `~/.pi/agent/extensions/jrbar.ts` | extension events + `~/.pi/agent/sessions` tail | none | Verified (pi 0.73.1 emits no ask events, so pi has no ask lane) |
 | Grok, Devin, OpenCode, OpenClaw, Antigravity | provider config or plugin | hook + liveness | native where the provider exposes it | Verified |
 | Cursor, Hermes Agent, Kiro | provider config | hook + liveness | Cursor native | Best effort: not installed on the owner's Mac |
@@ -42,11 +42,20 @@ A hook shape changing upstream degrades that provider to `stale` or
 makes a false zero. Detail per provider is in
 [NATIVE-PROVIDERS.md](NATIVE-PROVIDERS.md).
 
+Reviewed 2026-10-07 against the changelogs and source of Claude Code 2.1.292
+and codex-cli 0.159.2, the versions on the owner's Mac: the hook events and
+fields JR-Bar reads are unchanged, the Codex hook trust hash matches Codex's
+current rule, and the packaged manifest still lists 2.1.263 and 0.153.4 as the
+last versions exercised by hand, so `jrbar hooks doctor` says "newer than
+verified" for both. That is a source review, not a live drill. The open items
+it found are in
+[the 2026-10-07 note](archive/2026-10-07-codexbar-t3-similar-tools-review.md).
+
 ## Neighbours
 
 | Integration | Claim |
 | --- | --- |
-| T3 Code | Read-only SQLite projection, `sqlite-readonly-v1`, reviewed window 0.0.33 through 0.0.43 as recorded in the packaged `integration_compatibility.json`. Additive columns are accepted; a missing required column fails closed as unsupported. Never writes, never runs T3 commands, never reads T3 credentials. |
+| T3 Code | Read-only SQLite projection (`statev2.sqlite` for a 0.0.46 nightly, `state.sqlite` for stable), `sqlite-readonly-v1`, reviewed window 0.0.33 through 0.0.46 as recorded in the packaged `integration_compatibility.json`. Additive columns are accepted; a missing required column fails closed as unsupported. Never writes, never runs T3 commands, never reads T3 credentials. |
 | Alcove | The Screen Bar reads Alcove's capsule width through the window list (Screen Recording permission) and follows it; verified with Alcove 1.7.9. Without permission or without Alcove the bar keeps its measured notch geometry. |
 | Tailscale | Optional. Used only to discover peers; the transport is `sftp` over SSH, never a remote command. |
 | CodexBar | An engineering reference for the forecast and refresh discipline; nothing is exchanged at runtime. |

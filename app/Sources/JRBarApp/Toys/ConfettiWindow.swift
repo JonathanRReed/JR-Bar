@@ -14,7 +14,7 @@ final class ConfettiWindow: NSPanel {
     /// Rest re-reads the windows once a second, so a piece lying on one
     /// that moved or closed fades instead of floating.
     private var ledgeTimer: Timer?
-    private let started = Date()
+    private let started = ProcessInfo.processInfo.systemUptime
     /// How long this burst runs: the burst's own worked-out life (the
     /// last piece gone), or the Reduce Motion glow's.
     let life: TimeInterval
@@ -83,7 +83,7 @@ final class ConfettiWindow: NSPanel {
                     OnScreenWindows.local($0, on: screen, primaryHeight: primaryHeight)
                 }
                 watch.note(standing: ConfettiBurst.standing(ledges, now: now),
-                           at: Date().timeIntervalSince(self.started))
+                           at: max(0, ProcessInfo.processInfo.systemUptime - self.started))
             }
         }
         RunLoop.main.add(timer, forMode: .common)

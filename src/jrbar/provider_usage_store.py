@@ -17,6 +17,10 @@ from .provider_usage_runtime import ProviderUsageState
 
 PROVIDER_USAGE_STORE_SCHEMA_VERSION = 3
 MAX_STORE_BYTES = 2 * 1024 * 1024
+#: Snapshots read back from the file: every provider, every configured
+#: instance and the hub's accounts (``cliproxy_hub.MAX_ACCOUNTS``), with room
+#: to spare. The file's byte budget is what really bounds a save.
+MAX_RESTORED_SNAPSHOTS = 64
 
 
 def default_provider_usage_state_path(home: Path | None = None) -> Path:
@@ -157,14 +161,13 @@ def _reset_credits(value: object) -> int | None:
 
 def _read_at(value: object) -> float | None:
     """An older file has no read time, and a bad one is dropped, never fatal."""
-    if (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(float(value))
-        and float(value) >= 0.0
-    ):
-        return float(value)
-    return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) and number >= 0.0 else None
 
 
 def load_provider_usage_state(
@@ -175,7 +178,7 @@ def load_provider_usage_state(
         from .private_io import read_private_text
 
         document = json.loads(read_private_text(target, max_bytes=MAX_STORE_BYTES))
-    except (FileNotFoundError, OSError, UnicodeError, ValueError):
+    except (FileNotFoundError, OSError, UnicodeError, ValueError, RecursionError):
         return ProviderUsageState((), None, None, False)
     if (
         not isinstance(document, dict)
@@ -190,7 +193,7 @@ def load_provider_usage_state(
     purged = False
     raw_snapshots = document.get("snapshots")
     if isinstance(raw_snapshots, list):
-        for raw_snapshot in raw_snapshots[:16]:
+        for raw_snapshot in raw_snapshots[:MAX_RESTORED_SNAPSHOTS]:
             snapshot = _snapshot(raw_snapshot)
             if snapshot is not None and is_invented_antigravity_reading(snapshot):
                 # Every reader of the saved file drops it here, not only the
@@ -203,17 +206,13 @@ def load_provider_usage_state(
                 existing.identity for existing in snapshots
             }:
                 snapshots.append(snapshot)
-    refreshed_at = document.get("refreshed_at")
-    next_refresh_at = document.get("next_refresh_at")
-    if refreshed_at is not None and not isinstance(refreshed_at, (int, float)):
-        refreshed_at = None
-    if next_refresh_at is not None and not isinstance(next_refresh_at, (int, float)):
-        next_refresh_at = None
+    refreshed_at = _read_at(document.get("refreshed_at"))
+    next_refresh_at = _read_at(document.get("next_refresh_at"))
     return ProviderUsageState(
         tuple(snapshots),
-        None if refreshed_at is None else float(refreshed_at),
+        refreshed_at,
         # A dropped reading is a gap the next refresh should fill, not wait out.
-        None if purged or next_refresh_at is None else float(next_refresh_at),
+        None if purged else next_refresh_at,
         False,
     )
 

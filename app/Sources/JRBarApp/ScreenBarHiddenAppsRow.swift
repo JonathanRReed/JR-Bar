@@ -2,7 +2,7 @@ import AppKit
 import JRBarCore
 import SwiftUI
 
-/// Settings › Devices › Screen Bar's "Hide over these apps": the band
+/// Settings › Devices & Lighting › Screen Bar's "Hide over these apps": the band
 /// steps aside while a listed app is in front, the way it does over a
 /// full-screen video — for the app you present from, or the one whose
 /// own notch-side UI the band would sit on. Apps are added from the ones

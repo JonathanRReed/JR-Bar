@@ -104,7 +104,6 @@ def test_semantics_are_distinguishable_without_color_or_motion__and_2_more() -> 
     assert plan.cadence is signature.cadence
     assert plan.static_slots == signature.geometry.static_slots
     assert plan.accessibility_label == "Handoff ready"
-    assert plan.reduce_motion_substituted is False
     assert plan.has_motion is True
 
     # --- scenario: reduce_motion_preserves_meaning_with_a_static_spatial_substitute
@@ -120,7 +119,6 @@ def test_semantics_are_distinguishable_without_color_or_motion__and_2_more() -> 
         assert plan.cadence is None
         assert plan.static_slots == signature.geometry.static_slots
         assert plan.accessibility_label == signature.accessibility_label
-        assert plan.reduce_motion_substituted is True
         assert plan.has_motion is False
 
 

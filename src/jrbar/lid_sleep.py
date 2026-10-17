@@ -34,8 +34,17 @@ RENEWAL_FILE_NAME = "lid-hold-renewal"
 #: The watchdog records its pid here so a new spawn reclaims the role
 #: (kill the recorded predecessor) instead of stacking beside it.
 WATCHDOG_PID_FILE_NAME = "lid-hold-watchdog.pid"
-RENEWAL_STALE_SECONDS = 900
-WATCHDOG_POLL_SECONDS = 300
+#: Three minutes without a renewal clears the hold. With the poll below, a
+#: Mac whose daemon died is sleepable again within about four minutes.
+RENEWAL_STALE_SECONDS = 180
+#: The renewal file is touched at most this often. Staleness is three
+#: minutes, and the hold is asked to renew on every refresh (several a
+#: second while agents work), so touching on every ask only wrote the disk.
+RENEWAL_TOUCH_SECONDS = 30
+WATCHDOG_POLL_SECONDS = 60
+#: A renewal stamped further ahead than this is not a heartbeat (a clock
+#: step or a forged mtime) and counts as stale, so it cannot pin the hold.
+RENEWAL_FUTURE_TOLERANCE_SECONDS = 60
 IOREG_CLAMSHELL_COMMAND = ("/usr/sbin/ioreg", "-r", "-k", "AppleClamshellState", "-d", "4")
 IOREG_SLEEP_DISABLED_COMMAND = ("/usr/sbin/ioreg", "-r", "-k", "SleepDisabled", "-d", "4")
 # True when shutting the lid puts the Mac to sleep -- no external display
@@ -88,22 +97,29 @@ def closed_lid_awake_should_hold(policy: str, *, agents_active: bool) -> bool:
     return False
 
 
-def _iokit_root_domain_bool(property_name: str) -> bool | None:
-    """Read a boolean off IOPMrootDomain in-process through IOKit — the
-    same answer ``ioreg`` prints, without forking a process for it. The
-    lid poll asked every couple of seconds, and each ``ioreg`` fork was
-    ~50 ms of CPU on an idle desk (measured 2026-09-16). None when IOKit
-    is unavailable or the property is absent; callers fall back to
-    ``ioreg`` then."""
+_IOKIT_BINDINGS = None
+_IOKIT_BINDINGS_FAILED = False
+
+
+def _iokit_bindings():
+    """IOKit and CoreFoundation, loaded and given their prototypes once.
+
+    The lid poll reads three properties on a timer, and finding and loading
+    the two frameworks again for each read (``find_library`` walks the dyld
+    cache's candidate paths) cost more than the read. None when the
+    frameworks cannot be loaded; that is remembered, so a Mac without them
+    does not retry every second."""
+    global _IOKIT_BINDINGS, _IOKIT_BINDINGS_FAILED
+    if _IOKIT_BINDINGS is not None:
+        return _IOKIT_BINDINGS
+    if _IOKIT_BINDINGS_FAILED:
+        return None
     try:
         import ctypes
         import ctypes.util
 
         iokit = ctypes.cdll.LoadLibrary(ctypes.util.find_library("IOKit"))
         cf = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreFoundation"))
-    except (OSError, TypeError, AttributeError):
-        return None
-    try:
         iokit.IOServiceMatching.restype = ctypes.c_void_p
         iokit.IOServiceMatching.argtypes = [ctypes.c_char_p]
         iokit.IOServiceGetMatchingService.restype = ctypes.c_uint32
@@ -119,6 +135,25 @@ def _iokit_root_domain_bool(property_name: str) -> bool | None:
         cf.CFGetTypeID.argtypes = [ctypes.c_void_p]
         cf.CFBooleanGetTypeID.restype = ctypes.c_ulong
         cf.CFRelease.argtypes = [ctypes.c_void_p]
+    except (OSError, TypeError, AttributeError):
+        _IOKIT_BINDINGS_FAILED = True
+        return None
+    _IOKIT_BINDINGS = (iokit, cf)
+    return _IOKIT_BINDINGS
+
+
+def _iokit_root_domain_bool(property_name: str) -> bool | None:
+    """Read a boolean off IOPMrootDomain in-process through IOKit — the
+    same answer ``ioreg`` prints, without forking a process for it. The
+    lid poll asked every couple of seconds, and each ``ioreg`` fork was
+    ~50 ms of CPU on an idle desk (measured 2026-09-16). None when IOKit
+    is unavailable or the property is absent; callers fall back to
+    ``ioreg`` then."""
+    bindings = _iokit_bindings()
+    if bindings is None:
+        return None
+    iokit, cf = bindings
+    try:
         service = iokit.IOServiceGetMatchingService(0, iokit.IOServiceMatching(b"IOPMrootDomain"))
         if not service:
             return None
@@ -449,7 +484,9 @@ def watchdog_script(renewal_path: Path, pid_path: Path | None = None) -> str:
         f"  if [ ! -f {quoted} ]; then rm -f {pidfile}; exit 0; fi\n"
         f"  now=$(date +%s)\n"
         f"  mt=$(stat -f %m {quoted} 2>/dev/null || echo 0)\n"
-        f"  if [ $((now - mt)) -gt {RENEWAL_STALE_SECONDS} ]; then\n"
+        f"  age=$((now - mt))\n"
+        f"  if [ \"$age\" -gt {RENEWAL_STALE_SECONDS} ]"
+        f" || [ \"$age\" -lt -{RENEWAL_FUTURE_TOLERANCE_SECONDS} ]; then\n"
         f"    /usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0 2>/dev/null\n"
         f"    rm -f {quoted} {pidfile}\n"
         f"    exit 0\n"
@@ -480,6 +517,7 @@ class ClosedLidAwakeController:
         self.use_system_disable = use_system_disable
         self.keep_display_awake = bool(keep_display_awake)
         self.process = None
+        self._process_display: bool | None = None
         self.changed_system_disable = False
         self.system_disable_attempted = False
         self.orphan_reclaim_attempted = False
@@ -493,6 +531,7 @@ class ClosedLidAwakeController:
             else self.renewal_path.with_name(WATCHDOG_PID_FILE_NAME)
         )
         self.watchdog_process = None
+        self._watchdog_retiring = False
         # Wired by the daemon (configure_sleep_on_release); inert otherwise,
         # so the menu-bar app and every test that builds one of these keeps
         # the release behaviour it always had.
@@ -503,6 +542,7 @@ class ClosedLidAwakeController:
         self.sleeper: Callable[[], None] | None = None
         self.wall_clock: Callable[[], float] = time.time
         self.held_since: float | None = None
+        self._pending_release_reason: str | None = None
         self.last_release_reason: str | None = None
         self.last_sleep_epoch: float | None = None
         self.last_sleep_error: str | None = None
@@ -544,10 +584,12 @@ class ClosedLidAwakeController:
         self.keep_display_awake = enabled
         was_running = self.process_running()
         if was_running:
-            errors: list[str] = []
-            self._terminate_caffeinate(errors)
             if self.last_requested:
                 self.ensure_awake()
+            else:
+                errors: list[str] = []
+                self._terminate_caffeinate(errors)
+                self.last_error = "; ".join(errors) if errors else None
 
     def update(self, policy: str, *, agents_active: bool) -> bool:
         should_hold = closed_lid_awake_should_hold(policy, agents_active=agents_active)
@@ -564,16 +606,21 @@ class ClosedLidAwakeController:
         self.last_policy = policy
         self.last_requested = should_hold
         if should_hold:
-            if not was_requested:
+            self._pending_release_reason = None
+            if self.held_since is None:
                 self.held_since = self.wall_clock()
             self.ensure_awake()
         else:
-            self.release()
             if was_requested:
-                self._after_release(
+                self._pending_release_reason = (
                     suspension
                     or ("policy" if policy_changed and policy == CLOSED_LID_AWAKE_NEVER else "agents_idle")
                 )
+            self.release()
+            if self._pending_release_reason is not None and not self.active():
+                reason = self._pending_release_reason
+                self._pending_release_reason = None
+                self._after_release(reason)
         return self.active()
 
     def _suspension(self) -> str | None:
@@ -628,17 +675,33 @@ class ClosedLidAwakeController:
         except ValueError:
             pass
 
-    def _renew_heartbeat(self, errors: list[str]) -> None:
-        """Touch the renewal file and keep the fail-safe watchdog alive."""
+    def _renewal_is_fresh(self) -> bool:
+        """True when the renewal file exists and was touched a moment ago, so
+        another touch would change nothing the watchdog can see."""
         try:
-            self.renewal_path.parent.mkdir(parents=True, exist_ok=True)
-            self.renewal_path.touch()
+            age = self.wall_clock() - self.renewal_path.stat().st_mtime
+        except OSError:
+            return False
+        return 0.0 <= age < RENEWAL_TOUCH_SECONDS
+
+    def _renew_heartbeat(self, errors: list[str]) -> bool:
+        """Touch the renewal file and keep the fail-safe watchdog alive.
+        True when both are in place, which is the only state in which
+        `disablesleep` may be turned on."""
+        if self._watchdog_retiring:
+            self._retire_watchdog(errors)
+            if self.watchdog_process is not None:
+                return False
+        try:
+            if not self._renewal_is_fresh():
+                self.renewal_path.parent.mkdir(parents=True, exist_ok=True)
+                self.renewal_path.touch()
         except OSError as exc:
             errors.append(f"renewal: {exc}")
-            return
+            return False
         watchdog = self.watchdog_process
         if watchdog is not None and watchdog.poll() is None:
-            return
+            return True
         try:
             # The script itself reclaims the role: its first act is to
             # kill the watchdog the pidfile records (same-script sanity
@@ -658,15 +721,20 @@ class ClosedLidAwakeController:
         except Exception as exc:
             self.watchdog_process = None
             errors.append(f"watchdog: {exc}")
+            return False
+        return True
 
     def ensure_awake(self) -> None:
         errors: list[str] = []
         # The heartbeat comes FIRST: even if everything below fails, a
         # running watchdog with a fresh renewal is what guarantees the
-        # system can always fall back asleep on its own.
-        self._renew_heartbeat(errors)
+        # system can always fall back asleep on its own. Without it,
+        # `disablesleep` stays off: a daemon that dies afterwards would
+        # leave a shut laptop awake with nothing to turn it back.
+        failsafe_ready = self._renew_heartbeat(errors)
         if (
-            self.use_system_disable
+            failsafe_ready
+            and self.use_system_disable
             and not self.changed_system_disable
             and not self.system_disable_attempted
         ):
@@ -679,6 +747,8 @@ class ClosedLidAwakeController:
             except Exception as exc:
                 errors.append(f"disablesleep: {exc}")
 
+        if self.process_running() and self._process_display != self.keep_display_awake:
+            self._terminate_caffeinate(errors)
         if not self.process_running():
             try:
                 self.process = self.process_factory(
@@ -686,6 +756,7 @@ class ClosedLidAwakeController:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
+                self._process_display = self.keep_display_awake
             except Exception as exc:
                 self.process = None
                 errors.append(f"caffeinate: {exc}")
@@ -694,6 +765,15 @@ class ClosedLidAwakeController:
 
     def release(self) -> None:
         errors: list[str] = []
+        self._terminate_caffeinate(errors)
+        self.release_system_disable(errors=errors)
+        if self.changed_system_disable:
+            # `disablesleep` is still on (the helper refused). The renewal
+            # file and the watchdog are the only thing left that can turn
+            # it off, so they stay: the watchdog clears it once the file
+            # goes stale, and the next release retries.
+            self.last_error = "; ".join(errors) if errors else None
+            return
         # Clean release retires the heartbeat and the watchdog pidfile;
         # any watchdog still looping exits on its next poll (marker gone
         # or pidfile no longer naming it) without touching anything.
@@ -702,9 +782,6 @@ class ClosedLidAwakeController:
         except OSError:
             pass
         self._retire_watchdog(errors)
-        self._terminate_caffeinate(errors)
-
-        self.release_system_disable(errors=errors)
 
         self.last_error = "; ".join(errors) if errors else None
 
@@ -717,33 +794,44 @@ class ClosedLidAwakeController:
         except OSError:
             pass
         process = self.watchdog_process
-        self.watchdog_process = None
         if process is None:
+            self._watchdog_retiring = False
             return
-        try:
-            if process.poll() is None:
-                process.terminate()
-                process.wait(timeout=1)
-        except Exception:
-            try:
-                process.kill()
-            except Exception as exc:
-                errors.append(f"watchdog: {exc}")
+        self._watchdog_retiring = True
+        if self._stop_process(process, "watchdog", errors):
+            self.watchdog_process = None
+            self._watchdog_retiring = False
 
     def _terminate_caffeinate(self, errors: list[str]) -> None:
         process = self.process
-        self.process = None
         if process is None:
             return
+        if self._stop_process(process, "caffeinate", errors):
+            self.process = None
+            self._process_display = None
+
+    @staticmethod
+    def _stop_process(process: object, name: str, errors: list[str]) -> bool:
+        failure = None
         try:
             if process.poll() is None:
                 process.terminate()
                 process.wait(timeout=1)
-        except Exception:
+        except Exception as exc:
+            failure = exc
             try:
                 process.kill()
+                process.wait(timeout=1)
             except Exception as exc:
-                errors.append(f"caffeinate: {exc}")
+                failure = exc
+        try:
+            if process.poll() is not None:
+                return True
+        except Exception as exc:
+            failure = exc
+        detail = str(failure) if failure is not None else "process is still running"
+        errors.append(f"{name}: could not stop: {detail}")
+        return False
 
     def release_system_disable(self, *, errors: list[str] | None = None) -> None:
         active_errors = errors if errors is not None else []
@@ -766,10 +854,12 @@ class ClosedLidAwakeController:
             # again if the helper toggles) -- ioreg is a subprocess and
             # this runs on every sync.
             if self.use_system_disable and not self.orphan_reclaim_attempted:
-                self.orphan_reclaim_attempted = True
                 try:
                     if self.sleep_disabled_reader() is True:
+                        self.changed_system_disable = True
                         self.sleep_disabled_setter(False)
+                        self.changed_system_disable = False
+                    self.orphan_reclaim_attempted = True
                 except Exception as exc:
                     active_errors.append(f"disablesleep: {exc}")
 

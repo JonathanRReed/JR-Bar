@@ -10,7 +10,11 @@ within two minutes.
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from types import SimpleNamespace
+
+import pytest
 
 from jrbar.provider_reset_events import (
     ResetDeliverySettings,
@@ -27,6 +31,7 @@ from jrbar.provider_usage_platform import (
 )
 from jrbar.provider_usage_qol import (
     RESET_TRIGGER_JUMP,
+    RESET_TRIGGER_LAPSED,
     RESET_TRIGGER_TIMING,
     confirm_reset_events,
     detect_reset_events,
@@ -100,6 +105,76 @@ def test_a_timing_reset_fires_at_once() -> None:
 
     assert [event.trigger for event in result.events] == [RESET_TRIGGER_TIMING]
     assert result.candidates == ()
+
+
+@pytest.mark.parametrize("old_delay,new_delay", [(0.0, 15.0), (0.25, 15.25), (15.0, 30.0)])
+@pytest.mark.parametrize("remaining", [96.0, 100.0])
+def test_provider_boundary_lag_is_timing(old_delay, new_delay, remaining):
+    boundary = T0 + 100
+    before = read(boundary + old_delay, lane(12.0, boundary))
+    after = read(boundary + new_delay, lane(remaining, boundary + WEEK))
+    result = step(before, after)
+    assert [event.trigger for event in result.events] == [RESET_TRIGGER_TIMING]
+    assert result.candidates == ()
+
+
+@pytest.mark.parametrize("old_delay,new_delay", [(0.0, 30.001), (31.0, 45.0), (15.0, 14.0)])
+def test_provider_boundary_lag_is_bounded_and_ordered(old_delay, new_delay):
+    boundary = T0 + 100
+    result = step(read(boundary + old_delay, lane(12.0, boundary)),
+                  read(boundary + new_delay, lane(96.0, boundary + WEEK)))
+    assert result.events == ()
+
+
+@pytest.mark.parametrize("remaining,new_boundary", [(12.0, T0 + WEEK), (96.0, T0 + 100), (100.0, T0 + WEEK)])
+def test_boundary_lag_keeps_replenishment_and_unused_guards(remaining, new_boundary):
+    boundary = T0 + 100
+    old_remaining = 100.0 if remaining == 100.0 else 12.0
+    result = step(read(boundary, lane(old_remaining, boundary)),
+                  read(boundary + 15, lane(remaining, new_boundary)))
+    assert result.events == ()
+    assert result.candidates == ()
+
+
+@pytest.mark.parametrize("provider", ["claude", "grok"])
+@pytest.mark.parametrize("account", [None, "another-account"])
+def test_boundary_lag_requires_same_known_account(provider, account):
+    boundary = T0 + 100
+    before = replace(read(boundary), provider_id=provider,
+                     lanes=(replace(lane(12.0, boundary), provider_id=provider),))
+    after = replace(read(boundary + 15, account_discriminator=account), provider_id=provider,
+                    lanes=(replace(lane(96.0, boundary + WEEK), provider_id=provider),))
+    result = step(before, after)
+    assert result.events == ()
+    assert result.candidates == ()
+
+
+@pytest.mark.parametrize("change", ["source", "instance"])
+def test_boundary_lag_requires_same_source_and_instance(change):
+    boundary = T0 + 100
+    before = read(boundary, lane(12.0, boundary))
+    after = read(boundary + 15, lane(96.0, boundary + WEEK,
+                                   source_id="other-source" if change == "source" else "claude-oauth"))
+    if change == "instance":
+        after = replace(after, source_instance_id="other-instance")
+    result = step(before, after)
+    assert result.events == ()
+    assert result.candidates == ()
+
+
+def test_boundary_lag_accepts_small_full_refill():
+    boundary = T0 + 100
+    result = step(read(boundary, lane(97.0, boundary)),
+                  read(boundary + 15, lane(100.0, boundary + WEEK)))
+    assert [event.trigger for event in result.events] == [RESET_TRIGGER_TIMING]
+    assert result.candidates == ()
+
+
+def test_boundary_lag_does_not_promote_an_advanced_but_expired_window():
+    boundary = T0 + 100
+    result = step(read(boundary, lane(12.0, boundary)),
+                  read(boundary + 15, lane(96.0, boundary + 1)))
+    assert result.events == ()
 
 
 def test_a_jump_then_a_confirming_read_gives_exactly_one_event() -> None:
@@ -290,16 +365,82 @@ def test_a_confirmation_with_a_different_reset_time_is_dropped() -> None:
     assert result.candidates == ()
 
 
-def test_a_confirmation_more_than_thirty_minutes_later_is_dropped() -> None:
+def test_a_confirmation_after_the_half_hour_still_counts_inside_the_day() -> None:
+    """A laptop that slept through the half hour the confirming read is
+    asked for must not lose the reset: the late read shows the same
+    replenishment and the same boundary, so it confirms, stamped now."""
     before = read(T0, lane(10.0, T0 + 3 * 86400))
     jumped = read(T0 + 120, lane(100.0, T0 + 120 + WEEK))
     first = step(before, jumped)
 
-    stale = read(T0 + 120 + 1801, lane(98.0, T0 + 120 + WEEK))
-    result = step(jumped, stale, candidates=first.candidates)
+    late = read(T0 + 120 + 1801, lane(98.0, T0 + 120 + WEEK))
+    result = step(jumped, late, candidates=first.candidates)
+
+    assert [event.trigger for event in result.events] == [RESET_TRIGGER_JUMP]
+    assert result.events[0].event_id == first.candidates[0].event_id
+    assert result.events[0].occurred_at == late.observed_at
+    assert result.candidates == ()
+
+
+def test_a_confirmation_after_a_day_is_dropped() -> None:
+    from jrbar.provider_usage_qol import RESET_CANDIDATE_LIFETIME_S
+
+    before = read(T0, lane(10.0, T0 + 3 * 86400))
+    jumped = read(T0 + 120, lane(100.0, T0 + 120 + WEEK))
+    first = step(before, jumped)
+
+    ancient = read(
+        T0 + 120 + RESET_CANDIDATE_LIFETIME_S + 1, lane(98.0, T0 + 120 + WEEK)
+    )
+    result = step(jumped, ancient, candidates=first.candidates)
 
     assert result.events == ()
     assert result.candidates == ()
+
+
+def test_a_reset_seen_after_the_old_window_was_quoted_past_its_boundary_is_confirmed() -> None:
+    """2026-10-06: Claude's weekly boundary passed at 11:00, but the source
+    kept quoting the ended window (6% left, boundary in the past) until the
+    next message opened a new one, seven hours later. The boundary was not
+    BETWEEN the two reads, and a refill under 50 points is no jump, so a
+    reset that did not start from near-empty was never seen at all."""
+    boundary = T0 - 7 * 3600
+    # The last read before the new window still quotes the ended one.
+    quoted = read(T0, lane(60.0, boundary))
+    refilled = read(T0 + 120, lane(100.0, T0 + 120 + WEEK - 30))
+
+    first = step(quoted, refilled)
+    assert first.events == ()
+    assert [candidate.trigger for candidate in first.candidates] == [RESET_TRIGGER_LAPSED]
+
+    confirm = read(T0 + 120 + 300, lane(97.0, T0 + 120 + WEEK - 30))
+    second = step(refilled, confirm, candidates=first.candidates)
+    assert [event.trigger for event in second.events] == [RESET_TRIGGER_LAPSED]
+    assert second.events[0].reset_boundary == boundary
+    assert second.candidates == ()
+
+    # A stale read the daemon re-stamped as new is the same ended window.
+    restamped = read(T0, lane(60.0, boundary), state=ProviderSourceState.STALE)
+    assert len(step(restamped, refilled).candidates) == 1
+
+
+def test_a_lapsed_window_that_barely_moves_or_comes_back_is_not_a_reset() -> None:
+    boundary = T0 - 7 * 3600
+    quoted = read(T0, lane(60.0, boundary))
+
+    # A small rise is drift, and a window that opened full is nearly full.
+    nudged = read(T0 + 120, lane(63.0, T0 + 120 + WEEK))
+    assert step(quoted, nudged).candidates == ()
+    halfway = read(T0 + 120, lane(85.0, T0 + 120 + WEEK))
+    assert step(quoted, halfway).candidates == ()
+
+    # A confirming read that gives the refill back contradicts it.
+    refilled = read(T0 + 120, lane(100.0, T0 + 120 + WEEK))
+    first = step(quoted, refilled)
+    assert len(first.candidates) == 1
+    back = read(T0 + 400, lane(61.0, boundary))
+    result = step(refilled, back, candidates=first.candidates)
+    assert result.events == () and result.candidates == ()
 
 
 def test_a_rolling_unused_weekly_window_is_never_a_reset() -> None:
@@ -511,3 +652,45 @@ def test_the_usage_apply_reads_the_same_state_and_asks_for_the_confirming_read()
     }
     assert {"reset_delivery_state", "note_reset_candidates", "confirm_reset_events"} <= called
     assert "load_reset_delivery_state" not in called
+
+
+@pytest.mark.parametrize("change", ["source", "account_label"])
+def test_confirmation_rejects_changed_source_or_account_label(change):
+    scheduled = T0 + 3 * 86400
+    before = read(T0, lane(10.0, scheduled), account_label="synthetic-original")
+    raised = read(T0 + 120, lane(100.0, T0 + 120 + WEEK), account_label="synthetic-original")
+    first = step(before, raised)
+    assert len(first.candidates) == 1
+    restored = decode_reset_delivery_state(encode_reset_delivery_state(
+        with_reset_candidates(ResetDeliveryState(), first.candidates)))
+    confirming = read(
+        T0 + 240,
+        lane(100.0, T0 + 120 + WEEK,
+             source_id="synthetic-replacement" if change == "source" else "claude-oauth"),
+        account_label="synthetic-replacement" if change == "account_label" else "synthetic-original",
+    )
+    result = step(raised, confirming, candidates=restored.candidates)
+    assert result.events == ()
+    assert result.candidates == ()
+
+
+@pytest.mark.parametrize("provider", ["cursor", "devin", "gemini", "antigravity", "opencode", "factory", "kimi", "kilo"])
+def test_every_provider_rejects_a_changed_account_discriminator(provider):
+    def snapshot(at, remaining, boundary, account):
+        return replace(read(at, lane(remaining, boundary)), provider_id=provider,
+                       account_discriminator=account,
+                       lanes=(replace(lane(remaining, boundary), provider_id=provider),))
+    result = step(snapshot(T0, 10.0, T0 + 100, "synthetic-first"),
+                  snapshot(T0 + 200, 100.0, T0 + WEEK, "synthetic-second"))
+    assert result.events == ()
+    assert result.candidates == ()
+
+
+def test_persisted_candidate_without_source_evidence_is_discarded():
+    first = step(read(T0, lane(10.0, T0 + 3 * 86400)),
+                 read(T0 + 120, lane(100.0, T0 + 120 + WEEK)))
+    raw = json.loads(encode_reset_delivery_state(with_reset_candidates(ResetDeliveryState(), first.candidates)))
+    for item in raw["candidates"]:
+        item.pop("source_id", None)
+        item.pop("account_label", None)
+    assert decode_reset_delivery_state(json.dumps(raw)).candidates == ()

@@ -15,7 +15,9 @@ exactly this reason). The jobs, all AppKit-free enough to test:
 
 from __future__ import annotations
 
+import threading
 import time
+from collections.abc import Callable
 
 from .product_identity import PRODUCT_DISPLAY_NAME
 from .provider_reset_events import (
@@ -24,12 +26,55 @@ from .provider_reset_events import (
     ResetChannelReceipt,
 )
 
+# The first NSSound of a session starts the audio stack, which held the
+# daemon's run loop for more than five seconds on 2026-10-07 (a watchdog line
+# naming this very call). The default player runs on its own thread and the
+# run loop waits only this long for its answer.
+SOUND_HANDOFF_SECONDS = 0.25
+_reset_sound = None
+
 
 def _play_reset_sound() -> bool:
+    global _reset_sound
     from AppKit import NSSound
 
     sound = NSSound.soundNamed_("Glass")
+    # Held, so a sound that is still playing is not released under itself.
+    _reset_sound = sound
     return bool(sound is not None and sound.play())
+
+
+def _start_sound_thread(job: Callable[[], None]) -> None:
+    threading.Thread(target=job, name="JRBarResetSound", daemon=True).start()
+
+
+def play_reset_sound_off_loop(
+    *,
+    play: Callable[[], bool] | None = None,
+    start: Callable[[Callable[[], None]], None] = _start_sound_thread,
+    wait_seconds: float = SOUND_HANDOFF_SECONDS,
+) -> bool:
+    """Play the reset sound without holding the caller for the audio stack.
+
+    Returns what the player said when it answers inside ``wait_seconds``. A
+    sound still loading by then is on its way: that counts as played, and a
+    failure after the hand-off has nobody left to tell."""
+    player = play or _play_reset_sound
+    done = threading.Event()
+    played = [False]
+
+    def job() -> None:
+        try:
+            played[0] = bool(player())
+        except Exception:
+            played[0] = False
+        finally:
+            done.set()
+
+    start(job)
+    if done.wait(max(0.0, wait_seconds)):
+        return played[0]
+    return True
 
 
 def deliver_reset_channels(
@@ -127,7 +172,7 @@ def deliver_reset_channels(
                 if quiet:
                     outcome, reason = ResetChannelOutcome.SUPPRESSED, "quiet_active"
                 else:
-                    player = sound_player or _play_reset_sound
+                    player = sound_player or play_reset_sound_off_loop
                     if player():
                         outcome, reason = ResetChannelOutcome.DELIVERED, "played"
                     else:
@@ -156,22 +201,22 @@ def alert_connection_loss(
     from .provider_reconnect import connection_loss_transitions
 
     try:
-        from .provider_reconnect import _LOST_STALE_REASONS
+        from .provider_reconnect import _LOST_STALE_REASONS, _connection_loss_scope
 
         healthy_now = {
-            snapshot.provider_id
+            _connection_loss_scope(snapshot)
             for snapshot in state.snapshots
             if getattr(snapshot.state, "value", None) in ("ready", "stale")
             # A stale-served live failure is NOT recovered: pruning its
             # seen key here would re-announce the same loss every apply.
             and getattr(snapshot, "reason_code", None) not in _LOST_STALE_REASONS
         }
-        # A recovery re-arms the announcement: losing the same provider
+        # A recovery re-arms only its own profile: losing it
         # next week deserves its own cue.
         seen = tuple(
             key
             for key in getattr(controller, "_jrbar_seen_connection_losses", ())
-            if key.split(":", 1)[0] not in healthy_now
+            if key.rsplit(":", 1)[0] not in healthy_now
         )
         events = connection_loss_transitions(
             previous_state.snapshots,
@@ -223,14 +268,14 @@ def _clock_words(epoch: float, now: float) -> str:
 def _pace_event_fields(state, key: str, provider_id: str, label: str, *, now: float) -> dict:
     """The ``quota_pace`` event for one alert: the lane, how much is left,
     when it runs out at this rate and when it resets, in History's words."""
-    from .usage_pace import PACE_OUT, lane_pace
+    from .usage_pace import PACE_OUT, lane_pace, pace_window_key
 
     fields: dict = {"provider": provider_id, "label": label}
     for snapshot in getattr(state, "snapshots", ()):
         if snapshot.provider_id != provider_id:
             continue
         for lane in getattr(snapshot, "lanes", ()):
-            if f"{provider_id}:{lane.lane_id}:{int(lane.reset_at or 0)}" != key:
+            if pace_window_key(snapshot, lane) != key:
                 continue
             reading = lane_pace(
                 remaining_percent=lane.remaining_percent,
@@ -239,6 +284,7 @@ def _pace_event_fields(state, key: str, provider_id: str, label: str, *, now: fl
                 now=now,
             )
             fields["lane"] = lane.lane_id
+            fields["instance"] = getattr(snapshot, "source_instance_id", "default")
             fields["remaining_percent"] = lane.remaining_percent
             fields["resets_at"] = lane.reset_at
             resets = f"resets {_clock_words(lane.reset_at, now)}" if lane.reset_at else None

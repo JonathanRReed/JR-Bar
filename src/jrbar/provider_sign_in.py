@@ -197,7 +197,7 @@ class ProviderSignIn:
             return SignInResult("unavailable", reread.message)
         if provider == "claude":
             # 2. Ask Claude Code to renew its own sign-in; else 3.
-            renewed = self._renew_claude(reread)
+            renewed = self._renew_claude(reread, reason_code=reason_code)
             if renewed is not None:
                 return renewed
             return self._open_sign_in_terminal(provider, reread, terminal)
@@ -269,7 +269,9 @@ class ProviderSignIn:
             return self._fingerprint()
         return credential_fingerprint(self._home(), "claude", fresh=True)
 
-    def _renew_claude(self, reread: ResignInResult) -> SignInResult | None:
+    def _renew_claude(
+        self, reread: ResignInResult, *, reason_code: str | None = None
+    ) -> SignInResult | None:
         """The quiet renewal. ``None`` means "fall through to the terminal":
         the CLI is missing, says it is not logged in, or the call did not
         renew anything. A result is final."""
@@ -338,9 +340,15 @@ class ProviderSignIn:
         # Claude Code saved a new sign-in: copy the fresh access token into
         # JR-Bar's own store so the forced refresh reads it at once.
         try:
-            self._reconnect("claude", "default")
+            copied = self._reconnect("claude", "default", reason_code=reason_code)
         except Exception:
-            pass
+            return SignInResult(
+                "failed",
+                "Claude Code's sign-in changed, but JR-Bar could not copy it. "
+                "Reconnect Claude to try again.",
+            )
+        if copied.outcome not in (RepairOutcome.REPAIRED, RepairOutcome.ALREADY_HEALTHY):
+            return SignInResult("unavailable", copied.message, sign_in_url=copied.sign_in_url)
         return SignInResult(
             "renewed",
             "Claude Code renewed its sign-in, so Claude usage is refreshing now.",

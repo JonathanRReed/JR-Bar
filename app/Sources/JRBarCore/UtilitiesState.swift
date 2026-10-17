@@ -19,10 +19,6 @@ public struct UtilitiesState: Codable, Equatable, Sendable {
     /// The Agent Overview utility's card: per-provider alert rules and
     /// "quiet while you watch" (docs/UTILITIES.md).
     public var agents: AgentOverviewSettings
-    public var dataHoarderEnabled: Bool
-    /// The hoarder's capture dials — which sources stream in, whether full
-    /// content is consented to, and the pause switch.
-    public var dataHoarder: DataHoarderSettings
     /// What the ⌘⇧K palette has been used for — the frecency behind its
     /// Suggestions and its ranking. Per-Mac habit, so it rides the same
     /// file as the rest of the page's remembered state.
@@ -30,20 +26,16 @@ public struct UtilitiesState: Codable, Equatable, Sendable {
 
     public init(enabled: Bool = true, menuBar: MenuBarSettings = MenuBarSettings(),
                 dock: DockSettings = DockSettings(),
-                agents: AgentOverviewSettings = AgentOverviewSettings(),
-                dataHoarderEnabled: Bool = false,
-                dataHoarder: DataHoarderSettings = DataHoarderSettings()) {
+                agents: AgentOverviewSettings = AgentOverviewSettings()) {
         self.enabled = enabled
         self.menuBar = menuBar
         self.dock = dock
         self.agents = agents
-        self.dataHoarderEnabled = dataHoarderEnabled
-        self.dataHoarder = dataHoarder
     }
 
-    private enum CodingKeys: String, CodingKey { case enabled, menuBar, dock, agents, dataHoarderEnabled, dataHoarder
-        case commandUses
-    }
+    /// `dataHoarderEnabled` and `dataHoarder` were the retired Data Hoarder's
+    /// keys; an older file may still carry them and they are ignored.
+    private enum CodingKeys: String, CodingKey { case enabled, menuBar, dock, agents, commandUses }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -51,53 +43,7 @@ public struct UtilitiesState: Codable, Equatable, Sendable {
         menuBar = (try? c.decodeIfPresent(MenuBarSettings.self, forKey: .menuBar)) ?? MenuBarSettings()
         dock = (try? c.decodeIfPresent(DockSettings.self, forKey: .dock)) ?? DockSettings()
         agents = (try? c.decodeIfPresent(AgentOverviewSettings.self, forKey: .agents)) ?? AgentOverviewSettings()
-        dataHoarderEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .dataHoarderEnabled)) ?? false
-        dataHoarder = (try? c.decodeIfPresent(DataHoarderSettings.self, forKey: .dataHoarder)) ?? DataHoarderSettings()
         commandUses = (try? c.decodeIfPresent(PaletteUsage.self, forKey: .commandUses)) ?? PaletteUsage()
-    }
-}
-
-/// The Data Hoarder's capture settings. `captureSources` maps source id →
-/// "Capture new activity" — only listed ids run watchers, and nothing runs
-/// while the utility is off or `paused` is set. `fullContent` is the
-/// explicit prompt/response consent: off stores each segment's structural
-/// redacted form instead.
-public struct DataHoarderSettings: Codable, Equatable, Sendable {
-    public var captureSources: [String: Bool]
-    public var fullContent: Bool
-    public var paused: Bool
-    /// Days a trashed record is kept before the archive purges it. nil keeps
-    /// trash forever — retention only ever deletes what the user deleted.
-    public var trashRetentionDays: Int?
-    /// Days of pre-existing files a source's first capture scan reads from
-    /// their start; older files are only positioned, and everything after
-    /// is followed live. nil reads nothing that predates the capture.
-    public var backfillDays: Int?
-
-    public init(captureSources: [String: Bool] = [:], fullContent: Bool = false,
-                paused: Bool = false, trashRetentionDays: Int? = nil, backfillDays: Int? = nil) {
-        self.captureSources = captureSources
-        self.fullContent = fullContent
-        self.paused = paused
-        self.trashRetentionDays = trashRetentionDays
-        self.backfillDays = backfillDays
-    }
-
-    public var enabledSources: [String] {
-        captureSources.filter(\.value).map(\.key).sorted()
-    }
-
-    private enum CodingKeys: String, CodingKey { case captureSources, fullContent, paused, trashRetentionDays, backfillDays }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        captureSources = (try? c.decodeIfPresent([String: Bool].self, forKey: .captureSources)) ?? [:]
-        fullContent = (try? c.decodeIfPresent(Bool.self, forKey: .fullContent)) ?? false
-        paused = (try? c.decodeIfPresent(Bool.self, forKey: .paused)) ?? false
-        let days = (try? c.decodeIfPresent(Int.self, forKey: .trashRetentionDays)) ?? nil
-        trashRetentionDays = (days ?? 0) > 0 ? days : nil
-        let backfill = (try? c.decodeIfPresent(Int.self, forKey: .backfillDays)) ?? nil
-        backfillDays = (backfill ?? 0) > 0 ? backfill : nil
     }
 }
 
@@ -134,6 +80,8 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     public var sections: [String: MenuBarItemSection]
     /// The pointer entering the menu bar row reveals the hidden run.
     public var revealOnHover: Bool
+    public var hoverRevealSeconds: Double
+    public var hoverHideSeconds: Double
     /// A click on empty menu bar space — one that lands on no item
     /// frame — reveals it.
     public var revealOnClick: Bool
@@ -145,8 +93,9 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// How a reveal ends: on the `rehideSeconds` clock, or only when a
     /// click lands off the bar (Bartender's "show until clicked").
     public var rehideMode: RehideMode
-    /// Where a reveal surfaces the hidden run — the Item Bar panel
-    /// (Bartender) or inline on the row (Ice, Hidden Bar).
+    /// Where a reveal surfaces the hidden run — inline on the row (Ice,
+    /// Hidden Bar; the default, so a hidden item is drawn and can be
+    /// ⌘-dragged back) or the Item Bar panel (Bartender).
     public var revealStyle: RevealStyle
     /// Bartender Golden Gate's swap: while a reveal is out, the
     /// normally-shown items are covered too — the bar shows only the
@@ -178,22 +127,16 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// (`MenuBarHotkeys.standard`) — the card materializes the list the
     /// first time a binding is toggled.
     public var hotkeyBindings: [MenuBarHotkeyBinding]
+    public var itemHotkeyBindings: [MenuBarItemHotkeyBinding]
     /// The trigger rules — "when X, do Y" rows evaluated by the app's
     /// trigger engine.
     public var triggerRules: [MenuBarTriggerRule]
-    /// The concealer's map (macOS 27): bundle identifier → hidden or
-    /// always-hidden. An unlisted app is shown. Per application, not
-    /// per item — the agent conceals by process, and it reorders the
-    /// bar on its own, so a position can never be the setting.
+    /// The record of where the bar's positions put each app: bundle
+    /// identifier → hidden or always-hidden. An unlisted app is shown.
+    /// Position is the setting; this only remembers it, per application,
+    /// so a newcomer is told from an app the bar already knows. Nothing
+    /// hides an app on this map's say-so.
     public var concealedApps: [String: MenuBarItemSection]
-    /// Whether `concealedApps` was seeded once from the spacer model's
-    /// plan — the apps left of the JR-Bar icon at the first run.
-    public var concealSeeded: Bool
-    /// Use the agent's concealment even from a build that is not
-    /// notarized — where the agent hides JR-Bar's own icon along with
-    /// the rest (measured: an allowlisted app stays only when it passes
-    /// Gatekeeper). Off, an unnotarized build falls back to the spacer.
-    public var concealUnnotarized: Bool
     /// The system-wide status-item gap — Bartender's "reduce spacing"
     /// verbatim (it writes NSStatusItemSpacing into the current-host
     /// global domain; items pick it up as they launch). 0 leaves the
@@ -210,20 +153,14 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// Items the front app's menus overdraw are unreachable the same
     /// way: they plan hidden instead of sitting behind menu text.
     public var hideOnMenuOverlap: Bool
-    /// Extra fixed-width status items carrying a text label — the
-    /// spacer rows Bartender scatters through the bar. Each is born
-    /// visible like the chevron; its click reveals the hidden run.
-    public var spacers: [Spacer]
     /// A tint panel drawn under the whole menu bar row — the full-bar
     /// underlay, same material dials as the covers.
     public var barUnderlay: Bool
-    /// A status item mirroring the agent feed's state dot; its click
-    /// opens the Overview.
-    public var agentStatusItem: Bool
-    /// One status item standing in for the Control Center items it
-    /// covers — battery, Wi-Fi, sound, Focus — whose system items are
-    /// hidden through the Control Center defaults while this is on.
-    public var combinedSystemItem: Bool
+    /// The retired extras this file still asked for — "combined",
+    /// "agents", "spacers" — said once in plain words at launch, then
+    /// emptied. A file from before the one-item decision lists them by
+    /// what its old keys held.
+    public var retiredExtras: [String]
     /// Display number → profile name: the profile follows the screen
     /// the pointer is on.
     public var displayProfiles: [String: String]
@@ -236,6 +173,17 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// (`MenuBarActionsModel.swift`).
     public var curation: MenuBarCuration = MenuBarCuration()
 
+    /// Search-name edits refresh search results without reapplying hiding.
+    public func requiresReapply(comparedTo previous: MenuBarSettings) -> Bool {
+        var current = self
+        var previous = previous
+        current.curation.searchNames = [:]
+        previous.curation.searchNames = [:]
+        current.itemHotkeyBindings = []
+        previous.itemHotkeyBindings = []
+        return current != previous
+    }
+
     /// The cover's visual-effect material, persisted as its raw name so
     /// a newer build's materials keep their data.
     public enum CoverMaterial: String, Codable, CaseIterable, Sendable {
@@ -247,8 +195,8 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     }
 
     /// Where a reveal puts the hidden run. `.bar` opens the Item Bar —
-    /// Bartender's model: the menu bar itself never reflows, the
-    /// concealment assertion holds, nothing flaps. `.inline` drops the
+    /// Bartender's model: the menu bar itself never reflows, nothing
+    /// flaps. `.inline` drops the
     /// covers so the run reflows onto the row — Ice and Hidden Bar's
     /// model.
     public enum RevealStyle: String, Codable, CaseIterable, Sendable {
@@ -268,19 +216,17 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         case focusChange
     }
 
-    /// A named preset: the section map — and under the concealer the
-    /// per-app concealment map — plus the cover's appearance, the
-    /// reveal's style and clock, the item spacing and the spacer items,
+    /// A named preset: the section map plus the cover's appearance, the
+    /// reveal's style and clock and the item spacing,
     /// captured at save time. Triggers and hotkeys are deliberately
     /// not the profile's business — they are machine-local.
     public struct Profile: Codable, Equatable, Sendable, Identifiable {
         public var id: String
         public var name: String
         public var sections: [String: MenuBarItemSection]
-        /// The concealer's map: bundle identifier → section. Profiles
-        /// saved before the field existed decode to an empty map —
-        /// applying one then leaves the concealed set alone no more
-        /// than any other field it never carried.
+        /// The record's deltas: bundle identifier → section. A profile
+        /// saved with per-app picks keeps them in the file; nothing hides
+        /// an app on their say-so any more, and the editor writes none.
         public var concealedApps: [String: MenuBarItemSection]
         public var coverMaterial: CoverMaterial
         public var coverTint: String
@@ -295,8 +241,6 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         public var rehideSeconds: Double
         /// The system-wide status-item gap — 0 is the system default.
         public var itemSpacing: Int
-        /// The labelled spacer items — they are layout, like the cover.
-        public var spacers: [Spacer]
 
         public init(id: String, name: String,
                     sections: [String: MenuBarItemSection] = [:],
@@ -309,8 +253,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                     revealStyle: RevealStyle = .bar,
                     rehideMode: RehideMode = .timed,
                     rehideSeconds: Double = MenuBarSettings.defaultRehideSeconds,
-                    itemSpacing: Int = 0,
-                    spacers: [Spacer] = []) {
+                    itemSpacing: Int = 0) {
             self.id = id
             self.name = name
             self.sections = sections
@@ -324,13 +267,12 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
             self.rehideMode = rehideMode
             self.rehideSeconds = MenuBarSettings.clampedRehide(rehideSeconds)
             self.itemSpacing = max(0, itemSpacing)
-            self.spacers = spacers
         }
 
         private enum CodingKeys: String, CodingKey {
             case id, name, sections, concealedApps, coverMaterial, coverTint
             case coverTintOpacity, coverRoundness, showCoverSeparator
-            case revealStyle, rehideMode, rehideSeconds, itemSpacing, spacers
+            case revealStyle, rehideMode, rehideSeconds, itemSpacing
         }
 
         /// Tolerant like the settings themselves: a key a build never
@@ -365,22 +307,6 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 (try? c.decodeIfPresent(Double.self, forKey: .rehideSeconds))
                     ?? MenuBarSettings.defaultRehideSeconds)
             itemSpacing = max(0, (try? c.decodeIfPresent(Int.self, forKey: .itemSpacing)) ?? 0)
-            spacers = (try? c.decodeIfPresent([Spacer].self, forKey: .spacers)) ?? []
-        }
-    }
-
-    /// A spacer item: a fixed-width status item carrying a text label.
-    /// `width` 0 hugs the label's own measure.
-    public struct Spacer: Codable, Equatable, Sendable, Identifiable {
-        public var id: String
-        public var label: String
-        public var width: Double
-
-        public init(id: String = UUID().uuidString, label: String = "",
-                    width: Double = 0) {
-            self.id = id
-            self.label = label
-            self.width = max(0, width)
         }
     }
 
@@ -391,12 +317,16 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     public static let itemSpacingRange: ClosedRange<Double> = 0...24
     /// The default reveal window.
     public static let defaultRehideSeconds: Double = 4
+    public static let defaultHoverRevealSeconds: Double = 0.18
+    public static let defaultHoverHideSeconds: Double = 0.25
+    public static let hoverRevealRange: ClosedRange<Double> = 0.05...1.5
+    public static let hoverHideRange: ClosedRange<Double> = 0.1...3
     /// The hiding model this build writes: 2 is positional sections
     /// with overrides; 0 (or absent with a map) is the cover era's
     /// all-covered map, cleared once on first apply.
-    /// Model 3: the concealer's first-run seed hid whatever sat left of
-    /// the boundary without asking — the map it wrote is cleared once,
-    /// and nothing is concealed until the person picks or drags it.
+    /// Model 3: a first-run seed hid whatever sat left of the boundary
+    /// without asking — the map it wrote is cleared once, and nothing is
+    /// hidden until the person picks or drags it.
     /// Model 4: the newcomer sweep is gone too — no bundle ever joins
     /// the map on its own. Cleared again so a seed-era map (and any
     /// auto-hid newcomers it gathered) resets to the stock bar.
@@ -411,8 +341,10 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 sections: [String: MenuBarItemSection] = [:],
                 revealOnHover: Bool = true, revealOnClick: Bool = true, revealOnScroll: Bool = true,
                 rehideSeconds: Double = MenuBarSettings.defaultRehideSeconds,
+                hoverRevealSeconds: Double = MenuBarSettings.defaultHoverRevealSeconds,
+                hoverHideSeconds: Double = MenuBarSettings.defaultHoverHideSeconds,
                 rehideMode: RehideMode = .timed,
-                revealStyle: RevealStyle = .bar,
+                revealStyle: RevealStyle = .inline,
                 hideShownWhileRevealing: Bool = false,
                 layoutModel: Int = MenuBarSettings.currentLayoutModel,
                 coverMaterial: CoverMaterial = .blend, coverTint: String = "",
@@ -420,18 +352,15 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 coverRoundness: Double = 0, showCoverSeparator: Bool = false,
                 profiles: [Profile] = [],
                 hotkeyBindings: [MenuBarHotkeyBinding] = [],
+                itemHotkeyBindings: [MenuBarItemHotkeyBinding] = [],
                 triggerRules: [MenuBarTriggerRule] = [],
                 concealedApps: [String: MenuBarItemSection] = [:],
-                concealSeeded: Bool = false,
-                concealUnnotarized: Bool = false,
                 itemSpacing: Int = 0,
                 itemSpacingManaged: Bool = false,
                 hideUnderNotch: Bool = true,
                 hideOnMenuOverlap: Bool = true,
-                spacers: [Spacer] = [],
                 barUnderlay: Bool = false,
-                agentStatusItem: Bool = false,
-                combinedSystemItem: Bool = false,
+                retiredExtras: [String] = [],
                 displayProfiles: [String: String] = [:],
                 showForUpdates: Bool = false) {
         self.enabled = enabled
@@ -441,6 +370,8 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.revealOnClick = revealOnClick
         self.revealOnScroll = revealOnScroll
         self.rehideSeconds = Self.clampedRehide(rehideSeconds)
+        self.hoverRevealSeconds = Self.clampedHoverReveal(hoverRevealSeconds)
+        self.hoverHideSeconds = Self.clampedHoverHide(hoverHideSeconds)
         self.rehideMode = rehideMode
         self.revealStyle = revealStyle
         self.hideShownWhileRevealing = hideShownWhileRevealing
@@ -452,20 +383,37 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.showCoverSeparator = showCoverSeparator
         self.profiles = profiles
         self.hotkeyBindings = hotkeyBindings
+        self.itemHotkeyBindings = MenuBarItemHotkeyBinding.rejectingDuplicates(itemHotkeyBindings)
         self.triggerRules = triggerRules
         self.concealedApps = concealedApps
-        self.concealSeeded = concealSeeded
-        self.concealUnnotarized = concealUnnotarized
         self.itemSpacing = max(0, itemSpacing)
         self.itemSpacingManaged = itemSpacingManaged
         self.hideUnderNotch = hideUnderNotch
         self.hideOnMenuOverlap = hideOnMenuOverlap
-        self.spacers = spacers
         self.barUnderlay = barUnderlay
-        self.agentStatusItem = agentStatusItem
-        self.combinedSystemItem = combinedSystemItem
+        self.retiredExtras = retiredExtras
         self.displayProfiles = displayProfiles
         self.showForUpdates = showForUpdates
+    }
+
+    /// The names of the retired extras a file still asked for, in the
+    /// order the launch notice says them.
+    static func retiredExtras(combined: Bool, agents: Bool, spacers: Bool) -> [String] {
+        var out: [String] = []
+        if combined { out.append("combined") }
+        if agents { out.append("agents") }
+        if spacers { out.append("spacers") }
+        return out
+    }
+
+    public static func clampedHoverReveal(_ value: Double) -> Double {
+        guard value.isFinite else { return defaultHoverRevealSeconds }
+        return min(hoverRevealRange.upperBound, max(hoverRevealRange.lowerBound, value))
+    }
+
+    public static func clampedHoverHide(_ value: Double) -> Double {
+        guard value.isFinite else { return defaultHoverHideSeconds }
+        return min(hoverHideRange.upperBound, max(hoverHideRange.lowerBound, value))
     }
 
     static func clampedRehide(_ value: Double) -> Double {
@@ -502,17 +450,28 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, provider, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, rehideMode, revealStyle, hideShownWhileRevealing, layoutModel
+        case hoverRevealSeconds, hoverHideSeconds
         case coverMaterial, coverTint, coverTintOpacity, coverRoundness, showCoverSeparator
-        case profiles, hotkeyBindings, triggerRules
-        case concealedApps, concealSeeded, concealUnnotarized, itemSpacing, itemSpacingManaged
-        case hideUnderNotch, hideOnMenuOverlap, spacers, barUnderlay
-        case agentStatusItem, combinedSystemItem, displayProfiles, showForUpdates
+        case profiles, hotkeyBindings, itemHotkeyBindings, triggerRules
+        case concealedApps, itemSpacing, itemSpacingManaged
+        case hideUnderNotch, hideOnMenuOverlap, barUnderlay
+        case retiredExtras, displayProfiles, showForUpdates
         case curation
-        // Retired keys — e.g. `combinedStatusItem`, replaced by
-        // `combinedSystemItem`, and the old Arrange action's
-        // `arrangeOrder` — are simply unlisted: decode ignores them,
+        // Retired keys — the old Arrange action's `arrangeOrder`, and the
+        // extra status items (`spacers`, `agentStatusItem`,
+        // `combinedSystemItem`, see `LegacyKeys`) — are simply unlisted:
         // encode never writes them.
     }
+
+    /// The keys of the extra status items JR-Bar no longer draws. They are
+    /// read, never written: a file that had one on becomes the face segment
+    /// (`faceSystemReadout`) or a one-time line (`retiredExtras`).
+    private enum LegacyKeys: String, CodingKey {
+        case spacers, agentStatusItem, combinedSystemItem
+    }
+
+    /// A spacer row's shape does not matter, only that a row existed.
+    private struct AnyRow: Decodable {}
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -523,12 +482,16 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         let raw = (try? c.decodeIfPresent([String: String].self, forKey: .sections)) ?? [:]
         sections = raw.compactMapValues { MenuBarItemSection(rawValue: $0) }
         revealOnHover = (try? c.decodeIfPresent(Bool.self, forKey: .revealOnHover)) ?? true
+        hoverRevealSeconds = Self.clampedHoverReveal(
+            (try? c.decodeIfPresent(Double.self, forKey: .hoverRevealSeconds)) ?? Self.defaultHoverRevealSeconds)
+        hoverHideSeconds = Self.clampedHoverHide(
+            (try? c.decodeIfPresent(Double.self, forKey: .hoverHideSeconds)) ?? Self.defaultHoverHideSeconds)
         revealOnClick = (try? c.decodeIfPresent(Bool.self, forKey: .revealOnClick)) ?? true
         revealOnScroll = (try? c.decodeIfPresent(Bool.self, forKey: .revealOnScroll)) ?? true
         rehideSeconds = Self.clampedRehide(
             (try? c.decodeIfPresent(Double.self, forKey: .rehideSeconds)) ?? Self.defaultRehideSeconds)
         rehideMode = (try? c.decodeIfPresent(RehideMode.self, forKey: .rehideMode)) ?? .timed
-        revealStyle = (try? c.decodeIfPresent(RevealStyle.self, forKey: .revealStyle)) ?? .bar
+        revealStyle = (try? c.decodeIfPresent(RevealStyle.self, forKey: .revealStyle)) ?? .inline
         hideShownWhileRevealing = (try? c.decodeIfPresent(Bool.self, forKey: .hideShownWhileRevealing)) ?? false
         // Absent with a map present means a file from the cover era —
         // the map is cleared on first apply. Absent with no map has
@@ -545,6 +508,9 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         profiles = (try? c.decodeIfPresent([Profile].self, forKey: .profiles)) ?? []
         hotkeyBindings = (try? c.decodeIfPresent([MenuBarHotkeyBinding].self,
                                                  forKey: .hotkeyBindings)) ?? []
+        let itemRows = ((try? c.decodeIfPresent([LossyElement<MenuBarItemHotkeyBinding>].self,
+                                              forKey: .itemHotkeyBindings)) ?? []).compactMap(\.value)
+        itemHotkeyBindings = MenuBarItemHotkeyBinding.rejectingDuplicates(itemRows)
         // Per-element lossy decode: a rule written by a build that knows
         // an action this one doesn't drops *that rule*, not the list.
         triggerRules = ((try? c.decodeIfPresent([LossyElement<MenuBarTriggerRule>].self,
@@ -552,18 +518,19 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
             .compactMap(\.value)
         let rawApps = (try? c.decodeIfPresent([String: String].self, forKey: .concealedApps)) ?? [:]
         concealedApps = rawApps.compactMapValues { MenuBarItemSection(rawValue: $0) }
-        concealSeeded = (try? c.decodeIfPresent(Bool.self, forKey: .concealSeeded)) ?? false
-        concealUnnotarized = (try? c.decodeIfPresent(Bool.self, forKey: .concealUnnotarized)) ?? false
         let spacing = (try? c.decodeIfPresent(Int.self, forKey: .itemSpacing)) ?? 0
         itemSpacing = max(0, spacing)
         itemSpacingManaged = (try? c.decodeIfPresent(Bool.self, forKey: .itemSpacingManaged))
             ?? (spacing > 0)
         hideUnderNotch = (try? c.decodeIfPresent(Bool.self, forKey: .hideUnderNotch)) ?? true
         hideOnMenuOverlap = (try? c.decodeIfPresent(Bool.self, forKey: .hideOnMenuOverlap)) ?? true
-        spacers = (try? c.decodeIfPresent([Spacer].self, forKey: .spacers)) ?? []
         barUnderlay = (try? c.decodeIfPresent(Bool.self, forKey: .barUnderlay)) ?? false
-        agentStatusItem = (try? c.decodeIfPresent(Bool.self, forKey: .agentStatusItem)) ?? false
-        combinedSystemItem = (try? c.decodeIfPresent(Bool.self, forKey: .combinedSystemItem)) ?? false
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        let hadCombined = (try? legacy.decodeIfPresent(Bool.self, forKey: .combinedSystemItem)) ?? false
+        let hadAgents = (try? legacy.decodeIfPresent(Bool.self, forKey: .agentStatusItem)) ?? false
+        let hadSpacers = ((try? legacy.decodeIfPresent([AnyRow].self, forKey: .spacers)) ?? []).isEmpty == false
+        retiredExtras = (try? c.decodeIfPresent([String].self, forKey: .retiredExtras))
+            ?? Self.retiredExtras(combined: hadCombined, agents: hadAgents, spacers: hadSpacers)
         displayProfiles = (try? c.decodeIfPresent([String: String].self,
                                                  forKey: .displayProfiles)) ?? [:]
         showForUpdates = (try? c.decodeIfPresent(Bool.self, forKey: .showForUpdates)) ?? false

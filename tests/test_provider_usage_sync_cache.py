@@ -34,6 +34,20 @@ def _merged() -> MergedProviderSync:
     return MergedProviderSync((), (), 0, 0, 0, None, None)
 
 
+def test_expired_lookup_does_not_evict_a_new_worker_publication(monkeypatch) -> None:
+    monkeypatch.setattr(sync_cache, "_memo", None)
+    state = ProviderUsageState((_snapshot(),), 1000.0, 1100.0, False)
+    sync_cache.refresh_cached_merged_sync(state, loader=lambda _: _merged(), monotonic=lambda: 100.0)
+    fresh = _merged()
+
+    def publish_then_read_clock():
+        sync_cache.refresh_cached_merged_sync(state, loader=lambda _: fresh, monotonic=lambda: 131.0)
+        return 131.0
+
+    assert sync_cache.cached_merged_sync(state, monotonic=publish_then_read_clock) is None
+    assert sync_cache.cached_merged_sync(state, monotonic=lambda: 131.0) is fresh
+
+
 def test_cached_merge_is_refreshed_once_then_reused_by_logical_snapshot_value(
     monkeypatch,
 ) -> None:

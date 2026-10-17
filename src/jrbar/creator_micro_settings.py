@@ -56,14 +56,14 @@ def save_creator_micro_choice_async(target, enabled: bool) -> None:
     threading.Thread(target=save, name="JRBarCreatorMicroSettings", daemon=True).start()
 
 
-def apply_creator_micro_settings(target, result: object) -> None:
+def apply_creator_micro_settings(target, result: object) -> bool:
     if (
         type(result) is not CreatorMicroSettingsResult
         or result.generation is not getattr(target, "_creator_micro_settings_generation", None)
         or getattr(target, "_runtime_termination_started", False)
         or getattr(target, "_deck_runtime_stopping", False)
     ):
-        return
+        return False
     target._creator_micro_output_enabled = result.enabled
     toggle = getattr(target, "_creator_micro_output_toggle", None)
     if toggle is not None:
@@ -75,3 +75,4 @@ def apply_creator_micro_settings(target, result: object) -> None:
         from .optional_integration_runtime import CreatorMicroOutputReceipt
 
         target.applyCreatorMicroOutputReceipt_(CreatorMicroOutputReceipt(False, result.reason))
+    return True

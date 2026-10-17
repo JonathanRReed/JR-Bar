@@ -278,7 +278,10 @@ def test_service_answers_inside_the_budget_when_the_scan_is_quick__and_2_more() 
     assert events == [
         (
             history.READY_EVENT,
-            {"provider": "codex", "label": "codex", "detail": "30d", "range": "30d", "records": 1, "scanned_at": clock.now},
+            {
+                "provider": "codex", "label": "codex", "detail": "30d", "range": "30d",
+                "records": 1, "reading_files": 0, "scanned_at": clock.now,
+            },
         )
     ]
     # The next request answers from memory, fresh, with no rescan.
@@ -338,8 +341,12 @@ def test_service_warm_starts_every_scanned_provider_once_and_survives_a_failing_
     threads.settle()
     assert sorted(calls) == [("claude", 30), ("codex", 30)]
     assert any("claude 30d failed: OSError" in line for line in logged)
-    # A failed scan leaves no document: the next request is pending, not wrong.
-    assert service.document("claude", "30d", budget=0.0)["pending"] is True
+    running.clear()
+    try:
+        assert service.document("claude", "30d", budget=0.0)["pending"] is True
+    finally:
+        running.set()
+        threads.settle()
     assert service.document("codex", "30d")["pending"] is False
 
     # --- scenario: service_rejects_a_bad_range_and_answers_unscanned_providers_empty
@@ -363,3 +370,130 @@ def test_service_warm_starts_every_scanned_provider_once_and_survives_a_failing_
     assert calls == [] and threads.threads == []
     assert service.document("codex", "7d", budget=0.0)["pending"] is True
 
+
+
+def test_each_scan_thread_lowers_its_own_priority_before_it_reads_a_line() -> None:
+    order: list[tuple[str, str]] = []
+
+    def setup() -> None:
+        order.append(("setup", threading.current_thread().name))
+
+    def scan(provider: str, days: int) -> list[tuple]:
+        order.append(("scan", threading.current_thread().name))
+        return []
+
+    threads = _Threads()
+    service = _service(scan, threads=threads, thread_setup=setup)
+    service.warm(("claude",))
+    threads.settle()
+
+    assert [step for step, _name in order] == ["setup", "scan"]
+    assert {name for _step, name in order} == {"JRBarUsageScan-claude-30"}, "both on the scan thread, not the caller's"
+
+
+def test_a_scan_thread_whose_priority_cannot_be_lowered_still_scans() -> None:
+    def broken() -> None:
+        raise OSError("no qos")
+
+    threads = _Threads()
+    service = _service(lambda provider, days: [], threads=threads, thread_setup=broken)
+    service.warm(("claude",))
+    threads.settle()
+
+    assert service.document("claude", "30d", budget=0.0)["pending"] is False
+
+
+def test_a_scan_that_leaves_transcripts_unread_carries_on_pass_by_pass() -> None:
+    now = datetime.now()
+    gates = [threading.Event() for _ in range(3)]
+    started = [threading.Event() for _ in range(3)]
+    passes = [
+        history.ScanPass([_record("codex", "gpt-5.6", now, dedupe="a")], reading_files=2),
+        history.ScanPass([_record("codex", "gpt-5.6", now, dedupe="a"), _record("codex", "gpt-5.6", now, dedupe="b")], reading_files=1),
+        history.ScanPass([_record("codex", "gpt-5.6", now, dedupe=name) for name in "abc"], reading_files=0),
+    ]
+    calls: list[int] = []
+
+    def scan(provider: str, days: int) -> history.ScanPass:
+        number = len(calls)
+        calls.append(number)
+        started[number].set()
+        gates[number].wait(5.0)
+        return passes[number]
+
+    events: list[tuple[str, dict]] = []
+    threads = _Threads()
+    service = _service(scan, lambda kind, **fields: events.append((kind, fields)), threads=threads, pass_pause=0.0)
+
+    first = service.document("codex", "30d")
+    assert first["pending"] is True and first["reading_files"] == 0 and first["records"] == 0
+    assert first["partial"] is True
+    gates[0].set()
+    assert started[1].wait(5.0), "the second pass starts by itself"
+    # A request that lands mid-way is answered with what has been read so far.
+    partial = service.document("codex", "30d", budget=0.0)
+    assert partial["records"] == 1 and partial["reading_files"] == 2
+    assert partial["stale"] is True and partial["pending"] is False
+    assert partial["partial"] is True, "the app keeps its note and asks again"
+    assert service.is_scanning()
+
+    gates[1].set()
+    assert started[2].wait(5.0)
+    gates[2].set()
+    threads.settle()
+
+    assert not service.is_scanning()
+    done = service.document("codex", "30d")
+    assert done["records"] == 3 and done["reading_files"] == 0 and done["stale"] is False
+    assert done["partial"] is False
+    assert len(calls) == 3
+    # The client that was told "still reading" hears about each pass it asked through.
+    assert [fields["reading_files"] for kind, fields in events if kind == history.READY_EVENT] == [2, 1]
+
+
+def test_a_stopping_service_ends_a_multi_pass_scan_without_another_pass() -> None:
+    now = datetime.now()
+    calls: list[int] = []
+
+    def scan(provider: str, days: int) -> history.ScanPass:
+        calls.append(1)
+        service.close()
+        return history.ScanPass([_record("codex", "gpt-5.6", now)], reading_files=5)
+
+    threads = _Threads()
+    service = _service(scan, threads=threads, pass_pause=30.0)
+    service.warm(("codex",))
+    threads.settle()
+
+    assert calls == [1]
+    assert not service.is_scanning()
+
+
+def test_scan_provider_pass_reports_what_the_bounded_scan_left(tmp_path, monkeypatch) -> None:
+    pending = usage_stats.UsageSourceCoverage(
+        provider_id="codex", status=usage_stats.UsageSourceStatus.PARTIAL, root_present=True,
+        root_walked=True, files_discovered=9, files_read=1, cache_hits=0, malformed_lines=0,
+        unreadable_files=0, skipped_symlinks=0, duplicate_physical_files=0, pending_files=8,
+    )
+    totals = usage_stats.UsageTotals()
+    totals.records.append(_record("codex", "gpt-5.6", NOW))
+    totals.records.append(_record("claude", "fable", NOW))
+    totals.source_coverage["codex"] = pending
+    seen: dict = {}
+
+    def fake(cache, **options):
+        seen.update(options)
+        return totals
+
+    monkeypatch.setattr("jrbar.provider_homes.scan_usage_all_homes", fake)
+    monkeypatch.setattr(history, "default_state_dir", lambda *_a, **_k: tmp_path)
+
+    bounded = history.scan_provider_pass("codex", days=30, home=tmp_path, seconds=1.5)
+    assert [record[0] for record in bounded.records] == ["codex"]
+    assert bounded.reading_files == 8
+    assert isinstance(seen["budget"], usage_stats.ScanBudget)
+
+    seen.clear()
+    unbounded = history.scan_provider_records("codex", days=30, home=tmp_path)
+    assert [record[0] for record in unbounded] == ["codex"]
+    assert "budget" not in seen

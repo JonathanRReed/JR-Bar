@@ -14,10 +14,105 @@ import UserNotifications
 @MainActor
 @Observable
 final class SettingsStore {
+    /// The seven pages the sidebar lists. Each holds one or two chapters:
+    /// the twelve areas Settings used to list as pages of their own. A
+    /// chapter keeps its old name, so a link, a search hit or a saved
+    /// choice that names one still lands on it.
     enum Page: String, CaseIterable, Identifiable, Hashable {
+        case general, agents, alerts, devices, utilities, shortcuts, remote
+
+        var id: String { rawValue }
+
+        /// The chapters this page holds, top to bottom.
+        var chapters: [Chapter] {
+            switch self {
+            case .general: return [.general, .advanced]
+            case .agents: return [.agents, .usage]
+            case .alerts: return [.notifications, .sounds]
+            case .devices: return [.devices, .lighting]
+            case .utilities: return [.utilities, .toys]
+            case .shortcuts: return [.shortcuts]
+            case .remote: return [.remote]
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .general: return "General"
+            case .agents: return "Agents & Usage"
+            case .alerts: return "Alerts & Sounds"
+            case .devices: return "Devices & Lighting"
+            case .utilities: return "Utilities & Toys"
+            case .shortcuts: return "Shortcuts"
+            case .remote: return "Remote"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .general: return "gearshape.fill"
+            case .agents: return "person.2.fill"
+            case .alerts: return "bell.badge.fill"
+            case .devices: return "light.beacon.max.fill"
+            case .utilities: return "wrench.and.screwdriver.fill"
+            case .shortcuts: return "command"
+            case .remote: return "antenna.radiowaves.left.and.right"
+            }
+        }
+
+        /// System Settings tints every sidebar icon; these follow its palette.
+        var tint: Color {
+            switch self {
+            case .general: return Color(nsColor: .systemGray)
+            case .agents: return Color(nsColor: .systemBlue)
+            case .alerts: return Color(nsColor: .systemRed)
+            case .devices: return Color(nsColor: .systemOrange)
+            case .utilities: return Color(nsColor: .systemIndigo)
+            case .shortcuts: return Color(nsColor: .systemPurple)
+            case .remote: return Color(nsColor: .systemTeal)
+            }
+        }
+
+        /// The daemon-document pages this page resets: every chapter
+        /// that has keys, apart from Advanced (which only holds tools).
+        var resettable: [SettingsKey.Page] {
+            chapters.filter { $0 != .advanced }.compactMap(\.catalogue)
+        }
+
+        /// A page or chapter named in a link, a script or an old
+        /// preference: the page that holds it, and the chapter to bring
+        /// into view when the name is a chapter's.
+        static func destination(named name: String) -> (page: Page, chapter: Chapter?)? {
+            let key = name.lowercased()
+            if let chapter = Chapter(rawValue: key) { return (chapter.page, chapter) }
+            if let page = Page(rawValue: key) { return (page, nil) }
+            return nil
+        }
+
+        /// Every name a link may use: the pages and the chapters.
+        static var linkNames: Set<String> {
+            Set(allCases.map(\.rawValue)).union(Chapter.allCases.map(\.rawValue))
+        }
+    }
+
+    /// The twelve areas Settings has grown, each now a chapter of a page.
+    /// Search entries, resets, cards and deep links still speak in them.
+    enum Chapter: String, CaseIterable, Identifiable, Hashable {
         case general, agents, usage, devices, utilities, lighting, toys, notifications, sounds, shortcuts, remote, advanced
 
         var id: String { rawValue }
+
+        var page: Page {
+            switch self {
+            case .general, .advanced: return .general
+            case .agents, .usage: return .agents
+            case .notifications, .sounds: return .alerts
+            case .devices, .lighting: return .devices
+            case .utilities, .toys: return .utilities
+            case .shortcuts: return .shortcuts
+            case .remote: return .remote
+            }
+        }
 
         var title: String {
             switch self {
@@ -28,7 +123,7 @@ final class SettingsStore {
             case .utilities: return "Utilities"
             case .lighting: return "Lighting"
             case .toys: return "Toys"
-            case .notifications: return "Notifications & Focus"
+            case .notifications: return "Alerts & Focus"
             case .sounds: return "Sounds"
             case .shortcuts: return "Shortcuts"
             case .remote: return "Remote"
@@ -53,7 +148,7 @@ final class SettingsStore {
             }
         }
 
-        /// System Settings tints every sidebar icon; these follow its palette.
+        /// The chapter's own tint, worn by its cards and search hits.
         var tint: Color {
             switch self {
             case .general: return Color(nsColor: .systemGray)
@@ -73,12 +168,15 @@ final class SettingsStore {
             }
         }
 
-        /// The daemon-document page this page resets; nil for pages with
-        /// no daemon keys (Toys keeps its state in `app-state.json`).
+        /// The daemon-document page this chapter resets; nil for chapters
+        /// with no daemon keys (Toys keeps its state in `app-state.json`).
         var catalogue: SettingsKey.Page? { SettingsKey.Page(rawValue: rawValue) }
     }
 
     let core: CoreModel
+    let providerUsage = ProviderUsageSwitchesModel(active: false)
+    /// Settings › Devices & Lighting › Firmware (`FirmwareStore.swift`).
+    let firmware: FirmwareStore
     var page: Page = .general {
         // A search hit names its row only on its own page; choosing any
         // other page retires it.
@@ -132,12 +230,29 @@ final class SettingsStore {
     var updaterHint: String? = "Sparkle.framework is not in this build"
     var automaticUpdateChecks = false
     var lastUpdateCheck: Date?
+    @ObservationIgnored var readLastUpdateCheck: () -> Date? = { SparkleUpdater.shared?.lastUpdateCheckDate }
     var launchAtLogin: Bool = false
     var launchAtLoginError: String?
+    var loginItemState: LoginItemState = .unknown
+    var launchAtLoginBusy = false
+    @ObservationIgnored private var launchAtLoginChanging = false
+    @ObservationIgnored private var launchAtLoginGeneration = UUID()
+    @ObservationIgnored private var launchAtLoginTask: Task<Void, Never>?
     /// How the launch-at-login state is read. `SMAppService.status` is a
     /// synchronous XPC round trip, normally 3 ms and once 250 ms of a
     /// hang, so it runs off the main thread; a test hands in its own.
-    @ObservationIgnored var launchAtLoginStatus: @Sendable () -> Bool = SettingsStore.systemLaunchAtLogin
+    @ObservationIgnored var launchAtLoginStatus: @Sendable () -> Bool = SettingsStore.systemLaunchAtLogin {
+        didSet {
+            let read = launchAtLoginStatus
+            loginItemStateReader = { read() ? .enabled : .notRegistered }
+        }
+    }
+    @ObservationIgnored var loginItemStateReader: @Sendable () -> LoginItemState = {
+        LoginItemState(SMAppService.mainApp.status)
+    }
+    @ObservationIgnored var loginItemChange: @Sendable (Bool) throws -> Void = { on in
+        if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+    }
 
     /// The window is open but none of it shows: covered, minimised or on
     /// another Space. Every LED preview holds its frame
@@ -146,6 +261,9 @@ final class SettingsStore {
     var windowCovered = false
 
     @ObservationIgnored private var pending: [String: JSONValue] = [:]
+    // Returning to an earlier value is still a new edit.
+    @ObservationIgnored private var pendingTokens: [String: UUID] = [:]
+    @ObservationIgnored var settingWriter: ((SettingsPath, JSONValue) async throws -> CoreReply)?
     @ObservationIgnored private var throttles: [String: DispatchWorkItem] = [:]
     @ObservationIgnored private var errorClear: DispatchWorkItem?
 
@@ -182,7 +300,7 @@ final class SettingsStore {
     @ObservationIgnored private var versionedDocument = SettingsDocument()
     /// `core.settings` moved since the caches were read.
     @ObservationIgnored private var documentStale = true
-    /// `core.state`, `lights` or the connection moved since `facts` was read.
+    /// `core.state`, `lights`, readiness or the connection moved since `facts` was read.
     @ObservationIgnored private var factsStale = true
     /// The caches moved and the mirrors have not caught up yet.
     @ObservationIgnored private var documentMirrorsStale = true
@@ -230,9 +348,10 @@ final class SettingsStore {
         didSet {
             guard menuBarIconStyle != oldValue else { return }
             onSetMenuBarIconStyle?(menuBarIconStyle)
-            set("menu_bar_icon_style", .string(menuBarIconStyle))
+            if !copyingImportedIconStyle { set("menu_bar_icon_style", .string(menuBarIconStyle)) }
         }
     }
+    @ObservationIgnored private var copyingImportedIconStyle = false
     /// Persists the choice; wired to `AppState` by the delegate.
     var onSetMenuBarIconStyle: (@MainActor (String) -> Void)?
 
@@ -313,6 +432,8 @@ final class SettingsStore {
         default:
             if let action = MenuBarHotkeyAction.allCases.first(where: { MenuBarHotkeys.registryID(for: $0) == id }) {
                 utilities?.menuBar.setHotkeyChord(chord, for: action)
+            } else if let binding = utilities?.state.menuBar.itemHotkeyBindings.first(where: { $0.id == id }) {
+                utilities?.menuBar.setItemHotkeyChord(chord, for: binding.target)
             } else {
                 onSetActionShortcut?(chord, id)
                 hotkeyChordVersion += 1
@@ -333,7 +454,7 @@ final class SettingsStore {
 
     // MARK: Sounds
 
-    /// Settings › Sounds — app-local, since the app plays the sounds.
+    /// Settings › Alerts & Sounds — app-local, since the app plays the sounds.
     /// Every write persists at once; the event player reads them at each
     /// sound, so a change lands on the next one.
     var soundPreferences: SoundPreferences = SoundPreferences.load() {
@@ -376,6 +497,8 @@ final class SettingsStore {
     /// Bumped by every reveal into a card, so the page scrolls to it
     /// again even when the same card is picked twice.
     private(set) var revealRequest = 0
+    /// The chapter `open(chapter:)` asked for, until its page has scrolled to it.
+    var pendingChapter: Chapter?
 
     /// The scroll anchor a card's row carries on its page.
     nonisolated static func cardAnchor(_ card: String) -> String { "card:\(card)" }
@@ -385,12 +508,13 @@ final class SettingsStore {
     /// the titled rows inside their cards.
     var searchEntries: [SettingsSearchEntry] {
         var entries = SettingsSearch.rows + SettingsSearch.pages + SettingsSearch.shortcutRows
+        entries += providerUsage.searchEntries
         entries += MenuBarHotkeyAction.allCases.map {
             SettingsSearchEntry(.shortcuts, "Menu bar", MenuBarHotkeys.title(for: $0))
         }
-        var cards: [(page: Page, toy: any Toy)] = []
+        var cards: [(chapter: Chapter, toy: any Toy)] = []
         if let utilities {
-            cards += ([utilities.menuBar, utilities.dock, utilities.agents, utilities.dataHoarder] as [any Toy])
+            cards += ([utilities.menuBar, utilities.dock, utilities.agents] as [any Toy])
                 .map { (.utilities, $0) }
         }
         if let toys {
@@ -398,10 +522,11 @@ final class SettingsStore {
             if let notch = toys.notch { cards.append((.utilities, notch)) }
             cards += toys.toys.map { (.toys, $0) }
         }
-        for (page, toy) in cards {
-            entries.append(SettingsSearchEntry(page, toy.name, toy.name, subtitle: toy.blurb, card: toy.id))
+        for (chapter, toy) in cards {
+            entries.append(SettingsSearchEntry(chapter, toy.name, toy.name, subtitle: toy.blurb, card: toy.id))
             entries += toy.searchRows.map {
-                SettingsSearchEntry(page, toy.name, $0.title, keywords: $0.keywords, card: toy.id)
+                SettingsSearchEntry(chapter, toy.name, $0.title, subtitle: $0.hint,
+                                    keywords: $0.keywords, card: toy.id)
             }
         }
         return entries
@@ -450,16 +575,43 @@ final class SettingsStore {
     /// toy or utility card, that card opened, scrolled to and lit.
     func reveal(_ entry: SettingsSearchEntry) {
         searchHit = entry
+        pendingChapter = nil
         page = entry.page
         openFolds.formUnion(folds(holding: entry))
         if let card = entry.card {
             expandedCards.insert(card)
             highlightedCard = card
-            revealRequest += 1
         } else {
             highlightedCard = nil
         }
+        // Every hit asks the page to scroll: to its card, or to the group
+        // the row sits in.
+        revealRequest += 1
     }
+
+    /// Opens a page at one of its chapters: how a link, the command
+    /// palette or a button elsewhere in the app names "Usage" or "Sounds"
+    /// now that those sit on a page with another chapter.
+    func open(chapter: Chapter) {
+        searchHit = nil
+        highlightedCard = nil
+        pendingChapter = chapter
+        page = chapter.page
+        revealRequest += 1
+    }
+
+    /// Opens whatever a link or script named: a page, or a chapter of one.
+    /// A name nobody holds opens General.
+    func open(named name: String?) {
+        guard let name, let found = Page.destination(named: name) else {
+            page = .general
+            return
+        }
+        if let chapter = found.chapter { open(chapter: chapter) } else { page = found.page }
+    }
+
+    /// The scroll anchor a group's header carries on its page.
+    nonisolated static func groupAnchor(_ group: String) -> String { "group:\(group)" }
 
     /// Open or fold one card by hand.
     func setCard(_ card: String, expanded: Bool) {
@@ -475,8 +627,21 @@ final class SettingsStore {
     /// The folds a search hit's row sits in: a device card's rows are in
     /// every device's fold, a group behind one fold is behind that one.
     func folds(holding entry: SettingsSearchEntry) -> [String] {
-        switch (entry.page, entry.group) {
-        case (.devices, "Devices"): return deviceEntries.map { SettingsFold.device($0.id) }
+        var folds = groupFolds(holding: entry)
+        if SettingsFold.isAdvanced(chapter: entry.chapter, group: entry.group) {
+            folds.append(SettingsFold.advanced(entry.page))
+        }
+        for nested in SettingsFold.nested where nested.chapter == entry.chapter && nested.group == entry.group
+            && nested.titles.contains(entry.title) {
+            folds.append(nested.fold)
+        }
+        return folds
+    }
+
+    private func groupFolds(holding entry: SettingsSearchEntry) -> [String] {
+        switch (entry.chapter, entry.group) {
+        case (.devices, "Devices"):
+            return DevicesPage.Layout(entries: deviceEntries).devices.map { SettingsFold.device($0.id) }
         case (.devices, "Screen Bar"): return [SettingsFold.screenBar]
         case (.devices, "Creator Micro 2"): return [SettingsFold.creatorMicro]
         case (.devices, "Stream Deck"): return [SettingsFold.streamDeck]
@@ -493,6 +658,11 @@ final class SettingsStore {
     /// indistinguishable from a bug.
     var notificationPermissionDenied = false
 
+    /// The settings seal: the Keychain key, the daemon's word on it and the
+    /// banner above every page (SettingsSealViews.swift). Nil when the app
+    /// is not supervising a daemon of its own.
+    var seal: SettingsSealCoordinator?
+
     func refreshNotificationPermission() {
         guard Bundle.main.bundleIdentifier != nil else { return }
         UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
@@ -505,6 +675,7 @@ final class SettingsStore {
     /// shows (`refreshLaunchAtLogin`), not here: the read is an XPC call.
     init(core: CoreModel) {
         self.core = core
+        self.firmware = FirmwareStore { name, args in try await core.send(name, args: args) }
         watchSettings()
         watchFacts()
         syncMirrors()
@@ -621,9 +792,9 @@ final class SettingsStore {
 
     private func refreshFactsCache() {
         guard factsStale else { return }
-        factsStale = false
+        factsStale = !watchingFacts
         let now = CoreReading.now(core)
-        facts = SettingsCoreFacts(state: now.state, lights: now.lights, connected: now.connected)
+        facts = SettingsCoreFacts(state: now.state, lights: now.lights, live: now.live)
         lastWrites = Dictionary((now.state?.devices ?? []).compactMap { device in device.lastWrite.map { (device.id, $0) } },
                                 uniquingKeysWith: { first, _ in first })
         deviceListCache = computeDeviceEntries()
@@ -652,6 +823,7 @@ final class SettingsStore {
             _ = core.state
             _ = core.lights
             _ = core.connection
+            _ = core.isLive
         } onChange: { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -758,39 +930,107 @@ final class SettingsStore {
 
     // MARK: Writes
 
+    @ObservationIgnored private var pendingOrigins: [String: SettingsPath] = [:]
+    private struct SettingWrite {
+        let path: SettingsPath
+        let origin: SettingsPath
+        let task: Task<Void, Never>
+    }
+    @ObservationIgnored private var settingWrites: [UUID: SettingWrite] = [:]
+
+    private static func containsPath(_ parent: SettingsPath, _ child: SettingsPath) -> Bool {
+        child.segments.starts(with: parent.segments)
+    }
+
     /// Sends `set_setting`. `throttled` coalesces a slider's stream into one
     /// write every 120 ms, the last value always winning.
     func set(_ path: String, _ value: JSONValue, throttled: Bool = false) {
-        pending[path] = value
-        overlayChanged(at: SettingsPath(path))
-        throttles[path]?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.flush(path) }
+        let requested = SettingsPath(path)
+        var writePath = path
+        var writeValue = value
+        if let ancestor = pending.keys.filter({
+            let candidate = SettingsPath($0)
+            return candidate.segments.count < requested.segments.count && Self.containsPath(candidate, requested)
+        }).max(by: { SettingsPath($0).segments.count < SettingsPath($1).segments.count }),
+           let ancestorValue = pending[ancestor] {
+            let relative = SettingsPath(segments: Array(requested.segments.dropFirst(SettingsPath(ancestor).segments.count)))
+            let merged = SettingsDocument(ancestorValue).replacing(relative, with: value)
+            guard merged.value(at: relative) == value else {
+                report(error: "\(path): this position is not present in the pending setting")
+                return
+            }
+            writePath = ancestor
+            writeValue = merged.root
         }
-        throttles[path] = work
+        let target = SettingsPath(writePath)
+        for obsolete in Array(pending.keys) where Self.containsPath(target, SettingsPath(obsolete)) {
+            throttles[obsolete]?.cancel()
+            throttles[obsolete] = nil
+            pending[obsolete] = nil
+            pendingTokens[obsolete] = nil
+            pendingOrigins[obsolete] = nil
+        }
+        pending[writePath] = writeValue
+        pendingTokens[writePath] = UUID()
+        pendingOrigins[writePath] = requested
+        overlayChanged(at: target)
+        throttles[writePath]?.cancel()
+        let flushPath = writePath
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { _ = self?.flush(flushPath) }
+        }
+        throttles[writePath] = work
         DispatchQueue.main.asyncAfter(deadline: .now() + (throttled ? 0.12 : 0), execute: work)
     }
 
-    private func flush(_ path: String) {
+    /// Selects an alerts profile: one `set_setting` per key it owns, and
+    /// nothing else. The individual switches keep working afterwards.
+    func apply(_ profile: AlertsProfile) {
+        for write in profile.writes { set(write.key, write.value) }
+    }
+
+    @discardableResult
+    func flush(_ path: String) -> Task<Void, Never>? {
+        throttles[path]?.cancel()
         throttles[path] = nil
-        guard let value = pending[path] else { return }
+        guard let value = pending[path], let token = pendingTokens[path] else { return nil }
+        let target = SettingsPath(path)
+        let origin = pendingOrigins[path] ?? target
+        let dependencies = settingWrites.values.filter {
+            $0.path.overlaps(target) && ($0.path != target || $0.origin != origin || origin != target || $0.origin != $0.path)
+        }.map(\.task)
+        let writeID = UUID()
         pendingWrites += 1
-        Task { [weak self] in
+        let task = Task { [weak self] in
             guard let self else { return }
-            defer { self.pendingWrites -= 1 }
+            defer {
+                self.pendingWrites -= 1
+                self.settingWrites[writeID] = nil
+            }
+            for dependency in dependencies { await dependency.value }
+            guard self.pendingTokens[path] == token else { return }
             do {
-                let reply = try await self.core.setSetting(SettingsPath(path), value: value)
+                let reply = try await self.writeSetting(SettingsPath(path), value: value)
+                guard self.pendingTokens[path] == token else { return }
                 if !reply.ok {
                     self.report(error: reply.error?.message ?? "\(path): refused (\(reply.error?.code ?? "error"))")
-                    self.dropPending(path)
+                    self.dropPending(path, token: token)
                 } else {
-                    self.settlePending(path, value: value, echoed: reply.result?["value"])
+                    self.settlePending(path, value: value, echoed: reply.result?["value"], token: token)
                 }
             } catch {
+                guard self.pendingTokens[path] == token else { return }
                 self.report(error: "\(path): \(error)")
-                self.dropPending(path)
+                self.dropPending(path, token: token)
             }
         }
+        settingWrites[writeID] = SettingWrite(path: target, origin: origin, task: task)
+        return task
+    }
+
+    private func writeSetting(_ path: SettingsPath, value: JSONValue) async throws -> CoreReply {
+        if let writer = settingWriter { return try await writer(path, value) }
+        return try await core.setSetting(path, value: value)
     }
 
     /// Once the daemon's document carries the value, the overlay is not
@@ -800,20 +1040,21 @@ final class SettingsStore {
     /// drop at once and say so, not paint the asked-for value until the
     /// document push lands.
     /// Internal for the overlay-rule tests.
-    func settlePending(_ path: String, value: JSONValue, echoed: JSONValue? = nil) {
+    func settlePending(_ path: String, value: JSONValue, echoed: JSONValue? = nil, token: UUID? = nil) {
+        if let token, pendingTokens[path] != token { return }
         if let echoed, !echoed.isNull, !Self.sameValue(echoed, value) {
-            dropPending(path, ifStill: value)
+            dropPending(path, ifStill: value, token: token)
             report(error: "\(path): the monitor kept \(Self.describeValue(echoed)) instead")
             return
         }
         refreshDocument()
         let inDocument = daemonDocument.value(at: SettingsPath(path)) == value
         if inDocument || throttles[path] != nil {
-            if inDocument { dropPending(path, ifStill: value) }
+            if inDocument { dropPending(path, ifStill: value, token: token) }
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            MainActor.assumeIsolated { self?.dropPending(path, ifStill: value) }
+            MainActor.assumeIsolated { self?.dropPending(path, ifStill: value, token: token) }
         }
     }
 
@@ -843,9 +1084,12 @@ final class SettingsStore {
         }
     }
 
-    private func dropPending(_ path: String, ifStill value: JSONValue? = nil) {
+    private func dropPending(_ path: String, ifStill value: JSONValue? = nil, token: UUID? = nil) {
+        if let token, pendingTokens[path] != token { return }
         if let value, pending[path] != value { return }
         guard pending.removeValue(forKey: path) != nil else { return }
+        pendingTokens[path] = nil
+        pendingOrigins[path] = nil
         overlayChanged(at: SettingsPath(path))
     }
 
@@ -990,11 +1234,15 @@ final class SettingsStore {
     private func computeDeviceEntries() -> [DeviceEntry] {
         let known = Dictionary(facts.devices.map { ($0.key, $0.value) }, uniquingKeysWith: { first, _ in first })
         return overlaidDocument.deviceEntries.map { index, id, entry in
-            let state = known[id]
+            let state = known[Self.factDeviceID(id)]
             let name = entry["name"]?.stringValue ?? state?.name ?? id
             let kind = state?.kind ?? Self.guessKind(id: id, name: name)
             return DeviceEntry(index: index, id: id, name: name, kind: kind)
         }
+    }
+
+    private static func factDeviceID(_ id: String) -> String {
+        id == "virtual:status-bar" ? "screen-bar" : id
     }
 
     private static func guessKind(id: String, name: String) -> String {
@@ -1015,7 +1263,7 @@ final class SettingsStore {
     func deviceFacts(_ id: String) -> CoreDevice? {
         refreshFacts()
         _ = deviceFactsMirror.value
-        return facts.devices[id]
+        return facts.devices[Self.factDeviceID(id)]
     }
 
     /// When the monitor last wrote the device (epoch seconds). Not
@@ -1023,14 +1271,14 @@ final class SettingsStore {
     /// 5 s clock.
     func deviceLastWrite(_ id: String) -> Double? {
         refreshFacts()
-        return lastWrites[id]
+        return lastWrites[Self.factDeviceID(id)]
     }
 
     /// The `lights` surface the device plays (`DeviceHealthLine.surface`).
     func deviceSurface(_ id: String) -> CoreLightSurface? {
         refreshFacts()
         _ = deviceSurfaceMirror.value
-        return facts.deviceSurfaces[id]
+        return facts.deviceSurfaces[Self.factDeviceID(id)]
     }
 
     /// The Dot's `dot_link` word and its own surface, from `lights`.
@@ -1233,18 +1481,23 @@ final class SettingsStore {
     /// document; a core that applies the stamp itself answers with the
     /// normalised `value`, and a bounce is said out loud instead of the
     /// toggle flipping and quietly reverting.
-    func setClaudePlanLimits(_ on: Bool) {
+    @discardableResult
+    func setClaudePlanLimits(_ on: Bool) -> Task<Void, Never> {
         pending["claude_plan_limits_enabled"] = .bool(on)
+        let token = UUID()
+        pendingTokens["claude_plan_limits_enabled"] = token
         overlayChanged(at: "claude_plan_limits_enabled")
         pendingWrites += 1
-        Task { [weak self] in
+        return Task { [weak self] in
             guard let self else { return }
             defer { self.pendingWrites -= 1 }
             do {
                 if on {
-                    _ = try await self.core.setSetting("claude_plan_limits_consent_version", value: .number(1))
+                    _ = try await self.writeSetting("claude_plan_limits_consent_version", value: .number(1))
                 }
-                let reply = try await self.core.setSetting("claude_plan_limits_enabled", value: .bool(on))
+                guard self.pendingTokens["claude_plan_limits_enabled"] == token else { return }
+                let reply = try await self.writeSetting("claude_plan_limits_enabled", value: .bool(on))
+                guard self.pendingTokens["claude_plan_limits_enabled"] == token else { return }
                 if !reply.ok {
                     self.dropPending("claude_plan_limits_enabled", ifStill: .bool(on))
                     self.report(error: "claude_plan_limits_enabled: \(reply.error?.message ?? reply.error?.code ?? "refused")")
@@ -1255,8 +1508,9 @@ final class SettingsStore {
                     self.report(error: "Plan limits stayed off: the monitor applies its own consent stamp and did not keep the write")
                     return
                 }
-                self.settlePending("claude_plan_limits_enabled", value: .bool(on), echoed: reply.result?["value"])
+                self.settlePending("claude_plan_limits_enabled", value: .bool(on), echoed: reply.result?["value"], token: token)
             } catch {
+                guard self.pendingTokens["claude_plan_limits_enabled"] == token else { return }
                 self.dropPending("claude_plan_limits_enabled", ifStill: .bool(on))
                 self.report(error: "claude_plan_limits_enabled: \(error)")
             }
@@ -1266,7 +1520,8 @@ final class SettingsStore {
     // MARK: Remote
 
     /// `serve_token`: copies the loopback status endpoint's bearer token
-    /// to the pasteboard. The token is fetched on demand, never stored.
+    /// to the pasteboard, marked concealed so a clipboard manager that
+    /// honours the convention leaves it out of its history.
     func copyServeToken() {
         Task { [weak self] in
             guard let self else { return }
@@ -1274,12 +1529,37 @@ final class SettingsStore {
                 if let token = try await self.core.serveToken(), !token.isEmpty {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(token, forType: .string)
+                    NSPasteboard.general.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
                     self.show(status: "Serve token copied")
                 } else {
                     self.report(error: "The monitor did not hand over a serve token")
                 }
             } catch {
                 self.report(error: "serve_token: \(error)")
+            }
+        }
+    }
+
+    /// Settings › Alerts & Sounds › Phone alert › Test: one fixed line to the saved
+    /// ntfy topic, only because the button was pressed. The daemon words the
+    /// outcome; it is shown as given.
+    var phoneAlertTesting = false
+
+    func testPhoneAlert() {
+        guard !phoneAlertTesting else { return }
+        phoneAlertTesting = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.phoneAlertTesting = false }
+            do {
+                let outcome = try await self.core.testPhoneAlert()
+                if outcome.sent {
+                    self.show(status: outcome.message)
+                } else {
+                    self.report(error: outcome.message)
+                }
+            } catch {
+                self.report(error: "The monitor did not answer the test")
             }
         }
     }
@@ -1303,7 +1583,7 @@ final class SettingsStore {
     /// "Copy diagnostics" is gathering (the doctor round-trip).
     var diagnosticsCopying = false
 
-    /// Settings › Advanced › Copy diagnostics: the Doctor's reply (when
+    /// Settings › General › Advanced › Copy diagnostics: the Doctor's reply (when
     /// the monitor is up), every Setup permission read without prompting,
     /// both builds and the log tail, redacted, onto the pasteboard.
     func copyDiagnostics() {
@@ -1364,10 +1644,10 @@ final class SettingsStore {
         panel.nameFieldStringValue = "JR-Bar Settings.json"
         panel.allowedContentTypes = [.json]
         panel.canCreateDirectories = true
-        panel.message = "The file holds your webhook URL and the menu bar's curated apps; keep it where only you can read it."
+        panel.message = "The file holds the menu bar's curated apps, your shortcuts and your ntfy topic; keep it where only you can read it. Webhook URLs and hook programs are never written to it."
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            try bundle.encoded().write(to: url, options: .atomic)
+            try bundle.write(to: url)
             let parts = bundle.categories.map { $0.title.lowercased() }
             show(status: "Exported \(parts.joined(separator: ", ")) to \(url.lastPathComponent)")
         } catch {
@@ -1383,7 +1663,7 @@ final class SettingsStore {
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            pendingImport = try SettingsBundle.read(Data(contentsOf: url))
+            pendingImport = try SettingsBundle.read(contentsOf: url)
         } catch {
             report(error: "Import: \(error.localizedDescription)")
         }
@@ -1395,28 +1675,45 @@ final class SettingsStore {
     /// monitor knows and values that differ are written. The Utilities
     /// and Toys pages take their state whole, through their own stores,
     /// so every utility re-applies at once.
-    func applyImport(_ bundle: SettingsBundle, categories: Set<SettingsBundle.Category>) {
+    @discardableResult
+    func applyImport(_ bundle: SettingsBundle, categories: Set<SettingsBundle.Category>) -> Task<Void, Never>? {
+        guard !categories.isEmpty, !importing else { return nil }
         pendingImport = nil
-        guard !categories.isEmpty, !importing else { return }
         importing = true
-        Task { [weak self] in
+        return Task { [weak self] in
             guard let self else { return }
             defer { self.importing = false }
             var done: [String] = []
             var problems: [String] = []
+            var needsYourOK: [String] = []
             let wantsMonitor = categories.contains(.monitor) || categories.contains(.devices)
             if wantsMonitor, !self.core.isLive {
                 problems.append("monitor settings need the monitor running")
             }
             if categories.contains(.monitor), self.core.isLive {
                 let plan = bundle.monitorWrites(against: self.core.settings?.document)
+                let style = bundle.monitor["menu_bar_icon_style"]?.stringValue
+                let importedStyle = style.flatMap { StatusIconStyle(rawValue: $0) }
+                var styleLanded = importedStyle.map {
+                    self.core.settings?.document["menu_bar_icon_style"] == .string($0.rawValue)
+                } ?? false
                 var refused: [String] = []
                 for write in plan.writes {
-                    if await !self.write(write.key, write.value) { refused.append(write.key) }
+                    let landed = await self.write(write.key, write.value)
+                    if !landed { refused.append(write.key) }
+                    if write.key == "menu_bar_icon_style" { styleLanded = landed }
+                }
+                if styleLanded, let importedStyle {
+                    // This write already landed. Copy it to the picker and
+                    // status item without sending it to the monitor again.
+                    self.copyingImportedIconStyle = true
+                    self.menuBarIconStyle = importedStyle.rawValue
+                    self.copyingImportedIconStyle = false
                 }
                 done.append("\(plan.writes.count - refused.count) monitor settings")
                 if !refused.isEmpty { problems.append("refused " + refused.joined(separator: ", ")) }
                 if !plan.unknown.isEmpty { problems.append("\(plan.unknown.count) this monitor does not know were skipped") }
+                needsYourOK += plan.needsYourOK
             }
             if categories.contains(.devices), self.core.isLive, let devices = bundle.devices {
                 var landed = self.core.settings?.document["devices"] == devices
@@ -1425,7 +1722,9 @@ final class SettingsStore {
             }
             if categories.contains(.utilities) {
                 if let state = SettingsBundle.decode(UtilitiesState.self, from: bundle.utilities), let utilities = self.utilities {
-                    utilities.state = state
+                    let kept = SettingsBundle.utilitiesForImport(state, over: utilities.state)
+                    utilities.state = kept.state
+                    needsYourOK += kept.needsYourOK
                     done.append("utilities")
                 } else {
                     problems.append("the utilities could not be read")
@@ -1433,7 +1732,9 @@ final class SettingsStore {
             }
             if categories.contains(.toys) {
                 if let state = SettingsBundle.decode(ToysState.self, from: bundle.toys), let toys = self.toys {
-                    toys.state = state
+                    let kept = SettingsBundle.toysForImport(state, over: toys.state)
+                    toys.replaceState(kept.state)
+                    needsYourOK += kept.needsYourOK
                     done.append("toys")
                 } else {
                     problems.append("the toys could not be read")
@@ -1442,11 +1743,19 @@ final class SettingsStore {
             if categories.contains(.preferences) {
                 let preferences = self.applyPreferences(bundle.preferences)
                 done.append("\(preferences.applied) preferences")
+                needsYourOK += preferences.needsYourOK
                 if !preferences.refused.isEmpty {
                     problems.append("skipped shortcuts the recorder would refuse: " + preferences.refused.joined(separator: ", "))
                 }
+                if !preferences.malformed.isEmpty {
+                    problems.append("preferences could not be read: " + preferences.malformed.joined(separator: ", "))
+                }
             }
-            let summary = "Imported " + (done.isEmpty ? "nothing" : done.joined(separator: ", "))
+            var summary = "Imported " + (done.isEmpty ? "nothing" : done.joined(separator: ", "))
+            if !needsYourOK.isEmpty {
+                let names = Array(Set(needsYourOK)).sorted().joined(separator: ", ")
+                summary += ". Needs your OK on this Mac, left off: " + names
+            }
             if problems.isEmpty {
                 self.show(status: summary)
             } else {
@@ -1458,7 +1767,10 @@ final class SettingsStore {
     /// One awaited `set_setting`; true when the monitor took it.
     private func write(_ key: String, _ value: JSONValue) async -> Bool {
         do {
-            return try await core.setSetting(SettingsPath(key), value: value).ok
+            let reply = try await writeSetting(SettingsPath(key), value: value)
+            guard reply.ok else { return false }
+            if let echoed = reply.result?["value"], !echoed.isNull { return Self.sameValue(echoed, value) }
+            return true
         } catch {
             return false
         }
@@ -1471,10 +1783,12 @@ final class SettingsStore {
     /// checks reach Sparkle, and sounds and the strip re-read. A chord
     /// the recorder would refuse is not bound; its id comes back in
     /// `refused` for the summary to name.
-    private func applyPreferences(_ preferences: [String: JSONValue]) -> (applied: Int, refused: [String]) {
+    private func applyPreferences(_ preferences: [String: JSONValue]) -> (applied: Int, refused: [String], malformed: [String], needsYourOK: [String]) {
         let chordPrefix = "hotkeyChord."
         var applied = 0
         var refused: [String] = []
+        var malformed: [String] = []
+        var needsYourOK: [String] = []
         for key in preferences.keys.sorted() where key.hasPrefix(chordPrefix) {
             let id = String(key.dropFirst(chordPrefix.count))
             switch SettingsBundle.importedChord(preferences[key]) {
@@ -1488,31 +1802,40 @@ final class SettingsStore {
         }
         let defaults = UserDefaults.standard
         for key in preferences.keys.sorted() where !key.hasPrefix(chordPrefix) {
-            guard let value = preferences[key], let object = SettingsBundle.defaultsValue(value) else { continue }
+            guard let value = preferences[key], let object = SettingsBundle.defaultsValue(value) else {
+                malformed.append(key)
+                continue
+            }
             switch key {
             case PanelHotkey.defaultsKey:
-                guard let on = value.boolValue else { continue }
+                guard let on = value.boolValue else { malformed.append(key); continue }
                 panelHotkeyEnabled = on
             case Self.shelfHotkeyDefaultsKey:
-                guard let on = value.boolValue else { continue }
+                guard let on = value.boolValue else { malformed.append(key); continue }
                 shelfHotkeyEnabled = on
             case SparkleUpdater.channelDefaultsKey:
-                guard let channel = value.stringValue else { continue }
+                guard let channel = value.stringValue else { malformed.append(key); continue }
                 updateChannel = channel
             case SparkleUpdater.automaticChecksDefaultsKey:
-                guard let on = value.boolValue else { continue }
+                guard let on = value.boolValue else { malformed.append(key); continue }
+                if let held = SettingsBundle.preferenceNeedsYourOK(key, value, currentlyOn: automaticUpdateChecks) {
+                    needsYourOK.append(held)
+                    continue
+                }
                 setAutomaticUpdateChecks(on)
             case SystemTogglesStore.awakeDisplayDefaultsKey:
-                guard let on = value.boolValue else { continue }
+                guard let on = value.boolValue else { malformed.append(key); continue }
                 SystemTogglesStore.shared.setAwakeKeepsDisplay(on)
             default:
                 defaults.set(object, forKey: key)
             }
             applied += 1
         }
-        soundPreferences = SoundPreferences.load()
-        SystemTogglesStore.shared.state.strip = SystemTogglesStore.loadStrip()
-        return (applied, refused)
+        if applied > 0 {
+            soundPreferences = SoundPreferences.load()
+            SystemTogglesStore.shared.state.strip = SystemTogglesStore.loadStrip()
+        }
+        return (applied, refused, malformed, needsYourOK)
     }
 
     /// The monitor's connection in words, as the Advanced page says it.
@@ -1537,15 +1860,36 @@ final class SettingsStore {
         return name.isEmpty ? os : "\(os) · \(name)"
     }
 
+    /// What the reset confirmation says: what goes back, what that takes
+    /// with it that the page does not show, and what it leaves alone.
+    nonisolated static func resetMessage(for page: Page) -> String {
+        var text = "The monitor's settings on this page go back to their defaults."
+        switch page {
+        case .general: text += " The menu bar icon returns to its default look."
+        case .agents: text += " That includes how a click opens each session."
+        case .devices: text += " That includes every strip's brightness, colour gains and resting glow, and the Screen Bar's hidden apps."
+        case .alerts: text += " That includes your per-Focus dim rules."
+        default: break
+        }
+        return text + " Shortcuts, sounds, window choices and other settings that live in the app are not touched. This cannot be undone."
+    }
+
     func resetPage(_ page: Page) {
-        guard let catalogue = page.catalogue else { return }
-        let paths = SettingsKey.resetPaths(on: catalogue, in: SettingsDocument(core.settings?.document ?? .object([:])))
+        let document = SettingsDocument(core.settings?.document ?? .object([:]))
+        let paths = page.resettable.flatMap { SettingsKey.resetPaths(on: $0, in: document) }
         guard !paths.isEmpty else { return }
         Task { [weak self] in
             guard let self else { return }
             do {
                 let reply = try await self.core.resetSettings(paths: paths)
-                if !reply.ok { self.report(error: reply.error?.message ?? "reset refused") }
+                if reply.ok {
+                    // The icon style has a copy in the app that the picker and
+                    // the status item read; the monitor's reset does not reach it.
+                    if page == .general { self.menuBarIconStyle = StatusIconStyle.agents.rawValue }
+                    self.show(status: "\(page.title) is back to its defaults")
+                } else {
+                    self.report(error: reply.error?.message ?? "reset refused")
+                }
             } catch {
                 self.report(error: "reset: \(error)")
             }
@@ -1568,27 +1912,88 @@ final class SettingsStore {
     /// here; the returned task finishes once it has.
     @discardableResult
     func refreshLaunchAtLogin() -> Task<Void, Never> {
-        let read = launchAtLoginStatus
-        return Task { [weak self] in
-            let on = await Task.detached(priority: .userInitiated) { read() }.value
-            self?.launchAtLogin = on
+        if launchAtLoginChanging, let task = launchAtLoginTask { return task }
+        launchAtLoginTask?.cancel()
+        let generation = UUID()
+        launchAtLoginGeneration = generation
+        launchAtLoginBusy = true
+        let read = loginItemStateReader
+        let task = Task { [weak self] in
+            let state = await Task.detached(priority: .userInitiated) { read() }.value
+            guard let self, self.launchAtLoginGeneration == generation else { return }
+            guard !Task.isCancelled else {
+                self.launchAtLoginBusy = false
+                return
+            }
+            self.loginItemState = state
+            self.launchAtLogin = state.isEnabled
+            self.launchAtLoginError = nil
+            self.launchAtLoginBusy = false
         }
+        launchAtLoginTask = task
+        return task
     }
 
     nonisolated static let systemLaunchAtLogin: @Sendable () -> Bool = {
         SMAppService.mainApp.status == .enabled
     }
 
+    var launchAtLoginSubtitle: String {
+        if launchAtLoginBusy { return launchAtLoginChanging ? "Changing the login item…" : "Checking the login item…" }
+        return launchAtLoginError ?? loginItemState.subtitle
+    }
+
+    @discardableResult
+    func setLaunchAtLogin(_ on: Bool) -> Task<Void, Never> {
+        // A status read may be replaced, but a registration cannot be
+        // canceled once macOS has received it. Keep writes serial.
+        if launchAtLoginChanging, let task = launchAtLoginTask { return task }
+        launchAtLoginTask?.cancel()
+        let generation = UUID()
+        launchAtLoginGeneration = generation
+        launchAtLoginBusy = true
+        launchAtLoginChanging = true
+        let change = loginItemChange
+        let read = loginItemStateReader
+        let task = Task { [weak self] in
+            var failure: String?
+            do {
+                try await Task.detached(priority: .userInitiated) { try change(on) }.value
+            } catch {
+                failure = error.localizedDescription
+            }
+            let state = await Task.detached(priority: .userInitiated) { read() }.value
+            guard let self, self.launchAtLoginGeneration == generation else { return }
+            self.loginItemState = state
+            self.launchAtLogin = state.isEnabled
+            self.launchAtLoginError = failure
+            self.launchAtLoginBusy = false
+            self.launchAtLoginChanging = false
+        }
+        launchAtLoginTask = task
+        return task
+    }
+
     // MARK: Software update
 
     /// Re-reads the updater's state; the delegate calls it once the updater
-    /// exists and whenever Sparkle's automatic-checks flag changes.
+    /// exists, its automatic-checks flag changes, or a check finishes.
     func refreshUpdater() {
         let updater = SparkleUpdater.shared
         updaterAvailable = updater?.isAvailable ?? false
         updaterHint = updaterAvailable ? nil : (updater?.availability.description ?? "Sparkle.framework is not in this build")
         automaticUpdateChecks = updater?.automaticallyChecksForUpdates ?? false
-        lastUpdateCheck = updater?.lastUpdateCheckDate
+        lastUpdateCheck = readLastUpdateCheck()
+    }
+
+    /// The app keeps these observers for its lifetime; tests remove their own.
+    @discardableResult
+    func observeUpdaterChanges(in center: NotificationCenter = .default) -> [NSObjectProtocol] {
+        [SparkleUpdater.automaticChecksDidChange, SparkleUpdater.updateCycleDidFinish].map { name in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshUpdater() }
+            }
+        }
     }
 
     /// The "Automatically check for updates" toggle: Sparkle owns the value.
@@ -1607,17 +2012,6 @@ final class SettingsStore {
         NSApp.sendAction(#selector(AppDelegate.checkForUpdates(_:)), to: nil, from: nil)
     }
 
-    func setLaunchAtLogin(_ on: Bool) {
-        do {
-            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-            launchAtLoginError = nil
-            // The switch shows the change at once; the read below confirms it.
-            launchAtLogin = on
-        } catch {
-            launchAtLoginError = error.localizedDescription
-        }
-        refreshLaunchAtLogin()
-    }
 }
 
 extension NSColor {
@@ -1638,6 +2032,34 @@ enum SettingsFold {
     static let providerColours = "lighting:provider-colours"
     static let shortcutActions = "shortcuts:actions"
     static let quickToggles = "shortcuts:quick-toggles"
+    /// The disclosure rows a search hit may sit inside.
+    static func advanced(_ page: SettingsStore.Page) -> String { "advanced:\(page.rawValue)" }
+    static let screenBarAdvanced = "devices:screen-bar-advanced"
+    static let dotClock = "devices:dot-clock"
+
+    /// The groups that sit inside their page's Advanced disclosure, by
+    /// chapter. Everything in the Advanced chapter does.
+    static let advancedGroups: [SettingsStore.Chapter: Set<String>] = [
+        .general: ["Setup", "Release channel"],
+        .agents: ["Ask lifetime", "Updates", "Transcripts"],
+        .usage: ["Incidents", "Claude Code status line", "Hooks", "History"],
+        .notifications: ["Silent sessions", "Calendar & reminders", "Escalation", "Battery", "Webhook"],
+        .sounds: ["Output", "Your own sounds"],
+        .devices: ["Calibration profiles"],
+        .lighting: ["Pulse range", "Auto-dim", "Ambient cues"],
+        .shortcuts: ["Command line", "Links"],
+    ]
+
+    /// Whether a search hit's row sits behind its page's Advanced fold.
+    static func isAdvanced(chapter: SettingsStore.Chapter, group: String) -> Bool {
+        chapter == .advanced || advancedGroups[chapter]?.contains(group) == true
+    }
+
+    /// Rows listed in search that live inside one of those disclosures.
+    static let nested: [(chapter: SettingsStore.Chapter, group: String, titles: Set<String>, fold: String)] = [
+        (.devices, "Screen Bar", ["Phase nudge", "Minimum glow", "Gap width", "Wing length"], screenBarAdvanced),
+        (.devices, "Pro & Dot", ["Keep in step", "Sync tolerance"], dotClock),
+    ]
 }
 
 // MARK: - Path-by-path observation
@@ -1732,8 +2154,8 @@ struct SettingsCoreFacts: Equatable {
 
     init() {}
 
-    init(state: CoreState?, lights: CoreLights?, connected: Bool) {
-        live = connected && state != nil
+    init(state: CoreState?, lights: CoreLights?, live: Bool) {
+        self.live = live
         let health = state?.health
         for provider in SettingsKey.providers {
             if let status = health?["hooks"]?[provider]?.stringValue { hookStatuses[provider] = status }
@@ -1773,28 +2195,28 @@ enum CoreReading {
         var settings: CoreSettings?
         var state: CoreState?
         var lights: CoreLights?
-        var connected: Bool
+        var live: Bool
     }
 
     static func now(_ core: CoreModel) -> Now {
         var settings: CoreSettings?, state: CoreState?, lights: CoreLights?
-        var connection: CoreModel.Connection?
+        var live: Bool?
         var found = 0
         for child in Mirror(reflecting: core).children {
             switch child.label {
-            case "_settings": settings = child.value as? CoreSettings; found += 1
+            case "_settingsFrame": settings = (child.value as? CoreSettingsFrame)?.settings; found += 1
             case "_state": state = child.value as? CoreState; found += 1
             case "_lights": lights = child.value as? CoreLights; found += 1
-            case "_connection": connection = child.value as? CoreModel.Connection; found += 1
+            case "_isLive": live = child.value as? Bool; found += 1
             default: continue
             }
             if found == 4 { break }
         }
-        guard found == 4, let connection else {
+        guard found == 4, let live else {
             return Now(settings: core.settings, state: core.state, lights: core.lights,
-                       connected: core.connection.isConnected)
+                       live: core.isLive)
         }
-        return Now(settings: settings, state: state, lights: lights, connected: connection.isConnected)
+        return Now(settings: settings, state: state, lights: lights, live: live)
     }
 }
 

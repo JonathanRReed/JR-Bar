@@ -10,6 +10,14 @@ import JRBarCore
 /// that decide when they show are pure and pinned here.
 @Suite("Aquarium ambient")
 struct AquariumAmbientTests {
+    @Test("the saver measures input from a monotonic baseline")
+    func monotonicInputBaseline() {
+        let baseline = AquariumScreensaver.IdleBaseline(idleSeconds: 600, uptime: 100)
+        #expect(!baseline.inputSinceShowing(idleSeconds: 630, uptime: 130))
+        #expect(baseline.inputSinceShowing(idleSeconds: 2, uptime: 130))
+        #expect(!baseline.inputSinceShowing(idleSeconds: 630, uptime: 99))
+        #expect(!baseline.inputSinceShowing(idleSeconds: 630, uptime: .nan))
+    }
     @Test("the idle clock alone: at or past the minutes, never when off")
     func idleClock() {
         #expect(AquariumScreensaver.isIdle(idleSeconds: 600, minutes: 10))
@@ -34,14 +42,44 @@ struct AquariumAmbientTests {
                                                 someoneWatching: false, freeScreens: 2))
     }
 
-    @Test("input since showing: the idle clock fell behind the time it's been up")
+    @Test("input since showing: idle time falls behind its original baseline")
     func inputSinceShowing() {
         // Up for 30 s and idle for 630: nobody touched it.
-        #expect(!AquariumScreensaver.inputSinceShowing(idleSeconds: 630, shownFor: 30))
+        #expect(!AquariumScreensaver.inputSinceShowing(idleSeconds: 630, shownFor: 30,
+                                                      idleAtShow: 600))
         // The poll's own jitter is not a touch.
-        #expect(!AquariumScreensaver.inputSinceShowing(idleSeconds: 29.9, shownFor: 30))
+        #expect(!AquariumScreensaver.inputSinceShowing(idleSeconds: 629.9, shownFor: 30,
+                                                      idleAtShow: 600))
         // A key two seconds ago.
-        #expect(AquariumScreensaver.inputSinceShowing(idleSeconds: 2, shownFor: 30))
+        #expect(AquariumScreensaver.inputSinceShowing(idleSeconds: 2, shownFor: 30,
+                                                     idleAtShow: 600))
+    }
+
+    @Test("movement during the first quarter second dismisses at the first or later poll")
+    func earlyInputSinceShowing() {
+        #expect(AquariumScreensaver.inputSinceShowing(idleSeconds: 0.15, shownFor: 0.25,
+                                                     idleAtShow: 600))
+        #expect(AquariumScreensaver.inputSinceShowing(idleSeconds: 29.9, shownFor: 30,
+                                                     idleAtShow: 600))
+        #expect(!AquariumScreensaver.inputSinceShowing(idleSeconds: 600.25, shownFor: 0.25,
+                                                      idleAtShow: 600))
+        #expect(!AquariumScreensaver.inputSinceShowing(idleSeconds: 600.15, shownFor: 0.25,
+                                                      idleAtShow: 600))
+    }
+
+    @Test("invalid idle observations never dismiss the screensaver")
+    func invalidInputSinceShowing() {
+        for invalid in [Double.nan, Double.infinity, -Double.infinity, -1] {
+            #expect(!AquariumScreensaver.inputSinceShowing(idleSeconds: invalid, shownFor: 30,
+                                                          idleAtShow: 600))
+            #expect(!AquariumScreensaver.inputSinceShowing(idleSeconds: 2, shownFor: invalid,
+                                                          idleAtShow: 600))
+            #expect(!AquariumScreensaver.inputSinceShowing(idleSeconds: 2, shownFor: 30,
+                                                          idleAtShow: invalid))
+        }
+        #expect(!AquariumScreensaver.inputSinceShowing(idleSeconds: 0,
+                                                      shownFor: Double.greatestFiniteMagnitude,
+                                                      idleAtShow: Double.greatestFiniteMagnitude))
     }
 
     @Test("a video or a call holding the display is watching; our own keep-awake isn't")
@@ -188,8 +226,12 @@ struct AquariumAmbientTests {
         let old = try decode(#"{"enabled": true, "density": 0.5}"#)
         #expect(old.idleFillMinutes == 0 && old.ambientDisplay == nil)
         #expect(old.density == 0.5)
-        // A minute count the picker never offers is off, not a surprise.
-        #expect(try decode(#"{"idleFillMinutes": 7}"#).idleFillMinutes == 0)
+        // A minute count the picker never offers (a newer build's) reads
+        // as the nearest one it does, so a downgrade keeps the saver on.
+        #expect(try decode(#"{"idleFillMinutes": 7}"#).idleFillMinutes == 5)
+        #expect(try decode(#"{"idleFillMinutes": 20}"#).idleFillMinutes == 15)
+        #expect(try decode(#"{"idleFillMinutes": 120}"#).idleFillMinutes == 30)
+        #expect(try decode(#"{"idleFillMinutes": -5}"#).idleFillMinutes == 0)
         #expect(try decode(#"{"idleFillMinutes": "ten"}"#).idleFillMinutes == 0)
         #expect(try decode(#"{"idleFillMinutes": 30}"#).idleFillMinutes == 30)
         // An empty or mistyped display name is no display.

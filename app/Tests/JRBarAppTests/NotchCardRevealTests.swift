@@ -5,9 +5,9 @@ import Testing
 import JRBarCore
 @testable import JRBarApp
 
-/// The grown card's reveal: the header is there from the first frame,
-/// and the rows under it count their stagger over the rows actually
-/// drawn, so the foot never waits on a row that is not there.
+/// The grown card's reveal: the header comes with the sheet, and the
+/// rows under it count their cascade over the rows actually drawn, so
+/// the foot never waits on a row that is not there.
 @Suite("Notch card reveal")
 @MainActor
 struct NotchCardRevealTests {
@@ -15,54 +15,60 @@ struct NotchCardRevealTests {
     func denseNowPage() {
         let steps = NotchCardRevealSteps(hint: false, page: .now, sessions: 2, more: false, meters: 1,
                                          privacy: false, media: true, battery: false,
-                                         tray: true, timers: true, calendar: true)
+                                         tray: true, timers: true)
         #expect(steps.sessions == 0)
         #expect(steps.meters == 2)
         #expect(steps.media == 3)
-        #expect(steps.pageBar == 4, "two sessions, a meter and the media before it")
-        #expect(NotchMotion.rowRevealDelay(step: steps.pageBar) == 4 * NotchMotion.rowStagger)
+        #expect(steps.timerGlance == 4)
+        #expect(steps.pageBar == 5, "two sessions, a meter, media and the timer before it")
+        #expect(NotchReveal.row(step: steps.pageBar, openness: 0.6)
+                < NotchReveal.row(step: steps.sessions, openness: 0.6),
+                "the foot follows the first session down the card")
     }
 
     @Test("an empty card's foot comes straight after the header")
     func emptyCard() {
         let steps = NotchCardRevealSteps(hint: false, page: .now, sessions: 0, more: false, meters: 0,
                                          privacy: false, media: false, battery: false,
-                                         tray: true, timers: true, calendar: true)
+                                         tray: true, timers: false)
         #expect(steps.pageBar == 0)
     }
 
-    @Test("a full card's later rows share the last step")
+    @Test("a full card's later rows share the last step, the foot among them")
     func fullCardIsCapped() {
         let steps = NotchCardRevealSteps(hint: true, page: .now, sessions: 5, more: true, meters: 3,
                                          privacy: true, media: true, battery: true,
-                                         tray: true, timers: true, calendar: true)
+                                         tray: true, timers: true)
         #expect(steps.hint == 0)
         #expect(steps.sessions == 1)
-        #expect(steps.pageBar == 13)
-        let last = NotchMotion.rowRevealDelay(step: steps.pageBar) + NotchMotion.rowFade
-        #expect(abs(last - NotchMotion.revealSpan) < 1e-9, "the foot is opaque 0.24 s after the reveal")
-        #expect(NotchMotion.rowRevealDelay(step: steps.battery) == NotchMotion.rowRevealDelay(step: steps.pageBar))
+        #expect(steps.timerGlance == 13)
+        #expect(steps.pageBar == 14)
+        #expect(NotchReveal.row(step: steps.pageBar, openness: 0.95) > 0.99,
+                "the foot is opaque as the shape all but lands")
+        #expect(NotchReveal.row(step: steps.battery, openness: 0.8)
+                == NotchReveal.row(step: steps.pageBar, openness: 0.8),
+                "the capped rows share the last step")
     }
 
     @Test("the shelf page counts its rows from its first")
     func shelfPage() {
         let steps = NotchCardRevealSteps(hint: false, page: .shelf, sessions: 3, more: false, meters: 2,
                                          privacy: false, media: true, battery: true,
-                                         tray: true, timers: true, calendar: true)
+                                         tray: true, timers: true)
         #expect(steps.shelfTray == 0)
-        #expect(steps.shelfToggles == 6)
-        #expect(steps.pageBar == 7)
+        #expect(steps.shelfToggles == 5)
+        #expect(steps.pageBar == 6)
     }
 
     @Test("a sparse shelf page keeps its steps dense — no row waits on one that is not drawn")
     func sparseShelfPage() {
         let steps = NotchCardRevealSteps(hint: false, page: .shelf, sessions: 0, more: false, meters: 0,
                                          privacy: false, media: false, battery: false,
-                                         tray: false, timers: false, calendar: false)
-        #expect(steps.shelfWeather == 0)
+                                         tray: false, timers: false)
+        #expect(steps.shelfCalendar == 0)
         #expect(steps.shelfReminders == 1)
         #expect(steps.shelfMirror == 2)
-        #expect(steps.shelfToggles == 3, "the last drawn row, not a phantom seventh slot")
+        #expect(steps.shelfToggles == 3, "the last drawn row, not a phantom sixth slot")
         #expect(steps.pageBar == 4)
     }
 

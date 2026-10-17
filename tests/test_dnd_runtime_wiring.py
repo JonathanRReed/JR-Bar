@@ -216,7 +216,7 @@ def test_async_calendar_cue_armed_during_pause_is_consumed_without_replay(
             )
         )
     )
-    controller._calendar_observation_active = True
+    controller._set_calendar_observation_active(True, now=clock)
     controller._os_poll_generation = 11
     controller._runtime_started = True
     controller._runtime_worker_monotonic = lambda: clock
@@ -228,8 +228,6 @@ def test_async_calendar_cue_armed_during_pause_is_consumed_without_replay(
         app_terminating=False,
         animation_active=False,
         next_visual_change_at=None,
-        alcove_enabled=False,
-        alcove_relevant=False,
         pointer_interaction_relevant=False,
     )
     monkeypatch.setattr(controller, "refresh_", lambda _sender: None)
@@ -246,11 +244,11 @@ def test_async_calendar_cue_armed_during_pause_is_consumed_without_replay(
         command,
         status_bar.CalendarObservationResult(
             available=True,
-            starts_in_seconds=90.0,
+            starts_at_monotonic=clock + 90.0,
         ),
     )
 
-    assert controller.calendar_glow_until == clock + 90.0
+    assert controller.calendar_glow_until == 0.0
     assert (
         controller.active_led_display_kind_for_device(_device(), None)
         != status_bar.LED_DISPLAY_CALENDAR

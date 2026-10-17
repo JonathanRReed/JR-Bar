@@ -41,11 +41,6 @@ _SEMANTIC_PROJECTION = {
     GlanceSemantic.REST: (LightSemantic.REST, WinningPriority.P7),
 }
 
-_UNAVAILABLE_FOCUS = FocusDNDDecision(
-    FocusObservation.UNAVAILABLE,
-    FocusPolicy.UNAVAILABLE,
-    FocusOutcome.UNAVAILABLE,
-)
 
 
 def project_why_light_context(

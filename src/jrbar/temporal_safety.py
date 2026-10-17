@@ -45,11 +45,6 @@ class StaticSemanticFallback:
     semantic_key: str = "safe_static_state"
     luminance: float = 0.0
 
-    @property
-    def is_static(self) -> bool:
-        return True
-
-
 _CANONICAL_STATIC_FALLBACK = StaticSemanticFallback()
 
 

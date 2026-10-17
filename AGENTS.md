@@ -4,6 +4,10 @@ Notes for a coding agent (Claude Code, Codex, anything else) working in
 this repository. The human version is [CONTRIBUTING.md](CONTRIBUTING.md);
 this file adds the rules that are easy to break from inside a session.
 
+## Model
+
+Use GPT 6.1 for code changes and reviews in this repository.
+
 ## What it is
 
 Three processes, one direction of truth

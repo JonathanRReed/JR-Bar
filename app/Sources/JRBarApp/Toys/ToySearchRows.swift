@@ -7,10 +7,21 @@ import Foundation
 struct ToySearchRow: Hashable, Sendable {
     let title: String
     let keywords: [String]
+    /// The title of the switch in the same card that has to be on before
+    /// this row is drawn, for a row the card shows only conditionally. A
+    /// search that lands on the card then says why the row is not there
+    /// yet, instead of leading to nothing.
+    let needs: String?
 
-    init(_ title: String, keywords: [String] = []) {
+    init(_ title: String, keywords: [String] = [], needs: String? = nil) {
         self.title = title
         self.keywords = keywords
+        self.needs = needs
+    }
+
+    /// The line a search result carries for a conditional row.
+    var hint: String? {
+        needs.map { "Shown once “\($0)” is on." }
     }
 }
 
@@ -31,34 +42,32 @@ enum ToySearchCatalog {
             ToySearchRow("Pull & swipe gestures", keywords: ["gesture", "pinch", "pull down"]),
             ToySearchRow("Usage meters", keywords: ["quota", "limits"]),
             ToySearchRow("Event capsules", keywords: ["notice", "live activity"]),
-            ToySearchRow("Hold news while quiet", keywords: ["focus", "digest"]),
+            ToySearchRow("Hold news while quiet", keywords: ["focus", "digest"], needs: "Event capsules"),
             ToySearchRow("Mic & camera indicators", keywords: ["privacy", "microphone", "camera"]),
             ToySearchRow("Now Playing", keywords: ["music", "media", "spotify", "apple music"]),
             ToySearchRow("Audio visualizer (reacts to what's playing)",
-                         keywords: ["equalizer", "bars", "spectrum"]),
-            ToySearchRow("Synced lyrics", keywords: ["lyrics", "lrclib", "karaoke"]),
+                         keywords: ["equalizer", "bars", "spectrum"], needs: "Now Playing"),
+            ToySearchRow("Synced lyrics", keywords: ["lyrics", "lrclib", "karaoke"], needs: "Now Playing"),
             ToySearchRow("Volume & brightness capsules", keywords: ["hud", "osd", "volume", "brightness"]),
-            ToySearchRow("Replace the system volume & brightness overlay", keywords: ["hud", "osd"]),
+            ToySearchRow("Replace the system volume & brightness overlay", keywords: ["hud", "osd"], needs: "Volume & brightness capsules"),
             ToySearchRow("Timers flash the lights", keywords: ["timer", "sidepulse"]),
-            ToySearchRow("Shake to summon the shelf", keywords: ["drag", "drop", "files", "shelf"]),
+            ToySearchRow("Shake to summon the shelf", keywords: ["drag", "drop", "files", "shelf"], needs: "Shelf"),
             ToySearchRow("Shelf hotkey", keywords: ["shelf", "keyboard"]),
             ToySearchRow("System alerts", keywords: ["bluetooth", "caps lock", "focus"]),
             ToySearchRow("Capsule tick", keywords: ["sound", "click"]),
-            ToySearchRow("Weather", keywords: ["forecast", "rain", "open-meteo"]),
-            ToySearchRow("Locate by IP when no city is set", keywords: ["location", "ipapi", "privacy"]),
             ToySearchRow("Calendar", keywords: ["events", "agenda"]),
-            ToySearchRow("Meeting heads-up", keywords: ["zoom", "meet", "join"]),
+            ToySearchRow("Meeting heads-up", keywords: ["zoom", "meet", "join"], needs: "Calendar"),
             ToySearchRow("Reminders", keywords: ["todo", "tasks"]),
             ToySearchRow("Mirror", keywords: ["camera", "webcam"]),
-            ToySearchRow("Open after", keywords: ["hover delay", "delay", "debounce"]),
+            ToySearchRow("Open after", keywords: ["hover delay", "delay", "debounce"], needs: "Card on hover"),
             ToySearchRow("Display", keywords: ["screen", "monitor", "external display", "pointer"]),
             ToySearchRow("Shelf", keywords: ["file tray", "drop", "disable shelf"]),
-            ToySearchRow("Dragging a file out", keywords: ["copy", "move", "drag out"]),
-            ToySearchRow("Remove after dragging out", keywords: ["drag out", "auto remove"]),
-            ToySearchRow("Newest first", keywords: ["order", "reverse"]),
-            ToySearchRow("Shake sensitivity", keywords: ["shake", "gesture"]),
-            ToySearchRow("Never summon over", keywords: ["exclude", "apps", "shake"]),
-            ToySearchRow("Step aside for other shelf apps", keywords: ["dropover", "yoink", "dropzone"]),
+            ToySearchRow("Dragging a file out", keywords: ["copy", "move", "drag out"], needs: "Shelf"),
+            ToySearchRow("Remove after dragging out", keywords: ["drag out", "auto remove"], needs: "Shelf"),
+            ToySearchRow("Newest first", keywords: ["order", "reverse"], needs: "Shelf"),
+            ToySearchRow("Shake sensitivity", keywords: ["shake", "gesture"], needs: "Shake to summon the shelf"),
+            ToySearchRow("Never summon over", keywords: ["exclude", "apps", "shake"], needs: "Shake to summon the shelf"),
+            ToySearchRow("Step aside for other shelf apps", keywords: ["dropover", "yoink", "dropzone"], needs: "Shake to summon the shelf"),
         ],
         "notch-buddy": [
             ToySearchRow("Character", keywords: ["pet", "mascot"]),
@@ -71,14 +80,14 @@ enum ToySearchCatalog {
             ToySearchRow("Time between walks", keywords: ["walk", "stroll", "frequency", "how often"]),
         ],
         "confetti": [
-            ToySearchRow("Weekly reset", keywords: ["trigger"]),
+            ToySearchRow("Quota resets", keywords: ["trigger", "weekly", "daily", "monthly"]),
             ToySearchRow("Session completed", keywords: ["trigger", "done"]),
             ToySearchRow("All caught up", keywords: ["trigger", "asks"]),
             ToySearchRow("Codex banked credits", keywords: ["trigger"]),
             ToySearchRow("Milestones", keywords: ["trigger", "achievement"]),
             ToySearchRow("Quiet the toys during Focus, quiet hours and calls",
                          keywords: ["hush", "focus", "do not disturb", "meeting"]),
-            ToySearchRow("A held burst", keywords: ["later"]),
+            ToySearchRow("A held burst", keywords: ["later"], needs: "Quiet the toys during Focus, quiet hours and calls"),
             ToySearchRow("Sound", keywords: ["pop", "audio"]),
             ToySearchRow("Landing", keywords: ["pile", "floor", "rest", "fall", "fade"]),
             ToySearchRow("Palette", keywords: ["colors", "colours", "party", "gold", "pastel", "rainbow"]),
@@ -94,6 +103,7 @@ enum ToySearchCatalog {
         "aquarium": [
             ToySearchRow("In the tank", keywords: ["fish", "sessions"]),
             ToySearchRow("Look", keywords: ["theme", "water", "floor", "back wall", "classic", "arcade"]),
+            ToySearchRow("Motion", keywords: ["live", "still", "pause", "animation", "freeze"]),
             ToySearchRow("Labels", keywords: ["names", "fish", "show labels", "hover"]),
             ToySearchRow("Day & night", keywords: ["dark", "light", "time of day", "appearance"]),
             ToySearchRow("Sound", keywords: ["plop", "audio", "clink"]),
@@ -132,36 +142,31 @@ enum ToySearchCatalog {
         ],
         "menuBar": [
             ToySearchRow("Render with", keywords: ["bartender", "ice", "hidden bar"]),
-            ToySearchRow("Hide the way macOS hides", keywords: ["native", "concealer"]),
             ToySearchRow("Hover the blank stretch", keywords: ["reveal", "hover"]),
             ToySearchRow("Click the blank stretch", keywords: ["reveal", "click"]),
             ToySearchRow("Scroll over the bar", keywords: ["reveal", "scroll", "swipe"]),
-            ToySearchRow("Tuck away after", keywords: ["hide", "delay"]),
+            ToySearchRow("Click and scroll delay", keywords: ["hide", "delay", "tuck away after"]),
+            ToySearchRow("Show after hovering", keywords: ["hover", "entry", "delay"], needs: "Hover the blank stretch"),
+            ToySearchRow("Hide after leaving", keywords: ["hover", "exit", "delay"], needs: "Hover the blank stretch"),
             ToySearchRow("Reveal style", keywords: ["inline", "item bar"]),
             ToySearchRow("Hide shown items while revealing", keywords: ["swap"]),
-            ToySearchRow("Hidden items as tiles", keywords: ["item bar", "strip"]),
+            ToySearchRow("Hidden items as tiles", keywords: ["item bar", "strip", "search", "filter", "clear filter", "keyboard search"]),
             ToySearchRow("Keep items out of the notch", keywords: ["notch"]),
             ToySearchRow("Hide items under app menus", keywords: ["crowded"]),
             ToySearchRow("Tint the whole bar", keywords: ["underlay", "colour", "color"]),
             ToySearchRow("Item spacing", keywords: ["gap", "padding"]),
-            ToySearchRow("Spacer items", keywords: ["divider", "spacer"]),
             ToySearchRow("Profiles", keywords: ["layout", "preset"]),
             ToySearchRow("Command bar", keywords: ["palette", "cmd shift k"]),
+            ToySearchRow("Hotkeys", keywords: ["shortcut", "keys", "chord", "shortcuts page"]),
             ToySearchRow("Rules", keywords: ["automation", "trigger", "keep awake", "amphetamine"]),
             ToySearchRow("Cover material", keywords: ["blur", "glass"]),
-            ToySearchRow("⌘-drag across the icon hides or shows", keywords: ["command drag", "cmd drag", "drag to hide"]),
-            ToySearchRow("Show hidden items while ⌘-dragging", keywords: ["reveal", "drag"]),
-            ToySearchRow("Hide Apple's extras like apps", keywords: ["weather", "passwords", "time machine"]),
             ToySearchRow("Item Bar opens at", keywords: ["pointer", "cursor"]),
-            ToySearchRow("New menu bar items", keywords: ["newcomer", "new apps"]),
-            ToySearchRow("Icon seat", keywords: ["slot", "position"]),
-            ToySearchRow("Menu bar layout table", keywords: ["order", "full disk access", "thaw"]),
             ToySearchRow("Relaunch menu bar apps", keywords: ["spacing", "restart"]),
-            ToySearchRow("Tuck away", keywords: ["switch apps", "focus", "click elsewhere", "rehide"]),
+            ToySearchRow("Tuck away", keywords: ["hide", "timer", "switch apps", "focus", "click elsewhere", "rehide"]),
         ],
         "dock": [
             ToySearchRow("Render with", keywords: ["dockdoor", "activedock"]),
-            ToySearchRow("Hover previews", keywords: ["window previews", "thumbnails"]),
+            ToySearchRow("Hover previews", keywords: ["window previews", "thumbnails", "folder", "files", "finder", "folder access", "retry"]),
             ToySearchRow("Open previews on", keywords: ["option", "middle click"]),
             ToySearchRow("Show after", keywords: ["delay"]),
             ToySearchRow("Spacing", keywords: ["padding", "margin", "compact", "tight", "roomy", "air"]),

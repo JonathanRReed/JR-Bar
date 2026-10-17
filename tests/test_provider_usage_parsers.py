@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from jrbar.claude_quota import windows_from_payload
 from jrbar.provider_usage_parsers import (
     parse_antigravity_usage,
@@ -366,3 +368,159 @@ def test_a_gemini_model_with_two_buckets_keeps_the_first_lane() -> None:
         "model-gemini-2-5-flash",
     ]
     assert snapshot.model_count == 2
+
+
+def test_a_reset_in_epoch_milliseconds_reads_as_the_same_moment_in_seconds() -> None:
+    # A provider that stamps its reset in milliseconds must not push the
+    # boundary ~55,000 years out ("resets in 20,000,000 days").
+    seconds = 1_760_000_000
+    for value in (seconds, seconds * 1000, float(seconds * 1000)):
+        snapshot = parse_cursor_usage(
+            {"planUsage": {"usedPercent": 35}, "billingCycleEnd": value},
+            observed_at=1000,
+        )
+        assert snapshot.lanes[0].reset_at == seconds
+
+
+def _antigravity_summary(*buckets: dict) -> dict:
+    return {"response": {"groups": [{"displayName": "Gemini Models", "buckets": list(buckets)}]}}
+
+
+def test_an_antigravity_bucket_states_its_own_cadence() -> None:
+    # A bucket whose name says nothing about its length ("Limit Remaining")
+    # but whose `window` field says weekly is a weekly lane, never a 5-hour one.
+    snapshot = parse_antigravity_usage(
+        _antigravity_summary(
+            {
+                "bucketId": "gemini-allowance",
+                "displayName": "Limit Remaining",
+                "window": "weekly",
+                "remainingFraction": 0.8,
+                "resetTime": 3000,
+            }
+        ),
+        observed_at=1000,
+    )
+    assert [(lane.label, lane.remaining_percent) for lane in snapshot.lanes] == [
+        ("Gemini Weekly", 80)
+    ]
+
+
+def test_an_antigravity_bucket_cadence_beats_a_misleading_name() -> None:
+    snapshot = parse_antigravity_usage(
+        _antigravity_summary(
+            {
+                "bucketId": "gemini-5h",
+                "displayName": "Weekly-style label",
+                "window": "5h",
+                "remainingFraction": 0.5,
+                "resetTime": 2000,
+            }
+        ),
+        observed_at=1000,
+    )
+    assert [lane.label for lane in snapshot.lanes] == ["Gemini 5-Hour"]
+
+
+def test_a_weekly_only_antigravity_starter_account_gets_no_invented_five_hour_lane() -> None:
+    snapshot = parse_antigravity_usage(
+        {
+            "response": {
+                "groups": [
+                    {
+                        "displayName": "Gemini Models",
+                        "buckets": [
+                            {"bucketId": "g", "displayName": "Weekly Limit", "window": "weekly",
+                             "remainingFraction": 1, "resetTime": 3000},
+                        ],
+                    },
+                    {
+                        "displayName": "Claude and GPT models",
+                        "buckets": [
+                            {"bucketId": "c", "displayName": "Weekly Limit", "window": "weekly",
+                             "remainingFraction": 1, "resetTime": 3000},
+                        ],
+                    },
+                ]
+            }
+        },
+        observed_at=1000,
+    )
+    assert [lane.label for lane in snapshot.lanes] == ["Gemini Weekly", "Claude + GPT Weekly"]
+
+
+def test_reported_antigravity_argon_pool_keeps_independent_limits_and_resets():
+    # Synthetic fields follow Antigravity 2.23.1's embedded quota_summary.proto.
+    groups = [
+        {"displayName": "Gemini Models", "buckets": [
+            {"bucketId": "gemini-week", "window": "weekly", "remainingFraction": 0.8, "resetTime": 3000},
+        ]},
+        {"displayName": "Gemini 4 Argon", "buckets": [
+            {"bucketId": "argon-week", "window": "weekly", "remainingFraction": 0.3, "resetTime": 4000},
+            {"bucketId": "argon-short", "window": "5h", "remainingFraction": 0.6, "resetTime": 2000},
+        ]},
+    ]
+    reading = parse_antigravity_usage({"response": {"groups": groups}}, observed_at=1000)
+    assert [(lane.lane_id, lane.remaining_percent, lane.reset_at) for lane in reading.lanes] == [
+        ("gemini-weekly", 80, 3000),
+        ("gemini-argon-weekly", 30, 4000),
+        ("gemini-argon-five-hour", 60, 2000),
+    ]
+    assert reading.lanes[1].scope == "gemini-argon"
+    assert reading.lanes[1].model == "gemini-4-argon"
+    assert reading.lanes[1].label == "Gemini 4 Argon Weekly"
+
+
+def test_reported_argon_only_group_is_not_dropped():
+    reading = parse_antigravity_usage({"response": {"groups": [
+        {"displayName": "Argon", "buckets": [
+            {"bucketId": "weekly", "window": "weekly", "remainingFraction": 0.4},
+        ]},
+    ]}}, observed_at=1000)
+    assert [(lane.lane_id, lane.remaining_percent) for lane in reading.lanes] == [
+        ("gemini-argon-weekly", 40),
+    ]
+
+
+@pytest.mark.parametrize("group,bucket_id,bucket_name", [
+    ("Gemini Models", "gemini-4-argon-high-weekly", "Weekly limit"),
+    ("Gemini Models", "separate-weekly", "Argon weekly limit"),
+])
+def test_argon_bucket_identity_can_report_a_separate_pool(group, bucket_id, bucket_name):
+    reading = parse_antigravity_usage({"groups": [{"displayName": group, "buckets": [{
+        "bucketId": bucket_id, "displayName": bucket_name, "window": "weekly", "remainingFraction": 0.2,
+    }]}]}, observed_at=1000)
+    assert [(lane.lane_id, lane.remaining_percent) for lane in reading.lanes] == [
+        ("gemini-argon-weekly", 20),
+    ]
+
+
+def test_unknown_quota_names_do_not_create_argon_and_duplicate_pools_fail_closed():
+    bucket = {"bucketId": "weekly", "window": "weekly", "remainingFraction": 0.4}
+    unknown = {"displayName": "Argonaut models", "buckets": [bucket]}
+    assert parse_antigravity_usage({"groups": [unknown]}, observed_at=1000).lanes == ()
+    argon = {"displayName": "Argon", "buckets": [bucket]}
+    with pytest.raises(ValueError, match="duplicate usage lane"):
+        parse_antigravity_usage({"groups": [argon, argon]}, observed_at=1000)
+
+
+@pytest.mark.parametrize("bucket", [
+    {"bucketId": "argon-allowance", "displayName": "Limit Remaining"},
+    {"bucketId": "argon-allowance", "displayName": "Limit Remaining", "window": "daily"},
+])
+def test_argon_without_a_reported_cadence_does_not_invent_a_five_hour_lane(bucket):
+    reading = parse_antigravity_usage({"groups": [
+        {"displayName": "Gemini Models", "buckets": [
+            {"bucketId": "weekly", "window": "weekly", "remainingFraction": 0.8},
+        ]},
+        {"displayName": "Gemini 4 Argon", "buckets": [dict(bucket, remainingFraction=0.3)]},
+    ]}, observed_at=1000)
+    assert [lane.lane_id for lane in reading.lanes] == ["gemini-weekly"]
+
+
+@pytest.mark.parametrize("label", ["5h", "5-Hour Limit", "Five Hour Limit Remaining"])
+def test_argon_five_hour_name_can_state_its_cadence(label):
+    reading = parse_antigravity_usage({"groups": [{"displayName": "Gemini 4 Argon", "buckets": [
+        {"bucketId": "argon-allowance", "displayName": label, "remainingFraction": 0.3},
+    ]}]}, observed_at=1000)
+    assert [lane.lane_id for lane in reading.lanes] == ["gemini-argon-five-hour"]

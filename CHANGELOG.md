@@ -2,6 +2,25 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.17
+
+JR-Bar 0.9.17 improves the Notch, menu bar, usage tracking and lighting, with new provider connections and fixes throughout the utilities and toys.
+
+- The Notch has more consistent provider cycling, cleaner wing spacing and reliable dismissal and restoration. The right wing cycles status symbols in the same space as quota information.
+- Menu bar reveal starts in the hidden space left of the chevron. Hovering the chevron, JR-Bar icon or items to their right keeps the hidden items covered. The icon stays in place during reveal and re-hide.
+- Usage Center opens from Settings > Agents & Usage. Usage history keeps its cost and token breakdowns, explains missing prices and handles large histories without blocking unrelated requests.
+- Agent Overview offers both Cabinet and Radial views, with selection, keyboard navigation, pan and zoom.
+- Factory can connect through a signed-in browser profile, including Zen and Firefox. Kimi, Kilo and Kiro add usage sources, bringing the app to 13 usage collectors. Each connection stays off until enabled.
+- A separate, searchable Coming soon list shows planned integrations. Planned providers have no sign-in controls or invented usage readings.
+- Antigravity shows Argon separately and uses clearer quota labels. Activity checks retire stale working states without treating a successful database read as agent progress.
+- Reset celebrations recover through reconnects and deferred delivery. Confetti animation no longer freezes after starting. The reset setting covers confirmed quota windows across supported providers.
+- Screen Bar auto-brightness follows display brightness and disables the manual slider while enabled. Lighting status and firmware controls are clearer, and calibration scrolls while keeping Apply and Cancel accessible.
+- Dock previews constrain paused-video layouts. Preview loading, hover retargeting and media controls have clearer ownership and recovery.
+- Shelf folder moves keep descendant references, selection and keyboard focus together. Keep Awake restores valid saved agent leases after restart.
+- Fold capture recovery, Aquarium controls and saves, Notch Buddy motion, notification delivery and sync retries have been repaired.
+- Settings descriptions state what each tool does. Provider update controls reflect whether an installation can be updated.
+- Credential selection, account continuity, rejected-token handling, idle transport checks and stale asynchronous replies have been hardened.
+
 ## 0.9.16
 
 - A sub-agent's ask stays quiet while Sub-agent asks is off. Its permission

@@ -354,3 +354,29 @@ def test_delivery_rejects_private_or_unbounded_inputs__and_2_more() -> None:
     assert notification_client.authorization_state() is NotificationAuthorizationState.UNAVAILABLE
     assert notification_client.request_authorization() is False
 
+
+
+def test_delivery_bound_counts_requests_waiting_for_native_completion(monkeypatch) -> None:
+    monkeypatch.setattr(notifications, "_MAX_PENDING_DELIVERIES", 2)
+    center = AsyncFakeCenter(2)
+    notification_client = client(center)
+    assert notification_client.authorization_state() is NotificationAuthorizationState.AUTHORIZED
+    try:
+        for identifier in ("completion.one", "completion.two"):
+            center.delivery_started.clear()
+            assert notification_client.deliver(identifier, "JR-Bar", "A Codex session finished", {})
+            assert center.delivery_started.wait(1.0)
+        assert not notification_client.deliver("completion.three", "JR-Bar", "A Codex session finished", {})
+        center.complete_next_delivery()
+        center.delivery_started.clear()
+        assert notification_client.deliver("completion.three", "JR-Bar", "A Codex session finished", {})
+        assert center.delivery_started.wait(1.0)
+    finally:
+        notification_client.close(timeout_seconds=0.0)
+        worker = notification_client._delivery_thread
+        assert worker is not None
+        worker.join(1.0)
+        assert not worker.is_alive()
+        while center.delivery_callbacks:
+            center.complete_next_delivery()
+        assert notification_client.close(timeout_seconds=1.0)

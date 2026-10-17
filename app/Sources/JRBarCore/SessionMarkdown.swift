@@ -1,11 +1,9 @@
 import Foundation
 
 /// A session's story as one readable Markdown file — the header facts,
-/// what happened, the honest gaps, and every timeline row (the proxy's
-/// requests included) — so a run can go into a PR description or a
-/// postmortem. The Data Hoarder's "Export as Markdown" and the Overview's
-/// "Export this run" both write it, from the same `SessionReconstruction`
-/// the timeline view draws.
+/// what happened, the honest gaps, and every timeline row — so a run can go
+/// into a PR description or a postmortem. The Overview's "Export this run"
+/// writes it, from the same `SessionReconstruction` the timeline view draws.
 ///
 /// It is a rendering, not a raw copy: every row's text is already bounded
 /// by the reconstruction, long token-shaped runs are masked again here,
@@ -26,10 +24,10 @@ public enum SessionMarkdown {
     public static func render(title: String, facts: [Fact], reconstruction: SessionReconstruction,
                               notes: [String] = [], home: String? = NSHomeDirectory(),
                               generatedAt: Date = Date(), timeZone: TimeZone = .current) -> String {
-        let clean = { (text: String) in collapseHome(text, home: home) }
+        let clean = { (text: String) in mask(collapseHome(text, home: home)) }
         var out: [String] = ["# \(inline(clean(title)))", ""]
         for fact in facts where !fact.value.isEmpty {
-            out.append("- **\(inline(fact.label)):** \(inline(clean(fact.value)))")
+            out.append("- **\(inline(clean(fact.label))):** \(inline(clean(fact.value)))")
         }
         if !facts.isEmpty { out.append("") }
         let stamp = formatter("yyyy-MM-dd HH:mm", timeZone).string(from: generatedAt)
@@ -39,53 +37,41 @@ public enum SessionMarkdown {
 
         out.append("## What happened")
         out.append("")
-        out.append(reconstruction.story.failed ? mask(clean(reconstruction.story.sentence)) : "No failures in these rows.")
-        if let upstream = SessionProxyEvidence.summary(reconstruction.proxyRequests) {
-            out.append("")
-            out.append("Upstream: \(upstream).")
-        }
+        out.append(reconstruction.story.failed ? quoted(clean(reconstruction.story.sentence)) : "No failures in these rows.")
         out.append("")
 
-        var gaps = reconstruction.gaps.map(ReconstructionGap.text)
-        if reconstruction.redactedLines > 0 {
-            gaps.append("\(reconstruction.redactedLines) \(reconstruction.redactedLines == 1 ? "line" : "lines") stored with text withheld (metadata-only capture)")
-        }
+        let gaps = reconstruction.gaps.map(ReconstructionGap.text)
         if !gaps.isEmpty {
             out.append("## Gaps")
             out.append("")
-            out.append(contentsOf: gaps.map { "- \(inline($0))" })
+            out.append(contentsOf: gaps.map { "- \(inline(clean($0)))" })
             out.append("")
         }
 
         out.append("## Timeline")
         out.append("")
         let clock = formatter("HH:mm:ss", timeZone)
-        let entries = reconstruction.entries
-        if entries.isEmpty { out.append("No rows could be rebuilt."); out.append("") }
-        for entry in entries {
-            let time = entry.at.map { clock.string(from: Date(timeIntervalSince1970: $0)) } ?? "—"
-            switch entry {
-            case .item(let item):
-                out.append(contentsOf: rows(item, time: time, clean: clean))
-            case .request(_, let request):
-                var line = "- \(time) · proxy · `\(SessionProxyEvidence.line(request).replacingOccurrences(of: "`", with: "'"))`"
-                if SessionProxyEvidence.failed(request), let summary = request.errorSummary {
-                    line += " — \(inline(mask(clean(summary))))"
-                }
-                out.append(line)
-                out.append("")
-            }
+        let items = reconstruction.items
+        if items.isEmpty { out.append("No rows could be rebuilt."); out.append("") }
+        for item in items {
+            let time = item.at.map { clock.string(from: Date(timeIntervalSince1970: $0)) } ?? "—"
+            out.append(contentsOf: rows(item, time: time, clean: clean))
         }
         return out.joined(separator: "\n")
     }
 
     private static func rows(_ item: ReconstructedItem, time: String, clean: (String) -> String) -> [String] {
         let sidechain = item.sidechain ? " · subagent" : ""
-        let body = item.text.map { mask(clean($0)) }
+        let body = item.text.map(clean)
         switch item.kind {
         case .message:
-            let who = item.role == "user" ? "You" : (item.role == "assistant" ? "Assistant" : (item.role ?? "Message"))
-            let model = item.model.map { " (\(inline($0)))" } ?? ""
+            let who: String
+            switch item.role {
+            case "user": who = "You"
+            case "assistant": who = "Assistant"
+            default: who = inline(clean(item.role ?? "Message"))
+            }
+            let model = item.model.map { " (\(inline(clean($0))))" } ?? ""
             var out = ["### \(time) · \(who)\(model)\(sidechain)", ""]
             if item.redacted {
                 out.append("_redacted_")
@@ -97,7 +83,8 @@ public enum SessionMarkdown {
             out.append("")
             return out
         case .toolUse:
-            var out = ["- \(time) · tool `\(inline(item.name ?? "tool").replacingOccurrences(of: "`", with: "'"))`\(item.isError ? " · failed" : "")\(sidechain)"]
+            let name = singleLine(clean(item.name ?? "tool")).replacingOccurrences(of: "`", with: "'")
+            var out = ["- \(time) · tool `\(name)`\(item.isError ? " · failed" : "")\(sidechain)"]
             if item.redacted {
                 out.append("  _input redacted_")
             } else if let body {
@@ -115,7 +102,7 @@ public enum SessionMarkdown {
             out.append("")
             return out
         case .turnEnd:
-            return ["- \(time) · turn end\(item.name.map { " · \(inline($0))" } ?? "")\(item.isError ? " · **failed**" : "")", ""]
+            return ["- \(time) · turn end\(item.name.map { " · \(inline(clean($0)))" } ?? "")\(item.isError ? " · **failed**" : "")", ""]
         }
     }
 
@@ -138,6 +125,14 @@ public enum SessionMarkdown {
 
     /// One line, no Markdown structure characters left to misread.
     static func inline(_ text: String) -> String {
+        var escaped = singleLine(text).replacingOccurrences(of: "\\", with: "\\\\")
+        for character in ["*", "_", "`", "[", "]", "<", ">", "#", "!", "|"] {
+            escaped = escaped.replacingOccurrences(of: character, with: "\\" + character)
+        }
+        return escaped
+    }
+
+    private static func singleLine(_ text: String) -> String {
         text.replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
     }

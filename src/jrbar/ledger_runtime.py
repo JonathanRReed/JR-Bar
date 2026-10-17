@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .remote_peers import RemotePeerSettings, publication_settings
+
 LEDGER_PUBLISH_REASON_FAILED = "remote_ledger_publish_failed"
+LEDGER_PUBLISH_REASON_REVOKED = "remote_ledger_publish_revoked"
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,10 +34,16 @@ class LedgerPublishResult:
 
 
 class RemoteLedgerPublisher:
-    def __init__(self, publish: Callable[..., Path | None]) -> None:
+    def __init__(
+        self,
+        publish: Callable[..., Path | None],
+        *,
+        settings_supplier: Callable[[], RemotePeerSettings] | None = None,
+    ) -> None:
         if not callable(publish):
             raise ValueError("ledger publisher must be callable")
         self._publish = publish
+        self._settings_supplier = settings_supplier
         self._lock = threading.RLock()
         self._generation = 0
         self._closed = False
@@ -58,6 +67,10 @@ class RemoteLedgerPublisher:
         with self._lock:
             if self._closed:
                 return None
+            if self._settings_supplier is not None:
+                settings = publication_settings(settings, self._settings_supplier)
+                if settings is None:
+                    return None
             self._generation += 1
             request = LedgerPublishRequest(
                 self._generation,
@@ -97,12 +110,24 @@ class RemoteLedgerPublisher:
         callback: Callable[[LedgerPublishResult], None],
     ) -> None:
         try:
-            path = self._publish(
-                request.statuses,
-                generated_at=request.generated_at,
-                settings=request.settings,
-            )
-            result = LedgerPublishResult(request, path)
+            with self._lock:
+                settings = None if self._closed else request.settings
+                if settings is not None and self._settings_supplier is not None:
+                    settings = publication_settings(settings, self._settings_supplier)
+            if settings is None:
+                result = LedgerPublishResult(request, None, LEDGER_PUBLISH_REASON_REVOKED)
+            else:
+                request = replace(request, settings=settings)
+                options = {}
+                if self._settings_supplier is not None:
+                    options["settings_supplier"] = self._settings_supplier
+                path = self._publish(
+                    request.statuses,
+                    generated_at=request.generated_at,
+                    settings=settings,
+                    **options,
+                )
+                result = LedgerPublishResult(request, path)
         except Exception:
             result = LedgerPublishResult(
                 request,

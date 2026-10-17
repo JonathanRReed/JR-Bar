@@ -21,7 +21,26 @@ struct UsageGraphView: View {
     @ViewState private var hoverDay: Int?
 
     private var document: CoreUsageGraphDocument? { store.graph }
-    private var graph: CoreUsageGraph? { document?.graph }
+    private var graph: CoreUsageGraph? { document.map { UsageSourceReading.providerGraph($0.graph) } }
+    private var calendar: UsageChartCalendar { UsageChartCalendar(document?.graph ?? CoreUsageGraph()) }
+
+    nonisolated static func xDomain(days: Int) -> ClosedRange<Double> {
+        days > 1 ? 0...Double(days - 1) : -0.5...0.5
+    }
+
+    nonisolated static func chartMaximum(_ graph: CoreUsageGraph) -> Double {
+        let observed = graph.series.flatMap { $0.values.prefix(max(0, graph.days)) }
+            .filter { $0.isFinite && $0 >= 0 }.max() ?? 0
+        let supplied = graph.scaleMax.isFinite ? graph.scaleMax : 0
+        return max(graph.metric == "percent" ? 100 : 1, max(supplied, observed))
+    }
+
+    nonisolated static func selectedDay(_ raw: Double?, days: Int) -> Int? {
+        guard let raw, raw.isFinite, days > 0 else { return nil }
+        let day = raw.rounded()
+        guard day >= 0, day < Double(days) else { return nil }
+        return Int(day)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +52,17 @@ struct UsageGraphView: View {
             } else if let error = store.graphError, graph == nil {
                 errorState(error)
             } else if let graph {
+                if graph.readingFiles > 0 {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock").foregroundStyle(.secondary)
+                        Text("Reading \(graph.readingFiles.formatted()) \(graph.readingFiles == 1 ? "file" : "files"). Local history is still incomplete.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Color.primary.opacity(0.035))
+                }
                 // A failed refresh keeps the last document but says so —
                 // otherwise the header's new picks sit over the old chart
                 // with nothing admitting the desync.
@@ -54,9 +84,28 @@ struct UsageGraphView: View {
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
-                        chart(graph)
-                            .opacity(store.graphLoading ? 0.45 : 1)
-                        legend(graph)
+                        if let comparison = UsageComparison.make(graph) {
+                            UsageComparisonView(graph: graph, comparison: comparison)
+                            Picker("Presentation", selection: $store.graphComposition) {
+                                Text("Trends").tag(false)
+                                Text("Composition").tag(true)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .accessibilityLabel("Chart presentation")
+                            .frame(maxWidth: 240)
+                            if store.graphComposition {
+                                UsageCompositionView(graph: graph, comparison: comparison, calendar: calendar) { day in
+                                    store.showDay(day, provider: "all")
+                                }
+                                .opacity(store.graphLoading ? 0.45 : 1)
+                            } else {
+                                chart(graph).opacity(store.graphLoading ? 0.45 : 1)
+                            }
+                        } else {
+                            chart(graph).opacity(store.graphLoading ? 0.45 : 1)
+                            legend(graph)
+                        }
                         if let summary = document?.summary, !summary.isEmpty {
                             Text(summary)
                                 .font(.system(size: 11))
@@ -64,6 +113,12 @@ struct UsageGraphView: View {
                                 .textSelection(.enabled)
                         }
                         disclosures(graph)
+                        if let coverage = graph.costCoverage {
+                            UsageCostCoverageView(coverage: coverage)
+                        }
+                        if let imported = document?.graph {
+                            UsageIntegrationSourcesView(graph: imported)
+                        }
                         if let heatmap = graph.heatmap {
                             UsageHeatmapGrid(heatmap: heatmap, providers: graph.providers) { day, provider in
                                 store.showDay(day, provider: provider)
@@ -81,57 +136,58 @@ struct UsageGraphView: View {
                 loadingState
             }
         }
+        .onChange(of: store.graphPickKey) { hoverDay = nil }
+        .onChange(of: graph?.periodLabel) { hoverDay = nil }
     }
 
     // MARK: Header
 
     @ViewBuilder
     private var header: some View {
-        HStack(spacing: 10) {
-            Text("Usage")
-                .font(.system(size: 13, weight: .semibold))
-            Picker("Metric", selection: Binding(
-                get: { store.graphMetric },
-                set: { store.setGraphMetric($0) }
-            )) {
-                Text("Tokens").tag("tokens")
-                Text("Cost").tag("cost")
-                Text("Sessions").tag("sessions")
-                Text("Quota").tag("percent")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Text("Usage").font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                Picker("Metric", selection: Binding(
+                    get: { store.graphMetric }, set: { store.setGraphMetric($0) }
+                )) {
+                    Text("Tokens").tag("tokens")
+                    Text("Cost").tag("cost")
+                    Text("Sessions").tag("sessions")
+                    Text("Quota").tag("percent")
+                }
+                .pickerStyle(.segmented).frame(maxWidth: 300).labelsHidden()
+                Spacer(minLength: 0)
+                Button { Task { await store.loadGraph() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Refresh usage chart")
+                .disabled(store.graphLoading)
+                .help("Rescan the transcripts and redraw")
             }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 300)
-            .labelsHidden()
-            Spacer()
-            providerMenu
-            Picker("Range", selection: Binding(
-                get: { store.graphDays },
-                set: { store.setGraphDays($0) }
-            )) {
-                Text("7D").tag(7)
-                Text("30D").tag(30)
-                Text("90D").tag(90)
-                Text("1Y").tag(365)
+            HStack(spacing: 10) {
+                providerMenu
+                Picker("Range", selection: Binding(
+                    get: { store.graphDays }, set: { store.setGraphDays($0) }
+                )) {
+                    Text("7D").tag(7)
+                    Text("30D").tag(30)
+                    Text("90D").tag(90)
+                    Text("1Y").tag(365)
+                }
+                .pickerStyle(.segmented).frame(width: 190).labelsHidden()
+                Spacer(minLength: 0)
+                if let loaded = store.graphLoadedAt {
+                    ViewThatFits(in: .horizontal) {
+                        Text("Updated \(loaded.formatted(date: .omitted, time: .shortened))")
+                            .font(.system(size: 10)).foregroundStyle(.tertiary).fixedSize()
+                        Color.clear.frame(width: 0, height: 0)
+                    }
+                }
             }
-            .pickerStyle(.segmented)
-            .frame(width: 190)
-            .labelsHidden()
-            if let loaded = store.graphLoadedAt {
-                Text("Updated \(loaded.formatted(date: .omitted, time: .shortened))")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-            }
-            Button {
-                Task { await store.loadGraph() }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.borderless)
-            .disabled(store.graphLoading)
-            .help("Rescan the transcripts and redraw")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 12).padding(.vertical, 8)
     }
 
     /// The provider checklist — options are the daemon's registry plus
@@ -194,6 +250,7 @@ struct UsageGraphView: View {
     nonisolated static func splitPoints(_ graph: CoreUsageGraph) -> [Point] {
         var out: [Point] = []
         for (seriesIndex, series) in graph.series.enumerated() {
+            if graph.metric == "cost", series.hasPricedUsage == false { continue }
             var run = 0
             var open = false
             for (index, value) in series.values.enumerated() where index < graph.days {
@@ -209,17 +266,18 @@ struct UsageGraphView: View {
         return out
     }
 
-    /// Percent mode's quota overlay: each day a series stood at its limit
-    /// (100 % used or more), with the provider it belongs to — the chart
-    /// marks those days on the ceiling so spend lines up with the limits
-    /// it ran into.
+    /// Percent mode's quota overlay: each day a series stood at its limit,
+    /// with the provider it belongs to. The daemon's percent series is the
+    /// day's lowest remaining percent, so a spent quota is the floor (0 %
+    /// left) and a full one is the top of the chart; the chart marks the
+    /// floor days so spend lines up with the limits it ran into.
     /// Empty for every other metric, whose numbers have no ceiling.
     nonisolated static func limitDays(_ graph: CoreUsageGraph) -> [(day: Int, providerId: String)] {
         guard graph.metric == "percent" else { return [] }
         var out: [(day: Int, providerId: String)] = []
         var seen = Set<String>()
         for series in graph.series {
-            for (index, value) in series.values.enumerated() where index < graph.days && value >= 99.5 {
+            for (index, value) in series.values.enumerated() where index < graph.days && value >= 0 && value <= 0.5 {
                 if seen.insert("\(index)|\(series.providerId)").inserted {
                     out.append((index, series.providerId))
                 }
@@ -245,9 +303,9 @@ struct UsageGraphView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
             Chart {
-                // The ceiling percent mode climbs toward, under the lines.
+                // The floor a spent quota sits on, under the lines.
                 if graph.metric == "percent" {
-                    RuleMark(y: .value("Limit", 100))
+                    RuleMark(y: .value("Limit", 0))
                         .foregroundStyle(.secondary.opacity(0.45))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                         .annotation(position: .top, alignment: .leading, spacing: 1) {
@@ -261,7 +319,7 @@ struct UsageGraphView: View {
                         .foregroundStyle(accent)
                         .lineStyle(StrokeStyle(lineWidth: 1.8))
                     AreaMark(x: .value("Day", point.day), y: .value("Value", point.value),
-                             series: .value("Series", point.seriesId))
+                             series: .value("Series", point.seriesId), stacking: .unstacked)
                         .foregroundStyle(accent.opacity(0.10))
                     if singletons.contains(point.seriesId) {
                         PointMark(x: .value("Day", point.day), y: .value("Value", point.value))
@@ -270,30 +328,33 @@ struct UsageGraphView: View {
                     }
                 }
                 // The days a provider stood at its limit: a small mark on
-                // the ceiling in its colour, over the lines.
+                // the floor in its colour, over the lines.
                 ForEach(Array(Self.limitDays(graph).enumerated()), id: \.offset) { _, hit in
-                    PointMark(x: .value("Day", hit.day), y: .value("Value", 100))
+                    PointMark(x: .value("Day", hit.day), y: .value("Value", 0))
                         .foregroundStyle(ProviderStyle.style(for: hit.providerId).accent)
                         .symbol(.triangle)
                         .symbolSize(22)
                         .accessibilityLabel("\(ProviderStyle.style(for: hit.providerId).name) at its limit")
                 }
-                if let hoverDay {
-                    RuleMark(x: .value("Day", hoverDay))
+                if let day = Self.selectedDay(hoverDay.map { Double($0) }, days: graph.days) {
+                    RuleMark(x: .value("Day", day))
                         .foregroundStyle(.secondary.opacity(0.35))
                         .lineStyle(StrokeStyle(lineWidth: 1))
                 }
             }
-            // Percent mode always shows its ceiling, even on a quiet range.
-            .chartYScale(domain: 0...max(graph.metric == "percent" ? 100 : 1, graph.scaleMax))
+            // Percent mode always shows its whole 0...100 range, even on a quiet one.
+            .chartYScale(domain: 0...Self.chartMaximum(graph))
+            .chartXScale(domain: Self.xDomain(days: graph.days))
             .chartYAxis {
                 AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                     AxisGridLine()
                     AxisValueLabel {
                         if let v = value.as(Double.self) {
-                            Text(axisLabel(v, metric: graph.metric))
-                                .font(.system(size: 9))
-                                .foregroundStyle(.tertiary)
+                            if let label = Self.axisLabel(v, metric: graph.metric) {
+                                Text(label)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(Color.secondary)
+                            }
                         }
                     }
                 }
@@ -308,7 +369,7 @@ struct UsageGraphView: View {
                         AxisValueLabel {
                             Text(graph.labels[index])
                                 .font(.system(size: 9))
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(Color.secondary)
                         }
                     }
                 }
@@ -319,11 +380,14 @@ struct UsageGraphView: View {
                         .onContinuousHover { phase in
                             switch phase {
                             case .active(let location):
-                                guard let frame = proxy.plotFrame else { return }
+                                guard let frame = proxy.plotFrame,
+                                      geometry[frame].contains(location) else {
+                                    hoverDay = nil
+                                    return
+                                }
                                 let x = location.x - geometry[frame].origin.x
-                                let raw = proxy.value(atX: x, as: Double.self) ?? -1
-                                let day = Int(raw.rounded())
-                                hoverDay = (0..<graph.days).contains(day) ? day : nil
+                                hoverDay = Self.selectedDay(proxy.value(atX: x, as: Double.self),
+                                                            days: graph.days)
                             case .ended:
                                 hoverDay = nil
                             }
@@ -341,7 +405,7 @@ struct UsageGraphView: View {
     /// that slot, pinned above the plot.
     @ViewBuilder
     private func readout(_ graph: CoreUsageGraph, proxy: ChartProxy) -> some View {
-        if let day = hoverDay {
+        if let day = Self.selectedDay(hoverDay.map { Double($0) }, days: graph.days) {
             GeometryReader { geometry in
                 if let frame = proxy.plotFrame,
                    let x = proxy.position(forX: day) {
@@ -349,21 +413,7 @@ struct UsageGraphView: View {
                         Text(dayLabel(day, graph: graph))
                             .font(.system(size: 10, weight: .semibold))
                         ForEach(Array(graph.series.enumerated()), id: \.offset) { _, series in
-                            if day < series.values.count, series.values[day] >= 0 {
-                                HStack(spacing: 4) {
-                                    Circle()
-                                        .fill(ProviderStyle.style(for: series.providerId).accent)
-                                        .frame(width: 5, height: 5)
-                                    // `label` names the instance ("codex ·
-                                    // work") when the daemon split one;
-                                    // the bare provider name otherwise.
-                                    Text(series.label ?? ProviderStyle.style(for: series.providerId).name)
-                                    Spacer(minLength: 6)
-                                    Text(valueLabel(series.values[day], metric: graph.metric))
-                                        .monospacedDigit()
-                                }
-                                .font(.system(size: 9))
-                            }
+                            UsageGraphReadoutRow(series: series, day: day, metric: graph.metric)
                         }
                     }
                     .padding(.horizontal, 8).padding(.vertical, 6)
@@ -384,7 +434,8 @@ struct UsageGraphView: View {
     /// ISO date for a day slot — the heatmap's calendar is canonical;
     /// the strided axis label is the fallback.
     private func dayLabel(_ day: Int, graph: CoreUsageGraph) -> String {
-        if let iso = graph.heatmap?.days, day < iso.count {
+        let iso = calendar.days
+        if day >= 0, day < iso.count {
             if let date = Self.isoDay.date(from: iso[day]) {
                 return Self.readoutDay.string(from: date)
             }
@@ -427,12 +478,11 @@ struct UsageGraphView: View {
                         .lineLimit(1)
                     Spacer(minLength: 2)
                     if let series = row.series {
-                        Text(valueLabel(Self.legendFigure(series, metric: graph.metric),
-                                        metric: graph.metric))
+                        Text(Self.legendValueLabel(series, metric: graph.metric))
                             .font(.system(size: 10)).monospacedDigit()
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("no local history")
+                        Text(Self.noHistoryText(metric: graph.metric))
                             .font(.system(size: 9))
                             .foregroundStyle(.tertiary)
                     }
@@ -452,7 +502,7 @@ struct UsageGraphView: View {
     /// One legend row per charted series — a provider with several
     /// instance rows (percent mode) expands into one chip each so the
     /// legend names every line the chart draws.
-    static func legendRows(_ graph: CoreUsageGraph)
+    nonisolated static func legendRows(_ graph: CoreUsageGraph)
         -> [(key: String, id: String, label: String, series: CoreUsageGraph.Series?)] {
         var rows: [(key: String, id: String, label: String, series: CoreUsageGraph.Series?)] = []
         for id in graph.providers {
@@ -461,12 +511,23 @@ struct UsageGraphView: View {
                 rows.append((id, id, ProviderStyle.style(for: id).name, providerSeries.first))
             } else {
                 for series in providerSeries {
-                    rows.append((series.seriesKey, id,
-                                 series.label ?? ProviderStyle.style(for: id).name, series))
+                    rows.append((series.seriesKey, id, seriesName(series), series))
                 }
             }
         }
         return rows
+    }
+
+    /// A series' name as the legend and the readout say it: the provider's
+    /// own name, with the account after it when the daemon split one. The
+    /// daemon's `label` is the bare provider id for a default account and
+    /// `provider · instance` for another, so it is never shown raw.
+    nonisolated static func seriesName(_ series: CoreUsageGraph.Series) -> String {
+        let name = ProviderStyle.style(for: series.providerId).name
+        guard let label = series.label, !label.isEmpty, label != series.providerId else { return name }
+        let prefix = series.providerId + " · "
+        if label.hasPrefix(prefix) { return name + " · " + label.dropFirst(prefix.count) }
+        return label
     }
 
     @ViewBuilder
@@ -482,8 +543,7 @@ struct UsageGraphView: View {
                       systemImage: "exclamationmark.triangle")
             }
             if graph.series.isEmpty {
-                Label("No local activity in this range — the scan reads on-disk transcripts (Claude, Codex, opencode, Gemini, T3) plus the ledger.",
-                      systemImage: "tray")
+                Label(Self.emptyExplanation(metric: graph.metric), systemImage: "tray")
             }
         }
         .font(.system(size: 10))
@@ -537,24 +597,77 @@ struct UsageGraphView: View {
         return series.values.filter { $0 > 0 }.reduce(0, +)
     }
 
+    nonisolated static func legendValueLabel(_ series: CoreUsageGraph.Series, metric: String) -> String {
+        if metric == "cost" {
+            if series.hasPricedUsage == false { return "Unpriced" }
+            if !series.values.contains(where: { $0 >= 0 }) { return "No estimate" }
+        }
+        return valueLabel(legendFigure(series, metric: metric), metric: metric)
+    }
+
+    nonisolated static func readoutValueLabel(_ series: CoreUsageGraph.Series, day: Int, metric: String) -> String? {
+        guard series.values.indices.contains(day), series.values[day] >= 0 else { return nil }
+        if metric == "cost", series.hasPricedUsage == false { return "Unpriced" }
+        return valueLabel(series.values[day], metric: metric)
+    }
+
     /// Axis labels ride the metric: compact tokens, estimate dollars,
-    /// grouped counts, bare percents.
-    private func axisLabel(_ value: Double, metric: String) -> String {
+    /// grouped counts, bare percents. A tick between two whole sessions or
+    /// tokens has no honest label (it would round into its neighbour), so
+    /// it has none.
+    nonisolated static func axisLabel(_ value: Double, metric: String) -> String? {
         switch metric {
         case "cost": return UsageFormat.cost(value)
-        case "sessions": return UsageFormat.grouped(value)
-        case "percent": return "\(Int(value.rounded()))%"
-        default: return UsageFormat.tokens(Int(value))
+        case "sessions":
+            return value == value.rounded() ? UsageFormat.grouped(value) : nil
+        case "percent": return "\(UsageWindowLabel.wholeUsed(value))%"
+        default:
+            return value == value.rounded() ? UsageFormat.tokens(Int(saturating: value)) : nil
         }
     }
 
+    /// What a provider chip says when it has no series for the metric.
+    nonisolated static func noHistoryText(metric: String) -> String {
+        metric == "percent" ? "no quota history" : "no local history"
+    }
+
+    /// Why the chart is empty. Quota history is the monitor's own record of
+    /// each provider's remaining quota; every other metric is a scan of
+    /// on-disk transcripts.
+    nonisolated static func emptyExplanation(metric: String) -> String {
+        if metric == "percent" {
+            return "No quota readings in this range — the monitor records each provider's remaining quota as it reads it, so the line fills in as days pass."
+        }
+        return "No local activity in this range — the scan reads on-disk transcripts (Claude, Codex, opencode, Gemini, T3) plus the ledger."
+    }
+
     /// Readout/legend values get the fuller form.
-    private func valueLabel(_ value: Double, metric: String) -> String {
+    nonisolated static func valueLabel(_ value: Double, metric: String) -> String {
         switch metric {
         case "cost": return UsageFormat.cost(value)
         case "sessions": return UsageFormat.grouped(value)
         case "percent": return String(format: "%.1f%%", value)
-        default: return UsageFormat.tokens(Int(value))
+        default: return UsageFormat.tokens(Int(saturating: value))
+        }
+    }
+}
+
+struct UsageGraphReadoutRow: View {
+    let series: CoreUsageGraph.Series
+    let day: Int
+    let metric: String
+
+    var body: some View {
+        if let label = UsageGraphView.readoutValueLabel(series, day: day, metric: metric) {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(ProviderStyle.style(for: series.providerId).accent)
+                    .frame(width: 5, height: 5)
+                Text(UsageGraphView.seriesName(series))
+                Spacer(minLength: 6)
+                Text(label).monospacedDigit()
+            }
+            .font(.system(size: 9))
         }
     }
 }
@@ -655,7 +768,7 @@ struct UsageGraphFacts: View {
                 Text("About this chart")
                     .font(.system(size: 15, weight: .semibold))
                 if let document {
-                    let graph = document.graph
+                    let graph = UsageSourceReading.providerGraph(document.graph)
                     if !document.summary.isEmpty {
                         fact("Summary", document.summary)
                     }
@@ -703,6 +816,7 @@ struct UsageGraphFacts: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
+                    UsageIntegrationSourcesView(graph: document.graph)
                     sectionTitle("Source")
                     Text("On-disk transcripts (Claude, Codex, opencode, Gemini, T3) plus the session ledger. Nothing leaves the Mac.")
                         .font(.system(size: 11))

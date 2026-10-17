@@ -55,6 +55,20 @@ import Testing
         #expect(PermissionHealth.notice(for: [.screenRecording, .accessibility, .camera])
                 == "Screen Recording, Accessibility and Camera were turned off since JR-Bar last ran.")
     }
+
+    @Test func lostFocusGrantsNameTheirSeparateEffects() throws {
+        let names = ["fullDiskAccess", "focusStatus"]
+        let namedRules = PermissionHealth.review(remembered: names,
+                                                statuses: [.fullDiskAccess: .denied, .focusStatus: .granted])
+        #expect(namedRules.lost == [.fullDiskAccess])
+        let namedNotice = try #require(PermissionHealth.notice(for: namedRules.lost))
+        #expect(namedNotice.contains("rules for named Focus modes stop"))
+        let generalRules = PermissionHealth.review(remembered: names,
+                                                  statuses: [.fullDiskAccess: .granted, .focusStatus: .denied])
+        #expect(generalRules.lost == [.focusStatus])
+        let generalNotice = try #require(PermissionHealth.notice(for: generalRules.lost))
+        #expect(generalNotice.contains("React to Focus modes and Focus-based Menu Bar rules stop"))
+    }
 }
 
 /// The store's launch look: remembers through `persist` without touching

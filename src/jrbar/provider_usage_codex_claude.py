@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import math
 import sys
 import threading
@@ -11,35 +12,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from .provider_usage_parsers import parse_claude_usage, parse_codex_usage
-from .provider_usage_platform import ProviderSourceState, ProviderUsageSnapshot
+from .provider_usage_platform import (
+    ProviderSourceState,
+    ProviderUsageSnapshot,
+)
+from .provider_usage_platform import failure_snapshot as _failure
 from .provider_usage_settings import ProviderPreference
-
-
-def _failure(
-    provider_id: str,
-    *,
-    observed_at: float,
-    state: ProviderSourceState,
-    reason: str,
-    action: str,
-) -> ProviderUsageSnapshot:
-    return ProviderUsageSnapshot(
-        provider_id=provider_id,
-        account_label=None,
-        observed_at=observed_at,
-        state=state,
-        reason_code=reason,
-        action_label=action,
-        lanes=(),
-        input_tokens=0,
-        cached_input_tokens=0,
-        output_tokens=0,
-        model_count=0,
-        estimated_cost_usd=None,
-        cache_savings_usd=None,
-        credits_remaining=None,
-        incident=None,
-    )
 
 
 def _credential(credentials, provider_id: str, account: str) -> str | None:
@@ -56,12 +34,25 @@ def _credential(credentials, provider_id: str, account: str) -> str | None:
     return value
 
 
+#: How long one quota refresh may spend reading transcripts when no earlier
+#: scan has left totals in a cache. A very large history is read over several
+#: refreshes (each continues from where the last stopped) instead of holding
+#: one provider fetch for minutes; the token figures are a floor until then.
+LOCAL_SCAN_PASS_SECONDS = 8.0
+
+
 def _default_provider_local_scan(
     provider_id: str,
     home: Path,
     observed_at: float,
+    *,
+    read_account: bool = True,
 ) -> dict[str, object] | None:
-    """Use JR-Bar's bounded transcript scanner for exactly one provider."""
+    """Use JR-Bar's bounded transcript scanner for exactly one provider.
+
+    ``read_account`` false skips Codex's ``auth.json``, the only sign-in this
+    scan would otherwise read for the account label.
+    """
     try:
         from . import usage_stats
         from .providers import negotiated_provider_sources
@@ -105,6 +96,7 @@ def _default_provider_local_scan(
             cache,
             since_epoch=since,
             now=observed_at,
+            budget=usage_stats.ScanBudget(LOCAL_SCAN_PASS_SECONDS),
         )
         # Token totals count every home of this provider (provider_extra_homes),
         # each real folder once; the quota evidence stays the primary account's.
@@ -122,6 +114,7 @@ def _default_provider_local_scan(
                     _home_cache_path(cache, extra),
                     since_epoch=since,
                     now=observed_at,
+                    budget=usage_stats.ScanBudget(LOCAL_SCAN_PASS_SECONDS),
                 )
                 parts.append(extra_totals)
             merged = usage_stats._merge_usage_totals(tuple(parts))
@@ -138,7 +131,9 @@ def _default_provider_local_scan(
         "input_tokens": int(getattr(result, "input_tokens", 0)),
         "cached_input_tokens": int(getattr(result, "cached_input_tokens", 0)),
         "output_tokens": int(getattr(result, "output_tokens", 0)),
-        "model_count": len({record[2] for record in records if len(record) > 2}),
+        "model_count": len(
+            {usage_stats.base_model_key(record[2]) for record in records if len(record) > 2}
+        ),
         "estimated_cost_usd": getattr(result, "covered_cost_estimate_usd", None),
         "cache_savings_usd": getattr(
             result,
@@ -155,14 +150,15 @@ def _default_provider_local_scan(
             for window in tuple(getattr(totals, "codex_rate_limit_evidence", ()))[:64]
             if isinstance(window, dict)
         ]
-        try:
-            from .credentials import read_codex_tokens
+        if read_account:
+            try:
+                from .credentials import read_codex_tokens
 
-            tokens = read_codex_tokens(Path(home) / ".codex" / "auth.json")
-        except Exception:
-            tokens = None
-        if tokens is not None and getattr(tokens, "account_id", None):
-            document["account_label"] = str(tokens.account_id)
+                tokens = read_codex_tokens(Path(home) / ".codex" / "auth.json")
+            except Exception:
+                tokens = None
+            if tokens is not None and getattr(tokens, "account_id", None):
+                document["account_label"] = str(tokens.account_id)
     return document
 
 
@@ -350,6 +346,7 @@ def _cached_provider_local_scan(
     observed_at: float,
     *,
     extra_homes: Iterable[str] | None = None,
+    read_account: bool = True,
 ) -> dict[str, object] | None:
     """Read one provider's bounded usage cache without a transcript walk.
 
@@ -480,14 +477,15 @@ def _cached_provider_local_scan(
             document["windows"] = [dict(window) for window in windows]
             if newest_window_marker is not None:
                 document["windows_observed_at"] = newest_window_marker[0]
-            try:
-                from .credentials import read_codex_tokens
+            if read_account:
+                try:
+                    from .credentials import read_codex_tokens
 
-                tokens = read_codex_tokens(Path(home) / ".codex" / "auth.json")
-            except Exception:
-                tokens = None
-            if tokens is not None and getattr(tokens, "account_id", None):
-                document["account_label"] = str(tokens.account_id)
+                    tokens = read_codex_tokens(Path(home) / ".codex" / "auth.json")
+                except Exception:
+                    tokens = None
+                if tokens is not None and getattr(tokens, "account_id", None):
+                    document["account_label"] = str(tokens.account_id)
         return document
     return None
 
@@ -546,6 +544,7 @@ def _codex_plan(
     live: object,
     *,
     home: Path,
+    read_auth: bool = True,
 ) -> str | None:
     """The ChatGPT plan this Codex account is on, as OpenAI states it.
 
@@ -563,6 +562,8 @@ def _codex_plan(
     plan = local_facts.get("plan_type")
     if isinstance(plan, str) and plan.strip():
         return plan.strip()[:64]
+    if not read_auth:
+        return None
     try:
         from .credentials import read_codex_tokens
 
@@ -580,8 +581,9 @@ def collect_codex(
     observed_at: float,
     local_scanner: Callable[[Path, float], dict[str, object] | None] = _default_codex_local_scan,
     live_probe: Callable[[], dict | None] | None = None,
+    read_auth: bool = True,
 ) -> ProviderUsageSnapshot:
-    del preference
+    default_instance = getattr(preference, "source_instance_id", "default") == "default"
     live = live_probe() if callable(live_probe) else None
     if isinstance(live, dict) and local_scanner is _default_codex_local_scan:
         facts = _cached_codex_local_scan(Path(home), observed_at)
@@ -596,12 +598,13 @@ def collect_codex(
             action="Use Codex once or sign in",
         )
     local_facts = facts if isinstance(facts, dict) else {}
+    local_totals = local_facts if default_instance else {}
     windows = local_facts.get("windows")
     if not isinstance(windows, (list, tuple)):
         windows = ()
     source_id = "codex-rollouts"
     observed_evidence_at = local_facts.get("windows_observed_at")
-    account_plan = _codex_plan(local_facts, live, home=Path(home))
+    account_plan = _codex_plan(local_facts, live, home=Path(home), read_auth=read_auth)
     if isinstance(live, dict):
         live_windows = live.get("windows")
         live_windows = (
@@ -668,12 +671,12 @@ def collect_codex(
         snapshot = parse_codex_usage(
             windows=windows,
             observed_at=observed_at,
-            input_tokens=max(0, int(local_facts.get("input_tokens", 0))),
-            cached_input_tokens=max(0, int(local_facts.get("cached_input_tokens", 0))),
-            output_tokens=max(0, int(local_facts.get("output_tokens", 0))),
-            model_count=max(0, int(local_facts.get("model_count", 0))),
-            estimated_cost_usd=local_facts.get("estimated_cost_usd"),
-            cache_savings_usd=local_facts.get("cache_savings_usd"),
+            input_tokens=max(0, int(local_totals.get("input_tokens", 0))),
+            cached_input_tokens=max(0, int(local_totals.get("cached_input_tokens", 0))),
+            output_tokens=max(0, int(local_totals.get("output_tokens", 0))),
+            model_count=max(0, int(local_totals.get("model_count", 0))),
+            estimated_cost_usd=local_totals.get("estimated_cost_usd"),
+            cache_savings_usd=local_totals.get("cache_savings_usd"),
             account_label=(
                 str(local_facts["account_label"])
                 if local_facts.get("account_label") is not None
@@ -697,6 +700,47 @@ def collect_codex(
             reason="invalid_local_usage",
             action="Retry",
         )
+
+
+def _codex_rollouts_scan(home: Path, observed_at: float) -> dict[str, object] | None:
+    """Codex's own rollout files and JR-Bar's scan cache, and nothing that
+    holds a sign-in."""
+    cached = _cached_provider_local_scan("codex", home, observed_at, read_account=False)
+    if isinstance(cached, dict):
+        return cached
+    return _default_provider_local_scan("codex", home, observed_at, read_account=False)
+
+
+def collect_codex_local_only(
+    preference: ProviderPreference,
+    *,
+    home: Path,
+    observed_at: float,
+    local_scanner: Callable[[Path, float], dict[str, object] | None] = _codex_rollouts_scan,
+) -> ProviderUsageSnapshot:
+    """What Codex shows with its usage read off: the numbers its own rollout
+    files recorded, read from this Mac. No `codex app-server`, no `auth.json`.
+
+    A Mac with no rollouts yet has nothing to show, and says "usage off"
+    rather than "source not found" because turning the read on is the fix.
+    """
+    snapshot = collect_codex(
+        preference,
+        home=home,
+        observed_at=observed_at,
+        local_scanner=local_scanner,
+        live_probe=None,
+        read_auth=False,
+    )
+    if snapshot.state is ProviderSourceState.SOURCE_NOT_FOUND:
+        from .provider_usage_consent import usage_off_snapshot
+
+        return usage_off_snapshot(
+            "codex",
+            observed_at=observed_at,
+            source_instance_id=getattr(preference, "source_instance_id", "default"),
+        )
+    return snapshot
 
 
 def _with_local_usage(
@@ -730,7 +774,51 @@ _OAUTH_REST_SECONDS = {
     "network_unavailable": 120.0,
     "invalid_provider_response": 300.0,
 }
-_oauth_rest_until: dict[str, float] = {}
+_oauth_rest_until: dict[tuple[str, str], tuple[float, str | None, str | None]] = {}
+_oauth_rest_lock = threading.Lock()
+
+
+def clear_claude_auth_rest(*, source_instance_id: str = "default") -> None:
+    """A reconnect can probe again; a rate-limit cooldown still applies."""
+    with _oauth_rest_lock:
+        for key, rest in tuple(_oauth_rest_until.items()):
+            if key[1] == source_instance_id and rest[2] != "rate_limited":
+                _oauth_rest_until.pop(key, None)
+
+
+def _claude_credential_identity(credentials: object) -> str | None:
+    token = _credential(credentials, "claude", "oauth-token")
+    return hashlib.sha256(token.encode()).hexdigest() if token is not None else None
+
+
+def _fetch_claude_with_reloaded_token(
+    quota_fetcher: Callable[[str], list[dict]],
+    access_token: str,
+    credentials: object,
+    home: Path,
+    observed_at: float,
+    source_instance_id: str,
+) -> list[dict]:
+    """Retry one rejected access token only when a consented reread replaces it."""
+    try:
+        return quota_fetcher(access_token)
+    except Exception as error:
+        if source_instance_id != "default" or (
+            "unauthorized" not in str(error) and "needs_sign_in" not in str(error)
+        ):
+            raise
+        from .provider_reconnect import sync_claude_credential_in_background
+
+        try:
+            sync_claude_credential_in_background(
+                credentials, home=Path(home), now=observed_at, source_instance_id=source_instance_id
+            )
+        except Exception:
+            pass
+        current = _credential(credentials, "claude", "oauth-token")
+        if current is None or current == access_token:
+            raise
+    return quota_fetcher(current)
 
 
 def _default_statusline_reader(observed_at: float):
@@ -787,6 +875,7 @@ def collect_claude(
     # Claude Code's status line describes the account signed in on this Mac,
     # so it can only stand in for the default instance.
     default_instance = getattr(preference, "source_instance_id", "default") == "default"
+    instance = getattr(preference, "source_instance_id", "default")
     del preference
     try:
         from .claude_quota import account_facts_from_claude_config
@@ -799,14 +888,27 @@ def collect_claude(
     except Exception:
         account_plan = None
         account_discriminator = None
-    local = local_scanner(Path(home), observed_at)
+    local = local_scanner(Path(home), observed_at) if default_instance else None
     reader = _default_statusline_reader if statusline_reader is None else statusline_reader
     try:
         reading = reader(observed_at) if default_instance else None
     except Exception:
         reading = None
-    rest_key = str(Path(home))
-    if reading is not None and observed_at < _oauth_rest_until.get(rest_key, 0.0):
+    rest_key = (str(Path(home)), instance)
+    with _oauth_rest_lock:
+        rest = _oauth_rest_until.get(rest_key)
+    if (default_instance and reading is not None and rest is not None
+            and observed_at < rest[0] and rest[2] == "authentication_required"):
+        from .provider_reconnect import sync_claude_credential_in_background
+
+        sync_claude_credential_in_background(credentials, home=Path(home), now=observed_at)
+    identity = _claude_credential_identity(credentials)
+    with _oauth_rest_lock:
+        rest = _oauth_rest_until.get(rest_key)
+        if rest is not None and identity != rest[1] and rest[2] != "rate_limited":
+            _oauth_rest_until.pop(rest_key, None)
+            rest = None
+    if reading is not None and rest is not None and observed_at < rest[0]:
         # OAuth failed a moment ago and is resting; the status line is fresh.
         return _statusline_stand_in(
             _failure(
@@ -831,6 +933,7 @@ def collect_claude(
         local=local,
         account_plan=account_plan,
         account_discriminator=account_discriminator,
+        source_instance_id=instance,
     )
     snapshot = replace(
         snapshot,
@@ -838,11 +941,18 @@ def collect_claude(
         account_discriminator=account_discriminator,
     )
     if snapshot.state is ProviderSourceState.READY:
-        _oauth_rest_until.pop(rest_key, None)
+        with _oauth_rest_lock:
+            _oauth_rest_until.pop(rest_key, None)
         return snapshot
     if reading is None:
         return snapshot
-    _oauth_rest_until[rest_key] = observed_at + _OAUTH_REST_SECONDS.get(snapshot.reason_code or "", 300.0)
+    identity = _claude_credential_identity(credentials)
+    with _oauth_rest_lock:
+        _oauth_rest_until[rest_key] = (
+            observed_at + _OAUTH_REST_SECONDS.get(snapshot.reason_code or "", 300.0),
+            identity,
+            snapshot.reason_code,
+        )
     return _statusline_stand_in(
         snapshot,
         reading=reading,
@@ -851,6 +961,38 @@ def collect_claude(
         home=Path(home),
         account_plan=account_plan,
         account_discriminator=account_discriminator,
+    )
+
+
+def collect_claude_local_only(
+    preference: ProviderPreference,
+    *,
+    home: Path,
+    observed_at: float,
+    local_scanner: Callable[[Path, float], dict[str, object] | None] = _default_claude_local_scan,
+    statusline_reader: Callable[[float], object] | None = None,
+) -> ProviderUsageSnapshot:
+    """What Claude shows with its usage read off: token totals from the
+    transcripts on this Mac, and Claude Code's status line when you installed
+    it. Nothing asks Anthropic; no Keychain item, credential store or
+    `~/.claude.json` is read."""
+    from .provider_usage_consent import usage_off_snapshot
+
+    instance = getattr(preference, "source_instance_id", "default")
+    default_instance = instance == "default"
+    local = local_scanner(Path(home), observed_at) if default_instance else None
+    reader = _default_statusline_reader if statusline_reader is None else statusline_reader
+    try:
+        reading = reader(observed_at) if default_instance else None
+    except Exception:
+        reading = None
+    off = usage_off_snapshot("claude", observed_at=observed_at, source_instance_id=instance)
+    return _statusline_stand_in(
+        off,
+        reading=reading,
+        local=local,
+        observed_at=observed_at,
+        home=Path(home),
     )
 
 
@@ -863,6 +1005,7 @@ def _collect_claude_oauth(
     local: dict[str, object] | None,
     account_plan: str | None = None,
     account_discriminator: str | None = None,
+    source_instance_id: str = "default",
 ) -> ProviderUsageSnapshot:
     """The OAuth usage endpoint's reading, or the failure that says why not."""
     # Re-read BEFORE asking when JR-Bar's copy is stale. This is a
@@ -874,9 +1017,9 @@ def _collect_claude_oauth(
             sync_claude_credential_in_background,
         )
 
-        if claude_token_is_stale(credentials, now=observed_at):
+        if source_instance_id == "default" and claude_token_is_stale(credentials, now=observed_at):
             sync_claude_credential_in_background(
-                credentials, home=Path(home), now=observed_at
+                credentials, home=Path(home), now=observed_at, source_instance_id=source_instance_id
             )
     except Exception:
         pass
@@ -893,7 +1036,9 @@ def _collect_claude_oauth(
             local,
         )
     try:
-        windows = quota_fetcher(access_token)
+        windows = _fetch_claude_with_reloaded_token(
+            quota_fetcher, access_token, credentials, home, observed_at, source_instance_id
+        )
     except Exception as error:
         reason = str(error)
         if "unauthorized" in reason or "needs_sign_in" in reason:
@@ -901,13 +1046,9 @@ def _collect_claude_oauth(
             reason_code = "authentication_required"
             action = "Reconnect Claude"
         elif "forbidden" in reason:
-            # The token is known but may not read usage (it lacks the profile
-            # scope): signing in again is the fix, and the same token asked
-            # again would get the same answer, so this is a sign-in state
-            # (it waits for a changed credential), never "network unavailable".
-            state = ProviderSourceState.NEEDS_SIGN_IN
+            state = ProviderSourceState.UNAVAILABLE
             reason_code = "usage_permission_missing"
-            action = "Reconnect Claude"
+            action = "Check Claude usage access"
         elif "rate_limit" in reason:
             state = ProviderSourceState.RATE_LIMITED
             reason_code = "rate_limited"
@@ -961,4 +1102,9 @@ def _collect_claude_oauth(
         )
 
 
-__all__ = ["collect_claude", "collect_codex"]
+__all__ = [
+    "collect_claude",
+    "collect_claude_local_only",
+    "collect_codex",
+    "collect_codex_local_only",
+]

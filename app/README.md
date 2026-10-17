@@ -20,10 +20,11 @@ Sparkle key from `../packaging/`.
 | `Sources/JRBarLEDS/` | Pure Swift LEDS DSL: model, parser, sampler, keyframe renderer, presentation-safety compiler and its measured-flash pass. No AppKit. |
 | `Sources/JRBarCore/` | The core daemon protocol: NDJSON Unix-socket client, Codable models, `@Observable` `CoreModel`, the event-delivery policy, the "why this light" table, the panel's layout math, label and activity rules, the usage sparkline reduction, the history model, the Creator Micro 2 deck model and rail geometry, the Alcove capsule geometry, and the child-process supervisor. Foundation only. |
 | `Sources/JRBarUI/` | AppKit pieces small enough to test on their own: the status item icon renderer (glyph styles and the meter strip). |
-| `Sources/JRBarApp/` | The AppKit + SwiftUI agent app: status item, panel, Screen Bar, Settings, History, Usage Center, Effect Studio and Control Center windows, the deck rail, notifications, sounds, HUD, file-feed fallback. |
+| `Sources/JRBarApp/` | The AppKit + SwiftUI agent app: status item, panel, Screen Bar, Settings, History, Overview, Usage Center, Effect Studio and Creator Micro (Control Center) windows, the command palette, the deck rail, the notch island and the toys, the Menu Bar, Dock and other utilities, notifications, sounds, HUD, file-feed fallback. |
 | `Tests/JRBarLEDSTests/` | Swift Testing suites plus the firmware fixtures they check against. |
 | `Tests/JRBarCoreTests/` | Protocol codec tests over fixture frames, settings-document tests, the explanation table and the documented `why` vocabulary, the panel layout math, usage window and session label rules, the event policy, history filtering, the deck model and rail geometry, supervisor restart/backoff, and mock-daemon integration tests (every app-proposed command round-tripped). |
 | `Tests/JRBarUITests/` | The icon renderer: every style draws, styles differ, warning colours, caching. |
+| `Tests/JRBarAppTests/` | The app target's suites: view models, windows, the utilities and toys, hosted render proofs. |
 | `scripts/gen_leds_fixtures.py` | Regenerates the fixtures from the Python/firmware reference. |
 | `scripts/mock-core.py` | A stdlib-only mock `jrbar-core` that plays a scripted timeline over a socket (`$TMPDIR/jrbar-mock.sock`; it refuses the installed daemon's). |
 | `scripts/build-app.sh` | `swift build -c release`, assembles and signs `build/JR-Bar.app` (`JRBAR_BUNDLE` picks another path). |
@@ -37,7 +38,7 @@ Command Line Tools only (no Xcode, no `xcodebuild`):
 ```sh
 cd app
 swift build                 # library + app, debug
-swift test                  # every suite; the parity and keyframe tests fan out over 29 programs
+swift test                  # every suite; the parity and keyframe tests fan out over 30 programs
 ./scripts/build-app.sh      # release build -> build/JR-Bar.app (signed "Nautilus Local Dev", ad-hoc fallback)
 ./scripts/run-dev.sh        # mock + build/JR-Bar-dev.app on the mock socket (--build rebuilds, --stop ends both)
 ```
@@ -83,8 +84,8 @@ the Python suite.
 the `SwiftUICore.State` property wrapper (`PanelMotion.swift`). `#Preview` is
 unavailable for the same reason.
 
-Run against the mock daemon. The installed app (a LaunchAgent) owns
-`~/.local/state/jrbar/core.sock`; the mock never binds that path unless
+Run against the mock daemon. The installed app (a login item, or the
+dev LaunchAgents) owns `~/.local/state/jrbar/core.sock`; the mock never binds that path unless
 `--i-know-this-is-the-real-socket` is passed, and `run-dev.sh` never points
 the dev app there. Nothing here is stopped by name (`pkill JR-Bar` would
 take the installed app down); `run-dev.sh --stop` kills the pids it started.
@@ -96,12 +97,18 @@ JRBAR_OPEN_PANEL=1 ./scripts/run-dev.sh # mock + dev app, panel open 1.2 s after
 JRBAR_OPEN_CONTROL_CENTER=1 JRBAR_DECK_RAIL=left ./scripts/run-dev.sh --deck unapproved
 ```
 
-Or let the app launch and supervise the mock as its child (what the bundled
-`Contents/Helpers/jrbar-core` will get):
+Or let the app launch and supervise the mock as its child (the packaged app
+does the same with its `Contents/Helpers/jrbar-core.app`):
 
 ```sh
 JRBAR_CORE_EXEC="python3 $PWD/scripts/mock-core.py --step 2.5" ./build/JR-Bar.app/Contents/MacOS/JR-Bar
 ```
+
+A mock the app supervises gets the app's secret on its stdin like the real
+daemon (`JRBAR_AUTH_STDIN=1`), offers a nonce in `hello`, checks the `auth`
+proof and refuses everything outside its open list until a connection proves
+it. A mock started by hand holds no secret and accepts every command from every
+connection; that bypass is the mock's own, on its own socket.
 
 Against the real daemon from this checkout (stop the LaunchAgents first,
 `launchctl bootout gui/$UID/com.jonathanreed.jrbar.{ui,core}`, since only
@@ -146,8 +153,9 @@ Developer switches (environment variables read at launch):
   item itself can be photographed on a menu bar that collapses its
   extras.
 * `JRBAR_OPEN_SETTINGS=<page>` opens the Settings window on `general`, `agents`,
-  `usage`, `devices`, `lighting`, `notifications`, `remote`, `advanced` or
-  `effects`; `JRBAR_SETTINGS_HEIGHT=1100` makes it tall enough to show a whole page.
+  `usage`, `devices`, `utilities`, `lighting`, `toys`, `notifications`,
+  `sounds`, `shortcuts`, `remote` or `advanced` (anything else opens
+  General), or Effect Studio for `effects`; `JRBAR_SETTINGS_HEIGHT=1100` makes it tall enough to show a whole page.
   `JRBAR_OPEN_CALIBRATE=<device id>` opens the calibration sheet once Settings
   is up, and `JRBAR_CALIBRATE_FINE_TUNE=1` opens its Fine-tune disclosure —
   the pair is the sheet's screenshot path.
@@ -287,10 +295,9 @@ the phase floor, as in Python), and the 2 Hz and 1 Hz boundaries.
   `devices.0.brightness`; integer segments index arrays), a pure
   `replacing` write for optimistic overlays, and the catalogue of every key
   the Settings window touches, by page. Keys are the Python
-  `AgentMonitorSettings.to_dict()` names; the five the dataclass lacks
-  (`menu_bar_icon_style`, `devices_linked`, `cloud_ingest_token_path`,
-  `quota_alert_thresholds`, `devices[].resting_glow`) are the app's own
-  keys. `CoreModel` gained `setSetting`,
+  `AgentMonitorSettings.to_dict()` names, plus `cloud_ingest_token_path`,
+  which the daemon's projection serves read-only and the dataclass lacks.
+  `CoreModel` gained `setSetting`,
   `resetSettings`, `installHooks` / `uninstallHooks`, `previewProgram`,
   `applyCalibration`, `doctor`, and a bounded `logTail` of `log` messages.
 
@@ -298,7 +305,9 @@ the phase floor, as in Python), and the 2 Hz and 1 Hz boundaries.
   settings document to an `EventDelivery` (sound name and repeat count,
   notification title/body/category, HUD toast, status pulse, chime
   start/stop). `completed` → Glass plus a banner when
-  `completion_notification_enabled`; `ask_opened` → Funk × `alert_burst`
+  `completion_notification_enabled` ("<label> finished in 4m 12s", then the
+  event's `summary`, skipped while the session's terminal is in front);
+  `ask_opened` → Funk × `alert_burst`
   plus an Approve/Deny banner, skipped for sub-agents unless
   `subagent_asks_alert`; `failed`, `quota_crossed`, `quota_reset` →
   banners; `escalation_stage` (capped by `escalation_tier`: light 1,
@@ -509,17 +518,23 @@ three layers):
   `~/.local/state/jrbar/latest.json` (either the `agents`
   summary counts or the raw `works` list). Left click toggles the panel;
   right click or Option-click shows a utility menu (state, core status,
-  lights source, Open Panel, History…, "Show Screen Bar" toggle (persisted),
-  Settings…, Quit). `menu_bar_icon_style` picks the look
+  lights source, then the verbs the panel's More menu shares through
+  `AppMenuCatalog` — Command Palette…, History…, Events…, Overview…, Usage
+  Center…, Effect Studio…, Creator Micro… once a pad has been seen, What's
+  New…, Check for Updates…, Settings…, Quit JR-Bar — with Open Panel, the
+  persisted "Show Screen Bar" toggle and the hidden-items submenu among
+  them). `menu_bar_icon_style` picks the look
   (`StatusIconRenderer` in `JRBarUI`, cached per spec, redrawn only when
   the spec changes):
 
-  * `meters` (the default): a 22 pt-tall strip that is worth a glance. A
+  * `agents` (the default): one dot per live session, coloured by what it
+    is doing; the mark alone when nothing runs.
+  * `meters`: a 22 pt-tall strip that is worth a glance. A
     state dot at the left — breathing while anything works (a 2 Hz timer,
     running only then; Reduce Motion holds it bright), pulsing amber while
     an ask is open, green for six seconds after a completion, a hollow dot
     otherwise — then one 3.5 pt column per provider shown in the panel
-    (Settings › Usage, "Show in the panel", in that order), each filled
+    (Settings › Agents & Usage, "Show meters for"), each filled
     from the bottom by its primary window (the 5 h one when the provider
     reports it, else the first), amber from 80 % and red from 95 %.
     The fill is the track's own capsule shape cut off at the level, with a
@@ -546,6 +561,12 @@ three layers):
     title — `StatusIconRenderer.label` carries at most the two counts that
     matter most, since "1 ask · 1 working · 5 done" is three counts wider
     than the bar will give a slot to), all 18×18 pt, as before.
+  * `compact_percent` (the tightest window's remaining percent beside its
+    provider's mark, tinted by pace, or the reset countdown when that is
+    the more urgent number), `orbit` (the mark in a usage ring with the
+    working sessions as dots below) and `hidden` (no icon: a thin
+    invisible slot; a click, the hotkey or the ‹ mark still opens the
+    panel).
 
   Width is the scarce thing on a notched MacBook: an item much past 80 pt
   is given no slot at all and macOS hides it behind the "«" (measured on
@@ -553,11 +574,12 @@ three layers):
   three — never appeared). A column per provider keeps five providers, the
   dot and the insets to about 43 pt.
 
-  `menu_bar_icon_style` is the app's own key: the daemon answers
-  `set_setting` for it with `ok` and then keeps its value (the Python
-  settings dataclass has no field for it), so the choice is remembered in
-  `app-state.json` and the write still goes out for a daemon that learns
-  the key later. Unset means `meters`.
+  `menu_bar_icon_style` is a key the app also owns: the choice is
+  remembered in `app-state.json` (so the icon is right before the first
+  frame) and the write still goes out as `set_setting`, which the daemon
+  keeps in its document. Unset means `agents`; the daemon's own default
+  is `glyph`, which only matters to a client that reads the document
+  without the app.
 
   Stage-2 escalation pulses the icon amber (a layer opacity animation;
   Reduce Motion holds amber) until the ask resolves — in the meter styles
@@ -631,14 +653,18 @@ three layers):
   show), Devices (Pro / Dot / Screen Bar chips; the Screen Bar chip
   toggles the band; a brightness slider sends `set_brightness` for `all`,
   throttled to one command per 120 ms while dragging and flushed on
-  release), and a footer (Clear done → `clear_completed {sessions:
+  release), and a footer (Clear finished → `clear_completed {sessions:
   "all"}`, which acknowledges every done, ended and stale row the panel
-  listed; on `reply.ok` the button becomes "Undo clear 4:58" for the whole
-  300 s window and sends `undo_clear {batch}`, Quiet… →
-  `quiet` for 30 min / 1 h / 4 h / 12 h, History (⌘Y), an overflow menu
-  (Control Center ⌘K, Effects…, History ⌘Y, Usage Center ⌘U, then Check
-  for Updates… and Settings… ⌘,), a gear for Settings…, Quit; every footer
-  control's tooltip names its shortcut). Empty states are drawn, not
+  listed; on `reply.ok` an "Undo 4:58" link appears beside the button for
+  the whole 300 s window and sends `undo_clear {batch}`, Quiet… →
+  `quiet` for 30 min / 1 h / 4 h or until morning, with a Mode submenu
+  (Pause, Dim, Mute, Asks only, Dark) and End quiet while one is ours, a
+  mark for the awake hold when there is one, History (⌘Y), a More menu
+  that shares the status item's verbs — Command Palette… ⇧⌘K, History…
+  ⌘Y, Events… ⌘R, Overview… ⌘O, Usage Center… ⌘U, Effect Studio…,
+  Creator Micro… once a pad has been seen, What's New…, Check for
+  Updates…, Settings… ⌘, and Quit JR-Bar ⌘Q — and a gear for Settings…;
+  every footer control's tooltip names its shortcut). Empty states are drawn, not
   written: a soft mark, a headline and one line of what happens next —
   "No agents right now" when live and quiet ("All clear" when everything
   listed has been acknowledged), "Core is starting" / "Core not connected"
@@ -737,19 +763,24 @@ three layers):
   goes through the presentation-safety compiler before it is shown; refused
   programs keep the previous one and are named in the menu's lights line.
 * Events: `completed`, `ask_opened` and friends play their named system
-  sound when `notify` is true, and are logged. No banners yet.
+  sound when `notify` is true, and are logged. Banners come from
+  `EventCoordinator`, above.
 * Screen Bar interactions (`ScreenBarInteraction`): the band stays
-  click-through (`ignoresMouseEvents`), and global + local `NSEvent`
-  monitors hit-test the pointer against the band's own rect instead.
-  Hovering for 0.32 s shows a glass pill under the band with the
-  top-priority session (a live ask, else a failure, else the working one,
-  else an unseen completion; with nothing live, the aggregate word) as
-  provider tile, label and state word; it leaves when the pointer does,
-  on any click, when the geometry changes, and after 4 s regardless.
-  Clicking the band sends `open_session` for the ask's session, else the
-  working one, else nothing. The panel never becomes key.
+  click-through (`ignoresMouseEvents`). The pointer is read from
+  `NSEvent.mouseLocation` when `PointerWatcher` says it moved (a global
+  mouse-moved monitor costs a TCC round trip per delivery) and hit-tested
+  against the band's own rect. Hovering for 0.12 s drops the glass notch
+  card under the band as a peek with the top-priority session (a live ask,
+  else a failure, else the working one, else an unseen completion; with
+  nothing live, the aggregate word); it leaves on its own after 4 s unless
+  the pointer is parked on it or the band, and on any click outside.
+  Clicking the band pins the card open; a press dragged down expands it
+  and one dragged up while pinned collapses it. The session mark on the
+  left wing opens its session. While the Notch island owns the notch the
+  island is the card, and the band's hover arms nothing. The panel never
+  becomes key.
 * Settings (`SettingsWindowController`, `SettingsStore`, `SettingsView`,
-  `SettingsPagesA/B`): a standard titled, resizable 760×520 window
+  `SettingsPagesA/B`): a standard titled, resizable 820×620 window
   ("JR-Bar Settings", frame autosaved, page name in the subtitle) hosting
   a `NavigationSplitView` with System Settings-style tinted sidebar icons
   and a grouped `Form` per page. Every control reads the daemon's document
@@ -758,12 +789,12 @@ three layers):
   to one write per 120 ms, and shows refused writes in a transient line.
   A key the document lacks renders its default, disabled, with a "Not
   provided by core" caption; with no document at all a banner says so.
-  Pages: General (launch at login via `SMAppService`, the menu bar icon
-  as five rows each drawing the style it names on a strip of menu bar —
-  from the reader's own providers when the core is live, a sample
-  otherwise — tips,
-  Screen Bar on/Alcove/full screen/link, global brightness, Software Update
-  stub with an app-local channel), Agents (twelve provider rows with hook
+  Pages: General (launch at login via `SMAppService`, Run Setup Again…, the
+  menu bar icon as one row per style, each drawing the style it names on a
+  strip of menu bar — from the reader's own providers when the core is
+  live, a sample otherwise — the panel and shelf hotkeys, global
+  brightness, Software Update with the Sparkle check, automatic checks
+  and an app-local channel), Agents (twelve provider rows with hook
   status from `state.health.hooks`, Install/Reinstall/Remove →
   `install_hooks` / `uninstall_hooks`, per-provider "Open in", transcript
   toggles, sub-agent asks), Usage (providers shown, display mode, graph
@@ -802,14 +833,24 @@ three layers):
   `AutoDimReadout`: "Ambient: 12 lux → 45 %", "Sensor unavailable,
   following display: 62 % → 62 %", "Schedule: 23:10, inside the window →
   30 %", "Display unreadable → 100 %"), scene, and Effects…), Notifications &
-  Focus (completion banner/sweep, escalation tier and timings, alert burst,
+  Focus (the Alerts profile — Quiet, Balanced, Loud, Custom — over the
+  completion banner, quota alerts and escalation tier; the silent-session
+  banner; completion sweep, escalation timings, alert burst,
   quiet schedule with time pickers, focus sync with per-Focus dim rules,
   DND mode, keep-awake, closed-lid policy with the helper's status from
   `state.power`, battery threshold), Remote (peers, unmuted machine list,
   cloud ingest with the token path, webhook URL and events), Advanced
   (connection, core version, socket, capabilities, generations, Reveal
   State Folder, Run Doctor → `doctor` shown as a checklist plus JSON, the
-  `log` tail, and a per-page Reset… → `reset_settings`). The panel's
+  `log` tail, settings export and import, and a per-page Reset… →
+  `reset_settings`). The pages the paragraph above leaves out are
+  Utilities (Menu Bar, Dock and the rest,
+  `docs/UTILITIES.md`), Toys (`docs/TOYS.md`), Sounds (event sounds,
+  volume, output and your own sounds) and Shortcuts (global keys, the
+  `jrbar://` links, the command line link and the quick toggles). A
+  settings import never turns on a request that leaves the Mac, a hook
+  program, a phone link or a permission prompt, and says what it left
+  off. The panel's
   Settings… and the status menu's Settings… (⌘,) open it; a minimal main
   menu gives the text fields ⌘C/⌘V/⌘A.
 
@@ -862,7 +903,7 @@ three layers):
   records", which is a fact about the provider rather than a month of zero
   bars (the daemon pads its answer with a row per day either way).
 * Effect Studio (`EffectStudioWindowController`, `EffectStudioStore`,
-  `EffectStudioView`; Settings › Lighting › Effects…, the panel footer's
+  `EffectStudioView`; Settings › Devices & Lighting › Effects…, the panel footer's
   overflow menu, the status menu and the app menu): a 1060×680 window in
   three panes. Library: a search field and the `list_effects` catalog
   grouped by meaning ("Provider animation", "Attention required", "Pack ·
@@ -903,8 +944,11 @@ three layers):
   path, name}` for the selected effect, its whole pack, or every provider
   animation) and Refresh.
 * Control Center (`ControlCenterWindowController`, `DeckStore`,
-  `ControlCenterView`; ⌘K from the panel, the footer's overflow menu, the
-  status menu, the app menu and Settings › Devices): a 1000×740 window for
+  `ControlCenterView`; the window is titled "Creator Micro" since the
+  command palette took ⌘K. It opens from the More menu and the status
+  menu once a pad has been seen, from `jrbar://creator-micro`
+  (`jrbar://control-center` still works) and from Settings › Devices & Lighting): a
+  1000×740 window for
   the Creator Micro 2, everything on it `state.deck`. A device chip
   (serial, USB/Bluetooth glyph, connected / needs approval / conflict dot,
   firmware, profile and layer, an Approve button until the serial is
@@ -948,9 +992,9 @@ three layers):
   and "…" which opens the Control Center. Click sends `deck_press`; hover
   shows a glass label (title, state, number) beside the cell. It lives on
   the Control Center's screen, else the key window's.
-* Settings › Devices › Creator Micro 2: Enable, Session keys and Analog
+* Settings › Devices & Lighting › Creator Micro 2: Enable, Session keys and Analog
   joystick sectors (`deck_set_settings`), the status line, keymap, rail
-  edge, slot count and last receipt, and Open Control Center… (⌘K).
+  edge, slot count and last receipt, and a Control Center… button.
 * Lighting page previews: each provider's colour well sits beside a 66 pt
   band that plays that provider's working animation under the current
   blend mode and cycle speed (rebuilt on every change, each provider a
@@ -973,8 +1017,8 @@ three layers):
   `JRBAR_CORE_EXEC` or connects to whatever listens on the socket. The
   file feeds remain the fallback while nothing is connected.
 * Notifications need the user to allow them the first time one is due
-  (the system prompt). `quota_crossed` / `quota_reset` banners are on
-  unless `quota_alerts_enabled` is false. Nothing is done for
+  (the system prompt). `quota_crossed` / `quota_reset` banners are off
+  until `quota_alerts_enabled` is turned on (Settings › Agents & Usage › Quota alerts). Nothing is done for
   `peer_arrived` / `peer_departed` beyond the toast. Escalation stage 3 is
   a repeating chime (Hero, every 30 s); the `takeover` tier gets the same
   chime and sets `delivery.takeover` (`JRBarCore/EventPolicy.swift`): the notch
@@ -1033,7 +1077,7 @@ three layers):
   the terminal is frontmost is the daemon's `deck_press` to implement; the
   app only sends the press. Explicit per-control mappings (open_app,
   shortcut, …) are not edited here: the Dial and Joystick show what the
-  daemon reports and point at Settings › Devices, which does not have that
+  daemon reports and point at Settings › Devices & Lighting, which does not have that
   editor yet. Analog sectors (AG20–AG23) are inputs and a switch, not
   drawn on the pad.
 * The Lighting page's tiny previews are built locally
@@ -1051,12 +1095,11 @@ three layers):
   `cloud_ingest_token_path` is served but is in the daemon's
   `READ_ONLY_SETTINGS`, which is why the Remote page shows the path with a
   Reveal button rather than a field.
-  `menu_bar_icon_style` is the exception, and worse: the daemon *does*
-  send a value for it and answers a write with `ok` while keeping its own
-  ("glyph", the Python default it has no field to change). So the app owns
-  that key — the choice lives in `app-state.json`, the picker reads and
-  writes it there, and the `set_setting` still goes out for a daemon that
-  learns the key later. macOS notification permission for the
+  `menu_bar_icon_style` is the exception: the daemon sends a value for it
+  ("glyph" by default) that is not the app's default (`agents`). So the
+  app owns that key — the choice lives in `app-state.json`, the picker
+  reads and writes it there, and the `set_setting` still goes out so the
+  daemon's document agrees. macOS notification permission for the
   bundle id is the user's: a denied permission logs "notification skipped:
   permission denied" in the Advanced log and the sound still plays.
 * The aggregate fallback is a simple reduction of `latest.json` (needs input >
@@ -1065,9 +1108,12 @@ three layers):
   status item follows `state.aggregate.mode` and the counts.
 * Alcove (`AlcoveFollower`, `AlcoveGeometry` in `JRBarCore`):
   `screen_bar_follow_alcove` (default on) makes the band hug Alcove's live
-  capsule instead of the notch. While Alcove (`com.henrikruscon.Alcove`) is
-  running the window list is read at 2 Hz, bounds only, no capture and no
-  Screen Recording: an Alcove window hanging from the top of the screen
+  capsule instead of the notch, but only while the Notch utility is on with
+  Alcove chosen to draw the island (`AlcoveFollower.rendererChosen`). While
+  Alcove (`com.henrikruscon.Alcove`) is running the window list is read at
+  2 Hz for a few seconds after a launch, quit or capsule change, then at
+  0.5 Hz once the width is still, bounds only, no capture and no Screen
+  Recording: an Alcove window hanging from the top of the screen
   that is capsule-sized is the capsule (`AlcoveGeometry.select`, the
   Python's `select_alcove_window_values` plus a top-edge rule so Alcove's
   settings window is never taken for one), and the band takes its width

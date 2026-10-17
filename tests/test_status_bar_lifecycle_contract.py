@@ -208,7 +208,6 @@ def test_clear_agents_state_is_restored_at_launch() -> None:
         "self.clear_agents_state = ClearAgentsState()",
         "self.clear_agents_path = default_clear_agents_path()",
         "self._clear_agents_preview",
-        "self._clear_agents_commit_plan",
         "self._clear_agents_operation_pending = False",
     ):
         assert field in init_source

@@ -118,18 +118,13 @@ extension SettingsStore.Page {
     /// The header's sentence: what the page is for, in a breath.
     var blurb: String {
         switch self {
-        case .general: return "Startup, the menu bar icon, brightness and updates."
-        case .agents: return "Which agents report in, what JR-Bar reads from them and when they may ask."
-        case .usage: return "Meters, graphs, plan limits and the alerts that watch your quota."
-        case .devices: return "SidePulse hardware, the Creator Micro and the light band under the notch."
-        case .utilities: return "Tools that replace other apps — the menu bar, the Dock, the notch — and keep the agent roster organized."
-        case .lighting: return "Colours, pulses, dimming and the moments the lights can play."
-        case .toys: return "Stuff that's just fun. None of it touches your agents or your usage, & every bit of it can be turned off."
-        case .notifications: return "When JR-Bar speaks up, how loudly, and when it keeps quiet."
-        case .sounds: return "A sound for each moment, one volume, and where they play."
-        case .shortcuts: return "Every key JR-Bar holds, and the links that do the same things."
-        case .remote: return "Other Macs, the local endpoint, cloud ingest and webhooks."
-        case .advanced: return "Diagnostics, resets, reports and moving settings to another Mac."
+        case .general: return "Startup, menu bar, power, updates and diagnostics."
+        case .agents: return "Agent connections, usage and permission requests."
+        case .alerts: return "Sounds, notifications and quiet periods."
+        case .devices: return "SidePulse, Screen Bar and lighting settings."
+        case .utilities: return "Optional tools and toys for the menu bar, Dock, notch and agents."
+        case .shortcuts: return "Keyboard shortcuts, links and commands."
+        case .remote: return "Remote Macs, status endpoints and cloud agents."
         }
     }
 }
@@ -478,34 +473,110 @@ extension View {
 
 /// A titled group of settings rows: the bold header, inset dividers and
 /// optional footer note of a macOS grouped form, one idea per group.
+///
+/// Inside a page's Advanced disclosure (`PageAdvanced`) the same group
+/// draws as a quiet sub-heading and its rows, since a form section cannot
+/// sit inside a row.
 struct SettingGroup<Header: View, Content: View>: View {
     var note: String? = nil
+    /// The title a search hit scrolls to (`SettingsStore.groupAnchor`).
+    var anchor: String? = nil
+    /// The group's title as plain text, for the inline look.
+    var plainTitle: String? = nil
     @ViewBuilder var content: () -> Content
     @ViewBuilder var header: () -> Header
+    @Environment(\.settingGroupsInline) private var inline
 
-    init(note: String? = nil,
+    init(note: String? = nil, anchor: String? = nil, plainTitle: String? = nil,
          @ViewBuilder content: @escaping () -> Content,
          @ViewBuilder header: @escaping () -> Header) {
         self.note = note
+        self.anchor = anchor
+        self.plainTitle = plainTitle
         self.content = content
         self.header = header
     }
 
     var body: some View {
-        Section {
-            content()
-        } header: {
-            header()
-        } footer: {
-            if let note { SectionNote(note) }
+        if inline {
+            inlineBody
+        } else {
+            Section {
+                content()
+            } header: {
+                if let anchor {
+                    header().id(SettingsStore.groupAnchor(anchor))
+                } else {
+                    header()
+                }
+            } footer: {
+                if let note { SectionNote(note) }
+            }
         }
+    }
+
+    private var inlineBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let plainTitle {
+                CardSectionHeader(plainTitle)
+                    .id(SettingsStore.groupAnchor(anchor ?? plainTitle))
+            } else {
+                header()
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, SettingsMetrics.m)
+                    .padding(.bottom, 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            content()
+            if let note {
+                SectionNote(note)
+                    .padding(.top, SettingsMetrics.xs)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, SettingsMetrics.s)
     }
 }
 
 extension SettingGroup where Header == Text {
     /// A group with the standard bold title, e.g. `SettingGroup("Dimming")`.
     init(_ title: String, note: String? = nil, @ViewBuilder content: @escaping () -> Content) {
-        self.init(note: note, content: content) { Text(title).font(.headline) }
+        self.init(note: note, anchor: title, plainTitle: title, content: content) { Text(title).font(.headline) }
+    }
+}
+
+private struct SettingGroupsInlineKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// True inside a page's Advanced disclosure, where a `SettingGroup`
+    /// draws inline instead of as a form section.
+    var settingGroupsInline: Bool {
+        get { self[SettingGroupsInlineKey.self] }
+        set { self[SettingGroupsInlineKey.self] = newValue }
+    }
+}
+
+/// The one "Advanced" disclosure a page ends with: the settings most
+/// people never change, folded away. Each group inside keeps its own
+/// name, so search can still land on a row and open the fold.
+struct PageAdvanced<Content: View>: View {
+    let store: SettingsStore
+    let page: SettingsStore.Page
+    var subtitle: String? = nil
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        Section {
+            DisclosureRow("Advanced", subtitle: subtitle, fold: SettingsFold.advanced(page)) {
+                content()
+                    .environment(\.settingGroupsInline, true)
+            }
+            .id(SettingsStore.groupAnchor("Advanced"))
+        }
     }
 }
 
@@ -562,17 +633,28 @@ struct SettingRow<Control: View>: View {
 struct DisclosureRow<Content: View>: View {
     let title: String
     var subtitle: String? = nil
+    /// The store's fold this row opens with, so a search hit on a row
+    /// inside it can unfold it (`SettingsFold`). nil keeps its own state.
+    var fold: String? = nil
     @ViewBuilder var content: () -> Content
-    @ViewState private var expanded = false
+    @ViewState private var local = false
+    @Environment(SettingsStore.self) private var store: SettingsStore?
 
-    init(_ title: String, subtitle: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+    init(_ title: String, subtitle: String? = nil, fold: String? = nil,
+         @ViewBuilder content: @escaping () -> Content) {
         self.title = title
         self.subtitle = subtitle
+        self.fold = fold
         self.content = content
     }
 
+    private var expanded: Binding<Bool> {
+        guard let fold, let store else { return $local }
+        return Binding(get: { store.isFoldOpen(fold) }, set: { store.setFold(fold, open: $0) })
+    }
+
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        DisclosureGroup(isExpanded: expanded) {
             content()
         } label: {
             SettingLabel(title: title, subtitle: subtitle)

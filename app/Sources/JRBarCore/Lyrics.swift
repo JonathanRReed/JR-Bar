@@ -121,8 +121,17 @@ public struct LyricsQuery: Hashable, Sendable {
     /// The cache key: normalized so "Song (Remastered)" vs "song
     /// (remastered)" share a slot.
     public var cacheKey: String {
-        [title, artist, album ?? "", duration.map(String.init) ?? ""]
-            .joined(separator: "|")
-            .lowercased()
+        let fields = [title, artist, album ?? "", duration.map(String.init) ?? ""]
+            .map { $0.lowercased() }
+        guard fields.contains(where: { $0.contains("|") }) else {
+            return fields.joined(separator: "|")
+        }
+        // Keep ordinary disk entries. Pipe-containing fields use a separate
+        // encoding because their old keys cannot identify a track reliably.
+        let encoded = fields.map { field in
+            let value = Data(field.utf8).base64EncodedString()
+            return "\(value.utf8.count):\(value)"
+        }
+        return "v2:" + encoded.joined()
     }
 }

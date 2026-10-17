@@ -122,7 +122,12 @@ def test_hook_shim_path_finds_the_bundled_shim_when_frozen(tmp_path: Path, monke
     monkeypatch.setattr(install.sys, "frozen", True, raising=False)
     monkeypatch.setattr(install.sys, "executable", str(core))
     assert install.hook_shim_path() == shim.resolve()
-    assert install.hook_command_arguments("hermes", tmp_path / "hermes.jsonl")[0] == str(shim.resolve())
+    # Configs name the launcher under the home directory, which runs the
+    # bundled shim and survives the app being moved or removed.
+    launcher = Path(install.hook_command_arguments("hermes", tmp_path / "hermes.jsonl")[0])
+    assert launcher.name == "jrbar-hook" and launcher != shim.resolve()
+    assert launcher.is_relative_to(Path.home())
+    assert str(shim.resolve()) in launcher.read_text()
 
 
 def test_pending_lines_count_records_when_a_payload_carries_a_line_separator(tmp_path: Path) -> None:
@@ -144,3 +149,20 @@ def test_pending_lines_count_records_when_a_payload_carries_a_line_separator(tmp
     assert report["pending"] == [{"file": "claude.pending.jsonl", "lines": 2}]
     claude = next(entry for entry in report["providers"] if entry["provider"] == "claude")
     assert claude["pending_lines"] == 2
+
+
+def test_doctor_says_when_installed_hooks_are_switched_off_in_the_agent(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    config = home / ".claude" / "settings.json"
+    config.parent.mkdir(parents=True)
+    hook = {"type": "command", "command": "/opt/jrbar/bin/jrbar-hook --provider claude --log /tmp/claude.jsonl"}
+    config.write_text(json.dumps({"disableAllHooks": True, "hooks": {"Stop": [{"matcher": "*", "hooks": [hook]}]}}))
+
+    entry = next(p for p in hook_doctor_report(home, compatibility=lambda names, directory: {})["providers"] if p["provider"] == "claude")
+    assert entry["installed"] is True
+    assert entry["hooks_enabled"] is False
+
+    config.write_text(json.dumps({"hooks": {"Stop": [{"matcher": "*", "hooks": [hook]}]}}))
+    entry = next(p for p in hook_doctor_report(home, compatibility=lambda names, directory: {})["providers"] if p["provider"] == "claude")
+    assert entry["installed"] is True
+    assert entry["hooks_enabled"] is True

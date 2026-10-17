@@ -161,6 +161,34 @@ struct DockSwitcherAgentTests {
                 == "Claude is waiting on you here — ⌘W again to close")
     }
 
+    @Test("an old guard timeout preserves a newer guarded card")
+    func guardExpiry() {
+        var guardState = DockAgentGuard()
+        let firstConfirmed = guardState.confirm("w:1", guarded: true, now: 0)
+        #expect(!firstConfirmed)
+        let secondConfirmed = guardState.confirm("w:2", guarded: true, now: 1)
+        #expect(!secondConfirmed)
+        let oldExpired = guardState.expire("w:1", now: 2.1)
+        #expect(!oldExpired)
+        #expect(guardState.isArmed("w:2", now: 2.1))
+        let boundaryExpired = guardState.expire("w:2", now: 3)
+        #expect(!boundaryExpired)
+        let currentExpired = guardState.expire("w:2", now: 3.1)
+        #expect(currentExpired)
+        #expect(guardState.armedKey == nil)
+
+        let nextConfirmed = guardState.confirm("w:1", guarded: true, now: 10)
+        #expect(!nextConfirmed)
+        let rearmedConfirmed = guardState.confirm("w:1", guarded: true, now: 12.1)
+        #expect(!rearmedConfirmed)
+        let rearmedExpired = guardState.expire("w:1", now: 12.2)
+        #expect(!rearmedExpired)
+        #expect(guardState.isArmed("w:1", now: 12.2))
+        guardState.reset()
+        let resetExpired = guardState.expire("w:1", now: 15)
+        #expect(!resetExpired)
+    }
+
     @Test("open honours the lane's start and clamps a bad one")
     func openSelection() {
         var model = SwitcherModel()

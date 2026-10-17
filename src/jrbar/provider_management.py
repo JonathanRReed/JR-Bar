@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -18,8 +19,11 @@ from .provider_browser_consent import (
     load_browser_consents,
     save_browser_consents,
 )
+from .provider_usage_consent import usage_consent_row
 from .provider_usage_platform import provider_descriptor
 from .provider_usage_settings import (
+    USAGE_CONSENT_SOURCES,
+    ProviderUsageSettingsError,
     ProviderUsageSettingsWriteRefusedError,
     default_provider_usage_settings_path,
     load_provider_usage_settings,
@@ -42,9 +46,12 @@ BROWSER_CONSENT_SCOPES: dict[str, dict[str, tuple[str, ...]]] = {
 
 #: Provider -> credential accounts a caller may inspect (never read back).
 CREDENTIAL_ACCOUNTS: dict[str, tuple[str, ...]] = {
+    "kimi": ("api-key", "web-session"),
+    "kilo": ("api-key",),
     "claude": ("oauth-token",),
     "devin": ("token",),
     "grok": ("token",),
+    "factory": ("api-key", "web-session"),
     "openai-api": ("admin-key",),
     # The CLIProxyAPI hub's management key (cliproxy_hub). Not a provider:
     # it lets the hub read the accounts the proxy signs in to.
@@ -71,7 +78,7 @@ _IMPORT_ACCOUNT = "token"
 #: only -- ``csrf_token`` and anything a future provider adds stay inside
 #: the settings store. ``endpoint`` is loopback-validated at write time.
 _PUBLISHABLE_OPTION_KEYS = frozenset(
-    {"organization", "organization_id", "project_id", "endpoint"}
+    {"organization", "organization_id", "project_id", "endpoint", "region", "source"}
 )
 
 
@@ -306,6 +313,9 @@ def provider_rows(
                 "instance": instance_id,
                 "label": preference.label,
                 "enabled": preference.enabled,
+                # The per-provider switch for the read that asks the
+                # provider (or reads another app's sign-in) for usage.
+                "usage_consent": usage_consent_row(preference),
                 "menu_visible": preference.menu_visible,
                 "browser_sources_enabled": preference.browser_sources,
                 "supports_browser_sources": provider_id in BROWSER_CONSENT_SCOPES,
@@ -387,6 +397,115 @@ def set_provider_enabled(
         "enabled": enabled,
     }
     return row
+
+
+def set_provider_usage_consent(
+    provider_id: str,
+    granted: bool,
+    *,
+    source: str = "settings",
+    source_instance_id: str = "default",
+    settings_path: Path | None = None,
+    credentials=None,
+    home: Path | None = None,
+    clock=time.time,
+) -> dict[str, Any]:
+    """Turn one provider's usage read on or off, as the person's own choice.
+
+    Persisted through the settings document's optimistic concurrency, like
+    ``set_provider_enabled``. Turning it on also turns the provider on and
+    records the consent version and where it came from; turning it off
+    withdraws the consent and leaves the provider's local figures alone.
+    Returns the row as actually persisted."""
+    try:
+        provider_descriptor(provider_id)
+    except ValueError as exc:
+        raise ProviderManagementError("unknown_provider", f"unknown provider {provider_id!r}") from exc
+    if type(granted) is not bool:
+        raise ProviderManagementError("invalid_args", "enabled must be a boolean")
+    if source not in USAGE_CONSENT_SOURCES:
+        raise ProviderManagementError("invalid_args", f"unknown consent source {source!r}")
+    loaded = load_provider_usage_settings(settings_path)
+    try:
+        updated = loaded.settings.with_usage_consent(
+            provider_id,
+            granted,
+            source=source,
+            at=float(clock()) if granted else None,
+            source_instance_id=source_instance_id,
+        )
+    except StopIteration as exc:
+        raise ProviderManagementError(
+            "unknown_instance",
+            f"{provider_id} has no configured instance {source_instance_id!r}",
+        ) from exc
+    except ProviderUsageSettingsError as exc:
+        raise ProviderManagementError("invalid_args", str(exc)) from exc
+    try:
+        save_provider_usage_settings(
+            updated,
+            settings_path or default_provider_usage_settings_path(),
+            loaded=loaded,
+        )
+    except ProviderUsageSettingsWriteRefusedError as exc:
+        raise ProviderManagementError("settings_changed", str(exc)) from exc
+    rows = provider_rows(
+        credentials=credentials,
+        home=home,
+        settings_path=settings_path,
+        only=provider_id,
+        instance=source_instance_id,
+    )
+    return rows[0] if rows else {"id": provider_id, "instance": source_instance_id}
+
+
+def set_provider_options(
+    provider_id: str,
+    options: dict[str, str],
+    *,
+    source_instance_id: str = "default",
+    settings_path: Path | None = None,
+    credentials=None,
+    home: Path | None = None,
+) -> dict[str, Any]:
+    """Patch one account's source options without changing its usage consent."""
+    try:
+        provider_descriptor(provider_id)
+    except ValueError as exc:
+        raise ProviderManagementError("unknown_provider", f"unknown provider {provider_id!r}") from exc
+    if not isinstance(options, dict):
+        raise ProviderManagementError("invalid_args", "options must be an object")
+    allowed = {"kimi": {"region", "source"}, "kilo": {"organization_id"}}.get(provider_id)
+    if allowed is None or any(not isinstance(key, str) or key not in allowed for key in options):
+        raise ProviderManagementError("invalid_args", "unsupported provider option")
+    for key, value in options.items():
+        if not isinstance(value, str):
+            raise ProviderManagementError("invalid_args", "option values must be strings")
+        if provider_id == "kimi":
+            choices = {"region": {"china", "international"}, "source": {"auto", "api", "web", "cli"}}
+            valid = value in choices[key]
+        else:
+            valid = value == "" or re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value) is not None
+        if not valid:
+            raise ProviderManagementError("invalid_args", "invalid provider option value")
+    loaded = load_provider_usage_settings(settings_path)
+    try:
+        loaded.settings.preference(provider_id, source_instance_id)
+        updated = loaded.settings
+        for key, value in options.items():
+            updated = updated.with_option(provider_id, key, value or None,
+                                          source_instance_id=source_instance_id)
+    except StopIteration as exc:
+        raise ProviderManagementError("unknown_instance", "provider instance is not configured") from exc
+    except ProviderUsageSettingsError as exc:
+        raise ProviderManagementError("invalid_args", str(exc)) from exc
+    try:
+        save_provider_usage_settings(updated, settings_path or default_provider_usage_settings_path(), loaded=loaded)
+    except ProviderUsageSettingsWriteRefusedError as exc:
+        raise ProviderManagementError("settings_changed", str(exc)) from exc
+    rows = provider_rows(credentials=credentials, home=home, settings_path=settings_path,
+                         only=provider_id, instance=source_instance_id)
+    return rows[0]
 
 
 def add_provider_instance(

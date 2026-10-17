@@ -138,3 +138,25 @@ def test_release_documentation_names_the_owner_mac_as_the_only_release_path() ->
     assert "scripts/release.sh" in release_doc
     # The retirement has to be written down where a releaser will read it.
     assert "self-hosted" in release_doc
+
+
+_UNTRUSTED_EXPRESSION = re.compile(r"\$\{\{[^}]*(?:inputs\.|github\.event|github\.head_ref|github\.ref_name)[^}]*\}\}")
+
+
+def test_no_workflow_splices_an_input_or_event_field_into_a_shell_script() -> None:
+    """`run:` text is shell after the expression is expanded, so a tag or a
+    branch name written into it is a command. Hand the value over through
+    `env:` and read it as a shell variable."""
+    for workflow in _workflows():
+        run_indent: int | None = None
+        for number, line in enumerate(workflow.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.lstrip()
+            indent = len(line) - len(stripped)
+            if run_indent is not None and stripped and indent <= run_indent:
+                run_indent = None
+            if run_indent is None and re.match(r"(- )?run:", stripped):
+                run_indent = indent + (2 if stripped.startswith("- ") else 0)
+            if run_indent is not None:
+                assert not _UNTRUSTED_EXPRESSION.search(line), (
+                    f"{workflow.name}:{number} puts an untrusted expression in a run script"
+                )

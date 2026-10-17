@@ -13,6 +13,14 @@ MIN_ESCALATION_VISIBLE_BRIGHTNESS = 12
 # Screen Bar the matching perceived-light floor. Explicit zero factors still
 # bypass it below.
 MIN_AMBIENT_VISIBLE_BRIGHTNESS = 61
+# This floor guards the scalar only. What the die receives is the colour byte
+# times that scalar, so a program painted at half its colour range reached the
+# strip at about a tenth of the drive-12 target and read as green. The write
+# boundary closes that half: ``led_status.lift_emission_to_floor`` raises the
+# scalar of a lit Working/Ask/Done/Failed program until its brightest channel
+# emits ``STRIP_VISIBLE_EMISSION_DRIVE`` (12), and an idle whisper until it
+# holds a hue (3). This module stays the policy for the number; that one
+# keeps the promise about the light.
 MIN_SLEEP_DIM_FACTOR = 0.05
 
 
@@ -139,7 +147,7 @@ def plan_ambient_brightness(
             return _normalized_result(0.0, trace)
     scaled, step = _scaled_step("escalation_boost", scaled, escalation_boost)
     trace.append(step)
-    if float(escalation_boost) > 1.0:
+    if float(escalation_boost) > 1.0 and scaled > 0.0:
         scaled, step = _floor_step(
             "escalation_floor",
             scaled,
@@ -196,6 +204,8 @@ def plan_signal_brightness(
     ]
     scaled, step = _scaled_step("global_brightness", scaled, global_factor)
     trace.append(step)
+    if float(global_factor) <= 0.0:
+        return _normalized_result(0.0, trace)
     if dnd_factor is not None:
         scaled, step = _scaled_step("dnd_dim", scaled, dnd_factor)
         trace.append(step)

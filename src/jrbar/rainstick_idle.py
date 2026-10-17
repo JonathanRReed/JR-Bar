@@ -154,13 +154,6 @@ class RainstickGeometry:
         ):
             raise RainstickIdleError("static Rainstick index is outside the surface")
 
-    @property
-    def position_count(self) -> int:
-        """Return the number of positions on the inclusive travel path."""
-
-        return self.path_end_index - self.path_start_index + 1
-
-
 @dataclass(frozen=True, slots=True)
 class RainstickIdlePlan:
     """One internally consistent cadence, geometry, and accessibility plan."""

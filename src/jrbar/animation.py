@@ -1100,7 +1100,7 @@ def _parse_line(
     rest = head[1].strip() if len(head) > 1 else ""
 
     if keyword == "brightness":
-        if not rest.isdigit():
+        if not (rest.isascii() and rest.isdigit()):
             problems.append(
                 _error(
                     step,
@@ -1115,7 +1115,7 @@ def _parse_line(
     if keyword == "repeat":
         if not rest:
             return RepeatStep(None)
-        if not rest.isdigit():
+        if not (rest.isascii() and rest.isdigit()):
             problems.append(
                 _error(
                     step,

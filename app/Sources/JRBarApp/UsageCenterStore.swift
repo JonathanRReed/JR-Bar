@@ -28,7 +28,7 @@ final class UsageCenterStore {
     /// via the pushed document; `pendingRange` covers the instant in
     /// between so the toolbar never flickers back to the old value.
     var range: UsageHistoryRange {
-        get { pendingRange ?? Self.range(forDays: document?.int("usage_graph_days")) }
+        get { pendingRange?.value ?? Self.range(forDays: document?.int("usage_graph_days")) }
         set { setRange(newValue) }
     }
 
@@ -37,13 +37,27 @@ final class UsageCenterStore {
     /// Usage Center has no such chart, so they read as tokens rather than
     /// rendering a blank window.
     var metric: Metric {
-        get { pendingMetric ?? (Metric(rawValue: document?.string("usage_display_mode") ?? "") ?? .tokens) }
+        get { pendingMetric?.value ?? (Metric(rawValue: document?.string("usage_display_mode") ?? "") ?? .tokens) }
         set { setMetric(newValue) }
     }
 
-    private var pendingRange: UsageHistoryRange?
-    private var pendingMetric: Metric?
+    private struct PendingChoice<Value> {
+        let value: Value
+        let request = UUID()
+        var accepted = false
+        var generation: Int?
+
+        func confirmed(by currentGeneration: Int?, matchingValue: Bool) -> Bool {
+            guard accepted else { return false }
+            if let generation { return currentGeneration.map { $0 >= generation } ?? false }
+            return matchingValue
+        }
+    }
+
+    private var pendingRange: PendingChoice<UsageHistoryRange>?
+    private var pendingMetric: PendingChoice<Metric>?
     private var seenSettingsGeneration: Int?
+    @ObservationIgnored var writeSetting: (SettingsPath, JSONValue) async throws -> CoreReply
 
     /// `usage_graph_days` as a `UsageHistoryRange`; anything else the
     /// document holds (absent, corrupt) is the daemon's own default week.
@@ -57,40 +71,114 @@ final class UsageCenterStore {
     }
 
     /// Write `usage_graph_days` and reload every card for the new range.
-    func setRange(_ newValue: UsageHistoryRange) {
-        guard newValue != range else { return }
-        pendingRange = newValue
-        Task { [weak self] in
+    @discardableResult
+    func setRange(_ newValue: UsageHistoryRange) -> Task<Void, Never>? {
+        guard newValue != range else { return nil }
+        let choice = PendingChoice(value: newValue)
+        pendingRange = choice
+        let write = writeSetting
+        let task = Task { [weak self] in
             guard let self else { return }
             do {
-                _ = try await self.core.setSetting("usage_graph_days", value: .number(Double(newValue.days)))
+                let reply = try await write("usage_graph_days", .number(Double(newValue.days)))
+                guard self.pendingRange?.request == choice.request else { return }
+                if let refusal = Self.refusal(reply) {
+                    self.pendingRange = nil
+                    self.show(error: "Range not saved: \(refusal)", action: .range)
+                    self.loadAll()
+                } else {
+                    self.actionSucceeded(.range)
+                    self.pendingRange?.accepted = true
+                    self.pendingRange?.generation = reply.result?["generation"]?.intValue
+                    self.settlePendingChoices()
+                    self.loadAll()
+                }
             } catch {
+                guard self.pendingRange?.request == choice.request else { return }
                 self.pendingRange = nil
-                self.show(error: "Range not saved: \(Self.describe(error))")
+                self.show(error: "Range not saved: \(Self.describe(error))", action: .range)
+                self.loadAll()
             }
         }
         loadAll()
+        return task
     }
 
     /// Write `usage_display_mode`; the cards repaint on the push.
-    func setMetric(_ newValue: Metric) {
-        guard newValue != metric else { return }
-        pendingMetric = newValue
-        Task { [weak self] in
+    @discardableResult
+    func setMetric(_ newValue: Metric) -> Task<Void, Never>? {
+        guard newValue != metric else { return nil }
+        let choice = PendingChoice(value: newValue)
+        pendingMetric = choice
+        let write = writeSetting
+        return Task { [weak self] in
             guard let self else { return }
             do {
-                _ = try await self.core.setSetting("usage_display_mode", value: .string(newValue.rawValue))
+                let reply = try await write("usage_display_mode", .string(newValue.rawValue))
+                guard self.pendingMetric?.request == choice.request else { return }
+                if let refusal = Self.refusal(reply) {
+                    self.pendingMetric = nil
+                    self.show(error: "Metric not saved: \(refusal)", action: .metric)
+                } else {
+                    self.actionSucceeded(.metric)
+                    self.pendingMetric?.accepted = true
+                    self.pendingMetric?.generation = reply.result?["generation"]?.intValue
+                    self.settlePendingChoices()
+                }
             } catch {
+                guard self.pendingMetric?.request == choice.request else { return }
                 self.pendingMetric = nil
-                self.show(error: "Metric not saved: \(Self.describe(error))")
+                self.show(error: "Metric not saved: \(Self.describe(error))", action: .metric)
             }
+        }
+    }
+
+    private func settlePendingChoices() {
+        if let pendingRange, pendingRange.confirmed(by: core.settings?.generation,
+            matchingValue: document?.int("usage_graph_days") == pendingRange.value.days) {
+            self.pendingRange = nil
+        }
+        if let pendingMetric, pendingMetric.confirmed(by: core.settings?.generation,
+            matchingValue: document?.string("usage_display_mode") == pendingMetric.value.rawValue) {
+            self.pendingMetric = nil
         }
     }
     var now = Date()
     var refreshing = false
-    var lastError: String?
+    enum NoticeAction: Equatable {
+        case range, metric, refresh, planLimits
+        case providerEnabled(String), usageConsent(String), addInstance(String)
+        case providerAction(String), resignIn(String)
+        case revokeConsent(ConsentRevocation)
+    }
+
+    struct ConsentRevocation: Equatable {
+        let provider: String
+        let instance: String?
+        let browser: String?
+        let profile: String?
+    }
+
+    struct Notice: Equatable {
+        let id = UUID()
+        let action: NoticeAction
+        let text: String
+        let isFailure: Bool
+    }
+
+    private(set) var notice: Notice?
+    var lastError: String? { notice?.isFailure == true ? notice?.text : nil }
+    @ObservationIgnored var copyNoticeText: (String) -> Void = { text in
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+    @ObservationIgnored var scheduleNoticeExpiry: (@escaping @MainActor () -> Void) -> Void = { expire in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            MainActor.assumeIsolated { expire() }
+        }
+    }
     var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-    /// Provider → when its `quota_reset` arrived; the card celebrates for ~1.4 s.
+    /// Account identity → when its `quota_reset` arrived; the card celebrates for ~1.4 s.
     var resetPulses: [String: Date] = [:]
     /// The panel's per-provider drill ("Open Claude in the Usage Center"):
     /// the view scrolls this provider's card into view, and `focusPulses`
@@ -104,9 +192,17 @@ final class UsageCenterStore {
     /// card's `identity` so a duplicate provider id still lands on a card.
     func focus(provider: String?) {
         guard let provider else { return }
-        let identity = core.usage.first { $0.id == provider }?.identity ?? provider
+        let identity = Self.identity(for: provider, in: providers)
         focusProvider = identity
         focusPulses[identity] = Date()
+    }
+
+    /// The card a drill names: an identity (`id|instance`) is taken as it
+    /// is, so the second account of a provider is not mistaken for the
+    /// first; a bare provider id lands on that provider's first card.
+    nonisolated static func identity(for provider: String, in usage: [CoreProviderUsage]) -> String {
+        if usage.contains(where: { $0.identity == provider }) { return provider }
+        return usage.first { $0.id == provider }?.identity ?? provider
     }
 
     func isFocused(_ provider: CoreProviderUsage) -> Bool {
@@ -130,21 +226,44 @@ final class UsageCenterStore {
     static let coldRetryDelay: TimeInterval = 6
 
     @ObservationIgnored private var attempts: [String: Int] = [:]
+    @ObservationIgnored private var historySequence: UInt64 = 0
+    @ObservationIgnored private var historyRequests: [String: UInt64] = [:]
+    @ObservationIgnored private var dirtyHistoryKeys: Set<String> = []
+    @ObservationIgnored var readHistory: (String, UsageHistoryRange) async throws -> UsageHistory
+    @ObservationIgnored var readHistoryStatus: (String, UsageHistoryRange) async throws -> UsageHistory
+    @ObservationIgnored var readProviderRows: () async throws -> [ProviderRow]
+    @ObservationIgnored var revokeProviderConsent: (ConsentRevocation) async throws -> CoreReply
+    @ObservationIgnored var scheduleColdRetry: (@escaping @MainActor () -> Void) -> Void = { retry in
+        DispatchQueue.main.asyncAfter(deadline: .now() + UsageCenterStore.coldRetryDelay) {
+            MainActor.assumeIsolated { retry() }
+        }
+    }
 
     @ObservationIgnored private var ticker: Timer?
-    @ObservationIgnored private var lastEventID: String?
+    @ObservationIgnored private var lastEventSequence = 0
     @ObservationIgnored private var observing = false
     @ObservationIgnored private var isOpen = false
-    @ObservationIgnored private var errorClear: DispatchWorkItem?
+    // Keep quota readings through a monitor restart.
+    private var lastUsage: CoreUsage?
 
     init(core: CoreModel) {
         self.core = core
+        writeSetting = { try await core.setSetting($0, value: $1) }
+        readHistory = { try await core.usageHistory(provider: $0, range: $1) }
+        readHistoryStatus = { try await core.usageHistory(provider: $0, range: $1, observe: true) }
+        readProviderRows = { try await core.listProviders() }
+        revokeProviderConsent = { request in
+            try await core.providerConsent(action: "revoke", provider: request.provider,
+                browser: request.browser, profile: request.profile, instance: request.instance)
+        }
+        lastUsage = core.isLive ? core.state?.usage : nil
     }
 
     // MARK: Lifecycle
 
     func windowDidOpen() {
         isOpen = true
+        rememberUsage()
         now = Date()
         ticker?.invalidate()
         ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -183,7 +302,7 @@ final class UsageCenterStore {
     /// slice and the settings document — not a frame that only moved the
     /// sessions or the daemon's clock.
     static func observedFacts(_ core: CoreModel) {
-        _ = core.lastEvent?.id
+        _ = core.eventSequence
         _ = core.isLive
         _ = core.usage
         _ = core.settings?.generation
@@ -193,6 +312,7 @@ final class UsageCenterStore {
         withObservationTracking {
             Self.observedFacts(core)
         } onChange: { [weak self] in
+            MainActor.assumeIsolated { self?.rememberUsage() }
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.coreDidChange()
@@ -204,40 +324,65 @@ final class UsageCenterStore {
     private var wasLive = false
     private var knownProviders: [String] = []
 
-    private func coreDidChange() {
-        if let event = core.lastEvent, event.id != lastEventID {
-            lastEventID = event.id
+    @discardableResult
+    func coreDidChange() -> [Task<Void, Never>] {
+        rememberUsage()
+        let events = core.events(after: lastEventSequence)
+        lastEventSequence = core.eventSequence
+        var historyEvents: [CoreEvent] = []
+        for event in events {
             if event.kind == "quota_reset" {
+                if !historyEvents.isEmpty {
+                    historyDidComplete(historyEvents)
+                    historyEvents.removeAll(keepingCapacity: true)
+                }
                 let provider = event.provider ?? event.label?.lowercased() ?? ""
-                resetPulses[provider] = Date()
+                let instance = event.instance ?? "default"
+                let identity = instance.isEmpty || instance == "default" ? provider : "\(provider)|\(instance)"
                 if !provider.isEmpty {
-                    for match in core.usage where match.id == provider {
-                        load(provider: match, force: true)
+                    resetPulses[identity] = Date()
+                    if let historyProvider = historyProviders.first(where: { $0.id == provider }) {
+                        load(provider: historyProvider, force: true)
                     }
                 }
             }
-            if event.kind == CoreEvent.usageHistoryReadyKind {
-                historyDidBecomeReady(provider: event.provider, range: event.range)
+            if event.kind == CoreEvent.usageHistoryReadyKind || event.kind == CoreEvent.usageHistoryFailedKind {
+                historyEvents.append(event)
             }
         }
+        if !historyEvents.isEmpty { historyDidComplete(historyEvents) }
         // A pushed settings document can carry a range or metric written
-        // from the Settings page: the pendings this window set are now
-        // facts, and a range change means the cards need the other range.
+        // from the Settings page. A pending choice becomes a fact only once
+        // its own accepted write generation has arrived.
         let generation = core.settings?.generation
         if generation != seenSettingsGeneration {
             seenSettingsGeneration = generation
-            pendingRange = nil
-            pendingMetric = nil
+            settlePendingChoices()
             loadAll()
         }
         let live = core.isLive
+        if !live && wasLive {
+            providerRowsGeneration += 1
+            providerRows = [:]
+        }
         let ids = core.usage.map(\.identity)
+        var resumed: [Task<Void, Never>] = []
+        if live && !wasLive && isOpen {
+            // A retry that came due while disconnected could not finish.
+            // Resume its partial history, including an earlier graph range.
+            for provider in historyProviders {
+                for range in UsageHistoryRange.allCases where scanning.contains(key(provider, range: range)) {
+                    if let task = load(provider: provider, force: true, range: range) { resumed.append(task) }
+                }
+            }
+        }
         if (live && !wasLive) || ids != knownProviders {
             loadAll()
             loadProviderRows()
         }
         wasLive = live
         knownProviders = ids
+        return resumed
     }
 
     // MARK: Data
@@ -246,61 +391,102 @@ final class UsageCenterStore {
 
     /// Every provider the daemon reports, signed-out ones included: the
     /// card says how to fix that.
-    var providers: [CoreProviderUsage] { core.isLive ? core.usage : [] }
+    var providers: [CoreProviderUsage] { core.isLive ? core.usage : lastUsage?.providers ?? [] }
 
-    var refreshedAt: Date? { core.state?.usage?.refreshedAt.map { Date(timeIntervalSince1970: $0) } }
+    var refreshedAt: Date? {
+        let reading = core.isLive ? core.state?.usage : lastUsage
+        return reading?.refreshedAt.map { Date(timeIntervalSince1970: $0) }
+    }
 
-    /// Caches key by `identity` (`id|instance`) so two accounts of one
-    /// provider keep separate histories; the daemon's `usage_history`
-    /// still takes the bare provider id.
-    private func key(_ provider: CoreProviderUsage) -> String { provider.identity + "|" + range.rawValue }
+    private func rememberUsage() {
+        guard core.isLive, let usage = core.state?.usage else { return }
+        lastUsage = usage
+    }
 
-    func history(for provider: CoreProviderUsage) -> UsageHistory? { histories[key(provider)] }
+    /// Transcript history combines this Mac's configured homes for a provider.
+    /// Prefer the local/default card; a named-only setup still gets one history.
+    var historyProviders: [CoreProviderUsage] {
+        var order: [String] = []
+        var selected: [String: CoreProviderUsage] = [:]
+        for provider in providers where supportsLocalHistory(provider) && !provider.isSignedOut && !UsageSourceNotes.isHubInstance(provider.instance) {
+            if selected[provider.id] == nil {
+                order.append(provider.id)
+                selected[provider.id] = provider
+            } else if provider.identity == provider.id {
+                selected[provider.id] = provider
+            }
+        }
+        return order.compactMap { selected[$0] }
+    }
 
-    func isLoading(_ provider: CoreProviderUsage) -> Bool { loading.contains(key(provider)) }
+    func supportsLocalHistory(_ provider: CoreProviderUsage) -> Bool {
+        provider.id != "factory"
+    }
+
+    func ownsLocalHistory(_ provider: CoreProviderUsage) -> Bool {
+        historyProviders.first { $0.id == provider.id }?.identity == provider.identity
+    }
+
+    private func key(_ provider: CoreProviderUsage, range: UsageHistoryRange? = nil) -> String {
+        provider.id + "|" + (range ?? self.range).rawValue
+    }
+
+    func history(for provider: CoreProviderUsage) -> UsageHistory? {
+        ownsLocalHistory(provider) ? histories[key(provider)] : nil
+    }
+
+    func isLoading(_ provider: CoreProviderUsage) -> Bool {
+        ownsLocalHistory(provider) && loading.contains(key(provider))
+    }
 
     /// The daemon is still scanning: what is shown (if anything) is partial.
-    func isScanning(_ provider: CoreProviderUsage) -> Bool { scanning.contains(key(provider)) }
+    func isScanning(_ provider: CoreProviderUsage) -> Bool { ownsLocalHistory(provider) && scanning.contains(key(provider)) }
 
-    func error(for provider: CoreProviderUsage) -> String? { errors[key(provider)] }
+    func error(for provider: CoreProviderUsage) -> String? { ownsLocalHistory(provider) ? errors[key(provider)] : nil }
 
     /// The scan ran and this Mac has no transcripts for the provider at
     /// all — a different thing from a range with nothing in it.
     func hasNoLocalRecords(_ provider: CoreProviderUsage) -> Bool {
-        guard let history = history(for: provider) else { return false }
+        guard error(for: provider) == nil, let history = history(for: provider) else { return false }
         return history.hasNoLocalRecords && !isScanning(provider)
     }
 
     func loadAll() {
         guard isOpen, core.isLive else { return }
-        for provider in core.usage where !provider.isSignedOut {
+        for provider in historyProviders {
             load(provider: provider)
         }
     }
 
-    func load(provider: CoreProviderUsage, force: Bool = false) {
-        guard core.isLive else { return }
-        let key = key(provider)
-        if !force, histories[key] != nil || loading.contains(key) { return }
-        if force { attempts[key] = 0 }
+    @discardableResult
+    func load(provider: CoreProviderUsage, force: Bool = false, range: UsageHistoryRange? = nil) -> Task<Void, Never>? {
+        guard core.isLive, ownsLocalHistory(provider) else { return nil }
+        let range = range ?? self.range
+        let key = key(provider, range: range)
+        let needsRefresh = force || dirtyHistoryKeys.contains(key)
+        if !needsRefresh, histories[key] != nil || loading.contains(key) { return nil }
+        dirtyHistoryKeys.remove(key)
+        if needsRefresh { attempts[key] = 0 }
         loading.insert(key)
         errors[key] = nil
-        let range = self.range
-        Task { [weak self] in
+        let request = beginHistoryRequest(key: key)
+        return Task { [weak self] in
             guard let self else { return }
             do {
-                let history = try await self.core.usageHistory(provider: provider.id, range: range)
+                let history = try await self.readHistory(provider.id, range)
+                guard self.historyRequests[key] == request else { return }
                 self.histories[key] = history
                 // The daemon answered from what it had while its scan runs
                 // on: keep the skeleton and wait to be told it landed.
                 if history.partial {
                     self.scanning.insert(key)
-                    self.retryCold(provider: provider, key: key)
+                    self.retryCold(provider: provider, key: key, range: range, request: request)
                 } else {
                     self.scanning.remove(key)
                     self.attempts[key] = 0
                 }
             } catch {
+                guard self.historyRequests[key] == request else { return }
                 // A cold scan can outlive even the long timeout. That is
                 // the core being slow, not the core being wrong: hold the
                 // skeleton, ask again, and only give up after a couple of
@@ -309,9 +495,10 @@ final class UsageCenterStore {
                 let cold = (error as? CoreClientError) == .timeout && self.histories[key] == nil
                 if cold, (self.attempts[key] ?? 0) < Self.coldRetries {
                     self.scanning.insert(key)
-                    self.retryCold(provider: provider, key: key)
+                    self.retryCold(provider: provider, key: key, range: range, request: request)
                 } else {
                     self.scanning.remove(key)
+                    if self.histories[key] != nil { self.dirtyHistoryKeys.insert(key) }
                     self.errors[key] = Self.describe(error)
                 }
             }
@@ -319,76 +506,105 @@ final class UsageCenterStore {
         }
     }
 
-    /// Asks again after a pause, unless a `usage_history_ready` event has
-    /// already done it. Counted, so a daemon that never finishes still
-    /// ends in an honest error row rather than a skeleton forever.
-    private func retryCold(provider: CoreProviderUsage, key: String) {
+    /// A newer read owns this key, including its scan and loading state.
+    private func beginHistoryRequest(key: String) -> UInt64 {
+        historySequence &+= 1
+        historyRequests[key] = historySequence
+        return historySequence
+    }
+
+    /// Retry only the request that still owns the card.
+    private func retryCold(provider: CoreProviderUsage, key: String, range: UsageHistoryRange, request: UInt64) {
         attempts[key] = (attempts[key] ?? 0) + 1
         guard (attempts[key] ?? 0) <= Self.coldRetries else {
             scanning.remove(key)
-            if histories[key] == nil { errors[key] = "The monitor is still scanning transcripts. Try Refresh in a moment." }
+            dirtyHistoryKeys.insert(key)
+            errors[key] = "The monitor is still scanning transcripts. Try Refresh in a moment."
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.coldRetryDelay) { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.isOpen, self.scanning.contains(key) else { return }
-                self.loading.insert(key)
-                Task { [weak self] in
-                    guard let self else { return }
-                    await self.reload(provider: provider, key: key)
-                }
+        scheduleColdRetry { [weak self] in
+            guard let self, self.isOpen, self.core.isLive, self.scanning.contains(key),
+                  self.historyRequests[key] == request,
+                  let owner = self.historyProviders.first(where: { $0.id == provider.id }) else { return }
+            self.loading.insert(key)
+            let next = self.beginHistoryRequest(key: key)
+            Task { [weak self] in
+                guard let self else { return }
+                await self.reload(provider: owner, key: key, range: range, request: next)
             }
         }
     }
 
-    /// One more `usage_history` for a scan that was still running.
-    private func reload(provider: CoreProviderUsage, key: String) async {
+    /// One more `usage_history` for a scan that was still running. The
+    /// range is the one `key` was made for: asking for whichever range the
+    /// toolbar shows by now would file a month under the week's key.
+    private func reload(provider: CoreProviderUsage, key: String, range: UsageHistoryRange,
+                        request: UInt64, observeOnly: Bool = false) async {
         do {
-            let history = try await core.usageHistory(provider: provider.id, range: range)
+            let read = observeOnly ? readHistoryStatus : readHistory
+            let history = try await read(provider.id, range)
+            guard historyRequests[key] == request else { return }
             histories[key] = history
+            errors[key] = nil
             if history.partial {
-                retryCold(provider: provider, key: key)
+                scanning.insert(key)
+                if !observeOnly { retryCold(provider: provider, key: key, range: range, request: request) }
             } else {
                 scanning.remove(key)
-                errors[key] = nil
+                dirtyHistoryKeys.remove(key)
                 attempts[key] = 0
             }
         } catch {
-            if (attempts[key] ?? 0) < Self.coldRetries {
-                retryCold(provider: provider, key: key)
+            guard historyRequests[key] == request else { return }
+            if !observeOnly, (error as? CoreClientError) == .timeout, (attempts[key] ?? 0) < Self.coldRetries {
+                scanning.insert(key)
+                retryCold(provider: provider, key: key, range: range, request: request)
             } else {
                 scanning.remove(key)
-                if histories[key] == nil { errors[key] = Self.describe(error) }
+                dirtyHistoryKeys.insert(key)
+                errors[key] = Self.describe(error)
             }
         }
         loading.remove(key)
     }
 
-    /// `usage_history_ready {provider, range?}`: the daemon's background
-    /// scan landed. Only the ranges this window is showing are re-read; a
-    /// daemon that never sends the event costs nothing (the retry above
-    /// covers it).
-    private func historyDidBecomeReady(provider: String?, range: String?) {
-        guard isOpen else { return }
-        if let range, !range.isEmpty, range != self.range.rawValue { return }
-        // The event names a provider id; every instance of it is re-asked.
-        let providers = (provider?.isEmpty == false) ? core.usage.filter { $0.id == provider } : core.usage
-        for provider in providers {
-            let key = key(provider)
-            scanning.remove(key)
-            attempts[key] = 0
-            guard histories[key] != nil || errors[key] != nil || loading.contains(key) else { continue }
-            loading.insert(key)
-            Task { [weak self] in
-                guard let self else { return }
-                await self.reload(provider: provider, key: key)
+    /// Failure facts invalidate memory; observation checks for newer success without retrying work.
+    private func historyDidComplete(_ events: [CoreEvent]) {
+        for provider in historyProviders {
+            var outcomes: [UsageHistoryRange: Bool] = [:]
+            for event in events {
+                guard event.provider == nil || event.provider == "" || event.provider == provider.id else { continue }
+                let ranges: [UsageHistoryRange]
+                if let range = event.range, !range.isEmpty {
+                    guard let resolved = UsageHistoryRange(rawValue: range) else { continue }
+                    ranges = [resolved]
+                } else {
+                    ranges = UsageHistoryRange.allCases
+                }
+                for range in ranges { outcomes[range] = event.kind == CoreEvent.usageHistoryFailedKind }
+            }
+            for range in UsageHistoryRange.allCases {
+                guard let observeOnly = outcomes[range] else { continue }
+                let key = key(provider, range: range)
+                dirtyHistoryKeys.insert(key)
+                guard isOpen, range == self.range else { continue }
+                scanning.remove(key)
+                attempts[key] = 0
+                guard histories[key] != nil || errors[key] != nil || loading.contains(key) else { continue }
+                dirtyHistoryKeys.remove(key)
+                loading.insert(key)
+                let request = beginHistoryRequest(key: key)
+                Task { [weak self] in
+                    guard let self else { return }
+                    await self.reload(provider: provider, key: key, range: range, request: request, observeOnly: observeOnly)
+                }
             }
         }
     }
 
     // MARK: Actions
 
-    /// Settings › Usage from this window: the app menu's selector builds
+    /// Settings › Agents & Usage from this window: the app menu's selector builds
     /// the Settings window if it has never been shown, then the window's
     /// controller (its delegate) selects the page.
     func openUsageSettings() {
@@ -396,7 +612,7 @@ final class UsageCenterStore {
         if let controller = NSApp.windows
             .first(where: { $0.identifier?.rawValue == "settings" })?
             .delegate as? SettingsWindowController {
-            controller.show(page: .usage)
+            controller.show(chapter: .usage)
         }
     }
 
@@ -412,10 +628,12 @@ final class UsageCenterStore {
                 _ = try await self.core.setSetting("claude_plan_limits_consent_version", value: .number(1))
                 let reply = try await self.core.setSetting("claude_plan_limits_enabled", value: .bool(true))
                 if !reply.ok {
-                    self.show(error: reply.error?.message ?? reply.error?.code ?? "Plan limits stayed off")
+                    self.show(error: reply.error?.message ?? reply.error?.code ?? "Plan limits stayed off", action: .planLimits)
+                } else {
+                    self.actionSucceeded(.planLimits)
                 }
             } catch {
-                self.show(error: "Plan limits not enabled: \(Self.describe(error))")
+                self.show(error: "Plan limits not enabled: \(Self.describe(error))", action: .planLimits)
             }
         }
     }
@@ -428,11 +646,12 @@ final class UsageCenterStore {
             guard let self else { return }
             do {
                 try await self.core.refreshUsage()
-                for provider in self.core.usage where !provider.isSignedOut {
+                self.actionSucceeded(.refresh)
+                for provider in self.historyProviders {
                     self.load(provider: provider, force: true)
                 }
             } catch {
-                self.show(error: "Refresh failed: \(Self.describe(error))")
+                self.show(error: "Refresh failed: \(Self.describe(error))", action: .refresh)
             }
             self.refreshing = false
         }
@@ -450,11 +669,16 @@ final class UsageCenterStore {
     static func forecast(for provider: CoreProviderUsage, window: CoreUsageWindow,
                          core: CoreModel, now: Date) -> UsageForecast {
         // A window's own `forecast` wins. The provider-level one is about
-        // the daemon's 5h-convention primary; other windows only get its
-        // pace word.
+        // the daemon's 5h-convention primary. Another lane never borrows the primary's pace word: "under" on
+        // the 5h lane says nothing about a weekly lane at 97 %.
+        if !core.isLive || provider.isStale {
+            let reason = core.isLive ? "stale_samples" : "monitor_offline"
+            return UsageForecast(window: window.name, usedPct: window.usedPct, resetsAt: window.resetsAt,
+                                 verdict: window.usedPct == nil ? .unmeasured : .guarded(reason: reason),
+                                 ratePctPerHour: nil, source: .none, pace: "guarded", guardReason: reason)
+        }
         let primary = window.id == Self.conventionalWindow(of: provider)?.id
-        let daemon = window.forecast
-            ?? (primary ? provider.forecast : provider.forecast.map { CoreUsageForecast(exhaustsAt: nil, pace: $0.pace) })
+        let daemon = window.forecast ?? (primary ? provider.forecast : nil)
         let samples = core.usageSamples.samples(provider: provider.identity, window: window.name)
         let forecast = UsageForecaster.forecast(window: window, daemon: daemon, samples: samples, now: now.timeIntervalSince1970)
         // A hub account is spent by whoever uses the proxy, not by this
@@ -573,20 +797,32 @@ final class UsageCenterStore {
     /// the inspect/manage surface (enabled flag, consents, credential
     /// availability).
     private(set) var providerRows: [String: ProviderRow] = [:]
+    @ObservationIgnored private var providerRowsGeneration: UInt64 = 0
     /// A toggle while its write is in flight: a second tap can't stack.
     private var managing: Set<String> = []
 
     func row(for identity: String) -> ProviderRow? { providerRows[identity] }
 
-    func loadProviderRows() {
-        guard core.isLive else { providerRows = [:]; return }
-        Task { [weak self] in
+    /// The rows keyed by identity. Two rows that claim one identity must
+    /// not take the app down (a trap on a duplicate key): the first stays.
+    nonisolated static func rowsByIdentity(_ rows: [ProviderRow]) -> [String: ProviderRow] {
+        Dictionary(rows.map { ($0.identity, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    @discardableResult
+    func loadProviderRows() -> Task<Void, Never>? {
+        providerRowsGeneration += 1
+        let generation = providerRowsGeneration
+        guard core.isLive else { providerRows = [:]; return nil }
+        let hello = core.hello
+        let read = readProviderRows
+        return Task { [weak self] in
             guard let self else { return }
             do {
-                let rows = try await self.core.listProviders()
-                self.providerRows = Dictionary(
-                    uniqueKeysWithValues: rows.map { ($0.identity, $0) }
-                )
+                let rows = try await read()
+                guard self.core.isLive, self.providerRowsGeneration == generation,
+                      self.core.hello == hello else { return }
+                self.providerRows = Self.rowsByIdentity(rows)
             } catch {
                 // Inspection is best-effort: without it the cards still
                 // show quota state, just without the manage row.
@@ -607,8 +843,33 @@ final class UsageCenterStore {
                     instance: row.instance == "default" ? nil : row.instance
                 )
                 self.providerRows[updated.identity] = updated
+                self.actionSucceeded(.providerEnabled(row.identity))
             } catch {
-                self.show(error: "\(row.label): \(Self.describe(error))")
+                self.show(error: "\(row.label): \(Self.describe(error))", action: .providerEnabled(row.identity))
+            }
+        }
+    }
+
+    /// The per-provider usage switch: the person turning one provider's
+    /// usage read on (after reading the row's own sentence on the card) or
+    /// back off. Nothing is asked of the provider until this lands.
+    func setUsageConsent(_ row: ProviderRow, _ on: Bool) {
+        guard !managing.contains(row.identity) else { return }
+        managing.insert(row.identity)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.managing.remove(row.identity) }
+            do {
+                let updated = try await self.core.setProviderUsageConsent(
+                    row.id,
+                    enabled: on,
+                    source: "usage_center",
+                    instance: row.instance == "default" ? nil : row.instance
+                )
+                self.providerRows[updated.identity] = updated
+                self.actionSucceeded(.usageConsent(row.identity))
+            } catch {
+                self.show(error: "\(row.label): \(Self.describe(error))", action: .usageConsent(row.identity))
             }
         }
     }
@@ -632,9 +893,10 @@ final class UsageCenterStore {
                     label: (labelText?.isEmpty ?? true) ? nil : labelText
                 )
                 self.providerRows[added.identity] = added
+                self.actionSucceeded(.addInstance(row.identity))
                 self.loadProviderRows()
             } catch {
-                self.show(error: Self.describe(error))
+                self.show(error: Self.describe(error), action: .addInstance(row.identity))
             }
         }
     }
@@ -653,10 +915,10 @@ final class UsageCenterStore {
                     provider.id,
                     instance: provider.instance == "default" ? nil : provider.instance
                 )
-                self.show(error: message)
+                self.actionSucceeded(.providerAction(provider.identity), message: message)
                 self.loadProviderRows()
             } catch {
-                self.show(error: Self.describe(error))
+                self.show(error: Self.describe(error), action: .providerAction(provider.identity))
             }
         }
     }
@@ -689,13 +951,13 @@ final class UsageCenterStore {
                     provider.id,
                     instance: provider.instance == "default" ? nil : provider.instance
                 )
-                self.show(error: result.message.isEmpty ? "Re-checking \(provider.id)'s sign-in…" : result.message)
+                self.actionSucceeded(.resignIn(provider.identity), message: result.message.isEmpty ? "Re-checking \(provider.id)'s sign-in…" : result.message)
                 if let urlString = result.signInURL, let url = URL(string: urlString) {
                     NSWorkspace.shared.open(url)
                 }
                 self.loadProviderRows()
             } catch {
-                self.show(error: Self.describe(error))
+                self.show(error: Self.describe(error), action: .resignIn(provider.identity))
             }
         }
     }
@@ -778,34 +1040,57 @@ final class UsageCenterStore {
 
     /// Revokes one exact consent; the daemon removes the imported
     /// credential only while it is still the imported one.
-    func revokeConsent(providerID: String, consent: ProviderConsentRow) {
-        Task { [weak self] in
+    @discardableResult
+    func revokeConsent(providerID: String, consent: ProviderConsentRow) -> Task<Void, Never> {
+        let request = ConsentRevocation(provider: providerID,
+            instance: consent.sourceInstanceID == "default" ? nil : consent.sourceInstanceID,
+            browser: consent.browser, profile: consent.profile)
+        let revoke = revokeProviderConsent
+        return Task { [weak self] in
             guard let self else { return }
             do {
-                let reply = try await self.core.providerConsent(
-                    action: "revoke",
-                    provider: providerID,
-                    browser: consent.browser,
-                    profile: consent.profile,
-                    instance: consent.sourceInstanceID == "default" ? nil : consent.sourceInstanceID
-                )
+                let reply = try await revoke(request)
                 if !reply.ok {
-                    self.show(error: reply.error?.message ?? "Consent revoke refused")
+                    self.show(error: reply.error?.message ?? "Consent revoke refused", action: .revokeConsent(request))
                     return
                 }
+                self.actionSucceeded(.revokeConsent(request))
                 self.loadProviderRows()
             } catch {
-                self.show(error: "Revoke failed: \(Self.describe(error))")
+                self.show(error: "Revoke failed: \(Self.describe(error))", action: .revokeConsent(request))
             }
         }
     }
 
-    private func show(error: String) {
-        lastError = error
-        errorClear?.cancel()
-        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.lastError = nil } }
-        errorClear = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
+    func show(error: String, action: NoticeAction) {
+        notice = Notice(action: action, text: error, isFailure: true)
+    }
+
+    func actionSucceeded(_ action: NoticeAction, message: String? = nil) {
+        if let notice, notice.isFailure, notice.action != action { return }
+        notice = nil
+        guard let message, !message.isEmpty else { return }
+        let shown = Notice(action: action, text: message, isFailure: false)
+        notice = shown
+        scheduleNoticeExpiry { [weak self] in
+            guard self?.notice?.id == shown.id else { return }
+            self?.notice = nil
+        }
+    }
+
+    func dismissNotice() { notice = nil }
+
+    func copyNotice() {
+        guard let notice else { return }
+        copyNoticeText(notice.text)
+    }
+
+    /// Why the daemon refused a write, or nil when it took it. A refused
+    /// `set_setting` is a reply, not a thrown error, and the toolbar must
+    /// not keep showing a choice the daemon did not keep.
+    nonisolated static func refusal(_ reply: CoreReply) -> String? {
+        guard !reply.ok else { return nil }
+        return reply.error?.message ?? reply.error?.code ?? "refused"
     }
 
     static func describe(_ error: Error) -> String {
@@ -838,6 +1123,9 @@ final class UsageCenterStore {
         if let label = account?.label, !label.isEmpty {
             parts.append(SessionLabel.looksLikeUUID(label) ? String(label.prefix(8)) : SessionLabel.shorteningUUIDs(label))
         }
+        // A provider that is off says so on its card; the line keeps only
+        // who the account is.
+        if provider.usageIsOff { return parts.joined(separator: " · ") }
         // A source that is not ready carries the daemon's fix-it hint
         // ("Reconnect Claude · authentication required"); that says more
         // than repeating the badge's word.

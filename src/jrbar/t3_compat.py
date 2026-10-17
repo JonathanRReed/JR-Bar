@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -24,7 +25,14 @@ from urllib.parse import quote
 from .models import AgentMode, AgentStatus, parse_datetime
 from .provider_facts import SourceKey, WorkIdentifier, WorkKey
 
+_log = logging.getLogger(__name__)
+
 T3_DATABASE_RELATIVE_PATH = Path("userdata") / "state.sqlite"
+#: T3 Code 0.0.46 nightlies keep live threads here (upstream de3439142, #2829).
+#: The projection_* tables inside it are a frozen copy of ``state.sqlite``.
+T3_V2_DATABASE_RELATIVE_PATH = Path("userdata") / "statev2.sqlite"
+LAYOUT_LEGACY = "legacy"
+LAYOUT_V2 = "v2"
 T3_SQLITE_TIMEOUT_SECONDS = 0.75
 T3_SQLITE_MAX_VALUE_BYTES = 128 * 1024
 T3_MAX_QUERY_STEPS = 2_000_000
@@ -33,16 +41,19 @@ T3_QUERY_TIMEOUT_SECONDS = 0.5
 T3_POLL_INTERVAL_SECONDS = 2.0
 T3_MAX_THREADS = 512
 T3_MAX_TITLE_LENGTH = 160
-# Re-pinned 2026-09-24 against T3 Code Nightly 0.0.43 (source cb1a3f34,
-# tag v0.0.43-nightly.20260924.2200): migrations 050-053 only add tables
-# and columns, and a read-only probe of the owner's 0.0.43-nightly.20260922
-# database (migration 53) found every required column.
-T3_SOURCE_COMMIT = "cb1a3f34670b06148d88806a9534772879c30ecd"
-T3_LAST_TESTED_SOURCE_COMMIT = "cb1a3f34670b06148d88806a9534772879c30ecd"
+# Re-pinned 2026-10-07 against T3 Code Nightly 0.0.46 (source 611132c1):
+# migrations 054-058 only add or drop indexes and tables, and the nightly
+# moved its live threads to statev2.sqlite (orchestrator v2), which this
+# reader now prefers when it is the fresher database. A read-only look at
+# the owner's 0.0.46-nightly.20261006 install found every required column
+# in both files. Stable 0.0.45 still writes state.sqlite.
+T3_SOURCE_COMMIT = "611132c171f3a821bd2e32f22261135cef6330ac"
+T3_LAST_TESTED_SOURCE_COMMIT = "611132c171f3a821bd2e32f22261135cef6330ac"
 T3_MINIMUM_VERSION = "0.0.33"
-T3_MAXIMUM_TESTED_VERSION = "0.0.43"
+T3_MAXIMUM_TESTED_VERSION = "0.0.46"
 # Source review is not a claimed live application or test-suite verification.
-T3_SOURCE_REVIEW_COMMIT = "cb1a3f34670b06148d88806a9534772879c30ecd"
+# Request contracts reviewed separately; this is not a live compatibility claim.
+T3_SOURCE_REVIEW_COMMIT = "11fd54fcbbfb39f824bb4c908d428c20d801267c"
 T3_REASON_MISSING = "t3_database_missing"
 T3_REASON_UNSUPPORTED = "t3_schema_unsupported"
 T3_REASON_BUSY = "t3_database_busy"
@@ -101,10 +112,48 @@ T3_PROTOCOL_FINGERPRINT = "sha256:" + hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+#: Columns of the v2 projection this reader needs. Each is a plain column;
+#: everything else (branch, worktree, lineage, model options) is read from
+#: the thread's ``payload_json`` and degrades to "absent" rather than failing.
+_V2_REQUIRED_COLUMNS = {
+    "projection_projects": _REQUIRED_COLUMNS["projection_projects"],
+    "orchestration_v2_projection_threads": frozenset(
+        {
+            "thread_id",
+            "project_id",
+            "title",
+            "default_provider",
+            "runtime_mode",
+            "interaction_mode",
+            "active_provider_thread_id",
+            "created_at",
+            "updated_at",
+            "archived_at",
+            "deleted_at",
+            "payload_json",
+        }
+    ),
+    "orchestration_v2_projection_runs": frozenset(
+        {"run_id", "thread_id", "ordinal", "status", "requested_at", "completed_at", "payload_json"}
+    ),
+    "orchestration_v2_projection_runtime_requests": frozenset(
+        {"thread_id", "kind", "status", "created_at"}
+    ),
+    "orchestration_v2_projection_plans": frozenset({"thread_id", "kind", "status"}),
+}
+T3_V2_PROTOCOL_FINGERPRINT = "sha256:" + hashlib.sha256(
+    json.dumps(
+        {table: sorted(columns) for table, columns in sorted(_V2_REQUIRED_COLUMNS.items())},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+).hexdigest()
+
 _PROVIDER_ALIASES = {
     "codex": "codex",
     "openai": "codex",
     "claude": "claude",
+    "claudeagent": "claude",
     "anthropic": "claude",
     "cursor": "cursor",
     "grok": "grok",
@@ -321,13 +370,51 @@ class T3Observation:
 
 
 def default_t3_base_dir() -> Path:
-    configured = os.environ.get("T3_HOME", "").strip()
+    # T3 Code reads T3CODE_HOME; T3_HOME is what this reader used to honour.
+    configured = (
+        os.environ.get("T3CODE_HOME", "").strip() or os.environ.get("T3_HOME", "").strip()
+    )
     return Path(configured).expanduser() if configured else Path.home() / ".t3"
 
 
-def t3_database_path(base_dir: Path | str | None = None) -> Path:
+def _t3_root(base_dir: Path | str | None) -> Path:
     base = Path(base_dir).expanduser() if base_dir is not None else default_t3_base_dir()
-    return base.absolute() / T3_DATABASE_RELATIVE_PATH
+    return base.absolute()
+
+
+def _database_activity(path: Path) -> float | None:
+    """When the database file, or its write-ahead log, last changed."""
+    stamps = []
+    for candidate in (path, path.with_name(path.name + "-wal")):
+        try:
+            stamps.append(candidate.stat().st_mtime)
+        except OSError:
+            continue
+    return max(stamps) if stamps else None
+
+
+def select_t3_database(base_dir: Path | str | None = None) -> tuple[Path, str]:
+    """The database a T3 install is writing now, and its layout.
+
+    A 0.0.46 nightly writes ``statev2.sqlite`` and leaves ``state.sqlite``
+    as a frozen copy; stable 0.0.45 still writes ``state.sqlite``. When both
+    exist the one that changed last wins, so a person who runs the nightly
+    and then goes back to stable is read from the right file. With neither,
+    the legacy path is reported so a missing database reads as before.
+    """
+    legacy = _t3_root(base_dir) / T3_DATABASE_RELATIVE_PATH
+    v2 = _t3_root(base_dir) / T3_V2_DATABASE_RELATIVE_PATH
+    legacy_seen = _database_activity(legacy) if legacy.is_file() else None
+    v2_seen = _database_activity(v2) if v2.is_file() else None
+    if v2_seen is None:
+        return legacy, LAYOUT_LEGACY
+    if legacy_seen is None or v2_seen >= legacy_seen:
+        return v2, LAYOUT_V2
+    return legacy, LAYOUT_LEGACY
+
+
+def t3_database_path(base_dir: Path | str | None = None) -> Path:
+    return select_t3_database(base_dir)[0]
 
 
 def _bounded_text(value: object, maximum: int) -> str:
@@ -370,7 +457,8 @@ def _normalize_provider(*values: object) -> str:
     # or arbitrary substring never grants another provider's identity.
     for value in values:
         if isinstance(value, str) and value.strip():
-            return _PROVIDER_ALIASES.get(value.strip().casefold(), "other")
+            name = value.strip().casefold()
+            return _PROVIDER_ALIASES.get(name, "other")
     return "other"
 
 
@@ -384,9 +472,17 @@ def _parse_model_selection(raw: object) -> tuple[str | None, str | None, str | N
     instance = value.get("instanceId")
     model = value.get("model")
     options = value.get("options")
+    # T3 writes options as [{"id": "effort", "value": "high"}, ...]; an older
+    # build wrote a plain object. Both are read.
+    if isinstance(options, list):
+        options = {
+            str(entry.get("id")): entry.get("value")
+            for entry in options[:32]
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+        }
     reasoning = None
     if isinstance(options, dict):
-        for key in ("reasoningEffort", "reasoning_effort", "effort"):
+        for key in ("reasoningEffort", "reasoning_effort", "effort", "thought_level"):
             candidate = options.get(key)
             if isinstance(candidate, str) and candidate.strip():
                 reasoning = candidate.strip()[:64]
@@ -465,10 +561,13 @@ def _table_columns(connection: sqlite3.Connection, table: str) -> frozenset[str]
     return frozenset(str(row[1]) for row in rows)
 
 
-def _actual_schema_fingerprint(connection: sqlite3.Connection) -> str:
+def _actual_schema_fingerprint(
+    connection: sqlite3.Connection,
+    required: dict[str, frozenset[str]] | None = None,
+) -> str:
     document = {
         table: sorted(_table_columns(connection, table))
-        for table in sorted(_REQUIRED_COLUMNS)
+        for table in sorted(_REQUIRED_COLUMNS if required is None else required)
     }
     return "sha256:" + hashlib.sha256(
         json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -498,6 +597,21 @@ def _open_read_only(
     return connection
 
 
+def _bound_query_budget(connection: sqlite3.Connection) -> None:
+    deadline = time.monotonic() + T3_QUERY_TIMEOUT_SECONDS
+    progress_calls = 0
+
+    def query_budget_exhausted() -> int:
+        nonlocal progress_calls
+        progress_calls += 1
+        return int(
+            progress_calls * T3_QUERY_PROGRESS_INTERVAL > T3_MAX_QUERY_STEPS
+            or time.monotonic() >= deadline
+        )
+
+    connection.set_progress_handler(query_budget_exhausted, T3_QUERY_PROGRESS_INTERVAL)
+
+
 def read_t3_snapshot(
     *,
     base_dir: Path | str | None = None,
@@ -505,27 +619,36 @@ def read_t3_snapshot(
     connector: Callable[..., sqlite3.Connection] = sqlite3.connect,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> T3Snapshot:
-    database = t3_database_path(base_dir)
+    database, layout = select_t3_database(base_dir)
     if not database.is_file():
         raise FileNotFoundError(database)
+    if layout == LAYOUT_V2:
+        snapshot = _read_v2_snapshot(
+            database, environment_id=environment_id, connector=connector, now=now
+        )
+        if snapshot is not None:
+            return snapshot
+        # The v2 file exists but T3 has not built the v2 projection in it
+        # yet (a first launch that has not migrated): the legacy file is
+        # still the live one.
+        database = _t3_root(base_dir) / T3_DATABASE_RELATIVE_PATH
+        if not database.is_file():
+            raise FileNotFoundError(database)
+    return _read_legacy_snapshot(
+        database, environment_id=environment_id, connector=connector, now=now
+    )
+
+
+def _read_legacy_snapshot(
+    database: Path,
+    *,
+    environment_id: str | None,
+    connector: Callable[..., sqlite3.Connection],
+    now: Callable[[], datetime],
+) -> T3Snapshot:
     connection = _open_read_only(database, connector=connector)
     try:
-        deadline = time.monotonic() + T3_QUERY_TIMEOUT_SECONDS
-        progress_calls = 0
-
-        def query_budget_exhausted() -> int:
-            nonlocal progress_calls
-            progress_calls += 1
-            return int(
-                progress_calls * T3_QUERY_PROGRESS_INTERVAL
-                > T3_MAX_QUERY_STEPS
-                or time.monotonic() >= deadline
-            )
-
-        connection.set_progress_handler(
-            query_budget_exhausted,
-            T3_QUERY_PROGRESS_INTERVAL,
-        )
+        _bound_query_budget(connection)
         connection.execute("BEGIN")
         columns = {
             table: _table_columns(connection, table) for table in _REQUIRED_COLUMNS
@@ -697,6 +820,236 @@ def read_t3_snapshot(
         connection.close()
 
 
+_V2_ACTIVE_RUN = "('preparing', 'starting', 'running', 'waiting')"
+# T3 keeps a follow-up it has not released as a queued run flagged queueHeld.
+# It is a note to itself, not work, and it never stands in for the latest run.
+_V2_UNHELD_RUN = (
+    "NOT (runs.status = 'queued' "
+    "AND COALESCE(json_extract(runs.payload_json, '$.queueHeld'), 0) = 1)"
+)
+_V2_THREADS_SQL = f"""
+SELECT
+  threads.thread_id,
+  threads.project_id,
+  projects.title AS project_title,
+  threads.title AS thread_title,
+  projects.workspace_root,
+  json_extract(threads.payload_json, '$.branch') AS branch,
+  json_extract(threads.payload_json, '$.worktreePath') AS worktree_path,
+  json_extract(threads.payload_json, '$.modelSelection') AS model_selection_json,
+  json_extract(threads.payload_json, '$.settledAt') AS settled_at,
+  threads.default_provider,
+  {{instance_column}} AS provider_instance_id,
+  threads.runtime_mode,
+  threads.interaction_mode,
+  threads.active_provider_thread_id,
+  threads.updated_at AS thread_updated_at,
+  (SELECT COUNT(*) FROM orchestration_v2_projection_runtime_requests AS requests
+     WHERE requests.thread_id = threads.thread_id
+       AND requests.status = 'pending'
+       AND requests.kind NOT IN ('user_input', 'dynamic_tool_call', 'auth_refresh'))
+    AS pending_approval_count,
+  (SELECT COUNT(*) FROM orchestration_v2_projection_runtime_requests AS requests
+     WHERE requests.thread_id = threads.thread_id
+       AND requests.status = 'pending' AND requests.kind = 'user_input')
+    AS pending_user_input_count,
+  EXISTS (SELECT 1 FROM orchestration_v2_projection_plans AS plans
+            WHERE plans.thread_id = threads.thread_id
+              AND plans.kind = 'proposed_plan' AND plans.status = 'active')
+    AS has_actionable_proposed_plan,
+  active_run.run_id AS active_run_id,
+  active_run.status AS active_run_status,
+  {{active_provider_column}} AS active_run_provider,
+  {{active_instance_column}} AS active_run_instance,
+  {{active_thread_column}} AS active_run_thread,
+  json_extract(active_run.payload_json, '$.modelSelection') AS active_run_model_selection,
+  (SELECT runs.run_id FROM orchestration_v2_projection_runs AS runs
+     WHERE runs.thread_id = threads.thread_id AND {_V2_UNHELD_RUN}
+     ORDER BY runs.ordinal DESC LIMIT 1) AS latest_run_id,
+  (SELECT runs.status FROM orchestration_v2_projection_runs AS runs
+     WHERE runs.thread_id = threads.thread_id AND {_V2_UNHELD_RUN}
+     ORDER BY runs.ordinal DESC LIMIT 1) AS latest_run_status,
+  (SELECT MAX(COALESCE(runs.completed_at, runs.requested_at))
+     FROM orchestration_v2_projection_runs AS runs
+     WHERE runs.thread_id = threads.thread_id) AS latest_run_time
+FROM orchestration_v2_projection_threads AS threads
+INNER JOIN projection_projects AS projects
+  ON projects.project_id = threads.project_id
+LEFT JOIN orchestration_v2_projection_runs AS active_run
+  ON active_run.run_id = (
+    SELECT runs.run_id FROM orchestration_v2_projection_runs AS runs
+    WHERE runs.thread_id = threads.thread_id AND runs.status IN {_V2_ACTIVE_RUN}
+    ORDER BY runs.ordinal DESC LIMIT 1
+  )
+WHERE threads.deleted_at IS NULL
+  AND projects.deleted_at IS NULL
+  AND threads.archived_at IS NULL
+  AND COALESCE(json_extract(threads.payload_json, '$.lineage.relationshipToParent'), '')
+      <> 'subagent'
+ORDER BY
+  MAX(
+    COALESCE(threads.updated_at, ''),
+    COALESCE(latest_run_time, ''),
+    COALESCE(json_extract(threads.payload_json, '$.settledAt'), '')
+  ) DESC,
+  threads.thread_id ASC
+LIMIT ?
+"""
+
+#: How a v2 run reads to the state mapper. The run, not a transport session,
+#: is the unit of work in orchestrator v2.
+_V2_ACTIVE_AS_SESSION = {
+    "preparing": "starting",
+    "starting": "starting",
+    "running": "running",
+    "waiting": "running",
+}
+_V2_FINISHED_AS_TURN = {
+    "completed": "completed",
+    "failed": "error",
+    "interrupted": "interrupted",
+}
+
+
+def _read_v2_snapshot(
+    database: Path,
+    *,
+    environment_id: str | None,
+    connector: Callable[..., sqlite3.Connection],
+    now: Callable[[], datetime],
+) -> T3Snapshot | None:
+    """Threads from ``statev2.sqlite``; None when it holds no v2 projection yet."""
+    connection = _open_read_only(database, connector=connector)
+    try:
+        _bound_query_budget(connection)
+        connection.execute("BEGIN")
+        columns = {table: _table_columns(connection, table) for table in _V2_REQUIRED_COLUMNS}
+        if not columns["orchestration_v2_projection_threads"]:
+            return None
+        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        if any(
+            not required.issubset(columns.get(table, frozenset()))
+            for table, required in _V2_REQUIRED_COLUMNS.items()
+        ):
+            return T3Snapshot(
+                observed_at=now(),
+                database_path=database,
+                schema_fingerprint=_actual_schema_fingerprint(connection, _V2_REQUIRED_COLUMNS),
+                sqlite_user_version=user_version,
+                threads=(),
+                compatible=False,
+                reason=T3_REASON_UNSUPPORTED,
+            )
+        instance_column = (
+            "threads.provider_instance_id"
+            if "provider_instance_id" in columns["orchestration_v2_projection_threads"]
+            else "NULL"
+        )
+        query = _V2_THREADS_SQL.replace("{instance_column}", instance_column)
+        run_columns = columns["orchestration_v2_projection_runs"]
+        for placeholder, column in (
+            ("active_provider_column", "provider"),
+            ("active_instance_column", "provider_instance_id"),
+            ("active_thread_column", "provider_thread_id"),
+        ):
+            expression = f"active_run.{column}" if column in run_columns else "NULL"
+            query = query.replace("{" + placeholder + "}", expression)
+        rows = connection.execute(query, (T3_MAX_THREADS + 1,)).fetchall()
+        binding_columns = _table_columns(connection, "orchestration_v2_projection_provider_threads")
+        has_driver_bindings = {"provider_thread_id", "driver"}.issubset(binding_columns)
+        truncated = len(rows) > T3_MAX_THREADS
+        threads = []
+        for row in rows[:T3_MAX_THREADS]:
+            instance_from_model, model, reasoning = _parse_model_selection(
+                row["model_selection_json"]
+            )
+            provider_instance = row["provider_instance_id"] or instance_from_model
+            active_provider = row["active_run_provider"]
+            provider = active_provider or row["default_provider"]
+            provider_thread = row["active_provider_thread_id"]
+            if active_provider:
+                default_instance = provider_instance
+                provider_instance = row["active_run_instance"] or active_provider
+                provider_thread = row["active_run_thread"]
+                if provider_instance != default_instance:
+                    model = reasoning = None
+            if row["active_run_model_selection"] is not None:
+                _requested_instance, model, reasoning = _parse_model_selection(
+                    row["active_run_model_selection"]
+                )
+            if has_driver_bindings:
+                # Current v2 provider columns contain user-defined instance IDs.
+                # The bound provider thread owns the actual driver identity.
+                bound_instance = "provider_instance_id" if "provider_instance_id" in binding_columns else "NULL"
+                binding = connection.execute(
+                    f"SELECT driver, {bound_instance} AS provider_instance_id "
+                    "FROM orchestration_v2_projection_provider_threads "
+                    "WHERE provider_thread_id = ? LIMIT 2", (provider_thread,),
+                ).fetchall() if provider_thread else []
+                provider = binding[0]["driver"] if len(binding) == 1 else "other"
+                if len(binding) == 1 and binding[0]["provider_instance_id"]:
+                    bound_instance_id = binding[0]["provider_instance_id"]
+                    if provider_instance != bound_instance_id:
+                        model = reasoning = None
+                    provider_instance = bound_instance_id
+            active_status = row["active_run_status"]
+            latest_status = row["latest_run_status"]
+            threads.append(
+                T3ThreadView(
+                    thread_id=str(row["thread_id"]),
+                    project_id=str(row["project_id"]),
+                    project_title=_bounded_text(row["project_title"], T3_MAX_TITLE_LENGTH),
+                    thread_title=_bounded_text(row["thread_title"], T3_MAX_TITLE_LENGTH),
+                    workspace_root=str(row["workspace_root"]),
+                    branch=str(row["branch"]) if row["branch"] else None,
+                    worktree_path=str(row["worktree_path"]) if row["worktree_path"] else None,
+                    provider=_normalize_provider(
+                        provider, provider_instance, model
+                    ),
+                    provider_instance=(
+                        str(provider_instance)[:128] if provider_instance else None
+                    ),
+                    provider_thread_id=(
+                        str(provider_thread)
+                        if provider_thread
+                        else None
+                    ),
+                    model=model,
+                    reasoning_effort=reasoning,
+                    runtime_mode=str(row["runtime_mode"] or "unknown"),
+                    interaction_mode=str(row["interaction_mode"] or "default"),
+                    session_status=_V2_ACTIVE_AS_SESSION.get(str(active_status)),
+                    active_turn_id=str(row["active_run_id"]) if row["active_run_id"] else None,
+                    latest_turn_id=str(row["latest_run_id"]) if row["latest_run_id"] else None,
+                    pending_approval_count=_nonnegative_int(row["pending_approval_count"]),
+                    pending_user_input_count=_nonnegative_int(row["pending_user_input_count"]),
+                    has_actionable_plan=bool(row["has_actionable_proposed_plan"]),
+                    last_error_present=latest_status == "failed",
+                    updated_at=_latest_time(
+                        row["thread_updated_at"],
+                        row["latest_run_time"],
+                        row["settled_at"],
+                    ),
+                    deep_link=_deep_link(environment_id, str(row["thread_id"])),
+                    turn_state=(
+                        None
+                        if active_status is not None
+                        else _V2_FINISHED_AS_TURN.get(str(latest_status))
+                    ),
+                )
+            )
+        return T3Snapshot(
+            observed_at=now(),
+            database_path=database,
+            schema_fingerprint=_actual_schema_fingerprint(connection, _V2_REQUIRED_COLUMNS),
+            sqlite_user_version=user_version,
+            threads=tuple(threads),
+            truncated=truncated,
+        )
+    finally:
+        connection.close()
+
+
 class T3SnapshotService:
     """One daemon worker, latest-known-good state, and bounded polling."""
 
@@ -812,7 +1165,7 @@ class T3SnapshotService:
             try:
                 callback(observation)
             except Exception:
-                pass
+                _log.warning("T3 Code compatibility observer failed", exc_info=True)
 
 
 def reconcile_t3_snapshot_service(

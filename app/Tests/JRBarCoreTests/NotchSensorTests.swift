@@ -46,7 +46,7 @@ struct NotchSensorTests {
         #expect(layout.sensors == mic)
         #expect(layout.right == .nothing)
         #expect(layout.rightWidth == 5, "one 5 pt dot")
-        #expect(layout.rightShoulder == 5 + 2 * NotchIslandLayout.shoulderPad)
+        #expect(layout.rightShoulder == 5 + 2 * NotchIslandLayout.shoulderPad + NotchIslandLayout.bodyInset)
         // Both dots, side by side at the provider dots' rhythm.
         let both = NotchSensorState(microphoneInUse: true, cameraInUse: true)
         layout = NotchIsland.idleLayout(NotchIslandSummary(), media: nil,
@@ -64,7 +64,8 @@ struct NotchSensorTests {
                                         media: AlcoveMedia(title: "Papillon", playing: true),
                                         earsDrawn: false, sensors: mic)
         #expect(layout.right == .media)
-        #expect(layout.rightWidth == 5 + NotchIsland.sensorSeparatorWidth + NotchIsland.mediaContentWidth)
+        #expect(layout.rightWidth == 5 + NotchIsland.sensorSeparatorWidth + NotchIsland.mediaBarsWidth,
+                "the waveform shares the right shoulder with the dot; the cover is on the left")
     }
 
     @Test("the Screen Bar's ears suppress the dots with everything else")

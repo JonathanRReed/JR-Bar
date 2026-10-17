@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -24,6 +25,7 @@ _memo: (
     | None
 ) = None
 _memo_generation = 0
+_memo_lock = threading.Lock()
 
 
 def default_provider_sync_directory(home: Path | None = None) -> Path:
@@ -55,9 +57,10 @@ def invalidate_cached_merged_sync(
     """Fence worker publication and drop evidence from another policy."""
 
     global _memo, _memo_generation
-    _memo_generation += 1
-    if sharing_signature is None or _memo is None or _memo[2] != sharing_signature:
-        _memo = None
+    with _memo_lock:
+        _memo_generation += 1
+        if sharing_signature is None or _memo is None or _memo[2] != sharing_signature:
+            _memo = None
 
 
 def cached_merged_sync(
@@ -69,16 +72,20 @@ def cached_merged_sync(
     global _memo
     if type(state) is not ProviderUsageState:
         return None
-    memo = _memo
+    with _memo_lock:
+        memo = _memo
     if memo is None:
         return None
     elapsed = float(monotonic()) - memo[0]
-    if not 0.0 <= elapsed < _TTL_SECONDS:
-        _memo = None
+    with _memo_lock:
+        if _memo is not memo:
+            return None
+        if not 0.0 <= elapsed < _TTL_SECONDS:
+            _memo = None
+            return None
+        if memo[1] == state.snapshots:
+            return memo[3]
         return None
-    if memo[1] == state.snapshots:
-        return memo[3]
-    return None
 
 
 def refresh_cached_merged_sync(
@@ -91,7 +98,8 @@ def refresh_cached_merged_sync(
     """Refresh local sync evidence on a worker, then publish one atomic memo."""
     if type(state) is not ProviderUsageState:
         raise ValueError("invalid provider usage state")
-    generation = _memo_generation
+    with _memo_lock:
+        generation = _memo_generation
     resolved_signature = sharing_signature
     load = loader
     try:
@@ -125,9 +133,11 @@ def refresh_cached_merged_sync(
     if merged is not None and type(merged) is not MergedProviderSync:
         merged = None
     global _memo
-    if generation != _memo_generation:
-        return None
-    _memo = (float(monotonic()), state.snapshots, resolved_signature, merged)
+    observed_at = float(monotonic())
+    with _memo_lock:
+        if generation != _memo_generation:
+            return None
+        _memo = (observed_at, state.snapshots, resolved_signature, merged)
     return merged
 
 

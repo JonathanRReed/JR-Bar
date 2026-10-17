@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 
 from jrbar.provider_account_identity import (
     _identity_salt,
@@ -100,7 +101,9 @@ def test_concurrent_salt_creators_reread_one_exclusive_winner(tmp_path, monkeypa
         with lock:
             issued += 1
             value = issued
-        barrier.wait(timeout=2.0)
+        # A bound, not a wait: a loaded machine can take seconds to start the
+        # second thread, and the barrier releases the moment it arrives.
+        barrier.wait(timeout=30.0)
         return bytes([value]) * 32
 
     monkeypatch.setattr("jrbar.provider_account_identity.secrets.token_bytes", token_bytes)
@@ -109,12 +112,47 @@ def test_concurrent_salt_creators_reread_one_exclusive_winner(tmp_path, monkeypa
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=2.0)
+        thread.join(timeout=30.0)
 
     assert len(results) == 2
     assert results[0] == results[1]
     assert results[0] in {bytes([1]) * 32, bytes([2]) * 32}
     assert _identity_salt(tmp_path) == results[0]
+
+
+def test_a_salt_a_peer_is_still_publishing_is_read_again_not_given_up_on(tmp_path, monkeypatch) -> None:
+    # A creator that loses the race re-reads the winner's key. For an instant
+    # the winner's scratch link still exists, the leaf's link count is 2 and
+    # the private read refuses it; that is not a damaged key.
+    from jrbar import provider_account_identity as identity
+
+    winner = bytes([7]) * 32
+    real_read = identity._read_identity_salt
+    refusals = 2
+
+    def read_while_publishing(path):
+        nonlocal refusals
+        if refusals:
+            refusals -= 1
+            return None
+        return real_read(path)
+
+    path = identity._salt_path(tmp_path)
+    identity.atomic_private_write(path, winner.hex(), overwrite=False)
+    monkeypatch.setattr(identity, "_read_identity_salt", read_while_publishing)
+    original_lstat = Path.lstat
+    calls = []
+
+    def lstat(self, *args, **kwargs):
+        # The first look says the key is missing, so this creator tries to
+        # publish its own and loses to the file that is already there.
+        if self == path and not calls:
+            calls.append(self)
+            raise FileNotFoundError(str(self))
+        return original_lstat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    assert identity._identity_salt(tmp_path) == winner
 
 
 def test_existing_corrupt_salt_fails_closed_without_rotation(tmp_path, monkeypatch) -> None:

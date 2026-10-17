@@ -43,6 +43,10 @@ SQLITE_PROGRESS_CALLBACK_LIMIT = 100
 # A prune deletes this many rows per progress budget; 256 peaked at 27 of
 # the 100 callbacks on a live index.
 _PRUNE_CHUNK_ROWS = 128
+# After a prune that deleted rows, the file is rewritten smaller when at
+# least this much of it, and a quarter of it, is free pages. A cache that
+# only ever grew sat at tens of megabytes holding a few rows.
+_VACUUM_MIN_FREE_BYTES = 4 * 1024 * 1024
 _SIDECAR_SUFFIXES = ("-journal", "-wal", "-shm")
 _SCHEMA_VERSION = 1
 _COMPRESSED_PREFIX = b"JRZ1"
@@ -77,6 +81,7 @@ class UsageFileIndex:
         self._row_count = row_count
         self._next_sequence = next_sequence
         self._page_cap_applied = False
+        self._pruned_rows = 0
         self.dedupe_secret = dedupe_secret
 
     @classmethod
@@ -167,14 +172,9 @@ class UsageFileIndex:
         try:
             self._progress_budget.reset()
             row = self._connection.execute(
-                "SELECT length(CAST(document AS BLOB)) FROM files WHERE file_key = ?",
-                (key,),
-            ).fetchone()
-            if row is None or not isinstance(row[0], int) or row[0] > MAX_DOCUMENT_BYTES:
-                return None
-            self._progress_budget.reset()
-            row = self._connection.execute(
-                "SELECT document FROM files WHERE file_key = ?", (key,)
+                "SELECT CASE WHEN length(CAST(document AS BLOB)) <= ? THEN document END "
+                "FROM files WHERE file_key = ?",
+                (MAX_DOCUMENT_BYTES, key),
             ).fetchone()
             if row is None or not isinstance(row[0], (str, bytes)):
                 return None
@@ -294,6 +294,7 @@ class UsageFileIndex:
                 )
             self._connection.execute("RELEASE usage_file_prune")
             self._row_count -= len(stale)
+            self._pruned_rows += len(stale)
         except (TypeError, sqlite3.Error):
             try:
                 self._connection.execute("ROLLBACK TO usage_file_prune")
@@ -317,6 +318,7 @@ class UsageFileIndex:
                 self._connection.rollback()
             else:
                 self._connection.commit()
+                self._vacuum_if_wasteful()
         except (OSError, sqlite3.Error):
             try:
                 self._connection.rollback()
@@ -334,6 +336,29 @@ class UsageFileIndex:
             except OSError:
                 pass
             self._parent_context.__exit__(None, None, None)
+
+    def _vacuum_if_wasteful(self) -> None:
+        """Give the disk back after a prune left most of the file empty.
+
+        Runs once, at close, after the commit. Any failure leaves the file
+        as it is: a cache that stays large is a cost, not a fault."""
+        if self._pruned_rows <= 0:
+            return
+        try:
+            free_pages = self._connection.execute("PRAGMA freelist_count").fetchone()[0]
+            page_count = self._connection.execute("PRAGMA page_count").fetchone()[0]
+            page_size = self._connection.execute("PRAGMA page_size").fetchone()[0]
+            if (
+                free_pages * page_size < _VACUUM_MIN_FREE_BYTES
+                or free_pages * 4 < page_count
+            ):
+                return
+            # The scan's interrupt budget is for reads of untrusted rows;
+            # this rewrite is the cache's own and needs to run to the end.
+            self._connection.set_progress_handler(None, 0)
+            self._connection.execute("VACUUM")
+        except (TypeError, IndexError, sqlite3.Error):
+            pass
 
     def _begin(self) -> None:
         if not self._connection.in_transaction:

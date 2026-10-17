@@ -842,6 +842,37 @@ def _validate_channel_metadata(
         raise EvidenceError("update channel metadata appcast SHA-256 is wrong")
 
 
+def validate_sbom_evidence(
+    *,
+    root: Path,
+    candidate: Mapping[str, object],
+    sbom: Path,
+    artifacts: Sequence[Path],
+    performance_evidence: Path,
+) -> None:
+    if __package__:
+        from .generate_sbom import validate_sbom
+    else:
+        from generate_sbom import validate_sbom
+
+    _validate_candidate(candidate, root=root)
+    app = candidate["app"]
+    assert isinstance(app, Mapping)
+    inputs = {path.resolve(strict=True) for path in artifacts}
+    inputs.discard(sbom.resolve(strict=True))
+    inputs.add(performance_evidence.resolve(strict=True))
+    try:
+        validate_sbom(
+            load_json_object(sbom, label="SBOM"),
+            application_version=str(candidate["version"]),
+            app=_record_at_root(app, root=root),
+            artifacts=tuple(sorted(inputs)),
+            root=root,
+        )
+    except (OSError, ValueError) as exc:
+        raise EvidenceError(f"SBOM validation failed: {exc}") from exc
+
+
 def build_manifest(
     *,
     root: Path,
@@ -902,6 +933,13 @@ def build_manifest(
         performance_sha256=str(performance_record["sha256"]),
         appcast_sha256=str(appcast_record["sha256"]),
         hardware_profile=hardware_profile,
+    )
+    validate_sbom_evidence(
+        root=release_root,
+        candidate=candidate,
+        sbom=sbom,
+        artifacts=artifacts,
+        performance_evidence=performance_evidence,
     )
     document = {
         "document": DOCUMENT_NAME,

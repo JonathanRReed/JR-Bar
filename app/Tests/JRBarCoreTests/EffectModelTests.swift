@@ -5,6 +5,24 @@ import JRBarLEDS
 
 @Suite("Effect model")
 struct EffectModelTests {
+    @Test("invalid numeric metadata cannot trap native controls")
+    func numericControlsRejectUnrepresentableBounds() {
+        let integer = EffectParameter(name: "value", type: .integer, defaultValue: 1,
+                                      minimum: -Double.greatestFiniteMagnitude, maximum: Double.greatestFiniteMagnitude)
+        #expect(integer.control == .numberField)
+        #expect(integer.normalize(.number(.infinity)) == .number(1))
+        #expect(integer.normalize(.number(.nan)) == .number(1))
+        let wide = EffectParameter(name: "value", type: .integer, defaultValue: 1,
+                                   minimum: Double(Int.min), maximum: Double(Int.max).nextDown)
+        guard case .stepper = wide.control else { Issue.record("a wide integer uses a stepper"); return }
+        let fractional = EffectParameter(name: "value", type: .integer, defaultValue: 2, minimum: 1.2, maximum: 3.9)
+        #expect(fractional.control == .integerSlider(range: 2...3))
+        #expect(fractional.normalize(0) == .number(2))
+        #expect(fractional.normalize(9) == .number(3))
+        let number = EffectParameter(name: "value", type: .number, defaultValue: 1, minimum: 0, maximum: .infinity)
+        #expect(number.control == .numberField)
+    }
+
     static func catalog() throws -> EffectCatalog {
         try JSONDecoder().decode(EffectCatalog.self, from: CoreFixtures.data("list_effects.json"))
     }

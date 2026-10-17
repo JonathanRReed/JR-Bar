@@ -12,8 +12,8 @@ collection. The wire facts come from the public
 - fragments have no sequence number or terminator, so complete top-level JSON objects are found by brace balancing that ignores quoted braces
 
 Discovery only matches metadata. It does not open the device, send probes, or
-write hardware state. JR-Bar exposes a separate output switch in Devices
-settings, off by default. On first enable, JR-Bar approves only one connected
+write hardware state. JR-Bar exposes a separate output switch (Enable Creator Micro 2 in Settings ›
+Devices & Lighting), off by default. On first enable, JR-Bar approves only one connected
 matching device with a nonempty stable serial number. It stores that identity
 in the owner-private integration settings file and verifies it before every
 open. Missing, identity-less, and ambiguous matches fail closed.
@@ -77,8 +77,9 @@ The active hardware layer must map the keys to agent codes. The setup service
 can now plan and verify that change. Devices settings provides inspection,
 an explicit apply preview, and guarded restore. Live UI and hardware checks
 remain open.
-The Control Center pane in Devices settings owns app actions and the
-separate enable switch; hardware verification remains open.
+The Creator Micro 2 group in Settings › Devices & Lighting owns the
+separate enable switch and opens the Control Center window, which owns the
+pins, banks, rail, input check and keymap; hardware verification remains open.
 
 ## Keymap setup and recovery
 

@@ -11,7 +11,9 @@ that comes before the window's reset.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +40,9 @@ EXHAUSTED_PCT: Final = 99.5
 #: ``on`` pace: the projected exhaustion lands within this fraction of the
 #: time left until the reset, either side of it.
 ON_PACE_MARGIN: Final = 0.10
+#: Windows kept. A hub account that went away leaves its windows behind; past
+#: this the ones sampled longest ago go, so the file stays inside the read cap.
+MAX_WINDOWS: Final = 200
 #: Between saves of the buffer while samples keep arriving.
 SAVE_INTERVAL_SECONDS: Final = 60.0
 #: Heartbeats land every five minutes while the source delivers; a tail
@@ -74,8 +79,19 @@ class UsageSample:
     used_pct: float
 
 
-def _key(provider: str, window_id: str) -> str:
-    return f"{provider}|{str(window_id).lower()}"
+def _key(
+    provider: str, window_id: str, instance: str | None = None,
+    account_discriminator: str | None = None,
+) -> str:
+    # The default instance keeps the key older builds saved; any other
+    # instance of the provider (a second account, a hub account) is its own
+    # window, so two accounts never read as one window being reset.
+    scope = provider if instance in (None, "", "default") else f"{provider}:{instance}"
+    if account_discriminator:
+        identity = json.dumps([instance or "default", account_discriminator], separators=(",", ":"))
+        digest = hashlib.sha256(identity.encode()).hexdigest()
+        scope = f"{provider}:account-v1-{digest}"
+    return f"{scope}|{str(window_id).lower()}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,8 +241,17 @@ class UsageSampleBuffer:
 
     # -- recording -------------------------------------------------------------
 
-    def record(self, provider: str, window_id: str, used_pct: float, *, at: float) -> bool:
-        key = _key(provider, window_id)
+    def record(
+        self,
+        provider: str,
+        window_id: str,
+        used_pct: float,
+        *,
+        at: float,
+        instance: str | None = None,
+        account_discriminator: str | None = None,
+    ) -> bool:
+        key = _key(provider, window_id, instance, account_discriminator)
         samples = self._table.setdefault(key, [])
         used = max(0.0, min(100.0, float(used_pct)))
         if samples:
@@ -238,16 +263,37 @@ class UsageSampleBuffer:
         samples.append(UsageSample(at=float(at), used_pct=used))
         if len(samples) > SAMPLE_LIMIT:
             del samples[: len(samples) - SAMPLE_LIMIT]
+        if len(self._table) > MAX_WINDOWS:
+            self._drop_oldest_windows()
         self._dirty = True
         return True
 
+    def _drop_oldest_windows(self) -> None:
+        """Forget the windows nothing has sampled for the longest."""
+        ranked = sorted(
+            self._table,
+            key=lambda key: self._table[key][-1].at if self._table[key] else float("-inf"),
+        )
+        for key in ranked[: len(self._table) - MAX_WINDOWS]:
+            del self._table[key]
+
     def record_state(self, usage_state: object, *, now: float) -> int:
-        """Every lane of every snapshot in a ``ProviderUsageState``."""
+        """Every lane of every live snapshot in a ``ProviderUsageState``.
+
+        Only a ``ready`` snapshot is a reading taken now. A stale one carries
+        numbers read earlier, and sampling them at ``now`` would make a window
+        that stopped answering look like one that is quietly holding still.
+        """
         recorded = 0
         for snapshot in getattr(usage_state, "snapshots", ()) or ():
             provider = getattr(snapshot, "provider_id", None)
             if not isinstance(provider, str):
                 continue
+            state = getattr(snapshot, "state", None)
+            if state is not None and getattr(state, "value", state) != "ready":
+                continue
+            instance = getattr(snapshot, "source_instance_id", None)
+            account = getattr(snapshot, "account_discriminator", None)
             for lane in getattr(snapshot, "lanes", ()) or ():
                 lane_id = getattr(lane, "lane_id", None)
                 remaining = getattr(lane, "remaining_percent", None)
@@ -257,14 +303,18 @@ class UsageSampleBuffer:
                     used = 100.0 - float(remaining)
                 except (TypeError, ValueError):
                     continue
-                if self.record(provider, lane_id, used, at=now):
+                if self.record(provider, lane_id, used, at=now, instance=instance,
+                               account_discriminator=account):
                     recorded += 1
         return recorded
 
     # -- reading ---------------------------------------------------------------
 
-    def samples(self, provider: str, window_id: str) -> list[UsageSample]:
-        return list(self._table.get(_key(provider, window_id), ()))
+    def samples(
+        self, provider: str, window_id: str, instance: str | None = None,
+        *, account_discriminator: str | None = None,
+    ) -> list[UsageSample]:
+        return list(self._table.get(_key(provider, window_id, instance, account_discriminator), ()))
 
     def forecast(
         self,
@@ -274,8 +324,11 @@ class UsageSampleBuffer:
         used_pct: float | None,
         resets_at: float | None,
         now: float,
+        instance: str | None = None,
+        account_discriminator: str | None = None,
     ) -> dict[str, Any] | None:
-        samples = self.samples(provider, window_id) if window_id else []
+        samples = self.samples(provider, window_id, instance,
+                               account_discriminator=account_discriminator) if window_id else []
         return forecast_window(samples, window_id=window_id, used_pct=used_pct, resets_at=resets_at, now=now)
 
     @property
@@ -306,7 +359,9 @@ class UsageSampleBuffer:
                 for row in rows[-SAMPLE_LIMIT:]:
                     try:
                         at, used = float(row[0]), float(row[1])
-                    except (TypeError, ValueError, IndexError):
+                    except (TypeError, ValueError, IndexError, KeyError):
+                        continue
+                    if not (math.isfinite(at) and math.isfinite(used)):
                         continue
                     if samples and at < samples[-1].at:
                         continue
@@ -322,9 +377,12 @@ class UsageSampleBuffer:
             from .private_io import read_private_text
 
             document = json.loads(read_private_text(target, max_bytes=256 * 1024))
-        except (OSError, UnicodeError, ValueError):
+        except (OSError, UnicodeError, ValueError, RecursionError):
             return cls(target)
-        return cls.from_document(document, path=target)
+        buffer = cls.from_document(document, path=target)
+        if len(buffer._table) > MAX_WINDOWS:
+            buffer._drop_oldest_windows()
+        return buffer
 
     def save(self, *, now: float | None = None) -> bool:
         if self.path is None:
@@ -355,6 +413,7 @@ __all__ = [
     "HEARTBEAT_SECONDS",
     "IDLE_RATE_PCT_PER_HOUR",
     "LOOKBACK_SECONDS",
+    "MAX_WINDOWS",
     "MIN_SPAN_SECONDS",
     "ON_PACE_MARGIN",
     "PACE_AHEAD",

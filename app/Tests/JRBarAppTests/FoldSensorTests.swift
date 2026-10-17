@@ -43,3 +43,100 @@ struct FoldSensorTests {
                 "movement mode and a pause clear the band")
     }
 }
+
+/// A Mac with no lid sensor must not poll at 10 Hz forever: after a run
+/// of failed reads the pump rests, and looks again rarely.
+@Suite("Fold sensor probe policy")
+struct FoldSensorProbeTests {
+    @Test("a run of failed reads ends the poll; a good one starts the count over")
+    func restsAfterBoundedFailures() {
+        var policy = SensorProbePolicy()
+        for _ in 0..<(SensorProbePolicy.failureLimit - 1) {
+            #expect(policy.note(read: false) == .keepPolling)
+        }
+        #expect(policy.note(read: true) == .keepPolling)
+        for _ in 0..<(SensorProbePolicy.failureLimit - 1) {
+            #expect(policy.note(read: false) == .keepPolling, "the good read reset the run")
+        }
+        #expect(policy.note(read: false) == .rest)
+    }
+
+    @Test("resting is rare, and a re-probe that finds nothing rests again at once")
+    func probesRarely() {
+        #expect(SensorProbePolicy.probeInterval >= 30)
+        var policy = SensorProbePolicy()
+        for _ in 0..<SensorProbePolicy.failureLimit { _ = policy.note(read: false) }
+        policy.resumeProbing()
+        // One failed read after a probe is enough: the run was not reset.
+        #expect(policy.note(read: false) == .rest)
+        policy.resumeProbing()
+        #expect(policy.note(read: true) == .keepPolling)
+        #expect(policy.note(read: false) == .keepPolling, "a working sensor earns its full run back")
+    }
+
+    @Test("the limit is a few seconds at the parked rate, never a blink")
+    func limitIsBounded() {
+        let seconds = Double(SensorProbePolicy.failureLimit) * 0.1
+        #expect(seconds >= 3 && seconds <= 30)
+    }
+}
+
+/// A sensor that stops talking must not leave the fold standing on its
+/// last reading.
+@Suite("Fold sensor silence")
+struct FoldSensorSilenceTests {
+    @Test("a sensor is silent only after the limit, and only once it has spoken")
+    func silence() {
+        #expect(!FoldSensorSilence.isSilent(lastSampleAt: nil, now: 100), "never spoke: nothing to forget")
+        #expect(!FoldSensorSilence.isSilent(lastSampleAt: 100, now: 100 + FoldSensorSilence.limit))
+        #expect(FoldSensorSilence.isSilent(lastSampleAt: 100, now: 100 + FoldSensorSilence.limit + 0.1))
+    }
+
+    @Test("the limit outlasts the pump's once-a-second beat")
+    func limitOutlastsTheBeat() {
+        #expect(FoldSensorSilence.limit >= 2)
+    }
+}
+
+@Suite("Fold clamshell cadence")
+struct FoldClamshellCadenceTests {
+    @Test("poll rate changes preserve the one-second clamshell deadline")
+    func changingRate() {
+        var cadence = SensorClamshellCadence()
+        let initialRead = cadence.shouldRead(at: 10)
+        #expect(initialRead)
+        // Parked samples followed by armed samples still share one deadline.
+        for time in [10.1, 10.2, 10.3, 10.31, 10.32, 10.9, 10.99] {
+            let readBeforeFirstDeadline = cadence.shouldRead(at: time)
+            #expect(!readBeforeFirstDeadline)
+        }
+        let readAtFirstDeadline = cadence.shouldRead(at: 11)
+        #expect(readAtFirstDeadline)
+        // Returning to the parked rate does not turn old fast beats into seconds.
+        for time in [11.008, 11.016, 11.1, 11.2, 11.9] {
+            let readBeforeSecondDeadline = cadence.shouldRead(at: time)
+            #expect(!readBeforeSecondDeadline)
+        }
+        let readAtSecondDeadline = cadence.shouldRead(at: 12)
+        #expect(readAtSecondDeadline)
+    }
+
+    @Test("clock resets recover and invalid times leave the deadline alone")
+    func clockReset() {
+        var cadence = SensorClamshellCadence()
+        let invalidInitialRead = cadence.shouldRead(at: .nan)
+        #expect(!invalidInitialRead)
+        let initialRead = cadence.shouldRead(at: 10)
+        #expect(initialRead)
+        let infiniteTimeRead = cadence.shouldRead(at: .infinity)
+        #expect(!infiniteTimeRead)
+        let readBeforeReset = cadence.shouldRead(at: 10.5)
+        #expect(!readBeforeReset)
+        let resetRead = cadence.shouldRead(at: 2)
+        #expect(resetRead)
+        let readBeforeDeadline = cadence.shouldRead(at: 2.5)
+        #expect(!readBeforeDeadline)
+        let readAtDeadline = cadence.shouldRead(at: 3)
+        #expect(readAtDeadline)
+    }
+}

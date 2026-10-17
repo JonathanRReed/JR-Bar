@@ -26,6 +26,32 @@ import Testing
         #expect(graph.scaleMax == 100)
     }
 
+    @Test func unfinishedScanCountSurvivesTheCodecWithoutInvalidRetries() throws {
+        let document = try JSONDecoder().decode(CoreUsageGraphDocument.self,
+            from: Data(#"{"graph":{"reading_files":7},"summary":"Still reading"}"#.utf8))
+        #expect(document.graph.readingFiles == 7)
+        let roundTrip = try JSONDecoder().decode(CoreUsageGraphDocument.self,
+                                                from: JSONEncoder().encode(document))
+        #expect(roundTrip.graph.readingFiles == 7)
+        for raw in ["-1", "true", "1.5", "null", "\"many\""] {
+            let data = Data("{\"reading_files\":\(raw)}".utf8)
+            let graph = try JSONDecoder().decode(CoreUsageGraph.self, from: data)
+            #expect(graph.readingFiles == 0)
+        }
+        #expect(CoreUsageGraph().readingFiles == 0)
+    }
+
+    @Test func offMainDecodePreservesGraphHeatmapAndDisclosures() async throws {
+        let data = try CoreFixtures.data("usage_graph.json")
+        let value = try JSONDecoder().decode(JSONValue.self, from: data)
+        let expected = try decode()
+        let actual = try await ReplyDecoding.decodeOffMain(CoreUsageGraphDocument.self, from: value)
+        #expect(actual == expected)
+        #expect(actual.graph.heatmap?.aggregate.totals.tokens == 685200)
+        #expect(actual.graph.series[1].values.prefix(6).allSatisfy { $0 < 0 })
+        #expect(actual.graph.partialProviderIds == ["t3code"])
+    }
+
     @Test func resolvedProvidersEchoTheRequest() throws {
         let graph = try decode().graph
         // `providers` is the resolved request — including cursor, which

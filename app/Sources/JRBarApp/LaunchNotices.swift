@@ -20,6 +20,19 @@ final class LaunchNotices {
         let text: String
         let actionTitle: String
         let action: @MainActor () -> Void
+        /// Runs once the person could have read the notice — when it is
+        /// actually put on the panel — so a "told them" mark is never
+        /// saved for a notice that was lost with the app's quit.
+        var onShown: (@MainActor () -> Void)?
+
+        init(key: String, text: String, actionTitle: String, onShown: (@MainActor () -> Void)? = nil,
+             action: @escaping @MainActor () -> Void) {
+            self.key = key
+            self.text = text
+            self.actionTitle = actionTitle
+            self.action = action
+            self.onShown = onShown
+        }
     }
 
     private(set) var waiting: [Notice] = []
@@ -32,7 +45,7 @@ final class LaunchNotices {
     /// Said now on an open panel, else held for its next opening.
     func say(_ notice: Notice) {
         if panelIsOpen() {
-            showToast(notice)
+            show(notice)
         } else {
             post(notice)
         }
@@ -40,7 +53,12 @@ final class LaunchNotices {
 
     /// The panel just opened: one waiting notice, the oldest.
     func panelOpened() {
-        if let notice = next() { showToast(notice) }
+        if let notice = next() { show(notice) }
+    }
+
+    private func show(_ notice: Notice) {
+        showToast(notice)
+        notice.onShown?()
     }
 
     func post(_ notice: Notice) {

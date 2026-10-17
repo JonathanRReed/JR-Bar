@@ -369,7 +369,10 @@ enum DockEnhanceMath {
 
     /// "3:07", "1:02:45" — a playhead the way players print it.
     static func clock(_ seconds: Double) -> String {
-        let total = max(0, Int(seconds.isFinite ? seconds.rounded(.down) : 0))
+        // Clamped before the conversion: a player's garbage playhead (1e30)
+        // would trap `Int(_:)`.
+        let safe = seconds.isFinite ? min(max(0, seconds.rounded(.down)), 359_999) : 0
+        let total = Int(safe)
         let h = total / 3600, m = (total % 3600) / 60, s = total % 60
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
@@ -507,7 +510,9 @@ enum DockEnhanceMath {
             // Finger-down is +deltaY under natural scrolling, -deltaY
             // under traditional; normalise to finger motion.
             let physical = inverted ? deltaY : -deltaY
-            if now - lastAt > Self.idle || (total != 0 && (physical > 0) != (total > 0)) {
+            // A zero-delta event (a phase edge, a horizontal-only nudge)
+            // carries no direction: it must not reset a flick in progress.
+            if now - lastAt > Self.idle || (total != 0 && physical != 0 && (physical > 0) != (total > 0)) {
                 total = 0
             }
             lastAt = now
@@ -719,6 +724,27 @@ struct DockPlacement: Equatable {
         guard coversLabel, magnifying else { return 0 }
         return DockEnhanceMath.magnifiedReach(tileExtent: DockEnhanceMath.tileExtent(anchor, edge: edge),
                                               largesize: largesize)
+    }
+
+    /// Room on the tile's display, past its label and magnified icon.
+    /// The content scrolls when its controls need more room than this.
+    func availableSize(anchor: CGRect, edge: DockEdge, screen: CGRect, title: String) -> CGSize {
+        let offset = max(DockEnhanceMath.minimumGap, gap)
+            + labelClearance(title: title, edge: edge) + reach(anchor: anchor, edge: edge)
+        var width = max(1, screen.width - 40)
+        var height = max(1, screen.height - 40)
+        switch edge {
+        case .bottom:
+            let bottom = max(screen.minY + 8, anchor.maxY + offset)
+            height = min(height, max(1, screen.maxY - 8 - bottom))
+        case .left:
+            let left = max(screen.minX + 8, anchor.maxX + offset)
+            width = min(width, max(1, screen.maxX - 8 - left))
+        case .right:
+            let right = min(screen.maxX - 8, anchor.minX - offset)
+            width = min(width, max(1, right - screen.minX - 8))
+        }
+        return CGSize(width: min(720, width), height: height)
     }
 
     /// The frame for a panel of `size` over the tile `anchor`, whose

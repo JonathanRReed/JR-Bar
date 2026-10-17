@@ -705,7 +705,7 @@ def test_a_connection_that_closes_without_a_byte_is_not_a_rejection(
     tmp_path: Path,
 ) -> None:
     """`jrbar hooks doctor` (and the daemon's own hooks_doctor command, which
-    Settings > Agents runs each time it shows) connects to the ingress socket
+    Settings > Agents & Usage runs each time it shows) connects to the ingress socket
     and closes. That is a liveness probe, not a refused frame: it must not
     count as refused_invalid or add a line to the rejection log."""
     service, rejection_path = _probe_service(tmp_path)
@@ -802,3 +802,37 @@ def test_a_hook_whose_agent_already_exited_is_delivered_without_its_ppid(
         assert not rejection_path.exists()
     finally:
         assert service.close(timeout_seconds=1.0)
+
+
+def test_a_peer_cannot_aim_the_app_owned_processor_at_a_file_outside_the_state_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The wire names a log path. Anything but a log directly in the state
+    directory is a file some other tool owns, and the hook line, the chmod
+    and the compaction that follow would land on it."""
+    from jrbar import hook
+    from jrbar.hook_ingress import AppOwnedHookIngressProcessor
+
+    state = tmp_path / "state"
+    state.mkdir()
+    seen: list[Path] = []
+    monkeypatch.setattr(
+        hook,
+        "process_hook_payload",
+        lambda provider, log_path, payload, **kwargs: seen.append(Path(log_path)),
+    )
+    processor = AppOwnedHookIngressProcessor(lambda _hint: None, confine_to=state)
+
+    for requested in (
+        tmp_path / "victim" / "notes.txt",
+        state / ".." / "victim" / "notes.txt",
+        state / "sub" / "claude.jsonl",
+        state / "claude.txt",
+        Path("/etc/hosts"),
+    ):
+        processor(HookIngressRequest("claude", str(requested), "{}"))
+    processor(HookIngressRequest("claude", str(state / "claude.jsonl"), "{}"))
+    processor(HookIngressRequest("codex", str(state / "codex.jsonl"), "{}"))
+
+    managed = state / "claude.jsonl"
+    assert seen == [managed] * 5 + [managed, state / "codex.jsonl"]

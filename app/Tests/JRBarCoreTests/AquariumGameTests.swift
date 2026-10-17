@@ -864,4 +864,23 @@ extension AquariumGameTests {
         game.apply(.visitorShown(.submarine), now: Self.t0 + 1)
         #expect(game.totals.visitorsSeen == 0, "nothing swims by")
     }
+
+    @Test("a stamp ahead of a clock set back does not hold a visitor or a treasure out")
+    func futureStampsDoNotBlock() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let nextYear = now.timeIntervalSince1970 + 365 * 86_400
+        var game = AquariumGame()
+        game.lastVisitorAt[AquariumVisitor.whale.rawValue] = nextYear
+        game.lastTreasureAt = nextYear
+        // The next beat pulls the stamps back to now: the cooldowns run
+        // from here, not from a year ahead.
+        game.apply(.tick, now: now)
+        #expect(game.lastTreasureAt <= now.timeIntervalSince1970)
+        #expect((game.lastVisitorAt[AquariumVisitor.whale.rawValue] ?? 0) <= now.timeIntervalSince1970)
+        let later = now.addingTimeInterval(AquariumRules.visitorCooldown + 60)
+        game.continuousWorkSeconds = AquariumRules.whaleWorkSeconds
+        game.lastWorkAt = later.timeIntervalSince1970 - 10
+        game.apply(.workTick(seconds: 20, working: ["a"]), now: later)
+        #expect(game.pendingVisitors.contains(.whale), "one cooldown on, not a year")
+    }
 }

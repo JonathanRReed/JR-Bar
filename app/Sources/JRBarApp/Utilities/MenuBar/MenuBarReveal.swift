@@ -37,11 +37,12 @@ final class MenuBarReveal {
     /// rule) — a pointer crossing the app menus or the notch's island
     /// must not pop the run, so the utility always supplies one.
     var revealZone: @MainActor () -> NSRect? = { nil }
-    /// Item frames hovering which reveals anyway — the « control itself:
-    /// Bartender's chevron opens on hover, and an affordance that waits
-    /// for a click reads as dead. Kept out of `itemFrames` so a click on
-    /// it stays its own action, not a second reveal.
+    /// Blank regions that can override item-frame exclusions within the reveal zone.
     var hotFrames: @MainActor () -> [NSRect] = { [] }
+    /// A drawn Notch or its attached menu owns the current gesture.
+    var gestureOwnedElsewhere: @MainActor (NSPoint) -> Bool = { _ in false }
+    /// Controls that answer their own click.
+    var clickHandledFrames: @MainActor () -> [NSRect] = { [] }
     /// The Item Bar panel's frame while it is up — a surface a reveal
     /// stays alive for.
     var barFrame: @MainActor () -> NSRect? = { nil }
@@ -60,11 +61,11 @@ final class MenuBarReveal {
     /// presence is tracked but never counts; a fresh entry after it
     /// waits the full dwell. The rehide clock re-arms instead of folding.
     var suppressed: @MainActor () -> Bool = { false }
-    /// A ⌘-press anywhere, in AppKit screen coordinates — the drag
-    /// learn's fallback while the click bridge's tap is down.
+    /// A ⌘-press anywhere, in AppKit screen coordinates — the start of a
+    /// drag the divider holds still for.
     var onCommandDown: @MainActor (NSPoint, NSEvent.ModifierFlags) -> Void = { _, _ in }
     /// The release that ends a ⌘-press on a bar, in AppKit screen
-    /// coordinates — the fallback's end of a drag. No other release is
+    /// coordinates — the end of a drag. No other release is
     /// handed over.
     var onPointerUp: @MainActor (NSPoint, NSEvent.ModifierFlags) -> Void = { _, _ in }
 
@@ -90,6 +91,14 @@ final class MenuBarReveal {
 
     /// True while a reveal is out.
     private(set) var revealed = false
+    private var revealedByHover = false
+    var diagnostic: (@MainActor (String) -> Void)?
+
+    private func trace(_ message: @autoclosure () -> String) {
+        if let diagnostic { diagnostic(message()) }
+        else if ScreenBarInteraction.diagnosticsEnabled { ScreenBarInteraction.diag("menu " + message()) }
+    }
+    private var hoverExitGrace: TimeInterval { MenuBarSettings.clampedHoverHide(settings().hoverHideSeconds) }
 
     private var globalMonitor: Any?
     /// The front-app watch behind `RehideMode.focusChange`.
@@ -110,15 +119,17 @@ final class MenuBarReveal {
     private var presenceObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     /// The armed rehide's cancel token, whatever clock supplied it.
     private var cancelPendingRehide: (() -> Void)?
+    private var rehideRevision = 0
+    private var deferredFocusHide = false
     private var screenObserver: NSObjectProtocol?
     /// The poll's last inside-ness — entry is the gesture, not presence.
     private var hoverInside = false
+    private var lastHoverPoint: NSPoint?
     /// The dwell deadline a zone entry arms — the reveal answers only
     /// when the pointer is still inside at the deadline.
     private var hoverDwellDeadline: Date?
-    /// The last time `onReveal` actually fired; back-to-back gestures
-    /// inside the throttle just keep the clock warm.
-    private var lastRevealAt = Date.distantPast
+    /// The last gesture, including one that only extended the reveal.
+    private var lastGestureAt = Date.distantPast
 
     /// How far past the row's band a pointer can sit and still count as
     /// "on the bar" — the reveal is not a pixel hunt.
@@ -146,8 +157,12 @@ final class MenuBarReveal {
     /// a graze across the stretch on the way to the clock is not a
     /// gesture. Two polls at the near cadence; an instance property so
     /// a test can pin the old fire-on-entry timing.
-    nonisolated static let defaultHoverDwell: TimeInterval = 0.18
-    var hoverDwell: TimeInterval = MenuBarReveal.defaultHoverDwell
+    nonisolated static let defaultHoverDwell: TimeInterval = MenuBarSettings.defaultHoverRevealSeconds
+    private var hoverDwellOverride: TimeInterval?
+    var hoverDwell: TimeInterval {
+        get { hoverDwellOverride ?? MenuBarSettings.clampedHoverReveal(settings().hoverRevealSeconds) }
+        set { hoverDwellOverride = newValue }
+    }
 
     /// The row rect the off-actor monitor reads; a lock keeps the
     /// read whole against a screens-changed rewrite.
@@ -173,8 +188,8 @@ final class MenuBarReveal {
         }
         // One tap, one mask: every additional global monitor is another
         // event stream the TCC service gets pinged for. Mouse-ups are
-        // discrete like the downs — they end a ⌘-drag when the click
-        // bridge's tap is down — so they bring back no flood.
+        // discrete like the downs — they end a ⌘-drag — so they bring
+        // back no flood.
         globalMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .leftMouseUp, .scrollWheel],
             handler: { [weak self] event in self?.noteGlobalEvent(event) })
@@ -300,6 +315,7 @@ final class MenuBarReveal {
         disarmPointerWatch()
         // Entry is learned afresh on the way back.
         hoverInside = false
+        lastHoverPoint = nil
         hoverDwellDeadline = nil
     }
 
@@ -323,8 +339,12 @@ final class MenuBarReveal {
     /// folds — unless a listed item's menu is open (its app may well be
     /// the one that activated) or a drag holds the bar.
     func frontAppChanged() {
-        guard revealed, settings().rehideMode == .focusChange,
-              !itemMenuOpen(), !suppressed() else { return }
+        guard revealed, settings().rehideMode == .focusChange else { return }
+        if itemMenuOpen() || suppressed() || holdOpen {
+            deferredFocusHide = true
+            armClock(Self.hoverPollInterval)
+            return
+        }
         Self.log.notice("reveal: the front app changed")
         cancelReveal()
         onHide()
@@ -360,6 +380,7 @@ final class MenuBarReveal {
     func hoverTick() -> TimeInterval {
         guard settings().revealOnHover else {
             hoverInside = false
+            lastHoverPoint = nil
             hoverDwellDeadline = nil
             return Self.idlePollInterval
         }
@@ -380,13 +401,12 @@ final class MenuBarReveal {
         presenceObservers = []
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
-        cancelPendingRehide?()
-        cancelPendingRehide = nil
-        revealed = false
+        cancelReveal()
         holdOpen = false
         hoverInside = false
+        lastHoverPoint = nil
         hoverDwellDeadline = nil
-        lastRevealAt = .distantPast
+        lastGestureAt = .distantPast
     }
 
     isolated deinit {
@@ -403,7 +423,7 @@ final class MenuBarReveal {
     /// screen carrying the menu bar, `thickness` (or the notch's depth)
     /// deep. Nil when no screen carries a menu bar.
     private static func currentMenuBarRow() -> NSRect? {
-        guard let screen = NSScreen.main else { return nil }
+        guard let screen = MenuBarItemLister.managedScreen else { return nil }
         let depth = max(NSStatusBar.system.thickness, ScreenBarGeometry.notchDepth(of: screen))
         return NSRect(x: screen.frame.minX, y: screen.frame.maxY - max(depth, 1),
                       width: screen.frame.width, height: max(depth, 1))
@@ -491,7 +511,7 @@ final class MenuBarReveal {
             guard !command else { return }
             Task { @MainActor [weak self] in self?.pointerDown(at: point) }
         case .scrollWheel:
-            Task { @MainActor [weak self] in self?.scrolled() }
+            Task { @MainActor [weak self] in self?.scrolled(at: point) }
         default:
             break
         }
@@ -501,16 +521,21 @@ final class MenuBarReveal {
 
     /// The hover gesture, polled: entering the *zone* is the reveal —
     /// the row band minus other apps' item frames, so the gesture is
-    /// hovering the chevron or a covered/empty stretch, not parking on
+    /// hovering a covered or empty stretch, not parking on
     /// the clock. Item frames are the *shown* items only — a covered
     /// stretch is exactly the zone a gesture belongs to. A pointer
     /// parked in the zone is not a stream of gestures, and the rehide
     /// timer already re-arms while the pointer stays on the row.
     func pollHover() {
         let point = mouseLocation()
-        let inZone = ((revealZone() ?? row() ?? .zero).contains(point)
-            && !itemFrames().contains(where: { $0.contains(point) }))
-            || hotFrames().contains(where: { $0.contains(point) })
+        let moved = lastHoverPoint.map { $0 != point } ?? true
+        lastHoverPoint = point
+        if gestureOwnedElsewhere(point) {
+            hoverInside = false
+            hoverDwellDeadline = nil
+            return
+        }
+        let inZone = admitsReveal(at: point)
         if suppressed() {
             // A drag in flight or a held button: presence is tracked, so
             // the pointer still resting where the drop landed is not an
@@ -519,6 +544,9 @@ final class MenuBarReveal {
             hoverDwellDeadline = nil
             return
         }
+        // Divider and item reflow is not pointer intent. Keep the entry
+        // available for real motion, while an existing dwell still runs.
+        if inZone && !hoverInside && !moved { return }
         let entered = inZone && !hoverInside
         hoverInside = inZone
         guard inZone else {
@@ -534,18 +562,27 @@ final class MenuBarReveal {
         }
         guard let deadline = hoverDwellDeadline, now() >= deadline else { return }
         hoverDwellDeadline = nil
-        pointerEnteredRow()
+        pointerEnteredRow(at: point)
     }
 
     static let log = Logger(subsystem: "devin.jrbar", category: "menubar")
 
-    func pointerEnteredRow() {
-        guard settings().revealOnHover else { return }
-        triggerReveal("hover entered the blank stretch")
+    private func admitsReveal(at point: NSPoint) -> Bool {
+        guard (revealZone() ?? row() ?? .zero).contains(point) else { return false }
+        return !itemFrames().contains(where: { $0.contains(point) })
+            || hotFrames().contains(where: { $0.contains(point) })
+    }
+
+    func pointerEnteredRow(at point: NSPoint? = nil) {
+        let origin = point ?? mouseLocation()
+        guard settings().revealOnHover, !gestureOwnedElsewhere(origin), !suppressed(),
+              admitsReveal(at: origin) else { return }
+        triggerReveal("hover entered the blank stretch", fromHover: true)
     }
 
     func pointerDown(at point: NSPoint) {
-        guard settings().revealOnClick else { return }
+        guard settings().revealOnClick, !gestureOwnedElsewhere(point) else { return }
+        guard !clickHandledFrames().contains(where: { $0.contains(point) }) else { return }
         // Only empty space in the zone counts — a click on an item is
         // that item's, a click on the far side of the bar is nobody's.
         if let zone = revealZone(), !zone.contains(point) { return }
@@ -553,9 +590,11 @@ final class MenuBarReveal {
         triggerReveal("click on the blank stretch")
     }
 
-    func scrolled() {
-        guard settings().revealOnScroll else { return }
-        triggerReveal("scroll on the bar")
+    func scrolled(at point: NSPoint? = nil) {
+        let origin = point ?? mouseLocation()
+        guard settings().revealOnScroll, !gestureOwnedElsewhere(origin), !suppressed(),
+              admitsReveal(at: origin) else { return }
+        triggerReveal("scroll on the blank stretch")
     }
 
     /// A click anywhere off the row while a reveal is out folds it —
@@ -578,23 +617,29 @@ final class MenuBarReveal {
     /// turn into a reconcile storm. The notice names the gesture once
     /// per reveal that fires: logged per event, a trackpad scroll wrote
     /// 65 lines in one second (2026-09-22).
-    func triggerReveal(_ gesture: String = "gesture") {
-        let now = Date()
-        if revealed, now.timeIntervalSince(lastRevealAt) < Self.revealThrottle {
-            armRehide(settings().rehideSeconds)
+    func triggerReveal(_ gesture: String = "gesture", fromHover: Bool = false) {
+        retireDeferredFocusHide()
+        let hoverOwned = fromHover && (!revealed || revealedByHover)
+        revealedByHover = hoverOwned
+        let now = self.now()
+        let continuingBurst = revealed && now.timeIntervalSince(lastGestureAt) < Self.revealThrottle
+        lastGestureAt = now
+        if continuingBurst {
+            armRehide(hoverOwned ? hoverExitGrace : settings().rehideSeconds)
             return
         }
-        lastRevealAt = now
         revealed = true
         Self.log.notice("reveal: \(gesture, privacy: .public)")
         onReveal()
-        armRehide(settings().rehideSeconds)
+        armRehide(hoverOwned ? hoverExitGrace : settings().rehideSeconds)
     }
 
     /// Extend the current reveal's clock without re-firing `onReveal` —
     /// a click on a bar tile is a gesture too, but the bar itself is
     /// already going away.
     func rearm() {
+        retireDeferredFocusHide()
+        revealedByHover = false
         revealed = true
         armRehide(settings().rehideSeconds)
     }
@@ -604,6 +649,8 @@ final class MenuBarReveal {
     /// arms their return. The rule named its own seconds, so the
     /// `rehideMode` setting does not gate it.
     func rearm(for seconds: TimeInterval) {
+        retireDeferredFocusHide()
+        revealedByHover = false
         revealed = true
         armClock(max(0.5, seconds))
     }
@@ -612,7 +659,19 @@ final class MenuBarReveal {
     /// clock so a stale fire cannot land a second `onHide` after the
     /// covers already stand.
     func cancelReveal() {
+        trace("cancel revealed=\(revealed) revision=\(rehideRevision)")
         revealed = false
+        revealedByHover = false
+        deferredFocusHide = false
+        rehideRevision += 1
+        cancelPendingRehide?()
+        cancelPendingRehide = nil
+    }
+
+    private func retireDeferredFocusHide() {
+        guard deferredFocusHide else { return }
+        deferredFocusHide = false
+        rehideRevision += 1
         cancelPendingRehide?()
         cancelPendingRehide = nil
     }
@@ -642,7 +701,16 @@ final class MenuBarReveal {
     /// re-arm a fired timer earns are clocks regardless of mode.
     private func armClock(_ seconds: TimeInterval) {
         cancelPendingRehide?()
-        cancelPendingRehide = scheduleRehide(seconds) { [weak self] in self?.rehideTimerFired() }
+        rehideRevision += 1
+        let revision = rehideRevision
+        trace("armed seconds=\(seconds) hover=\(revealedByHover) revision=\(revision)")
+        cancelPendingRehide = scheduleRehide(seconds) { [weak self] in
+            guard let self else { return }
+            self.trace("fired revision=\(revision) current=\(self.rehideRevision)")
+            guard self.rehideRevision == revision else { return }
+            self.rehideRevision += 1
+            self.rehideTimerFired()
+        }
     }
 
     /// Whether the pointer is still on a surface the reveal serves —
@@ -664,11 +732,32 @@ final class MenuBarReveal {
         cancelPendingRehide = nil
         // A cancelled reveal owes no hide — the covers already stand.
         guard revealed else { return }
-        if pointerOnRevealSurface() || itemMenuOpen() || suppressed() {
-            armClock(0.5)
+        if deferredFocusHide {
+            guard settings().rehideMode == .focusChange else {
+                retireDeferredFocusHide()
+                return
+            }
+            if itemMenuOpen() || suppressed() || holdOpen {
+                armClock(Self.hoverPollInterval)
+                return
+            }
+            cancelReveal()
+            onHide()
+            return
+        }
+        let point = mouseLocation()
+        let onRow = row()?.contains(point) ?? false
+        let onBar = barFrame()?.insetBy(dx: -2, dy: -2).contains(point) ?? false
+        let surfaceHeld = onRow || onBar || holdOpen
+        let menuOpen: Bool? = surfaceHeld ? nil : itemMenuOpen()
+        let isSuppressed: Bool? = surfaceHeld || menuOpen == true ? nil : suppressed()
+        trace("guard row=\(onRow) bar=\(onBar) hold=\(holdOpen) menu=\(menuOpen.map { String($0) } ?? "skipped") suppressed=\(isSuppressed.map { String($0) } ?? "skipped")")
+        if surfaceHeld || menuOpen == true || isSuppressed == true {
+            armClock(revealedByHover ? hoverExitGrace : 0.5)
             return
         }
         revealed = false
+        revealedByHover = false
         Self.log.notice("reveal: rehide")
         onHide()
     }

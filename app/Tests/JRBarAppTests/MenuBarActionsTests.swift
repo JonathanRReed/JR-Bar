@@ -154,7 +154,7 @@ struct MenuBarActionsTests {
         let items = MenuBarCommands.build(
             items: [item("Mail", owner: "Mail", x: 600), item("Cal", owner: "Cal", x: 700)],
             sections: [:], ownBundleID: nil)
-            .map { $0.paletteItem { fired.actions.append($0) } }
+            .map { $0.paletteItem { fired.actions.append($0); return nil } }
         let hits = PaletteRanking.rank(items, query: "hide mail", usage: PaletteUsage())
         #expect(hits.first?.title == "Mail")
         #expect(hits.first?.primary?.title == "Hide")
@@ -175,7 +175,7 @@ struct MenuBarActionsTests {
             profiles: [], rules: [MenuBarTriggerRule(id: "r", enabled: false,
                                                      trigger: .screenLocked, action: .hideAll)],
             ownBundleID: nil)
-            .map { $0.paletteItem { _ in } }
+            .map { $0.paletteItem { _ in nil } }
         let app = rows.first { $0.title == "Hid" }
         #expect(app?.section == .menuBar)
         #expect(app?.tags == [PaletteTag(text: "Hidden")])
@@ -343,9 +343,9 @@ struct MenuBarActionsTests {
         var engine = MenuBarTriggerEngine()
         let rules = [rule(.screenLocked, .hideAll, id: "lock"),
                      rule(.screenUnlocked, .showAll, id: "unlock")]
-        #expect(engine.actions(for: .screenLocked, rules: rules) == [.hideAll])
-        #expect(engine.actions(for: .screenUnlocked, rules: rules) == [.showAll])
-        #expect(engine.actions(for: .appActivated(bundleID: "x"), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .screenLocked, rules: rules).map(\.action) == [.hideAll])
+        #expect(engine.matchedRules(for: .screenUnlocked, rules: rules).map(\.action) == [.showAll])
+        #expect(engine.matchedRules(for: .appActivated(bundleID: "x"), rules: rules).map(\.action).isEmpty)
     }
 
     @Test("app activation matches the bundle id case-insensitively")
@@ -353,26 +353,26 @@ struct MenuBarActionsTests {
         var engine = MenuBarTriggerEngine()
         let rules = [rule(.appActivated(bundleID: "com.apple.Safari"),
                           .applyProfile(name: "Browsing"))]
-        #expect(engine.actions(for: .appActivated(bundleID: "COM.APPLE.SAFARI"),
-                               rules: rules) == [.applyProfile(name: "Browsing")])
-        #expect(engine.actions(for: .appActivated(bundleID: "com.apple.Mail"),
-                               rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .appActivated(bundleID: "COM.APPLE.SAFARI"),
+                               rules: rules).map(\.action) == [.applyProfile(name: "Browsing")])
+        #expect(engine.matchedRules(for: .appActivated(bundleID: "com.apple.Mail"),
+                               rules: rules).map(\.action).isEmpty)
     }
 
     @Test("a time-of-day rule fires once at its minute and not again that day")
     func triggerClock() {
         var engine = MenuBarTriggerEngine()
         let rules = [rule(.timeOfDay(hour: 9, minute: 30), .showAll)]
-        #expect(engine.actions(for: .minute(hour: 9, minute: 30),
-                               rules: rules, dayStamp: "d1") == [.showAll])
+        #expect(engine.matchedRules(for: .minute(hour: 9, minute: 30),
+                               rules: rules, dayStamp: "d1").map(\.action) == [.showAll])
         // A repeated tick inside the same minute/day must not re-fire.
-        #expect(engine.actions(for: .minute(hour: 9, minute: 30),
-                               rules: rules, dayStamp: "d1").isEmpty)
-        #expect(engine.actions(for: .minute(hour: 9, minute: 31),
-                               rules: rules, dayStamp: "d1").isEmpty)
+        #expect(engine.matchedRules(for: .minute(hour: 9, minute: 30),
+                               rules: rules, dayStamp: "d1").map(\.action).isEmpty)
+        #expect(engine.matchedRules(for: .minute(hour: 9, minute: 31),
+                               rules: rules, dayStamp: "d1").map(\.action).isEmpty)
         // Tomorrow it fires again.
-        #expect(engine.actions(for: .minute(hour: 9, minute: 30),
-                               rules: rules, dayStamp: "d2") == [.showAll])
+        #expect(engine.matchedRules(for: .minute(hour: 9, minute: 30),
+                               rules: rules, dayStamp: "d2").map(\.action) == [.showAll])
     }
 
     @Test("the charger fires on the edge, not the level — and the first sample is a baseline")
@@ -381,15 +381,15 @@ struct MenuBarActionsTests {
         let rules = [rule(.chargerConnected, .applyProfile(name: "Docked"), id: "in"),
                      rule(.chargerDisconnected, .reveal(seconds: 5), id: "out")]
         // Baseline: already on AC when the source starts — no fire.
-        #expect(engine.actions(for: .onACPower(true), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .onACPower(true), rules: rules).map(\.action).isEmpty)
         // Re-sampling the same level is not an edge.
-        #expect(engine.actions(for: .onACPower(true), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .onACPower(true), rules: rules).map(\.action).isEmpty)
         // AC → battery is the disconnect edge.
-        #expect(engine.actions(for: .onACPower(false), rules: rules)
+        #expect(engine.matchedRules(for: .onACPower(false), rules: rules).map(\.action)
                 == [.reveal(seconds: 5)])
-        #expect(engine.actions(for: .onACPower(false), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .onACPower(false), rules: rules).map(\.action).isEmpty)
         // Back on AC is the connect edge.
-        #expect(engine.actions(for: .onACPower(true), rules: rules)
+        #expect(engine.matchedRules(for: .onACPower(true), rules: rules).map(\.action)
                 == [.applyProfile(name: "Docked")])
     }
 
@@ -402,7 +402,7 @@ struct MenuBarActionsTests {
             rule(.screenLocked, .hideAll, id: "a"),
             rule(.screenLocked, .applyProfile(name: "Away"), id: "b"),
         ]
-        #expect(engine.actions(for: .screenLocked, rules: rules)
+        #expect(engine.matchedRules(for: .screenLocked, rules: rules).map(\.action)
                 == [.hideAll, .applyProfile(name: "Away")])
     }
 
@@ -413,17 +413,17 @@ struct MenuBarActionsTests {
                      rule(.wifiLeft, .hideAll, id: "left"),
                      rule(.wifiJoined(ssid: ""), .reveal(seconds: 2), id: "any")]
         // Baseline — already on "Home" when the source starts: no edge.
-        #expect(engine.actions(for: .wifiSSID("Home"), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .wifiSSID("Home"), rules: rules).map(\.action).isEmpty)
         // Home → Office: nobody claimed Office, and leaving for another
         // network is not "wifi left".
-        #expect(engine.actions(for: .wifiSSID("Office"), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .wifiSSID("Office"), rules: rules).map(\.action).isEmpty)
         // Office → nothing is the leave edge.
-        #expect(engine.actions(for: .wifiSSID(nil), rules: rules) == [.hideAll])
+        #expect(engine.matchedRules(for: .wifiSSID(nil), rules: rules).map(\.action) == [.hideAll])
         // Nothing → Home is the join edge.
-        #expect(engine.actions(for: .wifiSSID("Home"), rules: rules)
+        #expect(engine.matchedRules(for: .wifiSSID("Home"), rules: rules).map(\.action)
                 == [.applyProfile(name: "Home")])
         // The unnamed change event fires only the nameless rule.
-        #expect(engine.actions(for: .wifiChanged, rules: rules)
+        #expect(engine.matchedRules(for: .wifiChanged, rules: rules).map(\.action)
                 == [.reveal(seconds: 2)])
     }
 
@@ -435,17 +435,17 @@ struct MenuBarActionsTests {
                      rule(.focusEnabled, .applyProfile(name: "Deep"), id: "focus-on"),
                      rule(.focusDisabled, .reveal(seconds: 3), id: "focus-off")]
         // Baselines: mic already live, Focus already on — nothing fires.
-        #expect(engine.actions(for: .micInUse(true), rules: rules).isEmpty)
-        #expect(engine.actions(for: .focusOn(true), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .micInUse(true), rules: rules).map(\.action).isEmpty)
+        #expect(engine.matchedRules(for: .focusOn(true), rules: rules).map(\.action).isEmpty)
         // Same levels again: still nothing.
-        #expect(engine.actions(for: .micInUse(true), rules: rules).isEmpty)
-        #expect(engine.actions(for: .focusOn(true), rules: rules).isEmpty)
+        #expect(engine.matchedRules(for: .micInUse(true), rules: rules).map(\.action).isEmpty)
+        #expect(engine.matchedRules(for: .focusOn(true), rules: rules).map(\.action).isEmpty)
         // The real edges.
-        #expect(engine.actions(for: .micInUse(false), rules: rules) == [.showAll])
-        #expect(engine.actions(for: .focusOn(false), rules: rules)
+        #expect(engine.matchedRules(for: .micInUse(false), rules: rules).map(\.action) == [.showAll])
+        #expect(engine.matchedRules(for: .focusOn(false), rules: rules).map(\.action)
                 == [.reveal(seconds: 3)])
-        #expect(engine.actions(for: .micInUse(true), rules: rules) == [.hideAll])
-        #expect(engine.actions(for: .focusOn(true), rules: rules)
+        #expect(engine.matchedRules(for: .micInUse(true), rules: rules).map(\.action) == [.hideAll])
+        #expect(engine.matchedRules(for: .focusOn(true), rules: rules).map(\.action)
                 == [.applyProfile(name: "Deep")])
     }
 
@@ -454,7 +454,7 @@ struct MenuBarActionsTests {
         var engine = MenuBarTriggerEngine()
         let rules = [rule(.screenUnlocked,
                           .runScript(command: "say 'welcome back'"), id: "s")]
-        #expect(engine.actions(for: .screenUnlocked, rules: rules)
+        #expect(engine.matchedRules(for: .screenUnlocked, rules: rules).map(\.action)
                 == [.runScript(command: "say 'welcome back'")])
         // The rule's one-line read names the command.
         #expect(rules[0].summary == "when the screen unlocks → run “say 'welcome back'”")
@@ -590,14 +590,14 @@ struct MenuBarActionsTests {
         #expect(rows[1].verbs[1].input?.initial == "Desk", "a rename starts from the name")
         // As the palette draws them: each is a field, filled on Send.
         var performed: [MenuBarCommandAction] = []
-        let saveItem = save?.paletteItem { performed.append($0) }
+        let saveItem = save?.paletteItem { performed.append($0); return nil }
         let field = saveItem?.primary?.input
         #expect(field?.prompt == "Name this layout…")
         #expect(field?.accepts("Travel") == true)
         #expect(field?.accepts("none") == false, "the built-in's name is taken")
         #expect(field?.submit("Travel") == "Profile “Travel” saved")
         #expect(field?.submit("desk") == "Profile “desk” updated", "a saved name updates in place")
-        let rename = rows[1].paletteItem { performed.append($0) }.actions.first { $0.id == "rename" }?.input
+        let rename = rows[1].paletteItem { performed.append($0); return nil }.actions.first { $0.id == "rename" }?.input
         #expect(rename?.submit("Office") == "Renamed to “Office”")
         #expect(performed == [.saveProfile(name: "Travel"), .saveProfile(name: "desk"),
                               .renameProfile(id: "p", name: "Office")])

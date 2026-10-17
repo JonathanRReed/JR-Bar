@@ -65,7 +65,11 @@ class ActivityKind(str, Enum):
     COMPLETED = "completed"
     ASKED = "asked"
     BLOCKED = "blocked"
+    CAPACITY_LIMITED = "capacity_limited"
     THRESHOLD_CROSSED = "threshold_crossed"
+    #: An ask nobody answered, closed by age with no process behind it
+    #: (``ask_lifetime``). Said out loud so an ask never silently vanishes.
+    EXPIRED = "expired"
 
 
 class ActivityRestoreHealth(str, Enum):
@@ -83,7 +87,9 @@ ACTIVITY_PHRASES: Final[dict[ActivityKind, str]] = {
     ActivityKind.COMPLETED: "finished",
     ActivityKind.ASKED: "asked you",
     ActivityKind.BLOCKED: "hit an error",
+    ActivityKind.CAPACITY_LIMITED: "reached a usage limit",
     ActivityKind.THRESHOLD_CROSSED: "passed",
+    ActivityKind.EXPIRED: "ask expired unanswered",
 }
 
 
@@ -138,6 +144,8 @@ class ActivityEntry:
     # daemon saw it working before the transition fired); ``None`` is the
     # honest answer for a session first seen already finished.
     duration_seconds: float | None = None
+    source_instance_id: str | None = None
+    instance_label: str | None = None
 
     def __post_init__(self) -> None:
         if not (
@@ -157,6 +165,10 @@ class ActivityEntry:
                 self.duration_seconds is None
                 or _finite_nonnegative(self.duration_seconds)
             )
+            and (self.source_instance_id is None
+                 or _bounded_text(self.source_instance_id, MAX_ACTIVITY_SUBJECT_LENGTH))
+            and (self.instance_label is None
+                 or _bounded_text(self.instance_label, MAX_ACTIVITY_LABEL_LENGTH))
         ):
             raise ActivityValidationError("invalid activity entry")
         object.__setattr__(self, "occurred_at_epoch", float(self.occurred_at_epoch))
@@ -168,12 +180,13 @@ class ActivityEntry:
     @property
     def identity(self) -> tuple[object, ...]:
         """What makes two rows the same event rather than two events."""
-        return (
+        key = (
             self.kind.value,
             self.occurred_at_epoch,
             self.subject_id,
             self.detail,
         )
+        return key if self.source_instance_id in (None, "default") else (*key, self.provider, self.source_instance_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +245,8 @@ def activity_entry_to_payload(entry: ActivityEntry) -> dict[str, object]:
         "subject_id": entry.subject_id,
         "detail": entry.detail,
         "duration_seconds": entry.duration_seconds,
+        **({"source_instance_id": entry.source_instance_id} if entry.source_instance_id is not None else {}),
+        **({"instance_label": entry.instance_label} if entry.instance_label is not None else {}),
     }
 
 

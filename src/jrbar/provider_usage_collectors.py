@@ -16,13 +16,15 @@ import sqlite3
 import ssl
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlparse
-from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 
+from .provider_account_identity import grok_account_metadata
 from .provider_usage_parsers import (
     parse_antigravity_usage,
     parse_cursor_usage,
@@ -32,7 +34,11 @@ from .provider_usage_parsers import (
     parse_openai_api_usage,
     parse_opencode_go_usage,
 )
-from .provider_usage_platform import ProviderSourceState, ProviderUsageSnapshot
+from .provider_usage_platform import (
+    ProviderSourceState,
+    ProviderUsageSnapshot,
+)
+from .provider_usage_platform import failure_snapshot as _failure
 from .provider_usage_settings import ProviderPreference
 
 HTTP_TIMEOUT_SECONDS = 20.0
@@ -92,6 +98,26 @@ class _Credential:
     reason: str | None = None
 
 
+def _http_error_reason(status: int, body: bytes) -> str:
+    """Keep only bounded error categories, never provider messages or bodies."""
+    if status != 403 or len(body) > 64 * 1024:
+        return "http_error"
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return "access_denied"
+    if not isinstance(payload, dict):
+        return "access_denied"
+    error = payload.get("error")
+    kind = error.get("type", error.get("code")) if isinstance(error, dict) else payload.get("code")
+    return {
+        "permission_error": "permission_denied",
+        "permission_denied": "permission_denied",
+        "unsupported_account": "unsupported_usage",
+        "unsupported_endpoint": "unsupported_usage",
+    }.get(kind, "access_denied") if isinstance(kind, str) else "access_denied"
+
+
 def _default_http_json(
     method: str,
     url: str,
@@ -114,16 +140,27 @@ def _default_http_json(
     context = None
     if parsed.scheme == "https" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}:
         context = ssl._create_unverified_context()
-    opener = build_opener(
+    handlers: list[Any] = [
         _CredentialSafeRedirectHandler(),
         HTTPSHandler(context=context) if context is not None else HTTPSHandler(),
-    )
+    ]
+    if parsed.hostname in {"127.0.0.1", "localhost", "::1"}:
+        # A local language server's token never goes through a proxy from
+        # the environment or the system settings.
+        handlers.append(ProxyHandler({}))
+    opener = build_opener(*handlers)
     try:
         with opener.open(request, timeout=timeout) as response:
             data = response.read(HTTP_MAX_BYTES + 1)
             status = int(getattr(response, "status", 200))
     except HTTPError as error:
-        raise ProviderHttpError(error.code, "http_error") from None
+        reason = "http_error"
+        if error.code == 403:
+            try:
+                reason = _http_error_reason(error.code, error.read(64 * 1024 + 1))
+            except (OSError, ValueError):
+                pass
+        raise ProviderHttpError(error.code, reason) from None
     except (URLError, OSError, TimeoutError, ValueError):
         raise ProviderHttpError(0, "network_error") from None
     if status < 200 or status >= 300:
@@ -134,33 +171,6 @@ def _default_http_json(
         return json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
         raise ProviderHttpError(status, "invalid_json") from None
-
-
-def _failure(
-    provider_id: str,
-    *,
-    observed_at: float,
-    state: ProviderSourceState,
-    reason: str,
-    action: str,
-) -> ProviderUsageSnapshot:
-    return ProviderUsageSnapshot(
-        provider_id=provider_id,
-        account_label=None,
-        observed_at=observed_at,
-        state=state,
-        reason_code=reason,
-        action_label=action,
-        lanes=(),
-        input_tokens=0,
-        cached_input_tokens=0,
-        output_tokens=0,
-        model_count=0,
-        estimated_cost_usd=None,
-        cache_savings_usd=None,
-        credits_remaining=None,
-        incident=None,
-    )
 
 
 #: Who actually owns each sign-in. "Reconnect X" is only honest where
@@ -183,13 +193,26 @@ def _auth_action(provider_id: str) -> str:
 
 
 def _http_failure(provider_id: str, observed_at: float, error: ProviderHttpError) -> ProviderUsageSnapshot:
-    if error.status in {401, 403}:
+    if error.status == 401:
         return _failure(
             provider_id,
             observed_at=observed_at,
             state=ProviderSourceState.NEEDS_SIGN_IN,
             reason="authentication_required",
             action=_auth_action(provider_id),
+        )
+    if error.status == 403:
+        unsupported = error.reason == "unsupported_usage"
+        return _failure(
+            provider_id,
+            observed_at=observed_at,
+            state=ProviderSourceState.UNSUPPORTED if unsupported else ProviderSourceState.UNAVAILABLE,
+            reason=(
+                "usage_source_unsupported" if unsupported
+                else "usage_permission_missing" if error.reason == "permission_denied"
+                else "usage_access_denied"
+            ),
+            action=f"Check {provider_id.replace('-', ' ').title()} usage access",
         )
     if error.status == 429:
         return _failure(
@@ -519,37 +542,76 @@ def collect_devin(
         )
 
 
-def _read_grok_auth(home: Path, observed_at: float) -> tuple[str, str | None] | None:
+@dataclass(frozen=True)
+class _GrokAuthRead:
+    credential: tuple[str, str | None] | None = field(default=None, repr=False)
+    unsupported_scope: bool = False
+
+
+def _read_grok_auth(home: Path, observed_at: float) -> _GrokAuthRead:
     path = Path(home) / ".grok" / "auth.json"
     try:
         if path.is_symlink() or path.stat().st_size > GROK_AUTH_MAX_BYTES:
-            return None
+            return _GrokAuthRead()
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError):
-        return None
+        return _GrokAuthRead()
     if not isinstance(payload, dict):
-        return None
+        return _GrokAuthRead()
     candidates: list[tuple[int, str, str | None]] = []
+    supported_scope = False
+    other_scope = False
     for key, value in tuple(payload.items())[:64]:
         if not isinstance(value, dict):
             continue
+        if key.startswith("https://auth.x.ai::"):
+            priority = 0
+        elif key == "https://accounts.x.ai/sign-in":
+            priority = 1
+        else:
+            other_scope = other_scope or "key" in value
+            continue
+        supported_scope = True
         token = _valid_secret(value.get("key"))
         expiry = value.get("expires_at")
-        if token is None or (
-            not isinstance(expiry, bool)
-            and isinstance(expiry, (int, float))
-            and math.isfinite(float(expiry))
-            and float(expiry) <= observed_at
-        ):
+        if isinstance(expiry, str):
+            if len(expiry) > 128:
+                continue
+            try:
+                date = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+                if date.tzinfo is None:
+                    continue
+                expiry = date.timestamp()
+            except (ValueError, OverflowError, OSError):
+                continue
+        if token is None:
             continue
-        priority = 0 if str(key).startswith("https://auth.x.ai::") else 1
+        if expiry is not None:
+            if isinstance(expiry, bool) or not isinstance(expiry, (int, float)):
+                continue
+            try:
+                expires_at = float(expiry)
+            except OverflowError:
+                continue
+            if not math.isfinite(expires_at) or expires_at <= observed_at:
+                continue
         email = value.get("email")
         candidates.append((priority, token, str(email).strip() if email else None))
     if not candidates:
-        return None
+        return _GrokAuthRead(unsupported_scope=other_scope and not supported_scope)
     _priority, token, email = min(candidates, key=lambda item: item[0])
-    return token, email
+    return _GrokAuthRead((token, email))
 
+
+
+def _grok_cli_auth_present(home: Path) -> bool:
+    try:
+        (Path(home) / ".grok" / "auth.json").lstat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
 
 def collect_grok(
     preference: ProviderPreference,
@@ -559,53 +621,90 @@ def collect_grok(
     credentials,
     http_json: Callable[..., object] = _default_http_json,
 ) -> ProviderUsageSnapshot:
-    auth = _read_grok_auth(Path(home), observed_at)
-    if auth is None:
+    default_instance = getattr(preference, "source_instance_id", "default") == "default"
+    read = _read_grok_auth(Path(home), observed_at) if default_instance else _GrokAuthRead()
+    auth = read.credential
+    if auth is None and (not default_instance or not _grok_cli_auth_present(Path(home))):
         stored = _credential(credentials, "grok", "token")
         auth = (stored.secret, None) if stored.available and stored.secret else None
     if auth is None:
+        if read.unsupported_scope:
+            return _failure(
+                "grok", observed_at=observed_at, state=ProviderSourceState.UNSUPPORTED,
+                reason="unsupported_cli_auth_scope", action="Add a Grok quota profile",
+            )
         return _failure(
             "grok",
             observed_at=observed_at,
             state=ProviderSourceState.NEEDS_SIGN_IN,
             reason="authentication_required",
-            action="Run grok login",
+            action="Run grok login" if default_instance else "Connect this Grok profile",
         )
     token, email = auth
-    try:
-        payload = http_json(
+    email, discriminator = grok_account_metadata(Path(home), email)
+
+    def scoped(snapshot):
+        return replace(snapshot, account_label=email, account_discriminator=discriminator)
+
+    def fetch(access_token):
+        return http_json(
             "GET",
             "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
             headers={
-                "Authorization": f"Bearer {token}",
+                "Authorization": f"Bearer {access_token}",
                 "x-xai-token-auth": "xai-grok-cli",
                 "Accept": "application/json",
             },
             timeout=HTTP_TIMEOUT_SECONDS,
         )
+
+    try:
+        try:
+            payload = fetch(token)
+        except ProviderHttpError as error:
+            if error.status != 401 or not default_instance:
+                raise
+            current_read = _read_grok_auth(Path(home), observed_at)
+            if current_read.unsupported_scope:
+                return _failure(
+                    "grok", observed_at=observed_at, state=ProviderSourceState.UNSUPPORTED,
+                    reason="unsupported_cli_auth_scope", action="Add a Grok quota profile",
+                )
+            current = current_read.credential
+            email, discriminator = grok_account_metadata(Path(home), current[1] if current else None)
+            if current is None or current[0] == token:
+                raise
+            token = current[0]
+            payload = fetch(token)
     except ProviderHttpError as error:
-        return _http_failure("grok", observed_at, error)
+        failure = scoped(_http_failure("grok", observed_at, error))
+        if not default_instance and failure.state is ProviderSourceState.NEEDS_SIGN_IN:
+            return replace(failure, action_label="Reconnect this Grok profile")
+        return failure
     if not isinstance(payload, dict):
-        return _failure(
+        return scoped(_failure(
             "grok",
             observed_at=observed_at,
             state=ProviderSourceState.ERROR,
             reason="invalid_provider_response",
             action="Retry",
-        )
+        ))
     document = dict(payload)
     if email:
         document["email"] = email
     try:
-        return parse_grok_usage(document, observed_at=observed_at)
+        snapshot = parse_grok_usage(document, observed_at=observed_at)
+        if email is None:
+            email, discriminator = grok_account_metadata(Path(home), document.get("email"))
+        return scoped(snapshot)
     except ValueError:
-        return _failure(
+        return scoped(_failure(
             "grok",
             observed_at=observed_at,
             state=ProviderSourceState.ERROR,
             reason="invalid_provider_response",
             action="Retry",
-        )
+        ))
 
 
 #: The OAuth "installed application" identity every Gemini CLI ships — public
@@ -1009,12 +1108,7 @@ def collect_antigravity(
                     "POST",
                     url,
                     headers=headers,
-                    body={
-                        "ideName": "antigravity",
-                        "extensionName": "antigravity",
-                        "locale": "en",
-                        "ideVersion": "unknown",
-                    },
+                    body={"request": {}},
                     timeout=HTTP_TIMEOUT_SECONDS,
                 )
                 if cand_pid is not None and process_identity_resolver(cand_pid) != cand_identity:
@@ -1087,6 +1181,47 @@ def collect_antigravity(
         action="Open Antigravity",
     )
 
+_OPENAI_USAGE_MAX_PAGES = 4
+
+
+def _openai_usage_pages(
+    endpoint: str,
+    query: dict[str, object],
+    *,
+    headers: dict[str, str],
+    http_json: Callable[..., object],
+) -> dict[str, object]:
+    buckets: list[object] = []
+    seen_cursors: set[str] = set()
+    for _ in range(_OPENAI_USAGE_MAX_PAGES):
+        page = http_json(
+            "GET",
+            f"https://api.openai.com/v1/organization/{endpoint}?{urlencode(query, doseq=True)}",
+            headers=headers,
+            timeout=HTTP_TIMEOUT_SECONDS,
+        )
+        if not isinstance(page, dict) or not isinstance(page.get("data"), list):
+            raise ValueError("invalid OpenAI API usage page")
+        buckets.extend(page["data"])
+        if len(buckets) > 366:
+            raise ValueError("OpenAI API usage exceeds bucket limit")
+        has_more = page.get("has_more", False)
+        if has_more is False:
+            return {"data": buckets}
+        cursor = page.get("next_page")
+        if (
+            has_more is not True
+            or not isinstance(cursor, str)
+            or not cursor.strip()
+            or len(cursor) > 4096
+            or cursor in seen_cursors
+        ):
+            raise ValueError("invalid OpenAI API usage cursor")
+        seen_cursors.add(cursor)
+        query = {**query, "page": cursor}
+    raise ValueError("incomplete OpenAI API usage pages")
+
+
 def collect_openai_api(
     preference: ProviderPreference,
     *,
@@ -1105,27 +1240,26 @@ def collect_openai_api(
             action="Add OpenAI Admin key",
         )
     start_time = max(0, int(observed_at - 30 * 24 * 60 * 60))
-    query = urlencode({"start_time": start_time, "bucket_width": "1d", "limit": 31})
+    query = {"start_time": start_time, "bucket_width": "1d", "limit": 31}
     headers = {"Authorization": f"Bearer {credential.secret}"}
     try:
-        usage = http_json(
-            "GET",
-            f"https://api.openai.com/v1/organization/usage/completions?{query}",
+        usage = _openai_usage_pages(
+            "usage/completions",
+            {**query, "group_by": ["model"]},
             headers=headers,
-            timeout=HTTP_TIMEOUT_SECONDS,
+            http_json=http_json,
         )
-        costs = http_json(
-            "GET",
-            f"https://api.openai.com/v1/organization/costs?{query}",
+        costs = _openai_usage_pages(
+            "costs",
+            query,
             headers=headers,
-            timeout=HTTP_TIMEOUT_SECONDS,
+            http_json=http_json,
         )
-    except ProviderHttpError as error:
-        return _http_failure("openai-api", observed_at, error)
-    try:
         return parse_openai_api_usage(
             {"usage": usage, "costs": costs}, observed_at=observed_at
         )
+    except ProviderHttpError as error:
+        return _http_failure("openai-api", observed_at, error)
     except ValueError:
         return _failure(
             "openai-api",
@@ -1178,6 +1312,13 @@ def _read_opencode_go_key(auth_path: Path, env) -> str | None:
     return _valid_secret((env or {}).get("OPENCODE_API_KEY"))
 
 
+def _mtime_or_none(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
 def _opencode_local_facts(db_path: Path, observed_at: float) -> tuple[int, int, int, str | None]:
     """(input tokens, output tokens, models, incident) from OpenCode's DB.
 
@@ -1192,7 +1333,9 @@ def _opencode_local_facts(db_path: Path, observed_at: float) -> tuple[int, int, 
     try:
         # Keyed by the file as well as its mtime: two databases touched in
         # the same second must not share one set of totals.
-        db_mtime = (str(db_path), db_path.stat().st_mtime)
+        # A database in WAL mode takes new rows into its -wal file and leaves
+        # the main file untouched until a checkpoint, so both stamps count.
+        db_mtime = (str(db_path), db_path.stat().st_mtime, _mtime_or_none(Path(f"{db_path}-wal")))
         uri = f"file:{quote(str(db_path))}?mode=ro"
         with sqlite3.connect(uri, uri=True, timeout=1.0) as con:
             con.execute("PRAGMA query_only=ON")
@@ -1261,6 +1404,36 @@ def _opencode_unsupported(
     )
 
 
+def collect_opencode_local_only(
+    preference: ProviderPreference,
+    *,
+    observed_at: float,
+    home: Path | None = None,
+    env=None,
+) -> ProviderUsageSnapshot:
+    """OpenCode with its Go usage read off: token totals from OpenCode's own
+    database on this Mac, and a "usage off" state where the quota would be.
+    Neither ``auth.json`` nor ``OPENCODE_API_KEY`` is read, and nothing is
+    asked of opencode.ai."""
+    from .provider_homes import opencode_data_root
+    from .provider_usage_consent import usage_off_snapshot
+
+    environment = os.environ if env is None else env
+    db_path = opencode_data_root(env=environment, home=home) / "opencode.db"
+    input_tokens, output_tokens, model_count, incident = _opencode_local_facts(
+        db_path, observed_at
+    )
+    snapshot = usage_off_snapshot(
+        "opencode",
+        observed_at=observed_at,
+        source_instance_id=getattr(preference, "source_instance_id", "default"),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        model_count=model_count,
+    )
+    return replace(snapshot, incident=incident) if incident else snapshot
+
+
 def collect_opencode(
     preference: ProviderPreference,
     *,
@@ -1287,7 +1460,9 @@ def collect_opencode(
     root = opencode_data_root(env=environment, home=home)
     db_path = root / "opencode.db"
     auth_path = root / "auth.json"
-    go_enabled = (preference.option("go_usage") or "on").strip().lower() != "off"
+    # Only a clear "on" leaves the request to opencode.ai running: a typo or
+    # "false" must not keep sending a key off this Mac.
+    go_enabled = (preference.option("go_usage") or "on").strip().lower() in {"on", "true", "1", "yes"}
     key = _read_opencode_go_key(auth_path, environment) if go_enabled else None
     if key is None and not db_path.is_file() and not auth_path.is_file():
         return _failure(
@@ -1358,4 +1533,5 @@ __all__ = [
     "collect_grok",
     "collect_openai_api",
     "collect_opencode",
+    "collect_opencode_local_only",
 ]

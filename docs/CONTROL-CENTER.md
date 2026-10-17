@@ -1,20 +1,22 @@
 # JR-Bar Control Center
 
 The Control Center is a Swift window (`app/Sources/JRBarApp/ControlCenterView.swift`,
-title "Control Center", subtitle "Creator Micro 2"). It renders `state.deck`
+titled "Creator Micro"; the file and the docs keep the old name so the window
+is not confused with macOS's own Control Center). It renders `state.deck`
 from the daemon and sends `deck_*` commands back over the core socket. It does
 not talk to the pad. Every decision — which identity owns a slot, what a press
 does, whether a keymap write is safe — is made in the daemon and documented on
 the wire in [CORE-PROTOCOL.md](CORE-PROTOCOL.md#the-creator-micro-2-deck-statedeck).
 The window is a view and a set of requests.
 
-That split is why the window opens with **Core not connected** when the daemon
+That split is why the window opens with **Waiting for the monitor** when the daemon
 is not up: there is no local model to fall back on, and inventing one would let
 the screen disagree with the pad.
 
-Open it with ⌘K from the panel, from the panel footer's overflow menu, from the
-status menu, from the app menu, or from **Settings › Devices › Open Control
-Center…**.
+Open it with **Creator Micro…** in the panel's More menu or the status item's
+menu (both list it once a pad has been seen), in the app menu, or with
+**Settings › Devices & Lighting › Creator Micro 2 › Control Center…**. It has
+no key of its own: ⌘K opens the command palette.
 
 ## Start without hardware
 
@@ -47,7 +49,7 @@ guessed terminal or emulating an approval.
 
 ## Connect a Creator Micro 2
 
-Enable the master connection under **Settings › Devices**, or press **Approve**
+Turn on **Enable Creator Micro 2** under **Settings › Devices & Lighting**, or press **Approve**
 in the Control Center's device card (`deck_approve_device`). Approval is bound
 to one stable serial. The daemon probes HID again at approval time and refuses
 with "No Creator Micro 2 is connected." rather than enabling a remembered serial
@@ -60,7 +62,7 @@ does not silently terminate them, and the firmware has no ownership handshake:
 RPC replies are not a lock, and concurrent writers can still corrupt the single
 stream. Conflict detection is a stop condition, not permission to keep writing.
 
-With **Session keys and per-session lighting** off, the runtime uses temporary
+With **Session keys** off, the runtime uses temporary
 whole-board `lights.preview` output and leaves stock key mappings alone. With it
 on, unmapped AG00–AG12 follow the current session bank; explicit saved actions
 override navigation. Per-key colors need those AG keycodes in the active
@@ -92,7 +94,7 @@ active firmware behaviour: reconnect the board if its firmware has not activated
 the stored map.
 
 After a verified write, **Check input** (`deck_check_input`) turns itself on and
-the header says "Input check: device actions are paused". Press every key, turn
+the window's footer says "Input check: device actions are paused". Press every key, turn
 and press the dial, exercise the joystick, and confirm the observed logical
 input appears before re-enabling actions. Closing the window does not resume
 them; uncheck Check input explicitly.
@@ -110,7 +112,7 @@ Each auxiliary control, the dial and the joystick, has a picker in the Control
 Center, and the four analog joystick sectors get one when **analog joystick
 sectors** is on. A picker offers next and previous bank, next and previous
 scope, revealing the current ask, Agent Browser, Usage Center and Control
-Center. **Unset** leaves the input to light up and nothing more. The picker
+Center (the last opens this window). **Unset** leaves the input to light up and nothing more. The picker
 sends `deck_set_settings`. The session keys are not mapped here: they belong to
 the sessions on the board.
 
@@ -144,7 +146,7 @@ The first original stays in a private device-identity-scoped backup beside the
 integration settings, and a separate `.recovery.json` records interrupted
 operations. Do not delete either while a recovery is pending.
 
-After **Recovery required**, use **Restore keymap…** (`deck_restore_keymap`) —
+After **Recovery required**, use **Restore original (required)…** (`deck_restore_keymap`) —
 not another Apply, which is refused until the recovery resolves. If the original
 is already intact, Restore verifies those bytes and clears the pending recovery
 with no device write. Restore accepts only the original, JR-Bar's verified map,
@@ -160,9 +162,10 @@ not restore the firmware map.
 ## Provider compatibility
 
 T3 is an optional read-only SQLite source. The compatibility manifest records a
-source review of `cb1a3f34670b06148d88806a9534772879c30ecd` (2026-09-24); the
-highest **tested** version is 0.0.43, from a read-only probe of a live 0.0.43
-database, and a source review is not a live compatibility certification. Missing native thread IDs are accepted without
+source review of `611132c171f3a821bd2e32f22261135cef6330ac` (2026-10-07); the
+highest **tested** version is 0.0.46, from a read-only run of the reader against
+a live 0.0.46 nightly's data, and a source review is not a live compatibility
+certification. Missing native thread IDs are accepted without
 reusing T3's own IDs as native resume IDs. A ready or idle transport is not
 successful completion — only an unambiguous completed-turn projection is. Gemini
 is not aliased to the separate Antigravity harness.

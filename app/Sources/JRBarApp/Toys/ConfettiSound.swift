@@ -3,7 +3,7 @@ import Foundation
 /// The burst's optional voice (Confetti card → Sound, off by default): a
 /// soft pop and a paper rustle, synthesized once into a small WAV — no
 /// bundled asset, no system sound that might be renamed away — and
-/// played through `SoundPlayer`, so it follows Settings › Sounds like
+/// played through `SoundPlayer`, so it follows Settings › Alerts & Sounds like
 /// every other JR-Bar sound: the one volume, the alert device when
 /// that's picked, and held while another app has the microphone.
 /// 1-Click Confetti's one advantage, kept calm: about half a second,
@@ -23,7 +23,7 @@ enum ConfettiSound {
 
     /// Plays the burst's pop through `player` at a pitch step near
     /// `rate` (±6 %) and `pan` (-1 … 1, where the burst came from).
-    /// Returns what played — nil when Settings › Sounds held or muted it.
+    /// Returns what played — nil when Settings › Alerts & Sounds held or muted it.
     @MainActor
     @discardableResult
     static func play(through player: SoundPlayer, rate: Double = 1,

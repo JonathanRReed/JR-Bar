@@ -23,8 +23,6 @@ import pytest
 from jrbar import colors as colors_module
 from jrbar.colors import (
     BRAND_SEED_COLORS,
-    CURATED_PALETTE,
-    CUSTOM_SWATCH_NAME,
     MOTION_BEAT,
     MOTION_BLINK,
     MOTION_BREATHE,
@@ -34,23 +32,14 @@ from jrbar.colors import (
     PROVIDER_ANIMATION_CHOICES,
     PROVIDER_ANIMATION_LABELS,
     PROVIDER_PALETTES,
-    STUDIO_SECTION_CHOICES,
-    SWATCH_GROUP_BRAND,
-    SWATCH_GROUP_CUSTOM,
-    SWATCH_GROUP_PALETTE,
     ColorSettings,
     StudioPreviewSession,
     agent_motion,
-    normalize_studio_section,
     program_for_snapshot,
-    provider_color_row,
-    provider_color_rows,
     studio_preview_program,
-    swatch_name,
 )
 from jrbar.led_status import LedDisplayState
 from jrbar.models import AgentMode, AgentStatus
-from jrbar.providers import PROVIDER_SPECS
 
 
 def is_brand_color(hex_value):
@@ -75,55 +64,10 @@ def _status(provider: str, mode: AgentMode, *, agent_id: str | None = None) -> A
 # --- Named brand groups ----------------------------------------------------
 
 
-def test_every_swatch_on_every_provider_row_has_a_name__and_2_more() -> None:
-    # --- scenario: every_swatch_on_every_provider_row_has_a_name
-    """"No anonymous colour squares anywhere." A coloured rectangle with no
-    word attached is a guess, not a choice, and it is what made the old
-    card's brand-colour claim unverifiable by anyone but its author."""
-    for row in provider_color_rows(ColorSettings.defaults()):
-        for group in row.groups:
-            assert group.label, f"{row.provider}: unlabelled group {group.key}"
-            assert group.swatches, f"{row.provider}: empty {group.key} group"
-            for swatch in group.swatches:
-                assert swatch.name.strip(), f"{row.provider}: anonymous swatch {swatch.hex}"
-                assert swatch.hex.startswith("#") and len(swatch.hex) == 7
-                assert swatch.tooltip.strip()
-
-    # --- scenario: each_row_leads_with_a_labelled_brand_group_naming_all_four_brands
-    """Identity first, palette second -- and the Brand group says "Brand"."""
-    for row in provider_color_rows(ColorSettings.defaults()):
-        first = row.groups[0]
-        assert first.key == SWATCH_GROUP_BRAND
-        assert first.label == "Brand"
-        brand_pairs = [
-            (swatch.name, swatch.hex) for swatch in first.swatches if swatch.name != "Default"
-        ]
-        assert brand_pairs == list(BRAND_SEED_COLORS), row.provider
-        assert all(swatch.is_brand for swatch in first.swatches)
-
-    # --- scenario: the_row_leads_with_the_providers_own_identity
-    rows = provider_color_rows(ColorSettings.defaults())
-    assert [row.provider for row in rows] == [spec.provider for spec in PROVIDER_SPECS]
-    assert [row.label for row in rows] == [spec.label for spec in PROVIDER_SPECS]
-    # Row order is the renderer's own LED-assignment order, so the window and
-    # the strip agree about who comes first.
-    assert rows[0].provider == PROVIDER_SPECS[0].provider
 
 
 
-def test_palette_swatches_never_claim_to_be_brand_colours__and_2_more() -> None:
-    # --- scenario: palette_swatches_never_claim_to_be_brand_colours
-    """The exact regression: the card announced "the first four swatches on
-    every row are Claude, OpenAI, Codex and Gemini's official brand colors"
-    while rendering CURATED_PALETTE, whose first four are system red, blue,
-    green and purple. Nothing in the palette group may claim brandhood."""
-    assert not any(is_brand_color(hex_value) for hex_value in CURATED_PALETTE[:4])
-    for row in provider_color_rows(ColorSettings.defaults()):
-        palette = row.group(SWATCH_GROUP_PALETTE)
-        assert palette.label == "Palette"
-        assert not any(swatch.is_brand for swatch in palette.swatches)
-        assert [swatch.hex for swatch in palette.swatches] == list(CURATED_PALETTE)
-
+def test_brand_seeds_and_brand_palettes_cannot_drift_apart() -> None:
     # --- scenario: brand_seeds_and_brand_palettes_cannot_drift_apart
     """One source of truth: the "Claude" look and the "Claude" swatch are
     seeded from the same hex, so renaming or recolouring one moves both."""
@@ -131,87 +75,12 @@ def test_palette_swatches_never_claim_to_be_brand_colours__and_2_more() -> None:
     for name, seed in BRAND_SEED_COLORS:
         assert PROVIDER_PALETTES[name] == colors_module.derive_palette(seed)
 
-    # --- scenario: a_row_names_the_swatch_it_is_actually_wearing
-    colors = ColorSettings.defaults()
-    row = provider_color_row("claude", colors)
-    assert row.current_name == "Claude"
-
-    openai = provider_color_row("claude", colors.with_agent_color("claude", "#10A37F"))
-    assert openai.current_name == "OpenAI"
-
-    grey = provider_color_row("claude", colors.with_agent_color("claude", "#8E8E93"))
-    assert grey.current_name == "Gray"
-
-    # A provider wearing the app's own ask signal is named for the signal,
-    # never for a provider, and recolouring it leaves its animation alone.
-    # #FF3A00 is led_status.ASK_AMBER; BRAND_SEED_COLORS once claimed it as
-    # Codex's brand, which named the row after the wrong thing.
-    signal = provider_color_row("claude", colors.with_agent_color("claude", "#FF3A00"))
-    assert signal.current_name == "Ask"
-    assert signal.animation == PROVIDER_ANIMATION_AUTO
 
 
 
-def test_a_hand_picked_colour_stays_a_named_selected_swatch__and_2_more() -> None:
-    # --- scenario: a_hand_picked_colour_stays_a_named_selected_swatch
-    colors = ColorSettings.defaults().with_agent_color("claude", "#123456")
-    row = provider_color_row("claude", colors)
-    custom = row.group(SWATCH_GROUP_CUSTOM)
-    assert [swatch.name for swatch in custom.swatches] == [CUSTOM_SWATCH_NAME]
-    assert custom.swatches[0].hex == "#123456"
-    assert custom.swatches[0].selected
-    assert custom.swatches[0].opens_picker
-    assert row.current_name == CUSTOM_SWATCH_NAME
-
-    # --- scenario: a_providers_own_shipped_colour_is_named_default_not_repeated
-    """Devin ships #5C84B0, which is in neither named set. It leads the row
-    as "Default" -- and must not ALSO show up as an unnamed custom chip."""
-    row = provider_color_row("devin", ColorSettings.defaults())
-    brand = row.group(SWATCH_GROUP_BRAND)
-    assert brand.swatches[0].name == "Default"
-    assert brand.swatches[0].hex == "#5C84B0"
-    assert brand.swatches[0].selected
-    assert row.current_name == "Default"
-    picker = row.group(SWATCH_GROUP_CUSTOM).swatches[0]
-    assert picker.name == "Pick…"
-    # The picker is a BUTTON here, not a second copy of the row's colour --
-    # otherwise #5C84B0 appears twice on one row and reads as a duplicate.
-    assert picker.is_control
-    assert not picker.selected
-
-    offered = [swatch.hex.upper() for swatch in row.all_swatches if not swatch.is_control]
-    assert len(offered) == len(set(offered)), "a colour appears twice on one row"
-
-    # --- scenario: a_provider_whose_default_is_already_named_gets_no_default_chip
-    claude = provider_color_row("claude", ColorSettings.defaults())
-    assert "Default" not in [swatch.name for swatch in claude.group(SWATCH_GROUP_BRAND).swatches]
-    # grok moved off systemGray (#8E8E93 -> #636366, an unnamed hex)
-    # when the mid-gray was found to cap devin's navy at an unlit
-    # luminance under the dichromacy contract -- so it wears "Default".
-    grok = provider_color_row("grok", ColorSettings.defaults())
-    assert grok.current_name == "Default"
 
 
 
-def test_swatch_name_resolves_brand_then_palette_then_identity_then_custom__and_2_more() -> None:
-    # --- scenario: swatch_name_resolves_brand_then_palette_then_identity_then_custom
-    assert swatch_name("#D97757") == "Claude"
-    assert swatch_name("#ff3b30") == "Red"
-    assert swatch_name("#4C8DFF") == "Azure"
-    assert swatch_name("#010203") == CUSTOM_SWATCH_NAME
-
-    # --- scenario: exactly_one_swatch_per_row_is_selected
-    for provider in ("claude", "codex", "devin", "grok", "cursor"):
-        row = provider_color_row(provider, ColorSettings.defaults())
-        selected = [swatch for swatch in row.all_swatches if swatch.selected]
-        assert len(selected) == 1, f"{provider}: {[s.name for s in selected]}"
-        assert selected[0].hex.upper() == row.current_hex.upper()
-
-    # --- scenario: the_studio_offers_colours_animations_and_preview_as_peers
-    assert STUDIO_SECTION_CHOICES == ("colors", "animations", "preview")
-    assert normalize_studio_section("animations") == "animations"
-    assert normalize_studio_section("nonsense") == "colors"
-    assert normalize_studio_section(None) == "colors"
 
 
 
@@ -526,38 +395,7 @@ def test_committing_keeps_whatever_is_being_previewed__and_2_more() -> None:
 
 
 
-def test_a_provider_preview_puts_that_provider_alone_on_the_strip__and_1_more() -> None:
-    # --- scenario: a_provider_preview_puts_that_provider_alone_on_the_strip
-    """A provider swatch previews THAT provider, not a fleet.
-
-    This file used to close by asserting the opposite of the last block:
-    that changing Claude's colour made NO difference to a crowd, because
-    two or more sessions handed every row an IDENTITY_PALETTE slot and
-    dropped the provider colour entirely. That is the defect the owner
-    reported as "it's purple for some reason when Claude's running", and
-    a provider colour that is unreachable in the only configuration the
-    owner actually runs is not a setting. A crowd now varies LIGHTNESS
-    inside each brand, so a provider colour change reaches every session
-    of that provider -- and only that provider.
-    """
-    statuses = colors_module.provider_preview_statuses("claude")
-    assert [status.provider for status in statuses] == ["claude"]
-
-    committed = ColorSettings.defaults()
-    candidate = committed.with_agent_color("claude", "#10A37F")
-    assert studio_preview_program(committed, statuses=statuses) != studio_preview_program(
-        candidate, statuses=statuses
-    )
-
-    crowd = (_status("claude", AgentMode.WORKING), _status("codex", AgentMode.WORKING))
-    assert studio_preview_program(committed, statuses=crowd) != studio_preview_program(
-        candidate, statuses=crowd
-    )
-    untouched = committed.with_agent_color("devin", "#10A37F")
-    assert studio_preview_program(committed, statuses=crowd) == studio_preview_program(
-        untouched, statuses=crowd
-    )
-
+def test_a_preview_with_nothing_running_still_shows_something() -> None:
     # --- scenario: a_preview_with_nothing_running_still_shows_something
     program = studio_preview_program(ColorSettings.defaults(), statuses=())
     assert program.strip()

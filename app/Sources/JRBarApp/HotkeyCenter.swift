@@ -106,8 +106,13 @@ struct HotkeyChord: Codable, Hashable, Sendable {
 
     init?(storageString: String) {
         let parts = storageString.split(separator: ":")
-        guard parts.count == 2, let key = UInt32(parts[0]), let mods = UInt32(parts[1]) else { return nil }
-        self.init(keyCode: key, modifiers: mods)
+        guard parts.count == 2, let key = UInt32(parts[0]), let mods = UInt32(parts[1]),
+              key < 256 else { return nil }
+        // Only the four chord modifiers mean anything: a stray caps-lock
+        // or function bit in a hand-edited value would slip a chord like
+        // ⌘⇥ past the reserved-chord table, which matches exactly.
+        let chordBits = Self.command | Self.option | Self.control | Self.shift
+        self.init(keyCode: key, modifiers: mods & chordBits)
     }
 }
 
@@ -154,7 +159,10 @@ final class HotkeyCenter {
     /// True while a shortcut recorder has the keyboard: every
     /// registration is out of Carbon so the chord being typed reaches
     /// the recorder instead of firing its current owner.
-    private(set) var suspended = false
+    var suspended: Bool { suspendDepth > 0 }
+    /// How many recorders have asked for the keyboard. The shortcuts come
+    /// back when the last one lets go, not the first.
+    private(set) var suspendDepth = 0
 
     @ObservationIgnored let registrar: any MenuBarHotkeyRegistering
     @ObservationIgnored private var live: [String: (token: MenuBarHotkeyToken, hotKeyID: UInt32)] = [:]
@@ -165,6 +173,40 @@ final class HotkeyCenter {
 
     init(registrar: any MenuBarHotkeyRegistering = CarbonHotkeyRegistrar(signature: CarbonHotkeyRegistrar.appSignature)) {
         self.registrar = registrar
+    }
+
+    isolated deinit {
+        for registration in live.values { registrar.unregister(registration.token) }
+        if handlerInstalled {
+            registrar.onHotKey = nil
+            registrar.uninstall()
+        }
+    }
+
+    private static let foldEscapeID = "fold.emergencyDismiss"
+    @ObservationIgnored private var foldEscapeLost: (@MainActor () -> Void)?
+
+    var foldEscapeIsLive: Bool { !suspended && live[Self.foldEscapeID] != nil }
+
+    /// This fixed temporary key exists only while Fold can obscure the desktop.
+    func acquireFoldEscape(action: @escaping @MainActor () -> Void,
+                           lost: @escaping @MainActor () -> Void) -> Bool {
+        guard !suspended else { return false }
+        if foldEscapeIsLive { return true }
+        let outcome = register(Self.foldEscapeID, title: "Dismiss Fold",
+                               chord: HotkeyChord(keyCode: UInt32(kVK_Escape), modifiers: 0),
+                               action: action)
+        guard outcome == .registered, foldEscapeIsLive else {
+            unregister(Self.foldEscapeID)
+            return false
+        }
+        foldEscapeLost = lost
+        return true
+    }
+
+    func releaseFoldEscape() {
+        foldEscapeLost = nil
+        unregister(Self.foldEscapeID)
     }
 
     /// The entry already holding `chord`, other than `id` itself.
@@ -204,6 +246,10 @@ final class HotkeyCenter {
     /// Drop `id` — its Carbon registration, its action, its refusal or
     /// lost conflict.
     func unregister(_ id: String) {
+        if id == Self.foldEscapeID, let lost = foldEscapeLost {
+            foldEscapeLost = nil
+            lost()
+        }
         detach(id)
         entries[id] = nil
         refusals[id] = nil
@@ -229,16 +275,22 @@ final class HotkeyCenter {
 
     /// Take every registration out of Carbon while a recorder listens.
     func suspend() {
-        guard !suspended else { return }
-        suspended = true
+        suspendDepth += 1
+        guard suspendDepth == 1 else { return }
+        if let lost = foldEscapeLost {
+            foldEscapeLost = nil
+            lost()
+            unregister(Self.foldEscapeID)
+        }
         for id in Array(live.keys) { detach(id) }
     }
 
     /// Put them back. A chord another app grabbed meanwhile lands in
     /// `refusals` like any other refusal.
     func resume() {
-        guard suspended else { return }
-        suspended = false
+        guard suspendDepth > 0 else { return }
+        suspendDepth -= 1
+        guard suspendDepth == 0 else { return }
         for entry in entries.values.sorted(by: { $0.id < $1.id }) where !attach(entry) {
             entries[entry.id] = nil
             actions[entry.id] = nil

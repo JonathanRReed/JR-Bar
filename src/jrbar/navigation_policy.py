@@ -231,6 +231,7 @@ def _valid_session_identifier(value: str) -> bool:
     return (
         1 <= len(value) <= MAX_SESSION_ID_LENGTH
         and value.isprintable()
+        and not value.startswith("-")
         and "/" not in value
         and "\\" not in value
     )

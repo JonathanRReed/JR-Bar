@@ -5,7 +5,7 @@ import Observation
 /// The Creator Micro window's state: the daemon's `state.deck`, the controls lit
 /// by `deck_input` events, the sheets, the receipt line, and every deck
 /// command. One instance is shared by the window, the rail and the
-/// Settings › Devices card.
+/// Settings › Devices & Lighting card.
 @MainActor
 @Observable
 final class DeckStore {
@@ -62,11 +62,13 @@ final class DeckStore {
 
     @ObservationIgnored private var ticker: Timer?
     @ObservationIgnored private var statusClear: DispatchWorkItem?
-    @ObservationIgnored private var lastEventID: String?
+    /// How far into the model's event log this store has read.
+    @ObservationIgnored private var eventsRead = 0
     @ObservationIgnored private var planRequest: Task<Void, Never>?
 
     init(core: CoreModel) {
         self.core = core
+        eventsRead = core.eventSequence
         trackEvents()
         trackConnection()
     }
@@ -224,7 +226,7 @@ final class DeckStore {
         isWindowOpen = false
         hoveredSlot = nil
         dropTarget = nil
-        sheet = nil
+        closeSheet()
         if !railShown { stopTicker() }
     }
 
@@ -252,19 +254,25 @@ final class DeckStore {
 
     private func trackEvents() {
         withObservationTracking {
-            _ = core.lastEvent
+            _ = core.eventSequence
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.consumeEvent()
+                self.consumeEvents()
                 self.trackEvents()
             }
         }
     }
 
-    private func consumeEvent() {
-        guard let event = core.lastEvent, event.id != lastEventID else { return }
-        lastEventID = event.id
+    /// Every event that arrived since the last look, in order — a burst in
+    /// one turn of the run loop is several events, not the last of them.
+    private func consumeEvents() {
+        let unread = core.events(after: eventsRead)
+        eventsRead = core.eventSequence
+        for event in unread { consume(event) }
+    }
+
+    private func consume(_ event: CoreEvent) {
         switch event.kind {
         case "deck_input":
             guard let input = event.input else { return }
@@ -366,19 +374,24 @@ final class DeckStore {
     var analogControls: [DeckAuxControl] { Self.analogControls(in: deck) }
 
     /// The full `bindings` payload for `deck_set_settings`: every
-    /// auxiliary control's mapping, and the analog sectors' while they
-    /// are enabled — the daemon replaces the whole set, so omitting a
-    /// bound index would unbind it.
+    /// auxiliary control's mapping and saved analog bindings, including
+    /// those paused by the analog switch. Omitting one would unbind it.
     nonisolated static func auxBindings(controls: [DeckAuxControl], analog: [DeckAuxControl],
-                                        changing index: Int, to action: String?) -> [(index: Int, action: String?)] {
-        (controls + analog).map { (index: $0.index, action: $0.index == index ? action : $0.mapping) }
+                                        changing index: Int, to action: String?,
+                                        saved: [DeckBinding] = []) -> [(index: Int, action: String?)] {
+        let visible = controls + analog
+        let indices = Set(visible.map(\.index))
+        let dormant = saved.filter { DeckControls.analogIndices.contains($0.index) && !indices.contains($0.index) }
+        let bindings = visible.map { DeckBinding(index: $0.index, action: $0.mapping) } + dormant
+        return bindings.map { (index: $0.index, action: $0.index == index ? action : $0.action) }
     }
 
     /// Rebind an auxiliary control: `deck_set_settings` replaces the whole
     /// aux set, so the other controls' current mappings go along — the
-    /// analog sectors' too, while `analog_enabled` is on.
+    /// saved analog sectors' too, even while `analog_enabled` is off.
     func setAuxBinding(index: Int, action: String?) {
-        let bindings = Self.auxBindings(controls: auxControls, analog: analogControls, changing: index, to: action)
+        let bindings = Self.auxBindings(controls: auxControls, analog: analogControls,
+                                        changing: index, to: action, saved: settings.bindings ?? [])
         run("deck_set_settings") { try await self.core.deckSetSettings(bindings: bindings) }
     }
 
@@ -399,6 +412,7 @@ final class DeckStore {
     }
 
     func openApplySheet() {
+        guard !sheetBusy else { return }
         let layers = keymap.layers
         let current = layers.first { $0.profile == (device?.profile ?? 0) && $0.layer == (device?.layer ?? 0) }
         applyLayer = current ?? layers.first ?? DeckKeymapLayer(profile: device?.profile ?? 0, layer: device?.layer ?? 0)
@@ -421,23 +435,37 @@ final class DeckStore {
     }
 
     func setApplyScope(_ scope: String, for row: DeckKeymapLayer) {
+        guard !sheetBusy else { return }
         applyScopes[row.id] = scope
+        loadPlan()
     }
 
-    func openRestoreSheet() { sheet = .restore }
-    func openClearAbsentSheet() { sheet = .clearAbsent }
+    func openRestoreSheet() { if !sheetBusy { sheet = .restore } }
+    func openClearAbsentSheet() { if !sheetBusy { sheet = .clearAbsent } }
 
     func closeSheet() {
         planRequest?.cancel()
+        planRequest = nil
+        plan = nil
+        planLoading = false
         sheet = nil
-        sheetBusy = false
+    }
+
+    /// Apply is available only for the choices whose review has finished.
+    var canApplyKeymap: Bool {
+        isLive && canWriteDevice && !keymap.needsRecovery && !sheetBusy && !planLoading && plan != nil
     }
 
     /// `deck_plan_keymap` for the sheet's current choices; 150 ms after the
     /// last change so a quick flip through the layers sends one request.
     func loadPlan() {
+        guard !sheetBusy else { return }
         planRequest?.cancel()
-        guard let layer = applyLayer else { return }
+        plan = nil
+        guard sheet == .apply, let layer = applyLayer else {
+            planLoading = false
+            return
+        }
         let auxiliary = applyAuxiliary
         planLoading = true
         planError = nil
@@ -458,7 +486,7 @@ final class DeckStore {
                 } else {
                     reply = try await self.core.deckPlanKeymap(profile: layer.profile, layer: layer.layer, includeAuxiliary: auxiliary)
                 }
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self.sheet == .apply else { return }
                 if reply.ok, let plan = DeckKeymapPlan(reply.result) {
                     self.plan = plan
                 } else {
@@ -466,7 +494,7 @@ final class DeckStore {
                     self.planError = Self.describe(reply.error)
                 }
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self.sheet == .apply else { return }
                 self.plan = nil
                 self.planError = Self.describe(error)
             }
@@ -476,7 +504,15 @@ final class DeckStore {
 
     /// The sheet's confirm button.
     func confirmSheet() {
-        guard let sheet else { return }
+        guard let sheet, !sheetBusy else { return }
+        if sheet == .apply, !canApplyKeymap { return }
+        if sheet == .restore, !isLive || !canWriteDevice { return }
+        let selectedLayer = applyLayer ?? DeckKeymapLayer(profile: 0, layer: 0)
+        let targets = applyTargets
+        let namedLayers = targets.map { (layer: $0.layer, name: scopeName(applyScope(for: $0))) }
+        let scopedLayers = targets.map { (layer: $0.layer, scope: applyScope(for: $0)) }
+        let includeAuxiliary = applyAuxiliary
+        let hasScopes = keymap.layers.contains { $0.scope != nil }
         sheetBusy = true
         Task { [weak self] in
             guard let self else { return }
@@ -487,19 +523,17 @@ final class DeckStore {
                     // A daemon that reports a scope per layer row also
                     // accepts the `layers` write and the `layer_map`
                     // setting; an older one gets the single-layer call.
-                    if self.keymap.layers.contains(where: { $0.scope != nil }) {
-                        let targets = self.applyTargets
+                    if hasScopes {
                         reply = try await self.core.deckApplyKeymap(
                             profile: targets.first?.profile ?? 0,
-                            layers: targets.map { (layer: $0.layer, name: self.scopeName(self.applyScope(for: $0))) },
-                            includeAuxiliary: self.applyAuxiliary)
+                            layers: namedLayers,
+                            includeAuxiliary: includeAuxiliary)
                         if reply.ok {
                             _ = try? await self.core.deckSetSettings(
-                                layerMap: targets.map { (layer: $0.layer, scope: self.applyScope(for: $0)) })
+                                layerMap: scopedLayers)
                         }
                     } else {
-                        let layer = self.applyLayer ?? DeckKeymapLayer(profile: 0, layer: 0)
-                        reply = try await self.core.deckApplyKeymap(profile: layer.profile, layer: layer.layer, includeAuxiliary: self.applyAuxiliary)
+                        reply = try await self.core.deckApplyKeymap(profile: selectedLayer.profile, layer: selectedLayer.layer, includeAuxiliary: includeAuxiliary)
                     }
                 case .restore:
                     reply = try await self.core.deckRestoreKeymap()
@@ -523,9 +557,12 @@ final class DeckStore {
                         self.show(removed == 1 ? "Cleared 1 absent slot" : "Cleared \(removed) absent slots")
                     }
                 } else {
+                    // The cleared board was a guess the daemon just refused.
+                    if sheet == .clearAbsent { self.optimistic = nil }
                     self.fail(Self.describe(reply.error))
                 }
             } catch {
+                if sheet == .clearAbsent { self.optimistic = nil }
                 self.fail(Self.describe(error))
             }
             self.sheetBusy = false

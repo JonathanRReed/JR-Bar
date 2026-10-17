@@ -153,7 +153,6 @@ struct WindowFrontTests {
                      "HistoryWindowController.swift", "SettingsWindowController.swift",
                      "Setup/SetupWindowController.swift", "Toys/Aquarium/AquariumWindowController.swift",
                      "UsageCenterWindowController.swift", "Overview/OverviewWindowController.swift",
-                     "Utilities/DataHoarder/DataHoarderWindowController.swift",
                      "WhatsNew/WhatsNewWindowController.swift"]
         for file in files {
             let text = try String(contentsOf: Self.sources.appending(path: file), encoding: .utf8)
@@ -241,4 +240,17 @@ private final class FallbackProbe {
 @MainActor
 private final class ActiveFlag {
     var isActive = false
+
+    @Test("a reopen that follows the app's own Launch Services request is not someone looking for the icon")
+    func ownReopenIsNotAnInvitationToOpenSettings() {
+        let start = Date(timeIntervalSince1970: 5_000)
+        _ = WindowFront.consumeOwnReopen(now: start)
+        #expect(!WindowFront.consumeOwnReopen(now: start), "nothing asked: a reopen is a person's")
+        WindowFront.noteOwnReopenRequested(now: start)
+        #expect(WindowFront.consumeOwnReopen(now: start.addingTimeInterval(0.4)), "ours")
+        #expect(!WindowFront.consumeOwnReopen(now: start.addingTimeInterval(0.5)), "taken once")
+        WindowFront.noteOwnReopenRequested(now: start)
+        #expect(!WindowFront.consumeOwnReopen(now: start.addingTimeInterval(WindowFront.ownReopenWindow + 1)),
+                "a stale request does not hide a later person's reopen")
+    }
 }

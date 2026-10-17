@@ -62,11 +62,10 @@ class ModuleEntrypointTests(unittest.TestCase):
             {"document", "findings", "last_failure_class", "version"},
         )
         self.assertEqual(payload["document"], "jrbar-doctor")
-        # v4 expands alcove_follow_state from capture outcomes into the
-        # seven semantic confidence states used by the product surfaces;
         # v6 drops launch_agent_state: no install has a menu-bar
-        # LaunchAgent any more.
-        self.assertEqual(payload["version"], 6)
+        # LaunchAgent any more; v7 drops alcove_follow_state: the app
+        # follows Alcove.
+        self.assertEqual(payload["version"], 7)
         self.assertEqual(
             tuple(finding["check"] for finding in payload["findings"]),
             (
@@ -78,7 +77,6 @@ class ModuleEntrypointTests(unittest.TestCase):
                 "worker_registry_bounds",
                 "timer_registry_bounds",
                 "mounted_device_health",
-                "alcove_follow_state",
                 "event_intake_freshness",
             ),
         )

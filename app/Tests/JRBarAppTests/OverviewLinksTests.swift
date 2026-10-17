@@ -125,46 +125,23 @@ import JRBarCore
         #expect(link?.facts.contains { $0.label == "Headline" && $0.value.contains("5h") } == true)
     }
 
-    // MARK: Archive
-
-    @Test func theArchiveChipWarnsOnFailuresAndGapsAndIsQuietWhenNotWatching() {
-        let now = Date(timeIntervalSince1970: 10_000)
-        var h = OverviewLinkage.HoarderHealth(sources: 2, watching: 2, fullContent: true,
-                                              archive: ArchiveCaptureHealth(lastCapturedAt: now.addingTimeInterval(-180)))
-        var link = OverviewLinkage.hoarderLink(h, now: now)
-        #expect(link.group == .archive)
-        #expect(link.tone == .good)
-        #expect(link.subtitle?.hasPrefix("captured ") == true)
-        #expect(link.facts.contains { $0.label == "Live sources" && $0.value == "2 of 2 watched" })
-
-        h.archive.gapRecords = 1
-        link = OverviewLinkage.hoarderLink(h, now: now)
-        #expect(link.tone == .warn)
-        #expect(link.subtitle == "1 gap")
-
-        h.archive.failures = 3
-        link = OverviewLinkage.hoarderLink(h, now: now)
-        #expect(link.tone == .warn)
-        #expect(link.subtitle == "3 failures")
-
-        h.archive = ArchiveCaptureHealth()
-        h.paused = true
-        #expect(OverviewLinkage.hoarderLink(h, now: now).tone == .idle)
-        #expect(OverviewLinkage.hoarderLink(h, now: now).subtitle == "paused")
-        h.paused = false
-        h.watching = 0
-        #expect(OverviewLinkage.hoarderLink(h, now: now).subtitle == "not watching")
-        h.sources = 0
-        #expect(OverviewLinkage.hoarderLink(h, now: now).subtitle == "no live sources")
-        h.fullContent = false
-        #expect(OverviewLinkage.hoarderLink(h, now: now).facts.contains { $0.value == "structure only (text withheld)" })
-    }
-
-    @Test func noHoarderNoChip() {
+    @Test func aStaleReadingIsMarkedAndTwoAccountsAreTold() {
         var s = OverviewLinkage.Snapshot()
-        #expect(!OverviewLinkage.links(s).contains { $0.group == .archive })
-        s.hoarder = OverviewLinkage.HoarderHealth()
-        #expect(OverviewLinkage.links(s).last?.group == .archive)
+        s.providers = [
+            CoreProviderUsage(id: "claude", windows: [CoreUsageWindow(name: "5h", usedPct: 40)], state: "stale"),
+            CoreProviderUsage(id: "claude", windows: [CoreUsageWindow(name: "5h", usedPct: 10)], state: "ready", instance: "work"),
+            CoreProviderUsage(id: "opencode", windows: [], state: "ready", quotaSource: false),
+        ]
+        let links = OverviewLinkage.links(s)
+        let stale = links.first { $0.id == "provider:claude" }
+        #expect(stale?.subtitle == "40% used · stale")
+        #expect(stale?.tone == .warn)
+        let work = links.first { $0.id == "provider:claude|work" }
+        #expect(work?.title == "Claude · work")
+        #expect(work?.tone == .good)
+        let none = links.first { $0.id == "provider:opencode" }
+        #expect(none?.subtitle == "no quota source")
+        #expect(none?.facts.contains { $0.label == "Quota" } == true)
     }
 
     // MARK: Order

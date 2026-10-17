@@ -25,7 +25,7 @@ struct NotchSurfaceRenderProofTests {
 
     private static let now = Date().timeIntervalSince1970
 
-    private static func sessions() -> CoreState {
+    static func sessions() -> CoreState {
         let ask = CoreAsk(session: "claude:ask", openedAt: now - 190,
                           summary: "Run the migration against the staging database?",
                           answerable: true, request: "r1",
@@ -41,7 +41,7 @@ struct NotchSurfaceRenderProofTests {
             asks: [ask])
     }
 
-    private static func makeToy(state: CoreState? = sessions())
+    static func makeToy(state: CoreState? = sessions())
         -> (NotchToy, ToysStore, ProofMonitor) {
         var toys = ToysState()
         toys.notch = NotchSettings(enabled: true, provider: .jrbar, islandEnabled: true)
@@ -181,11 +181,17 @@ struct NotchSurfaceRenderProofTests {
         let noticeSize = NotchIslandLayout.noticeSize(slotWidth: Self.slotWidth, notchDepth: depth)
         for (name, notice) in notices {
             toy.activeCapsule = notice
-            try ProofRender.write(Self.scene(NotchIslandView(toy: toy), size: noticeSize,
+            // Each fits its own words, as the island's frame does.
+            let fitted = NotchIslandLayout.noticeSize(slotWidth: Self.slotWidth, notchDepth: depth,
+                                                      copyWidth: NotchToy.copyWidth(of: notice))
+            toy.stage.noticeMorph = NotchMorph(rest: depth, open: fitted.height,
+                                               restWidth: Self.slotWidth, openWidth: fitted.width)
+            try ProofRender.write(Self.scene(NotchIslandView(toy: toy), size: fitted,
                                              depth: depth, canvas: CGSize(width: 520, height: 90)),
                                   size: CGSize(width: 520, height: 90), name: "notch-notice-\(name)")
         }
         toy.activeCapsule = nil
+        toy.stage.noticeMorph = nil
 
         // The level HUD, each key.
         let levels: [(String, AlcoveNotice)] = [
@@ -230,6 +236,25 @@ struct NotchSurfaceRenderProofTests {
                                   size: CGSize(width: 520, height: size.height + 30),
                                   name: takeover ? "notch-ask-takeover" : "notch-ask")
         }
+        // The keyboard on the ask face: nothing focused at first, then
+        // the ring walked onto Approve with Tab.
+        toy.activeCapsule = AlcoveNotice(id: "a", kind: .ask, title: "Claude · rename-the-fish",
+                                         subtitle: "needs you", provider: "claude", session: "claude:ask",
+                                         key: "ask:claude:ask|r1", ask: ask)
+        toy.askKeyboardEngaged = true
+        let keyboardSize = NotchIslandLayout.askSize(slotWidth: Self.slotWidth, notchDepth: depth,
+                                                     summaryLines: toy.askSummaryLines, takeover: false,
+                                                     underHousing: nil)
+        let keyboardCanvas = CGSize(width: 520, height: keyboardSize.height + 30)
+        try ProofRender.write(Self.scene(NotchIslandView(toy: toy), size: keyboardSize, depth: depth,
+                                         canvas: keyboardCanvas),
+                              size: keyboardCanvas, name: "notch-ask-keyboard-engaged")
+        toy.askKey(.tab)
+        toy.askKey(.tab)
+        try ProofRender.write(Self.scene(NotchIslandView(toy: toy), size: keyboardSize, depth: depth,
+                                         canvas: keyboardCanvas),
+                              size: keyboardCanvas, name: "notch-ask-keyboard-approve")
+        toy.releaseAskKeyboard()
         toy.activeCapsule = nil
         toy.noteMeetingSoon(ShelfCalendarModel.Event(
             title: "Design review", start: Date().addingTimeInterval(120),
@@ -323,8 +348,8 @@ struct NotchSurfaceRenderProofTests {
         }
     }
 
-    /// The shelf page's day rows with something in them — the weather,
-    /// the calendar with a joinable meeting, reminders, synced lyrics —
+    /// The shelf page's day rows with something in them — the
+    /// calendar with a joinable meeting, reminders, synced lyrics —
     /// on the island's black and on glass in both appearances.
     @Test(.enabled(if: enabled, "set JRBAR_RENDER_PROOF=1 to write PNGs"))
     func dayRows() throws {
@@ -334,8 +359,6 @@ struct NotchSurfaceRenderProofTests {
         Self.fill(model, monitor: monitor)
         defer { Self.clearTray(model) }
         let now = Date()
-        let reading = NotchWeather.Reading(celsius: 21.4, code: 2, place: "Austin", fahrenheit: true,
-                                           highCelsius: 27, lowCelsius: 16, rainInMinutes: 40)
         let events = ShelfCalendarModel.State.events([
             ShelfCalendarModel.Event(title: "Design review", start: now.addingTimeInterval(600),
                                      end: now.addingTimeInterval(2400),
@@ -358,7 +381,6 @@ struct NotchSurfaceRenderProofTests {
                                         ("glass-light", NotchCardStyle.glass, false),
                                         ("glass-dark", NotchCardStyle.glass, true)] {
             let rows = VStack(alignment: .leading, spacing: NotchCardView.runSpacing) {
-                ShelfWeatherRow(reading: reading, style: cardStyle)
                 ShelfCalendarRow(calendar: model.calendar, state: events, style: cardStyle)
                 ShelfRemindersRow(reminders: model.reminders, state: reminders, style: cardStyle)
                 LyricLines(lyrics: lyrics, utility: model.utility, playing: true, style: cardStyle)
@@ -642,23 +664,61 @@ enum ProofRender {
     static func write<V: View>(_ view: V, size: CGSize, name: String, dark: Bool = true,
                                scale: CGFloat = 2, settle: TimeInterval = 0.45,
                                overlay: NSView? = nil) throws {
-        let hosting = NSHostingView(rootView: view.environment(\.colorScheme, dark ? .dark : .light))
-        hosting.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        let bitmap = try render(view, size: size, dark: dark, scale: scale, settle: settle,
+                                overlay: overlay)
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try png.write(to: directory.appendingPathComponent("\(name).png"))
+    }
+
+    /// Keeps the requested width and grows the height for taller content.
+    /// Returns a bitmap for a PNG or contact sheet.
+    static func render<V: View>(_ view: V, size: CGSize, dark: Bool = true,
+                                scale: CGFloat = 2, settle: TimeInterval = 0.45,
+                                overlay: NSView? = nil) throws -> NSBitmapImageRep {
+        let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        let hosting = NSHostingView(rootView: view
+            .frame(width: size.width)
+            .environment(\.colorScheme, dark ? .dark : .light)
+            .environment(\.renderSnapshot, true))
+        hosting.appearance = appearance
         hosting.frame = CGRect(origin: .zero, size: size)
-        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless],
+        let offscreen = NSRect(origin: CGPoint(x: -20000, y: -20000), size: size)
+        let window = NSWindow(contentRect: offscreen, styleMask: [.borderless],
                               backing: .buffered, defer: false)
-        window.appearance = hosting.appearance
+        window.isReleasedWhenClosed = false
+        window.appearance = appearance
         window.contentView = hosting
+        defer {
+            window.contentView = nil
+            window.close()
+        }
         hosting.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(settle))
-        hosting.layoutSubtreeIfNeeded()
+        let idealHeight = ceil(hosting.fittingSize.height)
+        let height = idealHeight.isFinite ? max(size.height, idealHeight) : size.height
+        let captureSize = CGSize(width: size.width, height: height)
+        window.setContentSize(captureSize)
+        hosting.frame = NSRect(origin: .zero, size: captureSize)
+        for _ in 0..<6 {
+            hosting.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            if settle > 0 {
+                RunLoop.main.run(until: Date().addingTimeInterval(settle / 6))
+            }
+        }
         let bitmap = try #require(NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: Int(ceil(size.width * scale)),
-            pixelsHigh: Int(ceil(size.height * scale)), bitsPerSample: 8, samplesPerPixel: 4,
+            bitmapDataPlanes: nil, pixelsWide: Int(ceil(captureSize.width * scale)),
+            pixelsHigh: Int(ceil(captureSize.height * scale)), bitsPerSample: 8, samplesPerPixel: 4,
             hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
             bytesPerRow: 0, bitsPerPixel: 0))
-        bitmap.size = size
-        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        bitmap.size = captureSize
+        let context = try #require(NSGraphicsContext(bitmapImageRep: bitmap))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        appearance?.performAsCurrentDrawingAppearance {
+            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        }
+        NSGraphicsContext.restoreGraphicsState()
         // A native view drawn over the scene — the Screen Bar's panel sits
         // above the island on the desktop.
         if let overlay {
@@ -667,17 +727,20 @@ enum ProofRender {
                 bitmapDataPlanes: nil, pixelsWide: bitmap.pixelsWide, pixelsHigh: bitmap.pixelsHigh,
                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                 colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-            top.size = size
-            overlay.cacheDisplay(in: overlay.bounds, to: top)
+            top.size = captureSize
+            let overlayContext = try #require(NSGraphicsContext(bitmapImageRep: top))
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = overlayContext
+            appearance?.performAsCurrentDrawingAppearance {
+                overlay.cacheDisplay(in: overlay.bounds, to: top)
+            }
+            NSGraphicsContext.restoreGraphicsState()
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-            top.draw(in: CGRect(origin: .zero, size: size), from: .zero, operation: .sourceOver,
+            top.draw(in: CGRect(origin: .zero, size: captureSize), from: .zero, operation: .sourceOver,
                      fraction: 1, respectFlipped: true, hints: nil)
             NSGraphicsContext.restoreGraphicsState()
         }
-        let png = try #require(bitmap.representation(using: .png, properties: [:]))
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try png.write(to: directory.appendingPathComponent("\(name).png"))
-        window.contentView = nil
+        return bitmap
     }
 }

@@ -43,6 +43,59 @@ struct BuddyInteractionTests {
         #expect(opened == ["claude:old"])
     }
 
+    @Test("an open menu keeps the session named by its ask row")
+    func menuKeepsItsNamedAsk() async throws {
+        let core = CoreModel()
+        let named = CoreSession(id: "named", provider: "claude", label: "Named session",
+                                ask: CoreAsk(openedAt: 20))
+        core.apply(.state(CoreState(sessions: [named])))
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy = store.notchBuddy
+        let menu = toy.actionMenu(panelFrame: nil)
+        let item = try #require(menu.items.first { $0.action == #selector(BuddyMenuActions.openAsk) })
+        #expect(item.title == "Open “Named session”")
+        let actions = try #require(item.target as? BuddyMenuActions)
+        var opened: [String] = []
+        toy.openSession = { opened.append($0); return nil }
+
+        core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "older", provider: "codex", ask: CoreAsk(openedAt: 10)), named,
+        ])))
+        #expect(toy.askingSession?.id == "older")
+        actions.openAsk(item)
+        await toy.openInFlight?.value
+        #expect(opened == ["named"])
+    }
+
+    @Test("a menu ask that stopped waiting never opens a different session")
+    func resolvedMenuAskDoesNothing() async throws {
+        let core = CoreModel()
+        core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "named", provider: "claude", ask: CoreAsk(openedAt: 20)),
+        ])))
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        defer { withExtendedLifetime(store) {} }
+        let toy = store.notchBuddy
+        let menu = toy.actionMenu(panelFrame: nil)
+        let item = try #require(menu.items.first { $0.action == #selector(BuddyMenuActions.openAsk) })
+        let actions = try #require(item.target as? BuddyMenuActions)
+        var opened: [String] = []
+        toy.openSession = { opened.append($0); return nil }
+
+        core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "named", provider: "claude", mode: "tool_running", lifecycle: "active"),
+            CoreSession(id: "other", provider: "codex", ask: CoreAsk(openedAt: 10)),
+        ])))
+        actions.openAsk(item)
+        await toy.openInFlight?.value
+        #expect(opened.isEmpty)
+        #expect(toy.openInFlight == nil)
+        #expect(!toy.openAskingSession(id: "missing"))
+    }
+
     @Test("a tap is a pet and cycles the tricks")
     func tapPetsAndTricks() {
         let (toy, store) = makeToy()

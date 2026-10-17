@@ -35,13 +35,15 @@ import time
 import traceback
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
-from . import __version__, core_deck
+from . import __version__, core_deck, scene_leases
+from .ask_lifetime import stale_after_seconds_for
 from .attention import quiet_waiting_worker_ids
 from .completion_visibility import END_EVENT_NAMES
+from .core_auth import CoreAuthority, authority_from_process
 from .core_projection import (
     READ_ONLY_SETTINGS,
     DeviceFacts,
@@ -140,7 +142,6 @@ _TRANSIENT_KIND_DEADLINE: Final = {
     "peek": "peek_until",
     "signal_test": "test_signal_until",
 }
-_APP_OWNED_DIAGNOSTICS: Final = frozenset({"alcove_follow_state"})
 _HEALTHY_DIAGNOSTIC_CODES: Final = frozenset(
     {
         "source_checkout",
@@ -216,7 +217,7 @@ def split_path(path: str) -> list[str | int]:
     for piece in str(path).split("."):
         if not piece:
             continue
-        parts.append(int(piece) if piece.isdigit() else piece)
+        parts.append(int(piece) if piece.isascii() and piece.isdigit() else piece)
     return parts
 
 
@@ -560,6 +561,7 @@ class _Preview:
     # Dot under calibration): the primary session's device id, so ending or
     # applying on the Dot drops the strip's patch too.
     companion_of: str | None = None
+    channel_gains: tuple[float, float, float] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -904,6 +906,16 @@ def _cmd_answer_ask(self, args):
                     error={"code": error.code, "message": str(error)})
             )
             raise
+        except Exception as error:
+            # Anything else that goes wrong after the intent was recorded
+            # settles it too: left open it would read "outcome unknown" for
+            # a month and a retry of the same id would run the answer again.
+            on_main(
+                lambda error=error: journal.settle(
+                    record.command_id,
+                    error={"code": "internal", "message": error.__class__.__name__})
+            )
+            raise
     on_main(lambda: self.refresh_(None))
     result = {
         "session": status.agent_id,
@@ -1078,14 +1090,13 @@ def _cmd_clear_completed(self, args):
     except (TypeError, ValueError) as error:
         raise CommandError("internal", str(error)) from error
     self._clear_agents_preview = preview
-    _apply_clear_agents_plan(self, "commit", plan)
-    self._core_last_clear_batch = plan.batch_receipt.batch_id
+    _apply_clear_agents_plan(self, plan)
     # Every acknowledged row, not only the twenty the popover previews.
     cleared = sorted({key.agent_id for key in plan.batch_receipt.newly_added_keys})
     return {"batch": plan.batch_receipt.batch_id, "cleared": cleared}
 
 
-def _apply_clear_agents_plan(self, kind: str, plan) -> None:
+def _apply_clear_agents_plan(self, plan) -> None:
     """Save the receipts and republish, in order, on this thread.
 
     The menu's own path hands the write to the persistence writer and picks
@@ -1100,8 +1111,6 @@ def _apply_clear_agents_plan(self, kind: str, plan) -> None:
         raise CommandError("refused", f"could not save the clear receipts: {error}") from error
     self.clear_agents_state = plan.next_state
     self.current_mailbox_projection = None
-    if kind == "commit":
-        self._clear_agents_commit_plan = plan
     self._core_publish_state()
 
 
@@ -1112,11 +1121,11 @@ def _cmd_undo_clear(self, args):
     The rows return to ``state.sessions`` exactly as they were: the undo
     removes the receipts, and visibility is recomputed from them.
     """
-    from .clear_agents import ClearAgentsCommitPlan, ClearAgentsPlanError, plan_clear_agents_undo
+    from .clear_agents import ClearAgentsPlanError, plan_clear_agents_undo
 
-    batch = str(args.get("batch") or getattr(self, "_core_last_clear_batch", "") or "")
-    commit_plan = getattr(self, "_clear_agents_commit_plan", None)
-    if type(commit_plan) is not ClearAgentsCommitPlan or commit_plan.batch_receipt.batch_id != batch:
+    latest = self.clear_agents_state.latest_batch
+    batch = str(args.get("batch") or (latest.batch_id if latest is not None else ""))
+    if latest is None or latest.batch_id != batch:
         raise CommandError("not_found", "no such batch")
     try:
         plan = plan_clear_agents_undo(self.clear_agents_state, batch_id=batch, now_epoch=time.time())
@@ -1124,7 +1133,7 @@ def _cmd_undo_clear(self, args):
         reason = getattr(getattr(error, "reason", None), "value", "refused")
         raise CommandError("expired" if reason == "expired" else "refused", str(reason)) from error
     restored = sorted({key.agent_id for key in plan.batch_receipt.newly_added_keys})
-    _apply_clear_agents_plan(self, "undo", plan)
+    _apply_clear_agents_plan(self, plan)
     return {"batch": batch, "restored": restored}
 
 
@@ -1206,6 +1215,71 @@ def _cmd_dismiss_session(self, args):
     return {"session": agent_id, "dismissed": True}
 
 
+def _ask_dismissal_store(self):
+    """The Mac's record of dismissed asks, with its file under the state dir."""
+    from .ask_dismissals import default_ask_dismissals_path, load_ask_dismissals
+
+    if getattr(self, "ask_dismissals_path", None) is None:
+        self.ask_dismissals_path = default_ask_dismissals_path(default_state_dir())
+        self.ask_dismissals.absorb(load_ask_dismissals(self.ask_dismissals_path))
+    return self.ask_dismissals
+
+
+@command("dismiss_ask")
+def _cmd_dismiss_ask(self, args):
+    """Take one ask that may be stale off JR-Bar's surfaces.
+
+    Only an ask the daemon itself calls stale (``ask.stale``: older than the
+    "may be stale" mark, from a session silent for as long) can be dismissed,
+    so a fresh ask is never hidden by a stray command. The dismissal is the
+    Mac's own: it sends nothing to the agent, approves and denies nothing, and
+    leaves the agent's prompt exactly where it was. A later ask on the same
+    session is a different ask and is not covered.
+    """
+    from .ask_dismissals import save_ask_dismissals
+    from .core_projection import ask_document
+
+    status = _find_status(self, args.get("session"))
+    agent_id = status.agent_id
+    if agent_id.startswith("remote:"):
+        raise CommandError("refused", "a remote session is the peer's to manage")
+    if agent_id not in {s.agent_id for s in self._core_ask_statuses()}:
+        raise CommandError("not_found", "no open ask for that session")
+    cached = (getattr(self, "_core_extras", None) or {}).get(agent_id)
+    document = ask_document(
+        status,
+        getattr(self, "current_operator_state", None),
+        with_session=False,
+        now=time.time(),
+        stale_after_seconds=stale_after_seconds_for(self.settings),
+        process_alive=getattr(cached[1], "process_alive", None) if cached else None,
+    )
+    expected = args.get("request")
+    if expected is not None and expected != document.get("request"):
+        raise CommandError(
+            "stale_request",
+            "that request was replaced — the card is stale; look at the current ask",
+        )
+    if not document.get("dismissible"):
+        raise CommandError("refused", "only an ask that may be stale can be dismissed")
+    opened_at = document.get("opened_at")
+    store = _ask_dismissal_store(self)
+    if not store.add(agent_id, opened_at, at=time.time()):
+        raise CommandError("internal", "could not record the dismissal")
+    store.prune(now=time.time())
+    try:
+        save_ask_dismissals(self.ask_dismissals_path, store)
+    except (OSError, TypeError, ValueError) as error:
+        store.forget(agent_id, opened_at)
+        raise CommandError("refused", f"could not save the dismissal: {error}") from error
+    monitor = getattr(self, "monitor", None)
+    if monitor is not None:
+        monitor.revision += 1
+    self.current_mailbox_projection = None
+    self.refresh_(None)
+    return {"session": agent_id, "dismissed": True, "opened_at": opened_at}
+
+
 def _apply_settings_document(self, document: dict[str, Any], *, touched: list[str]) -> int:
     """Validate, take and publish a new settings document, then reply.
 
@@ -1217,19 +1291,35 @@ def _apply_settings_document(self, document: dict[str, Any], *, touched: list[st
         candidate = settings_from_document(document)
     except Exception as error:
         raise CommandError("invalid_value", f"settings did not validate: {error}") from error
-    self.settings = candidate
     save_soon = getattr(self, "_core_save_settings_soon", None)
-    if callable(save_soon):
-        save_soon()
-    else:
+    if not callable(save_soon):
         legacy = self._core_legacy()
         try:
-            legacy.save_settings(self.settings)
+            legacy.save_settings(candidate)
         except Exception as error:
-            self.settings = legacy.load_settings()
             raise CommandError("refused", f"could not save settings: {error}") from error
+    scene_leases.settings_changed(self, self.settings, candidate, touched=touched)
+    self.settings = candidate
+    if callable(save_soon):
+        save_soon()
     self._core_after_settings_change(touched)
     return self._core_settings_generation
+
+
+@command("scene_lease")
+def _cmd_scene_lease(self, args):
+    holder = scene_leases.leases(self)
+    expired = holder.expire()
+    try:
+        result = holder.apply(args, scene_leases.selected_scene(self))
+    except CommandError:
+        if expired:
+            self._core_publish_settings()
+            self.schedule_event_refresh()
+        raise
+    self._core_publish_settings()
+    self.schedule_event_refresh()
+    return result
 
 
 @command("set_setting")
@@ -1376,8 +1466,9 @@ def _cmd_apply_calibration(self, args):
         # eye ends here as often as it ends on the gains.
         settings = settings.with_device_brightness(device, brightness)
         applied["brightness"] = float(settings.brightness_for_device(device))
-    self.settings = settings
-    self._core_legacy().save_settings(self.settings)
+    with self._core_settings_save_lock:
+        self._core_legacy().save_settings(settings)
+        self.settings = settings
     # The applied values ARE the live ones now: a held preview still
     # showing the working numbers would be claiming a calibration the
     # device is no longer running.
@@ -1568,7 +1659,7 @@ def _cmd_preview_calibration(self, args):
     # audit). The except path withdraws the registration a refused write
     # never earned.
     self._core_previews[surface] = _Preview(
-        program, until_monotonic, started_epoch, (device.device_id,), held=True
+        program, until_monotonic, started_epoch, (device.device_id,), held=True, channel_gains=gains
     )
     controller = self.agent_controller_for_device(device)
     try:
@@ -1610,6 +1701,7 @@ def _cmd_preview_calibration(self, args):
                 (strip.device_id,),
                 held=True,
                 companion_of=device.device_id,
+                channel_gains=strip.channel_gains,
             )
             strip_controller = self.agent_controller_for_device(strip)
             try:
@@ -1809,7 +1901,7 @@ def _assignments_document(self) -> dict[str, Any]:
 
     cache = _effects_cache(self)
     document = cache.snapshot()
-    active_scene = getattr(self.settings, "active_scene", None)
+    active_scene = scene_leases.effective_scene(self)
     return core_effects.assignment_document(
         document,
         parameters=core_effects.load_assignment_parameters(),
@@ -1929,9 +2021,11 @@ def _apply_provider_motion_assignment(self, effect, scope, target_id, parameters
         ).with_agent_animation_parameters(target_id, values)
     except (TypeError, ValueError):
         return f"{effect.identifier} is not a motion this build can apply"
-    self.settings = self.settings.with_colors(colors)
+    settings = self.settings.with_colors(colors)
     try:
-        legacy.save_settings(self.settings)
+        with self._core_settings_save_lock:
+            legacy.save_settings(settings)
+            self.settings = settings
     except Exception as error:
         return f"the motion was assigned but settings would not save: {error}"
     self._core_publish_settings()
@@ -1952,11 +2046,15 @@ def _clear_provider_motion_assignment(self, record) -> None:
     # Back to what the provider plays when nobody chose -- OpenCode's own
     # Pendulum, not an Automatic nobody picked.
     colors = self.settings.colors.without_agent_animation(record.target_id)
-    self.settings = self.settings.with_colors(colors)
+    settings = self.settings.with_colors(colors)
     try:
-        legacy.save_settings(self.settings)
-    except Exception:
-        return
+        with self._core_settings_save_lock:
+            legacy.save_settings(settings)
+            self.settings = settings
+    except Exception as error:
+        raise CommandError(
+            "refused", f"could not clear provider motion: settings would not save: {error}"
+        ) from error
     self._core_publish_settings()
 
 
@@ -2110,6 +2208,7 @@ def _cmd_clear_assignment(self, args):
     document = current.without_assignment(scope, target)
     removed = len(document.assignments) < len(current.assignments)
     if removed:
+        _clear_provider_motion_assignment(self, removed_record)
         _save_assignments(self, document)
         table = core_effects.load_assignment_parameters()
         if table.pop(core_effects.assignment_key(scope.value, target), None) is not None:
@@ -2117,7 +2216,6 @@ def _cmd_clear_assignment(self, args):
                 core_effects.save_assignment_parameters(table)
             except OSError:
                 pass
-        _clear_provider_motion_assignment(self, removed_record)
     result = _assignments_document(self)
     result["removed"] = removed
     return result
@@ -2359,13 +2457,15 @@ USAGE_WARM_DELAY_SECONDS = 8.0
 def _usage_history_service(self):
     """The daemon's one ``UsageHistoryService`` (scans off the socket thread)."""
     from . import core_usage_history
+    from .usage_graph_worker import _drop_to_utility_qos
 
     service = getattr(self, "_core_usage_history_service", None)
     if service is None:
         service = core_usage_history.UsageHistoryService(
-            lambda provider, days: core_usage_history.scan_provider_records(provider, days=days),
+            lambda provider, days: core_usage_history.scan_provider_pass(provider, days=days),
             self._core_publish_event,
             log=self._core_log,
+            thread_setup=_drop_to_utility_qos,
         )
         self._core_usage_history_service = service
     return service
@@ -2409,6 +2509,9 @@ def _usage_history_warm_later(self) -> None:
 def _cmd_usage_history(self, args):
     from . import core_usage_history
 
+    observe = args.get("observe", False)
+    if type(observe) is not bool:
+        raise CommandError("invalid_args", "observe must be a boolean")
     provider = str(args.get("provider") or "").strip()
     if not provider:
         raise CommandError("not_found", "provider is required")
@@ -2435,7 +2538,17 @@ def _cmd_usage_history(self, args):
         and provider not in core_usage_history.REFERENCE_MODEL
     ):
         raise CommandError("not_found", f"no usage source for {provider}")
-    return _usage_history_service(self).document(provider, range_name, account=account, state=source_state)
+    # Transcript totals span configured homes, not the first quota account.
+    service = _usage_history_service(self)
+    try:
+        if observe:
+            document = service.observe(provider, range_name, state=source_state)
+            if document is None:
+                raise CommandError("unavailable", "No local history reading is available yet. Try Refresh.")
+            return document
+        return service.document(provider, range_name, state=source_state, budget=0)
+    except core_usage_history.UsageHistoryScanError:
+        raise CommandError("unavailable", core_usage_history.FAILURE_MESSAGE) from None
 
 
 @command("usage_graph", main_thread=False)
@@ -2449,11 +2562,15 @@ def _cmd_usage_graph(self, args):
     (``_core_start_server``), and never touches the menu.
     """
     from .t3_compat import T3ReadOnlyPolicy
-    from .usage_graph_worker import usage_graph_document
+    from .usage_graph_worker import NativeGraphReuse, usage_graph_document
 
     t3_policy = getattr(self, "_t3_read_only_policy", None)
     if type(t3_policy) is not T3ReadOnlyPolicy:
         t3_policy = None
+    native_reuse = getattr(self, "_core_native_graph_reuse", None)
+    if native_reuse is None:
+        native_reuse = NativeGraphReuse()
+        self._core_native_graph_reuse = native_reuse
     try:
         return usage_graph_document(
             self.settings,
@@ -2461,6 +2578,7 @@ def _cmd_usage_graph(self, args):
             metric=args.get("metric"),
             provider_ids=args.get("providers"),
             t3_policy=t3_policy,
+            native_reuse=native_reuse,
         )
     except ValueError as error:
         raise CommandError("invalid_args", str(error)) from error
@@ -2471,6 +2589,38 @@ def _cmd_refresh_usage(self, args):
     providers = tuple(p for p in (args.get("providers") or []) if isinstance(p, str))
     self._request_provider_usage(force=True, providers=providers or None)
     return {"requested_at": time.time(), "providers": list(providers)}
+
+
+@command("reset_receipt")
+def _cmd_reset_receipt(self, args):
+    """The app's report on a ``quota_reset`` it was sent: ``delivered``
+    (the burst was on screen), ``held``, ``dropped``, ``expired`` or
+    ``suppressed``, with a one-word reason. Recorded on the event in the
+    reset delivery store, so a celebration that never landed is visible
+    in ``provider-reset-events.json`` instead of failing silently, and
+    ``delivered``/``dropped`` close the greet's replay offer for good.
+    """
+    event_id = args.get("event_id")
+    if not isinstance(event_id, str) or not event_id:
+        raise CommandError("invalid_args", "event_id is required")
+    outcome = args.get("outcome")
+    if not isinstance(outcome, str) or not outcome:
+        raise CommandError("invalid_args", "outcome is required")
+    reason = args.get("reason")
+    if not isinstance(reason, str) or not reason:
+        reason = "unspecified"
+    from .provider_reset_settings_action import apply_app_reset_receipt
+
+    try:
+        result = apply_app_reset_receipt(self, event_id, outcome, reason)
+    except KeyError as error:
+        raise CommandError("not_found", f"no such reset event: {event_id}") from error
+    except ValueError as error:
+        raise CommandError("invalid_args", str(error)) from error
+    log = getattr(self, "_core_log", None)
+    if callable(log):
+        log(f"reset receipt {event_id}: {outcome} ({reason})")
+    return result
 
 
 # Usage hooks (lane oss): the Settings Hooks section's rules and Test button.
@@ -2512,6 +2662,51 @@ def _provider_credentials(self):
         store = ProviderCredentialStore()
         self._jrbar_provider_credential_store = store
     return store
+
+
+@command("factory_session_profiles", main_thread=False)
+def _cmd_factory_session_profiles(self, args):
+    from .factory_session import profiles
+
+    return profiles(args)
+
+
+@command("factory_session_import", main_thread=False)
+def _cmd_factory_session_import(self, args):
+    from .factory_session import import_session
+
+    return import_session(args, _provider_credentials(self))
+
+
+@command("factory_session_disconnect", main_thread=False)
+def _cmd_factory_session_disconnect(self, args):
+    from .factory_session import disconnect
+
+    return disconnect(args, _provider_credentials(self))
+
+
+@command("set_provider_credential", main_thread=False)
+def _cmd_set_provider_credential(self, args):
+    from .provider_credential_commands import change_credential
+
+    try:
+        return change_credential(args, _provider_credentials(self))
+    except CommandError:
+        raise
+    except Exception:
+        raise CommandError("credential_unavailable", "provider credential storage is unavailable") from None
+
+
+@command("delete_provider_credential", main_thread=False)
+def _cmd_delete_provider_credential(self, args):
+    from .provider_credential_commands import change_credential
+
+    try:
+        return change_credential(args, _provider_credentials(self), delete=True)
+    except CommandError:
+        raise
+    except Exception:
+        raise CommandError("credential_unavailable", "provider credential storage is unavailable") from None
 
 
 @command("list_providers")
@@ -2562,6 +2757,67 @@ def _cmd_set_provider_enabled(self, args):
     # fresh read, a disable needs the row to stop showing the old quota.
     try:
         self._request_provider_usage(force=True, providers=(provider,))
+    except Exception:
+        pass
+    return {"provider": row}
+
+
+@command("set_provider_usage_consent")
+def _cmd_set_provider_usage_consent(self, args):
+    provider = args.get("provider")
+    enabled = args.get("enabled")
+    instance = args.get("instance") or "default"
+    source = args.get("source") or "settings"
+    if not isinstance(provider, str) or not provider:
+        raise CommandError("invalid_args", "provider is required")
+    if type(enabled) is not bool:
+        raise CommandError("invalid_args", "enabled must be a boolean")
+    if not isinstance(instance, str) or not instance:
+        raise CommandError("invalid_args", "instance must be a nonempty string")
+    if not isinstance(source, str):
+        raise CommandError("invalid_args", "source must be a string")
+    from .provider_management import ProviderManagementError, set_provider_usage_consent
+
+    try:
+        row = set_provider_usage_consent(
+            provider,
+            enabled,
+            source=source,
+            source_instance_id=instance,
+            credentials=_provider_credentials(self),
+        )
+    except ProviderManagementError as exc:
+        raise CommandError(exc.code, str(exc)) from exc
+    # On needs a first read; off needs the card to stop showing the number.
+    try:
+        scope = (provider,) if instance == "default" else ((provider, instance),)
+        self._request_provider_usage(force=True, providers=scope)
+    except Exception:
+        pass
+    return {"provider": row}
+
+
+@command("set_provider_options")
+def _cmd_set_provider_options(self, args):
+    provider = args.get("provider")
+    options = args.get("options")
+    instance = args.get("instance", "default")
+    if not isinstance(provider, str) or not provider:
+        raise CommandError("invalid_args", "provider is required")
+    if not isinstance(options, dict):
+        raise CommandError("invalid_args", "options must be an object")
+    if not isinstance(instance, str) or not instance:
+        raise CommandError("invalid_args", "instance must be a nonempty string")
+    from .provider_management import ProviderManagementError, set_provider_options
+
+    try:
+        row = set_provider_options(provider, options, source_instance_id=instance,
+                                   credentials=_provider_credentials(self))
+    except ProviderManagementError as exc:
+        raise CommandError(exc.code, str(exc)) from exc
+    try:
+        scope = ((provider, instance),)
+        self._request_provider_usage(force=True, providers=scope)
     except Exception:
         pass
     return {"provider": row}
@@ -2663,6 +2919,22 @@ def _cmd_provider_add_instance(self, args):
     return {"provider": row}
 
 
+def _require_usage_on(self, provider, instance):
+    """A click that would read a provider's sign-in needs its usage on: the
+    card says "usage off" until the person turns the provider on."""
+    from .provider_usage_consent import is_usage_off
+
+    state = getattr(self, "provider_usage_state", None)
+    for item in getattr(state, "snapshots", ()) or ():
+        if getattr(item, "identity", None) == (provider, instance) and is_usage_off(item):
+            label = str(provider).replace("-", " ").title()
+            raise CommandError(
+                "usage_off",
+                f"{label} usage is off. Turn it on in Settings > Agents & Usage first; "
+                "nothing is read or sent until you do.",
+            )
+
+
 @command("provider_action")
 def _cmd_provider_action(self, args):
     provider = args.get("provider")
@@ -2678,9 +2950,19 @@ def _cmd_provider_action(self, args):
     from .provider_usage_platform import provider_descriptor
 
     try:
-        provider_descriptor(provider)
+        descriptor = provider_descriptor(provider)
     except ValueError as exc:
         raise CommandError("unknown_provider", f"unknown provider {provider!r}") from exc
+    _require_usage_on(self, provider, instance)
+    if provider == "factory" or (provider in {"kimi", "kilo", "kiro"} and action is None):
+        snapshots = getattr(getattr(self, "provider_usage_state", None), "snapshots", ())
+        if any(item.identity == (provider, instance) and getattr(item.state, "value", item.state) == "disabled"
+               for item in snapshots):
+            raise CommandError("usage_off", f"Turn on {descriptor.label} usage before refreshing it")
+        scope = ((provider, instance),)
+        self._request_provider_usage(force=True, providers=scope)
+        return {"provider": provider, "instance": instance,
+                "message": f"{descriptor.label} usage refresh requested."}
     if action == "resign_in":
         # "Re-sign in" / "Update provider" from the Usage Center: re-pull
         # whatever sign-in the provider's own tooling holds even when no
@@ -2749,6 +3031,7 @@ def _cmd_provider_sign_in(self, args):
     terminal = args.get("terminal")
     if not isinstance(instance, str) or not instance:
         raise CommandError("invalid_args", "instance must be a nonempty string")
+    _require_usage_on(self, provider, instance)
     if terminal is not None and not isinstance(terminal, str):
         raise CommandError("invalid_args", "terminal must be a bundle identifier")
     on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
@@ -2849,7 +3132,7 @@ def _known_provider(provider: object) -> str:
 
 @command("provider_update", main_thread=False)
 def _cmd_provider_update(self, args):
-    """Settings > Agents' Update button: run the provider's own updater on a
+    """Settings > Agents & Usage' Update button: run the provider's own updater on a
     worker thread and reply at once (``provider_updates.py``). The command is
     the daemon's own table's; the app sends only a provider id. Explicit
     only: nothing starts an updater on a timer."""
@@ -2862,6 +3145,117 @@ def _cmd_provider_update_check(self, args):
     nothing at all (no request, no thread) unless
     ``provider_update_checks_enabled`` is on."""
     return _provider_updates_of(self).check(forced=True)
+
+
+def _firmware_service_of(self):
+    """The daemon's one ``FirmwareService`` (``firmware_update.py``): what
+    Settings > Devices & Lighting shows about each device's firmware and the update job.
+    Built on first use; it does nothing until a command asks."""
+    service = getattr(self, "_jrbar_firmware", None)
+    if service is None:
+        from . import status_bar_legacy as legacy
+        from .device_writer import discover_devices
+        from .firmware_update import DeviceRef, FirmwareService
+
+        def refs() -> list:
+            def collect() -> list:
+                found = []
+                for device in self.status_bar_devices(remember=False):
+                    if device.device_id == legacy.VIRTUAL_DEVICE_ID:
+                        continue
+                    found.append(
+                        DeviceRef(
+                            id=device.device_id,
+                            name=device.name,
+                            root=Path(device.root),
+                            connected=bool(device.connected),
+                        )
+                    )
+                return found
+
+            return self._core_on_main(collect)
+
+        def partners(ref) -> list:
+            # A linked pair is written as one, so it is held as one.
+            if not bool(getattr(self.settings, "devices_linked", True)):
+                return []
+            return [other.root for other in refs() if other.connected and other.id != ref.id]
+
+        battery_memo: list = [0.0, None]
+
+        def battery():
+            now = time.monotonic()
+            if now - battery_memo[0] > 15.0:
+                battery_memo[0] = now
+                try:
+                    from .battery import read_battery_snapshot
+
+                    battery_memo[1] = read_battery_snapshot()
+                except Exception:
+                    battery_memo[1] = None
+            return battery_memo[1]
+
+        def changed() -> None:
+            publish = getattr(self, "_core_publish_state_soon", None)
+            if callable(publish):
+                publish()
+            # The hardware writer pauses and resumes with the hold.
+            try:
+                self._core_on_main(self.reconcile_lid_observation)
+            except Exception:
+                pass
+
+        service = FirmwareService(
+            state_dir=default_state_dir(),
+            devices=refs,
+            find_roots=lambda: [candidate.root for candidate in discover_devices()],
+            partners=partners,
+            battery=battery,
+            on_change=changed,
+        )
+        self._jrbar_firmware = service
+    return service
+
+
+@command("firmware_status", main_thread=False)
+def _cmd_firmware_status(self, args):
+    """Settings > Devices & Lighting > Firmware: each device's firmware read fresh and
+    compared offline with the pinned releases. No request leaves the Mac and
+    nothing is written (``firmware_update.py``)."""
+    return _firmware_service_of(self).status_document()
+
+
+@command("firmware_update", main_thread=False)
+def _cmd_firmware_update(self, args):
+    """Update one device's firmware: a click on "Download and update" after
+    the confirmation sheet, or ``jrbar firmware upgrade --yes``. Explicit
+    only: the only network request firmware ever causes happens inside this
+    command, and nothing starts it on a timer. Replies at once; the job
+    reports through ``state.firmware``."""
+    from .firmware_update import UpdateRefused
+
+    package = args.get("package")
+    if package is not None and (not isinstance(package, str) or not package or len(package) > 4096):
+        raise CommandError("invalid_args", "package must be a path")
+    try:
+        job = _firmware_service_of(self).start_update(
+            args.get("device"),
+            confirm=args.get("confirm") is True,
+            from_file=Path(package) if package else None,
+        )
+    except UpdateRefused as refusal:
+        raise CommandError(refusal.kind, refusal.message) from None
+    return {"started": True, "job": job.to_document()}
+
+@command("ntfy_test", main_thread=False)
+def _cmd_ntfy_test(self, args):
+    """Settings > Remote's Test button: one fixed line to the saved ntfy
+    topic, now, because the person clicked. It needs a usable topic but not
+    the on switch or the away condition, and it replies with the outcome in
+    plain words (``ntfy_alert.py``). Nothing else ever calls this."""
+    service = self.phone_alerts_service()
+    outcome = service.send_test(self.settings)
+    return {"sent": outcome.sent, "reason": outcome.reason, "message": outcome.message}
 
 
 def _hooks_command(self, args, *, install: bool):
@@ -2957,7 +3351,9 @@ def _cmd_set_closed_lid_policy(self, args):
 
 @command("quiet")
 def _cmd_quiet(self, args):
-    from .dnd_policy import DndMode
+    from math import isfinite
+
+    from .dnd_policy import MAX_DND_OVERRIDE_SECONDS, DndMode
 
     raw = str(args.get("mode") or "dnd").lower()
     mode = {
@@ -2971,18 +3367,52 @@ def _cmd_quiet(self, args):
     if mode is None:
         raise CommandError("invalid_args", f"unknown quiet mode {raw!r}")
     try:
-        seconds = float(args.get("seconds", 1800))
-    except (TypeError, ValueError) as error:
-        raise CommandError("invalid_args", "seconds must be a number") from error
+        raw_seconds = args.get("seconds", 1800)
+        if isinstance(raw_seconds, bool):
+            raise ValueError("boolean duration")
+        seconds = float(raw_seconds)
+        if not isfinite(seconds):
+            raise ValueError("nonfinite duration")
+    except (TypeError, ValueError, OverflowError) as error:
+        raise CommandError("invalid_args", "seconds must be a finite number") from error
     if seconds <= 0:
-        self.endDndOverride_(None)
+        if not self._end_dnd_override():
+            raise CommandError("refused", "DND override was not ended")
         self._core_publish_state()
         return {"until": None}
+    seconds = min(MAX_DND_OVERRIDE_SECONDS, max(60.0, seconds))
     if not self._set_dnd_for_duration(mode, seconds):
         raise CommandError("refused", "DND override was not applied")
     self._core_publish_state()
-    until = getattr(getattr(self.settings, "dnd_override", None), "until_epoch", None)
-    return {"until": until if until is not None else time.time() + max(60.0, seconds), "mode": mode.value}
+    override = self.settings.dnd_settings().override
+    until = override.until_epoch if override is not None else None
+    return {"until": until if until is not None else time.time() + seconds, "mode": mode.value}
+
+
+@command("quiet_lease")
+def _cmd_quiet_lease(self, args):
+    from .dnd_controller import QuietLeaseConflict, QuietLeaseRefused
+
+    lease_id = args.get("lease_id")
+    action = args.get("action")
+    if not isinstance(lease_id, str) or not lease_id or len(lease_id) > 128 or not lease_id.isascii():
+        raise CommandError("invalid_args", "lease_id must be 1 to 128 ASCII characters")
+    if action not in ("acquire", "release"):
+        raise CommandError("invalid_args", "action must be acquire or release")
+    revision = args.get("expected_revision")
+    if action == "acquire" and (not isinstance(revision, str) or not revision or len(revision) > 128):
+        raise CommandError("invalid_args", "acquire requires expected_revision")
+    try:
+        if action == "acquire":
+            result = self.dnd_controller.acquire_quiet_lease(lease_id, revision)
+        else:
+            result = self.dnd_controller.release_quiet_lease(lease_id)
+    except QuietLeaseConflict as error:
+        raise CommandError("conflict", str(error)) from error
+    except QuietLeaseRefused as error:
+        raise CommandError("refused", str(error)) from error
+    self._core_publish_state()
+    return result
 
 
 @command("hold_awake")
@@ -3172,8 +3602,11 @@ def _cmd_list_history(self, args):
     # state), so it is fetched there; the frozen object then reads off-main.
     on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
     ledger = on_main(lambda: self.ensure_activity_ledger())
+    from .provider_event_identity import controller_event_identity
+    visual, privacy = controller_event_identity(self)
     rows = _history_rows_named(
-        self, history_rows(ledger, since=float(since) if isinstance(since, (int, float)) else None, limit=limit)
+        self, history_rows(ledger, since=float(since) if isinstance(since, (int, float)) else None,
+                           limit=limit, instance_visual=visual, privacy_mode=privacy)
     )
     # The power log's rows ("let go: Mac too hot", "put the Mac to sleep")
     # sit beside the sessions' in the one History list.
@@ -3334,6 +3767,8 @@ def _roster_document(
         ),
         acknowledged_keys=self._core_acknowledged_keys(),
         quiet_worker_ids=_quiet_worker_ids(self, statuses),
+        now=time.time(),
+        ask_stale_after_seconds=stale_after_seconds_for(getattr(self, "settings", None)),
     )
     rows = roster_rows(
         projected,
@@ -3381,7 +3816,9 @@ def _cmd_audit_export(self, args):
         limit=ROSTER_MAX_LIMIT,
     )
     ledger = self.ensure_activity_ledger()
-    rows = history_rows(ledger, since=since, limit=2000)
+    from .provider_event_identity import controller_event_identity
+    visual, privacy = controller_event_identity(self)
+    rows = history_rows(ledger, since=since, limit=2000, instance_visual=visual, privacy_mode=privacy)
 
     gaps: list[str] = []
     # ``ids`` narrows the bundle to the rows a surface is showing (the
@@ -3712,14 +4149,14 @@ def _cmd_confetti(self, args):
     except ValueError as error:
         raise CommandError("invalid_args", str(error)) from None
     result = {"session": request.session, "provider": request.provider, "unmatched": request.unmatched}
+    server = getattr(self, "_core", None)
+    if server is None:
+        raise CommandError("unavailable", "the event stream is not running")
     gate = getattr(self, "_core_confetti_gate", None)
     if gate is None:
         gate = self._core_confetti_gate = ConfettiGate()
     if not gate.admit(time.monotonic()):
         return {**result, "sent": False, "coalesced": True}
-    server = getattr(self, "_core", None)
-    if server is None:
-        raise CommandError("unavailable", "the event stream is not running")
     body = server.publish_event({"kind": CONFETTI_EVENT_KIND, **request.event_fields()})
     return {**result, "sent": True, "coalesced": False, "event": body.get("id"), "cursor": body.get("cursor")}
 
@@ -3740,6 +4177,111 @@ def _cmd_serve_token(self, args):
         "enabled": bool(getattr(self.settings, "serve_enabled", False)),
         "running": getattr(self, "_core_serve_server", None) is not None,
     }
+
+
+def _seal_of(self):
+    """The settings seal, or the refusal that says there is none."""
+    from .settings_seal import SealState
+
+    seal = getattr(self, "_core_seal", None)
+    if seal is None or seal.state is SealState.UNAVAILABLE:
+        raise CommandError(
+            "seal_unavailable",
+            "protected settings cannot be sealed: JR-Bar has no seal key (the Keychain was not available)",
+        )
+    return seal
+
+
+def _sync_companion_ledger(self) -> None:
+    """Put the consent files' seals (companion_seal.py) into the settings, which
+    seal them. Run loop only."""
+    companions = getattr(self, "_core_companions", None)
+    if companions is None:
+        return
+    ledger = companions.ledger()
+    if ledger != getattr(self.settings, "companion_seals", ledger):
+        self.settings = replace(self.settings, companion_seals=ledger)
+        self._core_settings_dirty = True
+        self._core_save_settings_soon()
+    companions.settled(ledger)
+
+
+def _seal_current_settings(self, seal) -> None:
+    """Seal what the daemon holds now and write it; nothing is sealed if the
+    write fails."""
+    before = seal.begin_adopt(self.settings.to_dict())
+    try:
+        written = False
+        for attempt in range(2):
+            self._core_settings_dirty = True
+            written = self._core_flush_settings()
+            if written:
+                break
+            if attempt == 0 and self._core_settings_conflict is not None:
+                # The file changed since it was read: take it, then write again.
+                self._core_adopt_settings_from_disk()
+                seal.begin_adopt(self.settings.to_dict())
+        if not written:
+            raise CommandError("refused", "could not write the sealed settings; nothing was sealed")
+    except BaseException:
+        seal.restore(before)
+        raise
+    self._core_publish_settings()
+
+
+@command("adopt_seal")
+def _cmd_adopt_seal(self, args):
+    """Seal the settings the daemon holds now as the baseline (docs/CORE-PROTOCOL.md,
+    "Protected settings"). The app sends it after it authenticates when the
+    daemon says ``not_sealed``, and from Settings > General > Advanced > Reset protection."""
+    seal = _seal_of(self)
+    first = seal.state.value != "sealed"
+    companions = getattr(self, "_core_companions", None)
+    if companions is not None:
+        companions.adopt_all()
+        _sync_companion_ledger(self)
+    _seal_current_settings(self, seal)
+    legacy = self._core_legacy()
+    legacy.log_status_bar(
+        "core: protected settings sealed" if first else "core: protected settings sealed again (reset)"
+    )
+    return {"state": seal.state.value}
+
+
+@command("keep_protected_change")
+def _cmd_keep_protected_change(self, args):
+    """Apply the protected values a foreign edit of settings.json tried to set
+    and the daemon ignored, and seal them: a person said yes in the app."""
+    seal = _seal_of(self)
+    candidate = seal.candidate()
+    if not candidate:
+        raise CommandError("nothing_to_keep", "there is no ignored change to keep")
+    companions = getattr(self, "_core_companions", None)
+    labels = companions.labels if companions is not None else {}
+    kept_files = [name for name in candidate if name in labels]
+    for label in kept_files:
+        # A consent file's ignored change: take it and seal it.
+        companions.keep(label)
+        del candidate[label]
+    if companions is not None:
+        _sync_companion_ledger(self)
+    document = self.settings.to_dict()
+    document.update(json.loads(json.dumps(candidate)))
+    try:
+        accepted = settings_from_document(document)
+    except Exception as error:
+        raise CommandError("invalid_value", f"the ignored settings did not validate: {error}") from error
+    kept = sorted(candidate)
+    previous = self.settings
+    self.settings = accepted
+    try:
+        _seal_current_settings(self, seal)
+    except BaseException:
+        self.settings = previous
+        raise
+    self._core_after_settings_change(kept)
+    self._core_legacy().log_status_bar("core: a protected setting changed outside JR-Bar was kept by the person")
+    return {"state": seal.state.value, "kept": sorted([*kept, *kept_files])}
 
 
 @command("doctor", main_thread=False)
@@ -3802,19 +4344,21 @@ def _cmd_session_in_front(self, args):
 
 @command("hooks_doctor", main_thread=False)
 def _cmd_hooks_doctor(self, args):
-    """``jrbar hooks doctor`` as data, for Settings > Agents: per provider,
+    """``jrbar hooks doctor`` as data, for Settings > Agents & Usage: per provider,
     whether its hooks are installed and in which shape, whether the decide
     lane is, when its last event arrived and how many are queued. Content
     free: paths, shapes, counts and times, never a payload. Repair is
     ``install_hooks``."""
     from .hook_doctor import hook_doctor_report
 
-    return hook_doctor_report()
+    report = hook_doctor_report()
+    _provider_updates_of(self).refresh_capabilities()
+    return report
 
 
 @command("t3code_integration")
 def _cmd_t3code_integration(self, args):
-    """Settings > Agents' T3 Code row: whether T3 Code's database is on
+    """Settings > Agents & Usage' T3 Code row: whether T3 Code's database is on
     this Mac, whether JR-Bar reads it, and the reader's last look. With
     ``enabled`` it flips the opt-in in integrations.json first and
     reconciles the T3 reader at once rather than on the next refresh."""
@@ -4326,6 +4870,9 @@ def build_headless_controller_class() -> type:
 
         @settings.setter
         def settings(self, value) -> None:
+            previous = getattr(self, "_core_settings_value", None)
+            if previous is not None:
+                scene_leases.settings_changed(self, previous, value)
             self._core_settings_value = value
             self._core_settings_generation = getattr(self, "_core_settings_generation", 0) + 1
             if getattr(self, "_core", None) is not None:
@@ -4340,6 +4887,9 @@ def build_headless_controller_class() -> type:
             self.notification_client = HeadlessNotificationClient()
             self._core = None
             self._core_socket_path = None
+            # Closed to privileged commands until ``run_core`` sets the one the
+            # process started with (core_auth.py).
+            self._core_authority = CoreAuthority.closed()
             self._core_lock = threading.RLock()
             # Serializes answer_ask's arm -> dispatch -> wait window now that
             # the command runs on the socket thread: two in-flight answers
@@ -4383,6 +4933,12 @@ def build_headless_controller_class() -> type:
             # A save that lost to an outside edit of settings.json, waiting
             # for the run loop to take the file (any thread may set it).
             self._core_settings_conflict: str | None = None
+            # The settings seal (settings_seal.py): set by ``run_core`` when the
+            # app gave the daemon a key; None leaves the settings unsealed.
+            self._core_seal = None
+            self._core_companions = None
+            self._core_seal_signature: tuple[int, int] | None = None
+            self._core_seal_revision = -1
             # (size, mtime_ns) of an unparsable settings.json at the last
             # look: the file is set aside only if the next look finds it
             # unchanged (an editor's save may still be in progress).
@@ -4399,7 +4955,6 @@ def build_headless_controller_class() -> type:
             # Clear while the launch's spool drain is unfinished: the ingress
             # holds live hooks behind it (hook_pending).
             self._core_backlog_gate: threading.Event | None = None
-            self._core_last_clear_batch = None
             self._core_housekeeping_timer = None
             self._core_supervision_timer = None
             self._core_last_stage_event = 0
@@ -4623,9 +5178,14 @@ def build_headless_controller_class() -> type:
                     self.start_remote_peer_refresh()
 
             def trim_logs() -> None:
-                threading.Thread(
-                    target=lambda: legacy.trim_oversized_logs(default_state_dir()), daemon=True
-                ).start()
+                def run() -> None:
+                    from .audit import run_state_housekeeping
+
+                    state_dir = default_state_dir()
+                    legacy.trim_oversized_logs(state_dir)
+                    run_state_housekeeping(state_dir)
+
+                threading.Thread(target=run, daemon=True).start()
 
             # AppKit swallows what a timer callback raises, so each step says
             # its own failure and never keeps the next one from starting.
@@ -4679,6 +5239,9 @@ def build_headless_controller_class() -> type:
             service = getattr(self, "_core_usage_history_service", None)
             if service is not None:
                 service.close()
+            native_reuse = getattr(self, "_core_native_graph_reuse", None)
+            if native_reuse is not None:
+                native_reuse.close()
             try:
                 self._core_usage_samples.save()
             except Exception as exc:
@@ -4748,6 +5311,46 @@ def build_headless_controller_class() -> type:
                 legacy.log_status_bar(f"core: linked sync tick failed: {traceback.format_exc(limit=3)}")
             if now - self._core_deck_probe_at >= DECK_PROBE_SECONDS:
                 self._core_deck_probe_now()
+            try:
+                self._core_seal_watch()
+            except Exception:
+                legacy.log_status_bar(f"core: settings seal watch failed: {traceback.format_exc(limit=3)}")
+
+        def _core_seal_watch(self) -> None:
+            """Look at settings.json when its size or time changed, so a protected
+            value edited by hand is noticed (and written over) within a second
+            instead of at the next save, and tell the app when the seal's news
+            changes."""
+            seal = self._core_seal
+            if seal is None:
+                return
+            from . import settings as settings_module
+            from .settings_seal import SealState
+
+            companions = getattr(self, "_core_companions", None)
+            if companions is not None:
+                companions.inspect_all()
+                _sync_companion_ledger(self)
+
+            if seal.state is not SealState.UNAVAILABLE:
+                signature = settings_module._file_signature(seal.path)
+                if signature != self._core_seal_signature:
+                    self._core_seal_signature = signature
+                    try:
+                        document, _digest = settings_module._read_document(seal.path)
+                    except Exception:
+                        document = None
+                    if document is not None:
+                        seal.inspect(document)
+                    if seal.needs_rewrite() and seal.state is SealState.SEALED:
+                        if self._core_settings_conflict is None:
+                            self._core_settings_conflict = "a protected setting changed outside JR-Bar"
+                        self._core_adopt_settings_from_disk()
+                        if self._core_settings_dirty:
+                            self._core_save_settings_soon()
+            if seal.revision != self._core_seal_revision:
+                self._core_seal_revision = seal.revision
+                self._core_publish_settings()
 
         def _core_repaint_finished_cues(self, now: float) -> bool:
             """True when a bounded cue just ended and the device needs the
@@ -4815,6 +5418,8 @@ def build_headless_controller_class() -> type:
 
         @objc.IBAction
         def refresh_(self, sender):
+            if scene_leases.leases(self).expire():
+                self._core_publish_settings()
             previous_asks = self._core_prev_asks
             previous_devices = self._core_prev_devices
             if self._core_settings_conflict is not None:
@@ -4922,6 +5527,16 @@ def build_headless_controller_class() -> type:
                 mapped = {"completed": "completed", "blocked": "failed", "threshold_crossed": "quota_crossed"}.get(kind)
                 if mapped is None:
                     continue
+                extra: dict[str, Any] = {}
+                if mapped == "quota_crossed":
+                    extra["instance"] = getattr(entry, "source_instance_id", None)
+                if mapped == "completed":
+                    # The finish banner's two facts: how long it ran and the
+                    # first line of its last message (finish_summary).
+                    extra["duration"] = entry.duration_seconds
+                    extra["summary"] = (
+                        getattr(self, "_completion_summaries", None) or {}
+                    ).get(entry.subject_id)
                 self._core_publish_event(
                     mapped,
                     session=entry.subject_id,
@@ -4929,6 +5544,7 @@ def build_headless_controller_class() -> type:
                     label=entry.label,
                     detail=entry.detail,
                     at=entry.occurred_at_epoch,
+                    **extra,
                 )
 
         def apply_escalation(self, *, allow_refresh: bool = False) -> None:
@@ -5342,6 +5958,10 @@ def build_headless_controller_class() -> type:
                 stage = int(self.current_escalation_stage())
             except Exception:
                 stage = 0
+            try:
+                failure_active = self.active_failure_signal() is not None
+            except Exception:
+                failure_active = False
             mode = str(aggregate.get("mode") or "")
             # ``needs_you`` counts answerable asks; ``mode`` is the whole
             # fleet's headline and says "needs_you" for a session that is
@@ -5355,6 +5975,12 @@ def build_headless_controller_class() -> type:
             return DotBeaconFacts(
                 ask_count=max(asks, 1 if mode == "needs_you" else 0),
                 blocked=bool(aggregate.get("failed") or 0) or mode == "failed",
+                failure_active=failure_active,
+                capacity_active=(
+                    self.settings.quota_alerts_enabled
+                    and time.monotonic() < getattr(self, "_capacity_notice_until", 0.0)
+                    and not self.quiet_active()
+                ),
                 unseen_completions=int(aggregate.get("ready") or 0),
                 escalation_stage=stage,
                 # The ``call`` role's busylight, and the shut lid that turns
@@ -5628,8 +6254,10 @@ def build_headless_controller_class() -> type:
             )
             if not timed:
                 if force:
-                    return controller.sync_program(plan.program, state, force=True)
-                return controller.sync_program(plan.program, state)
+                    return controller.sync_program(
+                        plan.program, state, force=True, hold_visible=False
+                    )
+                return controller.sync_program(plan.program, state, hold_visible=False)
             correction = bool(getattr(self.settings, "linked_dot_clock_correction", True))
             drifted = link.current_error(link.now())
             rate = link.rate_for_write(device.device_id, correction=correction, commit=force)
@@ -5659,6 +6287,7 @@ def build_headless_controller_class() -> type:
                 force=force,
                 trim_on_reassert=False,
                 timing=DeviceTiming(anchor=epoch.anchor, rate=rate, trim_ms=phase_trim),
+                hold_visible=False,
             )
             if getattr(write, "changed", False) and getattr(write, "error", None) is None:
                 # No read of the Dot's clock here: this is the write worker,
@@ -6062,7 +6691,8 @@ def build_headless_controller_class() -> type:
         def applyCreatorMicroSettings_(self, result) -> None:
             from .creator_micro_settings import apply_creator_micro_settings
 
-            apply_creator_micro_settings(self, result)
+            if not apply_creator_micro_settings(self, result):
+                return
             self._core_deck_integration_cache = None
             self._core_deck_settings_result = result
             self._core_deck_settings_done.set()
@@ -6298,7 +6928,7 @@ def build_headless_controller_class() -> type:
 
         def _core_deck_run_setup(self, start: Callable[[], Any]):
             """Start a setup operation (inspect / apply / restore) and wait
-            for its result on this (socket) thread; the main thread receives
+            for its result on the Deck worker; the main thread receives
             it through ``applyCreatorMicroSetupResult:``."""
             if getattr(self, "_creator_micro_setup_busy", False):
                 raise CommandError("busy", "Creator Micro 2 setup is already running.")
@@ -6603,6 +7233,11 @@ def build_headless_controller_class() -> type:
                 # lines; at default QoS they compete with the main thread
                 # that answers every Approve.
                 slow_lane_setup=_drop_to_utility_qos,
+                reset_replay_source=self._core_reset_replay_documents,
+                # Who may send a privileged command: set from the app's secret
+                # at startup (``run_core``). A controller built any other way
+                # gets the closed authority, which refuses them all.
+                authority=self._core_authority,
             )
             server.start()
             self._core = server
@@ -6715,6 +7350,7 @@ def build_headless_controller_class() -> type:
             processor = AppOwnedHookIngressProcessor(
                 hints.note if hints is not None else self.handle_hook_event_message,
                 deduplicator_for=self.resident_hook_deduplicators(),
+                confine_to=default_state_dir(),
             )
             return processor(request)
 
@@ -6857,18 +7493,43 @@ def build_headless_controller_class() -> type:
 
         def _core_read_only_settings(self) -> dict[str, Any]:
             """The daemon's own facts the Settings window shows but never
-            writes: today the cloud ingest bearer token's path."""
+            writes: the cloud ingest bearer token's path, and whether the
+            protected settings are sealed."""
             from .cloud_ingest import default_token_path
 
-            return {"cloud_ingest_token_path": str(default_token_path())}
+            seal = getattr(self, "_core_seal", None)
+            return {
+                "scene_state": scene_leases.scene_state(self),
+                "cloud_ingest_token_path": str(default_token_path()),
+                "settings_seal": (
+                    seal.document() if seal is not None else {"state": "unavailable", "changed": None}
+                ),
+            }
 
         def _core_publish_event(self, kind: str, **fields: Any) -> None:
             server = getattr(self, "_core", None)
             if server is None:
                 return
             document = {"kind": kind}
+            from .provider_event_identity import public_event_fields
+            fields = public_event_fields(self, kind, fields)
             document.update({key: value for key, value in fields.items() if value is not None})
             server.publish_event(document)
+
+        def _core_reset_replay_documents(self) -> list[dict[str, Any]]:
+            """The greet's durable ``quota_reset`` replay: persisted
+            resets still inside the app's freshness window that have no
+            closing app receipt yet (docs/CORE-PROTOCOL.md). Read at
+            greet time, so a late load of the delivery store is seen.
+            """
+            from .provider_reset_settings_action import reset_replay_documents
+
+            try:
+                from .provider_event_identity import public_event_fields
+                return [public_event_fields(self, "quota_reset", document)
+                        for document in reset_replay_documents(self, now=time.time())]
+            except Exception:
+                return []
 
         def _core_escalation_since(
             self,
@@ -7106,6 +7767,11 @@ def build_headless_controller_class() -> type:
                 return
             self._core_settings_unsettled = None
             self._core_settings_refusal = None
+            seal = self._core_seal
+            if seal is not None and seal.needs_rewrite():
+                # The file holds a protected value the seal does not vouch for:
+                # whatever else was taken, write the held values over it.
+                self._core_settings_dirty = True
             if outcome is OutsideEditOutcome.ADOPTED:
                 kept = (
                     "your previous settings are in settings.json.replaced"
@@ -7127,7 +7793,8 @@ def build_headless_controller_class() -> type:
                 )
             elif outcome is OutsideEditOutcome.MISSING:
                 legacy.log_status_bar("core: settings.json was removed outside JR-Bar; saving the current settings again")
-            else:
+            elif not (seal is not None and seal.needs_rewrite()):
+                # (A protected value that was ignored has its own line.)
                 legacy.log_status_bar("core: settings.json was touched outside JR-Bar; it holds the same settings")
 
         # -- facts -------------------------------------------------------------
@@ -7289,6 +7956,10 @@ def build_headless_controller_class() -> type:
                             provider_ended = record.end_reason == "hook"
                         if alive:
                             pid = record.pid
+                # A session whose ask JR-Bar closed by age ended by the Mac's
+                # own record, not the agent's: never the green "done".
+                if self.ask_dismissals.was_expired(status.provider, session_id):
+                    provider_ended = False
                 name, cwd = self._core_session_title(status.provider, session_id, pid or (record.pid if record else None), cwd)
             origin_label = getattr(status, "origin", None)
             origin = origin_document(origin_label if isinstance(origin_label, str) else None)
@@ -7701,6 +8372,8 @@ def build_headless_controller_class() -> type:
                 devices=self._core_device_facts(),
                 usage_state=usage_state,
                 usage_samples=samples,
+                usage_privacy_mode=getattr(getattr(self, "_jrbar_provider_presentation_settings", None),
+                                           "privacy_mode", True),
                 power=PowerFacts(
                     keep_awake=bool(getattr(self.keep_awake, "holding_requested", False)),
                     closed_lid_policy=str(self.settings.closed_lid_awake_policy),
@@ -7720,6 +8393,7 @@ def build_headless_controller_class() -> type:
                     [*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())] if snapshot else ()
                 ),
                 dnd_override_until=getattr(self.settings, "dnd_override_until_epoch", None),
+                dnd_override_revision=getattr(getattr(self, "dnd_controller", None), "override_revision", None),
                 answer_contracts=getattr(self, "_answer_contracts_by_source", None),
                 has_answer_handler=getattr(
                     getattr(self, "answer_handler_registry", None), "has_handler", None
@@ -7728,7 +8402,14 @@ def build_headless_controller_class() -> type:
                 catalog_generation=catalog_generation,
                 provider_updates=provider_updates,
                 quiet_worker_ids=_quiet_worker_ids(self, all_statuses),
+                ask_stale_after_seconds=stale_after_seconds_for(self.settings),
             )
+            firmware = getattr(self, "_jrbar_firmware", None)
+            if firmware is not None:
+                # The update job, while one exists (firmware_update.py).
+                job_document = firmware.job_document()
+                if job_document is not None:
+                    document["firmware"] = job_document
             try:
                 document["deck"] = self._core_deck_document(document["sessions"])
             except Exception:
@@ -7820,10 +8501,14 @@ def build_headless_controller_class() -> type:
             )
 
         def _core_build_lights(self) -> dict[str, Any]:
-            from .colors import lift_program_luminance
             from .dot_role import normalize_dot_role, upsample_program
             from .dot_role import replace_brightness_line as apply_brightness_line
-            from .led_status import delivered_brightness, led_count_for_target
+            from .led_status import (
+                NEUTRAL_CHANNEL_GAINS,
+                delivered_brightness,
+                led_count_for_target,
+                strip_transfer_metadata,
+            )
             from .presentation_policy import MotionClass
 
             glance = getattr(self, "_current_resolved_glance", None)
@@ -7840,9 +8525,11 @@ def build_headless_controller_class() -> type:
             surfaces: dict[str, SurfaceFacts] = {}
             hardware_anchor: float | None = None
             # The program a LINKED Screen Bar presents: what the followed
-            # strip was asked to play. Set alongside the ``hardware``
+            # strip received. Set alongside the ``hardware``
             # surface below.
             hardware_mirror_program: str | None = None
+            hardware_mirror_nominal: str | None = None
+            hardware_mirror_gains = NEUTRAL_CHANNEL_GAINS
             # Beside each mirror program: the device that plays it and the
             # display kind it renders, which decide the bar's ``brightness
             # N`` below. A preview carries no kind -- it plays at the
@@ -7852,6 +8539,8 @@ def build_headless_controller_class() -> type:
             # still follow hardware -- the Dot's program, widened 2 -> 8.
             dot_anchor: float | None = None
             dot_mirror_program: str | None = None
+            dot_mirror_nominal: str | None = None
+            dot_mirror_gains = NEUTRAL_CHANNEL_GAINS
             dot_mirror_source: tuple[Any, str | None] | None = None
             first_strip = True
             # Connectivity, tracked apart from surfaces: a connected device
@@ -7878,7 +8567,7 @@ def build_headless_controller_class() -> type:
                 preview = self._core_previews.get("hardware" if leds != 2 else "dot") or self._core_previews.get(device.device_id)
                 previewing = preview is not None and device.device_id in preview.device_ids
                 if previewing:
-                    program, anchor = preview.program, preview.started_epoch
+                    anchor = preview.started_epoch
                 # The recorded display kind is only rewritten on a
                 # successful sync; a missed write leaves it frozen at a
                 # long-finished claim (a quota alert reported "capacity"
@@ -7901,29 +8590,22 @@ def build_headless_controller_class() -> type:
                 if leds != 2 and first_strip:
                     first_strip = False
                     hardware_anchor = anchor
-                    # NOMINAL, not the surface's written bytes: last_program
-                    # has already been through the strip's write boundary
-                    # (die gains, the light-domain brightness decode), and
-                    # replaying those bytes on the Screen Bar would wear a
-                    # calibration the display does not have -- the linked
-                    # Dot replays the nominal text for the same reason
-                    # (_core_note_hardware_write). Under a preview the
-                    # surface entry IS the program, and it is what the
-                    # strip is actually showing.
-                    hardware_mirror_program = (
-                        program
-                        if previewing
-                        else getattr(controller, "last_nominal_program", None) or program
+                    # Drive colors retain the strip's clipped tails and hue floor.
+                    # The display removes the source calibration after sampling.
+                    hardware_mirror_program = program
+                    hardware_mirror_nominal = getattr(controller, "last_nominal_program", None) or program
+                    hardware_mirror_gains = (
+                        preview.channel_gains if previewing and preview.channel_gains is not None
+                        else getattr(controller, "channel_gains", NEUTRAL_CHANNEL_GAINS)
                     )
                     hardware_mirror_source = (device, None if previewing else recorded_kind)
                 if leds == 2:
-                    # Same rule as the strip: the NOMINAL text, not the
-                    # written bytes, for the lone-Dot mirror below.
                     dot_anchor = anchor
-                    dot_mirror_program = (
-                        program
-                        if previewing
-                        else getattr(controller, "last_nominal_program", None) or program
+                    dot_mirror_program = program
+                    dot_mirror_nominal = getattr(controller, "last_nominal_program", None) or program
+                    dot_mirror_gains = (
+                        preview.channel_gains if previewing and preview.channel_gains is not None
+                        else getattr(controller, "channel_gains", NEUTRAL_CHANNEL_GAINS)
                     )
                     dot_mirror_source = (device, None if previewing else recorded_kind)
                 surfaces[name] = SurfaceFacts(
@@ -8000,6 +8682,8 @@ def build_headless_controller_class() -> type:
             mirror_anchor = hardware_anchor
             mirror_program = hardware_mirror_program
             mirror_source = hardware_mirror_source
+            mirror_nominal = hardware_mirror_nominal
+            mirror_gains = hardware_mirror_gains
             if mirror is None and "dot" in surfaces and dot_role not in ("asks", "call"):
                 widened = upsample_program(
                     dot_mirror_program or surfaces["dot"].program,
@@ -8011,6 +8695,8 @@ def build_headless_controller_class() -> type:
                     mirror_anchor = dot_anchor
                     mirror_program = widened
                     mirror_source = dot_mirror_source
+                    mirror_nominal = dot_mirror_nominal
+                    mirror_gains = dot_mirror_gains
             virtual = self.virtual_status_device
             call = getattr(virtual, "_live_program_call", None)
             virtual_device = next(
@@ -8035,6 +8721,10 @@ def build_headless_controller_class() -> type:
                 bar_code = self.settings.brightness_for_device(legacy.VIRTUAL_DEVICE_ID)
                 bar_brightness = bar_code / 255.0
             mirror_code = bar_code
+            mirror_transfer = strip_transfer_metadata(
+                mirror_gains,
+                getattr(virtual_device, "channel_gains", NEUTRAL_CHANNEL_GAINS),
+            )
             mirror_device, mirror_kind = mirror_source or (None, None)
             if (
                 linked
@@ -8059,7 +8749,7 @@ def build_headless_controller_class() -> type:
                 # The mirrored N over the strip's signal plan is that
                 # intensity, the one term the two plans do not share.
                 source_plan = self._core_signal_brightness_code(mirror_device) or 0
-                played = delivered_brightness(mirror_program or mirror.program) * 255.0
+                played = delivered_brightness(mirror_nominal or mirror.program) * 255.0
                 intensity = min(1.0, played / source_plan) if source_plan > 0 else 1.0
                 bar_signal = (
                     self._core_signal_brightness_code(virtual_device)
@@ -8094,14 +8784,11 @@ def build_headless_controller_class() -> type:
                     # Linked means the bar FOLLOWS the mirrored device: its
                     # own program on its own anchor -- a lone Dot's widened
                     # to the bar's eight -- not the virtual render's
-                    # re-reading of the same state. The two renderers draw
-                    # from different palettes, which is how one anchor once
-                    # carried two programs that read as "blink different".
-                    # The lift is legibility only: codes the device can show
-                    # as faint light read as "off" on a display.
+                    # re-reading of the same state. The display's brightness
+                    # line is its own gain. The renderer samples drive colors
+                    # before decoding emission and removing source calibration.
                     mirrored = apply_brightness_line(
-                        lift_program_luminance(mirror_program or mirror.program),
-                        mirror_code,
+                        mirror_program or mirror.program, mirror_code
                     )
                     surfaces["screen_bar"] = SurfaceFacts(
                         program=mirrored,
@@ -8114,6 +8801,7 @@ def build_headless_controller_class() -> type:
                         why=mirror.why,
                         override=override,
                         why_detail=mirror.why_detail,
+                        strip_transfer=mirror_transfer,
                     )
                 else:
                     surfaces["screen_bar"] = SurfaceFacts(
@@ -8131,8 +8819,7 @@ def build_headless_controller_class() -> type:
                 # The bar only mirrors the device while the two are linked;
                 # unlinked and idle, it has no program of its own to claim.
                 mirrored = apply_brightness_line(
-                    lift_program_luminance(mirror_program or mirror.program),
-                    mirror_code,
+                    mirror_program or mirror.program, mirror_code
                 )
                 surfaces["screen_bar"] = SurfaceFacts(
                     program=mirrored,
@@ -8149,6 +8836,7 @@ def build_headless_controller_class() -> type:
                     why=mirror.why,
                     override=override,
                     why_detail=mirror.why_detail,
+                    strip_transfer=mirror_transfer,
                 )
             try:
                 auto_dim = self.auto_dim_result().to_dict()
@@ -8257,19 +8945,15 @@ def build_headless_controller_class() -> type:
             }
 
         def _core_doctor_document(self) -> dict[str, Any]:
-            from .doctor import collect_diagnostics, daemon_probes
+            from .doctor import collect_diagnostics
             from .install import hook_shim_path
             from .memory_probe import memory_report
 
             checks: list[dict[str, Any]] = []
             try:
-                result = collect_diagnostics(probes=daemon_probes())
+                result = collect_diagnostics()
                 for finding in result.findings:
                     healthy = finding.code.value in _HEALTHY_DIAGNOSTIC_CODES
-                    if finding.check.value in _APP_OWNED_DIAGNOSTICS:
-                        # Alcove following is the app's job now; the daemon
-                        # not running it is the design, not a fault.
-                        healthy = True
                     checks.append(
                         {
                             "name": finding.check.value,
@@ -8438,6 +9122,14 @@ def build_core_parser() -> argparse.ArgumentParser:
 def run_core(argv: list[str] | None = None) -> int:
     args = build_core_parser().parse_args(argv)
     from . import status_bar_legacy as legacy_module
+
+    # First of all: take the secret the supervising app put on our stdin pipe
+    # (or note that there is none) before anything can start a child that
+    # would inherit the pipe. The log line goes out after the log exists.
+    startup_notes: list[str] = []
+    authority = authority_from_process(log=startup_notes.append)
+    for note in startup_notes:
+        legacy_module.log_status_bar(note)
     from .ipc import another_instance_alive
     from .memory_probe import start_if_requested
 
@@ -8498,8 +9190,43 @@ def run_core(argv: list[str] | None = None) -> int:
     compose_status_bar_application()
     controller_class = build_headless_controller_class()
     application = NSApplication.sharedApplication()
+    # Before the controller loads the settings: every read of settings.json in
+    # this process goes through the seal (settings_seal.py).
+    from .settings import install_document_seal, settings_file_path
+    from .settings_seal import SettingsSeal
+
+    seal = SettingsSeal(
+        authority.seal_key,
+        path=settings_file_path(),
+        previously_sealed=authority.seal_key is not None and not authority.seal_key_is_new,
+        log=lambda line: legacy_module.log_status_bar(line),
+    )
+    install_document_seal(seal)
+    # The seals of the consent files beside it (companion_seal.py). Until the
+    # controller has read the settings there is no ledger, and nothing is checked.
+    from .companion_seal import CompanionSeals, install_companion_seals
+    from .integration_settings import default_integration_settings_path
+    from .provider_browser_consent import default_browser_consent_path
+    from .provider_usage_settings import default_provider_usage_settings_path
+
+    holder: list[Any] = []
+    companions = CompanionSeals(
+        seal,
+        {
+            "provider_usage": default_provider_usage_settings_path(),
+            "browser_consent": default_browser_consent_path(),
+            "integrations": default_integration_settings_path(),
+        },
+        lambda: holder[0].settings.companion_seals if holder else None,
+        log=lambda line: legacy_module.log_status_bar(line),
+    )
+    install_companion_seals(companions)
     controller = controller_class.alloc().init()
+    holder.append(controller)
+    controller._core_companions = companions
+    controller._core_seal = seal
     controller._core_socket_path = Path(args.socket).expanduser() if args.socket else None
+    controller._core_authority = authority
     _install_log_mirror(lambda: getattr(controller, "_core", None))
     application.setDelegate_(controller)
 

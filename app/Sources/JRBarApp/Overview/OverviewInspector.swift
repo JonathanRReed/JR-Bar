@@ -358,12 +358,27 @@ struct OverviewSessionInspector: View {
                 Label("Destructive — it can lose work if it runs by mistake", systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 10.5)).foregroundStyle(.red)
             }
+            if ask.hasDetail {
+                // Opened only by the person; reading it answers nothing.
+                AskDetailToggle(ask: ask, labelled: true, size: 9)
+                if AskExpansion.shared.isShowing(ask) {
+                    AskDetailView(ask: ask, height: 140,
+                                  onOpenSession: entry.session.remote ? nil : { Task { await store.openSession(entry.id) } })
+                }
+            }
             if !entry.session.remote, AskVerbs.chooses(ask) {
                 // A held question: its options are the answer, through the
                 // agent's own hook, from whatever terminal hosts it.
                 choiceSection(ask: ask)
             } else {
                 answerButtons(ask: ask)
+            }
+            if ask.isDismissible, !entry.session.remote {
+                // A long-unanswered ask: one click clears it from this Mac.
+                // Not an answer; kept out of the verbs' disabled state.
+                Button("Dismiss") { Task { await store.dismissStaleAsk(entry: entry) } }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .help("Hide this ask on this Mac. The agent is not told anything and its own prompt is unchanged.")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -520,33 +535,15 @@ struct OverviewSessionInspector: View {
     private var timelineBody: some View {
         if store.timelineSessionID == entry.id {
             if let page = store.timelinePage {
-                // The one timeline view History and the Data Hoarder mount
-                // too: the story card, the honest gaps, the kind chips, jump
-                // to error and the rows.
-                if let archived = store.archivedTimeline, archived.id == entry.id {
-                    // The live transcript is gone but the Data Hoarder kept
-                    // it: the same view, labelled as the archive's.
-                    ReconstructedTimelineView(
-                        reconstruction: archived.reconstruction,
-                        viewState: store.timelineViewState, embedded: true,
-                        sourceNote: "Archived copy · \(archived.record.name) — the live transcript is gone")
-                } else {
-                    ReconstructedTimelineView(reconstruction: store.timelineReconstruction,
-                                              viewState: store.timelineViewState, embedded: true,
-                                              liveTail: OverviewStore.liveTail(for: entry))
-                }
-                if page.gaps.contains("transcript_not_found"), store.onOpenArchive != nil {
-                    Button {
-                        store.onOpenArchive?(OverviewStore.archiveSearchTerm(for: entry))
-                    } label: {
-                        Label("Search archive for this session", systemImage: "archivebox")
-                            .font(.system(size: 10.5))
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.orange)
-                    .help("Open Data Hoarder seeded with this session's id")
-                }
+                // The one timeline view History mounts too: the story card,
+                // the honest gaps, the kind chips, jump to error and the rows.
+                ReconstructedTimelineView(reconstruction: store.timelineReconstruction,
+                                          viewState: store.timelineViewState, embedded: true,
+                                          liveTail: OverviewStore.liveTail(for: entry))
                 if let file = page.file {
-                    archiveSourceLine(file: file, total: page.total)
+                    Text("Source: \(file) · \(page.total) items")
+                        .font(.system(size: 9.5)).foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
                 }
             } else if store.timelineLoading {
                 HStack(spacing: 6) {
@@ -555,35 +552,6 @@ struct OverviewSessionInspector: View {
                 }
             }
         }
-    }
-
-    /// The transcript's source line: path + item count, plus the Data
-    /// Hoarder's verdict when the archive probe answered — "Archived"
-    /// with a Reveal affordance, or nothing when the archive can't say.
-    @ViewBuilder
-    private func archiveSourceLine(file: String, total: Int) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("Source: \(file) · \(total) items")
-                .font(.system(size: 9.5)).foregroundStyle(.tertiary)
-                .textSelection(.enabled)
-            if let state = store.archiveStates[file], let row = state {
-                HStack(spacing: 6) {
-                    Text("Archived")
-                        .font(.system(size: 8.5, weight: .semibold))
-                        .padding(.horizontal, 5).padding(.vertical, 1.5)
-                        .background(Color.green.opacity(0.15), in: .capsule)
-                        .foregroundStyle(.green)
-                    Button("Reveal") {
-                        NSWorkspace.shared.activateFileViewerSelecting(
-                            [URL(fileURLWithPath: row.path)])
-                    }
-                    .buttonStyle(.plain).font(.system(size: 9.5))
-                    .foregroundStyle(.secondary)
-                    .help("Show the transcript in Finder")
-                }
-            }
-        }
-        .task { await store.probeArchive(file: file) }
     }
 
     // MARK: Observed tools

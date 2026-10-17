@@ -82,6 +82,17 @@ protocol DockRunningApp {
 extension NSRunningApplication: DockRunningApp {}
 
 enum DockSwitcherList {
+    /// Resolve filters by bundle id, so a relaunch with a new pid stays
+    /// excluded. An app without a bundle id remains available.
+    static func excludedPIDs<App>(_ apps: [pid_t: App], bundleIDs: [String],
+                                  bundleID: (App) -> String?) -> Set<pid_t> {
+        let excluded = Set(bundleIDs)
+        guard !excluded.isEmpty else { return [] }
+        return Set(apps.compactMap { pid, app in
+            bundleID(app).map { excluded.contains($0) } == true ? pid : nil
+        })
+    }
+
     /// The running apps keyed by pid. A quit app's object lingers in
     /// `NSWorkspace.runningApplications` for a turn and reads pid -1 (see
     /// `RunningAppsLedger`), so two apps quitting as ⌥⇥ is pressed would
@@ -162,6 +173,7 @@ enum DockSwitcherList {
     /// follow grouped by their app's best z position.
     static func order(rows: [SwitcherWindowRow],
                       offRows: [SwitcherWindowRow] = [],
+                      excludedPIDs: Set<pid_t> = [],
                       windowsForApp: (pid_t) -> [DockPreviewWindow],
                       appName: (pid_t) -> String,
                       icon: (pid_t) -> NSImage?) -> [SwitcherItem] {
@@ -179,6 +191,7 @@ enum DockSwitcherList {
         }
 
         for (rank, row) in rows.enumerated() {
+            guard !excludedPIDs.contains(row.pid) else { continue }
             if appRank[row.pid] == nil { appRank[row.pid] = rank }
             let candidates = axWindows(for: row.pid)
             let resolution = matchResult(row: row, in: candidates)
@@ -204,7 +217,7 @@ enum DockSwitcherList {
         // the same unmatched AX pool so a row that finds its element
         // takes it (and the AX leftover below skips it).
         var offByPID: [pid_t: [SwitcherWindowRow]] = [:]
-        for row in offRows { offByPID[row.pid, default: []].append(row) }
+        for row in offRows where !excludedPIDs.contains(row.pid) { offByPID[row.pid, default: []].append(row) }
 
         // Off-screen and minimized windows, app by app in recency.
         let pids = Set(unmatched.keys).union(offByPID.keys)
@@ -437,8 +450,8 @@ enum DockSwitcherList {
     /// the order given (the workspace's), less every app `listed` already
     /// shows. The card carries no window: picking it activates the app.
     static func windowlessItems(apps: [(pid: pid_t, name: String, icon: NSImage?)],
-                                listed: Set<pid_t>) -> [SwitcherItem] {
-        apps.filter { !listed.contains($0.pid) }.map { app in
+                                listed: Set<pid_t>, excludedPIDs: Set<pid_t> = []) -> [SwitcherItem] {
+        apps.filter { !listed.contains($0.pid) && !excludedPIDs.contains($0.pid) }.map { app in
             var item = SwitcherItem(id: "app\(app.pid)", pid: app.pid, appName: app.name, icon: app.icon,
                                     title: app.name, minimized: false, onScreen: false,
                                     element: nil, windowID: nil)
@@ -894,6 +907,23 @@ final class SwitcherKeyTap: @unchecked Sendable {
         }, userInfo: Unmanaged.passUnretained(owner).toOpaque())
     }
 
+    /// How the tap is asked back on, and whether it is. A seam for tests.
+    var tapControl = EventTapHealth.Control.system
+
+    /// The system switched the tap off and would not switch it on again (the
+    /// Accessibility grant was pulled). Runs on the tap's thread, which
+    /// `stop()` waits for, so the tap comes down on main: it is then not
+    /// live, and `DockSwitcherController.reviveTap` asks for a new one.
+    private func tapRefusedReenable(_ dead: CFMachPort) {
+        Self.log.error("switcher tap: the system turned it off and would not turn it back on — the chords stay the system's until it can be made again")
+        let deadID = ObjectIdentifier(dead)
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.lock.withLock({ self.tap }).map(ObjectIdentifier.init) == deadID else { return }
+            self.stop()
+        }
+    }
+
     /// The tap runs on a thread of its own (`DockTapThread`): it is
     /// active, so every key and right click on the Mac waits on its
     /// callback, and on the main run loop that meant waiting on whatever
@@ -950,7 +980,15 @@ final class SwitcherKeyTap: @unchecked Sendable {
     /// here may wait on the main thread.
     func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap = lock.withLock({ tap }) { CGEvent.tapEnable(tap: tap, enable: true) }
+            if let tap = lock.withLock({ tap }),
+               !EventTapHealth.reenable(tap, control: tapControl) {
+                tapRefusedReenable(tap)
+            }
+            // While the tap was off a modifier may have lifted, and its
+            // release was the commit: read the keys as they are now, or
+            // an open strip stays up swallowing every key until the next
+            // modifier change.
+            handleModifiers(liveModifierFlags())
             return Unmanaged.passUnretained(event)
         }
         lock.lock()
@@ -1085,6 +1123,17 @@ final class SwitcherKeyTap: @unchecked Sendable {
         }
 
         guard type == .flagsChanged else { return Unmanaged.passUnretained(event) }
+        handleModifiers(flags)
+        return Unmanaged.passUnretained(event)
+    }
+
+    /// The modifier keys as the session holds them right now. A seam so
+    /// a test can say what is held.
+    var liveModifierFlags: () -> CGEventFlags = { CGEventSource.flagsState(.combinedSessionState) }
+
+    /// One modifier change — or, after a disabled tap, the keys as they
+    /// are now.
+    private func handleModifiers(_ flags: CGEventFlags) {
         // ⌘'s edge is tracked on every modifier change, open or not, so
         // the first change after an open compares against the truth.
         let commandDown = flags.contains(.maskCommand)
@@ -1117,7 +1166,6 @@ final class SwitcherKeyTap: @unchecked Sendable {
         } else if commitOption {
             DispatchQueue.main.async { [weak self] in self?.onCommit() }
         }
-        return Unmanaged.passUnretained(event)
     }
 
     /// DockDoor's quick quit without Apple's menu flashing over it: a
@@ -1172,7 +1220,9 @@ final class SwitcherKeyTap: @unchecked Sendable {
     var keyboard: DockKeyboardLayout = .shared
 
     private func swallow(_ action: @escaping @MainActor () -> Void) -> Unmanaged<CGEvent>? {
-        DispatchQueue.main.async { Task { @MainActor in action() } }
+        // One hop, like the commit and tab hops: two (a queue, then a
+        // Task) let a modifier release overtake the key that preceded it.
+        DispatchQueue.main.async { MainActor.assumeIsolated { action() } }
         return nil
     }
 }
@@ -1225,6 +1275,8 @@ final class DockSwitcherController {
     /// The card's face pick: false keeps the strip to icons and never
     /// captures.
     var stillsWanted: () -> Bool = { true }
+    /// Independent of apps whose Dock previews are excluded.
+    var excludedBundleIDs: () -> [String] = { [] }
     /// The daemon's live agent sessions, reduced to marks — the Dock
     /// utility wires it to `state.sessions`. Empty means no lane.
     var agentMarks: () -> [DockAgentMark] = { [] }
@@ -1295,6 +1347,9 @@ final class DockSwitcherController {
 
     init(tap: SwitcherKeyTap = SwitcherKeyTap()) {
         self.tap = tap
+        EventTapRevival.shared.register(self, key: "dock-switcher",
+                                        isLive: { $0.tap.tapLive },
+                                        revive: { $0.reviveTap() })
     }
 
     /// Try the key tap again if macOS refused it when the switcher
@@ -1358,6 +1413,7 @@ final class DockSwitcherController {
         guard running else { return }
         running = false
         tap.stop()
+        tap.keyboard.stopWatching()
         for observer in workspaceObservers {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
@@ -1394,6 +1450,7 @@ final class DockSwitcherController {
         var signature = DockSwitcherList.signature(rows: DockSwitcherList.onScreenRows(),
                                                    offRows: DockSwitcherList.offScreenRows(),
                                                    marks: agentMarks())
+        signature.formUnion(excludedBundleIDs().map { "excluded:\($0)" })
         if appMode {
             for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
                 signature.insert("p\(app.processIdentifier)")
@@ -1590,12 +1647,14 @@ final class DockSwitcherController {
         let rows = DockSwitcherList.onScreenRows()
         let offRows = DockSwitcherList.offScreenRows()
         let apps = DockSwitcherList.appsByPID(NSWorkspace.shared.runningApplications)
+        let excluded = DockSwitcherList.excludedPIDs(apps, bundleIDs: excludedBundleIDs(),
+                                                    bundleID: { $0.bundleIdentifier })
         let now = ProcessInfo.processInfo.systemUptime
         let own = ProcessInfo.processInfo.processIdentifier
         var asked = Set<pid_t>()
         var reads: [DockSwitcherList.WindowRead] = []
         for pid in (rows + offRows).map(\.pid) where asked.insert(pid).inserted {
-            guard apps[pid] != nil, pid != own, !axSkips(pid, now: now) else { continue }
+            guard apps[pid] != nil, pid != own, !excluded.contains(pid), !axSkips(pid, now: now) else { continue }
             reads.append(DockSwitcherList.WindowRead(pid: pid, stamp: AppleDockReader.nextStamp()))
         }
         return ListRead(rows: rows, offRows: offRows, apps: apps, reads: reads, at: now)
@@ -1623,9 +1682,14 @@ final class DockSwitcherController {
             }
         }
         let apps = read.apps
+        // Re-read the filter when an async list lands. Settings may
+        // have changed while the Accessibility read was in flight.
+        let excluded = DockSwitcherList.excludedPIDs(apps, bundleIDs: excludedBundleIDs(),
+                                                    bundleID: { $0.bundleIdentifier })
         var items = DockSwitcherList.order(
             rows: read.rows,
             offRows: read.offRows,
+            excludedPIDs: excluded,
             windowsForApp: { windows.windows[$0] ?? [] },
             appName: { apps[$0]?.localizedName ?? "App" },
             icon: { apps[$0]?.icon })
@@ -1634,9 +1698,11 @@ final class DockSwitcherController {
             let running = NSWorkspace.shared.runningApplications.filter {
                 $0.activationPolicy == .regular && !$0.isTerminated && $0.processIdentifier != own
             }
+            let windowlessExcluded = DockSwitcherList.excludedPIDs(DockSwitcherList.appsByPID(running),
+                bundleIDs: excludedBundleIDs(), bundleID: { $0.bundleIdentifier })
             items += DockSwitcherList.windowlessItems(
                 apps: running.map { ($0.processIdentifier, $0.localizedName ?? "App", $0.icon) },
-                listed: Set(items.map(\.pid)))
+                listed: Set(items.map(\.pid)), excludedPIDs: windowlessExcluded)
         }
         items = DockSwitcherList.arranged(items, order: order())
         // The Dock's unread badges ride the window cards too — Mail's 3
@@ -1746,6 +1812,8 @@ final class DockSwitcherController {
                 && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
         }
         let byPID = DockSwitcherList.appsByPID(apps)
+        let excluded = DockSwitcherList.excludedPIDs(byPID, bundleIDs: excludedBundleIDs(),
+                                                    bundleID: { $0.bundleIdentifier })
         var ordered: [pid_t] = []
         var seen = Set<pid_t>()
         /// Each app's front window — its card's still, so the ⌘⇥ strip
@@ -1761,7 +1829,7 @@ final class DockSwitcherController {
         }
         let marks = agentMarks()
         return ordered.compactMap { pid -> SwitcherItem? in
-            guard let app = byPID[pid] else { return nil }
+            guard !excluded.contains(pid), let app = byPID[pid] else { return nil }
             return SwitcherItem(id: "app\(pid)", pid: pid,
                                 appName: app.localizedName ?? "App",
                                 icon: app.icon,
@@ -1984,7 +2052,7 @@ final class DockSwitcherController {
                    note: DockAgentGuard.note(for: mark, again: again))
         let key = "\(verb):\(item.id)"
         DispatchQueue.main.asyncAfter(deadline: .now() + DockAgentGuard.window) { [weak self] in
-            guard let self, !self.agentGuard.isArmed(key, now: CACurrentMediaTime()) else { return }
+            guard let self, self.agentGuard.expire(key, now: CACurrentMediaTime()) else { return }
             self.panel?.disarm()
         }
     }
@@ -2192,8 +2260,8 @@ final class DockSwitcherPanel: NSPanel {
         hosting.invalidateIntrinsicContentSize()
         hosting.layoutSubtreeIfNeeded()
         let fit = hosting.intrinsicContentSize
-        let screen = (NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
-                      ?? NSScreen.main ?? NSScreen.screens[0])
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) })
+                ?? NSScreen.main ?? NSScreen.screens.first else { return }
         let width = min(max(fit.width, 240), screen.visibleFrame.width - 60)
         let height = max(fit.height, 96)
         let origin = NSPoint(x: screen.visibleFrame.midX - width / 2,
@@ -2372,9 +2440,13 @@ struct DockSwitcherView: View {
     private var cards: some View {
         HStack(alignment: .top, spacing: metrics.cardGap) {
             ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
-                card(item, selected: index == model.selection)
+                Button { model.onPick(index) } label: {
+                    card(item, selected: index == model.selection)
+                }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(help(for: item))
+                    .accessibilityAddTraits(index == model.selection ? .isSelected : [])
                     .id(item.id)
-                    .onTapGesture { model.onPick(index) }
                     .onHover { inside in
                         if inside { model.onHover(index) }
                     }

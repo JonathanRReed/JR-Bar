@@ -96,7 +96,7 @@ def test_a_focus_never_holds_a_critical_signal(kind: str) -> None:
     assert grant.reason == signals.INTERRUPT_GRANTED
     # Ratified 2026-08-19: finite arrival taps + a steady anchor that
     # STANDS until dealt with -- not perpetual blinking.
-    assert grant.stands_until_dealt_with
+    assert grant.hold_seconds is None
     assert grant.repetitions == signals.ATTENTION_ARRIVAL_TAPS
     assert grant.hold_seconds is None
 
@@ -242,7 +242,6 @@ def test_silent_focus_outbound_reason_uses_the_final_effect_axes__and_2_more() -
     assert not grant.banner_allowed
     assert not grant.audible
     assert not grant.webhook_allowed
-    assert not grant.outbound_allowed
     assert grant.outbound_reason == signals.INTERRUPT_REFUSED_DND
 
     # --- scenario: a_courtesy_burst_is_exactly_three_and_is_configurable
@@ -643,27 +642,42 @@ def test_the_escalation_chime_asks_the_gate_rather_than_re_deriving_it(
         assert sounds == ["Glass"], "and it honours a grant"
 
 
-def test_the_burst_budget_sets_how_long_a_sweep_claims_the_bar(controller) -> None:
+class _FrozenMonotonic:
+    """The controller's `time` with a monotonic clock that only the test moves."""
+
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def __getattr__(self, name: str):
+        return getattr(time, name)
+
+
+def test_the_burst_budget_sets_how_long_a_sweep_claims_the_bar(controller, monkeypatch) -> None:
     """The wired proof of B: the "burst of exactly 3" number is the one
-    in the budget, and moving it moves the surface."""
+    in the budget, and moving it moves the surface. The clock is held
+    still, so a slow machine cannot move the hold it measures."""
+    from jrbar import status_bar_legacy
+
+    clock = _FrozenMonotonic(50_000.0)
+    monkeypatch.setattr(status_bar_legacy, "time", clock)
+    monkeypatch.setattr(controller, "_presentation_monotonic", clock.monotonic)
     controller.settings = controller.settings.with_completion_sweep_enabled(True)
     controller.track_completions((_status("codex", AgentMode.WORKING),))
-    started = time.monotonic()
     controller.track_completions((_status("codex", AgentMode.COMPLETED),))
     style = controller.settings.signal_style(signals.SIGNAL_COMPLETION)
-    three = controller.completion_sweep_until - started
-    assert three == pytest.approx(
-        signal_hold_seconds(style, burst=3), abs=0.5
-    )
+    three = controller.completion_sweep_until - clock.now
+    assert three == pytest.approx(signal_hold_seconds(style, burst=3))
 
     controller.settings = controller.settings.with_alert_burst(6)
     controller.last_agent_modes = {}
     controller.track_completions((_status("codex", AgentMode.WORKING),))
-    restarted = time.monotonic()
     controller.track_completions((_status("codex", AgentMode.COMPLETED),))
-    six = controller.completion_sweep_until - restarted
+    six = controller.completion_sweep_until - clock.now
     assert six > three
-    assert six == pytest.approx(signal_hold_seconds(style, burst=6), abs=0.5)
+    assert six == pytest.approx(signal_hold_seconds(style, burst=6))
 
 
 def test_a_signal_dialled_into_strobe_range_is_slowed_before_the_hardware__and_2_more(controller,) -> None:
@@ -874,7 +888,7 @@ def test_charging_trickle_claims_the_idle_strip_and_yields_to_agents(
     )
 
     # The off-switch is respected.
-    controller.settings = controller.settings.with_battery_charging_idle(False)
+    controller.settings = replace(controller.settings, battery_charging_idle_enabled=False)
     assert (
         controller.active_led_display_kind_for_device(device, charging)
         == status_bar.LED_DISPLAY_AGENT

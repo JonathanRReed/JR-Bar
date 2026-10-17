@@ -133,13 +133,17 @@ public struct EffectParameter: Codable, Hashable, Sendable, Identifiable {
         case .boolean:
             return .toggle
         case .integer:
-            guard let minimum, let maximum else { return .numberField }
-            let range = Int(minimum)...Int(max(minimum, maximum))
+            guard let minimum, let maximum, minimum <= maximum,
+                  let lower = Int(exactly: minimum.rounded(.up)),
+                  let upper = Int(exactly: maximum.rounded(.down)), lower <= upper
+            else { return .numberField }
+            let range = lower...upper
             // A seed spans billions: a slider is useless there.
-            if range.count > 64 { return .stepper(range: range) }
+            if maximum - minimum >= 64 { return .stepper(range: range) }
             return .integerSlider(range: range)
         case .number:
-            guard let minimum, let maximum, maximum > minimum else { return .numberField }
+            guard let minimum, let maximum, minimum.isFinite, maximum.isFinite,
+                  maximum > minimum, (maximum - minimum).isFinite else { return .numberField }
             let span = maximum - minimum
             let step: Double
             if span <= 1 { step = 0.01 } else if span <= 10 { step = 0.1 } else if span <= 100 { step = 1 } else { step = 5 }
@@ -161,10 +165,10 @@ public struct EffectParameter: Codable, Hashable, Sendable, Identifiable {
         case .boolean:
             return value.boolValue.map(JSONValue.bool) ?? defaultValue
         case .integer:
-            guard let number = value.doubleValue else { return defaultValue }
+            guard let number = value.doubleValue, number.isFinite else { return defaultValue }
             var rounded = number.rounded()
-            if let minimum { rounded = max(minimum, rounded) }
-            if let maximum { rounded = min(maximum, rounded) }
+            if let minimum { rounded = max(minimum.rounded(.up), rounded) }
+            if let maximum { rounded = min(maximum.rounded(.down), rounded) }
             return .number(rounded)
         case .number:
             guard var number = value.doubleValue, number.isFinite else { return defaultValue }

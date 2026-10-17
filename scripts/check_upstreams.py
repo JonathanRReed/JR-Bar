@@ -30,12 +30,18 @@ CACHE = Path.home() / ".cache" / "jrbar" / "upstreams"
 
 #: (name, clone URL, baseline ref) for each upstream.
 UPSTREAMS = (
-    ("steipete/CodexBar", "https://github.com/steipete/CodexBar.git", "e34fe618"),
-    ("pingdotgg/t3code", "https://github.com/pingdotgg/t3code.git", "cb1a3f34"),
+    ("steipete/CodexBar", "https://github.com/steipete/CodexBar.git", "03a51bdc"),
+    ("pingdotgg/t3code", "https://github.com/pingdotgg/t3code.git", "611132c1"),
     ("router-for-me/CLIProxyAPI", "https://github.com/router-for-me/CLIProxyAPI.git", "c404af96"),
-    ("ryoppippi/ccusage", "https://github.com/ryoppippi/ccusage.git", "03f421fa"),
+    ("ryoppippi/ccusage", "https://github.com/ryoppippi/ccusage.git", "f3b78d10"),
     ("inteliwear/sidepulse", "https://github.com/inteliwear/sidepulse.git",
-     "044508556934f913ac555d555e35e19b23294773"),
+     "6d55225fed20a82521b23d86a4df2c4a15dff295"),
+    # The maintainers' sibling repositories (licences: GPL-3.0-or-later and
+    # MPL-2.0, so they are read, never copied). Recorded 2026-10-07.
+    ("inteliwear/sidepulse-bridge", "https://github.com/inteliwear/sidepulse-bridge.git",
+     "e8e363df51388a000c03c8e693a531235f7d63d8"),
+    ("inteliwear/sidepulse-ios", "https://github.com/inteliwear/sidepulse-ios.git",
+     "5eec8b41377925d95a47845ea265d8c2b223f848"),
 )
 #: When the baselines above were recorded. A review doc newer than this
 #: supplies the refs instead.
@@ -59,7 +65,9 @@ def recorded_refs(review: Path | None) -> dict[str, str]:
     refs: dict[str, str] = {}
     for line in review.read_text(encoding="utf-8", errors="replace").splitlines():
         for name, _url, _baseline in UPSTREAMS:
-            if name.lower() in line.lower() and name not in refs:
+            # "inteliwear/sidepulse" must not claim the line of a sibling
+            # such as "inteliwear/sidepulse-bridge".
+            if name not in refs and re.search(re.escape(name.lower()) + r"(?![\w-])", line.lower()):
                 match = _SHA.search(line)
                 if match:
                     refs[name] = match.group(0)

@@ -161,4 +161,25 @@ struct PanelAskChordTests {
         #expect(store.toast != nil, "the desk's refusal is said, and nothing is approved")
         #expect(store.toast != PanelStore.chordAmbiguousLine)
     }
+
+    @Test("a held key or a panel that just arrived answers nothing")
+    func repeatsAndArrivalsAreNotAnswers() {
+        let opened = Date(timeIntervalSince1970: 1_000)
+        let later = opened.addingTimeInterval(PanelStore.chordSettle + 0.1)
+        #expect(!PanelStore.chordsArmed(isRepeat: false, openedAt: opened, now: opened.addingTimeInterval(0.1)))
+        #expect(PanelStore.chordsArmed(isRepeat: false, openedAt: opened, now: later))
+        #expect(!PanelStore.chordsArmed(isRepeat: true, openedAt: opened, now: later.addingTimeInterval(5)),
+                "a held ⌘↩ is one answer, not one per ask")
+    }
+
+    @Test("an unarmed chord is swallowed with nothing answered and nothing said; with no ask it is handed back")
+    func unarmedChordAnswersNothing() {
+        let store = liveStore([(Self.permission, permissionAsk(Self.permission))])
+        let swallowed = store.approveSelectedAsk(armed: false)
+        #expect(swallowed)
+        #expect(store.toast == nil)
+        #expect(!store.isAnswerPending(permissionAsk(Self.permission)))
+        let bare = liveStore([])
+        #expect(!bare.approveSelectedAsk(armed: false), "no ask: the key is not ours")
+    }
 }

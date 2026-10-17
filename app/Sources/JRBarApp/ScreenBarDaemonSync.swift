@@ -9,7 +9,7 @@ import Foundation
 /// A toggle made while the daemon is down is the person's choice, so it
 /// wins when the daemon comes back: the daemon's value at that moment is
 /// only what it last heard, and the app never told it. Every other
-/// mismatch is a change made somewhere else (Settings › Devices, another
+/// mismatch is a change made somewhere else (Settings › Devices & Lighting, another
 /// client), and the app adopts it.
 struct ScreenBarDaemonSync {
     /// What the app should do with one look at the two values.
@@ -39,12 +39,15 @@ struct ScreenBarDaemonSync {
     /// A write we sent whose echo has not landed yet: while it is in
     /// flight a mismatch is the old value, not a new choice.
     private(set) var pending: (value: Bool, at: Date)?
+    /// Identifies the current choice so an older write cannot undo it.
+    private(set) var writeGeneration: UInt64 = 0
 
     /// The person toggled the Screen Bar to `shown`. A click while the
     /// daemon is connected is written straight away and supersedes an
     /// earlier offline click; a click while it is down waits for the
     /// reconnect.
     mutating func toggled(shown: Bool, live: Bool, now: Date) {
+        writeGeneration &+= 1
         if live {
             pending = (shown, now)
             changedOffline = false
@@ -68,6 +71,7 @@ struct ScreenBarDaemonSync {
             changedOffline = false
             synced = true
             if daemonValue == appValue { return .agree }
+            writeGeneration &+= 1
             pending = (appValue, now)
             return .push(appValue)
         }
@@ -77,6 +81,7 @@ struct ScreenBarDaemonSync {
             // agrees with the window that is actually up.
             guard !synced else { return .none }
             synced = true
+            writeGeneration &+= 1
             pending = (appValue, now)
             return .push(appValue)
         }
@@ -88,7 +93,7 @@ struct ScreenBarDaemonSync {
         if let pending, now.timeIntervalSince(pending.at) < Self.pendingWindow { return .wait }
         pending = nil
         // A daemon value that is present and disagrees is the user's
-        // latest choice (Settings › Devices, another client), and it is
+        // latest choice (Settings › Devices & Lighting, another client), and it is
         // also the first-contact initializer for the app's value when the
         // two stores had never met. Adopt it; don't write back.
         synced = true
@@ -97,14 +102,16 @@ struct ScreenBarDaemonSync {
 
     /// The write was refused, or failed while the daemon stayed up: what
     /// it carried is no longer in flight, so the next mismatch is adopted.
-    mutating func pushRefused() {
+    mutating func pushRefused(forGeneration generation: UInt64? = nil) {
+        guard generation == nil || generation == writeGeneration else { return }
         pending = nil
     }
 
     /// The write failed because the daemon went away under it. The
     /// daemon may never have heard it, so it is kept as an offline
     /// choice and sent on the next connect.
-    mutating func pushLostOffline() {
+    mutating func pushLostOffline(forGeneration generation: UInt64? = nil) {
+        guard generation == nil || generation == writeGeneration else { return }
         pending = nil
         changedOffline = true
     }

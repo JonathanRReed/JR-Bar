@@ -28,18 +28,16 @@ final class DockPanelWatchers {
             if let monitor = NSEvent.addLocalMonitorForEvents(
                 matching: .keyDown,
                 handler: { [weak self] event in
-                    MainActor.assumeIsolated {
-                        if event.keyCode == 53 { self?.onEscape?() }
-                        else if self?.isInside() == true { _ = self?.onKey?(event.keyCode) }
+                    let consumed = MainActor.assumeIsolated {
+                        self?.handleKey(event.keyCode, modifiers: event.modifierFlags) ?? false
                     }
-                    return event
+                    return consumed ? nil : event
                 }) { monitors.append(monitor) }
             if let monitor = NSEvent.addGlobalMonitorForEvents(
                 matching: .keyDown,
                 handler: { [weak self] event in
                     MainActor.assumeIsolated {
-                        if event.keyCode == 53 { self?.onEscape?() }
-                        else if self?.isInside() == true { _ = self?.onKey?(event.keyCode) }
+                        _ = self?.handleKey(event.keyCode, modifiers: event.modifierFlags)
                     }
                 }) { monitors.append(monitor) }
         }
@@ -66,6 +64,18 @@ final class DockPanelWatchers {
     func stop() {
         for monitor in monitors { NSEvent.removeMonitor(monitor) }
         monitors = []
+    }
+
+    /// A preview handles bare navigation keys. Modified keys belong to
+    /// the focused app, as they do in the preview's event tap.
+    func handleKey(_ code: UInt16, modifiers: NSEvent.ModifierFlags = []) -> Bool {
+        guard modifiers.intersection([.command, .control, .option, .shift]).isEmpty else { return false }
+        if code == 53, let onEscape {
+            onEscape()
+            return true
+        }
+        guard isInside() else { return false }
+        return onKey?(code) ?? false
     }
 
     isolated deinit { stop() }
@@ -225,6 +235,19 @@ enum DockThumbnailer {
     /// showed when it was taken (`DockAgentMark.stillTag`): an agent
     /// that asked or moved on since makes the still stale early.
     @MainActor private static var captureCache: [String: (image: NSImage, at: Date, tag: String?)] = [:]
+    private(set) static var captureEpoch = 0
+
+    static func invalidateCaptures() {
+        captureEpoch += 1
+        captureCache.removeAll()
+    }
+
+    static func cacheCapture(_ image: NSImage, pid: pid_t, windowID: CGWindowID,
+                             tag: String?, epoch: Int) -> NSImage? {
+        guard epoch == captureEpoch else { return nil }
+        captureCache["\(pid):\(windowID)"] = (image, Date(), tag)
+        return image
+    }
     nonisolated static let captureLifetime: TimeInterval = 30
     /// The card under the pointer never shows a still older than this:
     /// a hover on a card whose still has aged past it re-takes that one
@@ -318,16 +341,18 @@ enum DockThumbnailer {
                        bundleID: String?, pid: pid_t,
                        includeOffscreen: Bool,
                        isStale: @MainActor () -> Bool) async {
+        let epoch = captureEpoch
+        guard !isStale() else { return }
         guard let shareable = try? await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: !includeOffscreen) else { return }
-        guard !isStale() else { return }
+        guard !isStale(), epoch == captureEpoch else { return }
         // Retina sharpness: `SCStreamConfiguration` sizes are PIXELS,
         // not points — multiply the point-space cap by the backing
         // scale or thumbnails stay 1×-soft on a Retina display.
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         let cands = candidates(shareable.windows, bundleID: bundleID, pid: pid)
         for scWindow in cands {
-            guard !isStale() else { return }
+            guard !isStale(), epoch == captureEpoch else { return }
             let rows = content.windows.map { (frame: $0.frame, title: $0.title) }
             guard let index = DockEnhanceMath.matchRow(
                 scFrame: scWindow.frame, scTitle: scWindow.title, rows: rows,
@@ -341,7 +366,7 @@ enum DockThumbnailer {
             // Re-check the preview still belongs to this app — a
             // same-generation refill (New window) rewrites the rows
             // without tripping `isStale`.
-            guard !isStale(), content.processIdentifier == pid,
+            guard !isStale(), epoch == captureEpoch, content.processIdentifier == pid,
                   let row = content.windows.firstIndex(where: { $0.id == rowID }) else { continue }
             content.windows[row].thumbnail = image
         }
@@ -357,6 +382,7 @@ enum DockThumbnailer {
     /// hovered card.
     static func capture(scWindow: SCWindow, pid: pid_t, scale: CGFloat,
                         tag: String? = nil, maxAge: TimeInterval = captureLifetime) async -> NSImage? {
+        let epoch = captureEpoch
         let cacheKey = "\(pid):\(scWindow.windowID)"
         let now = Date()
         if let cached = captureCache[cacheKey],
@@ -379,8 +405,7 @@ enum DockThumbnailer {
             cgImage: trimmed,
             size: NSSize(width: CGFloat(trimmed.width) / scale,
                          height: CGFloat(trimmed.height) / scale))
-        captureCache[cacheKey] = (image, Date(), tag)
-        return image
+        return cacheCapture(image, pid: pid, windowID: scWindow.windowID, tag: tag, epoch: epoch)
     }
 
     /// One window's still re-taken for a hovered card — found by its
@@ -389,10 +414,12 @@ enum DockThumbnailer {
     /// tighter bound. nil when the window is gone or the capture fails;
     /// the card keeps the still it has.
     static func fresh(windowID: CGWindowID, pid: pid_t, tag: String?) async -> NSImage? {
+        let epoch = captureEpoch
         guard let shareable = try? await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: false),
               let scWindow = shareable.windows.first(where: { $0.windowID == windowID }),
               scWindow.owningApplication?.processID == pid else { return nil }
+        guard epoch == captureEpoch else { return nil }
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         return await capture(scWindow: scWindow, pid: pid, scale: scale, tag: tag, maxAge: hoverFreshness)
     }

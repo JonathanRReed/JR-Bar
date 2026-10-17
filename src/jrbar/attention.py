@@ -5,10 +5,12 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 
+from .ask_lifetime import ASK_MAY_BE_STALE_SECONDS, AskStanding, ask_standing
 from .collector import MonitorSnapshot
 from .freshness import bounded_age_seconds
 from .models import AgentMode, AgentStatus
 from .operator_state import (
+    COMPLETED_GLOW_SECONDS,
     COMPLETED_RECENT_SECONDS,
     CanonicalOperatorState,
     SemanticEventKey,
@@ -44,6 +46,11 @@ class ProjectedAgentRow:
     source_status: AgentStatus
     work_key: WorkKey | None = None
     request_key: RequestKey | None = None
+    # An unanswered ask is never hidden for its age. When it is old and its
+    # session silent (``ask_lifetime``) it stays an ask on every surface and
+    # this flag marks it "may be stale": the strip keeps the Ask colour and
+    # pulses more calmly, and the panel says so and offers Dismiss.
+    ask_may_be_stale: bool = False
 
 
 @dataclass(frozen=True)
@@ -275,15 +282,7 @@ def project_attention(
         emitted.add(event_key)
     primary_rows = tuple(row for row in rows if not row.is_subagent)
     worker_rows = tuple(row for row in rows if row.is_subagent)
-    representative = min(
-        _light_driver_candidates(primary_rows, worker_rows),
-        key=lambda row: (
-            _LIFECYCLE_PRIORITY[row.lifecycle_mode],
-            -row.updated_at.timestamp(),
-            row.agent_id,
-        ),
-        default=None,
-    )
+    representative = _representative_row(primary_rows, worker_rows)
     return AttentionProjection(
         lifecycle_mode=(
             representative.lifecycle_mode if representative is not None else LifecycleMode.IDLE
@@ -298,6 +297,67 @@ def project_attention(
             else representative.provider if representative is not None else None
         ),
         click_target_agent_id=actionable[0].agent_id if actionable else None,
+    )
+
+
+def _representative_row(
+    primary_rows: tuple[ProjectedAgentRow, ...],
+    worker_rows: tuple[ProjectedAgentRow, ...],
+) -> ProjectedAgentRow | None:
+    return min(
+        _light_driver_candidates(primary_rows, worker_rows),
+        key=lambda row: (
+            _LIFECYCLE_PRIORITY[row.lifecycle_mode],
+            -row.updated_at.timestamp(),
+            row.agent_id,
+        ),
+        default=None,
+    )
+
+
+def settle_completed_for_lights(
+    projection: AttentionProjection,
+    *,
+    now: datetime,
+    glow_seconds: float = COMPLETED_GLOW_SECONDS,
+) -> AttentionProjection:
+    """The projection the LIGHTS paint: a completion glows briefly, then rests.
+
+    Rows, the menu bar and the unseen-done badge keep the longer
+    ``COMPLETED_RECENT_SECONDS`` memory; the strip does not. Every interactive
+    turn ends in a Stop, and a two-minute whole-strip done green after each
+    one read as "the strip is just green all the time" (2026-08-20, the owner's
+    words). The settle lived on the aggregate mode alone, and the strip stopped
+    reading the aggregate when it moved to this projection, so the bound was
+    silently two minutes again. A completed row older than ``glow_seconds`` is
+    Idle for the lights; anything still working, waiting or failed is
+    untouched, so a live session always outranks a finished one.
+    """
+
+    if not isinstance(projection, AttentionProjection):
+        return projection
+
+    def settled(row: ProjectedAgentRow) -> ProjectedAgentRow:
+        if row.lifecycle_mode is not LifecycleMode.COMPLETED_RECENTLY:
+            return row
+        if (now - row.updated_at).total_seconds() <= glow_seconds:
+            return row
+        return replace(row, lifecycle_mode=LifecycleMode.IDLE)
+
+    visible = tuple(settled(row) for row in projection.visible_rows)
+    workers = tuple(settled(row) for row in projection.worker_rows)
+    if visible == projection.visible_rows and workers == projection.worker_rows:
+        return projection
+    representative = _representative_row(visible, workers)
+    return replace(
+        projection,
+        lifecycle_mode=(
+            representative.lifecycle_mode
+            if representative is not None
+            else LifecycleMode.IDLE
+        ),
+        visible_rows=visible,
+        worker_rows=workers,
     )
 
 
@@ -369,6 +429,49 @@ def regate_actionable_attention(
             else representative.provider if representative is not None else None
         ),
         click_target_agent_id=actionable[0].agent_id if actionable else None,
+    )
+
+
+def mark_stale_asks(
+    projection: AttentionProjection,
+    *,
+    now_epoch: float,
+    stale_after_seconds: float = ASK_MAY_BE_STALE_SECONDS,
+) -> AttentionProjection:
+    """Flag the asks that have waited past the "may be stale" mark.
+
+    Only the flag changes: the row stays WAITING and actionable, so every
+    surface still shows an ask. Pure -- ``now_epoch`` is passed in.
+    """
+    if type(projection) is not AttentionProjection:
+        return projection
+
+    def marked(row: ProjectedAgentRow) -> ProjectedAgentRow:
+        if not row.actionable or row.lifecycle_mode is not LifecycleMode.WAITING:
+            return row
+        standing = ask_standing(
+            opened_at_epoch=row.updated_at.timestamp(),
+            last_activity_epoch=row.updated_at.timestamp(),
+            now_epoch=now_epoch,
+            process_alive=True,
+            stale_after_seconds=stale_after_seconds,
+        )
+        stale = standing is not AskStanding.CURRENT
+        return row if stale == row.ask_may_be_stale else replace(row, ask_may_be_stale=stale)
+
+    visible = tuple(marked(row) for row in projection.visible_rows)
+    workers = tuple(marked(row) for row in projection.worker_rows)
+    if visible == projection.visible_rows and workers == projection.worker_rows:
+        return projection
+    by_id = {row.agent_id: row for row in (*visible, *workers)}
+    actionable = tuple(
+        by_id.get(row.agent_id, row) for row in projection.actionable_attention
+    )
+    return replace(
+        projection,
+        visible_rows=visible,
+        worker_rows=workers,
+        actionable_attention=actionable,
     )
 
 
@@ -474,6 +577,8 @@ def _lifecycle_mode(
 ) -> LifecycleMode:
     if actionable:
         return LifecycleMode.WAITING
+    if status.is_capacity_limited:
+        return LifecycleMode.IDLE
     if status.mode in {
         AgentMode.WORKING,
         AgentMode.TOOL_RUNNING,
@@ -508,7 +613,11 @@ def _lifecycle_mode(
 
 
 def _is_failure_event(status: AgentStatus) -> bool:
-    return not status.stale and status.event_name in _FAILURE_EVENTS
+    return (
+        not status.stale
+        and not status.is_capacity_limited
+        and status.event_name in _FAILURE_EVENTS
+    )
 
 
 def _semantic_event_name(status: AgentStatus) -> str:

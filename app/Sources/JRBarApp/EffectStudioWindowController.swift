@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The Effect Studio window (Settings › Lighting › Effects…, the panel's
+/// The Effect Studio window (Settings › Devices & Lighting › Effects…, the panel's
 /// overflow menu, the status menu and the app menu).
 @MainActor
 final class EffectStudioWindowController: NSObject, NSWindowDelegate {

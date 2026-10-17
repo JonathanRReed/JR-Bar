@@ -4,17 +4,15 @@ import JRBarCore
 import Testing
 @testable import JRBarApp
 
-/// The Portal fold's pure model (FoldPortal.swift): the slew-limited
-/// tracker that turns the 10 Hz integer-degree hinge sensor into a
-/// glide, the arming machine that owns the capture streams' lifecycle,
-/// the unwind chase that turns a gate-close snap into a counter-
-/// rotation, the window-card depth bucketing, and the delta →
-/// shader-params map. No Metal, no HID, no timers — every rule the
-/// renderer and toy follow is testable here.
+/// The Portal fold's pure model (FoldPortal.swift): the movement anchor,
+/// the arming machine that owns the capture streams' lifecycle, the
+/// window-card depth bucketing, and the delta → shader-params map. (The
+/// lid's motion has its own suite: FoldMotionTests.) No Metal, no HID,
+/// no timers — every rule the renderer and toy follow is testable here.
 @Suite("Fold portal model")
 struct FoldPortalTests {
 
-    // MARK: SlewTracker
+    // MARK: MoveAnchor — resting angle
 
     @Test("resting angle relearns a stationary lid with the parking timer off")
     func automaticRestWorksWithoutParkingTimer() {
@@ -36,6 +34,45 @@ struct FoldPortalTests {
         anchor.feed(70, at: 1.5)
         #expect(anchor.moving(70))
         #expect(anchor.anchor == 80)
+    }
+
+    @Test("a parked lid's flicker never arms the capture; the second whole degree of a close does")
+    func armsOnTheFirstMoveThatIsNotFlicker() {
+        var anchor = MoveAnchor()
+        anchor.armThreshold = 0.5
+        _ = anchor.select(.movement, angle: 110, at: 0)
+        var t = 0.0
+        var armedByFlicker = false
+        // Three seconds of 110/109 flicker: once the rest has settled, the
+        // anchor follows it and nothing is "moving".
+        for step in 1...30 {
+            t = Double(step) * 0.1
+            anchor.feed(step % 2 == 0 ? 110 : 109, at: t)
+            if t > 0.5, anchor.moving(step % 2 == 0 ? 110 : 109) { armedByFlicker = true }
+        }
+        #expect(!armedByFlicker)
+        // A close begins: the first degree is absorbed like any flicker,
+        // the second is a move.
+        t += 0.1
+        anchor.feed(109, at: t)
+        #expect(!anchor.moving(109), "one degree is flicker")
+        t += 0.2
+        anchor.feed(108, at: t)
+        #expect(anchor.moving(108), "two degrees of travel arm the capture")
+        // A fast close arms on its first reading.
+        var fast = MoveAnchor()
+        fast.armThreshold = 0.5
+        _ = fast.select(.movement, angle: 110, at: 0)
+        for step in 1...10 { fast.feed(110, at: Double(step) * 0.1) }
+        fast.feed(101, at: 1.2)
+        #expect(fast.moving(101))
+        // Tilting the screen back arms nothing.
+        var back = MoveAnchor()
+        back.armThreshold = 0.5
+        _ = back.select(.movement, angle: 110, at: 0)
+        for step in 1...10 { back.feed(110, at: Double(step) * 0.1) }
+        back.feed(120, at: 1.2)
+        #expect(!back.moving(120))
     }
 
     @Test("a moving lid never starts a new resting fold halfway down")
@@ -81,35 +118,33 @@ struct FoldPortalTests {
 
     @Test("deep folds start their rest release gently too", arguments: [0.89, 0.91, 1.25])
     func deepRestReleaseEasesOut(delta: Double) {
-        var chase = DeltaChase()
-        chase.reset(to: delta)
-        let first = chase.tick(target: 0, dt: 1.0 / 60)
+        var ease = FoldGateEase()
+        _ = ease.tick(target: delta, dt: 1.0 / 60)
+        let first = ease.tick(target: 0, dt: 1.0 / 60)
         #expect(first > delta * 0.98)
-        for _ in 0..<40 { chase.tick(target: 0, dt: 1.0 / 60) }
-        #expect(chase.atRest)
-        #expect(chase.value == 0)
+        for _ in 0..<40 { ease.tick(target: 0, dt: 1.0 / 60) }
+        #expect(ease.atRest)
+        #expect(ease.value == 0)
     }
 
     @Test("sensor and display callbacks share elapsed time while the fold stays armed")
     func frameTimeSurvivesSensorReconciles() {
         var clock = FoldFrameClock()
-        var tracker = SlewTracker()
-        tracker.feed(110)
+        var spring = FoldAngleSpring()
+        spring.seat(110)
         _ = clock.tick(at: 0)
-        tracker.feed(80)
         var elapsed = 0.0
         for step in 1...120 {
             let displayTime = Double(step) / 120
             let sampleTime = displayTime - 0.002
             let sensorStep = clock.tick(at: sampleTime)
-            tracker.tick(dt: sensorStep)
+            spring.tick(target: 80, rate: 0, dt: sensorStep)
             let displayStep = clock.tick(at: displayTime)
-            tracker.tick(dt: displayStep)
+            spring.tick(target: 80, rate: 0, dt: displayStep)
             elapsed += sensorStep + displayStep
         }
         #expect(abs(elapsed - 1) < 1e-9)
-        #expect(tracker.atRest)
-        #expect(tracker.angle == 80)
+        #expect(spring.position == 80 && spring.velocity == 0)
         clock.reset()
         let restarted = clock.tick(at: 20)
         #expect(restarted == 0)
@@ -117,17 +152,17 @@ struct FoldPortalTests {
 
     @Test("a small rest release eases out instead of disappearing in two frames")
     func smallReleaseEasesOut() {
-        var chase = DeltaChase()
-        chase.reset(to: 6 * .pi / 180)
-        let initial = chase.value
+        var ease = FoldGateEase()
+        _ = ease.tick(target: 6 * .pi / 180, dt: 1.0 / 60)
+        let initial = ease.value
         let dt = 1.0 / 60
-        let first = chase.tick(target: 0, dt: dt)
+        let first = ease.tick(target: 0, dt: dt)
         #expect(first > initial * 0.98)
-        for _ in 0..<4 { chase.tick(target: 0, dt: dt) }
-        #expect(chase.value > initial * 0.7)
-        for _ in 0..<30 { chase.tick(target: 0, dt: dt) }
-        #expect(chase.value == 0)
-        #expect(chase.atRest)
+        for _ in 0..<4 { ease.tick(target: 0, dt: dt) }
+        #expect(ease.value > initial * 0.7)
+        for _ in 0..<30 { ease.tick(target: 0, dt: dt) }
+        #expect(ease.value == 0)
+        #expect(ease.atRest)
     }
 
     @Test("changing to movement mode folds from the parked reading on the first close")
@@ -161,186 +196,6 @@ struct FoldPortalTests {
         anchor.feed(85, at: 2.1)
         #expect(anchor.anchor == 95)
         #expect(anchor.moving(85))
-    }
-
-    @Test("the first sample primes the tracker at the measurement")
-    func trackerPrime() {
-        var tracker = SlewTracker()
-        tracker.feed(100)
-        #expect(tracker.primed)
-        #expect(tracker.angle == 100)
-        #expect(tracker.velocity == 0)
-        #expect(tracker.atRest, "primed at the measurement is already parked")
-    }
-
-    @Test("a slammed lid glides shut at the rate cap and never overshoots")
-    func trackerSlam() {
-        var tracker = SlewTracker()
-        tracker.feed(90)
-        tracker.feed(30)   // a 60° slam between samples
-        let dt = 1.0 / 120
-        var t = 0.0
-        var previous = tracker.angle
-        var maxStep = 0.0
-        while t < 1.0 {
-            tracker.tick(dt: dt)
-            #expect(tracker.angle >= 30, "overshot the target at t=\(t): \(tracker.angle)")
-            #expect(tracker.angle <= previous + 1e-9, "moved the wrong way at t=\(t)")
-            maxStep = max(maxStep, previous - tracker.angle)
-            previous = tracker.angle
-            t += dt
-        }
-        // The cap — 150°/s — owns the visible pace: sub-degree steps,
-        // and 60° of travel settles well under a second.
-        #expect(maxStep <= tracker.maxRate * dt + 1e-9,
-                "a frame stepped \(maxStep)° — over the slew cap")
-        #expect(tracker.atRest)
-        #expect(tracker.angle == 30)
-    }
-
-    @Test("the tracker holds sub-degree increments on a slow close")
-    func trackerGlide() {
-        var tracker = SlewTracker()
-        tracker.feed(90)
-        let dt = 1.0 / 120
-        // A 10 Hz staircase: whole-degree edges every ~100 ms.
-        var angle = 90.0
-        var maxStep = 0.0
-        var previous = tracker.angle
-        for edge in 0..<20 {
-            angle -= 1
-            tracker.feed(angle)
-            for _ in 0..<12 {
-                tracker.tick(dt: dt)
-                maxStep = max(maxStep, abs(tracker.angle - previous))
-                previous = tracker.angle
-            }
-            _ = edge
-        }
-        #expect(maxStep < 1.0, "render stepped \(maxStep)° in one frame")
-        #expect(abs(tracker.angle - angle) < 0.5)
-    }
-
-    @Test("a huge dt is a stall, not a teleport past the target")
-    func trackerDtClamp() {
-        var tracker = SlewTracker()
-        tracker.feed(90)
-        tracker.feed(30)
-        tracker.tick(dt: 5)   // a slept display, not a frame
-        #expect(tracker.angle > 30, "one step may not cross the target")
-        #expect(tracker.angle <= 90 - tracker.maxRate * tracker.maxDt + 1e-6)
-    }
-
-    @Test("a non-finite sample cannot corrupt the tracker")
-    func trackerGarbage() {
-        var tracker = SlewTracker()
-        tracker.feed(90)
-        tracker.feed(.nan)
-        tracker.feed(.infinity)
-        tracker.tick(dt: 1.0 / 60)
-        #expect(tracker.angle.isFinite)
-        #expect(tracker.velocity.isFinite)
-    }
-
-    // MARK: DeltaChase
-
-    @Test("a growing target is followed in the same tick — closing never waits")
-    func chaseClosingIsInstant() {
-        var chase = DeltaChase()
-        // The old behaviour was a direct assignment; closing must stay
-        // that responsive, bit for bit.
-        var shown = chase.tick(target: 0.4, dt: 1.0 / 60)
-        #expect(shown == 0.4)
-        shown = chase.tick(target: 0.9, dt: 1.0 / 60)
-        #expect(shown == 0.9)
-        #expect(chase.atRest)
-        // Even mid-unwind, a re-close snaps to the target at once —
-        // the slew unwind sits higher than the old damped one did at
-        // this point, so the re-close target is chosen above it.
-        _ = chase.tick(target: 0, dt: 1.0 / 60)
-        _ = chase.tick(target: 0, dt: 0.2)
-        #expect(chase.value < 0.9 && !chase.atRest, "mid-unwind now")
-        shown = chase.tick(target: 0.8, dt: 1.0 / 60)
-        #expect(shown == 0.8)
-        #expect(chase.atRest)
-    }
-
-    @Test("a gate-close snap unwinds smoothly and settles exactly on zero")
-    func chaseUnwind() throws {
-        var chase = DeltaChase()
-        _ = chase.tick(target: 0.5, dt: 1.0 / 60)   // a fold in flight
-        let dt = 1.0 / 120
-        var t = 0.0
-        var previous = chase.value
-        var settledAt: Double?
-        while t < 1.5 {
-            let v = chase.tick(target: 0, dt: dt)
-            #expect(v >= 0, "overshot below the floor at t=\(t): \(v)")
-            #expect(v <= previous + 1e-9, "moved the wrong way at t=\(t): \(v) after \(previous)")
-            if settledAt == nil, chase.atRest { settledAt = t }
-            previous = v
-            t += dt
-        }
-        #expect(chase.value == 0, "must settle exactly, not asymptote")
-        #expect(chase.atRest, "rest is what lets the display link stand down")
-        let settle = try #require(settledAt)
-        #expect(settle > 0.1, "a snap would be the bug this fixes (\(settle)s)")
-        #expect(settle < 0.9, "the unwind should land inside ~half a second (\(settle)s)")
-        // The visible bulk should move in the first ~350 ms.
-        var probe = DeltaChase()
-        _ = probe.tick(target: 0.5, dt: dt)
-        for _ in 0..<42 { probe.tick(target: 0, dt: dt) }   // 350 ms
-        #expect(probe.value < 0.5 * 0.1,
-                "90% of the unwind should be done in 350 ms, still at \(probe.value)")
-    }
-
-    @Test("an unwind can land on a non-zero target and re-close from there")
-    func chaseUnwindPartial() {
-        var chase = DeltaChase()
-        _ = chase.tick(target: 0.8, dt: 1.0 / 60)
-        let dt = 1.0 / 60
-        var previous = chase.value
-        for _ in 0..<120 {
-            let v = chase.tick(target: 0.3, dt: dt)
-            #expect(v >= 0.3 - 1e-9, "overshot the partial target: \(v)")
-            #expect(v <= previous + 1e-9)
-            previous = v
-        }
-        #expect(chase.value == 0.3)
-        #expect(chase.atRest)
-        // A target between the value and 0 unwinds; one above snaps.
-        _ = chase.tick(target: 0.2, dt: dt)
-        #expect(chase.value < 0.3 && chase.value > 0.2)
-        let snap = chase.tick(target: 0.6, dt: dt)
-        #expect(snap == 0.6)
-    }
-
-    @Test("stalled and garbage ticks can't corrupt the chase")
-    func chaseGarbage() {
-        var chase = DeltaChase()
-        _ = chase.tick(target: 0.5, dt: 1.0 / 60)
-        let v0 = chase.value
-        #expect(chase.tick(target: .nan, dt: 1.0 / 60) == v0)
-        let stalled = chase.tick(target: 0, dt: 0)
-        #expect(stalled == v0, "a zero dt is not a frame")
-        let negative = chase.tick(target: 0, dt: -1)
-        #expect(negative == v0)
-        // A slept-display dt clamps instead of teleporting home.
-        let v1 = chase.tick(target: 0, dt: 5)
-        #expect(v1 < v0 && v1 > 0)
-        #expect(chase.value.isFinite && chase.velocity.isFinite)
-    }
-
-    @Test("reset plants the chase so a stale unwind can't resurrect")
-    func chaseReset() {
-        var chase = DeltaChase()
-        _ = chase.tick(target: 0.5, dt: 1.0 / 60)
-        _ = chase.tick(target: 0, dt: 1.0 / 60)
-        #expect(!chase.atRest)
-        chase.reset()
-        #expect(chase.atRest && chase.value == 0)
-        chase.reset(to: 0.4)
-        #expect(chase.atRest && chase.value == 0.4, "a parked chase holds its plant")
     }
 
     // MARK: MoveAnchor
@@ -565,24 +420,26 @@ struct FoldPortalTests {
 
     @Test("the same angle draws the same image — opening retraces closing exactly")
     func retracePalindrome() {
-        // The toy's own chain: sensor angle → tracker glide → delta →
-        // chase → the shader's image params (opacity and dissolve ride
-        // the displayed delta). Feed the symmetric 110 → 60 → 110 path
-        // and let each held angle settle; the image at each angle must
-        // be a palindrome — the same angle, the same picture.
-        var tracker = SlewTracker()
-        var chase = DeltaChase()
+        // The toy's own chain: angle → spring → delta → gate ease → the
+        // shader's image params (opacity and dissolve ride the displayed
+        // delta). Feed the symmetric 110 → 60 → 110 path and let each
+        // held angle settle; the image at each angle must be a
+        // palindrome — the same angle, the same picture.
+        var motion = FoldMotion()
+        var ease = FoldGateEase()
         let dt = 1.0 / 120
-        tracker.feed(110)
+        var now = 0.0
+        motion.feedDirect(110)
+        motion.tick(at: now, dt: dt)
         func image(at angle: Double) -> (Double, Double, Double) {
-            tracker.feed(angle)
+            motion.feedDirect(angle)
             var shown = 0.0
             for _ in 0..<600 {
-                tracker.tick(dt: dt)
-                let target = FoldMath.deltaRadians(
-                    angle: tracker.angle, reference: 110)
-                shown = chase.tick(target: target, dt: dt)
-                if tracker.atRest && chase.atRest { break }
+                now += dt
+                let drawn = motion.tick(at: now, dt: dt) ?? angle
+                let target = FoldMath.deltaRadians(angle: drawn, reference: 110)
+                shown = ease.tick(target: target, dt: dt)
+                if motion.atRest(at: now) && ease.atRest { break }
             }
             return (shown, FoldPortalModel.opacity(delta: shown),
                     FoldPortalModel.dissolve(delta: shown))
@@ -603,26 +460,25 @@ struct FoldPortalTests {
             #expect(abs(series[i].2 - series[j].2) < 1e-3,
                     "dissolve differs at the mirrored angle")
         }
-        // The transient the old damped unwind lost: during a real
+        // The transient a rate-limited unwind would lose: during a real
         // opening the displayed delta sits on the target every frame —
-        // the slew outruns the fastest lid the tracker can draw, so
+        // the spring's own cap is under the ease's follow rate, so
         // mid-flight angles draw the same image too.
-        var tracker2 = SlewTracker()
-        var chase2 = DeltaChase()
-        tracker2.feed(110)
-        tracker2.feed(60)
-        for _ in 0..<300 { tracker2.tick(dt: dt) }
-        _ = chase2.tick(target: FoldMath.deltaRadians(
-            angle: tracker2.angle, reference: 110), dt: dt)
-        tracker2.feed(110)
+        var opening = FoldMotion()
+        var follow = FoldGateEase()
+        var clock = 0.0
+        opening.feedDirect(60)
+        opening.tick(at: clock, dt: dt)
+        _ = follow.tick(target: FoldMath.deltaRadians(angle: 60, reference: 110), dt: dt)
+        opening.feedDirect(110)
         for _ in 0..<600 {
-            tracker2.tick(dt: dt)
-            let target = FoldMath.deltaRadians(
-                angle: tracker2.angle, reference: 110)
-            _ = chase2.tick(target: target, dt: dt)
-            #expect(abs(chase2.value - target) < 1e-3,
+            clock += dt
+            let drawn = opening.tick(at: clock, dt: dt) ?? 110
+            let target = FoldMath.deltaRadians(angle: drawn, reference: 110)
+            _ = follow.tick(target: target, dt: dt)
+            #expect(abs(follow.value - target) < 1e-3,
                     "the opening path must retrace the closing one")
-            if tracker2.atRest && chase2.atRest { break }
+            if opening.atRest(at: clock) && follow.atRest { break }
         }
     }
 

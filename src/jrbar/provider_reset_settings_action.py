@@ -91,3 +91,67 @@ def deliver_pending_reset_events(controller, *, legacy) -> None:
 
 
 __all__.append("deliver_pending_reset_events")
+
+
+def reset_replay_documents(controller, *, now: float | None = None) -> list[dict]:
+    """Persisted reset events a connecting app may still celebrate —
+    the durable half of the greet's ``quota_reset`` replay
+    (docs/CORE-PROTOCOL.md). The journal's short tail covers socket
+    churn; this covers the app being away longer than that, up to
+    ``RESET_APP_FRESHNESS_SECONDS``, and survives a daemon restart the
+    journal cannot. Each document is the same shape a live publish puts
+    on the wire, with the reset's stable ``event_id`` repeated as the
+    frame ``id`` so the app can dedup by fact, not by stream position.
+    """
+    import time as _time
+
+    from .provider_reset_events import reset_events_pending_app
+
+    current = _time.time() if now is None else now
+    return [
+        {
+            "kind": "quota_reset",
+            "provider": event.provider_id,
+            "instance": event.account_id,
+            "lane": event.window_id,
+            "event_id": event.event_id,
+            "id": event.event_id,
+            "at": event.opened_at,
+            "notify": False,
+        }
+        for event in reset_events_pending_app(reset_delivery_state(controller), now=current)
+    ]
+
+
+__all__.append("reset_replay_documents")
+
+
+def apply_app_reset_receipt(controller, event_id, outcome, reason, *, now=None) -> dict:
+    """Record the app's ``reset_receipt`` verdict and persist it.
+
+    Propagates ``KeyError`` (the store has no such event) and
+    ``ValueError`` (a bad outcome or empty reason) for the command to
+    translate; a persisted receipt is the whole point of the call, so a
+    state that cannot be written is returned anyway — the next tick's
+    deliveries persist it with theirs.
+    """
+    import time as _time
+
+    from .provider_reset_events import apply_app_receipt
+
+    current = _time.time() if now is None else now
+    state = apply_app_receipt(
+        reset_delivery_state(controller),
+        event_id,
+        outcome,
+        reason,
+        now=current,
+    )
+    controller._jrbar_reset_delivery_state = state
+    persist = getattr(controller, "_persist_reset_delivery_state", None)
+    if callable(persist):
+        persist()
+    return {"recorded": True}
+
+
+__all__.append("apply_app_reset_receipt")

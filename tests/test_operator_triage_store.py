@@ -231,7 +231,7 @@ def test_mapping_subclass_from_decoder_is_rejected__and_1_more(tmp_path: Path) -
         {"version": 1, "acknowledgements": [_entry(_request_key())]}
     )
 
-    with patch("jrbar.operator_triage_store._decode_document", return_value=forged):
+    with patch("jrbar.operator_triage_store.decode_strict_json", return_value=forged):
         assert load_operator_triage(target) == LocalTriageState(())
 
     # --- scenario: failed_replace_preserves_exact_previous_bytes

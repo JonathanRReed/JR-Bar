@@ -69,8 +69,10 @@ Use one source-controlled snapshot per review named
 `docs/UPSTREAM-REFRESH-YYYY-MM-DD.md`, with the calendar date in the review
 timezone. If a second review is genuinely required on the same date, append a
 two-digit sequence, for example `docs/UPSTREAM-REFRESH-2026-08-30-02.md`.
-Never overwrite an earlier snapshot. The current example is
-[UPSTREAM-REFRESH-2026-08-30.md](UPSTREAM-REFRESH-2026-08-30.md).
+Never overwrite an earlier snapshot. The first example is
+[UPSTREAM-REFRESH-2026-08-30.md](UPSTREAM-REFRESH-2026-08-30.md); the
+2026-10-07 CodexBar and T3 Code review is
+[UPSTREAM-REFRESH-2026-10-07-02.md](UPSTREAM-REFRESH-2026-10-07-02.md).
 
 Each source or idea entry records these evidence fields: `source`,
 `source_url`, `source_ref_or_release`, `checked_at`, `finding`, `reachability`,
@@ -93,5 +95,8 @@ unavailable, or an off-cycle trigger is pending, mark the ledger
 `STALE — refresh required` in its opening status and in the roadmap link. Do
 not describe stale findings as current, and do not erase the prior snapshot.
 After a later review, mark the old ledger `superseded` and link the new dated
-snapshot. The 2026-08-30 snapshot is the current reference for this cadence at
-the time it was written.
+snapshot. The 2026-08-30 snapshot was the current reference when this cadence was
+written; it is superseded by the
+[2026-10-07 snapshot](archive/UPSTREAM-REFRESH-2026-10-07.md), which also
+records the two sibling repositories (bridge and iPhone app) and the
+licences and trademark policy that bear on what may be reused.

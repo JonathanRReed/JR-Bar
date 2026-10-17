@@ -138,9 +138,12 @@ def test_watchdog_script_owns_a_pidfile_and_reclaims_it(tmp_path) -> None:
 def _fast_watchdog_script(renewal: Path, pidfile: Path) -> str:
     """The real script with the poll interval patched down so process
     semantics are testable in seconds instead of 300 s."""
-    return watchdog_script(renewal, pidfile).replace(
+    script = watchdog_script(renewal, pidfile).replace(
         f"sleep {WATCHDOG_POLL_SECONDS}", "sleep 1"
     )
+    # The release command is swapped for `true` so no test asks the real
+    # machine to change its sleep setting.
+    return script.replace("/usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0", "/usr/bin/true")
 
 
 def _spawn_watchdog(script: str) -> subprocess.Popen:
@@ -275,3 +278,48 @@ def test_stale_pidfile_and_non_watchdog_pid_are_left_alone(tmp_path) -> None:
     finally:
         if watchdog.poll() is None:
             watchdog.terminate()
+
+
+@needs_sh
+def test_a_renewal_dated_in_the_future_counts_as_stale(tmp_path) -> None:
+    renewal = tmp_path / "lid-hold-renewal"
+    renewal.touch()
+    future = time.time() + 6 * 3600
+    os.utime(renewal, (future, future))
+    pidfile = tmp_path / WATCHDOG_PID_FILE_NAME
+    script = _fast_watchdog_script(renewal, pidfile)
+    assert "/usr/bin/true" in script
+
+    watchdog = _spawn_watchdog(script)
+    assert _wait_for(lambda: watchdog.poll() is not None)
+    assert not renewal.exists()
+    assert not pidfile.exists()
+
+
+def test_the_fail_safe_clears_a_dead_daemons_hold_within_minutes() -> None:
+    assert WATCHDOG_POLL_SECONDS <= 60
+    assert RENEWAL_STALE_SECONDS <= 180
+
+
+def test_a_new_daemon_releases_a_hold_the_last_one_left_behind(tmp_path) -> None:
+    spawned: list[FakeProcess] = []
+    calls: list[bool] = []
+
+    def factory(argv, **_kwargs):
+        process = FakeProcess(argv)
+        spawned.append(process)
+        return process
+
+    controller = ClosedLidAwakeController(
+        process_factory=factory,
+        sleep_disabled_reader=lambda: True,
+        sleep_disabled_setter=calls.append,
+        use_system_disable=True,
+        renewal_path=tmp_path / "lid-hold-renewal",
+    )
+    controller.update(CLOSED_LID_AWAKE_AGENTS, agents_active=False)
+    assert calls == [False]
+    assert not (tmp_path / "lid-hold-renewal").exists()
+    # Once per process: later idle ticks do not ask again.
+    controller.update(CLOSED_LID_AWAKE_AGENTS, agents_active=False)
+    assert calls == [False]

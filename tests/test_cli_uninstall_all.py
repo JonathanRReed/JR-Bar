@@ -50,9 +50,18 @@ def _install_claude(home: Path) -> Path:
     return config
 
 
+def _config_naming_jrbar(home: Path, relative: str) -> Path:
+    """A private agent config with a JR-Bar hook line in it, so a failure to
+    edit it is a real leftover and not a file with nothing to remove."""
+    path = home / relative
+    _private(path, "// jrbar-hook --provider x\n")
+    return path
+
+
 def test_uninstall_all_visits_every_provider_when_one_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    _config_naming_jrbar(home, ".codex/config.toml")
     visited: list[str] = []
     refusal = OSError(f"refusing non-regular file: {tmp_path / 'config.toml'}")
 
@@ -81,8 +90,10 @@ def test_uninstall_all_visits_every_provider_when_one_raises(
 
 
 def test_uninstall_all_names_the_config_it_could_not_clean(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    _config_naming_jrbar(home, ".gemini/settings.json")
+
     def fake(provider: str, **_kwargs: object) -> InstallResult:
         if provider == "gemini":
             raise ValueError("Expecting value: line 1 column 1 (char 0)")
@@ -94,12 +105,14 @@ def test_uninstall_all_names_the_config_it_could_not_clean(
 
     err = capsys.readouterr().err
     assert "gemini: could not remove hooks (ValueError: Expecting value" in err
-    assert f"config: {Path.home() / '.gemini' / 'settings.json'}" in err
+    assert f"config: {home / '.gemini' / 'settings.json'}" in err
 
 
 def test_uninstall_all_bounds_a_long_reason(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    _config_naming_jrbar(home, ".codex/config.toml")
+
     def fake(provider: str, **_kwargs: object) -> InstallResult:
         raise OSError("x" * 5000)
 
@@ -113,16 +126,18 @@ def test_uninstall_all_bounds_a_long_reason(
 def test_uninstall_all_real_configs_symlink_and_jsonc(
     tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A symlinked or commented config that does hold a JR-Bar hook is a
+    leftover JR-Bar will not edit: named, untouched, exit 1."""
     claude = _install_claude(home)
 
     outside = tmp_path / "dotfiles" / "config.toml"
-    _private(outside, "# my codex settings\n")
+    _private(outside, "# my codex settings\n[[hooks.Stop]]\ncommand = \"/opt/jrbar/bin/jrbar-hook --provider codex\"\n")
     codex = home / ".codex" / "config.toml"
     codex.parent.mkdir(mode=0o700)
     codex.symlink_to(outside)
 
     gemini = home / ".gemini" / "settings.json"
-    commented = '// my gemini settings\n{"theme": "dark"}\n'
+    commented = '// my gemini settings\n{"hooks": {"AfterAgent": [{"command": "jrbar-hook --provider gemini"}]}}\n'
     _private(gemini, commented)
     outside_before = outside.read_bytes()
 
@@ -139,6 +154,33 @@ def test_uninstall_all_real_configs_symlink_and_jsonc(
     assert "claude: removed" in captured.out
     assert "devin: already uninstalled" in captured.out
     assert "kiro: already uninstalled" in captured.out
+
+
+def test_uninstall_all_does_not_fail_over_configs_that_never_named_jrbar(
+    tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A dotfiles symlink or a commented file with no JR-Bar hook in it has
+    nothing to remove, so it must not stop the person from deleting the app."""
+    outside = tmp_path / "dotfiles" / "config.toml"
+    _private(outside, "# my codex settings\n")
+    codex = home / ".codex" / "config.toml"
+    codex.parent.mkdir(mode=0o700)
+    codex.symlink_to(outside)
+    gemini = home / ".gemini" / "settings.json"
+    commented = '// my gemini settings\n{"theme": "dark"}\n'
+    _private(gemini, commented)
+    outside_before = outside.read_bytes()
+
+    code = cli.main(["uninstall", "all"])
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert captured.err == ""
+    assert outside.read_bytes() == outside_before
+    assert codex.is_symlink()
+    assert gemini.read_text() == commented
+    assert "codex: already uninstalled" in captured.out
+    assert "gemini: already uninstalled" in captured.out
 
 
 def test_uninstall_all_clean_run_is_unchanged(
@@ -182,6 +224,8 @@ def test_a_failure_is_never_described_as_a_removal(
         raise OSError(f"refusing non-regular file: {tmp_path / provider}")
 
     monkeypatch.setattr(cli, "uninstall_provider_hooks", fake)
+    # Every config is taken to name JR-Bar, so nothing is waved through.
+    monkeypatch.setattr(cli, "_config_names_no_jrbar", lambda provider: None)
 
     assert cli.main(["uninstall", "all"]) == 1
 
@@ -237,3 +281,32 @@ def test_install_all_keeps_the_verification_refusal_wording(
 
     assert len(results) == len(HOOK_PROVIDERS) - 1
     assert "codex: the hook did not run: exited 3" in capsys.readouterr().out
+
+
+def test_install_of_one_named_provider_that_was_refused_exits_nonzero_and_names_the_fix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fake(provider: str, **_kwargs: object) -> InstallResult:
+        raise OSError(f"refusing non-regular file: {tmp_path / 'settings.json'}")
+
+    monkeypatch.setattr(cli, "install_provider_hooks", fake)
+    args = cli.build_parser().parse_args(["install", "claude", "--dry-run"])
+
+    assert cli.cmd_install(args) == 1
+    err = capsys.readouterr().err
+    assert "claude: skipped (OSError: refusing non-regular file" in err
+    assert "remove its entries by hand" not in err, "this is an install: the hint says how to make it installable"
+    assert "symlinked or shared-writable" in err
+
+
+def test_install_all_exits_nonzero_when_not_one_provider_could_be_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fake(provider: str, **_kwargs: object) -> InstallResult:
+        raise ValueError("Expected an object at the top level")
+
+    monkeypatch.setattr(cli, "install_provider_hooks", fake)
+    args = cli.build_parser().parse_args(["install", "all", "--dry-run"])
+
+    assert cli.cmd_install(args) == 1
+    assert "plain JSON" in capsys.readouterr().err

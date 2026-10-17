@@ -6,7 +6,7 @@ import Testing
 struct SessionMarkdownTests {
     static let utc = TimeZone(identifier: "UTC")!
 
-    private func reconstruction(proxy: [CLIProxyRequest] = [], gaps: [String] = []) -> SessionReconstruction {
+    private func reconstruction(gaps: [String] = []) -> SessionReconstruction {
         let items = [
             ReconstructedItem(seq: 0, at: 100, kind: .message, role: "user", untrusted: false,
                               text: "fix the build in /Users/tester/src/app"),
@@ -19,7 +19,7 @@ struct SessionMarkdownTests {
             ReconstructedItem(seq: 4, at: 104, kind: .toolUse, role: "assistant", name: "Read", redacted: true),
         ]
         return SessionReconstruction(items: items, story: SessionReconstructor.story(for: items), gaps: gaps,
-                                     totalLines: 5, redactedLines: 1).withProxyRequests(proxy)
+                                     totalLines: 5)
     }
 
     private func render(_ reconstruction: SessionReconstruction, notes: [String] = []) -> String {
@@ -35,8 +35,8 @@ struct SessionMarkdownTests {
         #expect(!text.contains("**Empty:**"))
         #expect(text.contains("> Exported by JR-Bar on 1970-01-01 00:00."))
         #expect(text.contains("> From the archived copy"))
-        #expect(text.contains("## What happened\n\nLast asked: fix the build in ~/src/app. Then tool `Bash` failed."))
-        #expect(text.contains("## Gaps\n\n- 2 malformed lines\n- 1 line stored with text withheld"))
+        #expect(text.contains("## What happened\n\n> Last asked: fix the build in ~/src/app. Then tool `Bash` failed."))
+        #expect(text.contains("## Gaps\n\n- 2 malformed lines"))
         let order = ["### 00:01:40 · You", "- 00:01:41 · tool `Bash`", "- 00:01:42 · result · **failed**",
                      "### 00:01:43 · Assistant (claude-opus-4-5)", "- 00:01:44 · tool `Read`"]
         let positions = order.compactMap { text.range(of: $0)?.lowerBound }
@@ -60,31 +60,51 @@ struct SessionMarkdownTests {
         #expect(!text.contains("/Users/tester"))
     }
 
-    @Test("the proxy's requests appear between the turns with the upstream line")
-    func proxy() {
-        let request = CLIProxyRequest(timestamp: Date(timeIntervalSince1970: 101.5), method: "POST", path: "localhost/v1/messages",
-                                      status: 529, attemptCount: 3, errorSummary: "HTTP 529: overloaded")
-        let text = render(reconstruction(proxy: [request]))
-        #expect(text.contains("Upstream: 1 × HTTP 529, and the last one failed."))
-        let line = "- 00:01:41 · proxy · `POST localhost/v1/messages → 529 · 3 attempts` — HTTP 529: overloaded"
-        #expect(text.contains(line))
-        let proxyAt = text.range(of: line)!.lowerBound
-        #expect(text.range(of: "- 00:01:41 · tool `Bash`")!.lowerBound < proxyAt)
-        #expect(proxyAt < text.range(of: "- 00:01:42 · result")!.lowerBound)
-    }
-
     @Test("a clean run says so, and an empty one says nothing was rebuilt")
     func clean() {
         let items = [ReconstructedItem(seq: 0, at: 1, kind: .turnEnd, name: "end_turn")]
         let quiet = SessionReconstruction(items: items, story: SessionReconstructor.story(for: items), gaps: [],
-                                          totalLines: 1, redactedLines: 0)
+                                          totalLines: 1)
         let text = render(quiet)
         #expect(text.contains("No failures in these rows."))
-        #expect(text.contains("- 00:00:01 · turn end · end_turn"))
+        #expect(text.contains("- 00:00:01 · turn end · end\\_turn"))
         #expect(!text.contains("## Gaps"))
         let empty = SessionReconstruction(items: [], story: SessionReconstructor.story(for: []), gaps: [],
-                                          totalLines: 0, redactedLines: 0)
+                                          totalLines: 0)
         #expect(render(empty).contains("No rows could be rebuilt."))
+    }
+
+    @Test("header facts, gap reasons and timeline metadata apply the same privacy mask as row text")
+    func metadataPrivacy() {
+        let token = "sk-test-ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        let items = [
+            ReconstructedItem(seq: 0, kind: .message, role: token, text: "body", model: token),
+            ReconstructedItem(seq: 1, kind: .toolUse, name: token),
+            ReconstructedItem(seq: 2, kind: .turnEnd, name: token),
+        ]
+        let run = SessionReconstruction(items: items, story: SessionReconstructor.story(for: items),
+                                        gaps: ["gap:/Users/tester/\(token)"], totalLines: 3)
+        let text = SessionMarkdown.render(title: token, facts: [.init(token, token)], reconstruction: run,
+                                          notes: [token], home: "/Users/tester")
+        #expect(!text.contains(token))
+        #expect(!text.contains("/Users/tester"))
+        #expect(text.contains("capture gap: ~\\[redacted\\]"))
+    }
+
+    @Test("metadata cannot introduce links or headings and failure intent remains quoted")
+    func metadataStructure() {
+        let attack = "[link](https://example.invalid)\n# forged"
+        let items = [
+            ReconstructedItem(seq: 0, kind: .message, role: "user", text: "first\n# forged"),
+            ReconstructedItem(seq: 1, kind: .toolResult, isError: true),
+        ]
+        let run = SessionReconstruction(items: items, story: SessionReconstructor.story(for: items),
+                                        gaps: [attack], totalLines: 2)
+        let text = SessionMarkdown.render(title: attack, facts: [.init("Label", attack)], reconstruction: run,
+                                          notes: [attack])
+        #expect(text.contains("\\[link\\](https://example.invalid) \\# forged"))
+        #expect(!text.contains("\n# forged"))
+        #expect(text.contains("> Last asked: first\n> # forged."))
     }
 
     @Test("the failing turn's running time is measured from what you last said")

@@ -312,3 +312,32 @@ def test_every_refusal_in_a_row_keeps_the_next_press_open() -> None:
         command.await_state(AnswerAttemptState.SENT)
     finally:
         command.close()
+
+
+def test_a_crash_inside_the_answer_settles_the_command_instead_of_leaving_it_open() -> None:
+    from jrbar.command_journal import STATUS_FAILED
+
+    command = _Command(_RefusesOnceDelivery(refusals=0))
+    try:
+        def explode(*_args, **_kwargs):
+            raise RuntimeError("the answer surface fell over")
+
+        command.stub.answer_controller = SimpleNamespace(perform_browser_answer=explode)
+        arguments = {
+            "session": command.status.agent_id,
+            "decision": "approve",
+            "only_if_frontmost": True,
+            "request": str(announcer_alert_identity(command.request_key).value),
+            "command_id": "cmd-crash-1",
+        }
+        with pytest.raises(RuntimeError):
+            core_runtime._cmd_answer_ask(command.stub, dict(arguments))
+
+        record = command.stub._jrbar_command_journal.get("cmd-crash-1")
+        assert record is not None and record.status == STATUS_FAILED
+        # The same id again replays the failure; it never runs the answer twice.
+        with pytest.raises(CommandError):
+            core_runtime._cmd_answer_ask(command.stub, dict(arguments))
+        assert command.delivery.decisions == []
+    finally:
+        command.close()

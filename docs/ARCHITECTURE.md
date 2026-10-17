@@ -35,7 +35,9 @@ daemon boundary, the hook path or packaging. The wire contract itself is
 - **jrbar-core** (`src/jrbar`, frozen by PyInstaller into the nested
   helper bundle) is the pre-0.8 controller run without a UI:
   `python -m jrbar core` in a checkout. It listens on `core.sock` (mode
-  0600, peer UID checked, 4 clients, 1 MiB frames), refreshes on a 15 s
+  0600, peer UID checked, 4 clients, 1 MiB frames; privileged commands only
+  from the app's connection, which proves the per-launch secret the app
+  handed the daemon on its stdin), refreshes on a 15 s
   timer plus every hook event, and pushes `state` / `lights` / `settings`
   documents coalesced to 20 / 30 / 10 per second. It exits on its own when
   its supervisor is gone (`JRBAR_SUPERVISED=1`), and on any exit writes
@@ -64,7 +66,7 @@ cannot confirm is `stale`, shown as such, never silently dropped.
 
 | Path | Owner | What |
 | --- | --- | --- |
-| `~/.config/jrbar/agent-monitor.json` | daemon | settings (`AgentMonitorSettings`; every key the app edits goes through `set_setting`) |
+| `~/.config/jrbar/settings.json` | daemon | settings (`AgentMonitorSettings`; every key the app edits goes through `set_setting`) |
 | `~/.config/jrbar/integrations.json` | daemon | T3 Code and other optional integrations |
 | `~/.config/jrbar/deck-controls.json` | daemon | Creator Micro 2 bindings and board settings |
 | `~/.config/jrbar/effect-assignments.json` (+ sidecar) | daemon | Effect Studio assignments, active scene |
@@ -73,27 +75,31 @@ cannot confirm is `stale`, shown as such, never silently dropped.
 | `~/.local/state/jrbar/hook-ingress.sock` | daemon | the shim ↔ daemon socket |
 | `~/.local/state/jrbar/<provider>.pending.jsonl` | shim | hook payloads queued while no daemon listened |
 | `~/.local/state/jrbar/latest.json` | daemon | the last projected state (the app's offline fallback for the icon) |
-| `~/.local/state/jrbar/screen-bar.led` | daemon | the Screen Bar program as a file (fallback feed when the socket is down) |
 | `~/.local/state/jrbar/usage-samples.json` | daemon | `(at, used_pct)` samples per provider window for the forecast |
-| `~/.local/state/jrbar/app-state.json` | app | hooks-installed stamp, login-item marker, Screen Bar flag |
-| `~/.local/state/jrbar/*.log`, `hook-records/` | daemon | logs and hook records |
+| `~/.local/state/jrbar/app-state.json` | app | hooks-installed stamp, login-item marker, Screen Bar flag, icon style, and the Toys and Utilities state |
+| `~/.local/state/jrbar/<provider>.jsonl`, `hook-ingress-rejections.jsonl`, `*.log` | daemon | the per-provider hook event ledgers, rejected hook frames, and logs |
 | `~/.local/state/jrbar/cloud-ingest.token` | daemon | bearer token for the loopback ingest listener |
-| `~/.local/share/jrbar/` | daemon | operator history, capacity history, activity ledger (each behind its own retention consent) |
-| `~/Library/Application Support/JR-Bar/` | daemon | provider credential caches; secrets themselves live in the Keychain under `com.jonathanreed.jrbar.provider.<id>` |
+| `~/.local/state/jrbar/activity-ledger.json` | daemon | the activity ledger behind "Since you left" and History |
+| `~/Library/Application Support/JR-Bar/` | daemon | `operator-history.json` and `capacity-history.json` (each behind its own retention consent) |
+| Keychain, service `com.jonathanreed.jrbar.provider.<id>` | daemon | provider secrets; nothing secret is written to a file |
+| `~/.local/share/jrbar/` | installer | where `scripts/install-agents.sh` keeps a source install's `bin/jrbar-hook`; the old SidePulse copy is carried here by `migration.py` |
 | `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.pi/agent/extensions/jrbar.ts`, … | providers | hook registrations JR-Bar writes and recognises (`install.py`) |
 
 `XDG_CONFIG_HOME` / `XDG_STATE_HOME` move the first two trees;
 `JRBAR_STATE_DIR` moves the sockets for tests and gives the installer's shim
 probe a private state dir. Pre-rename SidePulse trees
 are copied forward once by `migration.py` on first launch and recorded in
-`~/.local/state/jrbar/migrated-from-sidepulse.json`.
+`~/.local/state/jrbar/migrated-from-sidepulse.json`. Failed scans leave the
+marker absent so the next launch retries. Copies publish complete files without
+replacing current files, and retries fill missing files in existing directories.
+Config settings publish last so an interrupted copy does not block its own retry.
 
 ## What runs when
 
 | Moment | What happens |
 | --- | --- |
 | Login | `SMAppService` launches `JR-Bar.app` (registered on first launch; Settings › General turns it off). |
-| App launch | The app reads `app-state.json`, spawns the daemon, shows the status item, restores the Screen Bar if it was on. On the first launch it records the build and registers the login item; it installs no provider hooks by itself (Settings › Agents does). On the first launch of an upgraded build it refreshes only the hooks the detector proves are JR-Bar's. |
+| App launch | The app reads `app-state.json`, spawns the daemon, shows the status item, restores the Screen Bar if it was on. On the first launch it records the build and registers the login item; it installs no provider hooks by itself (Settings › Agents & Usage does). On the first launch of an upgraded build it refreshes only the hooks the detector proves are JR-Bar's. |
 | Daemon start | Loads settings, migrates from SidePulse if needed, drains pending hook files, starts the hook ingress listener, the process registry, the usage refresh worker, device discovery (volumes named `SidePulse` / `PulseDot`, the Creator Micro 2 over HID every 10 s), the keep-awake and DND controllers, remote peers, cloud ingest, then the core socket. |
 | A hook fires | provider → shim → ingress → collector → canonical operator state → projection → `state` and `lights` frames within one refresh. |
 | Every 15 s | A controller refresh: liveness sweep, transcript tails, usage staleness, device writes if the program changed. |
@@ -118,7 +124,7 @@ listed is a helper of the row it sits next to alphabetically.
 | Signals and presentation | `signals.py`, `signal_coordinator.py`, `signal_selection.py`, `presentation_policy.py`, `presentation_scheduler.py`, `presentation_compiler.py`, `render_policy.py`, `brightness_policy.py`, `auto_dim.py`, `display_brightness.py`, `interruption_policy.py`, `notification_arbitration.py`, `courtesy_signatures.py` |
 | Effects | `effect_registry.py`, `effect_packs.py`, `effect_pack_store.py`, `effect_assignment_store.py`, `effect_studio.py`, `semantic_effect_router.py`, `ambient_effect_*.py`, `scenes.py`, `scene_packs.py`, `animation.py`, `colors.py`, `celebrations.py`, `firefly_completion.py`, `rainstick_idle.py`, `turn_length_ember.py`, `finite_effect_policy.py` |
 | LED output | `led_status.py`, `led_wasm.py` (+ the packaged `sdled.wasm` firmware parser), `device_writer.py`, `hardware_write_policy.py`, `hardware_write_contract.py`, `firmware_validation.py`, `device_identity.py`, `device_inventory.py`, `device_projection.py`, `dot_binary_heartbeat.py` |
-| Screen Bar (the app draws it; the daemon only computes its program) | `headless_screen_bar.py` (the object the controller pushes Screen Bar settings at; it draws nothing), `screen_bar_pipeline.py`, `alcove_observation.py` |
+| Screen Bar (the app draws it; the daemon only computes its program) | `headless_screen_bar.py` (the object the controller pushes Screen Bar settings at; it draws nothing) |
 | Usage and quota | `provider_usage_*.py` (platform, runtime, store, sync, parsers, collectors, menu), `provider_capacity.py`, `capacity_*.py`, `claude_quota.py`, `usage_stats.py`, `usage_file_index.py`, `usage_pace.py`, `usage_percent_history.py`, `quota_runway.py`, `quota_power_hold.py`, `provider_reset_*.py`, `provider_credential_store.py`, `credentials.py`, `provider_browser_*.py` |
 | Power | `keep_awake.py` (`caffeinate -ims`), `power_policy.py`, `lid_sleep.py` (the `pmset` helper behind `/etc/sudoers.d/jrbar-disablesleep`), `lid_presets.py`, `battery.py`, `battery_runtime.py` |
 | Quiet and Focus | `dnd_policy.py`, `dnd_controller.py`, `focus_status.py`, `focus_sync.py`, `local_time_boundary.py`, `temporal_safety.py` |
@@ -134,17 +140,17 @@ listed is a helper of the row it sits next to alphabetically.
 The one-release `sidepulse` import shim and console alias are gone. Hook
 commands registered before the rename (`python -m sidepulse.hook_client`
 and the rest) are still recognised by `providers.py` and `install.py`, and
-connecting a provider from Settings › Agents, or an upgrade's refresh of a
+connecting a provider from Settings › Agents & Usage, or an upgrade's refresh of a
 provider JR-Bar already owns, rewrites them to the bundled shim.
 
 ## The Swift package
 
 | Target | Depends on | What |
 | --- | --- | --- |
-| `JRBarLEDS` | nothing | The LEDS DSL: parser, program model and sampler with fixture parity against the firmware's own frames (`Tests/JRBarLEDSTests/Fixtures`). Pure Swift. |
+| `JRBarLEDS` | nothing | The LEDS DSL: parser, program model and sampler with fixture parity against the firmware's own frames (`Tests/JRBarLEDSTests/Fixtures`), plus the Swift port of the presentation compiler and flash analysis the Screen Bar plays through. Pure Swift. |
 | `JRBarCore` | Foundation | The protocol: `CoreCodec` (NDJSON), `CoreMessages` / `CoreModel` (Codable documents), `CoreClient` (socket, reconnect with backoff), `CoreSupervisor`, `SettingsDocument` (typed keys per page), `PanelLayout` (fixed row heights, no measuring), `SessionLabel`, `UsageWindowLabel`, `UsageForecast` / `UsageHistory`, `LightExplanation` ("why this light"), `EventPolicy` (which event makes which sound or banner), `AutoDim`, `DeckModel`, `EffectModel`, `HistoryModel`, `AppState`. |
-| `JRBarUI` | JRBarCore, AppKit | The status-item icon renderer (glyph, glyph + usage ring, glyph + label). |
-| `JRBarApp` | all three | The executable: `AppDelegate`, `StatusItemController`, the panel (`PanelController` / `PanelStore` / `PanelView` / `PanelMotion`), the Screen Bar (`ScreenBarController` / `ScreenBarView` / `ScreenBarGeometry` / `ScreenBarBlend` / `ScreenBarInteraction` / `ScreenBarPanel`), `LEDFeed` (kqueue-driven file fallback), Settings (`SettingsWindowController` / `SettingsStore` / `SettingsView` / `SettingsPagesA` / `SettingsPagesB`), Usage Center, Effect Studio, Control Center and the Rail, History, `EventCoordinator` / `NotificationBridge` / `SoundPlayer` / `NotchHUD`, `SparkleUpdater`. |
+| `JRBarUI` | JRBarCore, AppKit | The status-item icon renderer (`StatusIconStyle`: session dots, usage meters, percent styles, glyph, ring, label, orbit, none). |
+| `JRBarApp` | all three | The executable: `AppDelegate`, `StatusItemController`, the panel (`PanelController` / `PanelStore` / `PanelView` / `PanelMotion`), the Screen Bar (`ScreenBarController` / `ScreenBarView` / `ScreenBarGeometry` / `ScreenBarBlend` / `ScreenBarInteraction` / `ScreenBarPanel`), `LEDFeed` (kqueue-driven file fallback), Settings (`SettingsWindowController` / `SettingsStore` / `SettingsView` / `SettingsPagesA` / `SettingsPagesB`), Usage Center, Effect Studio, Control Center and the Rail, History (with the event journal), Overview, the command palette (`Palette/`), first-run `Setup/`, `WhatsNew/`, the Toys (`Toys/`) and Utilities (`Utilities/`: Menu Bar, Dock, Agent Overview, Keep Awake), `EventCoordinator` / `NotificationBridge` / `SoundPlayer` / `NotchHUD`, `SparkleUpdater`. |
 
 Tests: `swift test` runs the LEDS parity suite, the protocol and model
 tests (with `Fixtures/python-state.json`, a `state` frame produced by the
@@ -161,7 +167,7 @@ Everything not in this list comes from a daemon document.
   selection.
 - The Screen Bar's band geometry from the notch's auxiliary areas, and the
   raised-cosine blend between the eight samples (ported from the Python
-  bar the app replaced; `docs/feature-disposition.md` names the last commit
+  bar the app replaced; [the archived feature disposition](archive/feature-disposition.md) names the last commit
   that still has it).
 - Which sound or banner an `event` earns (`EventPolicy`), notification
   permission, the ask banner's Approve / Deny actions (they send
@@ -213,7 +219,7 @@ Everything not in this list comes from a daemon document.
 ## Build and verification
 
 `make fast` (Ruff, import smoke, contract and focused pytest, secret scan,
-dependency and version policy), `pytest tests` (the full Python suite,
+doc-link check, dependency and version policy), `pytest tests` (the full Python suite,
 about five minutes), `cd app && swift test` (the Swift suites),
 `make package` (the signed bundle, PKG, Sparkle ZIP and feed;
 [PRODUCTION-RELEASE.md](PRODUCTION-RELEASE.md)). CI runs the first three on

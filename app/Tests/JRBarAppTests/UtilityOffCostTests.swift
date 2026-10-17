@@ -10,7 +10,7 @@ import Testing
 /// monitor, no event tap, no repeating timer or clock, no capture stream,
 /// no panel on screen.
 ///
-/// The notch, the shelf, the Keep Awake card, the Data Hoarder, Agent
+/// The notch, the shelf, the Keep Awake card, Agent
 /// Overview and the Screen Bar's pointer watch are turned on (with their
 /// system hands replaced by counters) and then off. The Screen Bar's band
 /// itself, the Menu Bar and the Dock are only built off and checked:
@@ -97,7 +97,7 @@ struct UtilityOffCostTests {
             assertions.held.insert(assertions.next)
             return assertions.next
         }
-        state.releaseAssertion = { assertions.held.remove($0) }
+        state.releaseAssertion = { assertions.held.remove($0); return kIOReturnSuccess }
         let utility = KeepAwakeUtility(toggles: SystemTogglesStore(state: state))
         // No monitor connected: the app's own assertion, on a countdown.
         KeepAwakeMenu.perform(.seconds(900), on: utility.toggles)
@@ -108,24 +108,6 @@ struct UtilityOffCostTests {
         #expect(!utility.isOn)
         #expect(assertions.held.isEmpty, "no power assertion left")
         #expect(!state.awakeClockRunning, "no countdown clock left")
-    }
-
-    @Test("the Data Hoarder switched off stops capturing")
-    func dataHoarderOff() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "jrbar-offcost-\(UUID().uuidString)")
-        let watched = root.appending(path: "sessions")
-        try FileManager.default.createDirectory(at: watched, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let model = DataHoarderModel(archive: DataHoarderArchive(root: root.appending(path: "archive")))
-        model.captureSettings.captureSources[watched.path] = true
-        model.enabled = true
-        await model.applyCaptureNow()
-        #expect(model.captureRunning)
-        #expect(!(await model.capture.activeSourceIDs).isEmpty)
-        model.enabled = false
-        await model.applyCaptureNow()
-        #expect(!model.captureRunning)
-        #expect(await model.capture.activeSourceIDs.isEmpty, "no file watcher left")
     }
 
     @Test("Agent Overview has nothing to run, on or off")
@@ -179,7 +161,7 @@ struct UtilityOffCostTests {
           .disabled("owner: lane menubar — MenuBarUtility.start() puts JR-Bar's control items on the real menu bar and probes Accessibility; it needs stand-ins for the boundary items and the hider before a suite may start it"))
     func menuBarOnThenOff() {
         let utility = MenuBarUtility()
-        var settings = MenuBarSettings()
+        @Captured var settings = MenuBarSettings()
         settings.enabled = true
         utility.settings = { settings }
         utility.applySettings()
@@ -194,7 +176,7 @@ struct UtilityOffCostTests {
           .disabled("owner: lane dock — DockUtility.start() restores com.apple.dock through AppleDockControl and starts the AX watcher and the switcher's event tap; it needs stand-ins for all three before a suite may start it"))
     func dockOnThenOff() {
         let utility = DockUtility()
-        var settings = DockSettings()
+        @Captured var settings = DockSettings()
         settings.enabled = true
         utility.settings = { settings }
         utility.applySettings()

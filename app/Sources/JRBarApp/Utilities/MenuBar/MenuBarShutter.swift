@@ -194,7 +194,7 @@ final class MenuBarShutter {
         let clean = ranges.filter { $0.upperBound - $0.lowerBound > 4 }
         if coveredRanges != clean {
             coveredRanges = clean
-            MenuBarAssessmentBackend.log.notice("cover paint \(clean.map { "\(Int($0.lowerBound))–\(Int($0.upperBound))" }.joined(separator: " "), privacy: .public)")
+            MenuBarUtility.log.notice("cover paint \(clean.map { "\(Int($0.lowerBound))–\(Int($0.upperBound))" }.joined(separator: " "), privacy: .public)")
         }
         while panels.count < clean.count { panels.append(makePanel()) }
         let displayHeight = CGDisplayBounds(CGMainDisplayID()).height

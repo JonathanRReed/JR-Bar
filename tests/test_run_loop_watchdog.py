@@ -118,3 +118,62 @@ def test_a_quick_run_loop_is_never_logged__and_3_more() -> None:
     assert frames[1].startswith("test_run_loop_watchdog.py:")
     assert frames[1].endswith(" test_a_quick_run_loop_is_never_logged__and_3_more")
     assert python_stack_of(None) == ""
+
+
+def _drive(watchdog, clock, *, pings: int, answer_after: float = 0.01) -> list[float]:
+    """Run whole cycles the way the thread does: step, sleep what it asks,
+    with the run loop answering ``answer_after`` seconds after each post."""
+    waits: list[float] = []
+    for _ in range(pings):
+        watchdog.tick()
+        clock.now += answer_after
+        watchdog.pong()
+        wait = watchdog.next_wait_seconds()
+        waits.append(wait)
+        clock.now += max(0.0, wait - answer_after)
+    return waits
+
+
+def test_a_healthy_run_loop_is_pinged_a_quarter_as_often_once_it_has_proved_itself__and_2_more() -> None:
+    # --- scenario: a_healthy_run_loop_is_pinged_less_often
+    clock = _Clock()
+    watchdog, posted, logged, recorded = _watchdog(clock, quiet_after=5)
+    waits = _drive(watchdog, clock, pings=40)
+    assert waits[:5] == [0.25] * 5, "the quick pace holds until the run loop has proved itself"
+    assert waits[5:] == [1.0] * 35
+    assert logged == [] and recorded == []
+    # Forty cycles at the old fixed pace took 10 s and posted 40 pings.
+    assert clock.now > 30.0 and len(posted) == 40
+
+    # --- scenario: a_late_ping_brings_the_quick_pace_back
+    clock = _Clock()
+    watchdog, posted, logged, recorded = _watchdog(clock, quiet_after=3)
+    _drive(watchdog, clock, pings=6)
+    assert watchdog.next_wait_seconds() == 1.0
+    watchdog.tick()
+    clock.now += 1.0  # the run loop is stuck for a second
+    watchdog.tick()   # sees the unanswered ping and takes the stack
+    assert watchdog.next_wait_seconds() == 0.25, "watching a stall closely"
+    clock.now += 0.2
+    watchdog.pong()
+    watchdog.tick()   # settles the late ping and posts the next one
+    assert watchdog.stalls == 1
+    assert logged and logged[0].startswith("core: run loop stalled 1.20s")
+    watchdog.pong()
+    assert watchdog.next_wait_seconds() == 0.25, "the quick pace is back after a stall"
+    waits = _drive(watchdog, clock, pings=6)
+    assert waits[:2] == [0.25] * 2 and waits[2:] == [1.0] * 4, "and it is earned again"
+
+    # --- scenario: a_stall_is_still_named_while_it_happens_at_the_quiet_pace
+    clock = _Clock()
+    watchdog, posted, logged, recorded = _watchdog(
+        clock, quiet_after=2, stacks=["core_runtime.py:10 refresh_ < subprocess.py:1 run"]
+    )
+    _drive(watchdog, clock, pings=4)
+    assert watchdog.next_wait_seconds() == 1.0
+    watchdog.tick()               # a ping goes out and is never answered
+    clock.now += 1.0
+    watchdog.tick()               # one quiet step later it is late: stack taken now
+    clock.now += 5.0
+    watchdog.tick()
+    assert any("and counting" in line and "core_runtime.py:10 refresh_" in line for line in logged)

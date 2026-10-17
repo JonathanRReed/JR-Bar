@@ -164,6 +164,53 @@ def run_log(b, provider: str) -> str:
 # --- the click starts a worker and returns at once ----------------------------------------
 
 
+def test_capabilities_use_local_installations_without_checks_or_workers(tmp_path: Path) -> None:
+    b = bench(tmp_path, missing=("grok",))
+    b.updates.refresh_capabilities()
+    document = b.updates.document()
+    assert document["claude"]["updatable"] is True
+    assert document["codex"]["updatable"] is False
+    assert document["gemini"]["update_advice"] == GEMINI_UPDATE_ADVICE
+    assert document["grok"]["updatable"] is False
+    assert "not installed" in document["grok"]["update_advice"]
+    assert b.started == [] and b.registry.requests == []
+    assert not list(b.directory.glob("*.run"))
+    b.updates._locate = lambda _binary: pytest.fail("serialization must not discover installations")
+    assert b.updates.document() == document
+
+
+def test_capability_refresh_reassesses_installations_and_preserves_results(tmp_path: Path) -> None:
+    b = bench(tmp_path)
+    b.updates.update("claude")
+    run_started(b)
+    before = b.updates.document()["claude"]
+    b.updates._locate = lambda _binary: None
+    b.updates.refresh_capabilities()
+    missing = b.updates.document()["claude"]
+    assert missing["updatable"] is False
+    assert missing["phase"] == before["phase"] and missing["message"] == before["message"]
+    b.updates._locate = lambda binary: str(b.directory / binary)
+    b.updates.refresh_capabilities()
+    assert b.updates.document()["claude"]["updatable"] is True
+    assert b.updates.document()["claude"]["update_advice"] is None
+    def unavailable(_binary):
+        raise OSError("synthetic unreadable installation")
+    b.updates._locate = unavailable
+    b.updates.refresh_capabilities()
+    assert b.updates.document()["claude"]["updatable"] is None
+
+
+def test_hooks_doctor_refreshes_cached_capability_on_its_existing_worker(tmp_path, monkeypatch):
+    from jrbar import hook_doctor
+    b = bench(tmp_path)
+    report = {"providers": [{"provider": "claude", "version": "2.1.285"}]}
+    monkeypatch.setattr(hook_doctor, "hook_doctor_report", lambda: report)
+    daemon = SimpleNamespace(_jrbar_provider_updates=b.updates)
+    assert core_runtime._cmd_hooks_doctor(daemon, {}) is report
+    assert b.updates.document()["claude"]["updatable"] is True
+    assert b.started == [] and b.registry.requests == []
+
+
 def test_a_click_returns_at_once_and_the_updater_runs_on_a_worker(tmp_path: Path) -> None:
     b = bench(tmp_path, environment={"FAKE_NEW_VERSION": "2.1.290"})
 
@@ -178,8 +225,11 @@ def test_a_click_returns_at_once_and_the_updater_runs_on_a_worker(tmp_path: Path
         "from_version": None,
         "to_version": None,
         "latest_version": None,
+        "up_to_date_version": None,
         "message": "Updating Claude Code…",
         "finished_at": None,
+        "updatable": True,
+        "update_advice": None,
     }
     assert len(b.published) == 1
 
@@ -190,17 +240,20 @@ def test_a_click_returns_at_once_and_the_updater_runs_on_a_worker(tmp_path: Path
         "from_version": "2.1.285",
         "to_version": "2.1.290",
         "latest_version": None,
+        "up_to_date_version": None,
         "message": "Updated 2.1.285 to 2.1.290",
         "finished_at": b.wall.now,
+        "updatable": True,
+        "update_advice": None,
     }
-    assert len(b.published) == 2, "one broadcast when it started, one when it finished"
+    assert len(b.published) == 5, "start, version check, updater, verification, finish"
     assert b.log == ["core: provider update claude updated"]
 
 
 def test_the_updater_is_the_tables_argv_run_with_a_closed_stdin_in_the_owners_environment(tmp_path: Path) -> None:
     b = bench(tmp_path)
     # Devin is not here: its updater asks before it installs, so it gets a terminal (below).
-    for provider, tail in (("claude", "update"), ("codex", "update"), ("grok", "update"), ("opencode", "upgrade")):
+    for provider, tail in (("claude", "update"), ("grok", "update"), ("opencode", "upgrade")):
         b.started.clear()
         b.updates.update(provider)
         run_started(b)
@@ -237,11 +290,11 @@ def test_unchanged_failed_and_unreadable_results_say_so(tmp_path: Path) -> None:
         tmp_path / "failed",
         environment={"FAKE_EXIT": "1", "FAKE_OUTPUT": f"downloading\\nAuthorization: Bearer {SECRET}\\ntoken={SECRET}\\ndisk full"},
     )
-    failed.updates.update("codex")
+    failed.updates.update("claude")
     run_started(failed)
-    record = failed.updates.document()["codex"]
+    record = failed.updates.document()["claude"]
     assert record["phase"] == "failed"
-    assert record["message"].startswith("Codex's updater failed (exit 1): ")
+    assert record["message"].startswith("Claude Code's updater failed (exit 1): ")
     assert record["message"].endswith("disk full")
     assert "ZZZZZZ" not in record["message"] and "ZZZZZZ" not in repr(failed.updates.document())
     assert (record["from_version"], record["to_version"]) == ("2.1.285", None)
@@ -270,26 +323,26 @@ def test_a_hung_updater_is_killed_at_the_timeout(tmp_path: Path, monkeypatch: py
 
 def test_an_updater_that_wants_a_terminal_gets_one(tmp_path: Path) -> None:
     b = bench(tmp_path, environment={"FAKE_EXIT": "1", "FAKE_OUTPUT": "Install 2.2.0? [y/N]"})
-    b.updates.update("codex")
+    b.updates.update("claude")
 
     run_started(b)
 
-    record = b.updates.document()["codex"]
+    record = b.updates.document()["claude"]
     assert record["phase"] == "needs_terminal"
     assert record["message"] == (
-        "Codex's updater needs a terminal: opened Ghostty on `codex update`. Finish the update there."
+        "Claude Code's updater needs a terminal: opened Ghostty on `claude update`. Finish the update there."
     )
-    assert b.terminal.calls == [(str(b.home), f"{shlex.quote(b.tools['codex'])} update")]
+    assert b.terminal.calls == [(str(b.home), f"{shlex.quote(b.tools['claude'])} update")]
 
     refused = bench(
         tmp_path / "refused",
         environment={"FAKE_EXIT": "1", "FAKE_OUTPUT": "stdin is not a terminal"},
     )
     refused.terminal.error = CommandError("unsupported", "that terminal could not be opened")
-    refused.updates.update("codex")
+    refused.updates.update("claude")
     run_started(refused)
-    assert refused.updates.document()["codex"]["phase"] == "failed"
-    assert "Run `codex update` yourself" in refused.updates.document()["codex"]["message"]
+    assert refused.updates.document()["claude"]["phase"] == "failed"
+    assert "Run `claude update` yourself" in refused.updates.document()["claude"]["message"]
 
 
 def test_devins_updater_is_never_run_blind_because_it_would_read_as_up_to_date(tmp_path: Path) -> None:
@@ -348,7 +401,7 @@ def test_one_update_per_provider_and_at_most_two_at_once(tmp_path: Path) -> None
     again = b.updates.update("claude")
     assert (again["started"], again["reason"]) == (False, "busy")
     assert "already running" in again["message"]
-    assert b.updates.update("codex")["started"] is True
+    assert b.updates.update("opencode")["started"] is True
     third = b.updates.update("grok")
     assert (third["started"], third["reason"]) == (False, "busy")
     assert "Two updates are already running" in third["message"]
@@ -370,7 +423,209 @@ def test_gemini_and_an_absent_cli_get_a_plain_refusal_and_no_thread(tmp_path: Pa
     assert "brew upgrade gemini-cli" in GEMINI_UPDATE_ADVICE
     assert (absent["started"], absent["reason"]) == (False, "not_installed")
     assert "`grok`" in absent["message"]
-    assert b.started == [] and b.published == [] and b.updates.document() == {}
+    assert b.started == [] and len(b.published) == 2
+    assert b.updates.document()["gemini"]["updatable"] is False
+    assert b.updates.document()["grok"]["updatable"] is False
+
+
+@pytest.mark.parametrize("provider,package", [("codex", "@openai/codex"), ("gemini", "@google/gemini-cli")])
+def test_global_package_update_uses_the_manager_and_confirms_the_same_cli(tmp_path, provider, package):
+    prefix = tmp_path / "prefix with spaces"
+    target = prefix / "lib" / "node_modules" / package / "bin" / "cli.js"
+    target.parent.mkdir(parents=True)
+    target.write_text("#!/bin/sh\nexit 0\n")
+    target.chmod(0o755)
+    manager = prefix / "bin" / "npm"
+    manager.parent.mkdir()
+    manager.write_text("#!/bin/sh\nexit 0\n")
+    manager.chmod(0o755)
+    entry = prefix / "bin" / provider
+    entry.symlink_to(target)
+    calls = []
+    versions = iter(("1.0.0", "1.1.0"))
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        output = f"fake-cli {next(versions)}" if argv[-1] == "--version" else "installed"
+        return provider_updates.RunResult(0, output)
+
+    started = []
+    updates = ProviderUpdates(locate=lambda _binary: str(entry), run=run,
+                              start=lambda fn, _name: started.append(fn), home=lambda: tmp_path,
+                              environ=lambda: {"PATH": "/usr/bin:/bin"})
+    updates.refresh_capabilities()
+    assert updates.document()[provider]["updatable"] is True
+    assert calls == [] and started == []
+    assert updates.update(provider)["started"] is True
+    assert calls == []
+    started[0]()
+    assert [argv for argv, _ in calls] == [
+        [str(entry), "--version"],
+        [str(manager), "install", "-g", "--prefix", str(prefix), f"{package}@latest"],
+        [str(entry), "--version"],
+    ]
+    assert calls[1][1]["env"]["PATH"].split(":")[0] == str(prefix / "bin")
+    assert updates.document()[provider]["phase"] == "updated"
+
+
+def test_update_refuses_a_manager_changed_after_the_click_before_any_run(tmp_path):
+    prefix = tmp_path / "prefix"
+    target = prefix / "lib" / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+    target.parent.mkdir(parents=True)
+    target.write_text("#!/bin/sh\nexit 0\n")
+    target.chmod(0o755)
+    manager = prefix / "bin" / "npm"
+    manager.parent.mkdir()
+    manager.write_text("#!/bin/sh\nexit 0\n")
+    manager.chmod(0o755)
+    entry = prefix / "bin" / "codex"
+    entry.symlink_to(target)
+    started = []
+    updates = ProviderUpdates(locate=lambda _binary: str(entry),
+                              run=lambda *_args, **_kwargs: pytest.fail("changed manager was run"),
+                              start=lambda fn, _name: started.append(fn), home=lambda: tmp_path)
+    assert updates.update("codex")["started"] is True
+    manager.chmod(0o777)
+    started[0]()
+    assert updates.document()["codex"]["phase"] == "failed"
+    assert "installation changed" in updates.document()["codex"]["message"]
+
+
+def test_unknown_codex_install_has_manual_advice_and_never_starts(tmp_path):
+    b = bench(tmp_path)
+    reply = b.updates.update("codex")
+    assert reply["started"] is False and reply["reason"] == "no_updater"
+    assert "manager you used to install it" in reply["message"]
+    assert b.started == []
+
+
+def manager_bench(tmp_path, monkeypatch, *, kind="npm", separate=False, outcome="complete"):
+    tools = {}
+    prefixes = []
+    for provider, package in (("codex", "@openai/codex"), ("gemini", "@google/gemini-cli")):
+        prefix = tmp_path / (provider if separate else "shared")
+        prefixes.append(str(prefix))
+        formula = "codex" if provider == "codex" else "gemini-cli"
+        root = prefix / "lib" / "node_modules" / package if kind == "npm" else prefix / "Cellar" / formula / "1.0.0"
+        target = root / "bin" / provider
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("#!/bin/sh\nexit 0\n")
+        target.chmod(0o755)
+        entry = prefix / "bin" / provider
+        entry.parent.mkdir(exist_ok=True)
+        entry.symlink_to(target)
+        manager = prefix / "bin" / kind
+        manager.write_text("#!/bin/sh\nexit 0\n")
+        manager.chmod(0o755)
+        tools[provider] = str(entry)
+    original = provider_updates.resolve_update_command
+    monkeypatch.setattr(provider_updates, "resolve_update_command", lambda cli, executable:
+                        original(cli, executable, group_writable_roots=tuple(prefixes)))
+    started = []
+    attempts = 0
+
+    def start(fn, _name):
+        nonlocal attempts
+        attempts += 1
+        if outcome == "startup_failure" and attempts == 1:
+            raise RuntimeError("synthetic thread failure")
+        started.append(fn)
+
+    def run(argv, **_kwargs):
+        if argv[-1] == "--version":
+            return provider_updates.RunResult(0, "fake-cli 1.0.0")
+        if outcome == "failure":
+            raise RuntimeError("synthetic worker failure")
+        return provider_updates.RunResult(0, "finished")
+
+    def log(_line):
+        if outcome == "log_failure":
+            raise RuntimeError("synthetic logging failure")
+
+    updates = ProviderUpdates(locate=lambda binary: tools.get(binary), run=run, start=start,
+                              log=log, home=lambda: tmp_path)
+    return updates, started
+
+
+@pytest.mark.parametrize("kind", ["npm", "brew"])
+def test_different_providers_cannot_overlap_the_same_installation_manager(tmp_path, monkeypatch, kind):
+    updates, started = manager_bench(tmp_path, monkeypatch, kind=kind)
+    assert updates.update("codex")["started"] is True
+    reply = updates.update("gemini")
+    assert (reply["started"], reply["reason"]) == (False, "busy")
+    assert "installation" in reply["message"]
+    assert len(started) == 1 and "gemini" not in updates.document()
+    started[0]()
+    assert updates.update("gemini")["started"] is True
+
+
+@pytest.mark.parametrize("kind", ["npm", "brew"])
+def test_independent_manager_installations_keep_two_update_capacity(tmp_path, monkeypatch, kind):
+    updates, started = manager_bench(tmp_path, monkeypatch, kind=kind, separate=True)
+    assert updates.update("codex")["started"] is True
+    assert updates.update("gemini")["started"] is True
+    assert len(started) == 2
+
+
+@pytest.mark.parametrize("outcome", ["failure", "startup_failure", "log_failure"])
+def test_manager_ownership_is_released_on_every_failure_path(tmp_path, monkeypatch, outcome):
+    updates, started = manager_bench(tmp_path, monkeypatch, outcome=outcome)
+    reply = updates.update("codex")
+    if outcome == "startup_failure":
+        assert reply["started"] is False
+        assert started == []
+    elif outcome == "log_failure":
+        with pytest.raises(RuntimeError, match="logging failure"):
+            started[0]()
+    else:
+        started[0]()
+        assert updates.document()["codex"]["phase"] == "failed"
+    assert updates.update("gemini")["started"] is True
+
+
+def test_manager_identity_follows_installation_aliases_instead_of_provider(tmp_path):
+    prefix = tmp_path / "owner"
+    prefix.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(prefix, target_is_directory=True)
+    first = provider_updates.ProviderUpdateCommand(str(prefix / "bin" / "npm"),
+                 ("install", "-g", "--prefix", str(prefix), "@openai/codex@latest"))
+    second = provider_updates.ProviderUpdateCommand(str(alias / "bin" / "npm"),
+                 ("install", "-g", "--prefix", str(alias), "@google/gemini-cli@latest"))
+    assert ProviderUpdates._manager_key(PROVIDER_CLIS["codex"], first) == ProviderUpdates._manager_key(PROVIDER_CLIS["gemini"], second)
+
+
+def test_managed_terminal_failure_does_not_launch_an_untracked_installer(tmp_path, monkeypatch):
+    updates, started = manager_bench(tmp_path / ('long-installation-prefix-' * 8), monkeypatch)
+
+    def run(argv, **_kwargs):
+        if argv[-1] == "--version":
+            return provider_updates.RunResult(0, "fake-cli 1.0.0")
+        return provider_updates.RunResult(1, "stdin is not a terminal")
+
+    updates._run = run
+    updates._open_terminal = lambda *_args: pytest.fail("untracked manager installer launched")
+    assert updates.update("codex")["started"] is True
+    started[0]()
+    record = updates.document()["codex"]
+    assert record["phase"] == "needs_terminal"
+    assert "original npm installation" in record["message"]
+    assert "`" not in record["message"]  # Never offer a truncated shell command.
+    assert updates.update("gemini")["started"] is True
+
+
+def test_short_manual_manager_command_is_preserved(tmp_path):
+    updates = bench(tmp_path).updates
+    command = provider_updates.ProviderUpdateCommand(
+        "/opt/homebrew/bin/npm",
+        ("install", "-g", "--prefix", "/opt/homebrew", "@openai/codex@latest"),
+    )
+    phase, _before, _after, message = updates._needs_terminal(
+        PROVIDER_CLIS["codex"], "/opt/homebrew/bin/codex", "1.0.0", command,
+    )
+    assert phase == "needs_terminal"
+    assert "`/opt/homebrew/bin/npm install -g --prefix /opt/homebrew @openai/codex@latest`" in message
+    assert len(message) <= provider_updates.MESSAGE_LIMIT
 
 
 def test_a_thread_that_cannot_start_releases_its_place(tmp_path: Path) -> None:
@@ -460,8 +715,9 @@ def test_with_checks_on_each_installed_cli_with_a_package_is_asked_once(tmp_path
     assert document["claude"]["latest_version"] == "2.1.290"
     assert document["grok"]["latest_version"] == "2.2.0"
     assert document["gemini"]["latest_version"] == "2.1.286"
-    assert "codex" not in document and "devin" not in document and "opencode" not in document
+    assert "codex" not in document and "devin" not in document
     assert {document[p]["phase"] for p in ("claude", "grok", "gemini")} == {"idle"}
+    assert document["opencode"]["up_to_date_version"] == "2.1.285"
     assert b.published, "a new latest_version is broadcast"
 
 
@@ -534,6 +790,90 @@ def test_an_update_that_catches_up_clears_the_available_version(tmp_path: Path) 
 
     record = b.updates.document()["claude"]
     assert (record["phase"], record["latest_version"], record["to_version"]) == ("updated", None, "2.1.290")
+
+
+def test_check_thread_start_failure_does_not_consume_the_retry_interval(tmp_path: Path) -> None:
+    b = bench(tmp_path, checks=True)
+    attempts = []
+
+    def start(target, name):
+        attempts.append(name)
+        if len(attempts) == 1:
+            raise RuntimeError("synthetic thread start failure")
+        b.started.append((target, name))
+
+    b.updates._start = start
+    assert b.updates.check() == {"enabled": True, "started": False}
+    assert b.updates.check(forced=True) == {"enabled": True, "started": True}
+    assert len(attempts) == 2
+    assert len(b.started) == 1
+    assert b.registry.requests == [], "starting a worker does not itself ask the registry"
+
+
+def test_failed_check_start_preserves_the_previous_successful_check_cadence(tmp_path: Path) -> None:
+    b = bench(tmp_path, checks=True, missing=tuple(PROVIDER_CLIS))
+    b.monotonic.now = 100.0
+    assert b.updates.check()["started"] is True
+    run_started(b)
+    b.monotonic.now = 200.0
+    attempts = []
+
+    def start(target, name):
+        attempts.append(name)
+        if len(attempts) == 1:
+            raise RuntimeError("synthetic thread start failure")
+        b.started.append((target, name))
+
+    b.updates._start = start
+    assert b.updates.check(forced=True)["started"] is False
+    assert b.updates._last_check_at == 100.0
+    assert b.updates.check()["started"] is False
+    assert len(attempts) == 1, "normal polling keeps the previous six-hour cadence"
+    assert b.updates.check(forced=True)["started"] is True
+    assert len(attempts) == 2
+    assert b.registry.requests == []
+
+
+@pytest.mark.parametrize(
+    ("outcome", "latest", "expected"),
+    [("updated", "2.0.0", None), ("updated", "3.0.0", "3.0.0"),
+     ("failed", "2.0.0", "2.0.0"), ("unchanged", "2.0.0", "2.0.0"),
+     ("unchanged", "1.0.0", None), ("failed", "1.0.0", None)],
+)
+def test_check_completion_respects_an_update_completed_during_its_fetch(
+    tmp_path: Path, monkeypatch, outcome: str, latest: str, expected: str | None,
+) -> None:
+    b = bench(tmp_path, checks=True, missing=tuple(p for p in PROVIDER_CLIS if p != "claude"))
+    version = ["1.0.0"]
+    calls = []
+    monkeypatch.setattr(provider_updates, "installed_version", lambda *args, **kwargs: version[0])
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        assert kwargs["cwd"] == b.home
+        if outcome == "updated":
+            version[0] = "2.0.0"
+        return provider_updates.RunResult(returncode=1 if outcome == "failed" else 0, output="")
+
+    def fetch(package):
+        assert package == "@anthropic-ai/claude-code"
+        assert b.updates.update("claude")["started"] is True
+        run_started(b, 1)
+        assert b.updates.document()["claude"]["phase"] == outcome
+        return latest
+
+    b.updates._run = run
+    b.updates._fetch_latest = fetch
+    assert b.updates.check()["started"] is True
+    run_started(b, 0)
+    record = b.updates.document()["claude"]
+    assert record["phase"] == outcome
+    assert record["latest_version"] == expected
+    current = "2.0.0" if outcome == "updated" and latest == "2.0.0" else None
+    if outcome == "unchanged" and latest == "1.0.0":
+        current = "1.0.0"
+    assert record["up_to_date_version"] == current
+    assert len(calls) == 1, "only the injected updater ran"
 
 
 def test_dotted_versions_compare_by_number_not_by_text() -> None:
@@ -709,3 +1049,162 @@ def test_the_refresh_tick_asks_the_coordinator_and_the_state_carries_its_documen
 
 def test_the_real_runner_is_what_runs_an_updater_by_default() -> None:
     assert inspect.signature(ProviderUpdates).parameters["run"].default is run_bounded
+
+
+def test_running_stages_publish_versions_without_extra_commands(tmp_path: Path) -> None:
+    b = bench(tmp_path)
+    snapshots = []
+    calls = []
+
+    def publish():
+        snapshots.append(b.updates.document()["claude"])
+
+    def run(argv, **_kwargs):
+        calls.append(list(argv))
+        record = b.updates.document()["claude"]
+        assert record["phase"] == "running"
+        assert record["finished_at"] is None
+        if len(calls) == 1:
+            assert record["message"] == "Checking installed version…"
+            assert record["from_version"] is None
+            return provider_updates.RunResult(0, "fake-cli 1.0.0")
+        assert record["from_version"] == "1.0.0"
+        if len(calls) == 2:
+            assert record["message"] == "Running updater…"
+            return provider_updates.RunResult(0, "synthetic output 50%")
+        assert record["message"] == "Verifying installed version…"
+        return provider_updates.RunResult(0, "fake-cli 1.1.0")
+
+    b.updates._on_change = publish
+    b.updates._run = run
+    b.updates.update("claude")
+    run_started(b)
+
+    assert calls == [[b.tools["claude"], "--version"],
+                     [b.tools["claude"], "update"],
+                     [b.tools["claude"], "--version"]]
+    assert [record["message"] for record in snapshots] == [
+        "Updating Claude Code…", "Checking installed version…", "Running updater…",
+        "Verifying installed version…", "Updated 1.0.0 to 1.1.0",
+    ]
+    assert [record["from_version"] for record in snapshots] == [None, None, "1.0.0", "1.0.0", "1.0.0"]
+    assert [record["phase"] for record in snapshots] == ["running"] * 4 + ["updated"]
+    terminal = b.updates.document()["claude"]
+    b.updates._stage("claude", "Checking installed version…")
+    assert b.updates.document()["claude"] == terminal
+    assert len(snapshots) == 5
+
+
+@pytest.mark.parametrize("failure_at", ["updater", "verification"])
+def test_running_failure_retains_version_and_releases_manager(tmp_path, monkeypatch, failure_at):
+    updates, started = manager_bench(tmp_path, monkeypatch)
+    calls = []
+
+    def run(argv, **_kwargs):
+        calls.append(list(argv))
+        if len(calls) == 1:
+            return provider_updates.RunResult(0, "fake-cli 1.0.0")
+        if failure_at == "updater" or len(calls) == 3:
+            raise RuntimeError("synthetic stage failure")
+        return provider_updates.RunResult(0, "finished")
+
+    updates._run = run
+    updates.update("codex")
+    refused = updates.update("gemini")
+    assert (refused["started"], refused["reason"]) == (False, "busy")
+    started[0]()
+    record = updates.document()["codex"]
+    assert record["phase"] == "failed"
+    assert record["from_version"] == "1.0.0"
+    assert record["to_version"] is None
+    assert len(calls) == (2 if failure_at == "updater" else 3)
+    assert updates._running == set()
+    assert updates._running_managers == {}
+    assert updates.update("gemini")["started"] is True
+
+
+def test_stage_listener_failure_does_not_interrupt_or_repeat_updater(tmp_path: Path) -> None:
+    b = bench(tmp_path)
+    calls = []
+    notifications = []
+
+    def publish():
+        notifications.append(b.updates.document()["claude"]["message"])
+        raise RuntimeError("synthetic listener failure")
+
+    def run(argv, **_kwargs):
+        calls.append(list(argv))
+        return provider_updates.RunResult(0, "fake-cli 1.0.0")
+
+    b.updates._run = run
+    b.updates._on_change = publish
+    assert b.updates.update("claude")["started"] is True
+    run_started(b)
+    assert len(calls) == 3
+    assert len(notifications) == 5
+    assert b.updates.document()["claude"]["phase"] == "unchanged"
+    assert b.updates._running == set()
+
+
+@pytest.mark.parametrize("installed, offer, expected", [
+    ("2.0.0", "2.0.0", "2.0.0"),
+    ("3.0.0", "2.0.0", "3.0.0"),
+    ("1.0.0", "2.0.0", None),
+    (None, "2.0.0", None),
+    ("unknown", "2.0.0", None),
+    ("2.0.0", "unknown", None),
+    ("2.0.0", None, None),
+])
+def test_registry_current_is_bound_to_a_readable_installed_version(
+    tmp_path: Path, monkeypatch, installed, offer, expected,
+) -> None:
+    registry = Registry(**{"@anthropic-ai/claude-code": offer})
+    b = bench(tmp_path, checks=True, registry=registry,
+              missing=tuple(p for p in PROVIDER_CLIS if p != "claude"))
+    monkeypatch.setattr(provider_updates, "installed_version", lambda *a, **kw: installed)
+    assert b.updates.check()["started"] is True
+    run_started(b)
+    record = b.updates.document().get("claude", {})
+    assert record.get("up_to_date_version") == expected
+    if expected:
+        assert record["phase"] == "idle"
+        assert record["message"] == "" and record["finished_at"] is None
+        assert b.published
+        b.state.checks = False
+        assert b.updates.document().get("claude", {}).get("up_to_date_version") is None
+
+
+def test_registry_current_clears_for_a_new_offer_and_an_explicit_update(tmp_path: Path) -> None:
+    registry = Registry(**{"@anthropic-ai/claude-code": "2.1.285"})
+    b = bench(tmp_path, checks=True, registry=registry,
+              missing=tuple(p for p in PROVIDER_CLIS if p != "claude"))
+    b.updates.check()
+    run_started(b)
+    assert b.updates.document()["claude"]["up_to_date_version"] == "2.1.285"
+    registry.answers["@anthropic-ai/claude-code"] = "2.1.290"
+    b.monotonic.now += 7 * 3600
+    b.updates.check()
+    run_started(b, 1)
+    assert b.updates.document()["claude"]["up_to_date_version"] is None
+    registry.answers["@anthropic-ai/claude-code"] = "2.1.285"
+    b.monotonic.now += 7 * 3600
+    b.updates.check()
+    run_started(b, 2)
+    assert b.updates.document()["claude"]["up_to_date_version"] == "2.1.285"
+    b.updates.update("claude")
+    assert b.updates.document()["claude"]["up_to_date_version"] is None
+
+
+def test_registry_check_does_not_mark_a_running_update_current(tmp_path: Path) -> None:
+    b = bench(tmp_path, checks=True,
+              missing=tuple(p for p in PROVIDER_CLIS if p != "claude"))
+    def fetch(package):
+        assert b.updates.update("claude")["started"] is True
+        return "2.1.285"
+    b.updates._fetch_latest = fetch
+    b.updates.check()
+    run_started(b)
+    record = b.updates.document()["claude"]
+    assert record["phase"] == "running"
+    assert record["up_to_date_version"] is None
+    assert not (b.directory / "claude.run").exists()

@@ -322,6 +322,12 @@ public struct UsageHistory: Codable, Hashable, Sendable {
     /// True while the daemon's scan is still running and these rows are
     /// what it has so far; a `usage_history_ready` event follows.
     public var partial: Bool
+    /// The rows are a previous reading while a background refresh runs.
+    public var stale: Bool
+    /// How many transcripts the scan has not finished reading: it reads a
+    /// large history in bounded passes and carries on from where each stopped.
+    /// 0 once every transcript in the range is read.
+    public var readingFiles: Int = 0
     /// Counted records priced at a reference stand-in rather than their
     /// model's own row (T24: estimates stay labeled).
     public var estimatedRecords: Int
@@ -335,7 +341,7 @@ public struct UsageHistory: Codable, Hashable, Sendable {
 
     public init(provider: String, range: String, days: [UsageHistoryDay] = [], hours: [UsageHistoryHour] = [], pricing: UsagePricing? = nil,
                 account: UsageAccount? = nil, records: Int? = nil, partial: Bool = false,
-                estimatedRecords: Int = 0, unpricedRecords: Int = 0, unpricedModels: [String] = []) {
+                estimatedRecords: Int = 0, unpricedRecords: Int = 0, unpricedModels: [String] = [], stale: Bool = false) {
         self.provider = provider
         self.range = range
         self.days = days
@@ -344,13 +350,15 @@ public struct UsageHistory: Codable, Hashable, Sendable {
         self.account = account
         self.records = records
         self.partial = partial
+        self.stale = stale
         self.estimatedRecords = estimatedRecords
         self.unpricedRecords = unpricedRecords
         self.unpricedModels = unpricedModels
     }
 
     enum CodingKeys: String, CodingKey {
-        case provider, range, days, hours, pricing, account, records, partial, models
+        case provider, range, days, hours, pricing, account, records, partial, stale, models
+        case readingFiles = "reading_files"
         case estimatedRecords = "estimated_records"
         case unpricedRecords = "unpriced_records"
         case unpricedModels = "unpriced_models"
@@ -366,6 +374,8 @@ public struct UsageHistory: Codable, Hashable, Sendable {
         account = try c.decodeIfPresent(UsageAccount.self, forKey: .account)
         records = try? c.decodeIfPresent(Int.self, forKey: .records)
         partial = (try? c.decodeIfPresent(Bool.self, forKey: .partial)) ?? false
+        stale = try c.decodeIfPresent(Bool.self, forKey: .stale) ?? false
+        readingFiles = max(0, (try? c.decodeIfPresent(Int.self, forKey: .readingFiles)) ?? 0)
         estimatedRecords = (try? c.decodeIfPresent(Int.self, forKey: .estimatedRecords)) ?? 0
         unpricedRecords = (try? c.decodeIfPresent(Int.self, forKey: .unpricedRecords)) ?? 0
         unpricedModels = (try? c.decodeIfPresent([String].self, forKey: .unpricedModels)) ?? []
@@ -386,13 +396,28 @@ public struct UsageHistory: Codable, Hashable, Sendable {
         (pricing?.estimated ?? true) || estimatedRecords > 0
     }
 
+    /// Tokens were counted and not one dollar could be priced: no price table
+    /// at all, or every record unpriced. The sum is then an absence, and a
+    /// "$0.00" beside millions of tokens would read as free.
+    public var costIsUnpriced: Bool {
+        totalCost <= 0 && totalTokens > 0 && (pricing == nil || unpricedRecords > 0)
+    }
+
+    /// The range's dollars as the headline says them: "≈ $12.40" while
+    /// approximate, and "No price" when nothing could be priced.
+    public var costHeadline: String {
+        if costIsUnpriced { return "No price" }
+        let amount = UsageFormat.cost(totalCost, currency: pricing?.currency ?? "USD")
+        return (costsApproximate ? "≈ " : "") + amount
+    }
+
     public var isEmpty: Bool { days.isEmpty && hours.isEmpty }
     /// The scan *finished* and found nothing for this provider on this
     /// Mac. A partial answer is a scan still running, not a verdict — and
     /// the daemon pads its answer with a row per day whether or not it
     /// read anything, so an all-zero month with no records is this, not a
     /// month that happened to be quiet.
-    public var hasNoLocalRecords: Bool { records == 0 && !partial && (isEmpty || totalTokens == 0) }
+    public var hasNoLocalRecords: Bool { records == 0 && !partial && !stale && (isEmpty || totalTokens == 0) }
     public var totalCost: Double { days.reduce(0) { $0 + $1.costUsd } }
     public var totalTokens: Int { days.reduce(0) { $0 + $1.totalTokens } }
     public var totalCacheRead: Int { days.reduce(0) { $0 + $1.cacheRead } }
@@ -401,7 +426,10 @@ public struct UsageHistory: Codable, Hashable, Sendable {
     /// What the cache reads would have cost at the input price minus what
     /// they cost at the cache price; nil without both prices.
     public var cacheSavings: Double? {
-        guard let pricing, let input = pricing.inputPerMillion, let cache = pricing.cacheReadPerMillion, input > cache else { return nil }
+        // One headline rate cannot price savings across different models.
+        guard Set(models.map(\.model)).count <= 1, unpricedRecords == 0,
+              let pricing, let input = pricing.inputPerMillion, let cache = pricing.cacheReadPerMillion,
+              input.isFinite, cache.isFinite, cache >= 0, input > cache else { return nil }
         return Double(totalCacheRead) / 1_000_000 * (input - cache)
     }
 
@@ -411,18 +439,17 @@ public struct UsageHistory: Codable, Hashable, Sendable {
         guard base > 0 else { return nil }
         return Double(totalCacheRead) / Double(base)
     }
-
-    /// The busiest day, for the axis ceiling.
-    public var peakDayTokens: Int { days.map(\.totalTokens).max() ?? 0 }
 }
 
 public enum UsageFormat {
     /// 1234 → "1.2k", 4_560_000 → "4.6M".
     public static func tokens(_ count: Int) -> String {
         let value = Double(count)
-        if value >= 1_000_000_000 { return String(format: "%.1fB", value / 1_000_000_000) }
-        if value >= 1_000_000 { return String(format: value >= 10_000_000 ? "%.0fM" : "%.1fM", value / 1_000_000) }
-        if value >= 1_000 { return String(format: value >= 10_000 ? "%.0fk" : "%.1fk", value / 1_000) }
+        // Each tier starts where the one below would round up to 1000, so
+        // 999_999 reads "1.0M" and never "1000k", and 9_999 reads "10k".
+        if value >= 999_500_000 { return String(format: "%.1fB", value / 1_000_000_000) }
+        if value >= 999_500 { return String(format: value >= 9_950_000 ? "%.0fM" : "%.1fM", value / 1_000_000) }
+        if value >= 1_000 { return String(format: value >= 9_950 ? "%.0fk" : "%.1fk", value / 1_000) }
         return "\(count)"
     }
 
@@ -431,7 +458,7 @@ public enum UsageFormat {
         if usd < 0.01, usd > 0 { return "<\(symbol)0.01" }
         // Past a thousand the cents are noise and the digits run together:
         // "$253,305" reads, "$253305" does not.
-        if usd >= 1000 { return symbol + grouped(usd.rounded()) }
+        if usd >= 999.995 { return symbol + grouped(usd.rounded()) }
         return String(format: "%@%.2f", symbol, usd)
     }
 

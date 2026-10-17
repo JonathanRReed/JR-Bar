@@ -220,7 +220,7 @@ def test_timer_intents_reject_invalid_or_ambiguous_schedules__and_2_more() -> No
     # --- scenario: a replanned repeating intent keeps its timer
     clock = _Clock()
     factory = _FakeAppKitFactory()
-    repeating = RuntimeFeature.ALCOVE_OBSERVATION
+    repeating = RuntimeFeature.POINTER_PEEK
     one_shot = RuntimeFeature.CAPACITY_DEADLINE
     registry = AppKitTimerRegistry(
         handlers={repeating: lambda: None, one_shot: lambda: None},
@@ -1111,16 +1111,16 @@ def test_worker_registry_rejects_duplicates_and_closes_reverse_under_shared_budg
 
     # --- scenario: worker_registry_close_refuses_late_submissions
     worker = LatestWinsWorker(
-        RuntimeWorkerDomain.ALCOVE_OBSERVER,
+        RuntimeWorkerDomain.SCREEN_BAR_SAMPLER,
         executor=lambda command: command.payload,
         result_handler=lambda _command, _result: None,
         dispatch_main=lambda _drain: None,
     )
     registry = RuntimeWorkerRegistry()
-    registry.register(RuntimeWorkerDomain.ALCOVE_OBSERVER, worker)
+    registry.register(RuntimeWorkerDomain.SCREEN_BAR_SAMPLER, worker)
 
     assert registry.close_all(timeout_seconds=1.0)
-    assert worker.submit(_command(RuntimeWorkerDomain.ALCOVE_OBSERVER, "alcove", 1)) is SubmissionDisposition.REFUSED
+    assert worker.submit(_command(RuntimeWorkerDomain.SCREEN_BAR_SAMPLER, "alcove", 1)) is SubmissionDisposition.REFUSED
 
     # --- scenario: ten_thousand_commands_and_reconciliations_stay_bounded
     clock = _Clock()

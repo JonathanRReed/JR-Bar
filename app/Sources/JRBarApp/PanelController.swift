@@ -260,6 +260,19 @@ final class PanelController {
         localMonitor = nil
     }
 
+    /// True when the text field being typed into keeps this key. Return
+    /// (plain or keypad), the arrows and Tab belong to the field; so does
+    /// ⌘⌫, which deletes a line there and must not dismiss a row. Esc is
+    /// not here: it still closes the panel.
+    nonisolated static func fieldKeepsKey(keyCode: UInt16, flags: NSEvent.ModifierFlags, typingInField: Bool) -> Bool {
+        guard typingInField else { return false }
+        switch keyCode {
+        case 36, 76, 125, 126, 48: return true
+        case 51: return flags.contains(.command)
+        default: return false
+        }
+    }
+
     private func handleLocal(_ event: NSEvent) -> NSEvent? {
         switch event.type {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
@@ -287,12 +300,18 @@ final class PanelController {
             // A reply field being typed into keeps its own characters, and
             // its ⌘↩ and ⌘D: they never answer some other card.
             let typingInField = panel.firstResponder is NSTextView
+            let armed = PanelStore.chordsArmed(isRepeat: event.isARepeat, openedAt: openedAt, now: Date())
             if flags.contains(.command), !typingInField, event.charactersIgnoringModifiers?.lowercased() == "d",
-               store.denySelectedAsk(typingInField: typingInField) {
+               store.denySelectedAsk(typingInField: typingInField, armed: armed) {
                 // ⌘D answers the selected ask card (the lone one, when none
                 // is selected) — registered once here, not once per ask row.
                 return nil
             }
+            // A reply field keeps the keys that edit or submit its text:
+            // Return sends it, the arrows move its caret, Tab leaves it by
+            // the field's own rules. None of them may move the card
+            // selection or open the selected session behind the field.
+            if Self.fieldKeepsKey(keyCode: event.keyCode, flags: flags, typingInField: typingInField) { return event }
             switch event.keyCode {
             case 53:                                                // Esc
                 // A find query goes first; the next Esc closes.
@@ -311,10 +330,14 @@ final class PanelController {
             case 36, 76:                                            // Return / keypad Enter
                 if flags.contains(.command) {
                     if typingInField { return event }
-                    if store.approveSelectedAsk(typingInField: typingInField) { return nil }
+                    if store.approveSelectedAsk(typingInField: typingInField, armed: armed) { return nil }
                     return event
                 }
-                if flags.isEmpty { store.activateSelection(); return nil }
+                // Return in a reply field sends that reply; it never opens a row.
+                if flags.isEmpty {
+                    if typingInField { return event }
+                    store.activateSelection(); return nil
+                }
                 return event
             case 48:                                                // Tab: keep focus inside
                 store.moveSelection(by: flags.contains(.shift) ? -1 : 1); return nil

@@ -134,9 +134,36 @@ import Testing
         #expect(a.cacheKey != c.cacheKey)
     }
 
-    /// A misbehaving media source can report NaN, ∞ or an absurd
-    /// length — "don't ask" or a clamped day, never a trap in
-    /// `Int(rounded())`.
+    @Test func cacheKeysKeepFieldSeparatorsUnambiguous() {
+        let queries = [
+            LyricsQuery(title: "One|Two", artist: "Three", album: "Four", duration: 120),
+            LyricsQuery(title: "One", artist: "Two|Three", album: "Four", duration: 120),
+            LyricsQuery(title: "One", artist: "Two", album: "Three|Four", duration: 120),
+        ]
+        #expect(Set(queries.map(\.cacheKey)).count == queries.count)
+        let same = LyricsQuery(title: "ONE|TWO", artist: "THREE", album: "FOUR", duration: 120)
+        #expect(same.cacheKey == queries[0].cacheKey)
+        #expect(LyricsQuery(title: "Song", artist: "Artist", duration: 200).cacheKey == "song|artist||200")
+    }
+
+    @Test func encodedCacheKeysKeepUnicodeAndEmptyFieldsDistinct() {
+        let queries = [
+            LyricsQuery(title: "Écho|", artist: "声", album: ""),
+            LyricsQuery(title: "Écho", artist: "|声", album: ""),
+            LyricsQuery(title: "Écho", artist: "声", album: "|"),
+            LyricsQuery(title: "Écho|", artist: "声", album: "", duration: 0),
+        ]
+        #expect(Set(queries.map(\.cacheKey)).count == queries.count)
+        let uppercase = LyricsQuery(title: "ÉCHO|", artist: "声", album: nil)
+        #expect(uppercase.cacheKey == queries[0].cacheKey)
+        // Ordinary keys always have separators, so a version-like title
+        // cannot collide with the encoded keys.
+        let ordinary = LyricsQuery(title: queries[0].cacheKey, artist: "声")
+        #expect(ordinary.cacheKey != queries[0].cacheKey)
+        #expect(LyricsQuery(title: "Song", artist: "Artist").cacheKey == "song|artist||")
+    }
+
+    /// A nonfinite duration stays unknown. Large finite values clamp to a day.
     @Test func nonFiniteAndAbsurdDurationsNeverTrap() {
         let nan = AlcoveMedia(title: "S", artist: "A", playing: true,
                               duration: .nan)

@@ -57,11 +57,29 @@ public struct AquariumSaveFile: Sendable {
         FileManager.default.fileExists(atPath: url.path)
     }
 
+    /// What a load found.
+    public struct LoadResult: Sendable {
+        public let save: AquariumSave
+        /// A file is there but its bytes could not be read (a transient
+        /// I/O or permission failure). The tank starts fresh, but the
+        /// file may be a perfectly good save, so the first write over it
+        /// keeps a copy first.
+        public let previousWasUnreadable: Bool
+    }
+
     /// The stored save, or a fresh one when the file is missing or not
     /// readable as JSON. Never throws: a broken file must not stop a
     /// launch — the tank just starts over.
-    public func load() -> AquariumSave {
-        guard let data = try? Data(contentsOf: url) else { return AquariumSave() }
+    public func load() -> AquariumSave { loadResult().save }
+
+    /// `load`, saying whether a file that exists could not be read.
+    public func loadResult() -> LoadResult {
+        // One more try before giving up on a file that is there: most
+        // read failures at launch are a moment long.
+        let data = (try? Data(contentsOf: url)) ?? (try? Data(contentsOf: url))
+        guard let data else {
+            return LoadResult(save: AquariumSave(), previousWasUnreadable: exists)
+        }
         var save = (try? JSONDecoder().decode(AquariumSave.self, from: data)) ?? AquariumSave()
         // The marathon clock measures a live stretch of work and nothing
         // ticks while the app is off, so a bank saved at quit would only
@@ -69,7 +87,7 @@ public struct AquariumSaveFile: Sendable {
         // (Done here, not in the decoder: the round-trip normalization in
         // `save` must still see the field's stored value.)
         save.game.continuousWorkSeconds = 0
-        return save
+        return LoadResult(save: save, previousWasUnreadable: false)
     }
 
     /// Writes the save, creating the directory when needed.
@@ -78,13 +96,18 @@ public struct AquariumSaveFile: Sendable {
     /// a recovery copy when this build would drop anything in it. Once a
     /// process has written the file itself, what is there is its own
     /// output, so `AquariumSaveWriter` checks only its first save.
-    public func save(_ save: AquariumSave, checkingPrevious: Bool = true) throws {
+    ///
+    /// `keepingPrevious` backs the file up whatever it holds: the load
+    /// could not read it, so this build cannot vouch that nothing in it
+    /// is lost.
+    public func save(_ save: AquariumSave, checkingPrevious: Bool = true,
+                     keepingPrevious: Bool = false) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(save)
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        if checkingPrevious, FileManager.default.fileExists(atPath: url.path) {
+        if checkingPrevious || keepingPrevious, FileManager.default.fileExists(atPath: url.path) {
             let previous = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             let decoded = try? decoder.decode(AquariumSave.self, from: previous)
@@ -97,7 +120,7 @@ public struct AquariumSaveFile: Sendable {
             } else {
                 preserved = false
             }
-            if !preserved {
+            if !preserved || keepingPrevious {
                 let recovery = directory.appending(
                     path: "aquarium-save.recovery-\(UUID().uuidString).json")
                 // Preserve the exact bytes before replacing a damaged or
@@ -146,11 +169,23 @@ public final class AquariumSaveWriter: @unchecked Sendable {
     /// Whether this writer has written the file once. Touched only on
     /// `queue`.
     private var wroteOnce = false
+    /// The load could not read the file that was there: the next save
+    /// keeps a copy of it first. Guarded by `lock`.
+    private var keepPrevious = false
 
     public init(file: AquariumSaveFile,
                 queue: DispatchQueue = DispatchQueue(label: "jrbar.aquarium-save", qos: .utility)) {
         self.file = file
         self.queue = queue
+    }
+
+    /// The load could not read an existing save: the first write over it
+    /// keeps a recovery copy, so a transient read failure never costs the
+    /// player a good tank.
+    public func keepPreviousOnNextSave() {
+        lock.lock()
+        keepPrevious = true
+        lock.unlock()
     }
 
     /// Queues `save`; it replaces a save still waiting its turn.
@@ -164,24 +199,32 @@ public final class AquariumSaveWriter: @unchecked Sendable {
         queue.async { [self] in drain() }
     }
 
-    /// Waits for every queued save to land: at quit, and in tests.
+    /// Waits for queued writes and retries a retained failure once.
     public func flush() {
-        queue.sync {}
+        queue.sync { drain() }
     }
 
     private func drain() {
         lock.lock()
         let save = pending
+        let keeping = keepPrevious
         pending = nil
         drainQueued = false
         lock.unlock()
         guard let save else { return }
         do {
-            try file.save(save, checkingPrevious: !wroteOnce)
+            try file.save(save, checkingPrevious: !wroteOnce, keepingPrevious: keeping)
             wroteOnce = true
+            if keeping {
+                lock.lock()
+                keepPrevious = false
+                lock.unlock()
+            }
         } catch {
-            // A failed write keeps the check for the next one; the game
-            // itself is still in memory and saves again on its next move.
+            // Keep the newest save for a later flush or write, without a retry loop.
+            lock.lock()
+            if pending == nil { pending = save }
+            lock.unlock()
         }
     }
 }

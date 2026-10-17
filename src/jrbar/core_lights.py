@@ -19,6 +19,7 @@ from .ambient_cues import (
     cue_for_id,
     normalize_disabled_cues,
 )
+from .scene_leases import effective_scene
 
 #: The longest program ``burn_init`` accepts before any parsing: the
 #: firmware's own budget is 512 bytes, and a request ten times that is a
@@ -312,7 +313,7 @@ def resolve_effect(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
         raise _command_error("invalid_args", "semantic must name a meaning (ask, work, completion, ...)") from error
     scene_word = args.get("scene")
     if scene_word is None:
-        scene_word = getattr(getattr(controller, "settings", None), "active_scene", None)
+        scene_word = effective_scene(controller)
     scene = scene_from_value(scene_word) or (None if args.get("scene") is not None else DEFAULT_SCENE)
     if scene is None:
         raise _command_error("invalid_args", "unknown scene")
@@ -598,16 +599,29 @@ def list_focuses(_controller: Any, _args: dict[str, Any]) -> dict[str, Any]:
     try:
         configured = focus_sync.configured_focus_modes()
     except focus_sync.FocusSyncUnavailableError as error:
-        return {"available": False, "reason": str(error)[:200], "focuses": [], "active": []}
+        return {
+            "available": False,
+            "reason": str(error)[:200],
+            "focuses": [],
+            "active": [],
+            "active_available": False,
+            "active_reason": "Active Focus mode names unavailable",
+        }
+    active_available = True
+    active_reason = None
     try:
         active = sorted(focus_sync.active_focus_mode_identifiers())
     except focus_sync.FocusSyncUnavailableError:
         active = []
+        active_available = False
+        active_reason = "Active Focus mode names unavailable"
     return {
         "available": True,
         "reason": None,
         "focuses": [{"id": identifier, "name": name} for identifier, name in configured],
         "active": active,
+        "active_available": active_available,
+        "active_reason": active_reason,
     }
 
 

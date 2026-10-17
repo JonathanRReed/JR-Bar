@@ -30,11 +30,13 @@ import logging
 import os
 import shutil
 import stat
+import tempfile
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from .private_io import atomic_private_write, ensure_private_directory
 from .sd_eject_guard_launch import default_user_data_dir
 from .settings import default_config_dir, legacy_config_dirs
 from .state_paths import default_state_dir, legacy_state_dirs
@@ -188,8 +190,6 @@ def _iter_entries(source: Path, area: MigrationArea) -> Iterable[Path]:
         entries = sorted(source.iterdir())
     except (FileNotFoundError, NotADirectoryError):
         return ()
-    except OSError:
-        return ()
     return tuple(entry for entry in entries if entry.name not in area.exclude_names)
 
 
@@ -202,40 +202,66 @@ def _ignore_process_files(directory: str, names: list[str]) -> set[str]:
     return ignored
 
 
-def _copy_entry(entry: Path, target: Path) -> None:
+def _copy_entry(entry: Path, target: Path, *, dry_run: bool = False) -> bool:
+    if target.is_symlink():
+        return False
     if entry.is_dir():
-        shutil.copytree(entry, target, symlinks=False, ignore=_ignore_process_files, copy_function=shutil.copy2)
-    else:
-        shutil.copy2(entry, target, follow_symlinks=False)
+        if target.exists() and not target.is_dir():
+            return False
+        copied = not target.exists()
+        if not dry_run:
+            ensure_private_directory(target, tighten_existing=False)
+        children = sorted(entry.iterdir())
+        ignored = _ignore_process_files(str(entry), [child.name for child in children])
+        for child in children:
+            if child.name not in ignored:
+                child_copied = _copy_entry(child, target / child.name, dry_run=dry_run)
+                copied = child_copied or copied
+        return copied
+    if target.exists():
+        return False
+    if dry_run:
+        return True
+    ensure_private_directory(target.parent, tighten_existing=False)
+    with tempfile.TemporaryDirectory(prefix=".jrbar-migrate-", dir=target.parent) as scratch:
+        staged = Path(scratch) / entry.name
+        shutil.copy2(entry, staged, follow_symlinks=False)
+        if not stat.S_ISREG(staged.lstat().st_mode):
+            raise OSError("migration source is not a regular file")
+        ensure_private_directory(target.parent, tighten_existing=False)
+        try:
+            os.link(staged, target, follow_symlinks=False)
+        except FileExistsError:
+            return False
+        staged.unlink()
+    return True
 
 
 def _migrate_area(area: MigrationArea, *, dry_run: bool) -> AreaResult:
-    if area.name == "config" and (area.destination / "settings.json").exists():
-        return AreaResult(area.name, area.destination, reason="settings.json already present")
-    if not any(source.is_dir() for source in area.sources):
+    settings = area.destination / "settings.json"
+    if area.name == "config" and (settings.exists() or settings.is_symlink()):
+        skipped = tuple(entry.name for source in area.sources for entry in _iter_entries(source, area))
+        return AreaResult(area.name, area.destination, skipped=skipped, reason="settings.json already present")
+    if area.destination.is_symlink():
+        raise OSError("migration destination is a symlink")
+    entries = [entry for source in area.sources for entry in _iter_entries(source, area)]
+    if not entries:
         return AreaResult(area.name, area.destination, reason="nothing to migrate")
+    if area.name == "config":
+        # Settings signal an existing install, so publish them after every other config file.
+        entries.sort(key=lambda entry: entry.name == "settings.json")
 
     copied: list[str] = []
     skipped: list[str] = []
-    destination_ready = dry_run
-    for source in area.sources:
-        for entry in _iter_entries(source, area):
-            relative = entry.name
-            if entry.is_symlink() or area.skip(entry):
-                skipped.append(relative)
-                continue
-            target = area.destination / relative
-            if target.exists() or target.is_symlink():
-                skipped.append(relative)
-                continue
-            if dry_run:
-                copied.append(relative)
-                continue
-            if not destination_ready:
-                area.destination.mkdir(parents=True, exist_ok=True, mode=0o700)
-                destination_ready = True
-            _copy_entry(entry, target)
+    for entry in entries:
+        relative = entry.name
+        if entry.is_symlink() or area.skip(entry):
+            skipped.append(relative)
+            continue
+        if _copy_entry(entry, area.destination / relative, dry_run=dry_run):
             copied.append(relative)
+        else:
+            skipped.append(relative)
     return AreaResult(area.name, area.destination, tuple(copied), tuple(skipped))
 
 
@@ -254,11 +280,11 @@ def _write_marker(marker: Path, report_areas: tuple[AreaResult, ...]) -> None:
             for area in report_areas
         },
     }
-    marker.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = marker.with_name(f".{marker.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, marker)
+    ensure_private_directory(marker.parent, tighten_existing=False)
+    atomic_private_write(
+        marker, json.dumps(document, indent=2, sort_keys=True) + "\n",
+        overwrite=False, tighten_parent=False,
+    )
 
 
 def migrate_from_sidepulse(
@@ -274,8 +300,8 @@ def migrate_from_sidepulse(
     Idempotent: the marker file short-circuits every later call, and a call
     that finds the marker missing still never overwrites a JR-Bar file. A
     failure inside one area is recorded and the others still run; the
-    marker is written only when something was copied, so a fresh machine
-    keeps a clean state directory.
+    marker records a successful scan, including a retry whose files already
+    exist. A fresh machine with no legacy entries keeps a clean state directory.
     """
     log = logger or _log
     resolved_areas = areas if areas is not None else migration_areas(home)
@@ -304,10 +330,14 @@ def migrate_from_sidepulse(
             )
 
     report = MigrationReport(marker, tuple(results), dry_run=dry_run, errors=tuple(errors))
-    if report.performed and not dry_run and not errors:
+    scanned_entries = report.performed or any(area.skipped for area in report.areas)
+    if scanned_entries and not dry_run and not errors:
         try:
             _write_marker(marker, report.areas)
+        except FileExistsError:
+            pass
         except OSError as exc:
+            report = replace(report, errors=(*report.errors, f"marker: {type(exc).__name__}"))
             log.warning("migration: marker not written (%s)", type(exc).__name__)
     return report
 

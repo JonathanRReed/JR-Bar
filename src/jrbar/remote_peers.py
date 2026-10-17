@@ -65,7 +65,7 @@ import subprocess
 import tempfile
 import time
 import unicodedata
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -270,11 +270,11 @@ def _strict_timestamp(value: object) -> datetime:
         text = f"{text[:-1]}+00:00"
     try:
         parsed = datetime.fromisoformat(text)
-    except ValueError as error:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (OverflowError, ValueError) as error:
         raise ValueError("invalid timestamp") from error
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _sanitize_text(value: object, *, limit: int) -> str:
@@ -324,10 +324,6 @@ def tailscale_cli_path() -> Path | None:
         except OSError:
             continue
     return None
-
-
-def tailscale_available() -> bool:
-    return tailscale_cli_path() is not None
 
 
 def _dns_label(value: object) -> str:
@@ -397,7 +393,7 @@ def parse_tailscale_status(
         if peer is not None and peer.host not in selected:
             selected[peer.host] = peer
     ordered = sorted(selected.values(), key=lambda peer: peer.host)
-    return tuple(ordered[: max(0, int(limit))])
+    return tuple(ordered[: _peer_limit(limit)])
 
 
 def _child_environment() -> dict[str, str]:
@@ -415,7 +411,8 @@ def _run_tailscale_cli(arguments: Sequence[str], timeout: float) -> str:
         completed = subprocess.run(  # fixed absolute argv, shell=False, no remote command
             [str(path), *arguments],
             stdin=subprocess.DEVNULL,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
             timeout=max(0.1, float(timeout)),
             check=False,
@@ -488,15 +485,6 @@ class LedgerRow:
         return self.status.agent_id
 
     @property
-    def is_actionable_locally(self) -> bool:
-        return not self.is_remote
-
-    @property
-    def remote_marker(self) -> str | None:
-        """The badge text for this row, or None when it is local."""
-        return "Remote" if self.is_remote else None
-
-    @property
     def ledger_label(self) -> str:
         """What the ledger shows. Remote rows always name their machine."""
         if not self.is_remote:
@@ -508,9 +496,12 @@ class LedgerRow:
         return self.status.priority
 
 
-def remote_agent_id(machine: str, source_agent_id: str) -> str:
-    """Namespace a peer's agent id so it can never collide with a local one."""
-    return f"remote:{machine}:{source_agent_id}"
+def remote_agent_id(machine: str, source_agent_id: str, *, source_namespace: str | None = None) -> str:
+    """Keep friendly labels while separating rows from distinct connected hosts."""
+    identity = f"remote:{machine}:{source_agent_id}"
+    if source_namespace is not None:
+        identity += "~" + hashlib.sha256(source_namespace.encode("utf-8")).hexdigest()[:32]
+    return identity
 
 
 @dataclass(frozen=True, slots=True)
@@ -645,6 +636,30 @@ def local_machine_name(fallback: str = DEFAULT_MACHINE_NAME) -> str:
     return label if machine_name_is_safe(label) else fallback
 
 
+def publication_settings(
+    settings: RemotePeerSettings,
+    settings_supplier: Callable[[], RemotePeerSettings] | None = None,
+) -> RemotePeerSettings | None:
+    """Keep a publication within both its original and current privacy settings."""
+    if type(settings) is not RemotePeerSettings:
+        return None
+    active = settings.normalized()
+    if not active.publish_enabled:
+        return None
+    if settings_supplier is None:
+        return active
+    try:
+        current = settings_supplier()
+        if type(current) is not RemotePeerSettings:
+            return None
+        current = current.normalized()
+    except Exception:
+        return None
+    if not current.publish_enabled:
+        return None
+    return replace(active, include_messages=active.include_messages and current.include_messages)
+
+
 def publish_local_ledger(
     statuses: Iterable[AgentStatus],
     *,
@@ -652,6 +667,7 @@ def publish_local_ledger(
     generated_at: datetime | None = None,
     path: Path | None = None,
     settings: RemotePeerSettings | None = None,
+    settings_supplier: Callable[[], RemotePeerSettings] | None = None,
 ) -> Path | None:
     """Write this machine's ledger where peers can read it, or do nothing.
 
@@ -659,15 +675,29 @@ def publish_local_ledger(
     is off by default: a second Mac reading this file is something the
     owner turns on, not something that starts happening.
     """
-    active = (settings or RemotePeerSettings()).normalized()
-    if not active.publish_enabled:
+    active = publication_settings(settings or RemotePeerSettings(), settings_supplier)
+    if active is None:
         return None
-    payload = build_remote_ledger_document(
-        machine=machine or local_machine_name(),
-        statuses=statuses,
-        generated_at=generated_at or datetime.now(timezone.utc),
-        include_messages=active.include_messages,
-    )
+    rows = tuple(statuses)
+    machine = machine or local_machine_name()
+    generated_at = generated_at or datetime.now(timezone.utc)
+
+    def payload_for(current: RemotePeerSettings) -> str:
+        return build_remote_ledger_document(
+            machine=machine,
+            statuses=rows,
+            generated_at=generated_at,
+            include_messages=current.include_messages,
+        )
+
+    payload = payload_for(active)
+    current = publication_settings(active, settings_supplier)
+    if current is None:
+        return None
+    if current.include_messages != active.include_messages:
+        payload = payload_for(current)
+        if publication_settings(current, settings_supplier) is None:
+            return None
     target = path or default_remote_ledger_path()
     atomic_private_write(target, payload)
     return target
@@ -717,7 +747,7 @@ def _optional_string(value: object, *, limit: int) -> str | None:
     return _sanitize_text(value, limit=limit) or None
 
 
-def _row_from_payload(payload: object, machine: str) -> LedgerRow | None:
+def _row_from_payload(payload: object, machine: str, source_namespace: str | None = None) -> LedgerRow | None:
     """One validated remote row, or None when it must be dropped."""
     row = _exact_fields(payload, _ROW_FIELDS)
     if row is None:
@@ -736,7 +766,7 @@ def _row_from_payload(payload: object, machine: str) -> LedgerRow | None:
         raise ValueError("invalid remote ledger row") from error
     updated_at = _strict_timestamp(row["updated_at"])
 
-    namespaced = remote_agent_id(machine, source_agent_id)
+    namespaced = remote_agent_id(machine, source_agent_id, source_namespace=source_namespace)
     status = AgentStatus(
         provider=provider,
         agent_id=namespaced,
@@ -770,6 +800,7 @@ def parse_remote_ledger_document(
     *,
     max_bytes: int = MAX_PAYLOAD_BYTES,
     machine: str | None = None,
+    source_namespace: str | None = None,
 ) -> RemoteLedger:
     """Validate one peer's ledger document, exactly.
 
@@ -785,10 +816,14 @@ def parse_remote_ledger_document(
     name, and the ledger would stop being a ledger. It also means the
     feature does not silently die when a peer's tailscale HostName and
     its local hostname disagree, which is common and harmless.
+    `source_namespace` comes from the connected host, never the document;
+    its bounded suffix separates peers sharing the same friendly name.
     """
+    if source_namespace is not None and not peer_host_is_safe(source_namespace):
+        raise RemotePeerError(FAILURE_MALFORMED)
     if type(text) is not str:
         raise RemotePeerError(FAILURE_MALFORMED)
-    if len(text.encode("utf-8", "ignore")) > max(1, int(max_bytes)):
+    if len(text.encode("utf-8", "ignore")) > max(1, min(int(max_bytes), MAX_PAYLOAD_BYTES)):
         raise RemotePeerError(FAILURE_TOO_LARGE)
     try:
         document = json.loads(
@@ -804,7 +839,7 @@ def parse_remote_ledger_document(
         raise RemotePeerError(FAILURE_MALFORMED)
     if fields["document"] not in (REMOTE_LEDGER_DOCUMENT, LEGACY_REMOTE_LEDGER_DOCUMENT):
         raise RemotePeerError(FAILURE_MALFORMED)
-    if fields["version"] != REMOTE_LEDGER_VERSION or type(fields["version"]) is bool:
+    if type(fields["version"]) is not int or fields["version"] != REMOTE_LEDGER_VERSION:
         raise RemotePeerError(FAILURE_UNSUPPORTED_VERSION)
 
     claimed = fields["machine"]
@@ -833,7 +868,7 @@ def parse_remote_ledger_document(
     seen: set[str] = set()
     for payload in rows_payload:
         try:
-            row = _row_from_payload(payload, effective)
+            row = _row_from_payload(payload, effective, source_namespace)
         except ValueError as error:
             raise RemotePeerError(FAILURE_MALFORMED) from error
         if row is None:
@@ -880,7 +915,7 @@ def transfer_limit_kbits(max_bytes: int, timeout_seconds: float) -> int:
     comfortably inside the window.
     """
     seconds = max(0.1, float(timeout_seconds))
-    needed_bits = float(max_bytes) * 8.0 * TRANSFER_HEADROOM
+    needed_bits = float(max(1, min(int(max_bytes), MAX_PAYLOAD_BYTES))) * 8.0 * TRANSFER_HEADROOM
     return max(1, int(math.ceil(needed_bits / (1024.0 * seconds))))
 
 
@@ -990,6 +1025,7 @@ class SecureShellPeerReader:
         timeout: float,
         max_bytes: int,
     ) -> str:
+        max_bytes = max(1, min(int(max_bytes), MAX_PAYLOAD_BYTES))
         binary = _validated_sftp_path(self.sftp_path)
         try:
             root = self._scratch_root()
@@ -1015,7 +1051,8 @@ class SecureShellPeerReader:
                 completed = subprocess.run(  # fixed absolute argv, shell=False, no remote command
                     argv,
                     stdin=subprocess.DEVNULL,
-                    capture_output=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                     text=True,
                     timeout=max(0.5, float(timeout)),
                     check=False,
@@ -1110,6 +1147,26 @@ class PeerRefreshResult:
     health: tuple[PeerHealth, ...] = ()
     breakers: tuple[PeerBreaker, ...] = ()
     attempted: int = 0
+    request_settings: RemotePeerSettings | None = None
+
+
+#: A desk with no other agent machine on it does not need `tailscale status`
+#: forked every minute to learn so again. After this many empty rounds the
+#: minute-timer skips ticks; any round that finds a machine starts over.
+QUIET_ROUNDS_BEFORE_BACKOFF = 5
+QUIET_ROUNDS_BEFORE_LONG_BACKOFF = 15
+QUIET_TICKS_TO_SKIP = 2
+LONG_QUIET_TICKS_TO_SKIP = 4
+
+
+def quiet_ticks_to_skip(quiet_rounds: int) -> int:
+    """Minute-timer ticks to let pass before the next peer round, given how
+    many rounds in a row found no machine to talk to (0 = ask every minute)."""
+    if quiet_rounds >= QUIET_ROUNDS_BEFORE_LONG_BACKOFF:
+        return LONG_QUIET_TICKS_TO_SKIP
+    if quiet_rounds >= QUIET_ROUNDS_BEFORE_BACKOFF:
+        return QUIET_TICKS_TO_SKIP
+    return 0
 
 
 def refresh_peers(
@@ -1123,6 +1180,7 @@ def refresh_peers(
     overall_deadline_seconds: float = DEFAULT_REFRESH_DEADLINE_SECONDS,
     max_peers: int = MAX_PEERS,
     max_bytes: int = MAX_PAYLOAD_BYTES,
+    _deadline_monotonic: float | None = None,
 ) -> PeerRefreshResult:
     """Fetch every peer's ledger, bounded on every axis.
 
@@ -1134,7 +1192,7 @@ def refresh_peers(
     """
     clock = now_monotonic if callable(now_monotonic) else time.monotonic
     state = breakers_by_host(breakers)
-    considered = tuple(peers)[: max(0, int(max_peers))]
+    considered = tuple(peers[: _peer_limit(max_peers)])
     if reader is None or not remote_path_is_safe(remote_path):
         # An injected reader is not obliged to validate anything, so the
         # path is checked here too rather than only inside sftp_command.
@@ -1154,6 +1212,9 @@ def refresh_peers(
 
     started = float(clock())
     deadline = started + max(0.0, float(overall_deadline_seconds))
+    if _deadline_monotonic is not None:
+        # Discovery and fetch setup share the facade's original deadline.
+        deadline = min(deadline, _deadline_monotonic)
     ledgers: list[RemoteLedger] = []
     health: list[PeerHealth] = []
     attempted = 0
@@ -1182,6 +1243,7 @@ def refresh_peers(
                 payload,
                 max_bytes=max_bytes,
                 machine=peer.machine,
+                source_namespace=peer.host,
             )
         except RemotePeerError as error:
             state[peer.host] = record_peer_failure(breaker, now=float(clock()))
@@ -1412,13 +1474,13 @@ class RemotePeerSettings:
 
     def normalized(self) -> RemotePeerSettings:
         return RemotePeerSettings(
-            enabled=bool(self.enabled),
-            publish_enabled=bool(self.publish_enabled),
-            include_messages=bool(self.include_messages),
-            remote_interrupts_muted=bool(self.remote_interrupts_muted),
+            enabled=self.enabled is True,
+            publish_enabled=self.publish_enabled is True,
+            include_messages=self.include_messages is True,
+            remote_interrupts_muted=self.remote_interrupts_muted is not False,
             unmuted_machines=_machine_tuple(self.unmuted_machines),
             muted_machines=_machine_tuple(self.muted_machines),
-            max_peers=max(0, min(int(self.max_peers), MAX_PEERS)),
+            max_peers=_peer_limit(self.max_peers),
             per_peer_timeout_seconds=_clamp(
                 self.per_peer_timeout_seconds, 0.5, DEFAULT_FETCH_TIMEOUT_SECONDS * 4
             ),
@@ -1463,11 +1525,11 @@ class RemotePeerSettings:
         defaults = cls()
         try:
             return cls(
-                enabled=bool(raw.get("enabled", defaults.enabled)),
-                publish_enabled=bool(raw.get("publish_enabled", defaults.publish_enabled)),
-                include_messages=bool(raw.get("include_messages", defaults.include_messages)),
-                remote_interrupts_muted=bool(
-                    raw.get("remote_interrupts_muted", defaults.remote_interrupts_muted)
+                enabled=raw.get("enabled", defaults.enabled) is True,
+                publish_enabled=raw.get("publish_enabled", defaults.publish_enabled) is True,
+                include_messages=raw.get("include_messages", defaults.include_messages) is True,
+                remote_interrupts_muted=(
+                    raw.get("remote_interrupts_muted", defaults.remote_interrupts_muted) is not False
                 ),
                 unmuted_machines=_machine_tuple(raw.get("unmuted_machines", ())),
                 muted_machines=_machine_tuple(raw.get("muted_machines", ())),
@@ -1482,8 +1544,15 @@ class RemotePeerSettings:
                     raw.get("remote_ledger_path", defaults.remote_ledger_path)
                 ),
             ).normalized()
-        except (TypeError, ValueError):
+        except (OverflowError, TypeError, ValueError):
             return defaults
+
+
+def _peer_limit(value: object) -> int:
+    try:
+        return max(0, min(int(value), MAX_PEERS))
+    except (OverflowError, TypeError, ValueError):
+        return MAX_PEERS
 
 
 def _machine_tuple(values: object) -> tuple[str, ...]:
@@ -1527,16 +1596,26 @@ def collect_remote_ledgers(
     active = (settings or RemotePeerSettings()).normalized()
     if not active.enabled:
         return PeerRefreshResult()
-    peers = discover_peers(runner=runner, limit=active.max_peers)
+    clock = now_monotonic if callable(now_monotonic) else time.monotonic
+    deadline = float(clock()) + active.refresh_deadline_seconds
+    peers = discover_peers(
+        runner=runner,
+        timeout=min(DEFAULT_DISCOVERY_TIMEOUT_SECONDS, active.refresh_deadline_seconds),
+        limit=active.max_peers,
+    )
     if not peers:
-        return PeerRefreshResult(breakers=tuple(breakers_by_host(breakers).values()))
-    return refresh_peers(
+        return PeerRefreshResult(
+            breakers=tuple(breakers_by_host(breakers).values()), request_settings=active
+        )
+    result = refresh_peers(
         peers,
         reader=reader if reader is not None else SecureShellPeerReader(),
         breakers=breakers,
-        now_monotonic=now_monotonic,
+        now_monotonic=clock,
         remote_path=active.remote_ledger_path,
         per_peer_timeout_seconds=active.per_peer_timeout_seconds,
-        overall_deadline_seconds=active.refresh_deadline_seconds,
+        overall_deadline_seconds=max(0.0, deadline - float(clock())),
         max_peers=active.max_peers,
+        _deadline_monotonic=deadline,
     )
+    return replace(result, request_settings=active)

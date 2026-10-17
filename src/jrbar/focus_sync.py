@@ -1,38 +1,14 @@
-"""Detects whether a macOS Focus (Do Not Disturb, Work, Sleep, etc.) is
-currently active, so LED brightness can dim/quiet down while one is on --
-the device shouldn't keep pulsing at you during a call just because an
-agent happens to be working.
+"""Read optional macOS Focus mode names and identifiers.
 
-There is no public API for this. The technique here -- reading
-``~/Library/DoNotDisturb/DB/Assertions.json``, which macOS's focus daemon
-(``focusd``) maintains with one entry per currently-active Focus assertion
--- is the same one several open-source menu-bar utilities rely on. Two
-real caveats, both handled defensively rather than assumed away:
+The public Focus observation in ``focus_status`` reports whether Focus is
+active. This module reads the private files maintained by ``focusd`` for
+named per-Focus rules. Those files require Full Disk Access for the exact
+Python interpreter reading them, and their schema can change with macOS.
 
-1. That file is TCC-protected -- the same protection macOS gives Mail/
-   Messages/Photos. Reading it requires Full Disk Access granted manually
-   in System Settings > Privacy & Security > Full Disk Access, for the
-   *exact* binary doing the reading (the LaunchAgent's own Python
-   interpreter, not Terminal or this source file). Without that grant,
-   every read raises a permission error, which is caught below and turned
-   into FocusSyncUnavailableError -- the feature just stays inactive,
-   never blocks or breaks the LED sync loop.
-2. The exact JSON schema has shifted across macOS releases and isn't
-   documented anywhere official. Rather than depend on one exact key
-   path (which could silently stop matching after an OS update),
-   is_focus_active() searches the whole parsed structure for any
-   non-empty "storeAssertionRecords" list -- the one marker for "at least
-   one Focus is currently on" that's stayed consistent across the
-   versions community tooling has published about. Any parse surprise is
-   treated as "can't tell" (raises FocusSyncUnavailableError) rather than
-   guessed at.
-
-This was written and unit-tested against synthetic JSON shaped like the
-documented format, but could not be verified against a real live Focus
-session on the development machine -- that would have required first
-granting Full Disk Access to a background Python process, which wasn't
-done during development. Treat the exact detection as best-effort until
-confirmed against a real Focus toggle.
+Unreadable files or active assertions without a usable identifier raise
+FocusSyncUnavailableError. An empty active assertion list means no named
+Focus is active. Synthetic tests cover these reads; they do not prove the
+private schema against a live Focus session.
 """
 
 from __future__ import annotations
@@ -43,6 +19,10 @@ from pathlib import Path
 ASSERTIONS_PATH = Path("~/Library/DoNotDisturb/DB/Assertions.json").expanduser()
 MODE_CONFIGURATIONS_PATH = Path("~/Library/DoNotDisturb/DB/ModeConfigurations.json").expanduser()
 
+MAX_ACTIVE_IDENTIFIERS = 64
+MAX_IDENTIFIER_UTF8_BYTES = 256
+MAX_FOCUS_JSON_BYTES = 8 * 1024 * 1024
+
 
 class FocusSyncUnavailableError(RuntimeError):
     pass
@@ -50,14 +30,15 @@ class FocusSyncUnavailableError(RuntimeError):
 
 def _load_focus_json(path: Path) -> object:
     try:
-        raw = path.read_text()
-    except OSError as exc:
-        raise FocusSyncUnavailableError(str(exc)) from exc
-    if not raw.strip():
-        return {}
-    try:
+        with path.open("rb") as stream:
+            raw_bytes = stream.read(MAX_FOCUS_JSON_BYTES + 1)
+        if len(raw_bytes) > MAX_FOCUS_JSON_BYTES:
+            raise FocusSyncUnavailableError("Focus data exceeds the read limit")
+        raw = raw_bytes.decode("utf-8")
+        if not raw.strip():
+            return {}
         return json.loads(raw)
-    except json.JSONDecodeError as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise FocusSyncUnavailableError(str(exc)) from exc
 
 
@@ -65,7 +46,13 @@ def _collect_string_values(node: object, key: str, found: set[str]) -> None:
     """Depth-first search for string values stored under ``key``."""
     if isinstance(node, dict):
         value = node.get(key)
-        if isinstance(value, str) and value:
+        if isinstance(value, str) and value.strip():
+            try:
+                encoded = value.encode("utf-8")
+            except UnicodeError as exc:
+                raise FocusSyncUnavailableError("Active Focus mode names unavailable") from exc
+            if len(encoded) > MAX_IDENTIFIER_UTF8_BYTES:
+                raise FocusSyncUnavailableError("Active Focus mode names unavailable")
             found.add(value)
         for child in node.values():
             _collect_string_values(child, key, found)
@@ -85,13 +72,21 @@ def _collect_active_assertion_identifiers(node: object, found: set[str]) -> None
     """
     if isinstance(node, dict):
         records = node.get("storeAssertionRecords")
+        if "storeAssertionRecords" in node and not isinstance(records, list):
+            raise FocusSyncUnavailableError("Active Focus mode names unavailable")
         if isinstance(records, list):
             for record in records:
+                identifiers: set[str] = set()
                 _collect_string_values(
                     record,
                     "assertionDetailsModeIdentifier",
-                    found,
+                    identifiers,
                 )
+                if not identifiers:
+                    raise FocusSyncUnavailableError("Active Focus mode names unavailable")
+                found.update(identifiers)
+                if len(found) > MAX_ACTIVE_IDENTIFIERS:
+                    raise FocusSyncUnavailableError("Active Focus mode names unavailable")
         for child in node.values():
             _collect_active_assertion_identifiers(child, found)
     elif isinstance(node, list):
@@ -105,10 +100,11 @@ def active_focus_mode_identifiers() -> list[str]:
     on. Raises FocusSyncUnavailableError when it can't be determined (no
     Full Disk Access, missing file, unparseable JSON)."""
     data = _load_focus_json(ASSERTIONS_PATH)
-    if not _has_active_assertion(data):
-        return []
     identifiers: set[str] = set()
-    _collect_active_assertion_identifiers(data, identifiers)
+    try:
+        _collect_active_assertion_identifiers(data, identifiers)
+    except RecursionError as exc:
+        raise FocusSyncUnavailableError("Active Focus mode names unavailable") from exc
     return sorted(identifiers)
 
 
@@ -131,7 +127,10 @@ def configured_focus_modes() -> list[tuple[str, str]]:
             for item in node:
                 walk(item)
 
-    walk(data)
+    try:
+        walk(data)
+    except RecursionError as exc:
+        raise FocusSyncUnavailableError("Configured Focus mode names unavailable") from exc
     return sorted(modes.items(), key=lambda item: item[1].lower())
 
 
@@ -154,14 +153,8 @@ def is_focus_active() -> bool:
     treat that the same as "assume not active" rather than let it
     propagate into the LED sync loop.
     """
+    data = _load_focus_json(ASSERTIONS_PATH)
     try:
-        raw = ASSERTIONS_PATH.read_text()
-    except OSError as exc:
-        raise FocusSyncUnavailableError(str(exc)) from exc
-    if not raw.strip():
-        return False
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise FocusSyncUnavailableError(str(exc)) from exc
-    return _has_active_assertion(data)
+        return _has_active_assertion(data)
+    except RecursionError as exc:
+        raise FocusSyncUnavailableError("Active Focus unavailable") from exc

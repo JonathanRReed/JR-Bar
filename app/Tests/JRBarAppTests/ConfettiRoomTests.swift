@@ -20,6 +20,11 @@ struct ConfettiRoomTests {
         var fired: [ConfettiPresentation] = []
     }
 
+    /// A clock the test cranks by hand, so no age depends on the wall.
+    private final class Ticks {
+        var seconds: TimeInterval = 1_000
+    }
+
     private func makeToy(enabled: Bool = true, freeScreens: Int = 1)
         -> (ConfettiToy, ToysStore, Bursts) {
         let core = CoreModel()
@@ -42,16 +47,58 @@ struct ConfettiRoomTests {
         _ = store
     }
 
+    @Test("owner shutdown retires held work and cannot be revived by late events")
+    func shutdownRetiresHeldWork() {
+        let (toy, store, bursts) = makeToy()
+        store.noteCallPresence(true)
+        #expect(toy.fire(reason: .request, at: t0))
+        #expect(toy.held != nil)
+        #expect(toy.isRecheckArmed)
+        store.shutdown()
+        store.shutdown()
+        #expect(toy.held == nil)
+        #expect(!toy.isRecheckArmed)
+        #expect(!toy.isOn)
+        #expect(store.state.confetti.enabled)
+        store.noteCallPresence(false)
+        toy.roomChanged(at: t0)
+        toy.noteEvent(CoreEvent(id: "late", kind: ConfettiToy.requestEventKind))
+        #expect(!toy.fire(reason: .test, at: t0))
+        #expect(bursts.fired.isEmpty)
+        #expect(!toy.isRecheckArmed)
+    }
+
+    @Test("releasing the owner retires a held toy retained elsewhere")
+    func ownerReleaseShutsDownToy() {
+        var fixture: (ConfettiToy, ToysStore, Bursts)? = makeToy()
+        let toy = fixture!.0
+        weak var owner = fixture!.1
+        let bursts = fixture!.2
+        fixture!.1.noteCallPresence(true)
+        #expect(toy.fire(reason: .request, at: t0))
+        fixture = nil
+        #expect(owner == nil)
+        #expect(toy.held == nil)
+        #expect(!toy.isRecheckArmed)
+        #expect(!toy.fire(reason: .test, at: t0))
+        #expect(bursts.fired.isEmpty)
+    }
+
     @Test("an outside request needs the toy on, and a loop is not a strobe")
     func requestIsGatedAndCooled() {
         let (off, offStore, offBursts) = makeToy(enabled: false)
         #expect(off.fire(reason: .request, at: t0) == false)
         #expect(offBursts.fired.isEmpty)
         let (toy, store, bursts) = makeToy()
+        let ticks = Ticks()
+        toy.clock = { ticks.seconds }
         #expect(toy.fire(reason: .request, provider: "codex", at: t0))
-        #expect(toy.fire(reason: .request, at: t0.addingTimeInterval(1)) == false,
-                "inside the cooldown")
-        #expect(toy.fire(reason: .request, at: t0.addingTimeInterval(ConfettiRoom.requestCooldown)))
+        ticks.seconds += 1
+        #expect(toy.fire(reason: .request, at: t0.addingTimeInterval(3_600)) == false,
+                "inside the cooldown, whatever the wall clock says")
+        ticks.seconds += ConfettiRoom.requestCooldown
+        #expect(toy.fire(reason: .request, at: t0.addingTimeInterval(-3_600)),
+                "past the cooldown, a wall clock stepped back changes nothing")
         #expect(bursts.fired.count == 2)
         _ = (offStore, store)
     }
@@ -104,15 +151,62 @@ struct ConfettiRoomTests {
         #expect(bursts.fired.isEmpty)
     }
 
-    @Test("a hold older than the limit is dropped, not replayed")
-    func staleHoldDrops() {
+    @Test("changing a held burst to let go discards it immediately")
+    func changingHoldPolicyDropsPendingBurst() {
         let (toy, store, bursts) = makeToy()
         store.noteCallPresence(true)
         toy.fire(reason: .trigger, at: t0)
         #expect(toy.held != nil)
-        store.noteCallPresence(false)   // re-checks at the real clock,
-        // years past t0, so the burst is old news.
+        #expect(toy.isRecheckArmed)
+
+        toy.bind(\.whenHeld).wrappedValue = .drop
         #expect(toy.held == nil)
+        #expect(!toy.isRecheckArmed)
+        store.noteCallPresence(false)
+        #expect(bursts.fired.isEmpty)
+    }
+
+    @Test("a hold older than the limit is dropped, not replayed")
+    func staleHoldDrops() {
+        let (toy, store, bursts) = makeToy()
+        let ticks = Ticks()
+        toy.clock = { ticks.seconds }
+        store.noteCallPresence(true)
+        toy.fire(reason: .trigger, at: t0)
+        #expect(toy.held != nil)
+        ticks.seconds += ConfettiRoom.holdLimit + 1
+        store.noteCallPresence(false)   // re-checks after the hold limit
+        #expect(toy.held == nil)
+        #expect(bursts.fired.isEmpty)
+    }
+
+    @Test("the hold limit is a monotonic age: a wall clock far ahead does not expire it")
+    func holdLimitIgnoresTheWallClock() {
+        let (toy, store, bursts) = makeToy()
+        let ticks = Ticks()
+        toy.clock = { ticks.seconds }
+        store.noteCallPresence(true)
+        toy.fire(reason: .trigger, at: t0)
+        ticks.seconds += 60
+        // The wall clock jumps years ahead; the burst is a minute old.
+        toy.roomChanged(at: t0.addingTimeInterval(86_400 * 900))
+        #expect(toy.held != nil, "still held: the call has not ended")
+        store.noteCallPresence(false)
+        #expect(bursts.fired.count == 1, "and it plays when the call ends")
+    }
+
+    @Test("an imported off lets a held burst go and stops its timer")
+    func importedOffDropsHeld() {
+        let (toy, store, bursts) = makeToy()
+        store.noteCallPresence(true)
+        toy.fire(reason: .trigger, at: Date())
+        #expect(toy.held != nil)
+        var imported = store.state
+        imported.confetti.enabled = false
+        store.replaceState(imported)
+        #expect(toy.held == nil)
+        #expect(!toy.isRecheckArmed)
+        store.noteCallPresence(false)
         #expect(bursts.fired.isEmpty)
     }
 
@@ -316,7 +410,7 @@ struct ConfettiRoomTests {
         #expect(ConfettiPreviewTile(toy: toy) != working, "a pick changed")
     }
 
-    @Test("the pop goes through Settings › Sounds, at its volume")
+    @Test("the pop goes through Settings › Alerts & Sounds, at its volume")
     func popFollowsTheSoundsVolume() throws {
         let (toy, store, _) = makeToy()
         store.state.confetti.sound = true

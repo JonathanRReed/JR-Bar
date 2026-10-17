@@ -35,10 +35,6 @@ REVIEWED_TERMINAL_BUNDLE_IDENTIFIERS = (
     GHOSTTY_BUNDLE_IDENTIFIER,
 )
 GHOSTTY_APPLICATION_PATHS = (Path("/Applications/Ghostty.app"),)
-APPLE_EVENTS_USAGE_DESCRIPTION = (
-    f"{PRODUCT_DISPLAY_NAME} uses Automation only to open a reviewed resume command in "
-    "Terminal or iTerm2 when you choose Open."
-)
 UNSUPPORTED_TERMINAL_FALLBACK_COPY = (
     f"{PRODUCT_DISPLAY_NAME} does not support this terminal yet, so it opened Terminal."
 )

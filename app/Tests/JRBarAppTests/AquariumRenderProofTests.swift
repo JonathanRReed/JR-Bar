@@ -408,6 +408,44 @@ struct AquariumRenderProofTests {
 
     // MARK: The Arcade tank
 
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write inspection PNGs"))
+    func inspectionSnapshots() throws {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
+                      ?? "/tmp/jrbar-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let core = CoreModel()
+        core.apply(.state(CoreState(sessions: [
+            CoreSession(id: "inspection-proof", provider: "codex", mode: "idle_ready",
+                        lifecycle: "active"),
+        ])))
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        let save = AquariumSaveFile(url: FileManager.default.temporaryDirectory
+            .appending(path: "jrbar-inspection-proof-\(UUID().uuidString)")
+            .appending(path: "aquarium-save.json"))
+        defer { try? FileManager.default.removeItem(at: save.url.deletingLastPathComponent()) }
+        let toy = AquariumToy(core: core, store: store, saveFile: save)
+        var selected = try #require(toy.fish.first)
+        selected.label = "A long session label that still leaves room for inspector controls"
+        let tank = AquariumView(toy: toy)
+        for (name, size) in [("minimum", CGSize(width: 480, height: 300)),
+                             ("regular", CGSize(width: 640, height: 400))] {
+            let view = ZStack {
+                Color(red: 0.02, green: 0.07, blue: 0.25)
+                tank.gameChrome(fish: toy.fish)
+                VStack {
+                    Spacer()
+                    tank.inspectorStrip(selected)
+                }
+            }
+            let rep = try Self.hostedSnapshot(view, size: size, dark: true)
+            let png = try #require(rep.representation(using: .png, properties: [:]))
+            try png.write(to: dir.appendingPathComponent("aquarium-inspection-\(name).png"))
+        }
+        withExtendedLifetime(store) {}
+    }
+
     /// Mean colourfulness of a render, 0…1: each pixel's chroma, how
     /// far its brightest channel stands from its dimmest. (HSV's ratio
     /// would score a near-black navy as vivid as a lit cyan; the loud

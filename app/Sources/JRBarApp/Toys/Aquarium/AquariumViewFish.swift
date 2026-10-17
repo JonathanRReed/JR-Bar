@@ -182,8 +182,9 @@ extension AquariumView {
 
     func layout(of fish: Fish, in size: CGSize, at t: Double, now: Date,
                         parent: (fish: Fish, layout: Layout)? = nil) -> Layout {
+        let poseNow = AquariumMotionClock.poseDate(for: fish, at: now, still: isStill)
         if fish.isFry, let parent {
-            return settle(fryLayout(of: fish, at: t, now: now, parent: parent), of: fish, t: t)
+            return settle(fryLayout(of: fish, at: t, now: poseNow, parent: parent), of: fish, t: t)
         }
         let h = fish.seed
         let phase = Double((h >> 43) & 0xFF) / 0xFF * .pi * 2
@@ -294,7 +295,7 @@ extension AquariumView {
             // nose like a tap on the pane. The half turn is the turn's
             // own pose at 0.3, held level whatever the fish was doing
             // when the ask came.
-            let age = now.timeIntervalSince(fish.stateSince)
+            let age = poseNow.timeIntervalSince(fish.stateSince)
             let rise = smooth(clamp01(age / 1.15))
             l.riseFrom = home.y
             l.riseTo = askTop(of: fish, layout: l)
@@ -316,7 +317,7 @@ extension AquariumView {
             // It stops where it was, drops nose down onto the sand,
             // rolls onto its side for a beat, then fades out.
             let frozen = home
-            let age = now.timeIntervalSince(fish.stateSince)
+            let age = poseNow.timeIntervalSince(fish.stateSince)
             let drop = clamp01(age / 2.4)
             let eased = drop * drop
             let settle = smooth(clamp01((age - 2.4) / 1.0))
@@ -341,8 +342,8 @@ extension AquariumView {
             // From wherever it was, corkscrewing up and out the
             // top-right edge — a fish facing left turns round first,
             // through the same U-turn as ever.
-            let progress = fish.leaveProgress(at: now)
-            let age = now.timeIntervalSince(fish.stateSince)
+            let progress = fish.leaveProgress(at: poseNow)
+            let age = poseNow.timeIntervalSince(fish.stateSince)
             let eased = smooth(progress)
             let start = home.x
             // The corkscrew winds up from nothing, so the first frame
@@ -373,7 +374,7 @@ extension AquariumView {
 
         // A new fish swims in from the edge behind its heading instead
         // of popping into the middle of the tank.
-        if fish.state == .swimming || fish.state == .idling || fish.state == .surfacing {
+        if !isStill && (fish.state == .swimming || fish.state == .idling || fish.state == .surfacing) {
             let enterDuration = 2.2
             let age = now.timeIntervalSince(fish.enteredAt)
             if age < enterDuration {
@@ -399,6 +400,10 @@ extension AquariumView {
     /// an ask answered, a fish failing mid-turn or a leaver flipping
     /// its facing never jumps.
     private func settle(_ raw: Layout, of fish: Fish, t: Double) -> Layout {
+        guard !isStill else {
+            motion.swim.handoffs.removeValue(forKey: fish.id)
+            return raw
+        }
         let memory = motion.swim
         var l = raw
         if let last = memory.drawn[fish.id], last.state != fish.state,
@@ -646,7 +651,7 @@ extension AquariumView {
         // pops wide and settles back over most of a second.
         var squashX = 1.0
         var squashY = 1.0
-        if let until = motion.bounceUntil[fish.id], now < until {
+        if !isStill, let until = motion.bounceUntil[fish.id], now < until {
             let k = clamp01(1 - until.timeIntervalSince(now) / 0.7)
             let s = sin(k * .pi)
             squashX = 1 + 0.16 * s
@@ -743,7 +748,7 @@ extension AquariumView {
         // An ask comes up for air: a small trail climbs from where the
         // rise began, and a bubble rides overhead growing till it pops.
         // Fry don't get one — a worker's ask surfaces on its parent.
-        if fish.state == .surfacing, !fish.isFry {
+        if fish.state == .surfacing, !fish.isFry, !isStill {
             let since = now.timeIntervalSince(fish.stateSince)
             for k in 0..<3 {
                 let birth = 0.15 + Double(k) * 0.42
@@ -1018,17 +1023,21 @@ extension AquariumView {
             .pickerStyle(.menu)
             .controlSize(.small)
             .frame(width: 108)
+            .accessibilityLabel("Species for \(fish.providerID) fish")
             .help("The fish every \(fish.providerID) session swims as.")
             // A resident's session has left; there's nothing to raise.
             if !fish.isResident, let onOpen = toy?.core.openSession {
                 Button("Open") { onOpen(fish.id) }
                     .controlSize(.small)
+                    .accessibilityLabel("Open \(fish.label)")
             }
             Button {
                 selectedID = nil
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .medium))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Close inspector")

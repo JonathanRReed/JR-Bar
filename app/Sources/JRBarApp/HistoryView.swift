@@ -29,6 +29,11 @@ struct HistoryView: View {
         }
     }
 
+    private var undoTitle: String {
+        if store.pendingAction == .undo { return "Undoing…" }
+        return store.undoRemaining.map { "Undo (\($0))" } ?? "Undo"
+    }
+
     @ViewBuilder
     private var activity: some View {
         VStack(spacing: 0) {
@@ -63,52 +68,54 @@ struct HistoryView: View {
                                      text: "No row fits this search and these filters.",
                                      actionTitle: "Clear search", action: { store.clearFilter() })
                         .frame(maxHeight: 260)
-                    if store.offersHoarder {
-                        HoarderOfferLine { store.offerHoarder() }
-                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                SnapshotScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        ForEach(store.days) { day in
-                            Section {
-                                ForEach(Array(day.rows.enumerated()), id: \.element.id) { index, row in
-                                    HistoryRowView(row: row, folded: day.folded[row.id] ?? [], store: store,
-                                                   isLast: index == day.rows.count - 1)
+                ScrollViewReader { proxy in
+                    SnapshotScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                            ForEach(store.days) { day in
+                                Section {
+                                    ForEach(Array(day.rows.enumerated()), id: \.element.id) { index, row in
+                                        HistoryRowView(row: row, folded: day.folded[row.id] ?? [], store: store,
+                                                       isLast: index == day.rows.count - 1)
+                                    }
+                                } header: {
+                                    DayHeader(title: day.title, count: day.rows.count)
                                 }
-                            } header: {
-                                DayHeader(title: day.title, count: day.rows.count)
                             }
                         }
+                        .padding(.bottom, 12)
                     }
-                    .padding(.bottom, 12)
+                    // ↑/↓ and a palette hit move the selection; the list
+                    // follows it instead of leaving it below the fold.
+                    .onChange(of: store.selectedID) {
+                        guard let id = store.selectedID else { return }
+                        proxy.scrollTo(id)
+                    }
                 }
             }
-        }
-        .sheet(item: $store.hoarderOffer) { offer in
-            DataHoarderOfferSheet(offer: offer) { store.hoarderOffer = nil }
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     store.undo()
                 } label: {
-                    Label(store.undoRemaining.map { "Undo (\($0))" } ?? "Undo", systemImage: "arrow.uturn.backward")
+                    Label(undoTitle, systemImage: "arrow.uturn.backward")
                         .labelStyle(.titleAndIcon)
                 }
                 .help(store.canUndo ? "Put the last cleared completions back" : "Nothing to undo")
-                .disabled(!store.canUndo)
+                .disabled(!store.isLive || !store.canUndo || store.pendingAction != nil)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     store.clearCompleted()
                 } label: {
-                    Label("Clear completed", systemImage: "checkmark.circle")
+                    Label(store.pendingAction == .clear ? "Clearing…" : "Clear completed", systemImage: "checkmark.circle")
                         .labelStyle(.titleAndIcon)
                 }
                 .help("Acknowledge every finished session (undo within 5 minutes)")
-                .disabled(!store.isLive || store.completedCount == 0)
+                .disabled(!store.isLive || store.completedCount == 0 || store.pendingAction != nil)
             }
             ToolbarItem(placement: .automatic) {
                 Button {
@@ -120,23 +127,6 @@ struct HistoryView: View {
                 .disabled(!store.isLive || store.loading)
             }
         }
-    }
-}
-
-/// The empty search's one line: History searched only its rows, and the
-/// Data Hoarder could keep the transcripts behind them.
-struct HoarderOfferLine: View {
-    let action: () -> Void
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "archivebox").foregroundStyle(.tertiary)
-            Text("Only these rows were searched.").foregroundStyle(.secondary)
-            Button("Keep a searchable copy of your sessions…", action: action)
-                .buttonStyle(.link)
-        }
-        .font(.system(size: 11))
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -187,7 +177,7 @@ struct HistoryFilterBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 12) {
-                WindowSearchField(prompt: store.canSearchTranscripts ? "Search sessions, details, transcripts…" : "Search sessions, details…",
+                WindowSearchField(prompt: "Search sessions, details…",
                                   text: $store.filter.text)
                     .frame(maxWidth: 300)
                 Spacer(minLength: 8)
@@ -477,6 +467,7 @@ struct FilterChip<Label: View>: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -515,6 +506,7 @@ enum HistoryKindStyle {
         case "failed": return "xmark"
         case "ended": return "stop.fill"
         case "quota_crossed": return "percent"
+        case "ask_expired": return "hourglass"
         default: return "circle.fill"
         }
     }
@@ -522,7 +514,7 @@ enum HistoryKindStyle {
     static func color(_ kind: String) -> Color {
         switch kind {
         case "completed": return .green
-        case "asked": return .orange
+        case "asked", "ask_expired": return .orange
         case "answered": return .blue
         case "failed": return .red
         case "quota_crossed": return .purple
@@ -572,7 +564,7 @@ struct HistoryRowView: View {
     }
 
     /// The row's session timeline — the same view the Overview inspector
-    /// and the Data Hoarder mount — capped in height with its own scroll,
+    /// mounts — capped in height with its own scroll,
     /// so one long run never pushes the rest of the day out of reach.
     @ViewBuilder
     private var timeline: some View {
@@ -596,24 +588,6 @@ struct HistoryRowView: View {
         }
     }
 
-    /// The snippet with the index's « » markers turned into emphasis.
-    static func marked(_ snippet: String) -> AttributedString {
-        var out = AttributedString()
-        var emphasised = false
-        var run = ""
-        func flush() {
-            var piece = AttributedString(run)
-            if emphasised { piece.inlinePresentationIntent = .stronglyEmphasized; piece.foregroundColor = .primary }
-            out.append(piece)
-            run = ""
-        }
-        for character in snippet {
-            if character == "«" { flush(); emphasised = true } else if character == "»" { flush(); emphasised = false } else { run.append(character) }
-        }
-        flush()
-        return out
-    }
-
     private var header: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 10) {
@@ -625,7 +599,7 @@ struct HistoryRowView: View {
                 ProviderTile(style: style, size: 22)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(row.displayTitle).fontWeight(.medium).lineLimit(1)
+                        Text(row.displayTitle(privacyMode: store.core.state?.usage?.privacyMode)).fontWeight(.medium).lineLimit(1)
                         KindBadge(kind: row.kind)
                         if row.kind == "started", store.isLiveSession(row.session) {
                             Text("still running")
@@ -638,20 +612,11 @@ struct HistoryRowView: View {
                                 .foregroundStyle(.tertiary)
                                 .help(Self.foldedHelp(folded))
                         }
-                        if row.unseen {
+                        if store.isUnseen(row) {
                             UnseenDot().help("Newer than your last visit here")
                         }
                     }
-                    if let snippet = store.transcriptSnippet(for: row) {
-                        // Found in what was said, not in the row's own
-                        // words: the archive's snippet, matches marked.
-                        HStack(spacing: 4) {
-                            Image(systemName: "text.magnifyingglass").font(.system(size: 9))
-                            Text(Self.marked(snippet)).lineLimit(1).truncationMode(.tail)
-                        }
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                        .help("Said in the archived transcript")
-                    } else if let detail = row.detail, !detail.isEmpty, !row.detailIsTitle {
+                    if let detail = row.detail, !detail.isEmpty, !row.detailIsTitle || QuotaAccountCaption.isQuota(row.kind) {
                         Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     } else {
                         Text(style.name).font(.system(size: 11)).foregroundStyle(.tertiary)
@@ -661,7 +626,7 @@ struct HistoryRowView: View {
                 Text(HistoryStore.duration(row.duration) ?? "")
                     .font(.system(size: 11.5, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
                     .frame(width: 58, alignment: .trailing)
-                    .help(row.duration.map { "Took \(Int($0.rounded())) s" } ?? "")
+                    .help(row.duration.map { "Took \(Int(saturating: $0.rounded())) s" } ?? "")
                 if resumable, hovering || selected {
                     // An ended run picks back up where it ran.
                     Button("Resume") { store.resume(row) }
@@ -726,7 +691,7 @@ struct HistoryRowView: View {
                             : (resumable ? "Ended — Resume picks it back up where it ran"
                                          : "Ended; the session is gone from the daemon so there is nothing to open")))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.displayTitle) \(row.kindWord) at \(HistoryStore.clock(row.date))"
+        .accessibilityLabel("\(row.displayTitle(privacyMode: store.core.state?.usage?.privacyMode)) \(row.kindWord) at \(HistoryStore.clock(row.date))"
                             + (folded.isEmpty ? "" : ", and \(folded.count) earlier"))
     }
 
@@ -852,7 +817,7 @@ struct EventLogRow: View {
                 .foregroundStyle(EventLogStyle.color(category))
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 1) {
-                Text(LightLog.text(for: event))
+                Text(LightLog.text(for: event, privacyMode: store.core.state?.usage?.privacyMode))
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                 if let detail = event.detail ?? event.message, !detail.isEmpty, detail != event.label {
@@ -934,9 +899,12 @@ struct HistoryEmptyState: View {
         } else if store.loading {
             WindowEmptyState(symbol: "clock.arrow.circlepath", title: "Loading history…",
                              text: "Reading what finished, failed and asked for you.")
+        } else if let error = store.error {
+            WindowEmptyState(symbol: "exclamationmark.triangle", title: "Could not load history",
+                             text: error.replacingOccurrences(of: HistoryStore.loadFailurePrefix, with: ""), actionTitle: "Try again", action: { store.reload() })
         } else {
             WindowEmptyState(symbol: "clock.arrow.circlepath", title: "Nothing yet",
-                             text: store.error ?? "Sessions that finish, fail or ask for you show up here.")
+                             text: "Sessions that finish, fail or ask for you show up here.")
         }
     }
 }

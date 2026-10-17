@@ -567,6 +567,75 @@ class RaiseOutcome:
         return {"raised": self.raised, "app": self.app_name, "bundle_id": self.bundle_id, "detail": self.detail}
 
 
+def _app_name_for_bundle(bundle: str) -> str | None:
+    from .core_projection import TERMINAL_APPS
+
+    for name, known in TERMINAL_APPS.values():
+        if known == bundle:
+            return name
+    return None
+
+
+#: How many parents the "what was tried" line names before it stops.
+_TRIED_CHAIN_LIMIT: Final = 6
+
+
+def _ancestor_names(pid: object, table: Mapping[int, Any]) -> list[str]:
+    """The executable names above ``pid``, nearest first, for the line that
+    says what a failed look went through. Names only: no paths, no arguments."""
+    names: list[str] = []
+    current = getattr(table.get(pid), "ppid", None) if type(pid) is int else None
+    seen: set[int] = set()
+    for _ in range(MAX_ANCESTRY_DEPTH):
+        if type(current) is not int or current <= 1 or current in seen:
+            break
+        seen.add(current)
+        entry = table.get(current)
+        if entry is None:
+            break
+        command = (getattr(entry, "command", "") or "").strip()
+        name = Path(command).name if command else ""
+        if name:
+            names.append(name[:40])
+        current = getattr(entry, "ppid", None)
+    return names
+
+
+def not_found_message(
+    host: SessionHost | None,
+    outcome: RaiseOutcome,
+    table: Mapping[int, Any] | None = None,
+) -> str:
+    """The sentence for a live session JR-Bar could not bring forward: the
+    app it looked for, what it tried, and that nothing new was started."""
+    ending = " Nothing new was started."
+    if outcome.detail == "no tmux pane has that tty" or (host is not None and host.in_tmux):
+        where = f" (tty {host.tty})" if host is not None and host.tty else ""
+        return (
+            "That session is still running in tmux, but no tmux pane has its terminal"
+            f"{where}. Is the pane still open?{ending}"
+        )
+    bundle = outcome.bundle_id or (host.bundle_id if host is not None else None)
+    if bundle:
+        app = outcome.app_name or (host.app_name if host is not None else None) or bundle
+        return (
+            f"That session is still running in {app} ({bundle}), but {app} did not come forward. "
+            f"Is {app} still open?{ending}"
+        )
+    pid = host.pid if host is not None else None
+    chain = _ancestor_names(pid, table or {})[:_TRIED_CHAIN_LIMIT]
+    if chain:
+        tried = f" It looked through: {' > '.join(chain)}."
+    elif pid in (table or {}):
+        tried = " The session's process has no parent but launchd."
+    else:
+        tried = " It could not read the session's process."
+    return (
+        "That session is still running, but JR-Bar found no terminal or app that hosts it, "
+        f"so it has no window to bring forward.{tried}{ending}"
+    )
+
+
 def _raise_tab_by_tty(runner: SurfaceRunner, bundle_id: str, tty: str | None) -> bool:
     script = {TERMINAL_BUNDLE_ID: _TERMINAL_RAISE_BY_TTY, ITERM_BUNDLE_ID: _ITERM_RAISE_BY_TTY}.get(bundle_id)
     if script is None or not tty or not _TTY.match(tty):
@@ -1000,6 +1069,17 @@ def recorded_ghostty_surface(
 RAISE_ACTIONS: Final = frozenset({"terminal", "raise"})
 
 
+def _origin_host(extras: object) -> tuple[str | None, str | None]:
+    """``(app name, bundle id)`` the hook's origin annotation names, for a
+    session whose ancestry named no app: Codex or Claude's own app, or the
+    editor it runs in. ``(None, None)`` for a terminal CLI or no annotation."""
+    origin = getattr(extras, "origin", None)
+    bundle = origin.get("bundle_id") if isinstance(origin, Mapping) else None
+    if type(bundle) is not str or not bundle:
+        return None, None
+    return _app_name_for_bundle(bundle), bundle
+
+
 def _live_host(
     controller: object,
     status: object,
@@ -1022,6 +1102,11 @@ def _live_host(
         return None
     table = process_table_holding(pid, process_table)
     app_name, bundle_id, in_tmux = host_from_ancestry(pid, table)
+    if bundle_id is None and not in_tmux:
+        # The walk found no app above the process (an app this build does
+        # not know by name): the hook's own origin annotation may still say
+        # which app the session was started from.
+        app_name, bundle_id = _origin_host(extras)
     if bundle_id in APP_HOSTED_BUNDLE_IDS:
         return None
     terminal = getattr(extras, "terminal", None)
@@ -1443,8 +1528,11 @@ def resume_ended_session(
             from .answer_local import tty_for_pid
 
             app_name, bundle_id, in_tmux = host_from_ancestry(pid, table)
+            host = SessionHost(
+                pid=pid, tty=tty_for_pid(pid), app_name=app_name, bundle_id=bundle_id, in_tmux=in_tmux
+            )
             outcome = raise_session_host(
-                SessionHost(pid=pid, tty=tty_for_pid(pid), app_name=app_name, bundle_id=bundle_id, in_tmux=in_tmux),
+                host,
                 cwd=directory,
                 title=None,
                 recorded_ghostty_id=recorder.recorded(provider, session_id),
@@ -1453,8 +1541,7 @@ def resume_ended_session(
             if outcome.raised == "none":
                 raise CommandError(
                     "not_found",
-                    "That session is still running, but JR-Bar can't find its window; "
-                    "nothing new was started.",
+                    not_found_message(host, outcome, table),
                 )
             return {"session": agent_id, "provider": provider, "cwd": directory, **outcome.document()}
     parts = session_resume_parts_for(provider, session_id, directory)
@@ -1542,7 +1629,7 @@ def open_live_session(
         return None
     if action is None:
         # An explicit choice elsewhere wins: a provider profile's open action,
-        # then Settings > Agents > Clicks open. "Automatic" and "Terminal"
+        # then Settings > Agents & Usage > Clicks open. "Automatic" and "Terminal"
         # both mean the session's own window when it has one, and so does
         # "Its app" for a session a terminal hosts: that choice is for the
         # sessions the app runs, which _live_host leaves to the ladder. A
@@ -1554,7 +1641,7 @@ def open_live_session(
     live = _live_host(controller, status, process_table=process_table, on_main=on_main)
     if live is None:
         return None  # ended or app-hosted: the ladder's open is the right one
-    host, extras, _table = live
+    host, extras, table = live
     from .answer_decisions import release_for_open
 
     # The owner is going to the session to answer there: a Codex prompt
@@ -1562,11 +1649,7 @@ def open_live_session(
     release_for_open(status)
     outcome = _raise_live(host, extras, status, runner=runner, recorder=recorder)
     if outcome.raised == "none":
-        raise CommandError(
-            "not_found",
-            "That session is still running, but JR-Bar can't find its window; "
-            "nothing new was started.",
-        )
+        raise CommandError("not_found", not_found_message(host, outcome, table))
     origin = getattr(extras, "origin", None)
     return {
         "session": agent_id,
@@ -1590,6 +1673,7 @@ __all__ = [
     "default_surface_recorder",
     "ghostty_focus_verdict",
     "host_from_ancestry",
+    "not_found_message",
     "open_live_session",
     "open_session_surface",
     "parse_ghostty_terminals",

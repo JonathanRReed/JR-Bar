@@ -6,8 +6,16 @@ stand-in controller, a fixed clock, and the pure selection code.
 
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
+from jrbar.capacity_limit_feedback import update_capacity_limit_alert
+from jrbar.dot_role import DotBeaconFacts, beacon_program
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.provider_facts import ProviderTerminalCause
 from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
@@ -84,15 +92,15 @@ def test_a_lapsed_low_lane_leaves_the_ember_dark() -> None:
     assert screen_bar_quota_ember_level(controller, wall_clock=lambda: NOW) == 0.0
 
 
-def test_a_lapsed_empty_lane_no_longer_reaches_the_exhausted_signal() -> None:
-    # 1.0 is what sends the "quota_exhausted" creator signal.
+def test_an_empty_lane_never_keeps_a_standing_exhaustion_light() -> None:
+    # Exhaustion has a finite notice; the standing gauge must stay dark.
     lapsed_empty = _controller(
         _snapshot(0.0, reset_at=NOW - 60.0, state=ProviderSourceState.STALE)
     )
     live_empty = _controller(_snapshot(0.0, reset_at=NOW + 60.0))
 
     assert screen_bar_quota_ember_level(lapsed_empty, wall_clock=lambda: NOW) < 1.0
-    assert screen_bar_quota_ember_level(live_empty, wall_clock=lambda: NOW) == 1.0
+    assert screen_bar_quota_ember_level(live_empty, wall_clock=lambda: NOW) == 0.0
 
 
 def test_the_runway_led_program_reads_its_state_once_and_survives_a_lapse() -> None:
@@ -119,3 +127,41 @@ def test_the_runway_led_program_reads_its_state_once_and_survives_a_lapse() -> N
     states[0] = None
     assert factory(255, 8) is None
     assert len(calls) == 1
+
+
+def test_a_reported_limit_silences_the_gauge_even_when_cached_quota_still_has_headroom():
+    snapshot = _snapshot(5.0, reset_at=NOW + 3600)
+    controller = _controller(snapshot)
+    controller._capacity_limit_seen = {snapshot.identity: NOW + 1}
+    assert screen_bar_quota_ember_level(controller, wall_clock=lambda: NOW + 2) == 0
+
+
+@pytest.mark.parametrize("state", [ProviderSourceState.READY, ProviderSourceState.STALE])
+def test_spent_weekly_lane_stays_quiet_beside_healthy_short_and_model_lanes(state):
+    weekly = _snapshot(0, reset_at=NOW + 158_572, state=state)
+    short = replace(weekly.lanes[0], lane_id="five_hour", label="5h", remaining_percent=100, reset_at=None)
+    model = replace(weekly.lanes[0], lane_id="seven_day_model", label="7d model",
+                    remaining_percent=100, model="fixture-model")
+    snapshot = replace(weekly, lanes=(short, replace(weekly.lanes[0], lane_id="seven_day", label="7d"), model))
+    controller = _controller(snapshot)
+    notices = []
+    controller.settings = SimpleNamespace(quota_alerts_enabled=True)
+    controller.quota_blink_until = 0
+    controller.may_interrupt = lambda _: True
+    controller.quiet_active = lambda: False
+    controller.schedule_event_refresh = lambda: None
+    controller._core_publish_event = lambda kind, **_: notices.append(kind)
+    empty = SimpleNamespace(all_rows=())
+    update_capacity_limit_alert(controller, empty, wall_now=NOW, monotonic_now=20, signal_kind="quota")
+    for offset in (1, 10, 100):
+        controller.provider_usage_state.snapshots = (replace(snapshot, observed_at=NOW + offset),)
+        retry = AgentStatus("claude", "claude:fixture", "Claude", AgentMode.BLOCKED_ERROR,
+                            datetime.fromtimestamp(NOW + offset, timezone.utc), "StopFailure",
+                            terminal_cause=ProviderTerminalCause.CLAUDE_RATE_LIMIT)
+        projection = SimpleNamespace(all_rows=(SimpleNamespace(source_status=retry),))
+        update_capacity_limit_alert(controller, projection, wall_now=NOW + offset,
+                                    monotonic_now=20 + offset, signal_kind="quota")
+        assert controller.quota_blink_until == 0 and notices == []
+        assert screen_bar_quota_ember_level(controller, wall_clock=lambda: NOW + offset) == 0
+        active = 20 + offset < controller.quota_blink_until
+        assert beacon_program(DotBeaconFacts(capacity_active=active)) == ("off", "idle", False)

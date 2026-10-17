@@ -96,6 +96,7 @@ final class TankSwimMemory {
 
     /// Keyed by the fry's id.
     var orbits: [String: Orbit] = [:]
+    private var rosterIDs: Set<String>?
     /// The cleaner shrimp's, while the tank has one.
     var shrimp: ShrimpTrail?
     /// The swim settings as this frame read them.
@@ -135,8 +136,11 @@ final class TankSwimMemory {
             return angle
         }
         let dt = t - o.t
-        guard dt > 0 else { return o.angle }
-        if dt <= 0.5 { o.angle += rate * dt }
+        guard dt != 0 else { return o.angle }
+        // A clock set back gives a negative step: the orbit holds its
+        // angle and counts time from the new clock, rather than waiting
+        // out the difference.
+        if dt > 0, dt <= 0.5 { o.angle += rate * dt }
         o.t = t
         orbits[id] = o
         return o.angle
@@ -151,10 +155,12 @@ final class TankSwimMemory {
 
     /// Forget fish that have left the tank.
     func prune(keeping live: Set<String>) {
-        if drawn.count > live.count { drawn = drawn.filter { live.contains($0.key) } }
-        if handoffs.count > live.count { handoffs = handoffs.filter { live.contains($0.key) } }
-        if meals.count > live.count { meals = meals.filter { live.contains($0.key) } }
-        if rolls.count > live.count { rolls = rolls.filter { live.contains($0.key) } }
-        if orbits.count > live.count { orbits = orbits.filter { live.contains($0.key) } }
+        guard rosterIDs != live else { return }
+        rosterIDs = live
+        drawn = drawn.filter { live.contains($0.key) }
+        handoffs = handoffs.filter { live.contains($0.key) }
+        meals = meals.filter { live.contains($0.key) }
+        rolls = rolls.filter { live.contains($0.key) }
+        orbits = orbits.filter { live.contains($0.key) }
     }
 }

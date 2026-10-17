@@ -119,6 +119,139 @@ def test_initial_connection_recovers_only_recent_quota_resets(server: CoreServer
     assert reset not in server.recent_reset_events(now=1290.0)
 
 
+def test_socket_greet_prefers_unsettled_durable_reset_over_recent_journal_copy(sock_dir, monkeypatch):
+    pending = {
+        "kind": "quota_reset", "provider": "kimi", "lane": "monthly",
+        "event_id": "kimi:monthly:synthetic", "id": "kimi:monthly:synthetic",
+        "at": 990.0, "notify": False,
+    }
+    server = _server(sock_dir, reset_replay_source=lambda: [pending, dict(pending)])
+    server.start()
+    try:
+        monkeypatch.setattr("jrbar.core_server.time.time", lambda: 1000.0)
+        # Seed only the journal, so an asynchronous live publish cannot race
+        # this new socket's greeting or masquerade as an extra replay.
+        monkeypatch.setattr(server, "_enqueue_locked", lambda _: None)
+        recent = server.publish_event({
+            "kind": "quota_reset", "provider": "kimi", "lane": "monthly",
+            "event_id": pending["event_id"], "at": 990.0,
+        })
+        legacy = server.publish_event({"kind": "quota_reset", "provider": "codex", "lane": "five-hour", "at": 990.0})
+        assert "cursor" in recent
+        with _connect(server) as client:
+            client.sendall(encode_frame({"t": "command", "v": 1, "id": "greet-complete", "name": "ping"}))
+            frames = _read_frames(client, 7)
+        assert frames[-1]["t"] == "reply" and frames[-1]["id"] == "greet-complete"
+        events = [frame for frame in frames if frame["t"] == "event"]
+        assert events == [legacy, {"t": "event", "v": 1, **pending}]
+        assert sum(frame.get("event_id") == pending["event_id"] for frame in events) == 1
+        assert "cursor" not in events[-1] and events[-1]["notify"] is False
+    finally:
+        server.stop()
+
+
+def test_greet_replays_pending_persisted_resets__and_1_more(sock_dir, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    pending = [
+        {
+            "kind": "quota_reset",
+            "provider": "claude",
+            "lane": "weekly",
+            "event_id": "claude:acct:weekly:boundary",
+            "id": "claude:acct:weekly:boundary",
+            "at": 500.0,
+            "notify": False,
+        },
+        {
+            "kind": "quota_reset",
+            "provider": "codex",
+            "lane": "weekly",
+            "event_id": "codex:acct:weekly:boundary",
+            "id": "codex:acct:weekly:boundary",
+            "at": 900.0,
+            "notify": False,
+        },
+    ]
+    server = _server(sock_dir, reset_replay_source=lambda: pending)
+    server.start()
+    try:
+        # --- scenario: a persisted reset too old for the journal is still offered, once
+        monkeypatch.setattr("jrbar.core_server.time.time", lambda: 1000.0)
+        journaled = server.publish_event(
+            {
+                "kind": "quota_reset",
+                "provider": "claude",
+                "lane": "weekly",
+                "event_id": "claude:acct:weekly:boundary",
+                "at": 990.0,
+            }
+        )
+        frames = []
+        client = SimpleNamespace(
+            alive=True,
+            index=1,
+            send=lambda frame: frames.append(json.loads(frame)),
+            finish_priming=lambda: None,
+        )
+        monkeypatch.setattr(server, "_read_commands", lambda _: None)
+        monkeypatch.setattr(server, "_drop_clients", lambda _: None)
+        server._serve_client(client)
+        events = [frame for frame in frames if frame["t"] == "event"]
+        assert events == [{"t": "event", "v": 1, **document} for document in pending]
+        assert all("cursor" not in event for event in events)
+        assert journaled not in events
+    finally:
+        server.stop()
+
+    # --- scenario: a failing replay source never costs a greeting
+    server = _server(
+        sock_dir,
+        socket_path=sock_dir / "other.sock",
+        reset_replay_source=lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    server.start()
+    try:
+        fallback = server.publish_event({"kind": "quota_reset", "provider": "kimi", "lane": "monthly", "at": 990.0})
+        frames = []
+        client = SimpleNamespace(
+            alive=True,
+            index=2,
+            send=lambda frame: frames.append(json.loads(frame)),
+            finish_priming=lambda: None,
+        )
+        monkeypatch.setattr(server, "_read_commands", lambda _: None)
+        monkeypatch.setattr(server, "_drop_clients", lambda _: None)
+        server._serve_client(client)
+        assert [frame["t"] for frame in frames] == ["hello", "state", "lights", "settings", "event"]
+        assert frames[-1] == fallback
+    finally:
+        server.stop()
+
+
+def test_greet_keeps_journal_fallback_when_replay_source_fails_during_iteration(sock_dir, monkeypatch):
+    from types import SimpleNamespace
+
+    def broken_source():
+        yield {"kind": "quota_reset", "event_id": "partial-source-fact", "id": "partial-source-fact", "notify": False}
+        raise RuntimeError("synthetic failure")
+
+    server = _server(sock_dir, reset_replay_source=broken_source)
+    server.start()
+    try:
+        monkeypatch.setattr("jrbar.core_server.time.time", lambda: 1000.0)
+        fallback = server.publish_event({"kind": "quota_reset", "provider": "kimi", "lane": "monthly", "at": 990.0})
+        frames = []
+        client = SimpleNamespace(alive=True, index=1,
+            send=lambda frame: frames.append(json.loads(frame)), finish_priming=lambda: None)
+        monkeypatch.setattr(server, "_read_commands", lambda _: None)
+        monkeypatch.setattr(server, "_drop_clients", lambda _: None)
+        server._serve_client(client)
+        assert [frame for frame in frames if frame["t"] == "event"] == [fallback]
+    finally:
+        server.stop()
+
+
 def test_socket_is_private_and_greets_with_hello_state_lights_settings__and_2_more(server: CoreServer) -> None:
     # --- scenario: socket_is_private_and_greets_with_hello_state_lights_settings
     mode = stat.S_IMODE(os.stat(server.socket_path).st_mode)
@@ -797,7 +930,7 @@ def test_a_slow_read_never_holds_up_a_later_command_on_the_same_socket__and_2_mo
         assert order == ["a", "b"]
         assert threads["usage_graph"] == threads["usage_history"] == "JRBarCoreScanLane"
         # Each lane's worker drops to utility QoS before its first command.
-        assert sorted(setup_threads) == ["JRBarCoreActionLane", "JRBarCoreReadLane", "JRBarCoreScanLane"]
+        assert sorted(setup_threads) == ["JRBarCoreActionLane", "JRBarCoreDeckLane", "JRBarCoreReadLane", "JRBarCoreScanLane"]
 
         # --- scenario: past the queue bound a slow read is refused busy at once
         release.clear()

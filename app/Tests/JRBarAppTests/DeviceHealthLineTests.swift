@@ -60,6 +60,9 @@ struct DeviceHealthLineTests {
         #expect(DeviceHealthLine.age(59) == "59 s")
         #expect(DeviceHealthLine.age(125) == "2 min")
         #expect(DeviceHealthLine.age(7300) == "2 h")
+        #expect(DeviceHealthLine.age(.greatestFiniteMagnitude) == "over a year")
+        #expect(DeviceHealthLine.age(.infinity) == "an unknown time")
+        #expect(DeviceHealthLine.age(.nan) == "an unknown time")
     }
 
     @Test func eachDeviceReadsItsOwnSurface() {

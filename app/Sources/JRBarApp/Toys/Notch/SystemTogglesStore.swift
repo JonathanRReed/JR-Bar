@@ -28,9 +28,14 @@ final class SystemTogglesStore {
         case taken
         /// Refused, in the daemon's words ("No agent is working right now.").
         case refused(String)
-        /// Not connected, no answer, or a daemon without the lease: the
-        /// app's own assertion stands in.
+        /// Not connected, or a daemon without the lease: the app's own
+        /// assertion stands in.
         case unavailable
+        /// The request went out and no usable answer came back (a
+        /// dropped connection, a timeout). The daemon may well hold the
+        /// lease, so the app takes no second hold and does not conclude
+        /// the daemon is too old; it says so and the next tap asks again.
+        case failed(String)
     }
 
     /// The one strip. `SystemTogglesStore()` joins it too.
@@ -48,6 +53,18 @@ final class SystemTogglesStore {
         var isOn: [SystemToggle: Bool] = [:]
         /// A toggle mid-apply — the chip pulses rather than lie.
         var applying: Set<SystemToggle> = []
+        @ObservationIgnored var pendingShellTargets: [SystemToggle: Bool] = [:]
+        @ObservationIgnored var shellTasks: [SystemToggle: Task<Void, Never>] = [:]
+        @ObservationIgnored var refreshOwners: [SystemToggle: UUID] = [:]
+        @ObservationIgnored var runCommand: @MainActor (String) async -> (output: String?, error: String?) = { command in
+            await Task.detached { SystemTogglesStore.shellWithError(command) }.value
+        }
+        @ObservationIgnored var readToggle: @MainActor (SystemToggle) async -> Bool = { toggle in
+            await Task.detached { SystemTogglesStore.probe(toggle) }.value
+        }
+        @ObservationIgnored var settleShell: @MainActor () async -> Void = {
+            try? await Task.sleep(nanoseconds: 600_000_000)
+        }
         /// The last apply's honest outcome — a denied `defaults` write or
         /// an AppleScript refusal lands here so the chip can say so.
         var lastError: String?
@@ -75,15 +92,21 @@ final class SystemTogglesStore {
         /// `deinit` can release it: the assertion must not outlive the
         /// state.
         let awake = AwakeAssertion()
+        private var awakeReleaseFailed = false
+        // A failed release preserves ownership, not a request to keep holding.
+        private var awakeRequested = false
 
         /// The daemon's hold (`state.power.hold`) as last published, and
         /// whether the daemon is there at all; while it is, this is the
         /// chip's truth.
         private(set) var daemonHold: CoreAwakeHold?
         private(set) var daemonLive = false
+        @ObservationIgnored private var daemonHello: CoreHello?
         /// Sends the person's lease: a request is `hold_awake`, nil is
         /// `release_awake`. Wired by `attachLease`; nil keeps every hold
         /// on the app's own assertion.
+        @ObservationIgnored private var leaseRevision = 0
+        @ObservationIgnored private(set) var leaseTask: Task<Void, Never>?
         @ObservationIgnored var sendLease: (@MainActor (CoreAwakeRequest?) async -> LeaseAnswer)?
         /// The chip's clock, stepped while a countdown shows so the word
         /// under the cup counts down without a daemon frame.
@@ -94,6 +117,9 @@ final class SystemTogglesStore {
         var awakeClockRunning: Bool { awakeTick != nil || awakeTimer != nil }
         /// A hand-over of the app's assertion to the daemon is in flight.
         @ObservationIgnored private var handingOver = false
+        @ObservationIgnored private(set) var handoverTask: Task<Void, Never>?
+        @ObservationIgnored private var handoverRevision = 0
+        @ObservationIgnored private var handoverRequest: CoreAwakeRequest?
         /// This connection's daemon answered a lease with "no such
         /// command" (or never answered): it cannot take the hold, so the
         /// app's own assertion does the job until the next connection
@@ -111,16 +137,17 @@ final class SystemTogglesStore {
                 &assertion)
             return status == kIOReturnSuccess ? assertion : nil
         }
-        @ObservationIgnored var releaseAssertion: @MainActor (IOPMAssertionID) -> Void = { _ = IOPMAssertionRelease($0) }
+        @ObservationIgnored var releaseAssertion: @MainActor (IOPMAssertionID) -> IOReturn = { IOPMAssertionRelease($0) }
 
         /// The one hold as the chip draws it: the daemon's while it is
         /// connected, else the app's own — and the app's own whenever it
         /// holds one, so an assertion the daemon could not take is never
         /// held out of sight of the switch that lets it go.
         var awakeReading: KeepAwakeReading {
-            daemonLive && !awake.held
-                ? KeepAwakeReading(hold: daemonHold)
-                : KeepAwakeReading(localHeld: awake.held, until: awakeUntil, display: awakeKeepsDisplay)
+            if daemonLive && !awake.held { return KeepAwakeReading(hold: daemonHold) }
+            var reading = KeepAwakeReading(localHeld: awake.held, until: awakeUntil, display: awakeKeepsDisplay)
+            reading.releaseFailed = awakeReleaseFailed
+            return reading
         }
 
         /// A Dock choice made while the Dock utility's preview holds the
@@ -155,6 +182,7 @@ final class SystemTogglesStore {
         /// the Mac only (the display still sleeps and locks), or the
         /// display too.
         func setAwake(_ hold: Bool) {
+            awakeRequested = hold
             if hold && !awake.held {
                 let kind = awakeKeepsDisplay
                     ? kIOPMAssertionTypePreventUserIdleDisplaySleep
@@ -162,20 +190,37 @@ final class SystemTogglesStore {
                 if let assertion = takeAssertion(kind as CFString) {
                     awake.id = assertion
                     awake.held = true
+                    awakeReleaseFailed = false
+                    if lastError?.hasPrefix("Awake:") == true { lastError = nil }
                 } else {
                     lastError = "Awake: the power assertion was refused."
                 }
             } else if !hold && awake.held {
-                releaseAssertion(awake.id)
-                awake.id = 0
-                awake.held = false
+                _ = releaseLocalAwake()
+            } else if hold && awakeReleaseFailed {
+                awakeReleaseFailed = false
+                if lastError?.hasPrefix("Awake:") == true { lastError = nil }
             }
-            if !awake.held {
+            if !awake.held || !awakeRequested {
                 awakeTimer?.cancel()
                 awakeTimer = nil
                 awakeUntil = nil
             }
+            updateHandoverIntent()
             syncAwakeChip()
+        }
+
+        private func releaseLocalAwake() -> Bool {
+            guard releaseAssertion(awake.id) == kIOReturnSuccess else {
+                awakeReleaseFailed = true
+                lastError = "Awake: could not stop its hold. Try turning it off again."
+                return false
+            }
+            awake.id = 0
+            awake.held = false
+            awakeReleaseFailed = false
+            if lastError?.hasPrefix("Awake:") == true { lastError = nil }
+            return true
         }
 
         /// Hold for `seconds`, indefinitely (nil), or let go (0) —
@@ -184,6 +229,10 @@ final class SystemTogglesStore {
         /// assertion otherwise — and the assertion's own switch while the
         /// app holds it, so a tap always moves the hold the chip shows.
         func holdAwake(seconds: Int?) {
+            if handingOver {
+                holdLocally(seconds: seconds)
+                return
+            }
             guard daemonLive, sendLease != nil, !leaseUnsupported, !awake.held else {
                 holdLocally(seconds: seconds)
                 return
@@ -210,6 +259,11 @@ final class SystemTogglesStore {
                 return
             }
             let request = CoreAwakeRequest(.untilAgentsFinish(sessions: nil), display: awakeKeepsDisplay)
+            if handingOver {
+                handoverRevision += 1
+                handoverRequest = request
+                return
+            }
             lease(request, fallback: nil) { [weak self] in
                 guard let self, self.awake.held else { return }
                 self.setAwake(false)
@@ -222,16 +276,21 @@ final class SystemTogglesStore {
         private func lease(_ request: CoreAwakeRequest?, fallback: (@MainActor () -> Void)?,
                            taken: (@MainActor () -> Void)? = nil) {
             guard let sendLease else { return }
+            leaseRevision += 1
+            let revision = leaseRevision
             applying.insert(.keepAwake)
-            Task { [weak self] in
+            leaseTask = Task { [weak self] in
                 let answer = await sendLease(request)
-                guard let self else { return }
+                guard let self, revision == self.leaseRevision else { return }
+                self.leaseTask = nil
                 self.applying.remove(.keepAwake)
                 switch answer {
                 case .taken:
                     if self.lastError?.hasPrefix("Awake:") == true { self.lastError = nil }
                     taken?()
                 case .refused(let why):
+                    self.lastError = "Awake: \(why)"
+                case .failed(let why):
                     self.lastError = "Awake: \(why)"
                 case .unavailable:
                     if self.daemonLive { self.leaseUnsupported = true }
@@ -259,6 +318,7 @@ final class SystemTogglesStore {
                 guard !Task.isCancelled else { return }
                 self?.setAwake(false)
             }
+            updateHandoverIntent()
             syncAwakeChip()
         }
 
@@ -268,15 +328,26 @@ final class SystemTogglesStore {
         /// assertion re-made.
         func setAwakeKeepsDisplay(_ on: Bool) {
             guard on != awakeKeepsDisplay else { return }
+            let wasHeld = awake.held
+            if wasHeld && !releaseLocalAwake() {
+                syncAwakeChip()
+                return
+            }
+            let pendingShape = handingOver ? handoverRequest?.shape : nil
             awakeKeepsDisplay = on
             defaults.set(on, forKey: SystemTogglesStore.awakeDisplayDefaultsKey)
-            if daemonLive, sendLease != nil, !awake.held, let hold = daemonHold, hold.isManual, let current = hold.lease {
+            if handingOver, let request = handoverRequest {
+                handoverRevision += 1
+                handoverRequest = CoreAwakeRequest(request.shape, display: on)
+            }
+            if !handingOver, daemonLive, sendLease != nil, !wasHeld, let hold = daemonHold, hold.isManual, let current = hold.lease {
                 lease(CoreAwakeRequest(Self.sameShape(current), display: on), fallback: nil)
                 return
             }
-            guard awake.held else { return }
-            releaseAssertion(awake.id)
-            awake.held = false
+            guard wasHeld && awakeRequested else {
+                syncAwakeChip()
+                return
+            }
             let until = awakeUntil
             let timer = awakeTimer
             awakeTimer = nil
@@ -286,6 +357,10 @@ final class SystemTogglesStore {
                 awakeTimer = timer
             } else {
                 timer?.cancel()
+            }
+            if handingOver, let pendingShape {
+                handoverRevision += 1
+                handoverRequest = CoreAwakeRequest(pendingShape, display: on)
             }
             syncAwakeChip()
         }
@@ -321,7 +396,7 @@ final class SystemTogglesStore {
                     }
                     return Self.answer(reply)
                 } catch {
-                    return .unavailable
+                    return Self.answer(failing: error)
                 }
             }
             observeLease(core)
@@ -329,10 +404,11 @@ final class SystemTogglesStore {
 
         private func observeLease(_ core: CoreModel) {
             let live = core.isLive
-            noteDaemonHold(live ? core.power?.hold : nil, live: live)
+            noteDaemonHold(live ? core.power?.hold : nil, live: live, hello: core.hello)
             withObservationTracking {
                 _ = core.isLive
                 _ = core.power?.hold
+                _ = core.hello
             } onChange: { [weak self, weak core] in
                 Task { @MainActor [weak self, weak core] in
                     guard let self, let core else { return }
@@ -344,6 +420,12 @@ final class SystemTogglesStore {
         /// A reply as the chip reads it. A daemon too old for the lease
         /// answers `unknown_command` (or `unsupported`): the app's own
         /// assertion stands in, as it did before the lease existed.
+        /// A request that threw is an error, not a daemon without the
+        /// lease: nothing here says the hold cannot be taken.
+        nonisolated static func answer(failing error: any Error) -> LeaseAnswer {
+            .failed("the monitor didn't answer.")
+        }
+
         nonisolated static func answer(_ reply: CoreReply) -> LeaseAnswer {
             if reply.ok { return .taken }
             switch reply.error?.code {
@@ -355,9 +437,20 @@ final class SystemTogglesStore {
         /// The daemon's latest word on the hold. The moment it is back, a
         /// hold the app took while it was away becomes its lease — asked
         /// afresh of each connection, since the daemon may have changed.
-        func noteDaemonHold(_ hold: CoreAwakeHold?, live: Bool) {
+        func noteDaemonHold(_ hold: CoreAwakeHold?, live: Bool, hello: CoreHello? = nil) {
             if daemonHold != hold { daemonHold = hold }
+            if daemonHello != hello || daemonLive != live {
+                leaseRevision += 1
+                leaseTask = nil
+                applying.remove(.keepAwake)
+            }
+            if daemonHello != hello {
+                daemonHello = hello
+                if handingOver { handoverRevision += 1 }
+                leaseUnsupported = false
+            }
             if daemonLive != live {
+                if handingOver { handoverRevision += 1 }
                 if live { leaseUnsupported = false }
                 daemonLive = live
             }
@@ -372,6 +465,10 @@ final class SystemTogglesStore {
         /// is not asked again on every frame; the assertion stays.
         private func handOver() {
             guard !handingOver, !leaseUnsupported, let sendLease else { return }
+            guard awakeRequested else {
+                setAwake(false)
+                return
+            }
             if daemonHold?.isManual == true {
                 setAwake(false)
                 return
@@ -379,17 +476,44 @@ final class SystemTogglesStore {
             let shape: CoreAwakeRequest.Shape = awakeUntil.map { .until($0.timeIntervalSince1970) } ?? .indefinite
             let request = CoreAwakeRequest(shape, display: awakeKeepsDisplay)
             handingOver = true
-            Task { [weak self] in
-                let answer = await sendLease(request)
+            handoverRequest = request
+            handoverTask = Task { [weak self] in
                 guard let self else { return }
-                self.handingOver = false
-                switch answer {
-                case .taken: self.setAwake(false)
-                case .unavailable: if self.daemonLive { self.leaseUnsupported = true }
-                case .refused: break
+                defer {
+                    self.handingOver = false
+                    self.handoverTask = nil
+                    self.syncAwakeChip()
                 }
-                self.syncAwakeChip()
+                while true {
+                    let revision = self.handoverRevision
+                    let answer = await sendLease(self.handoverRequest)
+                    if revision != self.handoverRevision {
+                        guard self.daemonLive else { return }
+                        continue
+                    }
+                    switch answer {
+                    case .taken:
+                        guard self.daemonLive else { return }
+                        if self.lastError?.hasPrefix("Awake:") == true { self.lastError = nil }
+                        self.handingOver = false
+                        self.setAwake(false)
+                        return
+                    case .unavailable:
+                        if self.daemonLive { self.leaseUnsupported = true }
+                        return
+                    case .refused(let why), .failed(let why):
+                        self.lastError = "Awake: \(why)"
+                        return
+                    }
+                }
             }
+        }
+
+        private func updateHandoverIntent() {
+            guard handingOver else { return }
+            handoverRevision += 1
+            let shape: CoreAwakeRequest.Shape = awakeUntil.map { .until($0.timeIntervalSince1970) } ?? .indefinite
+            handoverRequest = awakeRequested && awake.held ? CoreAwakeRequest(shape, display: awakeKeepsDisplay) : nil
         }
 
         /// The chip's lit state and its countdown clock, from the one
@@ -487,10 +611,11 @@ final class SystemTogglesStore {
     /// pretending the switch moved.
     private func setAwake(_ on: Bool) {
         let reading = state.awakeReading
-        if on != reading.leaseInForce {
+        let retryCleanup = !on && reading.persistenceError == "clear_failed" && state.daemonLive
+        if on != reading.leaseInForce || retryCleanup {
             state.holdAwake(seconds: on ? nil : 0)
         } else if !on, case .agents = reading.state {
-            state.lastNote = "Awake: the agents hold it until they stop — their switch is under Settings › Notifications › Power."
+            state.lastNote = "Awake: the agents hold it until they stop — their switch is under Settings › General › Power."
         }
     }
 
@@ -543,13 +668,22 @@ final class SystemTogglesStore {
         }
     }
 
-    private func refresh(_ toggle: SystemToggle) {
+    @discardableResult
+    func refresh(_ toggle: SystemToggle) -> Task<Void, Never>? {
+        guard !state.applying.contains(toggle) else { return nil }
+        let owner = UUID()
+        state.refreshOwners[toggle] = owner
         if let inline = readInline(toggle) {
             state.isOn[toggle] = inline
+            state.refreshOwners.removeValue(forKey: toggle)
+            return nil
         } else {
-            Task {
-                let value = await Task.detached { Self.probe(toggle) }.value
+            return Task {
+                let value = await state.readToggle(toggle)
+                guard state.refreshOwners[toggle] == owner,
+                      !state.applying.contains(toggle) else { return }
                 state.isOn[toggle] = value
+                state.refreshOwners.removeValue(forKey: toggle)
             }
         }
     }
@@ -620,6 +754,7 @@ final class SystemTogglesStore {
     /// for the read-back rather than racing the system.
     func apply(_ toggle: SystemToggle) {
         guard !state.applying.contains(toggle) else { return }
+        state.refreshOwners.removeValue(forKey: toggle)
         state.lastNote = nil
         switch toggle {
         case .keepAwake:
@@ -650,17 +785,7 @@ final class SystemTogglesStore {
             // A refused Automation grant is said up front instead of
             // failing inside `osascript` (or raising a surprise prompt
             // the chip never mentioned).
-            state.applying.insert(.darkMode)
-            Task {
-                let permission = await Task.detached { AutomationPermission.systemEvents(ask: false) }.value
-                state.applying.remove(.darkMode)
-                if permission == .denied {
-                    state.lastError = AutomationPermission.deniedSentence
-                    return
-                }
-                let current = readInline(.darkMode) ?? false
-                fire(.darkMode, on: !current)
-            }
+            setShellTarget(.darkMode, on: !(readInline(.darkMode) ?? false))
             return
         case .dockAutoHide:
             setDockAutohide(!(readInline(.dockAutoHide) ?? state.isOn[.dockAutoHide] ?? false))
@@ -670,10 +795,16 @@ final class SystemTogglesStore {
                 fire(toggle, on: !current)
             } else {
                 // No read yet — probe off-actor before deciding the flip.
+                state.applying.insert(toggle)
                 Task {
-                    let current = await Task.detached { Self.probe(toggle) }.value
+                    let current = await state.readToggle(toggle)
                     state.isOn[toggle] = current
-                    fire(toggle, on: !current)
+                    let target = state.pendingShellTargets.removeValue(forKey: toggle) ?? !current
+                    guard current != target else {
+                        state.applying.remove(toggle)
+                        return
+                    }
+                    fire(toggle, on: target)
                 }
             }
         }
@@ -691,8 +822,19 @@ final class SystemTogglesStore {
             setAwake(on)
             return
         }
+        if [.darkMode, .desktopIcons, .hiddenFiles].contains(toggle)
+            || (toggle == .dockAutoHide && dockDriver == nil && !dockHoldActive()) {
+            if state.applying.contains(toggle) {
+                state.pendingShellTargets[toggle] = on
+                return
+            }
+            if let current = readInline(toggle) ?? state.isOn[toggle], current == on { return }
+            setShellTarget(toggle, on: on)
+            return
+        }
         if let current = state.isOn[toggle] ?? readInline(toggle), current == on { return }
         if state.isOn[toggle] == nil, readInline(toggle) == nil {
+            state.refreshOwners.removeValue(forKey: toggle)
             Task {
                 let current = await Task.detached { Self.probe(toggle) }.value
                 state.isOn[toggle] = current
@@ -703,24 +845,62 @@ final class SystemTogglesStore {
         apply(toggle)
     }
 
+    private func setShellTarget(_ toggle: SystemToggle, on: Bool) {
+        state.refreshOwners.removeValue(forKey: toggle)
+        if toggle == .darkMode {
+            state.applying.insert(toggle)
+            Task {
+                let permission = await Task.detached { AutomationPermission.systemEvents(ask: false) }.value
+                if permission == .denied {
+                    state.pendingShellTargets.removeValue(forKey: toggle)
+                    state.applying.remove(toggle)
+                    state.lastError = AutomationPermission.deniedSentence
+                    return
+                }
+                fire(toggle, on: state.pendingShellTargets.removeValue(forKey: toggle) ?? on)
+            }
+        } else if toggle == .dockAutoHide {
+            setDockAutohide(on)
+        } else if state.isOn[toggle] == nil {
+            state.applying.insert(toggle)
+            Task {
+                let current = await state.readToggle(toggle)
+                state.isOn[toggle] = current
+                let target = state.pendingShellTargets.removeValue(forKey: toggle) ?? on
+                guard current != target else {
+                    state.applying.remove(toggle)
+                    return
+                }
+                fire(toggle, on: target)
+            }
+        } else {
+            fire(toggle, on: on)
+        }
+    }
+
     /// A shell-backed flip: run detached, read the truth back after
     /// the settle beat (Finder relaunches take a moment), and keep any
     /// stderr honest — a refused write lands in `lastError`.
     private func fire(_ toggle: SystemToggle, on: Bool, command override: String? = nil,
                       fallback: String? = nil) {
         guard let command = override ?? toggle.applyCommand(on: on) else { return }
+        state.refreshOwners.removeValue(forKey: toggle)
         state.applying.insert(toggle)
         state.lastError = nil
-        Task {
-            var result = await Task.detached {
-                Self.shellWithError(command)
-            }.value
+        let task = Task {
+            defer {
+                state.shellTasks.removeValue(forKey: toggle)
+                state.applying.remove(toggle)
+                if let target = state.pendingShellTargets.removeValue(forKey: toggle) {
+                    set(toggle, on: target)
+                }
+            }
+            var result = await state.runCommand(command)
             if result.error != nil, let fallback {
                 // The public path was refused (no Automation grant, most
                 // likely): the last resort still gets the choice through.
-                result = await Task.detached { Self.shellWithError(fallback) }.value
+                result = await state.runCommand(fallback)
             }
-            state.applying.remove(toggle)
             if let error = result.error, !error.isEmpty {
                 state.lastError = "\(toggle.title): \(error)"
                 Self.log.notice("toggle \(toggle.rawValue, privacy: .public) failed: \(error, privacy: .public)")
@@ -728,14 +908,15 @@ final class SystemTogglesStore {
             // The read-back is the truth — the chip settles to what
             // the system reports, not what we asked for.
             if !toggle.isMomentary {
-                try? await Task.sleep(nanoseconds: 600_000_000)
+                await state.settleShell()
                 if let inline = readInline(toggle) {
                     state.isOn[toggle] = inline
                 } else {
-                    state.isOn[toggle] = await Task.detached { Self.probe(toggle) }.value
+                    state.isOn[toggle] = await state.readToggle(toggle)
                 }
             }
         }
+        state.shellTasks[toggle] = task
     }
 
     // MARK: - Dock autohide (live, never a Dock restart when avoidable)
@@ -750,6 +931,7 @@ final class SystemTogglesStore {
     /// under a hold would be undone by the hold's restore, so it lands
     /// the moment the hold lets go.
     private func setDockAutohide(_ on: Bool) {
+        state.refreshOwners.removeValue(forKey: .dockAutoHide)
         state.lastError = nil
         if dockHoldActive() {
             state.pendingDockAutohide = on

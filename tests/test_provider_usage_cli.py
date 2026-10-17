@@ -70,6 +70,10 @@ def test_status_json_explains_actionable_provider_state__and_2_more(tmp_path: Pa
         1100,
         False,
     )
+    # The person has turned Claude's usage on, so its own state is shown.
+    assert provider_usage_cli.main(
+        ["usage", "claude", "on"], stdout=io.StringIO(), home=tmp_path
+    ) == 0
     output = io.StringIO()
     code = provider_usage_cli.main(
         ["status", "--json"],
@@ -301,3 +305,30 @@ def test_refresh_uses_native_service_and_persists_result(tmp_path: Path):
     assert code == 0
     assert saved == [state]
     assert json.loads(output.getvalue())["providers"][0]["provider_id"] == "codex"
+
+
+def test_configure_refuses_a_bad_value_with_a_message_not_a_traceback(tmp_path) -> None:
+    settings_path = tmp_path / "provider-usage.json"
+    for argv in (
+        ["configure", "claude", "--threshold-remaining", "500"],
+        ["configure", "opencode", "--option", "go_usage=flase"],
+    ):
+        output = io.StringIO()
+        code = provider_usage_cli.main(argv, stdout=output, home=tmp_path, settings_path=settings_path)
+        assert code == 2, argv
+        assert "settings updated" not in output.getvalue()
+        assert output.getvalue().strip(), "the message says what to change"
+    assert not settings_path.exists(), "a refused value saves nothing"
+
+
+def test_configure_accepts_go_usage_on_and_off(tmp_path) -> None:
+    settings_path = tmp_path / "provider-usage.json"
+    for value in ("on", "off"):
+        assert provider_usage_cli.main(
+            ["configure", "opencode", "--option", f"go_usage={value}"],
+            stdout=io.StringIO(),
+            home=tmp_path,
+            settings_path=settings_path,
+        ) == 0
+    loaded = provider_usage_cli.load_provider_usage_settings(settings_path).settings
+    assert loaded.preference("opencode").option("go_usage") == "off"

@@ -26,6 +26,13 @@ struct ScreenBarNudgeTests {
                              icon: icon, detail: detail, section: section)
     }
 
+    @Test func aChangedTileSaysSoToVoiceOver() {
+        var tile = MenuBarEarFeed.Tile(item: item("a", owner: "Tailscale"), face: nil)
+        #expect(ScreenBarPeekTile.spokenName(tile) == "Tailscale")
+        tile.changed = true
+        #expect(ScreenBarPeekTile.spokenName(tile) == "Tailscale, changed since you last looked")
+    }
+
     // MARK: Who is new
 
     @Test func onlySomeoneElsesConcealableAppsCount() {
@@ -95,25 +102,20 @@ struct ScreenBarNudgeTests {
         // The launch photographs, held against the last run's: a battery
         // level or a sync badge that moved since then raises nothing.
         #expect(!MenuBarUtility.pictureChangeNudges(settling: true, revealed: false, barOpen: false,
-                                                    lifted: false, hidden: true, watched: true))
+                                                    hidden: true, watched: true))
         // Settled, a watched hidden item's change is the ear's to say.
         #expect(MenuBarUtility.pictureChangeNudges(settling: false, revealed: false, barOpen: false,
-                                                   lifted: false, hidden: true, watched: true))
+                                                   hidden: true, watched: true))
         // Never while the person is looking at it already, never for an
         // item no longer tucked away, never past the watch list.
         #expect(!MenuBarUtility.pictureChangeNudges(settling: false, revealed: true, barOpen: false,
-                                                    lifted: false, hidden: true, watched: true))
+                                                    hidden: true, watched: true))
         #expect(!MenuBarUtility.pictureChangeNudges(settling: false, revealed: false, barOpen: true,
-                                                    lifted: false, hidden: true, watched: true))
+                                                    hidden: true, watched: true))
         #expect(!MenuBarUtility.pictureChangeNudges(settling: false, revealed: false, barOpen: false,
-                                                    lifted: true, hidden: true, watched: true))
+                                                    hidden: false, watched: true))
         #expect(!MenuBarUtility.pictureChangeNudges(settling: false, revealed: false, barOpen: false,
-                                                    lifted: false, hidden: false, watched: true))
-        #expect(!MenuBarUtility.pictureChangeNudges(settling: false, revealed: false, barOpen: false,
-                                                    lifted: false, hidden: true, watched: false))
-        // The settle is the newcomers' own window: the pre-photograph
-        // lands within the engine's start grace, well inside it.
-        #expect(MenuBarUtility.startSettle > MenuBarUtility.adoptionGrace)
+                                                    hidden: true, watched: false))
     }
 
     // MARK: The answers
@@ -188,11 +190,6 @@ struct ScreenBarNudgeTests {
         #expect(during.right?.markID == "newcomer-1-a")
         let after = ScreenBarMenuBarMarks.apply(ScreenBarMenuBarMarks(feed: feed, showsNudge: false), to: base)
         #expect(after.right == meter, "the beat over, the meter has its ear back")
-        // A failure outranks a nudge.
-        var failing = feed
-        failing.failure = "why"
-        let alert = ScreenBarMenuBarMarks.apply(ScreenBarMenuBarMarks(feed: failing), to: base)
-        #expect(alert.right?.tone == .alert)
         // The nudge alone gives the peek something to show.
         #expect(!feed.isEmpty)
     }

@@ -3,7 +3,7 @@ import Testing
 import JRBarCore
 @testable import JRBarApp
 
-/// Settings › Agents' T3 Code row reads `t3code_integration`'s document
+/// Settings › Agents & Usage' T3 Code row reads `t3code_integration`'s document
 /// (docs/CORE-PROTOCOL.md) and says what the reader saw in plain words.
 @Suite struct T3CodeRowTests {
     private static func reply(_ text: String) throws -> JSONValue {

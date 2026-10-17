@@ -1,3 +1,4 @@
+import CoreAudio
 import Foundation
 import Testing
 import JRBarCore
@@ -39,6 +40,88 @@ import JRBarCore
         var latest: FakeEngine!
         tap.makeEngine = { let engine = FakeEngine(); latest = engine; return engine }
         return (tap, { latest })
+    }
+
+    @Test func oldEngineCallbacksCannotOverwriteOrKillItsReplacement() async {
+        let tap = AudioLevelTap()
+        var engines: [FakeEngine] = []
+        tap.makeEngine = { let engine = FakeEngine(); engines.append(engine); return engine }
+        tap.resolvePIDs = { $0 == "a.app" ? [111] : [222] }
+        tap.sync(visible: true, playing: true, enabled: true, clientBundleID: "a.app")
+        await settle()
+        let staleLevels = engines[0].onLevels
+        let staleDeath = engines[0].onDeath
+        tap.sync(visible: true, playing: true, enabled: true, clientBundleID: "b.app")
+        await settle()
+        engines[1].onLevels?([0.2, 0.4, 0.6, 0.8, 1, 0.5])
+        await settle()
+        staleLevels?([1, 1, 1, 1, 1, 1])
+        staleDeath?()
+        await settle()
+        #expect(tap.live)
+        #expect(engines[1].running)
+        #expect(tap.levels == [0.2, 0.4, 0.6, 0.8, 1, 0.5])
+        tap.stop()
+        #expect(!engines[1].running)
+    }
+
+    @Test func aFailureFromAnEarlierStartCannotRejectAReusedEngineRun() async {
+        let tap = AudioLevelTap()
+        let engine = FakeEngine()
+        tap.makeEngine = { engine }
+        engine.startError = AudioTapError.noOutputDevice
+        tap.sync(visible: true, playing: true, enabled: true)
+        tap.stop()
+        engine.startError = nil
+        tap.sync(visible: true, playing: true, enabled: true)
+        await settle()
+        #expect(tap.live)
+        #expect(engine.running)
+        tap.stop()
+    }
+
+    @Test func failedRetargetClearsThePreviousSamples() async {
+        let tap = AudioLevelTap()
+        var engines: [FakeEngine] = []
+        tap.makeEngine = {
+            let engine = FakeEngine()
+            if !engines.isEmpty { engine.startError = AudioTapError.noOutputDevice }
+            engines.append(engine)
+            return engine
+        }
+        tap.resolvePIDs = { $0 == "a.app" ? [111] : [222] }
+        tap.sync(visible: true, playing: true, enabled: true, clientBundleID: "a.app")
+        await settle()
+        engines[0].onLevels?([1, 1, 1, 1, 1, 1])
+        await settle()
+        tap.sync(visible: true, playing: true, enabled: true, clientBundleID: "b.app")
+        await settle()
+        #expect(!tap.live)
+        #expect(tap.levels == [Float](repeating: 0, count: 6))
+        #expect(!engines[1].running)
+    }
+
+    @Test func zeroLengthBuffersContributeNoSamplesOrChannels() {
+        let samples = TapSampleBuffer()
+        var stereo: [Float] = [1, 3, 5, 7]
+        var emptyStorage: [Float] = [1000, 1000]
+        stereo.withUnsafeMutableBufferPointer { valid in
+            emptyStorage.withUnsafeMutableBufferPointer { empty in
+                let bytes = MemoryLayout<AudioBufferList>.size + MemoryLayout<AudioBuffer>.stride
+                let storage = UnsafeMutableRawPointer.allocate(byteCount: bytes,
+                                                               alignment: MemoryLayout<AudioBufferList>.alignment)
+                defer { storage.deallocate() }
+                let list = storage.bindMemory(to: AudioBufferList.self, capacity: 1)
+                list.initialize(to: AudioBufferList(mNumberBuffers: 2, mBuffers: AudioBuffer(
+                    mNumberChannels: 2, mDataByteSize: UInt32(valid.count * MemoryLayout<Float>.size),
+                    mData: valid.baseAddress)))
+                defer { list.deinitialize(count: 1) }
+                let buffers = UnsafeMutableAudioBufferListPointer(list)
+                buffers[1] = AudioBuffer(mNumberChannels: 1, mDataByteSize: 0, mData: empty.baseAddress)
+                samples.ingest(UnsafePointer(list))
+            }
+        }
+        #expect(samples.window(2).samples == [2, 6])
     }
 
     @Test func theGateStartsAndStopsTheEngine() async {

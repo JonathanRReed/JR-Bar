@@ -42,6 +42,7 @@ struct AquariumControlsView: View {
                 .padding(.vertical, 4)
 
             lookRow
+            motionRow
             labelsRow
             dayNightRow
             Toggle(isOn: bind(\.sound)) {
@@ -79,6 +80,20 @@ struct AquariumControlsView: View {
                 .frame(maxWidth: 230, alignment: .trailing)
         } label: {
             SettingLabel(title: "Look", subtitle: "Water, floor and back wall — Classic, or anything you've bought.")
+        }
+    }
+
+    private var motionRow: some View {
+        LabeledContent {
+            Picker("Motion", selection: bind(\.motion)) {
+                Text("Live").tag(AquariumSettings.Motion.live)
+                Text("Still").tag(AquariumSettings.Motion.still)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 220)
+        } label: {
+            SettingLabel(title: "Motion", subtitle: "Still holds the scene. Session status and rewards keep updating; feeding works immediately.")
         }
     }
 
@@ -196,6 +211,7 @@ struct AquariumControlsView: View {
         let current = store.state.aquarium
         var fresh = AquariumSettings()
         fresh.enabled = current.enabled
+        fresh.motion = current.motion
         fresh.speciesOverrides = current.speciesOverrides
         fresh.dayNight = current.dayNight
         fresh.idleFillMinutes = current.idleFillMinutes

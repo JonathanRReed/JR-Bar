@@ -664,10 +664,33 @@ exit 85
     environment = {
         **os.environ,
         "PATH": f"{tool_bin}:{os.environ['PATH']}",
+        "PYTHON": str(python),
         "FAKE_GH_LOG": str(log),
         "FAKE_GH_STATE": str(state),
     }
     return root, environment
+
+
+def test_publisher_fixture_ignores_inherited_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PYTHON", str(tmp_path / "unexpected-python"))
+    root, environment = _publisher_fixture(tmp_path)
+
+    result = subprocess.run(
+        [str(root / "scripts" / "publish_release.sh")],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = Path(environment["FAKE_GH_STATE"])
+    assert (state / "archive-uploaded").is_file()
+    assert (state / "version-published").is_file()
 
 
 def test_publisher_publishes_version_archive_before_mutating_durable_feed(
