@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from jrbar.animation import read_program
@@ -423,7 +425,7 @@ def test_the_plan_is_period_locked_and_carries_no_phase__and_2_more() -> None:
     blink at two LEDs, the Dot's own gate slowed it by 2x (1606 vs 3212 ms)
     and the pair ran different loops forever. The Dot steps down to band
     averages instead, which keep the strip's period."""
-    scanner = next(program for name, program, leds in CORPUS if name == "effect_scanner_8led")
+    scanner = (Path(__file__).parent / "fixtures/scanner-before-background.led").read_text().strip()
     plan = plan_dot_surface(role="extend", strip_program=scanner, strip_led_count=8)
     compiled_strip = compile_presentation_program(scanner, led_count=8).program
     compiled_dot = compile_presentation_program(plan.program, led_count=DOT_LED_COUNT).program
@@ -1158,7 +1160,7 @@ def test_the_average_rung_still_reaches_the_pulse_peak() -> None:
     """The average rung paints each pulse's PEAK as its target and lets the
     firmware bring it back; resting on the start colour there would turn
     every pulse into a pulse to itself."""
-    scanner = next(program for name, program, _leds in CORPUS if name == "effect_scanner_8led")
+    scanner = (Path(__file__).parent / "fixtures/scanner-before-background.led").read_text().strip()
     averaged = downsample_program(scanner, source_leds=8, band="average")
     assert averaged == (
         "0:#005661 1:#007280 723ms linear\n"

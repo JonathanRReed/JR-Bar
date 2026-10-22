@@ -295,7 +295,7 @@ def test_the_period_lock_steps_down_rather_than_change_the_period() -> None:
     whose compiled loop is the strip's."""
     from jrbar.presentation_compiler import compile_presentation_program
 
-    scanner = next(p for n, p, leds in CORPUS if n == "effect_scanner_8led")
+    scanner = (Path(__file__).parent / "fixtures/scanner-before-background.led").read_text().strip()
     locked = period_locked_dot(scanner, source_leds=8)
     assert locked.rung == "average"
     strip_lap = _lap(compile_presentation_program(scanner, led_count=8).program, 8)

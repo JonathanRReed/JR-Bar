@@ -1253,7 +1253,8 @@ def _travel_step(cycle_ms: int, led_count: int) -> int:
     sweeps, each one step per LED plus the two its tail needs at the ends,
     so this makes one there-and-back take the whole cycle."""
     span = 2 * (max(2, int(led_count)) + 1)
-    return max(MIN_STEP_MS, min(MAX_STEP_MS, max(1, int(cycle_ms)) // span))
+    step = max(1, int(cycle_ms)) // span
+    return max(MIN_STEP_MS, step if led_count <= 2 else min(MAX_STEP_MS, step))
 
 
 def render_motion(
@@ -1354,7 +1355,8 @@ def _motion_lines(
     tinted = shade(head, ceiling) if head else None
     if motion in {KITT, SCANNER, PENDULUM}:
         if count <= 2:
-            cycle = max(cycle, 2200)
+            # Keep a safe base cadence without flattening the speed control.
+            cycle += 2200
         floor_color = shade(peak, _number(params, "background_glow", 0.0, 0.0, 100.0) / 100.0)
 
     if motion == STEADY:
