@@ -2,6 +2,17 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.17.2
+
+- Knight Rider, Scanner and Pendulum clear inherited light from the previous effect and offer a Background glow control, defaulting to a dark background.
+- A provider's selected motion stays intact when several sessions from that provider work at once; asks and failures keep priority.
+- Effect Studio preserves edited parameters across assignment targets, shows current output, and has a clearer entry in Devices & Lighting and more compact controls.
+- General settings offers provider visibility and ordering for the menu-bar icon's usage and session displays.
+- Hidden menu-bar items can be covered inside the icon's blank reservation without covering the icon itself.
+- Claude reports lost Keychain permission separately from a rejected sign-in and stops repeating denied background reads.
+- Factory leaves refresh-token renewal to the browser and offers explicit permission to follow the selected profile's current access token; unrelated bad requests no longer appear as sign-outs.
+- Closed-lid agent holds request display sleep when no external display is active, while retaining power, thermal and crash-recovery safeguards.
+
 ## 0.9.17.1
 
 - Clicking the JR-Bar icon opens the main panel when macOS reports a centered status-item event.

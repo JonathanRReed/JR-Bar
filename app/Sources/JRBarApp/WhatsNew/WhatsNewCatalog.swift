@@ -33,29 +33,50 @@ struct WhatsNewEntry: Identifiable, Equatable, Sendable {
 enum WhatsNewCatalog {
     /// `setup.json`'s `whatsNewSeen` is compared with this. A new
     /// release gets a new id, and the window comes back once.
-    static let releaseID = "0.9.17.1"
+    static let releaseID = "0.9.17.2"
 
     /// The header's one line.
-    static let headline = "Menu-bar access and hover fixes."
+    static let headline = "Lighting, provider connections and menu-bar fixes."
 
     /// The window has room for this many rows and no more.
     static let maximumRows = 8
 
     static let entries: [WhatsNewEntry] = [
         WhatsNewEntry(
-            id: "menu-panel", symbol: "menubar.rectangle",
-            title: "Main panel access",
-            detail: "The JR-Bar icon opens the main panel with usage and Settings.",
-            tryIt: .panel(toggle: false), opens: "Opens the main panel"),
+            id: "sweep-background", symbol: "light.beacon.max",
+            title: "Sweep background",
+            detail: "Knight Rider, Scanner and Pendulum clear inherited light and offer a Background glow control.",
+            tryIt: .window(.effects), opens: "Opens Effect Studio"),
         WhatsNewEntry(
-            id: "menu-recovery", symbol: "arrow.triangle.2.circlepath",
-            title: "Icon recovery",
-            detail: "Shortens the delay when macOS briefly hides JR-Bar during a menu-bar shift.",
+            id: "working-motion", symbol: "waveform.path",
+            title: "Working motion",
+            detail: "Your selected motion stays intact when several sessions from one provider work at once.",
+            tryIt: .window(.effects), opens: "Opens Effect Studio"),
+        WhatsNewEntry(
+            id: "studio-controls", symbol: "slider.horizontal.3",
+            title: "Studio controls",
+            detail: "Edited parameters follow the assignment, and current-output previews show what the monitor sends.",
+            tryIt: .window(.effects), opens: "Opens Effect Studio"),
+        WhatsNewEntry(
+            id: "provider-order", symbol: "list.bullet",
+            title: "Provider visibility and order",
+            detail: "Choose which providers appear in the menu-bar icon and move them into your preferred order.",
+            tryIt: .settings(page: "general"), opens: "Opens General settings"),
+        WhatsNewEntry(
+            id: "provider-recovery", symbol: "key",
+            title: "Connection recovery",
+            detail: "Claude distinguishes lost Keychain permission, and Factory can follow browser renewals with explicit permission.",
+            tryIt: .settings(page: "usage"), opens: "Opens Agents & Usage"),
+        WhatsNewEntry(
+            id: "closed-lid-display", symbol: "laptopcomputer",
+            title: "Closed-lid display sleep",
+            detail: "Agent holds request display sleep when the lid is closed and no external display is active.",
+            tryIt: .settings(page: "general"), opens: "Opens General settings"),
+        WhatsNewEntry(
+            id: "menu-recovery", symbol: "menubar.rectangle",
+            title: "Hidden menu items",
+            detail: "The hiding fallback covers the blank reservation while keeping the JR-Bar icon exposed.",
             tryIt: .settings(page: "utilities"), opens: "Opens Utilities & Toys"),
-        WhatsNewEntry(
-            id: "hover-intent", symbol: "cursorarrow",
-            title: "Reveal after a pause",
-            detail: "Hover reveal waits for the pointer to rest before showing hidden icons."),
     ]
 }
 
