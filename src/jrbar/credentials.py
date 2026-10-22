@@ -61,6 +61,7 @@ class CredentialOutcome(Enum):
     DENIED = "denied"
     COOLING_DOWN = "cooling_down"
     PROMPT_NOT_ALLOWED = "prompt_not_allowed"
+    ACCESS_LOST = "access_lost"
     UNAVAILABLE = "unavailable"
 
 
@@ -157,6 +158,18 @@ class KeychainConsentLedger:
         except (TypeError, ValueError):
             return False
 
+    def access_lost(self, service: str) -> bool:
+        entry = self._read().get(service)
+        return isinstance(entry, dict) and "access_lost_at" in entry
+
+    def record_access_lost(self, service: str, now: float) -> None:
+        payload = self._read()
+        payload[service] = {"access_lost_at": float(now)}
+        try:
+            atomic_private_write(self.path, json.dumps(payload, separators=(",", ":")))
+        except OSError:
+            pass
+
     def clear(self, service: str) -> None:
         payload = self._read()
         if payload.pop(service, None) is None:
@@ -208,7 +221,8 @@ def read_keychain_secret(
     ):
         # No standing grant on record: a background read could surprise
         # the user with a Keychain dialog, so it is refused outright.
-        return CredentialResult(CredentialOutcome.PROMPT_NOT_ALLOWED)
+        outcome = CredentialOutcome.ACCESS_LOST if ledger is not None and ledger.access_lost(item.service) else CredentialOutcome.PROMPT_NOT_ALLOWED
+        return CredentialResult(outcome)
     if ledger is not None:
         retry_at = ledger.retry_at(item.service, reference)
         if retry_at is not None:
@@ -240,7 +254,9 @@ def read_keychain_secret(
     if completed.returncode == EXIT_UNAVAILABLE:
         return CredentialResult(CredentialOutcome.UNAVAILABLE)
     if completed.returncode == EXIT_INTERACTION_REQUIRED and not allow_prompt:
-        return CredentialResult(CredentialOutcome.PROMPT_NOT_ALLOWED)
+        if ledger is not None:
+            ledger.record_access_lost(item.service, reference)
+        return CredentialResult(CredentialOutcome.ACCESS_LOST)
     if completed.returncode in (_SECURITY_USER_CANCELED, EXIT_INTERACTION_REQUIRED):
         deadline = (
             ledger.record_denial(item.service, reference)

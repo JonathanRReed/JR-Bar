@@ -769,6 +769,7 @@ def _with_local_usage(
 _OAUTH_REST_SECONDS = {
     "rate_limited": 600.0,
     "authentication_required": 1800.0,
+    "claude_keychain_access_lost": 1800.0,
     "usage_permission_missing": 1800.0,
     "usage_connection_required": 1800.0,
     "network_unavailable": 120.0,
@@ -1045,6 +1046,15 @@ def _collect_claude_oauth(
             state = ProviderSourceState.NEEDS_SIGN_IN
             reason_code = "authentication_required"
             action = "Reconnect Claude"
+            if source_instance_id == "default":
+                from .credentials import CLAUDE_CODE_KEYCHAIN, KeychainConsentLedger
+                from .providers import default_state_dir
+
+                ledger = KeychainConsentLedger(default_state_dir() / "keychain-consent.json")
+                if ledger.access_lost(CLAUDE_CODE_KEYCHAIN.service):
+                    state = ProviderSourceState.NEEDS_CONSENT
+                    reason_code = "claude_keychain_access_lost"
+                    action = "Allow Claude Keychain access"
         elif "forbidden" in reason:
             state = ProviderSourceState.UNAVAILABLE
             reason_code = "usage_permission_missing"

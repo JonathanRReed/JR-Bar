@@ -25,7 +25,7 @@ from .settings import (
 CAFFEINATE_SELF_EXPIRE_SECONDS = 1800
 CAFFEINATE_CLOSED_LID_COMMAND = (
     "/usr/bin/caffeinate",
-    "-imsu",
+    "-ims",
     "-t",
     str(CAFFEINATE_SELF_EXPIRE_SECONDS),
 )
@@ -277,6 +277,28 @@ def parse_bool_ioreg_property(text: str | bytes, property_name: str) -> bool | N
     if value in {"no", "false", "0"}:
         return False
     return None
+
+
+def external_display_is_active() -> bool | None:
+    try:
+        from Quartz import CGDisplayIsActive, CGDisplayIsBuiltin, CGGetOnlineDisplayList
+
+        error, displays, count = CGGetOnlineDisplayList(32, None, None)
+        if error or not 0 < count < 32:
+            return None
+        return any(CGDisplayIsActive(display) and not CGDisplayIsBuiltin(display)
+                   for display in displays[:count])
+    except Exception:
+        return None
+
+
+def run_pmset_displaysleepnow(*, runner: CommandRunner = subprocess.run) -> None:
+    if system_sleep_suppressed():
+        raise SystemSleepSuppressedError("display sleep is suppressed in this process")
+    result = runner(["/usr/bin/pmset", "displaysleepnow"], check=False,
+                    capture_output=True, text=True, timeout=5)
+    if result.returncode:
+        raise RuntimeError("macOS refused display sleep")
 
 
 def run_sudo_pmset_disablesleep(
@@ -546,6 +568,10 @@ class ClosedLidAwakeController:
         self.last_release_reason: str | None = None
         self.last_sleep_epoch: float | None = None
         self.last_sleep_error: str | None = None
+        self.external_display_reader: Callable[[], bool | None] = external_display_is_active
+        self.display_sleeper: Callable[[], None] = run_pmset_displaysleepnow
+        self._display_sleep_requested = False
+        self._display_sleep_retry_at = 0.0
 
     def configure_sleep_on_release(
         self,
@@ -622,6 +648,24 @@ class ClosedLidAwakeController:
                 self._pending_release_reason = None
                 self._after_release(reason)
         return self.active()
+
+    def sync_display_sleep(self, *, lid_closed: bool | None) -> None:
+        if lid_closed is not True or not self.last_requested:
+            self._display_sleep_requested = False
+            self._display_sleep_retry_at = 0.0
+            return
+        if self._display_sleep_requested or self.wall_clock() < self._display_sleep_retry_at:
+            return
+        if not self.changed_system_disable and self._read(self.sleep_disabled_reader) is not True:
+            return
+        if self._read(self.external_display_reader) is not False:
+            return
+        try:
+            self.display_sleeper()
+            self._display_sleep_requested = True
+        except Exception:
+            self._display_sleep_retry_at = self.wall_clock() + 30
+            self.last_error = "; ".join(filter(None, (self.last_error, "Closed-lid display sleep failed")))
 
     def _suspension(self) -> str | None:
         governor = self.governor

@@ -669,3 +669,30 @@ route. JR-Bar independently implements those contracts in Python. It does
 not copy upstream code or assets, invoke the CLI's chat for background
 usage, refresh the CLI token, or claim separable trial and bonus usage
 from an ambiguous API total.
+
+### Credential ownership and closed-lid review, 2026-10-22
+
+Rechecked CodexBar at
+[`aa232d7f`](https://github.com/steipete/CodexBar/tree/aa232d7f9ffce83dcb559bf7a56abc93c477b40c),
+MIT, including `docs/claude.md`, `ClaudeOAuthCredentials.swift` and
+`FactoryStatusProbe.swift`. Claude Code can recreate its Keychain item and
+remove another app's grant. JR-Bar now distinguishes lost access from a
+rejected account and stops background reads after access is lost.
+CodexBar tries the current browser access token before renewing Factory.
+JR-Bar uses an explicit exact-profile permission for continued local reads
+and never consumes the browser's refresh token. This replaces the WorkOS
+refresh path described in the earlier Factory review above. WorkOS documents
+rotation and the retirement of the old token in its
+[session resilience guide](https://workos.com/docs/authkit/session-resilience).
+No upstream code was copied.
+
+SidePulse `main` remains at the MIT-licensed
+[`ffb1d3c2`](https://github.com/inteliwear/sidepulse/tree/ffb1d3c2f3eed3b7e80e32d7876a7e1d67bd5dfb).
+Its closed-lid controller combines a scoped `pmset disablesleep` helper
+with `caffeinate -ims`. Its status controller explicitly requests display
+sleep after the lid closes, provided no external display is active.
+JR-Bar now makes that guarded request once per lid closure and removes the
+closed-lid hold's user-activity assertion. It keeps display and computer
+sleep separate, releases the hold when agents finish, and retains its
+renewal watchdog. The policy, display-sleep and release tests were rerun.
+A physical closed-lid run remains separate from those tests.

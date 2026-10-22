@@ -170,11 +170,21 @@ read. Nothing runs until you click it.
 
 - **Claude.** JR-Bar reads Claude's usage with a copy of the sign-in that
   Claude Code keeps in the Keychain. Fix sign-in copies a current access token
-  after the required Keychain grant. If it has expired or Claude has rejected
+  after the required Keychain grant. If Claude Code replaces its Keychain item
+  and JR-Bar loses access, the card asks to allow Keychain access instead of
+  saying the account signed out. Background reads stop until you grant access
+  again. If it has expired or Claude has rejected
   it, open Claude Code and let it renew the sign-in, then reconnect in JR-Bar.
   JR-Bar leaves renewal and the refresh token with Claude Code. A named Claude
   profile keeps its own credential; update that profile's credential instead of
   replacing it with the default Claude Code account.
+- **Factory.** Connect the browser profile where you use Factory. The checkbox
+  **Keep Factory connected using this browser profile** allows JR-Bar to pick
+  up that profile's current access token as the browser renews it. Usage
+  requests still need their separate switch. JR-Bar leaves renewal to the
+  browser so the two apps do not invalidate each other's refresh tokens.
+  Existing connections need this permission once. If the browser itself has
+  signed out, sign in there again. An API key is another connection option.
 - **Grok.** Opens your terminal on `grok login`. JR-Bar notices on its own when
   the CLI saves the new sign-in.
 - **Codex and OpenCode.** Opens your terminal on `codex login` or `opencode

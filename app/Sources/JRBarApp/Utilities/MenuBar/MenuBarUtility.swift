@@ -275,7 +275,7 @@ final class MenuBarUtility: Toy {
         // Our own control is never covered — its live frame splits
         // cover runs even on the no-AX path where it cannot list.
         hider.protectedFrames = { [weak self] in
-            guard let self, let frame = self.controlFrames().hidden else { return [] }
+            guard let self, let frame = self.host?.boundaryOccupiedFrame else { return [] }
             return [frame]
         }
         hider.controlFrames = { [weak self] in

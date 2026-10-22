@@ -202,10 +202,10 @@ struct FactoryBrowserConnectionSheet: View {
                         .disabled(model.busy)
                     Text(instance == "default" ? "Default Factory account" : "Factory account: \(instance)")
                         .font(.caption).foregroundStyle(.secondary)
-                    Toggle("Use this profile’s Factory sign-in", isOn: $model.approved)
+                    Toggle("Keep Factory connected using this browser profile", isOn: $model.approved)
                         .toggleStyle(.checkbox)
                         .disabled(model.busy)
-                    Text("JR-Bar reads only the selected profile’s Factory sign-in and saves it in Keychain. When Factory usage is enabled, JR-Bar sends that sign-in to api.factory.ai for usage and to api.workos.com to renew the session. Connecting does not turn on usage.")
+                    Text("Allow JR-Bar to read Factory sign-in from this profile, save it in Keychain, and pick up browser renewals while Factory usage is enabled. Usage requests go to api.factory.ai. The browser keeps ownership of its refresh token. Connecting does not turn on usage.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let message = model.message {

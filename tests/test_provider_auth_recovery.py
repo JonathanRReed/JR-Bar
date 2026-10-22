@@ -49,6 +49,23 @@ def good_windows():
     return [{"id": "five-hour", "label": "5-hour", "remaining_percent": 60, "resets_at": 5000}]
 
 
+def test_lost_keychain_access_requests_permission_instead_of_another_login(tmp_path, monkeypatch):
+    from jrbar import providers
+    from jrbar.credentials import CLAUDE_CODE_KEYCHAIN, KeychainConsentLedger
+
+    monkeypatch.setattr(providers, "default_state_dir", lambda: tmp_path)
+    ledger = KeychainConsentLedger(tmp_path / "keychain-consent.json")
+    ledger.record_access_lost(CLAUDE_CODE_KEYCHAIN.service, 1000)
+
+    def rejected(_token):
+        raise RuntimeError("claude_remote_quota_unauthorized")
+
+    result = collect(Store(), rejected)
+    assert result.state.value == "needs_consent"
+    assert result.reason_code == "claude_keychain_access_lost"
+    assert result.action_label == "Allow Claude Keychain access"
+
+
 @pytest.mark.parametrize("replacement", ["synthetic-new", None, "synthetic-old"])
 def test_claude_401_rereads_once_and_retries_only_a_changed_token(monkeypatch, replacement):
     store = Store()

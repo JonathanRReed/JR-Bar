@@ -23,6 +23,7 @@ public struct AppState: Codable, Equatable, Sendable {
     /// for the moments before the first frame. nil means the app's
     /// default.
     public var menuBarIconStyle: String?
+    public var menuBarProviders: MenuBarProviderPreferences
     /// The Toys page's state (docs/TOYS.md): everything it persists lives
     /// here because the daemon's document is not the toys' to write in.
     public var toys: ToysState
@@ -31,18 +32,19 @@ public struct AppState: Codable, Equatable, Sendable {
     public var utilities: UtilitiesState
 
     public init(bundledHooksInstalledFor: String? = nil, loginItemRegistered: Bool = false, showScreenBar: Bool = true,
-                menuBarIconStyle: String? = nil, toys: ToysState = ToysState(),
+                menuBarIconStyle: String? = nil, menuBarProviders: MenuBarProviderPreferences = .init(), toys: ToysState = ToysState(),
                 utilities: UtilitiesState = UtilitiesState()) {
         self.bundledHooksInstalledFor = bundledHooksInstalledFor
         self.loginItemRegistered = loginItemRegistered
         self.showScreenBar = showScreenBar
         self.menuBarIconStyle = menuBarIconStyle
+        self.menuBarProviders = menuBarProviders
         self.toys = toys
         self.utilities = utilities
     }
 
     private enum CodingKeys: String, CodingKey {
-        case bundledHooksInstalledFor, loginItemRegistered, showScreenBar, menuBarIconStyle, toys, utilities
+        case bundledHooksInstalledFor, loginItemRegistered, showScreenBar, menuBarIconStyle, menuBarProviders, toys, utilities
     }
 
     /// Missing or wrongly typed keys read as the defaults; unknown keys are
@@ -53,6 +55,7 @@ public struct AppState: Codable, Equatable, Sendable {
         loginItemRegistered = (try? container.decodeIfPresent(Bool.self, forKey: .loginItemRegistered)) ?? false
         showScreenBar = (try? container.decodeIfPresent(Bool.self, forKey: .showScreenBar)) ?? true
         menuBarIconStyle = (try? container.decodeIfPresent(String.self, forKey: .menuBarIconStyle)) ?? nil
+        menuBarProviders = (try? container.decodeIfPresent(MenuBarProviderPreferences.self, forKey: .menuBarProviders)) ?? .init()
         toys = (try? container.decodeIfPresent(ToysState.self, forKey: .toys)) ?? ToysState()
         utilities = (try? container.decodeIfPresent(UtilitiesState.self, forKey: .utilities)) ?? UtilitiesState()
     }
@@ -217,5 +220,29 @@ public struct AppStateFile: Sendable {
         default:
             return original == normalized
         }
+    }
+}
+
+/// Presentation choices for the one status item. Unlisted providers follow
+/// the current input order; sessions from one provider keep their order.
+public struct MenuBarProviderPreferences: Codable, Equatable, Sendable {
+    public var order: [String]
+    public var hidden: [String]
+
+    public init(order: [String] = [], hidden: [String] = []) {
+        self.order = order
+        self.hidden = hidden
+    }
+
+    public func arranged<Element>(_ elements: [Element], provider: (Element) -> String) -> [Element] {
+        let excluded = Set(hidden)
+        let visible = elements.enumerated().filter { !excluded.contains(provider($0.element)) }
+        var ranks: [String: Int] = [:]
+        for id in order where ranks[id] == nil { ranks[id] = ranks.count }
+        return visible.sorted {
+            let left = ranks[provider($0.element)] ?? order.count
+            let right = ranks[provider($1.element)] ?? order.count
+            return left == right ? $0.offset < $1.offset : left < right
+        }.map(\.element)
     }
 }

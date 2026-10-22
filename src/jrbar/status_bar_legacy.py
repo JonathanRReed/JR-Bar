@@ -10619,6 +10619,7 @@ class StatusBarController(NSObject):
             self.settings.closed_lid_awake_policy,
             agents_active=self.keep_awake.holding_requested,
         )
+        self.closed_lid_awake.sync_display_sleep(lid_closed=getattr(self, "last_lid_closed", None))
         is_active = self.closed_lid_awake.active()
         if was_active != is_active:
             log_status_bar(

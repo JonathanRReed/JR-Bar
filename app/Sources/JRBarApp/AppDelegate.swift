@@ -192,6 +192,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self.persistAppState()
             self.refreshIconStyle()
         }
+        settingsStore.menuBarProviders = appState.menuBarProviders
+        settingsStore.onSetMenuBarProviders = { [weak self] value in
+            guard let self else { return }
+            self.appState.menuBarProviders = value
+            self.persistAppState()
+            self.refreshIconStyle()
+        }
         // Toys: the fun-first page. Its state lives in `app-state.json`
         // like the rest of the app's remembered facts, so the delegate
         // stays the file's only writer and the store just hands back
@@ -1724,15 +1731,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func refreshIconStyle() {
         guard let core, let statusItem else { return }
         let document = core.settings.map { SettingsDocument($0.document) }
-        // The style is the app's own (`app-state.json`). The daemon answers
-        // a write of this key with `ok` and then keeps its value — the
-        // Python settings dataclass has no field for it — so its copy is
-        // frozen at the old `glyph` default and is not read here; unset
-        // means the app's default, the session dots.
+        // App state supplies the launch-time style before the first core frame.
         statusItem.iconStyle = StatusIconStyle(setting: appState.menuBarIconStyle)
         let preferred = document?.strings("usage_graph_providers") ?? []
         let usage = core.isLive ? core.usage : []
-        let primary = preferred.lazy.compactMap { id in usage.first { $0.id == id } }.first ?? usage.first
+        let iconUsage = appState.menuBarProviders.arranged(
+            Self.meteredProviders(preferred: preferred, usage: usage), provider: { $0.id })
+        let primary = iconUsage.first
         let window = primary?.windows.first { $0.name.lowercased() == "5h" } ?? primary?.windows.first
         // A window with no reading draws no ring at all: an empty ring is
         // a ring at zero, and this window was never measured. A stale or
@@ -1770,7 +1775,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func refreshMeters(preferred: [String], usage: [CoreProviderUsage]) {
         guard let statusItem else { return }
         let document = core?.settings.map { SettingsDocument($0.document) }
-        let shown = Self.meteredProviders(preferred: preferred, usage: usage)
+        let shown = appState.menuBarProviders.arranged(
+            Self.meteredProviders(preferred: preferred, usage: usage), provider: { $0.id })
         let cap = StatusIconRenderer.maxMeters
         let now = Date().timeIntervalSince1970
         statusItem.meters = shown.prefix(cap).map { provider in
@@ -1809,7 +1815,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// the panel can never disagree about who leads.
     private func refreshSessionDots() {
         guard let statusItem, let store else { return }
-        let rows = store.rows
+        let rows = appState.menuBarProviders.arranged(store.rows, provider: { $0.style.id })
         let now = Date()
         statusItem.sessionDots = rows.map { row in
             // A snoozed ask still owns its dot but draws it dim and still:

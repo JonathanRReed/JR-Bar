@@ -2318,6 +2318,20 @@ def _representative_state(agents: list[_ActiveAgent]) -> LedDisplayState:
     return max(agents, key=lambda agent: agent.weight).state
 
 
+def _working_motion_owner(agents: list[_ActiveAgent], settings: ColorSettings) -> _ActiveAgent | None:
+    """A provider's chosen shape is independent of its number of sessions."""
+    working = [agent for agent in agents if agent.state is LedDisplayState.WORKING]
+    if not working or any(agent.state in URGENT_STATES for agent in agents):
+        return None
+    provider = working[0].provider
+    if (
+        any(agent.provider != provider for agent in working)
+        or settings.provider_animation.get(provider, PROVIDER_ANIMATION_AUTO) == PROVIDER_ANIMATION_AUTO
+    ):
+        return None
+    return working[0]
+
+
 def _color_blend_program(
     agents: list[_ActiveAgent],
     *,
@@ -3271,6 +3285,8 @@ def program_for_snapshot(
             include_arrival=include_attention_arrival,
         )
 
+    if owner := _working_motion_owner(agents, settings):
+        agents = [owner]
     if settings.blend_mode == BLEND_MODE_RELAY and led_count <= 0:
         return _representative_state(agents), ""
 
@@ -3543,8 +3559,10 @@ def program_for_projection(
         for row in ordered
     ]
     agents = [agent for _row, agent in row_agents]
+    motion_owner = _working_motion_owner(agents, settings)
     if (
         type(fleet_plan) is FleetPlan
+        and motion_owner is None
         and fleet_plan.accepted
         and fleet_plan.led_count == led_count
         and len(fleet_plan.member_slots) > 1
@@ -3631,6 +3649,8 @@ def program_for_projection(
             attention,
             include_arrival=include_attention_arrival,
         )
+    if motion_owner is not None:
+        agents = [motion_owner]
     if settings.blend_mode == BLEND_MODE_RELAY and led_count <= 0:
         return _representative_state(agents), ""
     if len(agents) == 1:

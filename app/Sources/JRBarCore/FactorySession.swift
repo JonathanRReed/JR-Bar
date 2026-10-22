@@ -26,6 +26,7 @@ extension CoreModel {
         let reply = try await send("factory_session_import", args: [
             "browser": .string(profile.browser), "profile": .string(profile.profile),
             "instance": .string(instance), "confirm": .bool(true),
+            "background_repair": .bool(true),
         ], timeout: 30)
         return try factorySessionMessage(reply, instance: instance)
     }

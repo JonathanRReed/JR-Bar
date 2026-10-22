@@ -80,6 +80,10 @@ struct MenuBarDividerCalmTests {
         var frame: CGRect? = CGRect(x: 1084, y: 0, width: 39, height: 24)
         var boundaryFrame: CGRect? { frame }
         var boundaryGlyphLength: CGFloat = 39
+        var boundaryOccupiedFrame: CGRect? {
+            frame.map { CGRect(x: $0.maxX - boundaryGlyphLength, y: $0.minY,
+                               width: boundaryGlyphLength, height: $0.height) }
+        }
         var spacers: [CGFloat] = []
         func setBoundarySpacer(_ length: CGFloat) { spacers.append(length) }
         var onBoundaryClick: (@MainActor () -> Void)?
@@ -99,6 +103,22 @@ struct MenuBarDividerCalmTests {
         var buttonDown = false
         var notes: [String] = []
         var plans = 0
+    }
+
+    @MainActor
+    @Test func blankReservationDoesNotProtectAHiddenItem() {
+        let utility = MenuBarUtility()
+        let host = Host()
+        host.frame = CGRect(x: 900, y: 0, width: 223, height: 24)
+        utility.host = host
+        let plan = MenuBarItemHider.plan(
+            items: [item("Hidden", x: 1000)], sections: [:], row: row,
+            controls: MenuBarControlFrames(hidden: host.frame, hiddenGlyph: 39),
+            fitEdge: 902, caps: MenuBarSpacerCaps(hidden: 50),
+            protectedFrames: utility.hider.protectedFrames())
+        #expect(plan.hidden.map(\.id) == ["Hidden"])
+        #expect(plan.hiddenCovers == [1000...1028])
+        #expect(!plan.hiddenCovers.contains { $0.overlaps(1084...1123) })
     }
 
     @MainActor

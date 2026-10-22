@@ -293,6 +293,53 @@ import Testing
         #expect(EffectStudioStore.liveValues(for: Self.breathe(), provider: "claude", settings: nil) == nil)
     }
 
+    @Test func assigningKeepsExplicitInspectorValuesAcrossProviderTargets() async throws {
+        let (core, process) = try await WindowsRenderProofTests.mock(startAt: 0)
+        defer { process.terminate(); core.stop() }
+        try await core.setAssignment(EffectAssignment(effectID: "comet", scope: .provider, targetID: "claude",
+                                                       parameters: ["duration_seconds": .number(5), "head_width": .number(2)]))
+        let store = EffectStudioStore(core: core)
+        store.windowDidOpen()
+        defer { store.windowDidClose() }
+        try await WindowsRenderProofTests.settle { store.catalog != nil && store.assignments != nil }
+        store.renderer = { _, _, leds, _ in EffectPreview(program: "off", ledCount: leds) }
+        let effect = try #require(store.catalog?.effect("comet"))
+        let width = try #require(effect.parameter(named: "head_width"))
+        store.core.apply(.settings(CoreSettings(generation: 1, document: .object(["colors": .object([
+            "provider_animation": .object(["claude": .string("comet"), "codex": .string("comet")]),
+            "provider_animation_parameters": .object([
+                "claude": .object(["duration_seconds": .number(5), "head_width": .number(2)]),
+                "codex": .object(["duration_seconds": .number(7), "head_width": .number(4)]),
+            ]),
+        ])]))))
+        store.setValue(.number(3), for: width, of: effect)
+        store.beginAssigning(effect, scope: .provider, target: "claude")
+        #expect(store.draftParameters["head_width"] == .number(3))
+        #expect(store.draftParameters["duration_seconds"] == .number(5))
+        store.draftTarget = "codex"
+        #expect(store.draftParameters["head_width"] == .number(3))
+        #expect(store.draftParameters["duration_seconds"] == .number(7))
+        store.draftTarget = "opencode"
+        #expect(store.draftParameters["head_width"] == .number(3))
+        #expect(store.draftParameters["duration_seconds"] == .number(2.2))
+    }
+
+    @Test func explicitlyChoosingTheDefaultOverridesTheProvidersValue() {
+        let store = EffectStudioStoreTests.makeStore()
+        store.renderer = { _, _, leds, _ in EffectPreview(program: "off", ledCount: leds) }
+        let effect = Self.breathe()
+        let duration = effect.parameters[0]
+        store.core.apply(.settings(CoreSettings(generation: 1, document: .object(["colors": .object([
+            "provider_animation": .object(["claude": .string("breathe")]),
+            "provider_animation_parameters": .object(["claude": .object(["duration_seconds": .number(5.5)])]),
+        ])]))))
+        store.setValue(.number(2.2), for: duration, of: effect)
+        #expect(!store.hasEdits(effect))
+        store.beginAssigning(effect, scope: .provider, target: "claude")
+        #expect(store.draftParameters["duration_seconds"] == .number(2.2))
+        store.windowDidClose()
+    }
+
     @Test func aProviderDraftIsAlwaysALoop() {
         let once = Self.comet(passing: "once")
         let looping = EffectStudioStore.loopingDraft(once.defaultParameters, for: once)

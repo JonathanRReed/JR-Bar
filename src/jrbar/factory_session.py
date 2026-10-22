@@ -273,9 +273,19 @@ def _read(store, key):
     return store.get_for_instance(key, "web-session")
 
 
+def background_repair_allowed(session, *, source_instance_id="default"):
+    identity = ("factory", source_instance_id, session["browser"], session["profile"])
+    return any(
+        row.identity == identity and row.background_repair
+        and set(ORIGINS) <= set(row.domains) and set(FIELDS) <= set(row.fields)
+        for row in load_browser_consents().store.consents
+    )
+
+
 def import_session(args, credentials):
     if (
-        set(args) - {"browser", "profile", "instance", "confirm"}
+        set(args) - {"browser", "profile", "instance", "confirm", "background_repair"}
+        or type(args.get("background_repair", False)) is not bool
         or args.get("confirm") is not True
         or not isinstance(args.get("browser"), str)
         or args["browser"] not in _ROOTS
@@ -283,7 +293,7 @@ def import_session(args, credentials):
     ):
         raise CommandError(
             "invalid_args",
-            "Choose a supported browser profile and explicitly confirm Factory storage and WorkOS renewal access",
+            "Choose a supported browser profile and explicitly confirm access to its Factory sign-in",
         )
     key = _instance(args)
     browser, profile = args["browser"], args["profile"]
@@ -318,7 +328,7 @@ def import_session(args, credentials):
                 profile=profile,
                 domains=ORIGINS,
                 fields=FIELDS,
-                background_repair=False,
+                background_repair=args.get("background_repair", False),
                 granted_at=time.time(),
                 source_instance_id=key.value[1],
             )

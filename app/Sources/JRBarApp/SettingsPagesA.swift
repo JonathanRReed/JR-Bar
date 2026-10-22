@@ -17,6 +17,7 @@ struct GeneralPage: View {
 
         SettingGroup("Menu bar") {
             MenuBarStylePicker(store: store)
+            MenuBarProviderPicker(store: store)
             // The summon keys have one home, with a recorder: Shortcuts.
             SettingsPointerRow(store: store, home: .hotkeys, line: store.summonHotkeyLine)
             SettingsPointerRow(store: store, home: .meters)
@@ -93,13 +94,14 @@ struct MenuBarStylePicker: View {
     /// order; empty while the core is away.
     private var shownProviders: [CoreProviderUsage] {
         let preferred = store.values.strings("usage_graph_providers") ?? []
-        return AppDelegate.meteredProviders(preferred: preferred, usage: store.isLive ? store.core.usage : [])
+        let providers = AppDelegate.meteredProviders(preferred: preferred, usage: store.isLive ? store.core.usage : [])
+        return store.menuBarProviders.arranged(providers, provider: { $0.id })
     }
 
     /// The meters as the menu bar would draw them now; a sample while the
     /// core is away.
     private func makeMeters(_ shown: [CoreProviderUsage], colors: SettingsDocument) -> [StatusMeter] {
-        guard !shown.isEmpty else { return StatusItemController.sampleMeters }
+        guard store.isLive else { return StatusItemController.sampleMeters }
         let now = Date().timeIntervalSince1970
         return shown.prefix(StatusIconRenderer.maxMeters).map { provider in
             StatusItemController.previewMeter(for: provider, document: colors, now: now)
@@ -110,8 +112,10 @@ struct MenuBarStylePicker: View {
     /// sessions in the panel's order, or a sample while the core is away.
     private func makeSessions(colors: SettingsDocument) -> [SessionDot] {
         let live = store.isLive ? store.core.sessions : []
-        guard !live.isEmpty else { return StatusItemController.sampleSessionDots }
-        return live.sorted { Self.rank($0) < Self.rank($1) }.map { session in
+        guard store.isLive else { return StatusItemController.sampleSessionDots }
+        let ordered = store.menuBarProviders.arranged(live.sorted { Self.rank($0) < Self.rank($1) },
+                                                      provider: { $0.provider })
+        return ordered.map { session in
             let activity = SessionActivity.reduce(session)
             let state: StatusDotState = session.ask != nil || activity == .waiting ? .ask
                 : activity == .failed ? .error
@@ -1505,4 +1509,56 @@ enum AskLifetimeCopy {
 /// the Settings search index so the two can never disagree.
 enum SubagentAsksCopy {
     nonisolated static let subtitle = "Sub-agent alerts are off by default. Agent prompts stay visible."
+}
+
+struct MenuBarProviderPicker: View {
+    @Bindable var store: SettingsStore
+
+    private var providers: [String] {
+        var seen = Set<String>()
+        let known = store.menuBarProviders.order + store.menuBarProviders.hidden
+            + store.core.usage.map(\.id) + store.core.sessions.map(\.provider)
+        let unique = known.filter { !$0.isEmpty && seen.insert($0).inserted }
+        var all = store.menuBarProviders
+        all.hidden = []
+        return all.arranged(unique, provider: { $0 })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Providers in the icon").font(.headline)
+            let ids = providers
+            if ids.isEmpty {
+                Text("Providers appear here once JR-Bar has activity or usage to show.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(Array(ids.enumerated()), id: \.element) { index, id in
+                HStack(spacing: 8) {
+                    Toggle(isOn: Binding(get: { !store.menuBarProviders.hidden.contains(id) }, set: { shown in
+                        var choices = store.menuBarProviders
+                        choices.hidden.removeAll { $0 == id }
+                        if !shown { choices.hidden.append(id) }
+                        store.menuBarProviders = choices
+                    })) {
+                        Text(ProviderStyle.style(for: id).name)
+                    }
+                    Spacer()
+                    Button { move(index, by: -1, ids: ids) } label: { Image(systemName: "chevron.up") }
+                        .disabled(index == 0)
+                        .accessibilityLabel("Move \(ProviderStyle.style(for: id).name) earlier")
+                    Button { move(index, by: 1, ids: ids) } label: { Image(systemName: "chevron.down") }
+                        .disabled(index == ids.count - 1)
+                        .accessibilityLabel("Move \(ProviderStyle.style(for: id).name) later")
+                }
+                .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func move(_ index: Int, by offset: Int, ids: [String]) {
+        var order = ids
+        order.swapAt(index, index + offset)
+        store.menuBarProviders.order = order
+    }
 }

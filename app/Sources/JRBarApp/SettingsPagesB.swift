@@ -27,7 +27,10 @@ struct LightingPage: View {
     private let swatchColumns = [GridItem(.adaptive(minimum: 160), alignment: .leading)]
 
     var body: some View {
-        SettingGroup("Provider colours") {
+        SettingGroup("Provider colours and animations") {
+            SettingRow("Effect Studio") {
+                Button("Open Effect Studio…") { store.onOpenEffects?() }
+            }
             // Twelve colour wells, each with a live preview: folded until
             // asked for, since they are most of what the page costs to open.
             SettingsFoldRow(store, id: SettingsFold.providerColours, title: "Colours",
@@ -95,9 +98,6 @@ struct LightingPage: View {
             SettingPicker(store, "Active scene", subtitle: "Which scene's effect assignments are in force.",
                           path: "active_scene", options: Self.scenes, default: "calm")
             ScenePackPicker(store: store)
-            SettingRow("Effect Studio", subtitle: "Tune effects live and assign looks to states, scenes, providers and devices.") {
-                Button("Effect Studio…") { store.onOpenEffects?() }
-            }
         }
     }
 

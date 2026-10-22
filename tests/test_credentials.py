@@ -28,6 +28,27 @@ def _completed(returncode: int, stdout: str = "") -> subprocess.CompletedProcess
     return subprocess.CompletedProcess(args=["security"], returncode=returncode, stdout=stdout, stderr="")
 
 
+def test_a_lost_background_grant_is_not_a_sign_out_or_a_new_prompt(tmp_path):
+    ledger = KeychainConsentLedger(tmp_path / "consent.json")
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000)
+    result = read_keychain_secret(
+        CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger,
+        runner=lambda _: _completed(3), now=1001,
+    )
+    assert result.outcome.value == "access_lost"
+    assert not ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service)
+    again = read_keychain_secret(
+        CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger,
+        runner=lambda _: pytest.fail("Lost permission must not trigger repeated reads"), now=1002,
+    )
+    assert again.outcome.value == "access_lost"
+    assert read_keychain_secret(
+        CLAUDE_CODE_KEYCHAIN, allow_prompt=True, ledger=ledger,
+        runner=lambda _: _completed(0, "synthetic-token"), now=1003,
+    ).ok
+    assert ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service)
+
+
 def test_foreground_and_background_use_the_same_isolated_reader(tmp_path, monkeypatch):
     from jrbar import credentials as module
 
@@ -49,7 +70,7 @@ def test_foreground_and_background_use_the_same_isolated_reader(tmp_path, monkey
     assert background[1]["timeout"] <= 5
 
 
-@pytest.mark.parametrize("code, outcome", [(3, CredentialOutcome.PROMPT_NOT_ALLOWED), (2, CredentialOutcome.UNAVAILABLE)])
+@pytest.mark.parametrize("code, outcome", [(3, CredentialOutcome.ACCESS_LOST), (2, CredentialOutcome.UNAVAILABLE)])
 def test_background_reader_refusal_has_no_prompt_fallback(tmp_path, monkeypatch, code, outcome):
     from jrbar import credentials as module
 
@@ -67,7 +88,7 @@ def test_background_reader_refusal_has_no_prompt_fallback(tmp_path, monkeypatch,
     assert result.secret is None
     assert len(calls) == 1
     assert "--allow-prompt" not in calls[0]
-    assert ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service)
+    assert ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service) == (code != 3)
     assert ledger.retry_at(CLAUDE_CODE_KEYCHAIN.service, 1_001) is None
 
 

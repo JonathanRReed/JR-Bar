@@ -1827,18 +1827,18 @@ optional `access_token`, optional `organization_id`, optional allowlisted
 proves both user and organization. Generic credential set/delete commands
 refuse this account. A saved browser session has priority over the optional
 API key. Invalid or rejected sessions never fall back to an API-key account.
-With provider usage enabled and consented, the collector may send the saved
-refresh token to `https://api.workos.com/user_management/authenticate` using
-its explicit refresh grant version 1. Refreshes preserve the prior refresh
-token when the response omits one. Valid replacement tokens are saved before
-the next request so a temporary `auth/me` failure does not lose a rotated
-refresh token. Account continuity must still pass before any quota request.
-Only a 400 or 401 response permits trying the other known Factory WorkOS
-client, with at most two attempts. The successful client is preferred next
-time. Fingerprint checks prevent refreshes from overwriting a
-new connection or disconnect. A final check after billing rejects readings
-for a session that changed during the request. No network call holds the
-session lock. Browser profiles are never reread by background collection.
+The browser owns token renewal. JR-Bar never sends the imported refresh token
+to WorkOS. With usage enabled and consented, it uses the access token for
+Factory account and billing requests. If the exact browser, profile and
+provider instance also have a background-repair grant, each collection may
+read that profile's current access token. A 401 permits one more local read
+and a retry only if the token changed. Without that grant, an expired token
+reports `browser_refresh_consent_required`, with `needs_consent`.
+Account continuity must pass before saving the access token or reading quota.
+Fingerprint checks prevent a read from overwriting a new connection or a
+disconnect. A final check after billing rejects readings for a session that
+changed during the request. No network call holds the session lock. A 400
+from account or billing requests is an error, not evidence of a sign-out.
 
 
 | name | args | effect / result |
@@ -1863,7 +1863,7 @@ session lock. Browser profiles are never reread by background collection.
 | `usage_hooks_test` | event (one of the seven), provider, rule? | Runs the rules a made-up event would match (or just `rule`), whatever the master switch says, with `state: "test"` in the event, and waits at most 8 s: `{event, provider, results[…last_result shape…], status}`. `invalid_args` for an unknown event or rule. The Test button. Off the main thread. |
 | `list_providers` | provider?, instance? | The inspect surface behind `jrbar providers status`: one row per configured provider *instance* — `{id, instance, label, enabled, usage_consent, menu_visible, browser_sources_enabled, supports_browser_sources, supports_local_tokens, supports_quota, source_order, options, consents[], credentials[], imported_credential, state, reason, action, account_label, observed_at}`. `consents` carry `source_instance_id` so a row only lists the grants its own instance holds; `credentials` report `{account, available}` — availability, never the secret; `imported_credential` says the stored token came from a consented browser import (the only credential a revoke may remove). `state`/`reason`/`action` mirror the live snapshot for that exact instance. `usage_consent` (additive, 2026-10-07) is the per-provider switch for the read that asks the provider's servers for usage, or reads another app's sign-in to do it: `{granted, version, source, at, required_version, question, summary, detail, hosts[], credential}`. `granted` is true only while `version >= required_version`; `source` is `setup`, `settings`, `cli`, `usage_center` or `migration` (an upgrade that kept a provider that was enabled and already returning usage); `at` is when the person said yes (null for a migrated one). `question`, `summary` and `detail` are the plain sentences Setup and Settings show verbatim, `hosts` is who is asked (empty when nothing leaves the Mac) and `credential` is whose sign-in the request carries. Every provider starts with `granted: false`. |
 | `factory_session_profiles` | none | Lists up to 256 existing supported browser profiles as `{profiles: [{browser, profile, label}]}`. Reads directory metadata only, never sessions or remote services. Privileged local worker command. Errors `invalid_args`, `unavailable`. |
-| `factory_session_import` | browser, profile, instance?, confirm | Requires `confirm: true` after disclosing access to only the selected profile's `app.factory.ai` and `auth.factory.ai` local storage fields `workos:refresh-token` and `workos:access-token`, storage in JR-Bar's instance-scoped Keychain `web-session`, and WorkOS refresh grant version 1. Confirmation authorizes that one read. Reads bounded private snapshots, then saves exact browser consent with background repair off and validated session JSON. No remote request, API key change, usage enable, or usage consent change. Reply `{provider: "factory", instance, message}`. Errors `invalid_args`, `unknown_instance`, `browser_session_not_found`, `credential_unavailable`, `unavailable` contain no secrets. Missing sessions ask the person to sign in at `https://app.factory.ai` in the selected profile and import again. Privileged local worker command. |
+| `factory_session_import` | browser, profile, instance?, confirm, background_repair? | Requires `confirm: true` after disclosing access to the selected profile's `app.factory.ai` and `auth.factory.ai` local storage fields `workos:refresh-token` and `workos:access-token`, and storage in JR-Bar's instance-scoped Keychain `web-session`. Confirmation authorizes one bounded local read. Optional `background_repair: true` also authorizes continued reads of that exact profile for this provider instance; it defaults to false and must be disclosed separately. Browser refresh tokens are never consumed. No remote request, API key change, usage enable, or usage consent change. Reply `{provider: "factory", instance, message}`. Errors `invalid_args`, `unknown_instance`, `browser_session_not_found`, `credential_unavailable`, `unavailable` contain no secrets. Missing sessions ask the person to sign in at `https://app.factory.ai` in the selected profile and import again. Privileged local worker command. |
 | `factory_session_disconnect` | instance? | Removes only this instance's JR-Bar Factory `web-session` and bound browser grants. Leaves API keys, other instances and usage settings unchanged. Reply `{provider: "factory", instance, message}`. Errors `invalid_args`, `unknown_instance`, `credential_unavailable`, `unavailable`. Privileged local worker command. |
 | `set_provider_credential` | provider, account, secret, instance? | Stores one explicitly supplied native-provider credential in JR-Bar's Keychain entry for that configured instance. Privileged local command. Provider and credential kind must be registered; instance defaults to `default`. Factory `web-session` writes and deletes require its dedicated commands. Secret is a trimmed, nonempty single-line string up to 64 KiB. It is never returned, logged, journaled, or placed in state. Saving does not enable usage, grant consent, or schedule a provider request. Reply `{provider, instance, account, available: true}`. `invalid_args`, `unknown_provider`, `unknown_instance`, `credential_unavailable` are sanitized errors. |
 | `delete_provider_credential` | provider, account, instance? | Removes that instance's JR-Bar-owned credential without changing provider settings or consent. Privileged local command with the same provider/account/instance validation. Reply `{provider, instance, account, available: false, removed}`; removing a missing key is a successful no-op. It never journals credential arguments or returns a secret. |
@@ -2865,3 +2865,11 @@ CLI owns that interactive sign-in. Kiro has no configured updater or
 proven automatic sign-in watcher. After finishing login, the person
 refreshes the usage card, which reads the new CLI state through the same
 consent gate. Background collection never invokes `kiro-cli login`.
+
+### Sweep parameters
+
+Provider animations `kitt`, `scanner` and `pendulum` use catalog version 2.
+Their `background_glow` number ranges from 0 to 100, in percent, and defaults
+to 0. It sets the resting colour relative to the moving head's peak. The
+provider assignment stores it with the other animation parameters. This
+background is independent of the global working-state fade floor.

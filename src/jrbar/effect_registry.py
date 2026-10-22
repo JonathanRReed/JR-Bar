@@ -393,6 +393,10 @@ def _number(
     )
 
 
+def _background_glow() -> EffectParameter:
+    return _number("background_glow", 0.0, "Brightness behind the moving head.", 0.0, 100.0, unit="%")
+
+
 def _integer(
     name: str,
     default: int,
@@ -539,11 +543,13 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_SCANNER: (
+        _background_glow(),
         _duration(minimum=0.5),
         _integer("beam_width", 1, "Width of the bright scanning beam in LEDs.", 1, 4),
         _number("trail", 0.35, "Relative length of the fading trail.", 0.0, 1.0),
     ),
     colors_module.MOTION_KITT: (
+        _background_glow(),
         _duration(minimum=0.5),
         _integer("beam_width", 3, "Width of the overlapping mechanical eye.", 2, 6),
         _number("overlap", 0.5, "Overlap between the eye's light bands.", 0.1, 1.0),
@@ -679,6 +685,7 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         ),
     ),
     colors_module.MOTION_PENDULUM: (
+        _background_glow(),
         _duration(minimum=1.2),
         _number(
             "glow",
@@ -754,6 +761,7 @@ def _provider_animation_effect(identifier: str) -> EffectDefinition:
         catalog="provider_animation",
         role=_PROVIDER_ROLES[identifier],
         parameter_metadata=_PROVIDER_PARAMETER_METADATA[identifier],
+        version=2 if identifier in {colors_module.MOTION_KITT, colors_module.MOTION_SCANNER, colors_module.MOTION_PENDULUM} else 1,
     )
 
 

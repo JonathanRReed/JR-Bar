@@ -108,3 +108,10 @@ with Utilities in settings exports and imports. At each key press, JR-Bar
 checks the running owner and its current menu bar items again. If the exact
 item is gone or its app refuses the press, the row reports it and JR-Bar leaves
 the other items alone.
+
+## Sweep background
+
+Open Effect Studio under Devices & Lighting. Knight Rider, Scanner and
+Pendulum have a **Background glow** slider. At 0%, the space behind the
+moving head is dark. Raise it to keep a dim background. Assign the effect
+to save the change. Pendulum's **Swing width** controls the head's width.

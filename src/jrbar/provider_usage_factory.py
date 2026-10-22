@@ -158,7 +158,14 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
         return failure(ProviderSourceState.DISABLED, "disabled", "Enable Factory usage")
     if not preference.usage_consented:
         return failure(ProviderSourceState.NEEDS_CONSENT, "usage_consent_required", "Allow Factory usage")
-    from .factory_session import SESSION_LOCK, WORKOS_CLIENT_IDS, decode_session, fingerprint, save_if_current
+    from .factory_session import (
+        SESSION_LOCK,
+        background_repair_allowed,
+        decode_session,
+        fingerprint,
+        read_browser_session,
+        save_if_current,
+    )
     session = None
     session_fingerprint = None
     try:
@@ -182,45 +189,32 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
                "Referer": "https://app.factory.ai/", "x-factory-client": "web-app"}
     try:
         if session is not None:
-            refreshed = False
+            may_read_browser = background_repair_allowed(
+                session, source_instance_id=getattr(preference, "source_instance_id", "default")
+            )
 
-            def renew():
-                nonlocal session_fingerprint
-                preferred = session.get("client_id", WORKOS_CLIENT_IDS[0])
-                clients = (preferred, *(client for client in WORKOS_CLIENT_IDS if client != preferred))
-                for index, client_id in enumerate(clients):
-                    try:
-                        response = http_json("POST", "https://api.workos.com/user_management/authenticate",
-                            headers={"Accept": "application/json", "Content-Type": "application/json"},
-                            body={"client_id": client_id, "grant_type": "refresh_token",
-                                  "refresh_token": session["refresh_token"],
-                                  **({"organization_id": session["organization_id"]} if session.get("organization_id") else {})})
-                        break
-                    except ProviderHttpError as error:
-                        if error.status not in {400, 401} or index == len(clients) - 1:
-                            raise
-                if not isinstance(response, dict):
-                    raise ValueError("invalid refresh response")
-                candidate = {**session, "access_token": response.get("access_token"), "client_id": client_id}
-                if response.get("refresh_token") is not None:
-                    candidate["refresh_token"] = response["refresh_token"]
-                decode_session(json.dumps(candidate))
-                if not save_if_current(credentials, session_fingerprint, candidate):
-                    raise ProviderHttpError(401, "web_session_changed")
-                session_fingerprint = fingerprint(json.dumps(candidate, separators=(",", ":"), sort_keys=True))
-                session.update(candidate)
+            def sync_browser_access():
+                if not may_read_browser:
+                    return False
+                try:
+                    current = read_browser_session(session["browser"], session["profile"])
+                except (OSError, ValueError):
+                    return False
+                if current is None or not current.get("access_token"):
+                    return False
+                changed = current["access_token"] != session.get("access_token")
+                session["access_token"] = current["access_token"]
                 headers["Authorization"] = "Bearer " + session["access_token"]
+                return changed
 
+            sync_browser_access()
             if not session.get("access_token"):
-                renew()
-                refreshed = True
+                raise ProviderHttpError(401, "browser_session_expired")
             try:
                 auth = http_json("GET", f"{_BASE}/app/auth/me", headers=headers)
             except ProviderHttpError as error:
-                if error.status != 401 or refreshed:
+                if error.status != 401 or not sync_browser_access():
                     raise
-                renew()
-                refreshed = True
                 auth = http_json("GET", f"{_BASE}/app/auth/me", headers=headers)
             auth = _authenticated_identity(auth, session.get("access_token"))
             identity = _identity(auth)[0]
@@ -262,9 +256,19 @@ def collect_factory(preference, *, observed_at, credentials, http_json=_default_
                 return failure(ProviderSourceState.NEEDS_SIGN_IN, "web_session_changed", "Reconnect Factory browser session")
         return replace(result, source_instance_id=getattr(preference, "source_instance_id", "default"))
     except ProviderHttpError as error:
-        if error.status == 401 or (session is not None and error.status == 400):
-            return failure(ProviderSourceState.NEEDS_SIGN_IN, "authentication_required",
-                           "Reconnect Factory browser session" if session is not None else "Add Factory API key")
+        if error.status == 401 and session is not None:
+            allowed = background_repair_allowed(
+                session, source_instance_id=getattr(preference, "source_instance_id", "default")
+            )
+            return failure(
+                ProviderSourceState.NEEDS_SIGN_IN if allowed else ProviderSourceState.NEEDS_CONSENT,
+                "browser_session_expired" if allowed else "browser_refresh_consent_required",
+                "Refresh Factory in the selected browser" if allowed else "Allow Factory browser updates",
+            )
+        if error.status == 401:
+            return failure(ProviderSourceState.NEEDS_SIGN_IN, "authentication_required", "Add Factory API key")
+        if error.status == 400:
+            return failure(ProviderSourceState.ERROR, "request_rejected", "Retry Factory usage")
         if error.status == 403:
             return failure(ProviderSourceState.UNAVAILABLE, "usage_access_denied", "Reconnect Factory browser session" if session is not None else "Check Factory key access")
         if error.status == 429:

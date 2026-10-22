@@ -780,12 +780,8 @@ final class EffectStudioStore {
     }
 
     /// Re-reads the sheet's parameter values for the current (scope,
-    /// target): the stored assignment's own parameters when one exists,
-    /// else what that provider already plays this effect with (its values
-    /// in Settings), else the catalog defaults. Runs when the sheet opens
-    /// and whenever scope or target changes, so "keep the parameters"
-    /// means the pair's tuning — not what was last edited for another
-    /// target. A provider's draft is always the loop it will play.
+    /// target): its saved or live values, then explicit inspector edits.
+    /// Untouched values follow the target. Provider motion always loops.
     private func hydrateDraftParameters(for effect: EffectDefinition? = nil) {
         guard let effect = effect ?? assignmentEffect ?? selected else { draftParameters = [:]; return }
         let target = draftScope == .global ? nil : draftTarget.trimmingCharacters(in: .whitespaces)
@@ -796,8 +792,10 @@ final class EffectStudioStore {
                let live = Self.liveValues(for: effect, provider: provider, settings: core.settings?.document) {
                 values = live
             }
-            values = Self.loopingDraft(values, for: effect)
         }
+        values.merge(edits[effect.id] ?? [:]) { _, edited in edited }
+        values = effect.normalizedParameters(values)
+        if draftScope == .provider { values = Self.loopingDraft(values, for: effect) }
         draftParameters = values
         scheduleRender(effect, values: draftParameters, color: draftColor)
     }

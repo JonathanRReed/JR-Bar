@@ -1102,7 +1102,7 @@ def reconnect_provider(
         if source_instance_id != "default":
             repair = _named_claude_repair(
                 store, source_instance_id, now=stamp,
-                server_rejected=reason_code == "authentication_required",
+                server_rejected=reason_code in {"authentication_required", "claude_keychain_access_lost"},
             )
             return ResignInResult(provider_id, repair.message, outcome=repair.outcome)
         reader = keychain_payload_reader
@@ -1164,7 +1164,7 @@ def reconnect_provider(
                 now=stamp,
                 keychain_payload_reader=reader,
                 source_instance_id=source_instance_id,
-                server_rejected=reason_code == "authentication_required",
+                server_rejected=reason_code in {"authentication_required", "claude_keychain_access_lost"},
             )
         except Exception as exc:
             return ResignInResult(
@@ -1185,7 +1185,7 @@ def reconnect_provider(
                 store,
                 home=root,
                 now=stamp,
-                server_rejected=reason_code == "authentication_required",
+                server_rejected=reason_code in {"authentication_required", "claude_keychain_access_lost"},
                 source_instance_id=source_instance_id,
             )
             return ResignInResult(

@@ -53,6 +53,21 @@ struct AppStateTests {
         #expect(file.load().showScreenBar == false)
     }
 
+    @Test("provider choices persist and preserve account and session order")
+    func menuBarProviderChoices() throws {
+        let file = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        let choices = MenuBarProviderPreferences(order: ["codex", "codex", "claude"], hidden: ["factory"])
+        try file.save(AppState(menuBarProviders: choices))
+        let restored = file.load().menuBarProviders
+        let rows = [("claude", "a"), ("codex", "one"), ("factory", "hidden"), ("codex", "two"), ("new", "last")]
+        #expect(restored.arranged(rows, provider: { $0.0 }).map { $0.1 } == ["one", "two", "a", "last"])
+        #expect(MenuBarProviderPreferences(hidden: ["codex"]).arranged(["codex"], provider: { $0 }).isEmpty)
+        #expect(try JSONDecoder().decode(AppState.self, from: Data("{}".utf8)).menuBarProviders == .init())
+        let malformed = Data(#"{"menuBarProviders":{"order":1}}"#.utf8)
+        #expect(try JSONDecoder().decode(AppState.self, from: malformed).menuBarProviders == .init())
+    }
+
     @Test("saving again replaces the file and leaves no temporary files behind")
     func atomicReplace() throws {
         let file = temporaryFile()

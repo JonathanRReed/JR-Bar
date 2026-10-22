@@ -397,11 +397,9 @@ struct EffectInspectorPane: View {
                     Badge(text: "pack · \(pack)", color: .purple)
                 }
                 Spacer()
-                Text(effect.id).font(.caption.monospaced()).foregroundStyle(.tertiary).textSelection(.enabled)
             }
-            Text(effect.description).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text(effect.familyLine).font(.caption).foregroundStyle(.tertiary)
         }
+        .help(effect.description)
     }
 
     private func preview(_ effect: EffectDefinition) -> some View {
@@ -524,7 +522,7 @@ struct EffectInspectorPane: View {
             let values = store.values(for: effect)
             VStack(spacing: 0) {
                 ForEach(effect.parameters) { parameter in
-                    EffectParameterRow(parameter: parameter, value: values[parameter.name] ?? parameter.defaultValue) { value in
+                    EffectParameterRow(parameter: parameter, value: values[parameter.name] ?? parameter.defaultValue, effectID: effect.id) { value in
                         store.setValue(value, for: parameter, of: effect)
                     }
                     if parameter.id != effect.parameters.last?.id { Divider().padding(.leading, 12) }
@@ -580,7 +578,12 @@ struct FactChip: View {
 struct EffectParameterRow: View {
     let parameter: EffectParameter
     let value: JSONValue
+    var effectID: String? = nil
     let onChange: (JSONValue) -> Void
+
+    var title: String {
+        effectID == "pendulum" && parameter.name == "glow" ? "Swing width" : parameter.title
+    }
 
     var body: some View {
         Group {
@@ -603,19 +606,12 @@ struct EffectParameterRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(parameter.title)
+        .accessibilityLabel(title)
     }
 
-    /// The plain title and sentence; the raw id the daemon and packs use
-    /// is the tooltip, for whoever writes a pack by hand.
     private var label: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(parameter.title)
-            if !parameter.description.isEmpty {
-                Text(parameter.description).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .help(parameter.name)
+        Text(title)
+            .help(parameter.description)
     }
 
     /// Menus and colour pickers sit one per row; sliders, switches and
@@ -847,7 +843,8 @@ struct EffectAssignmentsPane: View {
             }
             if !store.providerPlayback.isEmpty || !store.devicePlayback.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("What plays where").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    EffectLiveOutput(lights: store.core.lights, connected: store.core.isLive)
+                    Text("Provider assignments").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     ForEach(store.providerPlayback) { playback in
                         ProviderPlaybackRow(playback: playback, store: store)
                     }
@@ -963,6 +960,43 @@ struct ScenePackRow: View {
     }
 }
 
+struct EffectLiveOutput: View {
+    let lights: CoreLights?
+    let connected: Bool
+
+    var body: some View {
+        if let lights, !lights.surfaces.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(connected ? "Current output" : "Last output · disconnected")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(lights.surfaces.keys.sorted(), id: \.self) { name in
+                    if let surface = lights.surfaces[name] {
+                        HStack(spacing: 8) {
+                            Text(Self.label(name)).font(.caption)
+                            Spacer(minLength: 4)
+                            LEDStripPreview(program: surface.program, ledCount: surface.ledCount ?? 8,
+                                            style: .dots, dotSize: 5, spacing: 3, paused: !connected, showsBackground: true)
+                                .frame(width: 116, height: 20)
+                        }
+                    }
+                }
+            }
+            .padding(.bottom, 10)
+        }
+    }
+
+    private static func label(_ name: String) -> String {
+        switch name {
+        case "screen_bar": return "Screen Bar"
+        case "pro": return "SidePulse Pro"
+        case "hardware": return "SidePulse"
+        case "dot": return "SidePulse Dot"
+        default: return name.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+}
+
 /// A "what plays on X" row: the provider's tile and name, what its
 /// working motion resolves to, and — indented underneath — the semantic
 /// effects its events fire and any provider-instance rows. Tapping the
@@ -982,7 +1016,7 @@ struct ProviderPlaybackRow: View {
         guard let assignment = playback.provider else { return "default motion" }
         let label = effectLabel(assignment)
         return store.catalog?.effect(assignment.effectID)?.catalog == "provider_animation"
-            ? "\(label) while working" : label
+            ? "\(label) assigned" : label
     }
 
     /// `claude:work` → "work".

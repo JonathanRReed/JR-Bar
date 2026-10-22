@@ -351,6 +351,13 @@ final class SettingsStore {
             if !copyingImportedIconStyle { set("menu_bar_icon_style", .string(menuBarIconStyle)) }
         }
     }
+    var menuBarProviders = MenuBarProviderPreferences() {
+        didSet {
+            if menuBarProviders != oldValue { onSetMenuBarProviders?(menuBarProviders) }
+        }
+    }
+    var onSetMenuBarProviders: (@MainActor (MenuBarProviderPreferences) -> Void)?
+
     @ObservationIgnored private var copyingImportedIconStyle = false
     /// Persists the choice; wired to `AppState` by the delegate.
     var onSetMenuBarIconStyle: (@MainActor (String) -> Void)?
@@ -1885,7 +1892,10 @@ final class SettingsStore {
                 if reply.ok {
                     // The icon style has a copy in the app that the picker and
                     // the status item read; the monitor's reset does not reach it.
-                    if page == .general { self.menuBarIconStyle = StatusIconStyle.agents.rawValue }
+                    if page == .general {
+                        self.menuBarIconStyle = StatusIconStyle.agents.rawValue
+                        self.menuBarProviders = .init()
+                    }
                     self.show(status: "\(page.title) is back to its defaults")
                 } else {
                     self.report(error: reply.error?.message ?? "reset refused")

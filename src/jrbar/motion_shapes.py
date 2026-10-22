@@ -255,7 +255,7 @@ def bounce(
 ) -> list[str]:
     """One bright head with a decaying tail, sweeping out and back forever.
 
-    Two lines, one per direction. Each LED gets a raised-cosine bump centred
+    Each direction has its own line. Each LED gets a raised-cosine bump centred
     on the moment the head passes it and ``tail_leds`` LEDs wide, so at any
     instant three LEDs are lit at roughly 50/100/50 and the crest slides
     between them rather than hopping.
@@ -280,15 +280,16 @@ def bounce(
                 segments.append(f"{led}:{floor_color} {_time(half)} cosine")
             elif position == len(order) - 1:
                 delay = (len(order) - 1) * step
-                segments.append(f"{led}:{color} {_time(half)} cosine {_time(delay)}")
+                segments.append(f"{led}:{color} {_time(half)} {_time(delay)}")
             else:
                 delay = (position - 1) * step
                 tail = f" {_time(delay)}" if delay else ""
                 segments.append(f"{led}:{color} {_time(width)} pulse{tail}")
         return "; ".join(segments)
 
+    # Pulse returns to its starting colour. Seed that baseline without blanking the loop's returning head.
     forward = list(range(count))
-    return [sweep(forward), sweep(list(reversed(forward)))]
+    return [f"{floor_color} 0ms; 0:{color} 0ms", sweep(forward), sweep(list(reversed(forward)))]
 
 
 def converge(
@@ -921,7 +922,7 @@ def pendulum(
                 segments.append(f"{led}:{floor_color} {_time(max(MIN_STEP_MS, width))} cosine")
             elif position == last:
                 rise = max(MIN_STEP_MS, width)
-                segments.append(f"{led}:{color} {_time(rise)} cosine {_time(max(0, half - rise))}")
+                segments.append(f"{led}:{color} {_time(rise)} {_time(max(0, half - rise))}")
             else:
                 delay = max(0, int(arrival(position / last) - width / 2))
                 tail = f" {_time(delay)}" if delay else ""
@@ -929,7 +930,7 @@ def pendulum(
         return "; ".join(segments)
 
     forward = list(range(count))
-    return [sweep(forward), sweep(list(reversed(forward)))]
+    return [f"{floor_color} 0ms; 0:{color} 0ms", sweep(forward), sweep(list(reversed(forward)))]
 
 
 #: The narrowest bump a landing uses. The last LEDs are crossed fastest,
@@ -1351,6 +1352,10 @@ def _motion_lines(
     cycle = cycle_ms
     laps = 1 if compact else ROLL_LAPS
     tinted = shade(head, ceiling) if head else None
+    if motion in {KITT, SCANNER, PENDULUM}:
+        if count <= 2:
+            cycle = max(cycle, 2200)
+        floor_color = shade(peak, _number(params, "background_glow", 0.0, 0.0, 100.0) / 100.0)
 
     if motion == STEADY:
         level = _number(params, "luminance", 1.0, 0.05, 1.0)
@@ -1437,7 +1442,7 @@ def _motion_lines(
         decay = _number(params, "fade", RIPPLE_DECAY, 0.0, 0.5)
         return ripple(peak, floor_color, led_count=count, cycle_ms=cycle, decay=decay)
 
-    if motion in TRAVELLING_MOTIONS and not positional(count):
+    if motion in TRAVELLING_MOTIONS and motion not in {KITT, SCANNER, PENDULUM} and not positional(count):
         # Two LEDs have nowhere for a head to travel: the Dot wipes or
         # crossfades, never a two-LED strobe.
         backwards = _choice(params, "direction", "forward", ("forward", "reverse")) == "reverse"
@@ -1527,7 +1532,7 @@ def _motion_lines(
             peak,
             floor_color,
             led_count=count,
-            step_ms=max(MIN_STEP_MS, int(_travel_step(cycle, count) * 0.7)),
+            step_ms=max(300 if count <= 2 else MIN_STEP_MS, int(_travel_step(cycle, count) * 0.7)),
             tail_leds=round(1.0 + 0.5 * (beam - 1) + trail / 0.7, 3),
         )
     if motion == PENDULUM:

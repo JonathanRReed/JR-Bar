@@ -89,7 +89,7 @@ def test_closed_lid_display_change_preserves_helper_and_watchdog__and_1_more(tmp
     assert controller.update(CLOSED_LID_AWAKE_ALWAYS, agents_active=False)
     watchdog = factory.processes[0]
     first = _caffeinate_processes(factory)[0]
-    assert first.command[:2] == ("/usr/bin/caffeinate", "-imsu")
+    assert first.command[:2] == ("/usr/bin/caffeinate", "-ims")
     assert system_disable_calls == [True]
     assert controller.changed_system_disable is True
 
@@ -98,7 +98,7 @@ def test_closed_lid_display_change_preserves_helper_and_watchdog__and_1_more(tmp
     caffeinate = _caffeinate_processes(factory)
     assert first.terminated is True
     assert len(caffeinate) == 2
-    assert caffeinate[-1].command[:2] == ("/usr/bin/caffeinate", "-dimsu")
+    assert caffeinate[-1].command[:2] == ("/usr/bin/caffeinate", "-dims")
     assert watchdog.terminated is False
     assert controller.watchdog_process is watchdog
     assert controller.renewal_path.is_file()
