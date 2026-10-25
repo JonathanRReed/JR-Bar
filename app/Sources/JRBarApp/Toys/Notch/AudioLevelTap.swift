@@ -528,9 +528,8 @@ final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
                 try self.buildPipeline()
             } catch {
                 audioTapLog.error("audio tap: device-change rebuild failed — \(error.localizedDescription, privacy: .public)")
-                // Death must disarm before reporting: the HAL still holds
-                // this engine's address, and the next headphone plug would
-                // otherwise fire the proc on a dead object.
+                // Disarm before reporting death so a queued device-change
+                // callback cannot rebuild the stopped pipeline.
                 self.disarmDeviceChangeListener()
                 self.isRunning = false
                 self.timer?.cancel()
