@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from test_jrbar import isolate_controller
 
 from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
+from jrbar.models import AgentMode, AgentStatus
 from jrbar.status_bar_legacy import StatusBarDevice
 
 _NOW = datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc)
@@ -41,7 +42,7 @@ def _row(agent_id: str, provider: str, *, worker: bool = False) -> ProjectedAgen
         actionable=False,
         is_subagent=worker,
         updated_at=_NOW,
-        source_status=None,
+        source_status=AgentStatus(provider, agent_id, agent_id, AgentMode.WORKING, _NOW, "PreToolUse"),
     )
 
 
@@ -55,8 +56,8 @@ def test_worker_rows_survive_projection_for_an_unpinned_device__and_1_more(reque
     projection = AttentionProjection(
         lifecycle_mode=LifecycleMode.ACTIVE,
         actionable_attention=(),
-        visible_rows=(_row("claude:main", "claude"),),
-        worker_rows=(_row("claude:worker", "claude", worker=True),),
+        visible_rows=(_row("claude:session:main", "claude"),),
+        worker_rows=(_row("claude:agent:worker", "claude", worker=True),),
         transient_signals=(),
         dominant_provider="claude",
         click_target_agent_id=None,
@@ -81,10 +82,10 @@ def test_worker_rows_survive_projection_for_an_unpinned_device__and_1_more(reque
     projection = AttentionProjection(
         lifecycle_mode=LifecycleMode.ACTIVE,
         actionable_attention=(),
-        visible_rows=(_row("codex:main", "codex"), _row("claude:main", "claude")),
+        visible_rows=(_row("codex:session:main", "codex"), _row("claude:session:main", "claude")),
         worker_rows=(
-            _row("codex:worker", "codex", worker=True),
-            _row("claude:worker", "claude", worker=True),
+            _row("codex:agent:worker", "codex", worker=True),
+            _row("claude:agent:worker", "claude", worker=True),
         ),
         transient_signals=(),
         dominant_provider="codex",

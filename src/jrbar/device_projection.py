@@ -25,7 +25,7 @@ def _representative(
     main_rows: tuple[ProjectedAgentRow, ...],
     worker_rows: tuple[ProjectedAgentRow, ...],
 ) -> ProjectedAgentRow | None:
-    candidates = main_rows or worker_rows
+    candidates = main_rows or tuple(row for row in worker_rows if row.actionable)
     return min(
         candidates,
         key=lambda row: (
@@ -44,7 +44,7 @@ def _rows_for_provider(
     if not provider_pin:
         return projection.visible_rows, projection.worker_rows
     return (
-        tuple(row for row in projection.visible_rows if row.provider == provider_pin),
+        tuple(row for row in projection.light_rows if row.provider == provider_pin),
         tuple(row for row in projection.worker_rows if row.provider == provider_pin),
     )
 
@@ -53,20 +53,10 @@ def light_rows_for_provider(
     projection: AttentionProjection,
     provider_pin: str | None,
 ) -> tuple[ProjectedAgentRow, ...]:
-    """Return the light-eligible rows allowed by an optional provider pin.
-
-    Main agents remain a crowd. When only workers remain, one urgent worker is
-    the stand-in for that provider's background crowd. Filtering happens before
-    choosing the stand-in, so a busier worker from another provider cannot make
-    a pinned device falsely appear idle.
-    """
-    if not provider_pin:
+    """Filter group roots by provider; actionable asks bypass the pin."""
+    if not provider_pin or projection.actionable_attention:
         return projection.light_rows
-    main_rows, worker_rows = _rows_for_provider(projection, provider_pin)
-    if main_rows:
-        return main_rows
-    representative = _representative((), worker_rows)
-    return () if representative is None else (representative,)
+    return tuple(row for row in projection.light_rows if row.provider == provider_pin)
 
 
 def projection_for_provider(
@@ -91,7 +81,7 @@ def projection_for_provider(
             projection,
             lifecycle_mode=LifecycleMode.IDLE,
             visible_rows=(),
-            worker_rows=(),
+            worker_rows=worker_rows,
             dominant_provider=None,
             click_target_agent_id=None,
         )

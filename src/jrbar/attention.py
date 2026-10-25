@@ -51,6 +51,7 @@ class ProjectedAgentRow:
     # this flag marks it "may be stale": the strip keeps the Ask colour and
     # pulses more calmly, and the panel says so and offers Dismiss.
     ask_may_be_stale: bool = False
+    unlinked_worker: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,28 +74,12 @@ _LIFECYCLE_PRIORITY = {
 
 @dataclass(frozen=True)
 class AttentionProjection:
-    """The one place "which agents exist" is decided for every surface.
+    """Current rows and individual asks for all presentation consumers.
 
-    ``visible_rows`` is MAIN AGENTS ONLY, structurally. A sub-agent is
-    never a row, never a light, never an interrupt and never part of a
-    count -- one main session fans out to 100+ Task workers (200
-    observed), and a live snapshot ran 87 workers against 27 mains, so
-    every consumer that read this field inherited a ~4x inflation. The
-    menu bar said "Active: 34" and the dropdown said "24 active" with
-    ONE main agent running, because each one filtered (or failed to
-    filter) at its own call site and they disagreed.
-
-    So the filter lives HERE, not at the call sites, and it is enforced
-    in ``__post_init__`` rather than merely applied by the projectors:
-    any construction that puts a worker in ``visible_rows`` -- including
-    ``dataclasses.replace`` on a device-pinned copy, and including a
-    test -- has it moved to ``worker_rows`` instead of silently lighting
-    an LED.
-
-    ``worker_rows`` exists because sub-agents matter in exactly one way:
-    they hold their parent's completion open. The mailbox reads them to
-    count a family's workers and to fold a worker's ask into its parent.
-    Nothing else should touch them.
+    visible_rows holds main sessions; worker_rows holds delegated sessions.
+    light_rows resolves explicit lineage and gives each root one share in
+    its provider colour. Unlinked workers stay available in all_rows for
+    the panel and have no light share unless their ask is actionable.
     """
 
     lifecycle_mode: LifecycleMode
@@ -104,6 +89,7 @@ class AttentionProjection:
     dominant_provider: str | None
     click_target_agent_id: str | None
     worker_rows: tuple[ProjectedAgentRow, ...] = ()
+    agent_group_resolution: object = None
 
     def __post_init__(self) -> None:
         if not any(row.is_subagent for row in self.visible_rows):
@@ -115,29 +101,28 @@ class AttentionProjection:
 
     @property
     def light_rows(self) -> tuple[ProjectedAgentRow, ...]:
-        """The rows the LEDs and the Screen Bar are allowed to paint.
+        """One row per proven group, or individual actionable asks."""
+        from .agent_groups import resolve_agent_groups
 
-        Main agents. When there are none at all, the single most urgent
-        orphaned worker stands in for the whole background crowd -- one
-        presence, never N, exactly as the mailbox collapses them into one
-        "Background agents" row. Painting the crowd itself is how 87
-        workers became 87 identity colours and left Claude's brand hue
-        off the strip entirely.
-        """
-        if self.visible_rows:
-            return self.visible_rows
-        if not self.worker_rows:
-            return ()
-        return (
-            min(
-                self.worker_rows,
-                key=lambda row: (
-                    _LIFECYCLE_PRIORITY[row.lifecycle_mode],
-                    -row.updated_at.timestamp(),
-                    row.agent_id,
-                ),
-            ),
+        rows = {row.agent_id: row for row in self.all_rows}
+        resolution = self.agent_group_resolution or resolve_agent_groups(
+            (row.source_status for row in rows.values()),
+            now=max((row.updated_at.timestamp() for row in rows.values()), default=0),
         )
+        # Asks keep their own identities, including unlinked workers. The
+        # projection already applied subagent_asks_alert to actionable.
+        asking = tuple(row for row in self.all_rows if row.actionable)
+        if asking:
+            return asking
+        grouped = []
+        for group in resolution.groups:
+            root = rows.get(group.root_work_key)
+            members = [rows[key] for key in group.members if key in rows]
+            if root is None or not members:
+                continue
+            driver = min(members, key=lambda row: (_LIFECYCLE_PRIORITY[row.lifecycle_mode], row.agent_id))
+            grouped.append(replace(root, lifecycle_mode=driver.lifecycle_mode, is_subagent=False))
+        return tuple(grouped)
 
     @property
     def all_rows(self) -> tuple[ProjectedAgentRow, ...]:
@@ -183,6 +168,7 @@ def quiet_worker_request_keys(
     state: CanonicalOperatorState,
     *,
     subagent_asks_alert: bool,
+    statuses: Iterable[AgentStatus] = (),
 ) -> frozenset[RequestKey]:
     """The requests that belong to a sub-agent while sub-agent asks are off.
 
@@ -198,8 +184,15 @@ def quiet_worker_request_keys(
     """
     if subagent_asks_alert:
         return frozenset()
+    grouped_ids = set()
+    for status in statuses:
+        if status.is_subagent:
+            parts = status.agent_id.split(":", 2)
+            if len(parts) == 3 and parts[0] == status.provider:
+                grouped_ids.add((status.provider, parts[2]))
     worker_works = frozenset(
         work.key for work in state.works if work.parent_key is not None
+        or (work.key.source_key.provider_id, work.key.work_id.value) in grouped_ids
     )
     if not worker_works:
         return frozenset()
@@ -254,11 +247,21 @@ def project_attention(
         for status in snapshot.statuses
         if bounded_age_seconds(collected_at, status.updated_at) != float("inf")
     )
+    from .agent_groups import resolve_agent_groups
+
+    all_statuses = (*plausible_statuses, *getattr(snapshot, "stale_statuses", ()))
+    resolution = resolve_agent_groups(all_statuses, now=collected_at.timestamp())
+    live_ids = {status.agent_id for status in plausible_statuses}
+    needed_roots = {group.root_work_key for group in resolution.groups
+                    if live_ids.intersection(group.members)}
+    plausible_statuses = (*plausible_statuses, *(status for status in all_statuses
+                          if status.agent_id in needed_roots - live_ids))
     rows = tuple(
         _project_row(status, settings, now=collected_at)
         for status in plausible_statuses
     )
-    rows = _promote_delegating_parents(rows)
+    rows = _promote_delegating_parents(rows, resolution)
+    rows = tuple(replace(row, unlinked_worker=row.agent_id in resolution.unlinked_workers) for row in rows)
     actionable = tuple(
         sorted(
             (row for row in rows if row.actionable),
@@ -269,7 +272,7 @@ def project_attention(
     emitted = set(consumed)
     for status in plausible_statuses:
         event_key = stable_event_key(status)
-        if not _is_failure_event(status) or event_key in emitted:
+        if status.agent_id in resolution.unlinked_workers or not _is_failure_event(status) or event_key in emitted:
             continue
         signals.append(
             TransientSignal(
@@ -290,6 +293,7 @@ def project_attention(
         actionable_attention=actionable,
         visible_rows=primary_rows,
         worker_rows=worker_rows,
+        agent_group_resolution=resolution,
         transient_signals=tuple(signals),
         dominant_provider=(
             actionable[0].provider
@@ -422,6 +426,7 @@ def regate_actionable_attention(
         actionable_attention=actionable,
         visible_rows=visible,
         worker_rows=workers,
+        agent_group_resolution=projection.agent_group_resolution,
         transient_signals=projection.transient_signals,
         dominant_provider=(
             actionable[0].provider
@@ -486,6 +491,7 @@ _PROMOTABLE_PARENT_LIFECYCLES = frozenset(
 
 def _promote_delegating_parents(
     rows: tuple[ProjectedAgentRow, ...],
+    resolution,
 ) -> tuple[ProjectedAgentRow, ...]:
     """A main whose sub-agents are still working IS still working.
 
@@ -498,13 +504,9 @@ def _promote_delegating_parents(
     self-healing shape as the silence clock. The row's status mode is
     relabeled Working so the dropdown tells the same story as the light.
     """
-    delegating_parent_ids = {
-        row.source_status.parent_agent_id
-        for row in rows
-        if row.is_subagent
-        and row.lifecycle_mode is LifecycleMode.ACTIVE
-        and row.source_status.parent_agent_id
-    }
+    active_ids = {row.agent_id for row in rows if row.lifecycle_mode is LifecycleMode.ACTIVE}
+    delegating_parent_ids = {group.root_work_key for group in resolution.groups
+                             if active_ids.intersection(set(group.members) - {group.root_work_key})}
     if not delegating_parent_ids:
         return rows
     return tuple(

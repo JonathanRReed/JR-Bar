@@ -158,7 +158,7 @@ def _projection(*rows: ProjectedAgentRow) -> AttentionProjection:
     )
 
 
-def test_live_projection_uses_project_identity_and_keeps_sticky_slots() -> None:
+def test_live_projection_uses_group_identity_and_keeps_sticky_slots() -> None:
     first = plan_fleet_projection(
         _projection(
             _projected_row("codex:session:a", "repo-a", LifecycleMode.ACTIVE),
@@ -175,6 +175,6 @@ def test_live_projection_uses_project_identity_and_keeps_sticky_slots() -> None:
 
     assert first.member_slots == second.member_slots
     assert first.member_slots == (
-        ("project:repo-a", 0, 4),
-        ("project:repo-b", 4, 8),
+        ("group:codex:session:a", 0, 4),
+        ("group:codex:session:b", 4, 8),
     )

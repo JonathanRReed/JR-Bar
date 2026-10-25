@@ -3353,16 +3353,7 @@ _FLEET_LIFECYCLE_PRIORITY = {
 
 
 def _fleet_identity_for_row(row) -> str:
-    status = row.source_status
-    origin = getattr(status, "origin", None)
-    if isinstance(origin, str) and origin.strip():
-        return f"project:{origin.strip()}"
-    work_key = getattr(row, "work_key", None)
-    source_key = getattr(work_key, "source_key", None)
-    source_instance_id = getattr(source_key, "source_instance_id", None)
-    if isinstance(source_instance_id, str) and source_instance_id.strip():
-        return f"machine:{source_instance_id.strip()}"
-    return f"session:{row.agent_id}"
+    return f"group:{row.agent_id}"
 
 
 def _fleet_representative_rows(projection) -> dict[str, object]:
@@ -3398,7 +3389,7 @@ def plan_fleet_projection(
     led_count: int = 8,
     screen_bar_width: float = 1.0,
 ) -> FleetPlan:
-    """Project main rows into stable project or machine bands."""
+    """Give each resolved agent group one stable band."""
 
     representatives = _fleet_representative_rows(projection)
     members = tuple(
@@ -3490,6 +3481,7 @@ def program_for_projection(
     # never reached the strip.
     rows = tuple(projection.light_rows)
     if not rows:
+        state = LedDisplayState.IDLE
         return state, _display_state_program(settings,
             state,
             led_count=led_count,

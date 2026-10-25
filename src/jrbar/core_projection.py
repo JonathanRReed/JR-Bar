@@ -1531,6 +1531,48 @@ def device_document(device: DeviceFacts) -> dict[str, Any]:
     return document
 
 
+def _agent_group_resolution(snapshot, *, now):
+    from .agent_groups import resolve_agent_groups
+
+    collected_at = getattr(snapshot, "collected_at", None)
+    lineage_now = collected_at.timestamp() if isinstance(collected_at, datetime) else now
+    if lineage_now is None:
+        lineage_now = max((status.updated_at.timestamp() for status in getattr(snapshot, "statuses", ())), default=0)
+    return resolve_agent_groups(
+        (*getattr(snapshot, "statuses", ()), *getattr(snapshot, "stale_statuses", ())),
+        now=lineage_now,
+    )
+
+
+def _apply_agent_group_rows(rows, group_statuses, group_resolution, ask_ids, quiet_worker_ids):
+    group_by_member = {member: group for group in group_resolution.groups for member in group.members}
+    for row in rows:
+        group = group_by_member.get(row["id"])
+        row["group_id"] = group.id if group else None
+        row["unlinked_worker"] = row["id"] in group_resolution.unlinked_workers
+        if row["unlinked_worker"]:
+            row["parent"] = None
+        if group:
+            is_child = row["id"] != group.root_work_key
+            row["kind"] = "worker" if is_child else "main"
+            row["parent"] = group.root_work_key if is_child else None
+            live_workers = {status.agent_id for status in group_statuses
+                            if status.agent_id in group.members and status.agent_id != group.root_work_key
+                            and not status.stale and (status.mode in _WORKING_MODES
+                                                      or status.mode is AgentMode.WAITING_FOR_INPUT)}
+            row["workers"] = 0 if is_child else len(live_workers)
+            if not is_child:
+                if quiet_worker_ids is not None:
+                    row["workers_waiting"] = len(live_workers & quiet_worker_ids)
+                if row["id"] not in ask_ids and row["mode"] not in {mode.value for mode in _WORKING_MODES} and any(
+                    status.agent_id in group.members and not status.stale
+                    and status.mode in _WORKING_MODES for status in group_statuses
+                ):
+                    row["mode"] = AgentMode.WORKING.value
+                    row["lifecycle"] = "active"
+                    row["stale"] = False
+
+
 def project_session_rows(
     snapshot: object,
     *,
@@ -1616,6 +1658,7 @@ def project_session_rows(
         labels_by_id[agent_id] = document["label"]
         documents_by_id[agent_id] = document
     rows = [documents_by_id[str(getattr(status, "agent_id", ""))] for status in statuses]
+    _apply_agent_group_rows(rows, statuses, _agent_group_resolution(snapshot, now=now), ask_ids, quiet_worker_ids)
     return rows, ask_ids
 
 
@@ -1675,6 +1718,8 @@ def build_state_document(
         now=now,
         ask_stale_after_seconds=ask_stale_after_seconds,
     )
+    group_resolution = _agent_group_resolution(snapshot, now=now)
+    group_statuses = (*getattr(snapshot, "statuses", ()), *getattr(snapshot, "stale_statuses", ()))
     extras_by_id = extras_by_id or {}
     # An ask is the loudest thing the panel can show, so visibility never
     # gets to evict the row that carries one: a session with a live ask
@@ -1685,7 +1730,11 @@ def build_state_document(
         projected,
         now=now,
         acknowledged_at_by_id=acknowledged_epoch_by_session(acknowledged_keys or ()),
-        pinned_ids=ask_ids,
+        pinned_ids=ask_ids | frozenset(
+            group.root_work_key for group in group_resolution.groups
+            if any(status.agent_id in group.members and not status.stale
+                   and status.mode in _WORKING_MODES for status in group_statuses)
+        ),
     )
     listed_ids = {str(session.get("id") or "") for session in sessions}
     # The other half of the invariant. ``ask_statuses`` comes from the
@@ -1735,6 +1784,8 @@ def build_state_document(
         "now": float(now),
         "aggregate": {"mode": aggregate_mode(counts), **counts},
         "sessions": sessions,
+        "agent_groups": [group.to_dict() for group in group_resolution.groups
+                         if listed_ids.intersection(group.members)],
         "hidden_count": int(hidden_count),
         "asks": asks,
         "devices": [device_document(device) for device in devices],

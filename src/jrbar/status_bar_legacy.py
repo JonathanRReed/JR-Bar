@@ -2667,6 +2667,9 @@ class StatusBarController(NSObject):
                 update_t3_snapshot_runtime(self, integration_settings)
             except Exception as _t3_exc:
                 log_status_bar(f"t3 snapshot error: {_t3_exc}")
+            from .lineage_adapters import update_lineage_runtime
+
+            update_lineage_runtime(self)
             _t_ingest = time.monotonic()
             snapshot = self.monitor.snapshot()
             _t_snapshot = time.monotonic()
@@ -5353,6 +5356,7 @@ class StatusBarController(NSObject):
                     # off: nobody was asked, so it never raises the banner.
                     quiet_requests = quiet_worker_request_keys(
                         state,
+                        statuses=getattr(getattr(self, "last_snapshot", None), "statuses", ()),
                         subagent_asks_alert=bool(
                             getattr(self.settings, "subagent_asks_alert", False)
                         ),
@@ -6901,6 +6905,7 @@ class StatusBarController(NSObject):
             worker_count = len(state.works) - primary_count
             quiet_requests = quiet_worker_request_keys(
                 state,
+                statuses=getattr(getattr(self, "last_snapshot", None), "statuses", ()),
                 subagent_asks_alert=bool(
                     getattr(self.settings, "subagent_asks_alert", False)
                 ),
