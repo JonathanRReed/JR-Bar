@@ -98,10 +98,11 @@ def probe_usage(access_token: str, *, timeout: float = 20.0) -> list[dict]:
     except (OSError, subprocess.SubprocessError):
         raise ValueError("claude_cli_usage_unavailable") from None
     finally:
-        if process is not None:
-            if process.poll() is None:
+        try:
+            if process is not None:
                 _kill_group(process)
-            process.wait(timeout=2)
-        os.close(master)
-        if slave >= 0:
-            os.close(slave)
+                process.wait(timeout=2)
+        finally:
+            os.close(master)
+            if slave >= 0:
+                os.close(slave)
