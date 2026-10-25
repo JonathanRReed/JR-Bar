@@ -857,3 +857,55 @@ def test_scan_restores_the_callers_qos(tmp_path):
         assert library.qos_class_self() == 0x15
     finally:
         library.pthread_set_qos_class_self_np(previous, 0)
+
+
+def test_card_reopen_does_not_run_writer_integrity_checks(tmp_path, monkeypatch):
+    import sqlite3
+
+    from jrbar import token_history_index as module
+    monkeypatch.setattr(module, "_ENABLED", True)
+    monkeypatch.setattr(module, "_INDEXES", {})
+    root = tmp_path / ".claude/projects"
+    root.mkdir(parents=True)
+    (root / "one.jsonl").write_text(claude("one", "2026-10-25T01:00:00Z"))
+    path = tmp_path / ".local/state/jrbar/token-history.sqlite3"
+    module.shared_index(path).scan({"claude": (root,)})
+    monkeypatch.setattr(module, "_INDEXES", {})
+    real_connect, queries = sqlite3.connect, []
+    class Reader(sqlite3.Connection):
+        def execute(self, sql, *args, **kwargs):
+            assert "quick_check" not in sql.lower()
+            queries.append(sql)
+            return super().execute(sql, *args, **kwargs)
+    def connect(*args, **kwargs):
+        assert kwargs.get("uri") is True
+        assert str(args[0]).endswith("?mode=ro")
+        return real_connect(*args, **kwargs, factory=Reader)
+    monkeypatch.setattr(module.sqlite3, "connect", connect)
+    card = module.cached_card("claude", tmp_path, 1792929600)
+    assert card["input_tokens"] == 100
+    assert "PRAGMA query_only=ON" in queries
+
+
+def test_off_interrupts_the_writer_integrity_check(tmp_path, monkeypatch):
+    import sqlite3
+
+    import pytest
+
+    from jrbar import token_history_index as module
+    path = tmp_path / "state/history.sqlite3"
+    path.parent.mkdir()
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE synthetic (value INTEGER)")
+        db.executemany("INSERT INTO synthetic VALUES (?)", ((i,) for i in range(5000)))
+    index = module.TokenHistoryIndex(path)
+    real_connect = sqlite3.connect
+    class Stopped(sqlite3.Connection):
+        def execute(self, sql, *args, **kwargs):
+            if sql == "PRAGMA quick_check":
+                index.stopping.set()
+            return super().execute(sql, *args, **kwargs)
+    monkeypatch.setattr(module.sqlite3, "connect", lambda *a, **kw: real_connect(*a, **kw, factory=Stopped))
+    with pytest.raises(sqlite3.OperationalError) as caught:
+        index._connect()
+    assert caught.value.sqlite_errorcode == sqlite3.SQLITE_INTERRUPT

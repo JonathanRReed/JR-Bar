@@ -169,9 +169,11 @@ class TokenHistoryIndex:
             self.views.clear()
             self.view_bytes = 0
 
-    def _connect(self):
+    def _connect(self, *, read_only=False):
         # Creating a file needs durability; reopening an unchanged cache does not.
         if not self.path.exists():
+            if read_only:
+                return None
             ensure_private_file(self.path)
         from .private_io import _chmod_if_needed, _private_parent, _require_leaf_identity, _require_private_leaf
 
@@ -185,9 +187,24 @@ class TokenHistoryIndex:
                 info = _require_private_leaf(sidecar, parent, sidecar.name)
                 if info is not None:
                     _chmod_if_needed(sidecar, 0o600, info)
-            db = sqlite3.connect(target, timeout=0.05)
+            db = sqlite3.connect(target.as_uri() + "?mode=ro", uri=True, timeout=0.05) if read_only else sqlite3.connect(target, timeout=0.05)
             try:
                 _require_leaf_identity(target, parent, name, expected)
+                db.set_progress_handler(lambda: int(self.stopping.is_set() or not self.enabled), 1000)
+                if read_only:
+                    db.execute("PRAGMA query_only=ON")
+                    db.execute("PRAGMA cache_size=-2048")
+                    db.execute("BEGIN")
+                    try:
+                        version = db.execute("SELECT value FROM meta WHERE key='version'").fetchone()
+                    except sqlite3.OperationalError as error:
+                        if "no such table" not in str(error):
+                            raise
+                        version = None
+                    if version != (json.dumps(semantics()),):
+                        db.close()
+                        return None
+                    return db
                 identity = (expected.st_dev, expected.st_ino)
                 if self.checked_identity != identity:
                     if db.execute("PRAGMA quick_check").fetchone() != ("ok",):
@@ -442,9 +459,10 @@ class TokenHistoryIndex:
     def _cached_totals(self, roots, since_epoch, *, card_only=False):
         if not self.path.exists() or time.monotonic() < self.retry_at:
             return None
-        db = self._connect()
+        db = self._connect(read_only=True)
+        if db is None:
+            return None
         try:
-            db.execute("BEGIN")
             for provider, paths in roots.items():
                 manifest = json.dumps([os.path.realpath(root) for root in paths])
                 if db.execute("SELECT value FROM meta WHERE key=?", ("roots:" + provider,)).fetchone() != (manifest,):
