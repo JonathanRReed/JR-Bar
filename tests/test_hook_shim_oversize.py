@@ -463,7 +463,7 @@ def test_oversize_payload_preserves_bounded_lineage_fields(shim: Path, sock_dir:
     request = _delivered(shim, sock_dir, "claude", _compact(payload))
     assert request is not None
     forwarded = json.loads(request.payload_text)
-    kept = {"agent_id", "parent_agent_id", "parentAgentId"}
+    kept = set(lineage)
     assert all(forwarded.get(key) == lineage[key] for key in kept)
     assert all(key not in forwarded for key in lineage.keys() - kept)
     assert "tool_response" not in forwarded

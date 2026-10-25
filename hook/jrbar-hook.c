@@ -198,8 +198,6 @@ static const struct meta_key META_KEYS[] = {
     { "child_session_id", META_VALUE_BYTES },
     { "child_subagent_id", META_VALUE_BYTES },
     { "parent_subagent_id", META_VALUE_BYTES },
-    { "spawnedBy", META_VALUE_BYTES },
-    { "spawnedBySessionId", META_VALUE_BYTES },
     { "subagentId", META_VALUE_BYTES },
     { "subagentType", META_VALUE_BYTES },
     { "callingSessionId", META_VALUE_BYTES },
@@ -268,7 +266,7 @@ static int meta_put(char *out, size_t cap, size_t *o, const char *s, size_t n) {
 
 /* The metadata record for `b[0..n)` in `out`: its length, or 0 when the head
  * does not name an event and a session. */
-static size_t build_metadata(const char *b, size_t n, char *out, size_t cap) {
+static size_t build_metadata(const char *b, size_t n, char *out, size_t cap, const char *provider) {
     struct { size_t at, len; int seen; } found[META_KEY_COUNT];
     memset(found, 0, sizeof found);
     size_t input_at = 0, input_len = 0;
@@ -312,6 +310,10 @@ static size_t build_metadata(const char *b, size_t n, char *out, size_t cap) {
                 if (k == 1 && key_len == strlen("sessionId") && !memcmp(b + key_at, "sessionId", key_len)) matches = 1;
                 if (k == 1 && key_len == strlen("conversation_id") && !memcmp(b + key_at, "conversation_id", key_len)) matches = 1;
                 if (!matches) continue;
+                if (k == 1 && !strcmp(provider, "cursor") && found[k].seen) {
+                    size_t length = b[i] == '"' ? end - i - 2 : 0;
+                    if (!found[k].len || length != found[k].len || memcmp(b + found[k].at, b + i + 1, length)) return 0;
+                }
                 if (found[k].seen) break;
                 found[k].seen = 1;
                 if (b[i] != '"') break;
@@ -344,7 +346,8 @@ static size_t build_metadata(const char *b, size_t n, char *out, size_t cap) {
         if (!found[k].len) continue;
         if (!first && !meta_put(out, cap, &o, ",", 1)) return 0;
         first = 0;
-        if (!meta_put(out, cap, &o, "\"", 1) || !meta_put(out, cap, &o, META_KEYS[k].name, strlen(META_KEYS[k].name))
+        const char *name = k == 1 && !strcmp(provider, "cursor") ? "conversation_id" : META_KEYS[k].name;
+        if (!meta_put(out, cap, &o, "\"", 1) || !meta_put(out, cap, &o, name, strlen(name))
             || !meta_put(out, cap, &o, "\":\"", 3) || !meta_put(out, cap, &o, b + found[k].at, found[k].len)
             || !meta_put(out, cap, &o, "\"", 1)) return 0;
     }
@@ -797,7 +800,7 @@ int main(int argc, char **argv) {
          * whose input cannot be shown is not held for a verdict, so the shim
          * prints nothing and the agent's own prompt carries on. */
         char *meta = malloc(META_RECORD_BYTES);
-        size_t meta_len = meta ? build_metadata(payload, len, meta, META_RECORD_BYTES) : 0;
+        size_t meta_len = meta ? build_metadata(payload, len, meta, META_RECORD_BYTES, provider) : 0;
         if (meta_len) {
             free(payload);
             payload = meta;

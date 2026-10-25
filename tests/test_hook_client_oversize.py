@@ -135,7 +135,7 @@ def test_an_oversize_ask_is_sent_plain_and_never_held_for_a_verdict(
     assert capsys.readouterr().out == ""
 
 
-@pytest.mark.parametrize("provider", ["gemini", "opencode", "pi", "cursor", "devin", "grok"])
+@pytest.mark.parametrize("provider", ["gemini", "opencode", "pi", "devin"])
 def test_other_providers_are_dropped_as_before(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], provider: str
 ) -> None:
@@ -323,3 +323,43 @@ def test_the_record_never_exceeds_the_shims_record_cap() -> None:
     assert record is not None
     assert len(record.encode("utf-8")) < 64 * 1024 + 4096
     assert json.loads(record)["tool_input"] == {"k": "v" * 65_000}
+
+
+@pytest.mark.parametrize('provider,identity', [
+    ('cursor', {'conversation_id': 'synthetic-conversation'}),
+    ('hermes', {'child_session_id': 'synthetic-child', 'parent_session_id': 'synthetic-root'}),
+    ('grok', {'sessionId': 'synthetic-root', 'subagentId': 'synthetic-child', 'subagentType': 'worker'}),
+])
+def test_worker_metadata_matches_shim_and_preserves_identity(shim, state_dir, provider, identity):
+    from jrbar.hook import _normalized_hook_record
+    from jrbar.provider_adapters import normalized_provider_record_to_payload
+
+    payload = dict(hook_event_name='PostToolUse', **identity, tool_name='Shell', output='x' * (MIB + 4096))
+    if provider == 'hermes':
+        payload['hook_event_name'] = 'subagent_start'
+    expected = hook_client.oversize_payload_record(_compact(payload).encode()[:MIB], provider)
+    result = _run(shim, state_dir, provider, _compact(payload))
+    assert result.returncode == 0
+    pending, = state_dir.glob('*.pending.jsonl')
+    actual = json.loads(pending.read_text().splitlines()[0])['payload']
+    assert json.loads(actual) == json.loads(expected)
+    stamp = '2026-09-21T00:00:00+00:00'
+    def normalized(data):
+        return normalized_provider_record_to_payload(_normalized_hook_record(provider, dict(data, logged_at=stamp)))
+    small = normalized(dict(payload, output='small'))
+    shortened = normalized(json.loads(actual))
+    assert shortened['provider_work_id'] == small['provider_work_id']
+    if provider == 'cursor':
+        assert identity['conversation_id'] not in json.dumps(shortened)
+
+
+@pytest.mark.parametrize('aliases', [
+    {'conversation_id': 'one', 'session_id': 'two'},
+    {'sessionId': 'two', 'conversation_id': 'one'},
+    {'conversation_id': 'one', 'session_id': None},
+])
+def test_cursor_conflicting_oversize_aliases_are_dropped(shim, state_dir, aliases):
+    payload = _compact(dict(hook_event_name='postToolUse', **aliases, output='x' * (MIB + 4096)))
+    assert hook_client.oversize_payload_record(payload.encode()[:MIB], 'cursor') is None
+    assert _run(shim, state_dir, 'cursor', payload).returncode == 0
+    assert not list(state_dir.glob('*.pending.jsonl'))
