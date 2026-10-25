@@ -140,3 +140,114 @@ def test_installed_missing_sources_keep_their_own_reason_and_action():
         assert row["availability"] == "failing"
         assert row["action_kind"] is None
         assert "Quota service" not in row["status_text"]
+
+
+def test_provider_action_hops_state_changes_to_main_but_opens_on_worker(monkeypatch):
+    on_main_now = [False]
+    refreshes = []
+
+    def on_main(fn):
+        assert not on_main_now[0]
+        on_main_now[0] = True
+        try:
+            return fn()
+        finally:
+            on_main_now[0] = False
+
+    def detect():
+        assert on_main_now[0]
+        return {"antigravity": True}
+
+    def refresh(**kw):
+        assert on_main_now[0]
+        refreshes.append(kw)
+
+    def open_app(*args, **kw):
+        assert not on_main_now[0]
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(core_runtime.subprocess, "run", open_app)
+    controller = SimpleNamespace(provider_usage_state=ProviderUsageState((reading(),), 2000, 3000, False),
+        _core_on_main=on_main, _core_detected_agents=detect, _request_provider_usage=refresh)
+    core_runtime._cmd_provider_action(controller, {"provider": "antigravity"})
+    assert len(refreshes) == 1
+
+
+def test_open_timeout_is_a_command_error(monkeypatch):
+    import subprocess
+    import pytest
+    from jrbar.core_server import CommandError
+
+    def timeout(*args, **kw):
+        raise subprocess.TimeoutExpired("synthetic", 5)
+
+    monkeypatch.setattr(core_runtime.subprocess, "run", timeout)
+    controller = SimpleNamespace(provider_usage_state=ProviderUsageState((reading(),), 2000, 3000, False),
+        _request_provider_usage=lambda **_: pytest.fail("refresh after failed open"))
+    with pytest.raises(CommandError, match="Could not open"):
+        core_runtime._cmd_provider_action(controller, {"provider": "antigravity"})
+
+
+def test_hide_write_refusal_is_reported_on_main(monkeypatch):
+    import pytest
+    from jrbar.core_server import CommandError
+    from jrbar.provider_usage_settings import ProviderUsageSettingsWriteRefusedError
+
+    main = [False]
+
+    def on_main(fn):
+        main[0] = True
+        try:
+            return fn()
+        finally:
+            main[0] = False
+
+    def refuse(*args, **kw):
+        assert main[0]
+        raise ProviderUsageSettingsWriteRefusedError("settings changed")
+
+    monkeypatch.setattr("jrbar.provider_usage_settings.save_provider_usage_settings", refuse)
+    monkeypatch.setattr(core_runtime.time, "time", lambda: 1000 + GONE_READING_SECONDS)
+    controller = SimpleNamespace(provider_usage_state=ProviderUsageState((reading(),), 2000, 3000, False),
+        _core_on_main=on_main, _core_detected_agents=lambda: {"antigravity": False})
+    with pytest.raises(CommandError, match="settings changed"):
+        core_runtime._cmd_provider_action(controller, {"provider": "antigravity"})
+
+
+def test_reconnect_reads_on_worker_and_publishes_on_main(monkeypatch):
+    from jrbar.provider_reconnect import ResignInResult
+    from jrbar.provider_browser_access import perform_provider_usage_action
+
+    main = [False]
+    refreshes = []
+
+    class Controller(SimpleNamespace):
+        def __setattr__(self, name, value):
+            if name == "_jrbar_reconnect_watch":
+                assert main[0]
+            super().__setattr__(name, value)
+
+    def on_main(fn):
+        main[0] = True
+        try:
+            return fn()
+        finally:
+            main[0] = False
+
+    def read(*args, **kw):
+        assert not main[0]
+        return ResignInResult("claude", "Read again.")
+
+    def refresh(**kw):
+        assert main[0]
+        refreshes.append(kw)
+
+    monkeypatch.setattr("jrbar.provider_reconnect.reconnect_provider", read)
+    snapshot = replace(reading(provider="claude"), action_label="Reconnect Claude")
+    controller = Controller(provider_usage_state=ProviderUsageState((snapshot,), 2000, 3000, False),
+        _core_on_main=on_main, _request_provider_usage=refresh)
+    core_runtime._cmd_provider_action(controller, {"provider": "claude", "action": "resign_in"})
+    monkeypatch.setattr("jrbar.provider_browser_access.handle_provider_usage_action",
+                        lambda *a, **kw: read().message)
+    assert perform_provider_usage_action(controller, "claude") == "Read again."
+    assert len(refreshes) == 2
