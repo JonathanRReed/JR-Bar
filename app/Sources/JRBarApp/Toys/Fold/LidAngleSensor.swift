@@ -479,9 +479,10 @@ struct SensorMotionCadence {
     private(set) var stillReads = 0
     private var previous: Double?
 
-    mutating func note(_ angle: Double?) {
-        defer { previous = angle }
-        guard let angle, let previous, abs(angle - previous) <= SensorPump.quietBand else {
+    mutating func note(_ rawAngle: Double?) {
+        let priorAngle = previous
+        previous = rawAngle
+        guard let angle = rawAngle, let priorAngle, abs(angle - priorAngle) <= SensorPump.quietBand else {
             stillReads = 0
             return
         }
