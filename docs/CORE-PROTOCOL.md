@@ -2068,7 +2068,9 @@ bearer-authenticated like `/status.json` -- never anonymous, whatever
 `serve_enabled`, since reading the fleet and answering for the owner are
 different grants). The daemon's own server reads the switch on every
 request; a standalone `jrbar serve --allow-answers` reads the switch and the
-asks over `core.sock`, but its answers are refused there (`unauthenticated`,
+asks over `core.sock`, caching those reads for at most one second. An
+unreachable daemon returns `unavailable`, HTTP `503`, rather than
+`answering_off`. Its answers are refused there (`unauthenticated`,
 HTTP `403`): answering is app-only on the socket, and only the serve server
 inside the daemon answers, through the daemon's own dispatch and not the
 socket. Its answer waits up to 12 s for the

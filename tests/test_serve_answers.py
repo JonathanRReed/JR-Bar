@@ -499,7 +499,7 @@ def test_answering_from_serve_is_off_by_default_and_round_trips(tmp_path: Path) 
 
 
 def test_a_poll_reads_the_switch_and_the_asks_over_one_connection__and_1_more() -> None:
-    # --- scenario: each consent check opens fresh settings; its ask read shares the connection
+    # --- scenario: consent and asks share a one-second cached read
     opened: list[_Connection] = []
     clock = [100.0]
 
@@ -510,10 +510,10 @@ def test_a_poll_reads_the_switch_and_the_asks_over_one_connection__and_1_more() 
     answers = CoreSocketAnswers(Path("/tmp/core.sock"), connect=connect, monotonic=lambda: clock[0])
     assert answers.enabled() and len(answers.asks()) == 2
     assert answers.enabled() and len(answers.asks()) == 2
-    assert len(opened) == 2
+    assert len(opened) == 1
     clock[0] += READ_CACHE_SECONDS
     assert answers.enabled()
-    assert len(opened) == 3
+    assert len(opened) == 2
 
     # --- scenario: a failed read caches nothing
     failures = [ControlError("the JR-Bar monitor is not running", 1)]
@@ -525,7 +525,9 @@ def test_a_poll_reads_the_switch_and_the_asks_over_one_connection__and_1_more() 
             return self
 
     flaky = CoreSocketAnswers(Path("/x"), connect=lambda _path, **_kw: _Down(), monotonic=lambda: 5.0)
-    assert not flaky.enabled()
+    with pytest.raises(ServeAnswerRefused) as refused:
+        flaky.enabled()
+    assert refused.value.code == "unavailable"
     assert flaky.enabled()
 
 
@@ -570,15 +572,36 @@ def test_a_slot_answer_waits_out_an_ask_that_just_replaced_the_keys__and_2_more(
     assert connection.commands == []
 
 
-def test_consent_revocation_is_seen_even_inside_the_read_cache_window():
+def test_consent_revocation_is_seen_when_the_one_second_cache_expires():
     consent = [True]
+    now = [100.0]
     class Connection(_Connection):
         def document(self, kind):
             if kind == "settings":
                 return {"serve_answer_enabled": consent[0]}
             return super().document(kind)
     answers = CoreSocketAnswers(Path("/fixture.sock"), connect=lambda *a, **kw: Connection(),
-                                monotonic=lambda: 100.0)
+                                monotonic=lambda: now[0])
     assert answers.enabled()
     consent[0] = False
+    now[0] += READ_CACHE_SECONDS - 0.001
+    assert answers.enabled()
+    now[0] += 0.001
     assert not answers.enabled()
+
+
+@pytest.mark.parametrize("route,method", [("/asks.json", "GET"), ("/answer?slot=1&decision=approve", "POST")])
+def test_daemon_unreachable_is_not_reported_as_consent_off(route, method):
+    def connect(*_args, **_kwargs):
+        raise ControlError("the JR-Bar monitor is not running", 1)
+
+    answers = CoreSocketAnswers(Path("/fixture.sock"), connect=connect)
+    server, base = _serve(answers, status_access_token=TOKEN)
+    try:
+        status, body = _call(base + route, method=method)
+        assert status == 503
+        assert body["error"]["code"] == "unavailable"
+        assert "serve_answer_enabled" not in body["error"]["message"]
+    finally:
+        server.shutdown()
+        server.server_close()

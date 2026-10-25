@@ -349,7 +349,7 @@ class CoreSocketAnswers:
 
         return CoreConnection(self._socket_path, timeout=timeout)
 
-    def _documents(self, *, refresh: bool = False) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    def _documents(self) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """``settings`` and ``state`` from one connection -- both arrive in
         the frames the daemon sends on connect -- kept ``READ_CACHE_SECONDS``.
         A state that does not come is ``None``; a failed connection raises
@@ -359,7 +359,7 @@ class CoreSocketAnswers:
         with self._read_lock:
             now = self._monotonic()
             cached = self._read
-            if not refresh and cached is not None and now - cached[0] < READ_CACHE_SECONDS:
+            if cached is not None and now - cached[0] < READ_CACHE_SECONDS:
                 return cached[1], cached[2]
             with self._connection() as core:
                 settings = core.document("settings")
@@ -374,9 +374,9 @@ class CoreSocketAnswers:
         from .cli_control import ControlError
 
         try:
-            settings, _state = self._documents(refresh=True)
-        except ControlError:
-            return False
+            settings, _state = self._documents()
+        except ControlError as error:
+            raise ServeAnswerRefused("unavailable", str(error)) from None
         document = settings.get("document") if isinstance(settings.get("document"), dict) else settings
         return document.get("serve_answer_enabled") is True
 
