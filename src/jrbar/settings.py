@@ -3180,7 +3180,7 @@ def _merge_unknown_fields(
         merged = {
             source_key: source_value
             for source_key, source_value in source.items()
-            if source_key not in encoded
+            if source_key not in encoded and not (path == "colors" and source_key == "mix_mode")
         }
         for encoded_key, encoded_value in encoded.items():
             merged[encoded_key] = _merge_unknown_fields(

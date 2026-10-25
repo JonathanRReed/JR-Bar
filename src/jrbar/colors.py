@@ -1441,8 +1441,7 @@ class ColorSettings:
             "mode_colors": dict(self.mode_colors),
             "agent_colors": dict(self.agent_colors),
             "session_colors": dict(sorted(self.session_colors.items())),
-            "blend_mode": self.mix_mode,
-            "mix_mode": self.mix_mode,
+            "blend_mode": self.blend_mode,
             "mix_parameters": {key: dict(value) for key, value in self.mix_parameters.items()},
             "fade_floor": dict(self.fade_floor),
             "fade_ceiling": dict(self.fade_ceiling),
@@ -1492,7 +1491,7 @@ class ColorSettings:
                 if isinstance(agent_id, str) and agent_id:
                     session_colors[agent_id] = normalize_hex(value, IDENTITY_PALETTE[0])
 
-        blend_mode = data.get("mix_mode", data.get("blend_mode"))
+        blend_mode = data.get("blend_mode", data.get("mix_mode"))
         if blend_mode not in BLEND_MODE_CHOICES:
             blend_mode = DEFAULT_BLEND_MODE
 
