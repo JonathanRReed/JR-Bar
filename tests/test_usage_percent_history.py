@@ -50,6 +50,30 @@ def _retention(*policies):
     )
 
 
+def test_retention_appends_without_rewriting_unchanged_history(monkeypatch, tmp_path):
+    import jrbar.usage_percent_history as history
+
+    target = tmp_path / "history.jsonl"
+    retention = _retention(("claude", "default", 7))
+    record = dict(provider_id="claude", source_instance_id="default", lane_id="weekly",
+                  remaining_percent=71.0, observed_at_epoch=NOW_EPOCH)
+    append_percent_observations(target, [record], retention_projection=retention,
+                                now_epoch=NOW_EPOCH)
+    original = target.read_bytes()
+
+    def refuse_rewrite(*args, **kwargs):
+        raise AssertionError("unchanged history must be appended, not replaced")
+
+    monkeypatch.setattr(history, "atomic_private_write", refuse_rewrite)
+    append_percent_observations(target, [], retention_projection=retention,
+                                now_epoch=NOW_EPOCH + 60)
+    next_record = {**record, "remaining_percent": 70.0, "observed_at_epoch": NOW_EPOCH + 120}
+    append_percent_observations(target, [next_record], retention_projection=retention,
+                                now_epoch=NOW_EPOCH + 120)
+    assert target.read_bytes().startswith(original)
+    assert [json.loads(line) for line in target.read_text().splitlines()] == [record, next_record]
+
+
 def test_graph_skips_nonfinite_and_unrepresentable_timestamps() -> None:
     text = "".join(
         _line("claude", "weekly", 40.0, epoch)
