@@ -3,6 +3,7 @@
 import io
 import json
 import threading
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError
@@ -13,6 +14,7 @@ from jrbar import claude_quota, provider_reconnect
 from jrbar import provider_usage_codex_claude as claude
 from jrbar import provider_usage_collectors as collectors
 from jrbar.claude_statusline_source import StatusLineReading, StatusLineWindow
+from jrbar.provider_usage_settings import default_provider_usage_settings
 
 
 class Store:
@@ -37,7 +39,8 @@ def isolated(monkeypatch):
 
 def collect(store, fetcher, *, now=1000, reading=False, instance="default"):
     return claude.collect_claude(
-        SimpleNamespace(source_instance_id=instance), home=Path("/synthetic"), observed_at=now,
+        replace(default_provider_usage_settings().preference("claude"), source_instance_id=instance),
+        home=Path("/synthetic"), observed_at=now,
         credentials=store, quota_fetcher=fetcher, local_scanner=lambda *_a: None,
         statusline_reader=lambda stamp: StatusLineReading(None, None, (
             ("five_hour", StatusLineWindow(25, 5000)),

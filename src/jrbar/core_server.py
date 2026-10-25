@@ -141,7 +141,7 @@ READ_LANE_COMMANDS: Final = frozenset(
 # allows 90 s. It is not a read, so it has a worker of its own: it must not
 # make History, a doctor run or a comparison wait, nor wait behind a scan.
 ACTION_LANE_COMMANDS: Final = frozenset({
-    "provider_sign_in", "factory_session_profiles", "factory_session_import", "factory_session_disconnect",
+    "provider_sign_in", "provider_action", "factory_session_profiles", "factory_session_import", "factory_session_disconnect",
 })
 # Setup and settings share controller completion events and a device manager.
 # Admit one operation at a time; never queue a later device write.

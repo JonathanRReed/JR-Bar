@@ -1427,12 +1427,20 @@ final class PanelStore {
 
     /// Providers that earn a full row: a window with something on it,
     /// from a source that is on and found.
-    var usage: [CoreProviderUsage] { core.isLive ? core.usage.filter { !Self.foldsIntoQuietRow($0) } : [] }
+    var usage: [CoreProviderUsage] { core.isLive ? core.usage.filter { $0.panelVisible && !Self.foldsIntoQuietRow($0) } : [] }
     /// The providers with nothing to say — every window at 0 %, no window
     /// at all, the source not found or switched off: one trailing row
     /// names them and opens the Usage Center, so they neither vanish
     /// silently nor take a 50 pt row each to say "nothing".
-    var quietUsage: [CoreProviderUsage] { core.isLive ? core.usage.filter { Self.foldsIntoQuietRow($0) } : [] }
+    var quietUsage: [CoreProviderUsage] { core.isLive ? core.usage.filter { $0.panelVisible && Self.foldsIntoQuietRow($0) } : [] }
+
+    func runUsageAction(_ usage: CoreProviderUsage) {
+        Task { [weak self] in
+            guard let self else { return }
+            do { self.show(toast: try await self.core.providerAction(usage.id, instance: usage.instance)) }
+            catch { self.show(toast: error.localizedDescription) }
+        }
+    }
     var devices: [CoreDevice] { core.isLive ? core.devices : [] }
 
     /// `state.health.hooks` providers the daemon reports as `missing`: the
@@ -1601,6 +1609,7 @@ final class PanelStore {
     /// so a weekly at 100 % leads red instead of hiding behind 5 h
     /// headroom — and the 7 d window (else the next one) beside it.
     static func windows(of usage: CoreProviderUsage) -> (primary: CoreUsageWindow?, secondary: CoreUsageWindow?) {
+        if usage.availability == "not_found" { return (nil, nil) }
         let primary = UsageCenterStore.primaryWindow(of: usage)
         let secondary = usage.windows.first { $0.shortName == "7d" && $0.id != primary?.id }
             ?? usage.windows.first { $0.id != primary?.id }
@@ -1610,6 +1619,7 @@ final class PanelStore {
     /// A provider whose row would say nothing: no window, every window at
     /// 0 %, or a source that is switched off or was never found.
     static func foldsIntoQuietRow(_ usage: CoreProviderUsage) -> Bool {
+        if usage.statusText != nil { return false }
         if usage.windows.isEmpty { return true }
         if let state = usage.state?.lowercased(), state == "disabled" || state == "source_not_found" { return true }
         // An old reading or a vendor outage is news; a row of "at 0%" would bury it.
@@ -1701,6 +1711,11 @@ final class PanelStore {
     /// name, the fix-it beats the bare state word.
     static func usageResetLine(for usage: CoreProviderUsage, primary: CoreUsageWindow?, secondary: CoreUsageWindow?,
                                noRoomForOneMore: Bool, now: Date) -> String {
+        if usage.statusText != nil {
+            guard usage.lastGoodAgeSeconds != nil, let at = usage.readingAt,
+                  let age = elapsed(since: Date(timeIntervalSince1970: at), now: now) else { return "No reading yet" }
+            return "Read \(age) ago"
+        }
         let action = usage.action?.trimmingCharacters(in: .whitespaces) ?? ""
         let fix = usage.staleFix
         var parts: [String] = fix.map { [$0] } ?? []

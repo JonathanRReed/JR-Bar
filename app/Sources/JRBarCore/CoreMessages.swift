@@ -1106,6 +1106,8 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
     /// Go's monthly window): a line under the rings, never a ring. False
     /// from a daemon that predates the field.
     public var detail: Bool = false
+    public var elapsed: Bool = false
+    public var lastUsedPct: Double? = nil
 
     public var id: String { key ?? name }
 
@@ -1145,6 +1147,8 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
         case forecast
         case source
         case detail
+        case elapsed
+        case lastUsedPct = "last_used_pct"
     }
 
     public init(from decoder: Decoder) throws {
@@ -1161,6 +1165,9 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
         bindable = (try? c.decodeIfPresent(Bool.self, forKey: .bindable)) ?? true
         source = try? c.decodeIfPresent(String.self, forKey: .source)
         detail = (try? c.decodeIfPresent(Bool.self, forKey: .detail)) ?? false
+        elapsed = (try? c.decodeIfPresent(Bool.self, forKey: .elapsed)) ?? false
+        lastUsedPct = try? c.decodeIfPresent(Double.self, forKey: .lastUsedPct)
+        if elapsed { usedPct = nil }
     }
 }
 
@@ -1334,6 +1341,11 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     /// credit): a count to show, never something the app redeems. Nil
     /// when no source stated one.
     public var resetCredits: Int? = nil
+    public var availability: String? = nil
+    public var statusText: String? = nil
+    public var lastGoodAgeSeconds: Double? = nil
+    public var panelVisible: Bool = true
+    public var actionKind: String? = nil
 
     public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil,
                 account: UsageAccount? = nil, action: String? = nil, reason: String? = nil,
@@ -1385,6 +1397,11 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         incident = try? c.decodeIfPresent(String.self, forKey: .incident)
         let credits = try? c.decodeIfPresent(Int.self, forKey: .resetCredits)
         resetCredits = credits.map { max(0, $0) }
+        availability = try? c.decodeIfPresent(String.self, forKey: .availability)
+        statusText = try? c.decodeIfPresent(String.self, forKey: .statusText)
+        lastGoodAgeSeconds = try? c.decodeIfPresent(Double.self, forKey: .lastGoodAgeSeconds)
+        panelVisible = (try? c.decodeIfPresent(Bool.self, forKey: .panelVisible)) ?? true
+        actionKind = try? c.decodeIfPresent(String.self, forKey: .actionKind)
     }
 
     /// Stable identity across multi-account rows of the same provider;
@@ -1403,6 +1420,11 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         case observedAt = "observed_at"
         case readAt = "read_at"
         case resetCredits = "reset_credits"
+        case availability
+        case statusText = "status_text"
+        case lastGoodAgeSeconds = "last_good_age_seconds"
+        case panelVisible = "panel_visible"
+        case actionKind = "action_kind"
     }
 
     /// When these numbers were read: `readAt`, else `observedAt` (a daemon

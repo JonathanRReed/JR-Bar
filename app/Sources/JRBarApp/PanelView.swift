@@ -1754,8 +1754,28 @@ struct UsageRow: View {
     }
 
     var body: some View {
+        if usage.availability == "not_found" {
+            HStack(spacing: 6) {
+                ProviderTile(style: style, size: 20)
+                Text("\(style.name): not found on this Mac")
+                    .lineLimit(1)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 2)
+                Button("Hide") { store.runUsageAction(usage) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10))
+            }
+            .padding(.horizontal, 8)
+            .frame(height: CGFloat(PanelLayout.usageRowHeight), alignment: .top)
+        } else {
+            readingRow
+        }
+    }
+
+    private var readingRow: some View {
         let (primary, secondary) = windows
-        HStack(alignment: .top, spacing: 9) {
+        return HStack(alignment: .top, spacing: 9) {
             // The tile sits on the name's line, so the list's half row,
             // cut below that line, shows a tile and a name together.
             ProviderTile(style: style, size: 20)
@@ -1780,9 +1800,17 @@ struct UsageRow: View {
                               ? "\(style.name) reports this window without a number"
                               : (usage.isDerived ? "Derived estimate (\(usage.fidelity ?? "derived"))" : "Official figure"))
                 }
-                HStack(spacing: 8) {
-                    if let primary { QuotaBar(window: primary, accent: style.accent, reduced: store.reduceMotion, armed: store.animationsArmed) }
-                    if let secondary { QuotaBar(window: secondary, accent: style.accent, reduced: store.reduceMotion, armed: store.animationsArmed) }
+                if let status = usage.statusText {
+                    Text(status)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help(status)
+                } else {
+                    HStack(spacing: 8) {
+                        if let primary { QuotaBar(window: primary, accent: style.accent, reduced: store.reduceMotion, armed: store.animationsArmed) }
+                        if let secondary { QuotaBar(window: secondary, accent: style.accent, reduced: store.reduceMotion, armed: store.animationsArmed) }
+                    }
                 }
                 HStack(spacing: 6) {
                     Text(resetLine(primary: primary, secondary: secondary))
@@ -1792,6 +1820,12 @@ struct UsageRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 2)
+                    if usage.statusText != nil, let action = usage.action {
+                        Button(action) { store.runUsageAction(usage) }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tint)
+                    }
                     if let values = store.sparkline(for: usage.id) {
                         UsageSparklineView(values: values, accent: style.accent)
                             .transition(.opacity)

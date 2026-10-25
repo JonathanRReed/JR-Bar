@@ -70,6 +70,25 @@ def test_claude_foreground_and_background_prefer_bounded_system_tool(tmp_path, m
     assert background[1]["timeout"] <= 5
 
 
+def test_direct_reader_still_works_when_system_tool_is_unavailable(tmp_path, monkeypatch):
+    from jrbar import credentials as module
+
+    calls = []
+    def run(arguments, **kwargs):
+        calls.append(arguments)
+        assert kwargs["timeout"] <= 2
+        assert "--allow-prompt" not in arguments
+        return _completed(44) if arguments[0] == "/usr/bin/security" else _completed(0, "synthetic-direct-secret")
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    ledger = KeychainConsentLedger(tmp_path / "consent.json")
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000)
+    result = read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger)
+    assert result.ok
+    assert result.secret == "synthetic-direct-secret"
+    assert calls[1][1:3] == ["-m", "jrbar.keychain_read"]
+
+
 @pytest.mark.parametrize("code, outcome", [(3, CredentialOutcome.ACCESS_LOST), (2, CredentialOutcome.UNAVAILABLE)])
 def test_background_reader_refusal_has_no_prompt_fallback(tmp_path, monkeypatch, code, outcome):
     from jrbar import credentials as module

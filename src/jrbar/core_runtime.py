@@ -2935,7 +2935,7 @@ def _require_usage_on(self, provider, instance):
             )
 
 
-@command("provider_action")
+@command("provider_action", main_thread=False)
 def _cmd_provider_action(self, args):
     provider = args.get("provider")
     instance = args.get("instance") or "default"
@@ -2954,6 +2954,38 @@ def _cmd_provider_action(self, args):
     except ValueError as exc:
         raise CommandError("unknown_provider", f"unknown provider {provider!r}") from exc
     _require_usage_on(self, provider, instance)
+    if action is None:
+        from .provider_availability import availability_document
+
+        snapshot = next((item for item in getattr(getattr(self, "provider_usage_state", None), "snapshots", ())
+                         if item.identity == (provider, instance)), None)
+        detect = getattr(self, "_core_detected_agents", lambda: {})
+        if snapshot is not None:
+            availability = availability_document(snapshot, now=time.time(), installed=detect().get(provider))
+            if availability["action_kind"] == "hide":
+                from .provider_usage_settings import load_provider_usage_settings, save_provider_usage_settings
+
+                loaded = load_provider_usage_settings()
+                updated = loaded.settings.with_option(provider, "panel_hidden", "true", source_instance_id=instance)
+                save_provider_usage_settings(updated, loaded=loaded)
+                self._request_provider_usage(force=True, providers=((provider, instance),))
+                return {"provider": provider, "instance": instance, "message": "Provider hidden from the panel."}
+            if availability["action_kind"] == "open_app":
+                completed = subprocess.run(["/usr/bin/open", "-a", descriptor.label],
+                                           capture_output=True, timeout=5, check=False)
+                if completed.returncode != 0:
+                    raise CommandError("not_found", f"Could not open {descriptor.label} on this Mac")
+                self._request_provider_usage(force=True, providers=((provider, instance),))
+                return {"provider": provider, "instance": instance, "message": f"Opening {descriptor.label}."}
+            staged_action = availability.get("action", snapshot.action_label)
+            if staged_action in {"Retry", "Retry later"}:
+                self._request_provider_usage(force=True, providers=((provider, instance),))
+                return {"provider": provider, "instance": instance,
+                        "message": f"{descriptor.label} usage refresh requested."}
+            if provider == "claude" and staged_action in {
+                "Connect Claude usage", "Reconnect Claude", "Allow Claude Keychain access",
+            }:
+                action = "resign_in"
     if provider == "factory" or (provider in {"kimi", "kilo", "kiro"} and action is None):
         snapshots = getattr(getattr(self, "provider_usage_state", None), "snapshots", ())
         if any(item.identity == (provider, instance) and getattr(item.state, "value", item.state) == "disabled"
@@ -8362,6 +8394,11 @@ def build_headless_controller_class() -> type:
                 if snapshot is not None
                 else []
             )
+            usage_settings = getattr(self, "_jrbar_provider_usage_settings_snapshot", None)
+            hidden_usage_instances = frozenset(
+                preference.identity for preference in getattr(usage_settings, "providers", ())
+                if preference.option("panel_hidden") == "true"
+            )
             document = build_state_document(
                 now=wall_now,
                 generation=self._core_state_generation,
@@ -8399,6 +8436,7 @@ def build_headless_controller_class() -> type:
                     getattr(self, "answer_handler_registry", None), "has_handler", None
                 ),
                 detected_agents=detected_agents,
+                hidden_usage_instances=hidden_usage_instances,
                 catalog_generation=catalog_generation,
                 provider_updates=provider_updates,
                 quiet_worker_ids=_quiet_worker_ids(self, all_statuses),
