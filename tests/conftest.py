@@ -224,10 +224,14 @@ def block_live_keychain_access():
 
             mp.setattr(subprocess, name, guarded)
 
-        def refuse_api():
+        def refuse_api(*args, **kwargs):
             refuse("test attempted real Keychain API; inject a fake API")
 
         mp.setattr("jrbar.keychain_read._load_api", refuse_api)
+        import keyring
+
+        for name in ("get_password", "set_password", "delete_password"):
+            mp.setattr(keyring, name, refuse_api)
         yield
     if background_attempts:
         pytest.fail("test worker attempted live Keychain access; inject a fake reader")

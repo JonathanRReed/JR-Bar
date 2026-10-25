@@ -28,3 +28,11 @@ def test_real_keychain_api_is_blocked():
 def test_reader_cannot_swallow_the_real_api_guard():
     with pytest.raises(pytest.fail.Exception, match="real Keychain API"):
         keychain_read._read_secret("synthetic")
+
+
+@pytest.mark.parametrize("operation", ["get_password", "set_password", "delete_password"])
+def test_keyring_backend_cannot_access_real_keychain(operation):
+    import keyring
+
+    with pytest.raises(pytest.fail.Exception, match="real Keychain API"):
+        getattr(keyring, operation)("synthetic", "synthetic")
