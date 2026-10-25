@@ -39,18 +39,45 @@ final class NotchAnnouncements {
     /// What registers for connect notifications; a test swaps it so no
     /// hardware is touched.
     var startBluetooth: (() -> Void)?
+    var stopBluetooth: (() -> Void)?
+    var startLocalSources: (() -> Void)?
+    var stopLocalSources: (() -> Void)?
 
     /// Registers for Bluetooth connects the first time announcements are
     /// allowed. Nothing is registered, and nothing asked, while the notch
     /// or its announcements are off.
     func syncBluetooth() {
-        guard !bluetoothStarted, isAllowed() else { return }
+        guard isAllowed() else {
+            if bluetoothStarted {
+                if let stopBluetooth { stopBluetooth() } else { bluetooth.stop() }
+                bluetoothStarted = false
+            }
+            return
+        }
+        guard !bluetoothStarted else { return }
         bluetoothStarted = true
         if let startBluetooth { startBluetooth() } else { bluetooth.start() }
     }
 
+    isolated deinit { stop() }
+
+    func sync() {
+        if isAllowed() { start() } else { stop() }
+    }
+
+    func stop() {
+        if started { onFocus("", false) }
+        if let stopLocalSources { stopLocalSources() }
+        else { focus.stop(); capsLock.stop(); displays.stop() }
+        if bluetoothStarted {
+            if let stopBluetooth { stopBluetooth() } else { bluetooth.stop() }
+        }
+        bluetoothStarted = false
+        started = false
+    }
+
     func start() {
-        guard !started else { return }
+        guard isAllowed(), !started else { return }
         started = true
         focus.onChange = { [weak self] name, on in
             guard let self, self.isAllowed() else { return }
@@ -72,10 +99,9 @@ final class NotchAnnouncements {
             guard let self, self.isAllowed() else { return }
             self.announce(Self.displayNotice(connected: connected))
         }
-        focus.start()
+        if let startLocalSources { startLocalSources() }
+        else { focus.start(); capsLock.start(); displays.start() }
         syncBluetooth()
-        capsLock.start()
-        displays.start()
     }
 
     // MARK: Notices
@@ -185,7 +211,18 @@ final class FocusWatcher {
             .appendingPathComponent("Library/DoNotDisturb/DB", isDirectory: true)
     }
 
+    isolated deinit { stop() }
+
+    func stop() {
+        debounce?.cancel()
+        debounce = nil
+        source?.cancel()
+        source = nil
+        active = nil
+    }
+
     func start() {
+        guard source == nil else { return }
         active = readFile()
         if let active { onSettle(active.mode, active.on) }
         let fd = open(Self.dbDirectory.path, O_EVTONLY)
@@ -193,13 +230,14 @@ final class FocusWatcher {
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
         source.setEventHandler { [weak self] in
+            guard let self, self.source != nil else { return }
             // The DB rewrite can be a few writes in a burst — one read
             // per settle, never per event.
-            self?.debounce?.cancel()
+            self.debounce?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 MainActor.assumeIsolated { self?.readChanged() }
             }
-            self?.debounce = work
+            self.debounce = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
         }
         source.setCancelHandler { close(fd) }
@@ -208,6 +246,7 @@ final class FocusWatcher {
     }
 
     private func readChanged() {
+        guard source != nil else { return }
         let now = readFile()
         let same = (now?.on == active?.on && now?.mode == active?.mode)
             || (now == nil && active == nil)
@@ -333,6 +372,7 @@ final class BluetoothWatcher: NSObject {
     /// behind its own lock.
     private let armedLock = NSLock()
     nonisolated(unsafe) private var armedAt = Date.distantFuture
+    nonisolated(unsafe) private var running = false
     /// Each connected device's disconnect registration, by address —
     /// held so the notification stays alive, dropped when it fires.
     /// Touched only on the notification thread, behind the lock anyway.
@@ -341,12 +381,34 @@ final class BluetoothWatcher: NSObject {
     nonisolated static let audioMajorClass: UInt32 = 0x04
 
     func start() {
-        armedLock.lock(); armedAt = Date().addingTimeInterval(3); armedLock.unlock()
+        guard thread == nil else { return }
+        armedLock.lock()
+        running = true
+        armedAt = Date().addingTimeInterval(3)
+        armedLock.unlock()
         let thread = BluetoothNotificationThread()
         thread.name = "JRBar.bluetooth"
         thread.watcher = self
         thread.start()
         self.thread = thread
+    }
+
+    func stop() {
+        armedLock.lock()
+        running = false
+        armedAt = .distantFuture
+        let notes = Array(disconnects.values)
+        disconnects.removeAll()
+        armedLock.unlock()
+        notes.forEach { $0.unregister() }
+        thread?.cancel()
+        thread = nil
+    }
+
+    nonisolated private var isRunning: Bool {
+        armedLock.lock()
+        defer { armedLock.unlock() }
+        return running
     }
 
     /// nonisolated: IOBluetooth invokes this off the main thread, and
@@ -358,7 +420,7 @@ final class BluetoothWatcher: NSObject {
     /// code can guard it. It took the app down on a connect event.
     @objc nonisolated fileprivate func deviceConnected(_ note: IOBluetoothUserNotification,
                                                        device: IOBluetoothDevice?) {
-        guard let device else { return }
+        guard isRunning, let device else { return }
         let name = device.name ?? device.addressString ?? "Bluetooth device"
         // BatteryPercent arrived by KVO — but on 27 responds(to:) alone
         // is no guard: the device forwards the selector while KVO still
@@ -387,7 +449,8 @@ final class BluetoothWatcher: NSObject {
         guard at >= armed else { return }
         let change = Change(name: name, battery: battery, connected: true, isAudio: isAudio)
         Task { @MainActor [weak self] in
-            self?.onChange(change)
+            guard let self, self.isRunning else { return }
+            self.onChange(change)
         }
     }
 
@@ -397,15 +460,20 @@ final class BluetoothWatcher: NSObject {
     nonisolated private func watchDisconnect(of device: IOBluetoothDevice) {
         guard let address = device.addressString else { return }
         armedLock.lock()
-        let known = disconnects[address] != nil
+        let known = !running || disconnects[address] != nil
         armedLock.unlock()
         guard !known,
               let note = device.register(forDisconnectNotification: self,
                                          selector: #selector(deviceDisconnected(_:device:)))
         else { return }
         armedLock.lock()
-        disconnects[address] = note
-        armedLock.unlock()
+        if running {
+            disconnects[address] = note
+            armedLock.unlock()
+        } else {
+            armedLock.unlock()
+            note.unregister()
+        }
     }
 
     /// The device left. Both arguments optional for the same reason the
@@ -423,7 +491,8 @@ final class BluetoothWatcher: NSObject {
         let change = Change(name: device.name ?? device.addressString ?? "Bluetooth device",
                             battery: nil, connected: false, isAudio: Self.isAudio(device))
         Task { @MainActor [weak self] in
-            self?.onChange(change)
+            guard let self, self.isRunning else { return }
+            self.onChange(change)
         }
     }
 
@@ -450,8 +519,30 @@ private final class BluetoothNotificationThread: Thread {
     var watcher: BluetoothWatcher?
     /// Held for the thread's lifetime so the token outlives `main()`.
     private var registration: IOBluetoothUserNotification?
+    private let loopLock = NSLock()
+    private var deliveryLoop: CFRunLoop?
+
+    override func cancel() {
+        super.cancel()
+        loopLock.lock()
+        let loop = deliveryLoop
+        loopLock.unlock()
+        if let loop { CFRunLoopStop(loop); CFRunLoopWakeUp(loop) }
+    }
 
     override func main() {
+        loopLock.lock()
+        deliveryLoop = CFRunLoopGetCurrent()
+        loopLock.unlock()
+        defer {
+            registration?.unregister()
+            registration = nil
+            watcher = nil
+            loopLock.lock()
+            deliveryLoop = nil
+            loopLock.unlock()
+        }
+        guard !isCancelled else { return }
         if let watcher {
             registration = IOBluetoothDevice.register(
                 forConnectNotifications: watcher,
@@ -463,6 +554,7 @@ private final class BluetoothNotificationThread: Thread {
         // The keep-alive port is a permanent source, so `run` parks on
         // the mach port wait until a real notification (or never) wakes
         // it instead of re-arming on a timeout.
+        guard !isCancelled else { return }
         let keepAlive = NSMachPort()
         RunLoop.current.add(keepAlive, forMode: .default)
         while !isCancelled {
@@ -484,12 +576,21 @@ final class CapsLockWatcher {
     private var monitors: [Any] = []
     private var active: Bool?
 
+    isolated deinit { stop() }
+
+    func stop() {
+        monitors.forEach { NSEvent.removeMonitor($0) }
+        monitors.removeAll()
+        active = nil
+    }
+
     func start() {
+        guard monitors.isEmpty else { return }
         active = NSEvent.modifierFlags.contains(.capsLock)
         let note: (NSEvent) -> Void = { [weak self] event in
             let on = event.modifierFlags.contains(.capsLock)
             Task { @MainActor [weak self] in
-                guard let self, self.active != on else { return }
+                guard let self, !self.monitors.isEmpty, self.active != on else { return }
                 self.active = on
                 self.onToggle(on)
             }
@@ -517,14 +618,22 @@ final class DisplayWatcher {
     private var observer: NSObjectProtocol?
     private var count: Int = 0
 
+    isolated deinit { stop() }
+
+    func stop() {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+    }
+
     func start() {
+        guard observer == nil else { return }
         count = NSScreen.screens.count
         observer = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, self.observer != nil else { return }
                 let now = NSScreen.screens.count
                 guard now != self.count else { return }
                 let connected = now > self.count

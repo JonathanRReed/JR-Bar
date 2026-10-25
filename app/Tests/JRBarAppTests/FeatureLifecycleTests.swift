@@ -41,6 +41,25 @@ struct FeatureLifecycleTests {
             tank.isOn = false
             await drain()
             stopped(tank.lifecycleResources, feature: contract.id)
+        case "announcements":
+            let owner = NotchAnnouncements()
+            var enabled = true
+            var localSources = 0
+            var bluetooth = 0
+            owner.isAllowed = { enabled }
+            owner.startLocalSources = { localSources += 3 }
+            owner.stopLocalSources = { localSources = 0 }
+            owner.startBluetooth = { bluetooth += 1 }
+            owner.stopBluetooth = { bluetooth -= 1 }
+            for _ in 0..<2 {
+                enabled = true
+                owner.sync()
+                #expect(localSources == 3 && bluetooth == 1)
+                enabled = false
+                owner.sync()
+                #expect(localSources == 0 && bluetooth == 0)
+                #expect(!owner.started && !owner.bluetoothStarted)
+            }
         case "shelf-media":
             let monitor = Monitor()
             let feed = MediaFeed(monitor: monitor)
