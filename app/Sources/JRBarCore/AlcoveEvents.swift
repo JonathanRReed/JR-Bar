@@ -410,6 +410,30 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
         return key[...]
     }
 
+    private static func priority(_ kind: AlcoveNoticeKind) -> Int {
+        switch kind {
+        case .ask: return 3
+        case .timer, .meeting: return 2
+        case .failed: return 1
+        default: return 0
+        }
+    }
+
+    private mutating func parkInterrupted(at now: Date) {
+        guard let shown = current else { return }
+        let shownAt = currentShownAt ?? now
+        let fresh = now.timeIntervalSince(shownAt) < Self.pendingStaleAfter
+        let pendingFresh = pending?.kind == .ask
+            || pendingAt.map { now.timeIntervalSince($0) < Self.pendingStaleAfter } ?? false
+        let outranks = pending.map { Self.priority(shown.kind) > Self.priority($0.kind) } ?? true
+        if fresh && (!pendingFresh || outranks) {
+            wait(shown, at: now)
+            pendingAt = shownAt
+        } else {
+            onEvict?(shown)
+        }
+    }
+
     @discardableResult
     public mutating func offer(_ notice: AlcoveNotice, at now: Date) -> AlcoveCapsuleVerdict {
         recent = recent.filter { now.timeIntervalSince($0.value) < Self.sameKeyCooldown }
@@ -418,6 +442,7 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
         }
         recent[notice.key] = now
         if notice.kind == .ask, current?.kind != .ask {
+            parkInterrupted(at: now)
             current = notice
             currentShownAt = now
             overlay = nil

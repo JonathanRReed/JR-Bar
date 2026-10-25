@@ -79,10 +79,43 @@ struct AlcoveEventsTests {
         for kind in [AlcoveNoticeKind.completed, .timer, .meeting] {
             var queue = AlcoveCapsuleQueue()
             _ = queue.offer(notice(kind, key: "ordinary"), at: t0)
-            let ask = notice(.ask)
+            var ask = notice(.ask)
+            ask.session = "fixture-session"
             #expect(queue.offer(ask, at: t0 + 0.01) == .now)
             #expect(queue.current == ask)
+            let resolved = queue.resolveAsk(session: "fixture-session", request: nil)
+            #expect(resolved)
+            #expect(queue.finish(at: t0 + 2) == .now(notice(kind, key: "ordinary")))
         }
+    }
+
+    @Test("an interrupted timer displaces news but keeps its original age")
+    func interruptedTimerReturns() {
+        var queue = AlcoveCapsuleQueue()
+        let timer = notice(.timer, key: "timer", id: "timer")
+        _ = queue.offer(timer, at: t0)
+        _ = queue.offer(notice(.completed, key: "news", id: "news"), at: t0 + 1)
+        _ = queue.offer(notice(.ask), at: t0 + 2)
+        #expect(queue.pending == timer)
+        #expect(queue.finish(at: t0 + AlcoveCapsuleQueue.pendingStaleAfter) == .idle)
+    }
+
+    @Test("an interrupted notice reports eviction when newer equal priority news waits")
+    func interruptedNoticeFallsBack() {
+        final class Evictions: @unchecked Sendable {
+            let lock = NSLock()
+            var ids: [String] = []
+            func append(_ notice: AlcoveNotice) { lock.withLock { ids.append(notice.id) } }
+        }
+        let evicted = Evictions()
+        var queue = AlcoveCapsuleQueue()
+        queue.onEvict = { evicted.append($0) }
+        _ = queue.offer(notice(.device, key: "device", id: "device"), at: t0)
+        let waiting = notice(.completed, key: "news", id: "news")
+        _ = queue.offer(waiting, at: t0 + 1)
+        _ = queue.offer(notice(.ask), at: t0 + 2)
+        #expect(evicted.ids == ["device"])
+        #expect(queue.finish(at: t0 + 4) == .now(waiting))
     }
 
     @Test("a lone notice shows now; a second queues; a third replaces it — newest wins")
