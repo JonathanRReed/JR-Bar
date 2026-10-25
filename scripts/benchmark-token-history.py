@@ -94,7 +94,7 @@ def worker(root, side, phase):
                 roots["claude"][0], root / "state/old.json", codex_root=roots["codex"][0], since_epoch=since, now=now
             )
         else:
-            totals = index.scan(roots, since_epoch=since, now=now)
+            totals = index.scan(roots, since_epoch=since)
         documents = [usage_history_document(totals.records, provider=p, range_name="30d", now=now) for p in roots]
         return {
             "records": sum(d["records"] for d in documents),

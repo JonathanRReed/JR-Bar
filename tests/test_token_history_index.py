@@ -43,7 +43,7 @@ def legacy(roots):
 
 def compare(index, roots, now):
     old = legacy(roots)
-    totals = index.scan(roots, now=now)
+    totals = index.scan(roots)
     for provider in roots:
         expected = usage_history_document(old, provider=provider, range_name="30d", now=now)
         actual = usage_history_document(totals.records, provider=provider, range_name="30d", now=now)
@@ -74,7 +74,7 @@ def test_rewrite_rotation_duplicates_and_append(tmp_path, monkeypatch):
     compare(index, roots, now)
     # Unchanged opens perform no parser work, even in a new index instance.
     monkeypatch.setattr(usage, "_parse_file", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("reparsed")))
-    TokenHistoryIndex(index.path).scan(roots, now=now)
+    TokenHistoryIndex(index.path).scan(roots)
 
 
 def test_codex_forks_copies_late_ancestor_and_tail(tmp_path):
@@ -478,3 +478,95 @@ def test_a_view_over_its_byte_limit_is_served_without_retaining_it(tmp_path, mon
     assert index.scan({"claude": (root,)}).input_tokens == 100
     assert not index.views
     assert index.view_bytes == 0
+
+
+def test_retention_skips_old_files_prunes_old_rows_and_reads_newest_first(tmp_path, monkeypatch):
+    import os
+
+    from jrbar import token_history_index as module
+
+    now = datetime.fromisoformat("2026-10-25T12:00:00+00:00").timestamp()
+    monkeypatch.setattr(module.time, "time", lambda: now)
+    root = tmp_path / "claude"
+    root.mkdir()
+    for name, stamp, age in [("old", "2024-01-01T00:00:00Z", 400),
+                             ("recent", "2026-10-24T00:00:00Z", 1),
+                             ("newest", "2026-10-25T00:00:00Z", 0)]:
+        path = root / f"{name}.jsonl"
+        path.write_text(claude(name, stamp))
+        os.utime(path, (now - age * 86400, now - age * 86400))
+    parser, calls = usage._parse_file, []
+    def record(path, *args, **kwargs):
+        calls.append(path.stem)
+        return parser(path, *args, **kwargs)
+    monkeypatch.setattr(usage, "_parse_file", record)
+    index = TokenHistoryIndex(tmp_path / "state/history.sqlite3")
+    assert index.scan({"claude": (root,)}).input_tokens == 200
+    assert calls == ["newest", "recent"]
+    monkeypatch.setattr(module.time, "time", lambda: now + 370 * 86400)
+    assert index.scan({"claude": (root,)}).input_tokens == 0
+    with index._connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM raw").fetchone()[0] == 0
+
+
+def test_timezone_change_rebuckets_without_parsing(tmp_path, monkeypatch):
+    import os
+    import time
+    original = os.environ.get("TZ")
+    try:
+        monkeypatch.setenv("TZ", "UTC")
+        time.tzset()
+        root = tmp_path / "claude"
+        root.mkdir()
+        (root / "one.jsonl").write_text(claude("one", "2026-10-25T01:00:00Z"))
+        index = TokenHistoryIndex(tmp_path / "state/history.sqlite3")
+        index.scan({"claude": (root,)})
+        monkeypatch.setattr(usage, "_parse_file", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("reparse")))
+        monkeypatch.setenv("TZ", "America/Chicago")
+        time.tzset()
+        totals = index.scan({"claude": (root,)})
+        assert datetime.fromtimestamp(totals.records[0][3]).day == 24
+        assert totals.input_tokens == 100
+    finally:
+        if original is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", original)
+        time.tzset()
+
+
+def test_compact_schema_idle_scan_makes_no_database_writes(tmp_path, monkeypatch):
+    root = tmp_path / "claude"
+    root.mkdir()
+    (root / "one.jsonl").write_text(claude("one", "2026-10-25T01:00:00Z"))
+    index = TokenHistoryIndex(tmp_path / "state/history.sqlite3")
+    index.scan({"claude": (root,)})
+    connect, connections = index._connect, []
+    def counted():
+        db = connect()
+        connections.append(db)
+        return db
+    # Keep a separate connection open so the WAL remains inspectable.
+    db = connect()
+    try:
+        before = db.execute("PRAGMA data_version").fetchone()
+        monkeypatch.setattr(index, "_connect", counted)
+        for _ in range(6):
+            assert index.scan({"claude": (root,)}).input_tokens == 100
+        assert db.execute("PRAGMA data_version").fetchone() == before
+        assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert db.execute("PRAGMA max_page_count").fetchone()[0] > 65536
+        assert db.execute("SELECT length(dedupe),kind,owner,event FROM raw").fetchone() == (16, None, None, None)
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' OR name='days'").fetchall()
+    finally:
+        db.close()
+
+
+def test_arbitrary_since_filters_before_dedupe(tmp_path):
+    root = tmp_path / "claude"
+    root.mkdir()
+    (root / "a.jsonl").write_text(claude("same", "2026-10-25T01:00:00Z"))
+    (root / "b.jsonl").write_text(claude("same", "2026-10-25T02:00:00Z"))
+    index = TokenHistoryIndex(tmp_path / "state/history.sqlite3")
+    since = datetime.fromisoformat("2026-10-25T01:30:00+00:00").timestamp()
+    assert index.scan({"claude": (root,)}, since_epoch=since).input_tokens == 100

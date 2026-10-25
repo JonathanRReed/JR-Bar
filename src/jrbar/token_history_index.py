@@ -6,6 +6,7 @@ Python retains at most one bounded parse pass and one compact range view.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
@@ -22,7 +23,9 @@ from . import local_token_history as local
 from . import usage_stats as usage
 from .private_io import ensure_private_file
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+RETENTION_SECONDS = 368 * 86400
+MAX_DATABASE_BYTES = 4 * 1024**3
 VIEW_BYTES = 4 * 1024 * 1024
 
 
@@ -37,6 +40,10 @@ class BucketRecord(tuple):
         return row
 
 
+def _digest(value):
+    return hashlib.blake2b(value.encode(), digest_size=16).digest()
+
+
 def semantics():
     return (
         SCHEMA_VERSION,
@@ -44,9 +51,6 @@ def semantics():
         usage.CODEX_CACHE_SEMANTICS_VERSION,
         usage._MALFORMED_SEMANTICS,
         local.PARSER_VERSION,
-        tuple(time.tzname),
-        time.timezone,
-        os.environ.get("TZ"),
     )
 
 
@@ -136,80 +140,104 @@ class TokenHistoryIndex:
             self.view_bytes = 0
 
     def _connect(self):
-        ensure_private_file(self.path)
-        # The journal is created next to an owner-private database. Refuse an
-        # existing foreign/symlink sidecar before SQLite can follow it.
-        for suffix in ("-journal", "-wal", "-shm"):
-            sidecar = Path(str(self.path) + suffix)
-            if sidecar.exists() or sidecar.is_symlink():
-                ensure_private_file(sidecar)
-        db = sqlite3.connect(self.path, timeout=1)
-        db.execute("PRAGMA cache_size=-2048")
-        db.execute("PRAGMA max_page_count=65536")
-        db.execute("PRAGMA temp_store=FILE")
-        db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
-        version = json.dumps(semantics())
-        old = db.execute("SELECT value FROM meta WHERE key='version'").fetchone()
-        if old != (version,):
-            self.views.clear()
-            self.view_bytes = 0
-            for table in ("files", "raw", "events", "hours", "days", "conflicts"):
-                db.execute(f"DROP TABLE IF EXISTS {table}")
-            db.execute("DELETE FROM meta")
-            db.executemany("INSERT INTO meta VALUES (?,?)", [("version", version), ("secret", secrets.token_hex(32))])
-        db.executescript("""
-        CREATE TABLE IF NOT EXISTS files (
-            id TEXT PRIMARY KEY, provider TEXT, root TEXT, ordering TEXT, metadata TEXT);
-        CREATE TABLE IF NOT EXISTS raw (
-            file TEXT, seq INTEGER, provider TEXT, session TEXT, model TEXT,
-            epoch REAL, inp INTEGER, cached INTEGER, created INTEGER, out INTEGER,
-            dedupe TEXT, canonical TEXT, kind TEXT, owner TEXT, parent TEXT,
-            root TEXT, event TEXT, day TEXT, hour TEXT, long_context INTEGER,
-            PRIMARY KEY(file,seq));
-        CREATE INDEX IF NOT EXISTS raw_key ON raw(canonical);
-        CREATE INDEX IF NOT EXISTS raw_own ON raw(owner,event,kind);
-        CREATE INDEX IF NOT EXISTS raw_kind ON raw(kind);
-        CREATE INDEX IF NOT EXISTS raw_parent ON raw(owner) WHERE parent IS NOT NULL;
-        CREATE TABLE IF NOT EXISTS conflicts (dedupe TEXT PRIMARY KEY);
-        CREATE TABLE IF NOT EXISTS events (
-            dedupe TEXT PRIMARY KEY, provider TEXT, session TEXT, model TEXT,
-            epoch REAL, inp INTEGER, cached INTEGER, created INTEGER, out INTEGER,
-            day TEXT, hour TEXT, long_context INTEGER);
-        CREATE TABLE IF NOT EXISTS hours (
-            provider TEXT, session TEXT, model TEXT, day TEXT, hour TEXT,
-            long_context INTEGER, inp INTEGER, cached INTEGER, created INTEGER,
-            out INTEGER, records INTEGER, positive_records INTEGER,
-            PRIMARY KEY(provider,session,model,day,hour,long_context));
-        CREATE TABLE IF NOT EXISTS days (
-            provider TEXT, session TEXT, model TEXT, day TEXT,
-            long_context INTEGER, inp INTEGER, cached INTEGER, created INTEGER,
-            out INTEGER, records INTEGER, positive_records INTEGER,
-            PRIMARY KEY(provider,session,model,day,long_context));
-        """)
-        for table, calendar in (("hours", "day,hour"), ("days", "day")):
-            keys = f"provider,session,model,{calendar},long_context"
-            values = ",".join("NEW." + key for key in keys.split(","))
-            where = " AND ".join(f"{key}=OLD.{key}" for key in keys.split(","))
-            db.executescript(f"""
-            CREATE TRIGGER IF NOT EXISTS add_{table} AFTER INSERT ON events BEGIN
-                INSERT INTO {table} ({keys},inp,cached,created,out,records,positive_records)
-                VALUES ({values},NEW.inp,NEW.cached,NEW.created,NEW.out,1,CASE WHEN NEW.inp+NEW.cached+NEW.created+NEW.out>0 THEN 1 ELSE 0 END)
-                ON CONFLICT ({keys}) DO UPDATE SET
-                    inp=inp+NEW.inp,cached=cached+NEW.cached,
-                    created=created+NEW.created,out=out+NEW.out,records=records+1,
-                    positive_records=positive_records+CASE WHEN NEW.inp+NEW.cached+NEW.created+NEW.out>0 THEN 1 ELSE 0 END;
-            END;
-            CREATE TRIGGER IF NOT EXISTS remove_{table} AFTER DELETE ON events BEGIN
-                UPDATE {table} SET inp=inp-OLD.inp,cached=cached-OLD.cached,
-                    created=created-OLD.created,out=out-OLD.out,records=records-1,
-                    positive_records=positive_records-CASE WHEN OLD.inp+OLD.cached+OLD.created+OLD.out>0 THEN 1 ELSE 0 END
-                    WHERE {where};
-                DELETE FROM {table} WHERE {where} AND records=0;
-            END;
-            """)
-        db.execute("CREATE TEMP TABLE dirty (key TEXT PRIMARY KEY)")
-        db.commit()
-        return db
+        # Creating a file needs durability; reopening an unchanged cache does not.
+        if not self.path.exists():
+            ensure_private_file(self.path)
+        from .private_io import _private_parent, _require_leaf_identity, _require_private_leaf
+
+        with _private_parent(self.path) as (target, parent, name):
+            expected = _require_private_leaf(target, parent, name)
+            if expected is None or expected.st_size > MAX_DATABASE_BYTES:
+                raise sqlite3.DatabaseError("history cache exceeds its size limit")
+            for suffix in ("-journal", "-wal", "-shm"):
+                sidecar = Path(str(target) + suffix)
+                _require_private_leaf(sidecar, parent, sidecar.name)
+            db = sqlite3.connect(target, timeout=0.05)
+            try:
+                _require_leaf_identity(target, parent, name, expected)
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("PRAGMA synchronous=NORMAL")
+                db.execute("PRAGMA cache_size=-32768")
+                db.execute(f"PRAGMA max_page_count={MAX_DATABASE_BYTES // 4096}")
+                db.execute("PRAGMA temp_store=MEMORY")
+                db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID")
+                version = json.dumps(semantics())
+                old = db.execute("SELECT value FROM meta WHERE key='version'").fetchone()
+                if old != (version,):
+                    self.views.clear()
+                    self.view_bytes = 0
+                    for table in ("files", "raw", "events", "hours", "days", "conflicts"):
+                        db.execute(f"DROP TABLE IF EXISTS {table}")
+                    db.execute("DELETE FROM meta")
+                    db.executemany("INSERT INTO meta VALUES (?,?)", [("version", version), ("secret", secrets.token_hex(32))])
+                db.executescript("""
+                CREATE TABLE IF NOT EXISTS files (
+                    id INTEGER PRIMARY KEY, key TEXT UNIQUE, provider TEXT, root TEXT, ordering TEXT, metadata TEXT);
+                CREATE TABLE IF NOT EXISTS raw (
+                    file INTEGER, seq INTEGER, provider TEXT, session TEXT, model TEXT,
+                    epoch REAL, inp INTEGER, cached INTEGER, created INTEGER, out INTEGER,
+                    dedupe BLOB, canonical BLOB, kind TEXT, owner TEXT, parent TEXT,
+                    root TEXT, event TEXT, day TEXT, hour TEXT, long_context INTEGER,
+                    PRIMARY KEY(file,seq)) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS conflicts (dedupe BLOB PRIMARY KEY) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS events (
+                    dedupe BLOB PRIMARY KEY, provider TEXT, session TEXT, model TEXT,
+                    epoch REAL, inp INTEGER, cached INTEGER, created INTEGER, out INTEGER,
+                    day TEXT, hour TEXT, long_context INTEGER) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS hours (
+                    provider TEXT, session TEXT, model TEXT, day TEXT, hour TEXT,
+                    long_context INTEGER, inp INTEGER, cached INTEGER, created INTEGER,
+                    out INTEGER, records INTEGER, positive_records INTEGER,
+                    PRIMARY KEY(provider,session,model,day,hour,long_context)) WITHOUT ROWID;
+                CREATE TEMP TABLE dirty (key BLOB PRIMARY KEY) WITHOUT ROWID;
+                """)
+                db.commit()
+                return db
+            except BaseException:
+                db.close()
+                raise
+
+    def _indexes(self, db):
+        # A cold load creates these once, after inserting its first batch.
+        db.execute("CREATE INDEX IF NOT EXISTS raw_key ON raw(canonical)")
+        db.execute("CREATE INDEX IF NOT EXISTS raw_own ON raw(owner,event,kind)")
+        db.execute("CREATE INDEX IF NOT EXISTS raw_kind ON raw(kind)")
+        db.execute("CREATE INDEX IF NOT EXISTS raw_parent ON raw(owner) WHERE parent IS NOT NULL")
+        db.execute("CREATE INDEX IF NOT EXISTS events_hour ON events(provider,session,model,day,hour,long_context)")
+
+    def _reconcile(self, db):
+        self._indexes(db)
+        self._lineage(db)
+        keys = "provider,session,model,day,hour,long_context"
+        db.execute(f"CREATE TEMP TABLE affected AS SELECT DISTINCT {keys} FROM events WHERE dedupe IN (SELECT key FROM dirty)")
+        db.execute("DELETE FROM events WHERE dedupe IN (SELECT key FROM dirty)")
+        db.execute("DELETE FROM conflicts WHERE dedupe IN (SELECT key FROM dirty)")
+        db.execute("""INSERT INTO conflicts SELECT canonical FROM raw
+            WHERE canonical IN (SELECT key FROM dirty) GROUP BY canonical HAVING MIN(day)!=MAX(day)""")
+        db.execute("""INSERT INTO events
+            SELECT canonical,provider,session,model,epoch,inp,cached,created,out,day,hour,long_context FROM (
+                SELECT r.*,ROW_NUMBER() OVER (PARTITION BY canonical ORDER BY f.ordering,r.seq) AS position
+                FROM raw r JOIN files f ON f.id=r.file
+                WHERE canonical IN (SELECT key FROM dirty) AND canonical NOT IN (SELECT dedupe FROM conflicts)
+            ) WHERE position=1""")
+        db.execute(f"INSERT INTO affected SELECT DISTINCT {keys} FROM events WHERE dedupe IN (SELECT key FROM dirty)")
+        db.execute(f"DELETE FROM hours WHERE ({keys}) IN (SELECT {keys} FROM affected)")
+        db.execute(f"""INSERT INTO hours SELECT {keys},SUM(inp),SUM(cached),SUM(created),SUM(out),COUNT(*),
+            SUM(CASE WHEN inp+cached+created+out>0 THEN 1 ELSE 0 END) FROM events
+            WHERE ({keys}) IN (SELECT {keys} FROM affected) GROUP BY {keys}""")
+        db.execute("DROP TABLE affected")
+
+    def _rebucket(self, db):
+        zone = json.dumps([time.tzname, time.timezone, os.environ.get("TZ")])
+        if db.execute("SELECT value FROM meta WHERE key='timezone'").fetchone() == (zone,):
+            return False
+        # Timezone changes touch buckets only. Raw timestamps remain UTC epochs.
+        db.create_function("local_day", 1, lambda epoch: datetime.fromtimestamp(epoch).date().isoformat())
+        db.create_function("local_hour", 1, lambda epoch: datetime.fromtimestamp(epoch).strftime("%Y-%m-%dT%H:00"))
+        db.execute("INSERT OR IGNORE INTO dirty SELECT canonical FROM raw")
+        db.execute("UPDATE raw SET day=local_day(epoch),hour=local_hour(epoch)")
+        db.execute("INSERT OR REPLACE INTO meta VALUES ('timezone',?)", (zone,))
+        return True
 
     def _remove(self, db, key):
         db.execute("INSERT OR IGNORE INTO dirty SELECT canonical FROM raw WHERE file=?", (key,))
@@ -224,12 +252,13 @@ class TokenHistoryIndex:
                 provider, session, model, epoch, inp, cached, created, out, dedupe = row
                 stamp = datetime.fromtimestamp(epoch)
                 identity = usage._codex_event_identity(dedupe) if provider == "codex" else None
-                kind, owner, parent, root, event = identity or ("", "", None, None, "")
+                kind, owner, parent, root, event = identity or (None, None, None, None, None)
                 yield (
                     key,
                     seq + offset,
-                    *row,
-                    dedupe,
+                    *row[:8],
+                    _digest(dedupe),
+                    _digest(dedupe),
                     kind,
                     owner,
                     parent,
@@ -256,7 +285,9 @@ class TokenHistoryIndex:
         for file, seq, dedupe, previous in db.execute(
             "SELECT file,seq,dedupe,canonical FROM raw WHERE kind IN ('inherited','boundary')"
         ):
-            kind, session, parent, root, event = usage._codex_event_identity(dedupe)
+            kind, session, parent, root, event = db.execute(
+                "SELECT kind,owner,parent,root,event FROM raw WHERE file=? AND seq=?", (file, seq)
+            ).fetchone()
             owner, visited, canonical = parent, set(), None
             while owner is not None and owner not in visited:
                 visited.add(owner)
@@ -275,12 +306,12 @@ class TokenHistoryIndex:
                 ).fetchone()
                 canonical = own[0] if own else None
             if canonical is None:
-                canonical = dedupe if kind == "boundary" else f"codex-unresolved:{parent or root or session}:{event}"
+                canonical = dedupe if kind == "boundary" else _digest(f"codex-unresolved:{parent or root or session}:{event}")
             if canonical != previous:
                 db.executemany("INSERT OR IGNORE INTO dirty VALUES (?)", [(previous,), (canonical,)])
                 db.execute("UPDATE raw SET canonical=? WHERE file=? AND seq=?", (canonical, file, seq))
 
-    def scan(self, roots, *, since_epoch=0.0, budget=None, now=None, cached_only=False, source_bindings=None):
+    def scan(self, roots, *, since_epoch=0.0, budget=None, cached_only=False, source_bindings=None):
         """Update changed files and return compact records for one window.
 
         All roots of each provider are reconciled together, so duplicates
@@ -321,6 +352,15 @@ class TokenHistoryIndex:
                         ):
                             return None
                     return self._totals(db, roots, since_epoch)
+                changed = self._rebucket(db) or changed
+                cutoff = time.time() - RETENTION_SECONDS
+                prune_day = str(int(cutoff // 86400))
+                if db.execute("SELECT value FROM meta WHERE key='pruned'").fetchone() != (prune_day,):
+                    db.execute("INSERT OR IGNORE INTO dirty SELECT canonical FROM raw WHERE epoch<?", (cutoff,))
+                    if db.execute("SELECT 1 FROM dirty LIMIT 1").fetchone():
+                        db.execute("DELETE FROM raw WHERE epoch<?", (cutoff,))
+                        changed = True
+                    db.execute("INSERT OR REPLACE INTO meta VALUES ('pruned',?)", (prune_day,))
                 configured = {
                     f"{provider}:{os.path.realpath(root)}" for provider, paths in roots.items() for root in paths
                 }
@@ -339,11 +379,18 @@ class TokenHistoryIndex:
                         root_key = f"{provider}:{os.path.realpath(root)}"
                         present = set()
                         attempted = False
-                        for candidate in source.candidates:
+                        for candidate in sorted(source.candidates, key=lambda c: -c.info.st_mtime_ns):
+                            if candidate.info.st_mtime < cutoff:
+                                continue
                             key = root_key + ":" + usage._cache_file_key(provider, candidate.info)
+                            saved = db.execute("SELECT metadata,ordering,id FROM files WHERE key=?", (key,)).fetchone()
+                            if saved:
+                                key = saved[2]
+                            if not saved:
+                                key = db.execute("INSERT INTO files(key,provider,root,ordering) VALUES (?,?,?,?) RETURNING id",
+                                    (key, provider, root_key, "")).fetchone()[0]
                             present.add(key)
-                            saved = db.execute("SELECT metadata,ordering FROM files WHERE id=?", (key,)).fetchone()
-                            entry = json.loads(saved[0]) if saved else None
+                            entry = json.loads(saved[0]) if saved and saved[0] else None
                             info = candidate.info
                             suffix_rank = int(candidate.path.suffix != ".sqlite")
                             ordering = f"{root_rank:04}:{suffix_rank}:{candidate.path}"
@@ -407,8 +454,9 @@ class TokenHistoryIndex:
                                 state.unreadable_files += 1
                                 continue
                             if not append:
-                                self._remove(db, key)
-                            self._append(db, key, result.records)
+                                db.execute("INSERT OR IGNORE INTO dirty SELECT canonical FROM raw WHERE file=?", (key,))
+                                db.execute("DELETE FROM raw WHERE file=?", (key,))
+                            self._append(db, key, (row for row in result.records if row[3] >= cutoff))
                             metadata = {
                                 "size": result.parsed_size,
                                 "device": info.st_dev,
@@ -425,8 +473,8 @@ class TokenHistoryIndex:
                                 **usage._resume_extras_of(result, info),
                             }
                             db.execute(
-                                "INSERT OR REPLACE INTO files VALUES (?,?,?,?,?)",
-                                (key, provider, root_key, ordering, json.dumps(metadata)),
+                                "UPDATE files SET provider=?,root=?,ordering=?,metadata=? WHERE id=?",
+                                (provider, root_key, ordering, json.dumps(metadata), key),
                             )
                             state.files_read += 1
                             state.malformed_lines += metadata["malformed_lines"]
@@ -447,21 +495,7 @@ class TokenHistoryIndex:
                     db.rollback()
                     return usage.UsageTotals()
                 if changed:
-                    self._lineage(db)
-                    for (key,) in db.execute("SELECT key FROM dirty"):
-                        db.execute("DELETE FROM events WHERE dedupe=?", (key,))
-                        db.execute("DELETE FROM conflicts WHERE dedupe=?", (key,))
-                        days = db.execute("SELECT MIN(day),MAX(day) FROM raw WHERE canonical=?", (key,)).fetchone()
-                        if days[0] != days[1]:
-                            db.execute("INSERT INTO conflicts VALUES (?)", (key,))
-                            continue
-                        db.execute(
-                            """INSERT INTO events
-                            SELECT r.canonical,r.provider,r.session,r.model,r.epoch,r.inp,r.cached,r.created,r.out,r.day,r.hour,r.long_context
-                            FROM raw r JOIN files f ON f.id=r.file WHERE r.canonical=?
-                            ORDER BY f.ordering,r.seq LIMIT 1""",
-                            (key,),
-                        )
+                    self._reconcile(db)
                     db.execute(
                         "INSERT INTO meta VALUES ('generation','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1"
                     )
@@ -470,9 +504,9 @@ class TokenHistoryIndex:
                 db.commit()
                 for provider, source_coverage in coverage.items():
                     complete = source_coverage.status in {usage.UsageSourceStatus.OK, usage.UsageSourceStatus.MISSING}
-                    db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", ("complete:" + provider, str(complete)))
+                    db.execute("INSERT INTO meta VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE value!=excluded.value", ("complete:" + provider, str(complete)))
                     db.execute(
-                        "INSERT OR REPLACE INTO meta VALUES (?,?)",
+                        "INSERT INTO meta VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE value!=excluded.value",
                         ("roots:" + provider, json.dumps([os.path.realpath(root) for root in roots[provider]])),
                     )
                 db.commit()
@@ -492,7 +526,7 @@ class TokenHistoryIndex:
             root = "codex:" + os.path.realpath(roots["codex"][0])
             latest = (0, [])
             for (metadata,) in db.execute("SELECT metadata FROM files WHERE root=?", (root,)):
-                entry = json.loads(metadata)
+                entry = json.loads(metadata) if metadata else {}
                 if entry.get("windows") and entry.get("mtime_ns", 0) > latest[0]:
                     latest = entry["mtime_ns"], entry["windows"]
             totals.codex_rate_limit_evidence = tuple(latest[1])
@@ -506,7 +540,14 @@ class TokenHistoryIndex:
             self.view_bytes = 0
             self.generation = generation
         providers = tuple(roots)
-        view_key = (providers, datetime.fromtimestamp(since_epoch).date().isoformat())
+        view_key = (providers, since_epoch, tuple(time.tzname), time.timezone)
+        start = datetime.fromtimestamp(since_epoch)
+        if since_epoch and (start.hour or start.minute or start.second or start.microsecond):
+            return [BucketRecord(row[:9], 1, bool(row[9])) for row in db.execute(
+                """SELECT canonical,provider,session,model,epoch,inp,cached,created,out,long_context FROM (
+                    SELECT r.*,ROW_NUMBER() OVER (PARTITION BY canonical ORDER BY f.ordering,r.seq) AS position
+                    FROM raw r JOIN files f ON f.id=r.file WHERE epoch>=?
+                ) WHERE position=1""", (since_epoch,)) for row in [(row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[0], row[9])] if row[0] in providers]
         records = self.views.get(view_key)
         if records is None:
             records = []
@@ -515,7 +556,7 @@ class TokenHistoryIndex:
                         FROM hours WHERE provider IN ({marks}) AND day>=?
                         GROUP BY provider,session,model,hour,long_context ORDER BY hour,model,session"""
             for p, session, model, hour, inp, cached, created, out, count, long, positive in db.execute(
-                query, (*providers, view_key[1])
+                query, (*providers, start.date().isoformat())
             ):
                 records.append(
                     BucketRecord(
@@ -538,9 +579,9 @@ class TokenHistoryIndex:
             for (dedupe,) in db.execute("SELECT dedupe FROM conflicts"):
                 row = db.execute(
                     """SELECT r.provider,r.session,r.model,r.epoch,r.inp,r.cached,r.created,r.out,r.canonical,r.long_context
-                    FROM raw r JOIN files f ON f.id=r.file WHERE r.canonical=? AND r.day>=?
+                    FROM raw r JOIN files f ON f.id=r.file WHERE r.canonical=? AND r.epoch>=?
                     ORDER BY f.ordering,r.seq LIMIT 1""",
-                    (dedupe, view_key[1]),
+                    (dedupe, since_epoch),
                 ).fetchone()
                 if row and row[0] in providers:
                     records.append(BucketRecord(row[:9], 1, bool(row[9])))
@@ -609,7 +650,6 @@ def scan_history(
         roots,
         since_epoch=since_epoch,
         budget=budget,
-        now=now,
         source_bindings={p: allowed[p] for p in roots},
     )
 
