@@ -1241,6 +1241,10 @@ final class FoldToy: Toy {
     private func ensureOverlay() -> FoldOverlayWindow? {
         guard !isShutdown else { return nil }
         if let overlay { return overlay }
+        if rendererFailed {
+            guard CACurrentMediaTime() - rendererFailedAt >= Self.rendererRetryCooldown else { return nil }
+            rendererFailed = false
+        }
         guard let screen = FoldOverlayWindow.builtinScreen() else { return nil }
         do {
             let overlay = try FoldOverlayWindow(screen: screen)

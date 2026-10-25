@@ -86,8 +86,7 @@ private func foldLogThrottled(_ message: String) {
 /// Metal source takes long enough to drop frames, so the toy asks for it
 /// off the main thread the moment it is on (`prewarm`); a renderer made
 /// later takes the finished pipelines instead of compiling on the first
-/// gesture. A failed compile is not kept, so the renderer's own retry
-/// still has something to retry.
+/// gesture. Failures stay visible until the retry cooldown expires.
 final class FoldShaderCache: @unchecked Sendable {
     static let shared = FoldShaderCache()
 
@@ -100,6 +99,9 @@ final class FoldShaderCache: @unchecked Sendable {
     private let lock = NSLock()
     private var compiledByFormat: [UInt: Compiled] = [:]
     private var warming: Set<UInt> = []
+    private var failures: [UInt: (error: Error, at: TimeInterval)] = [:]
+    var clock: @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    static let retryCooldown: TimeInterval = 30
     private var waiters: [UInt: [@Sendable () -> Void]] = [:]
     /// How many times the source was compiled — the tests prove a second
     /// ask is free.
@@ -121,6 +123,10 @@ final class FoldShaderCache: @unchecked Sendable {
             lock.unlock()
             return done
         }
+        if let failure = failures[pixelFormat.rawValue], clock() - failure.at < Self.retryCooldown {
+            lock.unlock()
+            throw failure.error
+        }
         let busy = warming.contains(pixelFormat.rawValue)
         if !busy && !Thread.isMainThread { warming.insert(pixelFormat.rawValue) }
         lock.unlock()
@@ -138,6 +144,7 @@ final class FoldShaderCache: @unchecked Sendable {
             lock.lock()
             compilations += 1
             compiledByFormat[pixelFormat.rawValue] = built
+            failures.removeValue(forKey: pixelFormat.rawValue)
             warming.remove(pixelFormat.rawValue)
             let callbacks = waiters.removeValue(forKey: pixelFormat.rawValue) ?? []
             lock.unlock()
@@ -145,6 +152,7 @@ final class FoldShaderCache: @unchecked Sendable {
             return built
         } catch {
             lock.lock()
+            failures[pixelFormat.rawValue] = (error, clock())
             warming.remove(pixelFormat.rawValue)
             let callbacks = waiters.removeValue(forKey: pixelFormat.rawValue) ?? []
             lock.unlock()
@@ -160,7 +168,8 @@ final class FoldShaderCache: @unchecked Sendable {
 
     func prewarm(pixelFormat: MTLPixelFormat, completion: (@Sendable () -> Void)?) {
         lock.lock()
-        if compiledByFormat[pixelFormat.rawValue] != nil {
+        let coolingDown = failures[pixelFormat.rawValue].map { clock() - $0.at < Self.retryCooldown } ?? false
+        if compiledByFormat[pixelFormat.rawValue] != nil || coolingDown {
             lock.unlock()
             completion?()
             return

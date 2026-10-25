@@ -476,6 +476,29 @@ import Testing
         #expect(cache.compileCount == 1)
     }
 
+    @Test func failureWithoutAWaiterRespectsCooldown() async {
+        let cache = FoldShaderCache()
+        let record = Record()
+        cache.clock = { 100 }
+        cache.compile = { _ in
+            record.note(Thread.isMainThread)
+            throw FoldRendererError.noDevice
+        }
+        _ = await Task.detached {
+            #expect(throws: FoldRendererError.self) { try cache.compiled(pixelFormat: .bgra8Unorm) }
+        }.value
+        await withCheckedContinuation { continuation in
+            cache.prewarm(pixelFormat: .bgra8Unorm) { continuation.resume() }
+        }
+        #expect(throws: FoldRendererError.self) { try FoldRenderer(pixelFormat: .bgra8Unorm, cache: cache) }
+        #expect(record.onMain.count == 1)
+        cache.clock = { 130 }
+        await withCheckedContinuation { continuation in
+            cache.prewarm(pixelFormat: .bgra8Unorm) { continuation.resume() }
+        }
+        #expect(record.onMain.count == 2)
+    }
+
     @Test func prewarmCompilesOffTheMainThread() throws {
         let cache = FoldShaderCache()
         let record = Record()
