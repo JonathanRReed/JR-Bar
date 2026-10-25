@@ -449,11 +449,13 @@ struct NotchAskFlowTests {
         #expect(toy.capsuleQueue.pending == nil, "nothing parked behind the ask")
         #expect(toy.activeCapsule?.id == "a")
 
-        // News up, an ask waiting behind it: the device notice is
-        // outranked at the door, so the island will not say it.
+        // One ask up and another waiting: the device notice goes to the pill.
         let (other, store2, _) = makeToy(state: liveState())
         defer { withExtendedLifetime(store2) {} }
-        other.offer(news(.completed, id: "c"))
+        var firstAsk = askNotice()
+        firstAsk.id = "first-ask"
+        firstAsk.key = "ask:first"
+        other.offer(firstAsk)
         other.offer(askNotice())
         #expect(other.capsuleQueue.pending?.kind == .ask)
         #expect(!other.presentSystemNotice(news(.device, id: "d")))

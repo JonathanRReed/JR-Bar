@@ -74,6 +74,22 @@ struct AlcoveEventsTests {
 
     // MARK: Queue
 
+    @Test("a waiting ask refuses ordinary offers without spending their keys")
+    func waitingAskKeepsItsPlace() {
+        var queue = AlcoveCapsuleQueue()
+        let first = notice(.ask, key: "ask:first", id: "first")
+        let second = notice(.ask, key: "ask:second", id: "second")
+        let news = notice(.completed, key: "news", id: "news")
+        #expect(queue.offer(first, at: t0) == .now)
+        #expect(queue.offer(second, at: t0) == .queued)
+        #expect(queue.offer(news, at: t0) == .suppressed)
+        #expect(queue.pending == second)
+        #expect(queue.recent[news.key] == nil)
+        #expect(queue.finish(at: t0 + 2) == .now(second))
+        #expect(queue.offer(news, at: t0 + 2) == .queued)
+        #expect(queue.finish(at: t0 + 4) == .now(news))
+    }
+
     @Test("asks interrupt news, timers and meetings without a gap")
     func askInterrupts() {
         for kind in [AlcoveNoticeKind.completed, .timer, .meeting] {

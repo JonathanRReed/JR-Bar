@@ -303,7 +303,7 @@ public enum AlcoveCapsuleVerdict: Equatable, Sendable {
     case after(TimeInterval)
     /// A capsule is up; this one waits. At most one waits — newest wins.
     case queued
-    /// Same kind and subject inside the cooldown: strobe, dropped.
+    /// A repeat inside the cooldown, or ordinary news behind a waiting ask.
     case suppressed
 }
 
@@ -439,6 +439,8 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
 
     @discardableResult
     public mutating func offer(_ notice: AlcoveNotice, at now: Date) -> AlcoveCapsuleVerdict {
+        // A refused notice must not displace an ask or spend its cooldown.
+        if pending?.kind == .ask, notice.kind != .ask { return .suppressed }
         recent = recent.filter { now.timeIntervalSince($0.value) < Self.sameKeyCooldown }
         if let seen = recent[notice.key], now.timeIntervalSince(seen) < Self.sameKeyCooldown {
             return .suppressed
