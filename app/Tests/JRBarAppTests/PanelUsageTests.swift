@@ -11,6 +11,8 @@ struct PanelUsageTests {
     @MainActor
     final class Log {
         var calls: [String] = []
+        let waiting = TestEvents<Void>()
+        let requests = TestEvents<Void>()
     }
 
     private func liveCore(asks: [CoreAsk] = []) -> CoreModel {
@@ -24,34 +26,33 @@ struct PanelUsageTests {
         return core
     }
 
-    private func makeStore(_ core: CoreModel, asked: Log) -> PanelStore {
+    private func makeStore(_ core: CoreModel, asked: Log, clock: TestEvents<Void>? = nil) -> PanelStore {
         let store = PanelStore(core: core, draftsDefaults: UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.tests"))!,
                                screenBarShown: false)
-        store.sparklineWait = 0.05
+        store.sparklineSleep = { _ in
+            if let clock {
+                asked.waiting.send(())
+                _ = try await clock.next()
+            }
+        }
         store.fetchUsageHistory = { provider, _ in
             asked.calls.append(provider)
+            asked.requests.send(())
             throw CoreClientError.notConnected
         }
         return store
     }
 
-    /// Polls until `until` holds. The deadline is generous because a full
-    /// parallel run can keep the main actor busy for seconds at a time;
-    /// a passing wait returns as soon as the condition does.
-    private func settle(within seconds: TimeInterval = 30, _ until: () -> Bool) async {
-        let deadline = Date().addingTimeInterval(seconds)
-        while !until(), Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-    }
-
     @Test("the sparklines are asked for a beat after the panel opens, not on the way to showing it")
-    func sparklinesWaitABeat() async {
+    func sparklinesWaitABeat() async throws {
         let asked = Log()
-        let store = makeStore(liveCore(), asked: asked)
+        let clock = TestEvents<Void>()
+        let store = makeStore(liveCore(), asked: asked, clock: clock)
         store.panelDidOpen()
-        #expect(asked.calls.isEmpty, "nothing queues ahead of the panel's first clicks")
-        await settle(within: 90) { !asked.calls.isEmpty }
+        _ = try await asked.waiting.next()
+        #expect(asked.calls.isEmpty)
+        clock.send(())
+        _ = try await asked.requests.next()
         #expect(asked.calls == ["claude"])
         store.panelDidClose()
     }
@@ -59,23 +60,27 @@ struct PanelUsageTests {
     @Test("a panel closed within the beat asks for nothing")
     func closedBeforeTheBeat() async throws {
         let asked = Log()
-        let store = makeStore(liveCore(), asked: asked)
+        let clock = TestEvents<Void>()
+        let store = makeStore(liveCore(), asked: asked, clock: clock)
         store.panelDidOpen()
+        let pending = try #require(store.sparklineWork)
         store.panelDidClose()
-        try await Task.sleep(for: .milliseconds(200))
+        await pending.value
         #expect(asked.calls.isEmpty)
     }
 
     @Test("no sparklines while an ask is open: every usage_history waits in line ahead of its answer")
     func noSparklinesWithAnAsk() async throws {
         let asked = Log()
+        let clock = TestEvents<Void>()
         let ask = CoreAsk(session: "claude:a", kind: "permission", summary: "Run", answerable: true)
-        let store = makeStore(liveCore(asks: [ask]), asked: asked)
+        let store = makeStore(liveCore(asks: [ask]), asked: asked, clock: clock)
         store.panelDidOpen()
-        try await Task.sleep(for: .milliseconds(200))
+        let pending = try #require(store.sparklineWork)
+        clock.send(())
+        await pending.value
         #expect(asked.calls.isEmpty)
         store.refreshSparklines(force: true)
-        try await Task.sleep(for: .milliseconds(50))
         #expect(asked.calls.isEmpty, "the ready event waits for the ask too")
         store.panelDidClose()
         #expect(PanelStore.wantsSparklines(live: true, asksOpen: false))

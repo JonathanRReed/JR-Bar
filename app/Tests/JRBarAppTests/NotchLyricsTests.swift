@@ -126,25 +126,14 @@ struct NotchLyricsTests {
         store.enabled = { true }
         store.note(media: media)
         #expect(!store.inFlight.isEmpty)
-        // The lookup starts on the main actor, which a loaded parallel
-        // run can hold for seconds; the wait ends as soon as it lands.
-        let deadline = Date().addingTimeInterval(60)
-        while LyricsRecordingProtocol.hosts(for: media.title).isEmpty, Date() < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        await finishLookups(store)
         #expect(LyricsRecordingProtocol.hosts(for: media.title).first == "lrclib.net")
     }
 
     // MARK: A failed lookup is not "no lyrics"
 
-    /// Polls `condition` on the main actor until it holds or the deadline
-    /// passes. The lookup runs on a task of its own; nothing here sleeps
-    /// for a fixed time.
-    private func wait(upTo seconds: TimeInterval = 60, until condition: () -> Bool) async {
-        let deadline = Date().addingTimeInterval(seconds)
-        while !condition(), Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(5))
-        }
+    private func finishLookups(_ store: LyricsStore) async {
+        for task in store.lookupTasks.values { await task.value }
     }
 
     @Test("a lookup that could not reach LRCLIB is not remembered as no lyrics")
@@ -158,7 +147,7 @@ struct NotchLyricsTests {
         let store = LyricsStore(session: LyricsScriptedProtocol.session(), diskURL: url)
         store.enabled = { true }
         store.note(media: media)
-        await wait { LyricsScriptedProtocol.requests(for: title) >= 2 && store.inFlight.isEmpty }
+        await finishLookups(store)
         #expect(LyricsScriptedProtocol.requests(for: title) == 2, "both endpoints were asked")
         #expect(store.inFlight.isEmpty)
         #expect(store.lyrics == nil)
@@ -233,11 +222,11 @@ struct NotchLyricsTests {
         let trackB = AlcoveMedia(title: second, artist: "Nobody", playing: true)
 
         store.note(media: trackA)
-        await wait { store.inFlight.isEmpty }
+        await finishLookups(store)
         #expect(LyricsScriptedProtocol.requests(for: first) == 2)
         clock.advance(1)
         store.note(media: trackB)
-        await wait { store.inFlight.isEmpty }
+        await finishLookups(store)
         #expect(LyricsScriptedProtocol.requests(for: second) == 2)
 
         // Skipping back to A inside its cool-down asks nothing.
@@ -249,9 +238,9 @@ struct NotchLyricsTests {
         // Past it, nothing was memoized: B and then A ask again.
         clock.advance(LyricsStore.retryCooldown + 1)
         store.note(media: trackB)
-        await wait { store.inFlight.isEmpty }
+        await finishLookups(store)
         store.note(media: trackA)
-        await wait { store.inFlight.isEmpty }
+        await finishLookups(store)
         #expect(LyricsScriptedProtocol.requests(for: second) == 4)
         #expect(LyricsScriptedProtocol.requests(for: first) == 4)
     }
@@ -269,7 +258,7 @@ struct NotchLyricsTests {
         let playing = AlcoveMedia(title: title, artist: "Nobody", playing: true)
         let paused = AlcoveMedia(title: title, artist: "Nobody", playing: false)
         store.note(media: playing)
-        await wait { store.inFlight.isEmpty }
+        await finishLookups(store)
         #expect(LyricsScriptedProtocol.requests(for: title) == 2)
 
         clock.advance(10)
@@ -279,7 +268,7 @@ struct NotchLyricsTests {
         LyricsScriptedProtocol.script(title, get: Self.reply(200, Self.syncedRecord), search: .failure)
         clock.advance(LyricsStore.retryCooldown)
         store.note(media: playing)
-        await wait { store.inFlight.isEmpty }
+        await finishLookups(store)
         #expect(LyricsScriptedProtocol.requests(for: title, path: "/api/get") == 2)
         #expect(store.lyrics?.lines.first?.text == "la", "the retry's answer publishes")
         store.note(media: paused)
@@ -297,7 +286,7 @@ struct NotchLyricsTests {
         let store = LyricsStore(session: LyricsScriptedProtocol.session(), diskURL: url)
         store.enabled = { true }
         store.note(media: media)
-        await wait { store.inFlight.isEmpty }
+        await finishLookups(store)
         #expect(LyricsScriptedProtocol.requests(for: title) == 2)
         #expect(LyricsDiskCache(url: url).lookup(query.cacheKey) == .some(nil))
 
@@ -320,7 +309,7 @@ struct NotchLyricsTests {
         let store = LyricsStore(session: LyricsScriptedProtocol.session(), diskURL: url)
         store.enabled = { true }
         store.note(media: media)
-        await wait { store.inFlight.isEmpty }
+        await finishLookups(store)
         #expect(store.lyrics?.lines.first?.text == "la")
         let stored = LyricsDiskCache(url: url).lookup(query.cacheKey)
         #expect(stored??.lines.first?.text == "la")
