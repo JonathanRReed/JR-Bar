@@ -101,6 +101,7 @@ def test_the_other_providers_carry_no_outcome(tmp_path) -> None:
 
 
 def test_a_fresh_look_at_the_keychain_item_skips_the_sixty_second_cache(monkeypatch) -> None:
+    monkeypatch.setattr(provider_reconnect, "_keychain_metadata_allowed", lambda _: True)
     stamps = iter(("Jan 01 00:00:00 2026", "Jan 02 00:00:00 2026"))
     looks: list[list[str]] = []
 

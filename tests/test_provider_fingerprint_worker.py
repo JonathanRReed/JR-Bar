@@ -61,3 +61,37 @@ def test_auth_timer_fingerprints_off_main_without_holding_service_lock(tmp_path,
     assert not worker.is_alive()
     assert False in calls
     service.close()
+
+
+def test_metadata_worker_requires_tool_consent_and_unlocked_keychain(tmp_path, monkeypatch):
+    from jrbar import credentials, providers
+    from jrbar.credentials import CLAUDE_CODE_KEYCHAIN, KeychainConsentLedger
+
+    monkeypatch.setattr(providers, "default_state_dir", lambda: tmp_path)
+    monkeypatch.setattr(provider_reconnect, "_KEYCHAIN_FINGERPRINT_CACHE", {})
+    checks, reads = [], []
+    unlocked = [False]
+    monkeypatch.setattr(credentials, "_keychain_is_unlocked", lambda: checks.append(True) or unlocked[0])
+
+    def run(arguments, **kwargs):
+        reads.append(arguments)
+        assert "-w" not in arguments
+        return subprocess.CompletedProcess(arguments, 0, stdout='"mdat"="synthetic-stamp"', stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    service = CLAUDE_CODE_KEYCHAIN.service
+    assert provider_reconnect.keychain_fingerprint(service, now=1000, fresh=True) == ()
+    assert checks == []
+    assert reads == []
+    ledger = KeychainConsentLedger(tmp_path / "keychain-consent.json")
+    ledger.record_success(service, 1000, security=True)
+    assert provider_reconnect.keychain_fingerprint(service, now=1001, fresh=True) == ()
+    assert checks == [True]
+    assert reads == []
+    unlocked[0] = True
+    assert provider_reconnect.keychain_fingerprint(service, now=1002, fresh=True)
+    assert len(reads) == 1
+    unlocked[0] = False
+    assert provider_reconnect.keychain_fingerprint(service, now=1003, cached_only=True)
+    assert len(checks) == 2
+    assert len(reads) == 1

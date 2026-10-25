@@ -101,11 +101,20 @@ _KEYCHAIN_FINGERPRINT_TTL_SECONDS = 60.0
 _KEYCHAIN_FINGERPRINT_CACHE: dict[str, tuple[float, tuple]] = {}
 
 
+def _keychain_metadata_allowed(service: str) -> bool:
+    from .credentials import KeychainConsentLedger, _keychain_is_unlocked
+    from .providers import default_state_dir
+
+    ledger = KeychainConsentLedger(default_state_dir() / "keychain-consent.json")
+    return ledger.security_grant(service) and _keychain_is_unlocked()
+
+
 def keychain_fingerprint(service: str, *, now: float | None = None, fresh: bool = False, cached_only: bool = False) -> tuple:
     """Modification/creation stamps of a Keychain item, no secret read.
 
     `security find-generic-password` WITHOUT -w returns attributes only,
-    so this raises no consent dialog and costs no password access.
+    so it requests no password access. A prior user-granted security read
+    and a noninteractive unlocked check are still required before spawning.
     ``fresh`` skips the 60 s cache for one look (the sign-in fix asks "did
     Claude Code just renew its item?") and stores the answer, so the
     terminal gate sees the same change on its next look.
@@ -119,6 +128,10 @@ def keychain_fingerprint(service: str, *, now: float | None = None, fresh: bool 
         return cached[1] if cached is not None else ()
     if not fresh and cached is not None and stamp - cached[0] < _KEYCHAIN_FINGERPRINT_TTL_SECONDS:
         return cached[1]
+    if not _keychain_metadata_allowed(service):
+        parts = cached[1] if cached is not None else ()
+        _KEYCHAIN_FINGERPRINT_CACHE[service] = (stamp, parts)
+        return parts
     parts: tuple = ()
     try:
         completed = subprocess.run(
