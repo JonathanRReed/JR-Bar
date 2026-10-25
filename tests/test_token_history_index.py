@@ -831,3 +831,29 @@ def test_history_off_keeps_session_context_command(tmp_path, monkeypatch):
     result = core_runtime._cmd_session_usage(owner, {"ids": ["one"]})
     assert result["sessions"][0]["context_tokens"] == 900
     assert calls == [("one", "codex", "synthetic", None)]
+
+
+def test_scan_restores_the_callers_qos(tmp_path):
+    import ctypes
+    import sys
+
+    import pytest
+    if sys.platform != "darwin":
+        pytest.skip("Darwin scheduling classes")
+    library = ctypes.CDLL(None)
+    library.qos_class_self.restype = ctypes.c_uint
+    previous = library.qos_class_self()
+    try:
+        assert library.pthread_set_qos_class_self_np(0x15, 0) == 0
+        index = TokenHistoryIndex(tmp_path / "state/history.sqlite3")
+        observed = []
+        scan = index._scan
+        def during(*args, **kwargs):
+            observed.append(library.qos_class_self())
+            return scan(*args, **kwargs)
+        index._scan = during
+        index.scan({})
+        assert observed == [0x11]
+        assert library.qos_class_self() == 0x15
+    finally:
+        library.pthread_set_qos_class_self_np(previous, 0)

@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -52,6 +53,30 @@ def semantics():
         usage._MALFORMED_SEMANTICS,
         local.PARSER_VERSION,
     )
+
+
+@contextmanager
+def _utility_scan():
+    """Use Utility during indexing and restore the caller's scheduling class."""
+    from .usage_graph_worker import _drop_to_utility_qos
+    library, previous, priority = None, 0, None
+    try:
+        import ctypes
+        library = ctypes.CDLL(None)
+        library.qos_class_self.restype = ctypes.c_uint
+        library.pthread_self.restype = ctypes.c_void_p
+        library.pthread_get_qos_class_np.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_int)]
+        previous = library.qos_class_self()
+        priority = ctypes.c_int()
+        library.pthread_get_qos_class_np(library.pthread_self(), None, ctypes.byref(priority))
+    except (AttributeError, OSError):
+        library = None
+    _drop_to_utility_qos()
+    try:
+        yield
+    finally:
+        if library is not None and previous:
+            library.pthread_set_qos_class_self_np(previous, priority.value)
 
 
 class _CancelableBudget:
@@ -436,9 +461,8 @@ class TokenHistoryIndex:
                 return self._cached_totals(roots, since_epoch)
             if time.monotonic() < self.retry_at:
                 return self._failed_totals(roots)
-            from .usage_graph_worker import _drop_to_utility_qos
-            _drop_to_utility_qos()
-            return self._scan(roots, since_epoch=since_epoch, budget=budget, source_bindings=source_bindings)
+            with _utility_scan():
+                return self._scan(roots, since_epoch=since_epoch, budget=budget, source_bindings=source_bindings)
         except (OSError, ValueError, sqlite3.Error) as error:
             self._recover(error)
             return None if cached_only else self._failed_totals(roots)
