@@ -10,6 +10,7 @@ import json
 import os
 import secrets
 import sqlite3
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -543,7 +544,13 @@ class TokenHistoryIndex:
                 ).fetchone()
                 if row and row[0] in providers:
                     records.append(BucketRecord(row[:9], 1, bool(row[9])))
-            size = sum(512 + sum(len(v) * 4 for v in r if isinstance(v, str)) for r in records)
+            # Count object headers and tuple attributes as well as token
+            # values. Shared objects may be counted twice, conservatively.
+            size = sys.getsizeof(records) + 256
+            for row in records:
+                size += sys.getsizeof(row) + sys.getsizeof(vars(row))
+                size += sum(sys.getsizeof(value) for value in row)
+                size += sum(sys.getsizeof(key) + sys.getsizeof(value) for key, value in vars(row).items())
             if self.stopping.is_set() or not self.enabled:
                 return []
             if size <= VIEW_BYTES:

@@ -465,3 +465,16 @@ def test_corrupt_history_cache_does_not_interrupt_quota_card_reads(tmp_path, mon
     monkeypatch.setattr(token_history_index, "_ENABLED", True)
     assert token_history_index.cached_card("claude", tmp_path, 1_792_929_600) is None
     assert provider_usage_codex_claude._cached_provider_local_scan("claude", tmp_path, 1_792_929_600) is None
+
+
+def test_a_view_over_its_byte_limit_is_served_without_retaining_it(tmp_path, monkeypatch):
+    from jrbar import token_history_index
+
+    root = tmp_path / "claude"
+    root.mkdir()
+    (root / "one.jsonl").write_text(claude("one", "2026-10-25T01:00:00Z"))
+    monkeypatch.setattr(token_history_index, "VIEW_BYTES", 256)
+    index = TokenHistoryIndex(tmp_path / "state/index.sqlite3")
+    assert index.scan({"claude": (root,)}).input_tokens == 100
+    assert not index.views
+    assert index.view_bytes == 0
