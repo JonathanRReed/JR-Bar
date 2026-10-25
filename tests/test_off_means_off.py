@@ -1,5 +1,7 @@
+import threading
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -12,7 +14,7 @@ from jrbar.provider_usage_settings import default_provider_usage_settings
 from jrbar.runtime_scheduler import AppKitTimerRegistry, RuntimeFeature
 from jrbar.settings import AgentMonitorSettings, DeviceDisplaySetting
 from jrbar.usage_event_hooks import UsageHookJobs
-from tests.test_core_runtime import headless  # noqa: F401
+from tests.test_core_runtime import REAL_THREAD, headless  # noqa: F401
 from tests.test_presentation_scheduler import _FakeAppKitFactory, _inputs
 from tests.test_status_bar_lifecycle_contract import controller  # noqa: F401
 
@@ -64,18 +66,19 @@ def test_disabled_device_is_not_inspected_even_while_another_device_is_on(tmp_pa
     assert all(off not in path.parents for path in touched)
 
 
-def test_disabled_daemon_consumers_schedule_no_jobs(controller):  # noqa: F811
+@pytest.mark.parametrize("profile_rules", [{}, {"work": "fixture"}])
+def test_disabled_daemon_consumers_only_schedule_standalone_profile_rules(controller, profile_rules):  # noqa: F811
     target, _ = controller
     off_device = DeviceDisplaySetting("fixture", "Fixture", "/tmp/jrbar-device-fixture", enabled=False)
     target.settings = replace(AgentMonitorSettings(), devices=(off_device,), focus_dim_rules={"work": 0.5},
-                              focus_profile_rules={"work": "fixture"})
+                              focus_profile_rules=profile_rules)
     target._runtime_started = True
     target.leds_enabled = True
     inputs = _inputs(screen_bar_enabled=False, visible=False)
     assert not target._device_inventory_should_run(inputs)
     assert not target._hardware_write_should_run(inputs)
     assert not target._lid_observation_should_run(inputs)
-    assert not target._display_environment_should_run(inputs)
+    assert target._display_environment_should_run(inputs) == bool(profile_rules)
     assert not target._calendar_observation_should_run(inputs)
     assert not target._reminders_observation_should_run(inputs)
     factory = _FakeAppKitFactory()
@@ -84,7 +87,12 @@ def test_disabled_daemon_consumers_schedule_no_jobs(controller):  # noqa: F811
     live = target._runtime_timer_registry.snapshot().active_features
     assert RuntimeFeature.DEVICE_INVENTORY not in live
     assert RuntimeFeature.LID_OBSERVATION not in live
-    assert RuntimeFeature.DISPLAY_ENVIRONMENT not in live
+    assert (RuntimeFeature.DISPLAY_ENVIRONMENT in live) == bool(profile_rules)
+    submissions = []
+    target._display_environment_active = True
+    target._os_poll_worker = SimpleNamespace(submit=submissions.append)
+    target._display_environment_timer_fired()
+    assert submissions[0].payload.read_focus == bool(profile_rules)
 
 
 def test_off_remote_peers_invalidates_its_timer_and_does_not_rearm(controller):  # noqa: F811
@@ -143,9 +151,10 @@ def test_hooks_off_retires_active_processes_and_rejects_late_launches(monkeypatc
     assert jobs.register(first, generation)
     jobs.cancel()
     assert jobs.active_count == 0 and killed == [first]
-    late = object()
+    late = Mock()
     assert not jobs.register(late, generation)
     assert killed == [first, late]
+    late.wait.assert_called_once_with(timeout=2.0)
 
 
 def test_presence_off_releases_the_daemons_expiry_timer(headless):  # noqa: F811
@@ -159,3 +168,30 @@ def test_presence_off_releases_the_daemons_expiry_timer(headless):  # noqa: F811
     assert headless._core_presence is None
     assert headless._core_presence_timer is None
     assert invalidated == [True]
+
+
+def test_phone_off_cancels_an_active_test_send(headless, monkeypatch):  # noqa: F811
+    entered = threading.Event()
+    outcomes = []
+    service = PhoneAlerts()
+    headless._jrbar_phone_alerts = service
+    headless.settings = replace(headless.settings, ntfy_enabled=True, ntfy_topic="fixture")
+
+    def post(delivery, _target, _body):
+        entered.set()
+        assert delivery.cancelled.wait(timeout=5)
+        return None
+
+    monkeypatch.setattr("jrbar.ntfy_alert._Delivery.post", post)
+    worker = REAL_THREAD(target=lambda: outcomes.append(service.send_test(headless.settings)))
+    worker.start()
+    try:
+        assert entered.wait(timeout=5)
+        assert service.active_deliveries == 1
+        headless.settings = replace(headless.settings, ntfy_enabled=False)
+    finally:
+        service.cancel()
+        worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert service.active_deliveries == 0
+    assert outcomes[0].reason == Reason.OFF

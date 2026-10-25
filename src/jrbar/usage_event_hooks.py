@@ -595,7 +595,7 @@ class UsageHookJobs:
             if current:
                 self._processes.add(process)
         if not current:
-            _signal_kill(process)
+            _kill(process)
         return current
 
     def retire(self, process: subprocess.Popen) -> None:

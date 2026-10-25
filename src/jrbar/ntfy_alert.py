@@ -398,7 +398,10 @@ class PhoneAlerts:
         target = parse_target(topic)
         if target is None:
             return Outcome(False, Reason.INVALID_TARGET)
-        return self._deliver(target, TEST_MESSAGE)
+        delivery = _Delivery()
+        with self._lock:
+            self._deliveries.add(delivery)
+        return self._deliver(target, TEST_MESSAGE, delivery=delivery)
 
     def _deliver(self, target: NtfyTarget, message: str, *, delivery: _Delivery | None = None) -> Outcome:
         try:
