@@ -91,6 +91,14 @@ struct FoldSensorTests {
         #expect(rate(60, band: -.infinity) == 2,
                 "movement mode and a pause clear the band")
     }
+
+    @Test("movement mode polls at 120 Hz while armed and parks a shut lid")
+    func armedMovementBand() {
+        #expect(rate(60, band: .infinity) == 1)
+        #expect(rate(180, band: .infinity) == 1)
+        #expect(rate(FoldPause.closedAngle, band: .infinity) == 0)
+        #expect(rate(60, band: .infinity, clamshell: true) == 0)
+    }
 }
 
 /// A Mac with no lid sensor must not poll at 10 Hz forever: after a run

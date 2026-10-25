@@ -332,10 +332,10 @@ final class SensorPump: LidSensorPump, @unchecked Sendable {
         guard clamshell != true else { return 0 }
         guard let angle = rawAngle else { return 2 }
         guard angle > FoldPause.closedAngle else { return 0 }
+        if angle <= armingAngle { return 1 }
         // Movement mode has no fixed arming angle and needs the normal
         // sensor cadence to follow its moving rest angle.
         guard armingAngle.isFinite else { return 2 }
-        if angle <= armingAngle { return 1 }
         guard stillReads >= SensorMotionCadence.stillReadLimit else { return 2 }
         // A first movement sample can arrive half a second after closing
         // starts. Preserve an open sample even at 300 degrees/second.
