@@ -16,8 +16,9 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from urllib.parse import quote
@@ -39,6 +40,11 @@ T3_MAX_QUERY_STEPS = 2_000_000
 T3_QUERY_PROGRESS_INTERVAL = 1_000
 T3_QUERY_TIMEOUT_SECONDS = 0.5
 T3_POLL_INTERVAL_SECONDS = 2.0
+T3_ACTIVE_COALESCE_SECONDS = 4.0
+T3_IDLE_POLL_INTERVAL_SECONDS = 12.0
+T3_RECENT_WORKER_SECONDS = 600
+T3_MAX_STATUSES = 1_024
+T3_REASON_TRUNCATED = "t3_snapshot_truncated"
 T3_MAX_THREADS = 512
 T3_MAX_TITLE_LENGTH = 160
 # Re-pinned 2026-10-07 against T3 Code Nightly 0.0.46 (source 611132c1):
@@ -262,6 +268,7 @@ class T3ThreadView:
     deep_link: str | None
     turn_state: str | None = None
     parent_links: tuple[ParentLink, ...] = ()
+    _agent_status: AgentStatus | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def needs_user(self) -> bool:
@@ -289,6 +296,8 @@ class T3ThreadView:
         return T3ObservationState.IDLE
 
     def to_agent_status(self, *, stale: bool = False) -> AgentStatus:
+        if self._agent_status is not None:
+            return replace(self._agent_status, stale=True) if stale else self._agent_status
         mode, event_name, message = _agent_state_for_thread(self)
         session_id = _safe_session_identifier(self.provider_thread_id) if self.provider_thread_id else None
         observation_id = session_id or "t3-" + _safe_session_identifier(self.thread_id)
@@ -305,7 +314,7 @@ class T3ThreadView:
             SourceKey(self.provider, "t3code", source_instance, "threads"),
             WorkIdentifier(work_id),
         )
-        return AgentStatus(
+        status = AgentStatus(
             provider=self.provider,
             agent_id=f"{self.provider}:session:{observation_id}",
             display_name=_bounded_text(self.thread_title, T3_MAX_TITLE_LENGTH),
@@ -321,6 +330,9 @@ class T3ThreadView:
             work_key=work_key,
             parent_links=self.parent_links,
         )
+        if not stale:
+            object.__setattr__(self, "_agent_status", status)
+        return status
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,10 +346,21 @@ class T3Snapshot:
     truncated: bool = False
     reason: str | None = None
     native_workers: tuple[AgentStatus, ...] = ()
+    _statuses: tuple[AgentStatus, ...] | None = field(default=None, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if len(self.threads) + len(self.native_workers) > T3_MAX_STATUSES:
+            object.__setattr__(self, "truncated", True)
+            object.__setattr__(self, "reason", self.reason or T3_REASON_TRUNCATED)
 
     def agent_statuses(self, *, stale: bool = False) -> tuple[AgentStatus, ...]:
-        return (*tuple(thread.to_agent_status(stale=stale) for thread in self.threads),
-                *tuple(replace(status, stale=stale) for status in self.native_workers))
+        statuses = self._statuses
+        if statuses is None:
+            statuses = _bounded_statuses((*tuple(thread.to_agent_status() for thread in self.threads), *self.native_workers))
+            object.__setattr__(self, "_statuses", statuses)
+        if stale:
+            return tuple(replace(status, stale=True) for status in statuses)
+        return statuses
 
     @property
     def active_count(self) -> int:
@@ -356,6 +379,18 @@ class T3Snapshot:
     @property
     def needs_user_count(self) -> int:
         return sum(thread.needs_user for thread in self.threads)
+
+
+def _bounded_statuses(statuses: tuple[AgentStatus, ...]) -> tuple[AgentStatus, ...]:
+    if len(statuses) <= T3_MAX_STATUSES:
+        return statuses
+    # Keep asks and running agents before history. Mark the retained rows so
+    # a partial projection never looks like a complete, healthy reading.
+    ranked = sorted(statuses, key=lambda row: (
+        row.is_hard_ask, row.event_name == "LineageObserved" or row.mode in {AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS},
+        row.updated_at,
+    ), reverse=True)
+    return tuple(replace(row, stale=True) for row in ranked[:T3_MAX_STATUSES])
 
 
 @dataclass(frozen=True, slots=True)
@@ -834,11 +869,34 @@ _V2_UNHELD_RUN = (
     "NOT (runs.status = 'queued' "
     "AND COALESCE(json_extract(CASE WHEN octet_length(runs.payload_json) <= 65536 THEN runs.payload_json ELSE '{}' END, '$.queueHeld'), 0) = 1)"
 )
+
+
+@dataclass
+class _V2ReadCache:
+    identity: tuple | None = None
+    watermark: str = ""
+    rows: dict = field(default_factory=dict)
+    truncated: bool = False
+    views: dict = field(default_factory=dict)
+    payloads: dict = field(default_factory=dict)
+    final_views: dict = field(default_factory=dict)
+    worker_ids: set[str] = field(default_factory=set)
+    projects: dict = field(default_factory=dict)
+
+
+# Each service owns its cache. A wrapped reader keeps the public reader contract
+# and can still use the same cache on its short-lived worker threads.
+_v2_read_cache: ContextVar[_V2ReadCache | None] = ContextVar("t3_read_cache", default=None)
+
+
 _V2_THREADS_SQL = f"""
 WITH candidate_threads AS (
-  SELECT * FROM orchestration_v2_projection_threads AS threads
+  SELECT thread_id, project_id, title, default_provider, runtime_mode,
+    interaction_mode, active_provider_thread_id, created_at, updated_at,
+    archived_at, deleted_at, {{thread_instance_column}},
+    CASE WHEN octet_length(payload_json) <= 65536 THEN payload_json ELSE '{{}}' END AS payload_json
+  FROM orchestration_v2_projection_threads AS threads
   WHERE threads.deleted_at IS NULL AND threads.archived_at IS NULL
-    AND octet_length(threads.payload_json) <= 65536
     AND {{lineage_filter}}
   ORDER BY threads.updated_at DESC, threads.thread_id ASC
   LIMIT ?
@@ -958,7 +1016,9 @@ def _read_v2_snapshot(
             if "provider_instance_id" in columns["orchestration_v2_projection_threads"]
             else "NULL"
         )
-        query = _V2_THREADS_SQL.replace("{instance_column}", instance_column)
+        query = _V2_THREADS_SQL.replace("{instance_column}", instance_column).replace(
+            "{thread_instance_column}", instance_column + " AS provider_instance_id"
+        )
         run_columns = columns["orchestration_v2_projection_runs"]
         for placeholder, column in (
             ("active_provider_column", "provider"),
@@ -968,13 +1028,90 @@ def _read_v2_snapshot(
             expression = f"active_run.{column}" if column in run_columns else "NULL"
             query = query.replace("{" + placeholder + "}", expression)
         subagent_columns = _table_columns(connection, "orchestration_v2_projection_subagents")
-        worker_filter = "COALESCE(json_extract(threads.payload_json, '$.lineage.relationshipToParent'), '') = 'subagent'"
+        observed_at = now()
+        cutoff = (observed_at - timedelta(seconds=T3_RECENT_WORKER_SECONDS)).isoformat()
+        stat = database.stat()
+        identity = (str(database), stat.st_dev, stat.st_ino, environment_id)
+        cache = _v2_read_cache.get() or _V2ReadCache()
+        if cache.identity != identity:
+            cache = _V2ReadCache(identity=identity)
+        metadata = connection.execute(
+            "SELECT thread_id, updated_at FROM orchestration_v2_projection_threads "
+            "WHERE project_id IN (SELECT project_id FROM projection_projects) AND updated_at > ?", (cache.watermark,),
+        ).fetchall()
+        changed = {row["thread_id"] for row in metadata}
+        live = {key for key, row in cache.rows.items() if row["active_run_id"] is not None}
+        if {"child_thread_id", "status"}.issubset(subagent_columns):
+            parent_column = "thread_id" if "thread_id" in subagent_columns else "NULL"
+            for parent, child in connection.execute(
+                f"SELECT {parent_column}, child_thread_id FROM orchestration_v2_projection_subagents "
+                "WHERE status IN ('running', 'starting', 'active', 'pending')"
+            ):
+                live.update(key for key in (parent, child) if key is not None)
+        projects = {row[0]: tuple(row[1:]) for row in connection.execute(
+            "SELECT project_id, title, workspace_root, updated_at, deleted_at FROM projection_projects"
+        )}
+        changed_projects = {key for key in cache.projects.keys() | projects.keys()
+                            if cache.projects.get(key) != projects.get(key)}
+        selected = changed | live | {key for key, row in cache.rows.items() if row["project_id"] in changed_projects}
+        worker_filter = "COALESCE(json_extract(CASE WHEN octet_length(threads.payload_json) <= 65536 THEN threads.payload_json ELSE '{}' END, '$.lineage.relationshipToParent'), '') = 'subagent'"
         if "child_thread_id" in subagent_columns:
-            worker_filter = f"({worker_filter} OR threads.thread_id IN (SELECT child_thread_id FROM orchestration_v2_projection_subagents WHERE child_thread_id IS NOT NULL))"
-        roots = connection.execute(query.replace("{lineage_filter}", f"NOT ({worker_filter})"), (T3_MAX_THREADS + 1,)).fetchall()
-        workers = connection.execute(query.replace("{lineage_filter}", worker_filter), (T3_MAX_THREADS + 1,)).fetchall()
-        truncated = len(roots) > T3_MAX_THREADS or len(workers) > T3_MAX_THREADS
-        rows = [*roots[:T3_MAX_THREADS], *workers[:T3_MAX_THREADS]]
+            worker_filter = f"(threads.thread_id IN (SELECT child_thread_id FROM orchestration_v2_projection_subagents WHERE child_thread_id IS NOT NULL) OR {worker_filter})"
+        recent_worker = (
+            f"(threads.updated_at >= ? OR EXISTS (SELECT 1 FROM orchestration_v2_projection_runs runs "
+            f"WHERE runs.thread_id = threads.thread_id AND runs.status IN {_V2_ACTIVE_RUN}))"
+        )
+        rows_by_id = {key: row for key, row in cache.rows.items() if key not in selected}
+        truncated = cache.truncated
+        if not cache.watermark:
+            roots = connection.execute(query.replace("{lineage_filter}", f"NOT ({worker_filter})"), (T3_MAX_THREADS + 1,)).fetchall()
+            workers = connection.execute(query.replace("{lineage_filter}", f"{recent_worker} AND ({worker_filter})"), (cutoff, T3_MAX_THREADS + 1,)).fetchall()
+            truncated = len(roots) > T3_MAX_THREADS or len(workers) > T3_MAX_THREADS
+            rows_by_id.update((row["thread_id"], row) for row in (*roots[:T3_MAX_THREADS], *workers[:T3_MAX_THREADS]))
+        # The initial windows must not displace a live child or its parent.
+        refresh = selected if cache.watermark else live - rows_by_id.keys()
+        if refresh:
+            # Bound both SQLite's variable count and the retained projection.
+            ordered = sorted(refresh)
+            for offset in range(0, len(ordered), 256):
+                chunk = ordered[offset:offset + 256]
+                placeholders = ",".join("?" for _ in chunk)
+                predicate = f"threads.thread_id IN ({placeholders})"
+                fresh = connection.execute(query.replace("{lineage_filter}", predicate), (*chunk, len(chunk))).fetchall()
+                rows_by_id.update((row["thread_id"], row) for row in fresh)
+        # Finished workers age out even when another thread owns all the writes.
+        rows = sorted(rows_by_id.values(), key=lambda row: (
+            row["thread_id"] in live or row["active_run_id"] is not None or row["pending_approval_count"] > 0 or row["pending_user_input_count"] > 0,
+            row["thread_updated_at"], row["thread_id"],
+        ), reverse=True)
+        worker_ids = cache.worker_ids & rows_by_id.keys()
+        candidate_ids = sorted(rows_by_id.keys() - cache.rows.keys() | selected)
+        if "child_thread_id" in subagent_columns:
+            for offset in range(0, len(candidate_ids), 256):
+                chunk = candidate_ids[offset:offset + 256]
+                placeholders = ",".join("?" for _ in chunk)
+                worker_ids.update(row[0] for row in connection.execute(
+                    "SELECT child_thread_id FROM orchestration_v2_projection_subagents "
+                    f"WHERE child_thread_id IN ({placeholders})", chunk,
+                ))
+        roots, workers = [], []
+        payloads = {}
+        for row in rows:
+            tid = row["thread_id"]
+            previous_row = cache.rows.get(tid)
+            payload = (cache.payloads[tid] if previous_row is not None and previous_row["payload_json"] == row["payload_json"]
+                       else json.loads(row["payload_json"]))
+            payloads[tid] = payload
+            worker = row["thread_id"] in worker_ids or (payload.get("lineage") or {}).get("relationshipToParent") == "subagent"
+            if worker:
+                if row["thread_updated_at"] >= cutoff or row["active_run_id"] is not None:
+                    workers.append(row)
+            else:
+                roots.append(row)
+        truncated |= len(roots) > T3_MAX_THREADS or len(workers) > T3_MAX_THREADS
+        rows = sorted((*roots[:T3_MAX_THREADS], *workers[:T3_MAX_THREADS]),
+                      key=lambda row: (row["thread_updated_at"], row["thread_id"]))
+        rows.sort(key=lambda row: row["thread_updated_at"], reverse=True)
         binding_columns = _table_columns(connection, "orchestration_v2_projection_provider_threads")
         has_driver_bindings = {"provider_thread_id", "driver"}.issubset(binding_columns)
         selected_provider_threads = {row["active_run_thread"] or row["active_provider_thread_id"] for row in rows}
@@ -994,9 +1131,19 @@ def _read_v2_snapshot(
             )]
         bindings_by_thread = {}
         for binding in bindings:
+            binding["payload_json"] = json.loads(binding["payload_json"])
             bindings_by_thread.setdefault(binding["provider_thread_id"], []).append(binding)
         threads = []
+        views = {}
         for row in rows:
+            tid = row["thread_id"]
+            binding_key = row["active_run_thread"] or row["active_provider_thread_id"]
+            bound = bindings_by_thread.get(binding_key, [])
+            previous = cache.views.get(tid)
+            if previous is not None and cache.rows.get(tid) == row and previous[0] == bound:
+                threads.append(previous[1])
+                views[tid] = previous
+                continue
             instance_from_model, model, reasoning = _parse_model_selection(
                 row["model_selection_json"]
             )
@@ -1070,6 +1217,7 @@ def _read_v2_snapshot(
                     ),
                 )
             )
+            views[tid] = (bound, threads[-1])
         from .lineage_adapters import read_t3_registry_providers, t3_parent_links
 
         # Bind only the selected provider thread. Native IDs, not T3's own
@@ -1080,7 +1228,7 @@ def _read_v2_snapshot(
                 "thread_id": thread.thread_id,
                 "default_provider": thread.provider,
                 "active_provider_thread_id": thread.provider_thread_id,
-                "payload_json": row["payload_json"],
+                "payload_json": payloads[thread.thread_id],
             })
         subagents = []
         if {"thread_id", "child_thread_id", "payload_json"}.issubset(subagent_columns):
@@ -1097,8 +1245,9 @@ def _read_v2_snapshot(
                 subagents = [dict(row) for row in connection.execute(
                     f"SELECT thread_id, child_thread_id, {status_column} AS status, {instance_column} AS provider_instance_id, "
                     f"{native_ref} AS native_task_ref "
-                    f"FROM orchestration_v2_projection_subagents WHERE thread_id IN ({placeholders}) LIMIT ?",
-                    (*[row["thread_id"] for row in lineage_rows], T3_MAX_THREADS * 2),
+                    f"FROM orchestration_v2_projection_subagents WHERE thread_id IN ({placeholders}) "
+                    f"AND (child_thread_id IN ({placeholders}) OR {status_column} IN ('running', 'starting', 'active', 'pending')) LIMIT ?",
+                    (*[row["thread_id"] for row in lineage_rows], *[row["thread_id"] for row in lineage_rows], T3_MAX_THREADS * 2),
                 )]
         observed_at = now()
         registry_providers = read_t3_registry_providers(database.parent / "settings.json")
@@ -1114,12 +1263,36 @@ def _read_v2_snapshot(
             # Older projections have no native binding table. Keep their
             # observation identity, but do not claim cross-provider lineage.
             native = key.split(":session:", 1)[1]
-            if links or thread.thread_id in bound_thread_ids:
+            previous = cache.final_views.get(thread.thread_id)
+            same_targets = previous is not None and (
+                tuple((link.child, link.parent, link.harness) for link in previous.parent_links)
+                == tuple((link.child, link.parent, link.harness) for link in evidence)
+            )
+            same_identity = previous is not None and (
+                not (links or thread.thread_id in bound_thread_ids)
+                or (previous.provider == key.split(":", 1)[0] and previous.provider_thread_id == native)
+            )
+            if thread.thread_id not in selected and same_targets and same_identity and cache.views.get(thread.thread_id) == views.get(thread.thread_id):
+                threads[index] = previous
+            elif links or thread.thread_id in bound_thread_ids:
                 threads[index] = replace(thread, provider=key.split(":", 1)[0], provider_thread_id=native, parent_links=evidence)
+        fingerprint = _actual_schema_fingerprint(connection, _V2_REQUIRED_COLUMNS)
+        cache.projects = projects
+        cache.final_views = {thread.thread_id: thread for thread in threads}
+        cache.worker_ids = worker_ids & {row["thread_id"] for row in rows}
+        cache.views = views
+        cache.payloads = {row["thread_id"]: payloads[row["thread_id"]] for row in rows}
+        cache.truncated = truncated
+        cache.identity = identity
+        cache.rows = {row["thread_id"]: row for row in rows}
+        cache.watermark = max((row["updated_at"] for row in metadata), default=cache.watermark)
+        active_cache = _v2_read_cache.get()
+        if active_cache is not None and active_cache is not cache:
+            active_cache.__dict__.update(cache.__dict__)
         return T3Snapshot(
-            observed_at=now(),
+            observed_at=observed_at,
             database_path=database,
-            schema_fingerprint=_actual_schema_fingerprint(connection, _V2_REQUIRED_COLUMNS),
+            schema_fingerprint=fingerprint,
             sqlite_user_version=user_version,
             threads=tuple(threads),
             native_workers=tuple(AgentStatus(
@@ -1129,6 +1302,7 @@ def _read_v2_snapshot(
                 parent_links=tuple(links_by_child[child]),
             ) for child in sorted({link.child for link in links} - set(keys.values()))),
             truncated=truncated,
+            reason=T3_REASON_TRUNCATED if truncated else None,
         )
     finally:
         connection.close()
@@ -1164,9 +1338,10 @@ class T3SnapshotService:
     ) -> None:
         from .t3_process import t3_code_running
 
-        self._process_running = process_running or t3_code_running
+        self._process_running = process_running or (lambda: t3_code_running(base_dir=self._base_dir))
         self._activity = activity or (lambda: _t3_activity_signature(self._base_dir))
         self._last_activity = None
+        self._read_cache = _V2ReadCache()
         self._enabled = bool(enabled)
         self._base_dir = base_dir
         self._environment_id = environment_id
@@ -1178,6 +1353,7 @@ class T3SnapshotService:
         self._closed = False
         self._in_flight = False
         self._attempted_at: float | None = None
+        self._has_active = False
         self._snapshot: T3Snapshot | None = None
         self._reason: str | None = None
 
@@ -1195,29 +1371,36 @@ class T3SnapshotService:
         with self._lock:
             if self._closed or not self._enabled:
                 return self._observation_locked()
+            interval = self._minimum_interval
+            if self._snapshot is not None and self._reason is None:
+                coalesce = T3_ACTIVE_COALESCE_SECONDS if self._has_active else T3_IDLE_POLL_INTERVAL_SECONDS
+                interval = max(interval, coalesce)
             due = (
                 force
                 or self._attempted_at is None
-                or now - self._attempted_at >= self._minimum_interval
+                or now - self._attempted_at >= interval
             )
-            if not due or self._in_flight:
+            if self._in_flight:
                 return self._observation_locked()
             if not self._process_running():
+                if self._snapshot is not None:
+                    self._read_cache = _V2ReadCache()
                 self._snapshot = None
                 self._last_activity = None
                 self._reason = None
                 return self._observation_locked()
-            activity = self._activity()
-            if not force and self._attempted_at is not None and activity == self._last_activity:
+            if not due:
                 return self._observation_locked()
-            self._last_activity = activity
+            activity = self._activity()
+            if not force and self._reason is None and self._attempted_at is not None and activity == self._last_activity:
+                return self._observation_locked()
             self._generation += 1
             generation = self._generation
             self._in_flight = True
             self._attempted_at = now
             threading.Thread(
                 target=self._run,
-                args=(generation, callback),
+                args=(generation, callback, activity),
                 name="JRBarT3Compatibility",
                 daemon=True,
             ).start()
@@ -1240,9 +1423,11 @@ class T3SnapshotService:
         self,
         generation: int,
         callback: Callable[[T3Observation], None] | None,
+        activity: object,
     ) -> None:
         snapshot = None
         reason = None
+        token = _v2_read_cache.set(self._read_cache)
         try:
             snapshot = self._reader(
                 base_dir=self._base_dir,
@@ -1261,6 +1446,8 @@ class T3SnapshotService:
             )
         except Exception:
             reason = T3_REASON_FAILED
+        finally:
+            _v2_read_cache.reset(token)
 
         observation = None
         with self._lock:
@@ -1269,6 +1456,8 @@ class T3SnapshotService:
                 return
             if snapshot is not None and snapshot.compatible:
                 self._snapshot = snapshot
+                self._has_active = bool(snapshot.active_count)
+                self._last_activity = activity
                 self._reason = None
             else:
                 self._reason = reason or T3_REASON_FAILED
@@ -1342,13 +1531,13 @@ def update_t3_snapshot_runtime(
         return policy
 
     observation = service.observation()
-    if observation.snapshot is not None and observation.snapshot.compatible:
-        if callable(replace):
-            replace("t3code", observation.statuses)
-    elif not observation.in_flight and not cleared and callable(replace):
-        replace("t3code", ())
     if policy.should_poll:
         service.request()
+    if observation.snapshot is not None and observation.snapshot.compatible:
+        if callable(replace):
+            replace("t3code", _bounded_statuses(observation.statuses))
+    elif not observation.in_flight and not cleared and callable(replace):
+        replace("t3code", ())
     return policy
 
 

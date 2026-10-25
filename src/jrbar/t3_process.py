@@ -1,4 +1,4 @@
-"""Detect the T3 desktop host without starting a process or opening its data."""
+"""Detect T3 desktop and CLI hosts without starting a process or opening data."""
 from __future__ import annotations
 
 import ctypes
@@ -25,12 +25,13 @@ def _libproc():
 
 
 _cached = (0.0, False)
+_cached_base = None
 
 
-def t3_code_running() -> bool:
-    global _cached
+def t3_code_running(*, base_dir=None) -> bool:
+    global _cached, _cached_base
     now = time.monotonic()
-    if now < _cached[0]:
+    if now < _cached[0] and base_dir == _cached_base:
         return _cached[1]
     lib = _libproc()
     running = False
@@ -40,16 +41,59 @@ def t3_code_running() -> bool:
         count = lib.proc_listpids(1, 0, pids, ctypes.sizeof(pids)) // ctypes.sizeof(ctypes.c_int)
         name = ctypes.create_string_buffer(256)
         path = ctypes.create_string_buffer(4096)
+        headless = []
         for pid in pids[:max(0, count)]:
             if pid <= 0 or lib.proc_name(pid, name, len(name)) <= 0:
                 continue
-            if not name.value.lower().startswith((b"t3 code", b"t3-code", b"t3code")):
+            process_name = name.value.lower()
+            t3_named = process_name.startswith((b"t3 code", b"t3-code", b"t3code"))
+            if not t3_named and process_name not in {b"node", b"bun"}:
                 continue
             if lib.proc_pidpath(pid, path, len(path)) <= 0:
                 continue
             executable = path.value.lower()
-            if any(bundle in executable for bundle in (b"/t3 code.app/contents/macos/", b"/t3 code nightly.app/contents/macos/", b"/t3 code (nightly).app/contents/macos/")):
+            if t3_named and any(bundle in executable for bundle in (b"/t3 code.app/contents/macos/", b"/t3 code nightly.app/contents/macos/", b"/t3 code (nightly).app/contents/macos/")):
                 running = True
                 break
+            headless.append(pid)
+        if not running:
+            for pid in headless:
+                uses_database = (_uses_t3_database(lib, pid) if base_dir is None
+                                 else _uses_t3_database(lib, pid, base_dir=base_dir))
+                if uses_database:
+                    running = True
+                    break
+    _cached_base = base_dir
     _cached = (now + 2.0, running)
     return running
+
+
+def _uses_t3_database(lib, pid: int, *, base_dir=None) -> bool:
+    """A CLI host must hold this integration's database, not just a T3 name."""
+    from .t3_compat import T3_DATABASE_RELATIVE_PATH, T3_V2_DATABASE_RELATIVE_PATH, _t3_root
+
+    root = _t3_root(base_dir).resolve()
+    paths = {str(root / relative).encode() for relative in (T3_DATABASE_RELATIVE_PATH, T3_V2_DATABASE_RELATIVE_PATH)}
+    try:
+        list_fds = lib.proc_pidinfo
+        list_fds.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        list_fds.restype = ctypes.c_int
+        fd_info = lib.proc_pidfdinfo
+        fd_info.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        fd_info.restype = ctypes.c_int
+        descriptors = (ctypes.c_int * (4096 * 2))()
+        size = list_fds(pid, 1, 0, descriptors, ctypes.sizeof(descriptors))
+        vnode = ctypes.create_string_buffer(4096)
+        # proc_fdinfo is a pair of 32-bit fd/type fields. A vnode path is
+        # the final MAXPATHLEN bytes of vnode_fdinfowithpath in proc_info.h.
+        for offset in range(0, max(0, size) // ctypes.sizeof(ctypes.c_int) - 1, 2):
+            if descriptors[offset + 1] != 1:  # PROX_FDTYPE_VNODE
+                continue
+            length = fd_info(pid, descriptors[offset], 2, vnode, len(vnode))
+            if 1024 <= length <= len(vnode):
+                path = vnode.raw[length - 1024:length].split(b'\0', 1)[0]
+                if path in paths:
+                    return True
+    except (AttributeError, OSError):
+        return False
+    return False

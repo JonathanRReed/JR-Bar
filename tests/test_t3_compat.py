@@ -345,7 +345,7 @@ def test_t3_service_retains_last_known_good_on_failure(tmp_path: Path) -> None:
         force=True,
     )
     assert first_ready.wait(1.0)
-    clock["now"] = 1.0
+    clock["now"] = 12.0
     service.request(
         lambda observation: (second.append(observation), second_ready.set()),
         force=False,
@@ -780,7 +780,7 @@ def test_service_reads_only_while_t3_runs_and_its_files_change():
     service.request(lambda observation: ready.set())
     assert ready.wait(2)
     ready.clear()
-    clock[0] += 3
+    clock[0] += 12
     service.request()
     assert len(reads) == 1
     signature[0] += 1
@@ -823,3 +823,95 @@ def test_registry_settings_are_parsed_only_after_a_file_change(tmp_path, monkeyp
     monkeypatch.setattr(Path, "open", original)
     path.write_text(json.dumps({"providerInstances": {"worker": {"driver": "acpRegistry", "enabled": True, "config": {"agentId": "devin"}}}}))
     assert read_t3_registry_providers(path) == {"worker": "devin"}
+
+
+def test_failed_read_retries_unchanged_activity_on_next_tick():
+    clock = [0.0]
+    calls = []
+    ready = threading.Event()
+    snapshot = T3Snapshot(observed_at=datetime.now(timezone.utc), database_path=Path('/synthetic/state.sqlite'),
+                          schema_fingerprint='synthetic', sqlite_user_version=0, threads=())
+
+    def reader(**kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            raise OSError('synthetic failure')
+        return snapshot
+
+    service = T3SnapshotService(enabled=True, reader=reader, process_running=lambda: True,
+                               monotonic=lambda: clock[0], activity=lambda: 1)
+    service.request(lambda _: ready.set())
+    assert ready.wait(2)
+    assert service.observation().reason == t3_compat.T3_REASON_FAILED
+    ready.clear()
+    clock[0] = 2
+    service.request(lambda _: ready.set())
+    assert ready.wait(2)
+    assert service.observation().available
+    assert service.observation().reason is None
+    assert len(calls) == 2
+    service.close()
+
+
+def test_idle_reader_coalesces_changes_for_twelve_seconds():
+    clock = [0.0]
+    calls = []
+    ready = threading.Event()
+    snapshot = T3Snapshot(observed_at=datetime.now(timezone.utc), database_path=Path('/synthetic/state.sqlite'),
+                          schema_fingerprint='synthetic', sqlite_user_version=0, threads=())
+    service = T3SnapshotService(enabled=True, reader=lambda **kw: (calls.append(True), snapshot)[1],
+                               process_running=lambda: True, monotonic=lambda: clock[0], activity=lambda: clock[0])
+    service.request(lambda _: ready.set())
+    assert ready.wait(2)
+    ready.clear()
+    for tick in range(1, 12):
+        clock[0] = tick
+        service.request()
+    assert len(calls) == 1
+    clock[0] = 12
+    service.request(lambda _: ready.set())
+    assert ready.wait(2)
+    assert len(calls) == 2
+    service.close()
+
+
+def test_t3_overflow_keeps_live_rows_and_marks_partial_reading():
+    from dataclasses import replace
+
+    from jrbar.models import AgentStatus
+
+    old = AgentStatus(provider='codex', agent_id='codex:session:old', display_name='old',
+                      mode=AgentMode.IDLE_READY, updated_at=datetime.now(timezone.utc), event_name='SessionStart')
+    rows = tuple(replace(old, agent_id=f'codex:session:idle-{i}') for i in range(1024))
+    live = replace(old, agent_id='codex:session:live', mode=AgentMode.WORKING)
+    snapshot = T3Snapshot(observed_at=old.updated_at, database_path=Path('/synthetic/state.sqlite'),
+                          schema_fingerprint='synthetic', sqlite_user_version=0, threads=(), native_workers=(*rows, live))
+    retained = snapshot.agent_statuses()
+    assert len(retained) == 1024
+    assert retained[0].agent_id == live.agent_id
+    assert all(row.stale for row in retained)
+
+
+def test_overflow_publication_does_not_stop_following_reads():
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from jrbar.collector import LiveAgentMonitor
+    from jrbar.models import AgentStatus
+
+    row = AgentStatus(provider='codex', agent_id='codex:session:row', display_name='Synthetic',
+                      mode=AgentMode.WORKING, updated_at=datetime.now(timezone.utc), event_name='UserPromptSubmit')
+    rows = tuple(replace(row, agent_id=f'codex:session:row-{i}') for i in range(1025))
+    observation = SimpleNamespace(
+        snapshot=SimpleNamespace(compatible=True), statuses=rows, in_flight=False)
+    requests = []
+    service = SimpleNamespace(observation=lambda: observation, request=lambda: requests.append(True))
+    monitor = LiveAgentMonitor()
+    target = SimpleNamespace(monitor=monitor)
+    settings = SimpleNamespace(t3code_enabled=False)
+    for _ in range(2):
+        t3_compat.update_t3_snapshot_runtime(target, settings, factory=lambda **kw: service)
+    assert len(requests) == 2
+    retained = monitor.current_statuses_by_key()
+    assert len(retained) == 1024
+    assert all(row.stale for row in retained.values())
