@@ -145,6 +145,24 @@ final class UsageCenterStore {
     }
     var now = Date()
     var refreshing = false
+    private(set) var historyDisabled = false
+    var tokenHistoryOff: Bool { historyDisabled || document?.bool("token_history_enabled") == false }
+
+    func enableTokenHistory() {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.writeSetting("token_history_enabled", .bool(true))
+                if let refusal = Self.refusal(reply) {
+                    self.show(error: refusal, action: .refresh)
+                    return
+                }
+                self.historyDisabled = false
+                for provider in self.historyProviders { self.load(provider: provider, force: true) }
+            } catch { self.show(error: Self.describe(error), action: .refresh) }
+        }
+    }
+
     enum NoticeAction: Equatable {
         case range, metric, refresh, planLimits
         case providerEnabled(String), usageConsent(String), addInstance(String)
@@ -544,6 +562,7 @@ final class UsageCenterStore {
             let read = observeOnly ? readHistoryStatus : readHistory
             let history = try await read(provider.id, range)
             guard historyRequests[key] == request else { return }
+            historyDisabled = false
             histories[key] = history
             errors[key] = nil
             if history.partial {
@@ -556,6 +575,10 @@ final class UsageCenterStore {
             }
         } catch {
             guard historyRequests[key] == request else { return }
+            if (error as? CoreReplyError)?.isTokenHistoryDisabled == true {
+                historyDisabled = true
+                histories[key] = nil
+            }
             if !observeOnly, (error as? CoreClientError) == .timeout, (attempts[key] ?? 0) < Self.coldRetries {
                 scanning.insert(key)
                 retryCold(provider: provider, key: key, range: range, request: request)

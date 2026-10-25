@@ -448,6 +448,8 @@ struct ProviderUsageCard: View {
     private var readingsLine: String? {
         guard !provider.isSignedOut else { return nil }
         var parts: [String] = []
+        if provider.tokenHistoryState == "building" { parts.append("Building token history") }
+        if provider.tokenHistoryState == "stale" { parts.append("Token history is stale") }
         if let tokens = provider.tokens, tokens.total > 0 {
             var text = "\(UsageFormat.tokens(tokens.total)) tokens"
             if tokens.cachedInput > 0 { text += " · \(UsageFormat.tokens(tokens.cachedInput)) from cache" }
@@ -658,6 +660,20 @@ struct ProviderUsageCard: View {
 
     @ViewBuilder
     private var historySection: some View {
+        if store.tokenHistoryOff {
+            HStack {
+                Text(CoreReplyError.tokenHistoryOffMessage)
+                Spacer()
+                Button("Turn on") { store.enableTokenHistory() }
+                    .disabled(!store.isLive)
+            }
+        } else {
+            enabledHistorySection
+        }
+    }
+
+    @ViewBuilder
+    private var enabledHistorySection: some View {
         let title = store.metric == .tokens ? "Tokens" : "Estimated cost"
         let unit = store.range == .week && !(history?.hours.isEmpty ?? true) ? "by hour" : "by day"
         WindowSectionTitle(title: "\(title) \(unit)", symbol: "chart.xyaxis.line") {
