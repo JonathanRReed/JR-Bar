@@ -467,3 +467,16 @@ def test_oversize_payload_preserves_bounded_lineage_fields(shim: Path, sock_dir:
     assert all(forwarded.get(key) == lineage[key] for key in kept)
     assert all(key not in forwarded for key in lineage.keys() - kept)
     assert "tool_response" not in forwarded
+
+
+def test_cursor_oversize_keeps_explicit_child_and_parent(shim: Path, sock_dir: Path) -> None:
+    payload = {"hook_event_name": "subagentStart", "conversation_id": "cursor-parent",
+               "subagent_id": "cursor-worker", "parent_conversation_id": "cursor-parent",
+               "task": "A" * (MIB + 4096)}
+    result = _run(shim, sock_dir, "cursor", _compact(payload))
+    assert result.returncode == 0 and result.stdout == b"{}\n"
+    queued, = (sock_dir / "cursor.pending.jsonl").read_text().splitlines()
+    record = json.loads(json.loads(queued)["payload"])
+    assert record["subagent_id"] == "cursor-worker"
+    assert record["parent_conversation_id"] == "cursor-parent"
+    assert "task" not in record

@@ -3507,6 +3507,7 @@ def _devin_persisted_label(record: HookEvent, work_id: str | None) -> str | None
 
 
 def status_from_event(record: HookEvent, metadata: StatusMetadata | None = None) -> AgentStatus | None:
+    from .lineage_adapters import hook_parent_links
     mode = mode_for_event(record)
     if mode is None:
         return None
@@ -3542,6 +3543,7 @@ def status_from_event(record: HookEvent, metadata: StatusMetadata | None = None)
         tool_name=record.tool_name,
         message=_capped_detail(record.message),
         origin=record.origin or metadata.origin or origin_label_from_payload(record.provider, record.raw),
+        parent_links=hook_parent_links(record),
     )
 
 

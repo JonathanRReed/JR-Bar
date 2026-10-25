@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
 import threading
@@ -82,6 +83,50 @@ def member_key(provider: str, native_id: object, kind: str = "session") -> str |
 
 def _link(child, parent, harness, observed_at) -> tuple[ParentLink, ...]:
     return (ParentLink(child, parent, harness, observed_at),) if child else ()
+
+
+def cursor_native_id(value: object) -> str | None:
+    if type(value) is not str or not _ID.fullmatch(value) or len(value) > 128:
+        return None
+    return hashlib.sha256(b"sidepulse.cursor.conversation.v1\0" + value.encode("ascii")).hexdigest()
+
+
+def cursor_parent_links(payload: dict, *, observed_at: float) -> tuple[ParentLink, ...]:
+    child = cursor_native_id(payload.get("subagent_id"))
+    parent = cursor_native_id(payload.get("parent_conversation_id"))
+    return _link(member_key("cursor", child), member_key("cursor", parent), "cursor", observed_at)
+
+
+def persisted_parent_links(payload: object, provider: str) -> tuple[ParentLink, ...]:
+    """Validate the optional content-free hook lineage extension."""
+    if type(payload) is not list or not 1 <= len(payload) <= 4:
+        raise ValueError("invalid parent links")
+    links = []
+    for row in payload:
+        if type(row) is not dict or set(row) != {"child", "parent", "harness", "observed_at"}:
+            raise ValueError("invalid parent link")
+        def key(value):
+            if type(value) is not str:
+                return False
+            prefix, _, native = value.partition(":")
+            kind, _, native = native.partition(":")
+            return prefix == provider and kind in {"session", "agent"} and member_key(provider, native, kind) == value
+        stamp = row["observed_at"]
+        if (not key(row["child"]) or (row["parent"] is not None and not key(row["parent"]))
+                or row["harness"] != provider or type(stamp) not in {float, int}
+                or not math.isfinite(stamp) or stamp < 0):
+            raise ValueError("invalid parent link")
+        links.append(ParentLink(row["child"], row["parent"], provider, float(stamp)))
+    return tuple(links)
+
+
+def hook_parent_links(record) -> tuple[ParentLink, ...]:
+    raw = record.raw
+    if "parent_links" in raw:
+        return persisted_parent_links(raw["parent_links"], record.provider)
+    if record.provider == "cursor":
+        return cursor_parent_links(raw, observed_at=record.logged_at.timestamp())
+    return ()
 
 
 def claude_parent_links(payload: dict, *, observed_at: float, agent_id: str | None = None) -> tuple[ParentLink, ...]:
@@ -173,7 +218,8 @@ def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: f
             if type(native) is not dict or native.get("driver") != binding.get("driver"):
                 continue
             provider = _provider(binding.get("driver"), binding.get("provider_instance_id"), registry_providers)
-            key = member_key(provider, native.get("nativeId"))
+            native_id = native.get("nativeId")
+            key = member_key(provider, cursor_native_id(native_id) if provider == "cursor" else native_id)
             if key:
                 valid.append(key)
                 owners.setdefault(key, set()).add((tid, binding.get("provider_instance_id") or ""))

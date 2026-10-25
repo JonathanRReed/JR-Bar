@@ -191,6 +191,12 @@ static const struct meta_key META_KEYS[] = {
     { "agent_id", META_VALUE_BYTES },
     { "parent_agent_id", META_VALUE_BYTES },
     { "parentAgentId", META_VALUE_BYTES },
+    { "parent_thread_id", META_VALUE_BYTES },
+    { "parent_session_id", META_VALUE_BYTES },
+    { "subagent_id", META_VALUE_BYTES },
+    { "parent_conversation_id", META_VALUE_BYTES },
+    { "callingSessionId", META_VALUE_BYTES },
+    { "callingToolUseId", META_VALUE_BYTES },
     { "transcript_path", META_PATH_BYTES },
 };
 #define META_KEY_COUNT (sizeof META_KEYS / sizeof META_KEYS[0])
@@ -207,7 +213,7 @@ static uint64_t fnv1a64(const char *p, size_t n) {
 }
 
 static int metadata_provider(const char *provider) {
-    return !strcmp(provider, "claude") || !strcmp(provider, "codex");
+    return !strcmp(provider, "claude") || !strcmp(provider, "codex") || !strcmp(provider, "cursor");
 }
 
 static size_t json_skip_ws(const char *b, size_t i, size_t n) {
@@ -293,7 +299,11 @@ static size_t build_metadata(const char *b, size_t n, char *out, size_t cap) {
         if (!end) break;
         if (!is_input) {
             for (size_t k = 0; k < META_KEY_COUNT; k++) {
-                if (key_len != strlen(META_KEYS[k].name) || memcmp(b + key_at, META_KEYS[k].name, key_len)) continue;
+                int matches = key_len == strlen(META_KEYS[k].name) && !memcmp(b + key_at, META_KEYS[k].name, key_len);
+                if (k == 0 && key_len == strlen("hookEventName") && !memcmp(b + key_at, "hookEventName", key_len)) matches = 1;
+                if (k == 1 && key_len == strlen("sessionId") && !memcmp(b + key_at, "sessionId", key_len)) matches = 1;
+                if (k == 1 && key_len == strlen("conversation_id") && !memcmp(b + key_at, "conversation_id", key_len)) matches = 1;
+                if (!matches) continue;
                 if (found[k].seen) break;
                 found[k].seen = 1;
                 if (b[i] != '"') break;

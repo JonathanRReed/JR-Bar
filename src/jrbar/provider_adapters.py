@@ -21,7 +21,8 @@ from typing import Final
 
 from .capacity_types import CapacityValidationError, SourceKey
 from .hook_ingress_protocol import PAYLOAD_FINGERPRINT_FIELD, PAYLOAD_TRUNCATED_FIELD
-from .models import _CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE, HookEvent
+from .lineage_adapters import hook_parent_links, persisted_parent_links
+from .models import _CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE, HookEvent, ParentLink
 from .provider_contracts import (
     AdapterIdentifier,
     CapabilityIdentifier,
@@ -191,9 +192,13 @@ class NormalizedProviderRecord:
     notification_kind: NotificationKind | None
     sequence: int | None
     terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE
+    parent_links: tuple[ParentLink, ...] = ()
     _terminal_provenance: object | None = dataclass_field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
+        if type(self.parent_links) is not tuple or (self.parent_links and persisted_parent_links(
+                [link.to_dict() for link in self.parent_links], self.source_key.provider_id) != self.parent_links):
+            raise ProviderAdapterValidationError("invalid parent links")
         sequence_valid = self.sequence is None or (
             type(self.sequence) is int and 0 <= self.sequence <= MAX_PROVIDER_SEQUENCE
         )
@@ -1530,6 +1535,7 @@ def minimize_hook_event(
         notification_kind=notification_kind,
         sequence=sequence,
         _terminal_provenance=record._terminal_provenance,
+        parent_links=hook_parent_links(record),
         terminal_cause=(
             ProviderTerminalCause.CODEX_USAGE_LIMIT
             if (
@@ -1806,6 +1812,7 @@ def normalized_provider_record_to_payload(
                 None if record.notification_kind is None else record.notification_kind.value
             ),
             "sequence": record.sequence,
+            **({"parent_links": [link.to_dict() for link in record.parent_links]} if record.parent_links else {}),
             **({"terminal_cause": record.terminal_cause.value}
                if record.terminal_cause is not ProviderTerminalCause.NONE else {}),
         }
@@ -1891,6 +1898,8 @@ def normalized_provider_record_from_payload(
     )
     if kind == "normalized" and "terminal_cause" in payload:
         expected_fields = _NORMALIZED_FIELDS | {"terminal_cause"}
+    if kind == "normalized" and "parent_links" in payload:
+        expected_fields = expected_fields | {"parent_links"}
     if expected_fields is None or not _has_exact_fields(payload, expected_fields):
         return None
     if not _valid_version(payload["version"]):
@@ -1947,6 +1956,7 @@ def normalized_provider_record_from_payload(
             ),
             sequence=sequence,
             terminal_cause=ProviderTerminalCause(payload.get("terminal_cause", "none")),
+            parent_links=persisted_parent_links(payload["parent_links"], source_key.provider_id) if "parent_links" in payload else (),
         )
     except (
         ContractValidationError,

@@ -2198,6 +2198,13 @@ def parse_log_line(provider: str, line: str) -> HookEvent | None:
 
     session_id = _first_string(normalized_raw, "session_id", "sessionId")
     agent_id = _first_string(normalized_raw, "agent_id", "agentId")
+    if provider == "cursor" and normalized_raw.get("subagent_id"):
+        # Cursor's envelope still names the parent conversation on a start.
+        # The work belongs to the declared child, using the normal hash domain.
+        normalized_raw["conversation_id"] = normalized_raw["subagent_id"]
+        session_id = normalized_raw["subagent_id"]
+        for alias in ("session_id", "sessionId"):
+            normalized_raw.pop(alias, None)
     # Normalized ledger records carry identity as WORK ids: the work IS
     # the session for a main, and the agent for a sub-agent (whose
     # parent_work_id names its session). Reading only session_id/agent_id

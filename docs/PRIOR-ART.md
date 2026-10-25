@@ -705,3 +705,10 @@ Apache-2.0, defines the registry IDs `factory-droid` and `devin`.
 JR-Bar reads those IDs from T3's local provider configuration to identify
 a generic ACP binding. Custom instance labels do not establish identity.
 No upstream code was copied. The daemon makes no registry request.
+
+## Native worker lineage adapters
+
+Cursor's [hooks reference](https://cursor.com/docs/hooks#subagentstart),
+checked 2026-10-25, documents `subagent_id` and `parent_conversation_id`.
+No Cursor executable or app was available to version locally. The synthetic
+fixture names the documentation date. No Cursor source code was copied.

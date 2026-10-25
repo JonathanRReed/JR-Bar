@@ -133,6 +133,12 @@ Adapters emit `ParentLink(child, parent, harness, observed_at)` values to
 resolver changes. It must preserve ambiguous evidence rather than choose
 one binding, bound its reads, and emit only provider-qualified IDs.
 
+Normalized hook logs may include `parent_links`, a list of at most four
+`ParentLink` objects with provider-qualified child and parent IDs, a provider
+name in `harness`, and a finite `observed_at` epoch. A null parent records a
+known worker whose parent is missing. Replay preserves the original timestamp.
+These records contain identities only, never prompts or tool output.
+
 ## Who may send what
 
 Any process running as you can open `core.sock`: the daemon checks the peer's
