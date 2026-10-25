@@ -1,0 +1,115 @@
+source	line	function	writer	target_or_statement
+src/jrbar/activity_ledger_store.py	124	save_activity_ledger	atomic_private_write	Path(path)
+src/jrbar/ambient_effect_runtime.py	603	_save_glance_state	atomic_private_write	path
+src/jrbar/answer_surfaces.py	1024	_update	atomic_private_write	path
+src/jrbar/ask_dismissals.py	202	save_ask_dismissals	atomic_private_write	Path(path)
+src/jrbar/audit.py	274	compact_jsonl_file	atomic_private_write	path
+src/jrbar/audit.py	201	trim_process_log	os.write	descriptor
+src/jrbar/browser_session_import.py	154	_copy_storage_file	destination.write	chunk
+src/jrbar/capacity_history_store.py	178	save_capacity_history	atomic_private_write	Path(path)
+src/jrbar/capacity_history_store.py	361	_discard_and_diagnose	atomic_private_write	diagnostic
+src/jrbar/claude_statusline_source.py	417	publish_statusline_text	SHARED_TEXT_WRITER.write	document
+src/jrbar/claude_statusline_source.py	544	install_statusline	atomic_private_write	_backup_path(state_dir)
+src/jrbar/claude_statusline_source.py	235	put	atomic_private_write	path
+src/jrbar/claude_statusline_source.py	401	write	atomic_private_write	target
+src/jrbar/clear_agents_store.py	144	save_clear_agents_state	atomic_private_write	Path(path)
+src/jrbar/cloud_ingest.py	314	rotate_ingest_token	atomic_private_write	target
+src/jrbar/collector.py	1988	_write_latest_state	atomic_private_write	self.latest_state_path
+src/jrbar/command_journal.py	139	_persist	atomic_private_write	self._path
+src/jrbar/companion_seal.py	458	_write_json	atomic_private_write	path
+src/jrbar/core_effects.py	675	save_assignment_parameters	handle.write	encoded + '\n'
+src/jrbar/core_runtime.py	9183	run_core	crash_handle.write	"f""--- crash capture armed {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} pid={os.getpid()} ---\n"""
+src/jrbar/core_runtime.py	9179	run_core	crash_log.write_bytes	crash_log.read_bytes()[-512 * 1024:]
+src/jrbar/core_usage_samples.py	392	save	atomic_private_write	self.path
+src/jrbar/creator_micro_adapter.py	611	_call	self.transport.write	report
+src/jrbar/creator_micro_hidapi.py	220	write	self._device.write	report
+src/jrbar/creator_micro_setup.py	131	record	atomic_private_write	self.recovery_path
+src/jrbar/creator_micro_setup.py	154	_write_verified	atomic_private_write	self.recovery_path
+src/jrbar/creator_micro_setup.py	84	_save_backup	atomic_private_write	self.backup_path
+src/jrbar/creator_micro_setup.py	225	restore	atomic_private_write	self.recovery_path
+src/jrbar/credentials.py	133	record_denial	atomic_private_write	self.path
+src/jrbar/credentials.py	148	record_success	atomic_private_write	self.path
+src/jrbar/credentials.py	169	record_access_lost	atomic_private_write	self.path
+src/jrbar/credentials.py	178	clear	atomic_private_write	self.path
+src/jrbar/deck_board_store.py	87	_write	atomic_private_write	self.path
+src/jrbar/deck_control_settings.py	260	save_deck_controls	atomic_private_write	target
+src/jrbar/device_clock.py	393	save_rates	scratch.write_text	json.dumps(merged, indent=2, sort_keys=True)
+src/jrbar/device_writer.py	404	_write_all	os.write	descriptor
+src/jrbar/effect_assignment_store.py	395	save_effect_assignments	atomic_private_write	Path(path)
+src/jrbar/effect_history_store.py	124	save_effect_history	atomic_private_write	Path(path)
+src/jrbar/effect_pack_store.py	478	install	transaction.write	target
+src/jrbar/effect_pack_store.py	541	update	transaction.write	target
+src/jrbar/effect_pack_store.py	645	duplicate	transaction.write	target
+src/jrbar/effect_pack_store.py	725	rename	transaction.write	target
+src/jrbar/firmware_drive.py	202	write_file	os.write	descriptor
+src/jrbar/firmware_package.py	226	store_cached	atomic_private_write	directory / release.package_name
+src/jrbar/hook.py	178	write_normalized_hook_record	append_private_text_at	log_path
+src/jrbar/hook_compatibility.py	305	save	atomic_private_write	self.path
+src/jrbar/hook_dedupe.py	94	_write_locked	os.write	descriptor
+src/jrbar/hook_ingress.py	1189	_record_rejection	append_private_text	self._rejection_path
+src/jrbar/hook_pending.py	344	_append_lines	os.write	descriptor
+src/jrbar/install.py	2772	backup_file	atomic_private_write	backup
+src/jrbar/install.py	2785	_private_config_write	atomic_private_write	path
+src/jrbar/install.py	312	_transactional_provider_publish	transaction.write	backup
+src/jrbar/install.py	321	_transactional_provider_publish	transaction.write	path
+src/jrbar/install.py	495	after_publish	transaction.write	config
+src/jrbar/install.py	1545	stable_hook_shim	handle.write	body
+src/jrbar/integration_settings.py	351	_write_integration_settings	atomic_private_write	target
+src/jrbar/ipc.py	629	record	path.write_text	json.dumps({'failures': failures + 1, 'since': since})
+src/jrbar/keep_awake.py	659	save	atomic_private_write	self.path
+src/jrbar/keep_awake.py	1013	_save_lease	atomic_private_write	path
+src/jrbar/keep_awake.py	1002	_save_lease	atomic_private_write	path
+src/jrbar/keep_awake.py	1029	_save_lease	atomic_private_write	path
+src/jrbar/lid_sleep.py	390	install_sleep_helper	tmp_path.write_text	rule
+src/jrbar/local_token_history.py	353	_sqlite_events	connection.execute	SQL: 'PRAGMA query_only=ON'
+src/jrbar/mailbox_preference_store.py	215	save_mailbox_preferences_v2	atomic_private_write	target
+src/jrbar/mailbox_preference_store.py	225	save_mailbox_preferences_v2	atomic_private_write	target
+src/jrbar/migration.py	284	_write_marker	atomic_private_write	marker
+src/jrbar/operator_history_store.py	356	save_operator_history	atomic_private_write	target
+src/jrbar/operator_history_store.py	225	_discard_and_diagnose	atomic_private_write	path.with_name(path.name + '.corrupt')
+src/jrbar/operator_triage_store.py	118	save_operator_triage	atomic_private_write	Path(path)
+src/jrbar/private_export.py	42	_write_all	os.write	descriptor
+src/jrbar/private_io.py	939	append_private_text	append_private_text_at	path
+src/jrbar/private_io.py	290	_write_all	os.write	descriptor
+src/jrbar/private_io.py	777	ensure_empty_file	self.write	target
+src/jrbar/private_io.py	498	quarantine_private_file	atomic_private_write	target.with_name(destination)
+src/jrbar/private_io.py	965	append_private_text_at	os.write	descriptor
+src/jrbar/process_registry.py	485	write_record	atomic_private_write	path
+src/jrbar/provider_account_identity.py	66	_identity_salt	atomic_private_write	path
+src/jrbar/provider_management.py	129	_save_import_ledger	atomic_private_write	path
+src/jrbar/provider_usage_collectors.py	270	_read_cursor_token	connection.execute	SQL: 'PRAGMA query_only=ON'
+src/jrbar/provider_usage_collectors.py	1341	_opencode_local_facts	con.execute	SQL: 'PRAGMA query_only=ON'
+src/jrbar/provider_usage_event_store.py	69	save_seen_reset_events	atomic_private_write	target
+src/jrbar/provider_usage_event_store.py	130	save_reset_delivery_state	atomic_private_write	target
+src/jrbar/provider_usage_kiro.py	132	_identity	connection.execute	SQL: 'PRAGMA query_only=ON'
+src/jrbar/provider_usage_pairing.py	61	_write_owner_private	os.write	descriptor
+src/jrbar/provider_usage_store.py	93	save_provider_usage_state	atomic_private_write	target
+src/jrbar/provider_usage_sync_transport.py	85	publish_local_packet	atomic_private_write	target
+src/jrbar/provider_usage_sync_transport.py	106	fetch_peer_packet	batch.write_text	f'get {_batch_quote(peer.remote_path)} {_batch_quote(str(output))}\n'
+src/jrbar/remote_peers.py	702	publish_local_ledger	atomic_private_write	target
+src/jrbar/scene_pack_store.py	331	install	transaction.write	target
+src/jrbar/scene_pack_store.py	400	update	transaction.write	target
+src/jrbar/sd_eject_guard_launch.py	132	install_sd_eject_guard	paths.plist_path.write_bytes	data
+src/jrbar/settings.py	3376	_replaced_backup	atomic_private_write	backup
+src/jrbar/settings.py	3562	save_settings	atomic_private_write	target
+src/jrbar/settings_seal.py	473	_write_snapshot	atomic_private_write	self._snapshot_path()
+src/jrbar/settings_seal.py	548	_write_rejected	atomic_private_write	self._rejected_path()
+src/jrbar/t3_compat.py	593	_open_read_only	connection.execute	SQL: 'PRAGMA query_only = ON'
+src/jrbar/usage_file_index.py	423	_configure_connection	connection.execute	SQL: 'PRAGMA trusted_schema = OFF'
+src/jrbar/usage_file_index.py	479	_initialize_schema	connection.execute	SQL: 'PRAGMA journal_mode = DELETE'
+src/jrbar/usage_file_index.py	480	_initialize_schema	connection.execute	SQL: 'PRAGMA synchronous = NORMAL'
+src/jrbar/usage_file_index.py	483	_initialize_schema	connection.execute	SQL: 'CREATE TABLE IF NOT EXISTS metadata (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), schema_ver
+src/jrbar/usage_file_index.py	490	_initialize_schema	connection.execute	SQL: 'CREATE TABLE IF NOT EXISTS files (file_key TEXT PRIMARY KEY, document TEXT NOT NULL, sequence INTEG
+src/jrbar/usage_file_index.py	516	_bind_metadata	connection.execute	SQL: 'DELETE FROM files'
+src/jrbar/usage_file_index.py	517	_bind_metadata	connection.execute	SQL: 'DELETE FROM metadata'
+src/jrbar/usage_file_index.py	518	_bind_metadata	connection.execute	SQL: 'INSERT INTO metadata VALUES (1, ?, ?, ?, ?)'
+src/jrbar/usage_file_index.py	240	put	self._connection.execute	SQL: 'INSERT INTO files(file_key, document, sequence) VALUES (?, ?, ?) ON CONFLICT(file_key) DO UPDATE SE
+src/jrbar/usage_file_index.py	359	_vacuum_if_wasteful	self._connection.execute	SQL: 'VACUUM'
+src/jrbar/usage_file_index.py	291	prune	self._connection.executemany	SQL: 'DELETE FROM files WHERE file_key = ?'
+src/jrbar/usage_graph_worker.py	1208	_usage_doc_cache_write	atomic_private_write	_usage_doc_cache_path()
+src/jrbar/usage_percent_history.py	183	append_percent_observations	append_private_text	path
+src/jrbar/usage_percent_history.py	218	append_percent_observations	atomic_private_write	path
+src/jrbar/usage_percent_history.py	193	append_percent_observations	append_private_text	path
+src/jrbar/usage_percent_history.py	220	append_percent_observations	append_private_text	path
+src/jrbar/usage_stats.py	3523	_scan_inventory_usage_with_index	atomic_private_write	cache_path
+src/jrbar/watch_run.py	234	create_temporary_settings	stream.write	payload

@@ -194,7 +194,7 @@ approves, denies or types into an agent (`answer_ask`, `deck_answer`,
 `provider_consent`, `provider_add_instance`, `provider_action`,
 `provider_sign_in`, `provider_update`, `provider_update_check`),
 `set_closed_lid_policy`, `presence`, `clear_completed`, `undo_clear`,
-`dismiss_session`, `mark_history_seen`, `reset_receipt`, `audit_export`,
+`dismiss_session`, `mark_history_seen`, `reset_receipt`, `reset_status`, `audit_export`,
 `t3code_integration`, `adopt_seal`, `keep_protected_change`, `quit`, the LED,
 calibration, effect, scene-pack and cue writers, the SidePulse protection
 commands and every `deck_*` command.
