@@ -1,10 +1,12 @@
+import AppKit
 import Foundation
+import SwiftUI
 @testable import JRBarCore
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("History timeline cache")
+@Suite("History timeline cache", .timeLimit(.minutes(2)))
 struct HistoryTimelineCacheTests {
     private func store() -> HistoryStore {
         let core = CoreModel(socketPath: NSTemporaryDirectory() + UUID().uuidString + ".sock")
@@ -33,6 +35,53 @@ struct HistoryTimelineCacheTests {
         #expect(store.timeline(for: row(0)) != nil)
         #expect(store.timeline(for: row(1)) == nil)
         #expect(store.timeline(for: row(32)) != nil)
+    }
+
+    @Test func expandedRowRefetchesAnEvictedTimelineOnDemand() async throws {
+        let store = store()
+        let expanded = row(0)
+        var reads = 0
+        let started = TestEvents<Void>()
+        var finish: CheckedContinuation<CoreTimelinePage, Never>?
+        store.readTimeline = { _ in reads += 1; return CoreTimelinePage(events: []) }
+        store.toggleExpanded(expanded)
+        #expect(await waitForObservedState { !store.isLoadingTimeline(expanded) })
+        for index in 1...32 {
+            let task = try #require(store.loadTimeline(for: row(index)))
+            await task.value
+        }
+        #expect(store.expandedID == expanded.id)
+        #expect(store.timeline(for: expanded) == nil)
+        let before = reads
+        store.readTimeline = { _ in
+            reads += 1
+            return await withCheckedContinuation { finish = $0; started.send(()) }
+        }
+        let host = NSHostingView(rootView: HistoryRowView(row: expanded, store: store, isLast: true))
+        host.frame = NSRect(x: 0, y: 0, width: 800, height: 360)
+        while !store.isLoadingTimeline(expanded), !Task.isCancelled {
+            host.layoutSubtreeIfNeeded()
+            await drainMainQueue()
+        }
+        try Task.checkCancellation()
+        _ = try await started.next()
+        #expect(store.isLoadingTimeline(expanded))
+        #expect(store.loadMissingExpandedTimeline(for: expanded) == nil)
+        finish?.resume(returning: CoreTimelinePage(events: [
+            CoreTimelineItem(seq: 0, kind: "message", role: "assistant", text: "Synthetic work"),
+        ]))
+        #expect(await waitForObservedState { !store.isLoadingTimeline(expanded) })
+        withExtendedLifetime(host) {}
+        #expect(reads == before + 1)
+        #expect(store.timeline(for: expanded)?.items.count == 1)
+        #expect(store.expandedTimelines.count == 32)
+        #expect(store.loadMissingExpandedTimeline(for: expanded) == nil)
+        #expect(store.loadMissingExpandedTimeline(for: row(1)) == nil)
+        if WindowsRenderProofTests.enabled {
+            try WindowsRenderProofTests.write("history-evicted-row", size: CGSize(width: 800, height: 360)) {
+                HistoryRowView(row: expanded, store: store, isLast: true)
+            }
+        }
     }
 
     @Test func vanishedRowsAndCloseReleaseCachedReconstructions() async throws {

@@ -143,6 +143,12 @@ final class HistoryStore {
         loadTimeline(for: row)
     }
 
+    @discardableResult
+    func loadMissingExpandedTimeline(for row: CoreHistoryRow) -> Task<Void, Never>? {
+        guard expandedID == row.id, expandedTimelines[row.id] == nil else { return nil }
+        return loadTimeline(for: row)
+    }
+
     /// The newest page of the row's transcript, through the same
     /// `session_timeline` the Overview reads; an ended session that aged
     /// out of the roster still resolves by provider and uuid.
