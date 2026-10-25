@@ -194,4 +194,48 @@ def test_noninteractive_refusal_preserves_stored_claude_token(tmp_path, monkeypa
     original = store.secrets.copy()
     assert not sync_claude_credential_in_background(store, home=tmp_path, now=1_000)
     assert store.secrets == original
-    assert len(calls) == 1
+    assert len(calls) == 2
+
+
+def test_rewritten_keychain_item_keeps_live_usage_via_system_tool(tmp_path, monkeypatch):
+    from jrbar import credentials, providers
+    from jrbar.credentials import CLAUDE_CODE_KEYCHAIN, KeychainConsentLedger
+    from jrbar.provider_usage_codex_claude import collect_claude
+    from jrbar.provider_usage_settings import default_provider_usage_settings
+
+    monkeypatch.setattr(providers, "default_state_dir", lambda: tmp_path)
+    ledger = KeychainConsentLedger(tmp_path / "keychain-consent.json")
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000)
+    # The direct reader has lost its ACL after Claude Code replaced the item.
+    ledger.record_access_lost(CLAUDE_CODE_KEYCHAIN.service, 1001)
+    calls = []
+    generation = [1]
+
+    def run(arguments, **kwargs):
+        calls.append(arguments)
+        assert kwargs["timeout"] <= 2
+        assert arguments == ["/usr/bin/security", "find-generic-password", "-s", "Claude Code-credentials", "-w"]
+        payload = _payload(access=f"synthetic-{generation[0]}", expires_at=generation[0] * 2000,
+                           refresh="unused-synthetic-refresh")
+        return subprocess.CompletedProcess(arguments, 0, stdout=payload, stderr="")
+
+    monkeypatch.setattr(credentials.subprocess, "run", run)
+    store = FakeStore()
+    fetched = []
+
+    def fetch(token):
+        fetched.append(token)
+        return [{"label": "5-hour", "utilization": 25, "resets_at": 3000}]
+
+    for now in (1002, 1702):
+        result = collect_claude(default_provider_usage_settings().preference("claude"),
+            home=tmp_path, observed_at=now, credentials=store, quota_fetcher=fetch,
+            local_scanner=lambda *_: None, statusline_reader=lambda *_: None)
+        assert result.state.value == "ready"
+        assert result.lanes[0].remaining_percent == 75
+        generation[0] += 1
+    assert fetched == ["synthetic-1", "synthetic-2"]
+    assert len(calls) == 2
+    assert ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service)
+    assert not ledger.access_lost(CLAUDE_CODE_KEYCHAIN.service)
+    assert all(account != "refresh-token" for _, account in store.stored)

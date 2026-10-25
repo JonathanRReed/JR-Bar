@@ -49,7 +49,7 @@ def test_a_lost_background_grant_is_not_a_sign_out_or_a_new_prompt(tmp_path):
     assert ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service)
 
 
-def test_foreground_and_background_use_the_same_isolated_reader(tmp_path, monkeypatch):
+def test_claude_foreground_and_background_prefer_bounded_system_tool(tmp_path, monkeypatch):
     from jrbar import credentials as module
 
     calls = []
@@ -64,8 +64,8 @@ def test_foreground_and_background_use_the_same_isolated_reader(tmp_path, monkey
     assert read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger).ok
     foreground, background = calls
     assert foreground[0][:3] == background[0][:3]
-    assert foreground[0][1:3] == ["-m", "jrbar.keychain_read"]
-    assert "--allow-prompt" in foreground[0]
+    assert foreground[0] == ["/usr/bin/security", "find-generic-password", "-s", "Claude Code-credentials", "-w"]
+    assert "--allow-prompt" not in foreground[0]
     assert "--allow-prompt" not in background[0]
     assert background[1]["timeout"] <= 5
 
@@ -86,8 +86,8 @@ def test_background_reader_refusal_has_no_prompt_fallback(tmp_path, monkeypatch,
     result = read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger)
     assert result.outcome is outcome
     assert result.secret is None
-    assert len(calls) == 1
-    assert "--allow-prompt" not in calls[0]
+    assert len(calls) == 2
+    assert all("--allow-prompt" not in call for call in calls)
     assert ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service) == (code != 3)
     assert ledger.retry_at(CLAUDE_CODE_KEYCHAIN.service, 1_001) is None
 

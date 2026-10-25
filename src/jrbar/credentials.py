@@ -201,6 +201,15 @@ def _run_keychain_reader(
     )
 
 
+def _run_security_reader(item: KeychainItem, *, timeout: float) -> subprocess.CompletedProcess:
+    # Claude Code writes with this system tool. Its trust survives an item
+    # replacement that removes the grant to our isolated direct reader.
+    arguments = ["/usr/bin/security", "find-generic-password", "-s", item.service, "-w"]
+    if item.account:
+        arguments += ["-a", item.account]
+    return subprocess.run(arguments, capture_output=True, text=True, timeout=timeout, check=False)
+
+
 def read_keychain_secret(
     item: KeychainItem,
     *,
@@ -208,6 +217,7 @@ def read_keychain_secret(
     ledger: KeychainConsentLedger | None = None,
     now: float | None = None,
     runner=None,
+    security_runner=None,
 ) -> CredentialResult:
     """Read one Keychain secret.
 
@@ -217,7 +227,11 @@ def read_keychain_secret(
     """
     reference = time.time() if now is None else float(now)
     if not allow_prompt and not (
-        ledger is not None and ledger.standing_grant(item.service)
+        ledger is not None and (
+            ledger.standing_grant(item.service)
+            or (item == CLAUDE_CODE_KEYCHAIN and ledger.access_lost(item.service)
+                and (runner is None or security_runner is not None))
+        )
     ):
         # No standing grant on record: a background read could surprise
         # the user with a Keychain dialog, so it is refused outright.
@@ -229,6 +243,21 @@ def read_keychain_secret(
             return CredentialResult(CredentialOutcome.COOLING_DOWN, retry_at=retry_at)
 
     try:
+        if item == CLAUDE_CODE_KEYCHAIN and (runner is None or security_runner is not None):
+            tool = security_runner or _run_security_reader
+            try:
+                completed = tool(item, timeout=_SECURITY_BACKGROUND_TIMEOUT_SECONDS)
+                secret = (completed.stdout or "").strip()
+                if completed.returncode == 0 and 0 < len(secret.encode("utf-8")) <= CODEX_AUTH_MAX_BYTES:
+                    if ledger is not None:
+                        ledger.record_success(item.service, reference)
+                    return CredentialResult(CredentialOutcome.OK, secret=secret)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            # The old grant cannot authorize a direct read after a rewrite.
+            # The trusted tool is still retried on the next quiet refresh.
+            if not allow_prompt and ledger is not None and ledger.access_lost(item.service):
+                return CredentialResult(CredentialOutcome.ACCESS_LOST)
         if runner is not None:
             completed = runner(item)
         else:
