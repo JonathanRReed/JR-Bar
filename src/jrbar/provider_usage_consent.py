@@ -326,10 +326,9 @@ class ConsentGatedCollector:
     """A collector that only makes its request, or reads its sign-in, once the
     person has turned the provider on.
 
-    Without consent it runs ``local_only`` instead, which is handed no
-    credential store and no transport, so it cannot ask anyone or read a
-    sign-in even by mistake. ``requires_usage_consent`` tells the refresh
-    loop not to touch the provider's credential sources either.
+    Without consent it returns an off snapshot without reading any source.
+    ``requires_usage_consent`` also stops the refresh loop from scheduling
+    a collection job or touching credentials.
     """
 
     requires_usage_consent = True
@@ -362,27 +361,6 @@ class ConsentGatedCollector:
         observed_at: float,
     ) -> ProviderUsageSnapshot:
         instance = getattr(preference, "source_instance_id", "default")
-        if self._local_only is not None:
-            snapshot = self._local_only(preference, Path(home), observed_at)
-            if self.provider_id in {"claude", "codex"} and instance != "default":
-                # These local counters cover provider homes, not this account.
-                snapshot = replace(
-                    snapshot, input_tokens=0, cached_input_tokens=0,
-                    output_tokens=0, model_count=0,
-                    estimated_cost_usd=None, cache_savings_usd=None,
-                )
-            if snapshot.lanes:
-                # A local reading (Codex's rollouts, Claude Code's status
-                # line) is real and stays: nothing left the Mac to get it.
-                return snapshot
-            return _with_local_totals(
-                usage_off_snapshot(
-                    self.provider_id,
-                    observed_at=observed_at,
-                    source_instance_id=instance,
-                ),
-                snapshot,
-            )
         return usage_off_snapshot(
             self.provider_id,
             observed_at=observed_at,
