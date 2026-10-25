@@ -3,17 +3,28 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Setup permission poll ownership", .serialized)
+@Suite("Setup permission poll ownership", .serialized, .timeLimit(.minutes(10)))
 struct SetupPermissionPollingTests {
     @MainActor
     private final class Gate {
+        private let starts = TestEvents<Int>()
+        private var finished = false
+
+        func waitForCall(_ call: Int) async throws {
+            if calls < call { _ = try await starts.next { $0 >= call } }
+            try #require(calls == call)
+        }
         private var pending: [Int: CheckedContinuation<[SetupPermission: SetupPermissionStatus], Never>] = [:]
         private(set) var calls = 0
 
         func read() async -> [SetupPermission: SetupPermissionStatus] {
+            guard !finished else { return [:] }
             calls += 1
             let call = calls
-            return await withCheckedContinuation { pending[call] = $0 }
+            return await withCheckedContinuation {
+                pending[call] = $0
+                starts.send(call)
+            }
         }
 
         func answer(_ call: Int, _ statuses: [SetupPermission: SetupPermissionStatus]) {
@@ -21,17 +32,43 @@ struct SetupPermissionPollingTests {
         }
 
         func finish() {
+            finished = true
             let held = Array(pending.values)
             pending.removeAll()
             for continuation in held { continuation.resume(returning: [:]) }
         }
     }
 
-    private func until(_ predicate: () -> Bool) async throws {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(5))
-        while !predicate(), clock.now < deadline, !Task.isCancelled { await Task.yield() }
-        try #require(predicate(), "Synthetic permission read did not start")
+    private static func manualPoll(_ tick: @escaping @MainActor () -> Void) -> Timer {
+        Timer(timeInterval: 1.5, repeats: true) { _ in MainActor.assumeIsolated { tick() } }
+    }
+
+    @Test("only an explicit clock tick polls again, and stopping disarms it")
+    func manualClockOwnsPolling() async throws {
+        let gate = Gate()
+        var timer: Timer?
+        var model = SetupModel()
+        model.refreshPermissions = { await gate.read() }
+        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in },
+                               schedulePermissionPoll: { tick in
+            let scheduled = Self.manualPoll(tick)
+            timer = scheduled
+            return scheduled
+        })
+        defer { store.stopPermissionUpdates(); gate.finish() }
+        let initial = try #require(store.startPermissionUpdates())
+        try await gate.waitForCall(1)
+        gate.answer(1, [.camera: .granted])
+        await initial.value
+        #expect(gate.calls == 1)
+        let scheduled = try #require(timer)
+        scheduled.fire()
+        try await gate.waitForCall(2)
+        #expect(store.pollPermissions() == nil)
+        gate.answer(2, [.camera: .denied])
+        #expect(await waitForObservedState { store.status(of: .camera) == .denied })
+        store.stopPermissionUpdates()
+        #expect(!scheduled.isValid)
     }
 
     @Test("the initial permission scan owns the poll until it settles")
@@ -39,14 +76,14 @@ struct SetupPermissionPollingTests {
         let gate = Gate()
         var model = SetupModel()
         model.refreshPermissions = { await gate.read() }
-        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in })
+        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in }, schedulePermissionPoll: Self.manualPoll)
         defer { store.stopPermissionUpdates(); gate.finish() }
         let initial = try #require(store.startPermissionUpdates())
-        try await until { gate.calls == 1 }
+        try await gate.waitForCall(1)
         let duplicate = store.pollPermissions()
         #expect(duplicate == nil, "The initial scan must own the poll")
         if let duplicate {
-            try await until { gate.calls == 2 }
+            try await gate.waitForCall(2)
             gate.finish()
             await duplicate.value
         } else {
@@ -60,7 +97,7 @@ struct SetupPermissionPollingTests {
         var reads = 0
         var model = SetupModel()
         model.refreshPermissions = { reads += 1; return [.camera: .granted] }
-        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in })
+        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in }, schedulePermissionPoll: Self.manualPoll)
         defer { store.stopPermissionUpdates() }
         let initial = try #require(store.startPermissionUpdates())
         store.stopPermissionUpdates()
@@ -74,11 +111,11 @@ struct SetupPermissionPollingTests {
         let gate = Gate()
         var model = SetupModel()
         model.refreshPermissions = { await gate.read() }
-        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in })
+        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in }, schedulePermissionPoll: Self.manualPoll)
         defer { store.stopPermissionUpdates(); gate.finish() }
         let initial = try #require(store.startPermissionUpdates())
         #expect(store.startPermissionUpdates() == nil)
-        try await until { gate.calls == 1 }
+        try await gate.waitForCall(1)
         #expect(store.startPermissionUpdates() == nil)
         #expect(store.pollPermissions() == nil)
         gate.finish()
@@ -92,13 +129,13 @@ struct SetupPermissionPollingTests {
         let gate = Gate()
         var model = SetupModel()
         model.refreshPermissions = { await gate.read() }
-        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in })
+        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in }, schedulePermissionPoll: Self.manualPoll)
         defer { store.stopPermissionUpdates(); gate.finish() }
         let old = try #require(store.startPermissionUpdates())
         store.stopPermissionUpdates()
         let current = try #require(store.startPermissionUpdates())
         await old.value
-        try await until { gate.calls == 1 }
+        try await gate.waitForCall(1)
         #expect(store.pollPermissions() == nil)
         #expect(store.startPermissionUpdates() == nil)
         gate.answer(1, [.camera: .granted])
@@ -106,7 +143,7 @@ struct SetupPermissionPollingTests {
         #expect(gate.calls == 1)
         #expect(store.status(of: .camera) == .granted)
         let next = try #require(store.pollPermissions())
-        try await until { gate.calls == 2 }
+        try await gate.waitForCall(2)
         gate.answer(2, [.camera: .denied])
         await next.value
         #expect(store.status(of: .camera) == .denied)
@@ -118,9 +155,9 @@ struct SetupPermissionPollingTests {
         defer { gate.finish() }
         var model = SetupModel()
         model.refreshPermissions = { await gate.read() }
-        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in })
+        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in }, schedulePermissionPoll: Self.manualPoll)
         let old = try #require(store.pollPermissions())
-        try await until { gate.calls == 1 }
+        try await gate.waitForCall(1)
         store.stopPermissionUpdates()
 
         let requested = store.pollPermissions()
@@ -130,14 +167,14 @@ struct SetupPermissionPollingTests {
             await old.value
             return
         }
-        try await until { gate.calls == 2 }
+        try await gate.waitForCall(2)
         gate.answer(1, [.camera: .denied])
         await old.value
         #expect(store.status(of: .camera) == .unknown)
         let unwanted = store.pollPermissions()
         #expect(unwanted == nil, "Old cleanup must not release the newer poll")
         if let unwanted {
-            try await until { gate.calls == 3 }
+            try await gate.waitForCall(3)
             gate.answer(3, [:])
             await unwanted.value
         }
@@ -146,7 +183,7 @@ struct SetupPermissionPollingTests {
         #expect(store.status(of: .camera) == .granted)
         let next = try #require(store.pollPermissions())
         let nextCall = gate.calls + 1
-        try await until { gate.calls == nextCall }
+        try await gate.waitForCall(nextCall)
         gate.answer(nextCall, [.camera: .needed])
         await next.value
         #expect(store.status(of: .camera) == .needed)
@@ -157,7 +194,7 @@ struct SetupPermissionPollingTests {
         var reads = 0
         var model = SetupModel()
         model.refreshPermissions = { reads += 1; return [.camera: .granted] }
-        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in })
+        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in }, schedulePermissionPoll: Self.manualPoll)
         let queued = try #require(store.pollPermissions())
         store.stopPermissionUpdates()
         await queued.value
@@ -175,16 +212,16 @@ struct SetupPermissionPollingTests {
         defer { gate.finish() }
         var model = SetupModel()
         model.refreshPermissions = { await gate.read() }
-        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in })
+        let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in }, schedulePermissionPoll: Self.manualPoll)
         store.stopPermissionUpdates()
         store.stopPermissionUpdates()
         let read = try #require(store.pollPermissions())
-        try await until { gate.calls == 1 }
+        try await gate.waitForCall(1)
         #expect(store.pollPermissions() == nil)
         gate.answer(1, [.camera: .granted])
         await read.value
         let retry = try #require(store.pollPermissions())
-        try await until { gate.calls == 2 }
+        try await gate.waitForCall(2)
         gate.answer(2, [.camera: .denied])
         await retry.value
         #expect(store.status(of: .camera) == .denied)
@@ -198,11 +235,11 @@ struct SetupPermissionPollingTests {
         var model = SetupModel()
         model.refreshPermissions = { await gate.read() }
         let store = SetupStore(model: model, load: { SetupState(grantedPermissions: ["camera"]) },
-                               persist: { saved.append($0) })
+                               persist: { saved.append($0) }, schedulePermissionPoll: Self.manualPoll)
         let health = Task { await store.reviewPermissionHealth() }
-        try await until { gate.calls == 1 }
+        try await gate.waitForCall(1)
         let poll = try #require(store.pollPermissions())
-        try await until { gate.calls == 2 }
+        try await gate.waitForCall(2)
         store.stopPermissionUpdates()
         gate.answer(2, [.camera: .denied])
         await poll.value

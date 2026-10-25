@@ -6,21 +6,33 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Setup recovery", .serialized)
+@Suite("Setup recovery", .serialized, .timeLimit(.minutes(10)))
 struct SetupRecoveryTests {
     @MainActor
     private final class PermissionGate {
+        private let starts = TestEvents<Int>()
+        private var finished = false
+
+        func waitForCall(_ call: Int) async throws {
+            if calls < call { _ = try await starts.next { $0 >= call } }
+            try #require(calls == call)
+        }
         private var pending: [Int: CheckedContinuation<[SetupPermission: SetupPermissionStatus], Never>] = [:]
         private(set) var calls = 0
         func read() async -> [SetupPermission: SetupPermissionStatus] {
+            guard !finished else { return [:] }
             calls += 1
             let call = calls
-            return await withCheckedContinuation { pending[call] = $0 }
+            return await withCheckedContinuation {
+                pending[call] = $0
+                starts.send(call)
+            }
         }
         func answer(_ call: Int, _ statuses: [SetupPermission: SetupPermissionStatus]) {
             pending.removeValue(forKey: call)?.resume(returning: statuses)
         }
         func finish() {
+            finished = true
             let held = pending.values
             pending.removeAll()
             for continuation in held { continuation.resume(returning: [:]) }
@@ -44,9 +56,9 @@ struct SetupRecoveryTests {
         let store = SetupStore(model: model, load: { SetupState(grantedPermissions: ["camera"]) },
                                persist: { saved.append($0) })
         let health = Task { await store.reviewPermissionHealth() }
-        try await until { gate.calls == 1 }
+        try await gate.waitForCall(1)
         let ui = Task { await store.refreshPermissions() }
-        try await until { gate.calls == 2 }
+        try await gate.waitForCall(2)
         gate.answer(2, [.camera: .denied])
         await ui.value
         gate.answer(1, [.camera: .denied])
@@ -64,9 +76,9 @@ struct SetupRecoveryTests {
         model.refreshPermissions = { await gate.read() }
         let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in })
         let health = Task { await store.reviewPermissionHealth() }
-        try await until { gate.calls == 1 }
+        try await gate.waitForCall(1)
         let ui = Task { await store.refreshPermissions() }
-        try await until { gate.calls == 2 }
+        try await gate.waitForCall(2)
         gate.answer(2, [.camera: .granted])
         await ui.value
         gate.answer(1, [.camera: .denied])
@@ -84,9 +96,9 @@ struct SetupRecoveryTests {
         model.refreshPermissions = { await gate.read() }
         let store = SetupStore(model: model, load: { SetupState(grantedPermissions: ["camera"]) }, persist: { _ in })
         let health = Task { await store.reviewPermissionHealth() }
-        try await until { gate.calls == 1 }
+        try await gate.waitForCall(1)
         let ui = Task { await store.refreshPermissions() }
-        try await until { gate.calls == 2 }
+        try await gate.waitForCall(2)
         gate.answer(2, [.camera: .granted])
         await ui.value
         gate.answer(1, [.camera: .denied])
@@ -104,9 +116,9 @@ struct SetupRecoveryTests {
         model.refreshPermissions = { await gate.read() }
         let store = SetupStore(model: model, load: { SetupState() }, persist: { saved.append($0) })
         let older = Task { await store.reviewPermissionHealth() }
-        try await until { gate.calls == 1 }
+        try await gate.waitForCall(1)
         let newer = Task { await store.reviewPermissionHealth() }
-        try await until { gate.calls == 2 }
+        try await gate.waitForCall(2)
         gate.answer(2, [.camera: .granted])
         #expect(await newer.value == [])
         gate.answer(1, [.camera: .denied])
@@ -124,9 +136,9 @@ struct SetupRecoveryTests {
         model.refreshPermissions = { await gate.read() }
         let store = SetupStore(model: model, load: { SetupState(grantedPermissions: ["camera"]) }, persist: { _ in })
         let health = Task { await store.reviewPermissionHealth() }
-        try await until { gate.calls == 1 }
+        try await gate.waitForCall(1)
         let ui = Task { await store.refreshPermissions() }
-        try await until { gate.calls == 2 }
+        try await gate.waitForCall(2)
         gate.answer(2, [.camera: .unknown])
         await ui.value
         gate.answer(1, [.camera: .denied])
@@ -143,11 +155,11 @@ struct SetupRecoveryTests {
         model.refreshPermissions = { await gate.read() }
         let store = SetupStore(model: model, load: { SetupState() }, persist: { _ in })
         let health = Task { await store.reviewPermissionHealth() }
-        try await until { gate.calls == 1 }
+        try await gate.waitForCall(1)
         let older = Task { await store.refreshPermissions() }
-        try await until { gate.calls == 2 }
+        try await gate.waitForCall(2)
         let newer = Task { await store.refreshPermissions() }
-        try await until { gate.calls == 3 }
+        try await gate.waitForCall(3)
         gate.answer(3, [.camera: .granted])
         await newer.value
         gate.answer(2, [.camera: .denied])
