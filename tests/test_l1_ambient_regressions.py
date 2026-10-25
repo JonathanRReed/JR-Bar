@@ -76,7 +76,8 @@ def test_ten_minute_ember_write_budget_tracks_base_reasserts(tmp_path, monkeypat
     band_starts = [index for index, epoch in enumerate(epochs)
                    if index == 0 or epoch != epochs[index - 1]]
     assert base_writes == [0, 240, 480]
-    assert len(writes) <= len(base_writes) + 2 * len(band_starts)
+    band_changes = len(band_starts) - 1
+    assert len(writes) <= len(base_writes) + 2 * band_changes
     assert all(any(0 <= second - start <= LAYER_SECONDS for start in band_starts)
                for second in set(writes) - set(base_writes))
 
