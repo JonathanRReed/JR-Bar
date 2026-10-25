@@ -17,6 +17,42 @@ struct FeatureLifecycleTests {
                   nativeSourcesEnabled: false)
     }
 
+    @Test("Aquarium counts with its window closed and stops completely when off")
+    func closedAquariumKeepsCounting() async throws {
+        let core = CoreModel()
+        let toys = store(core)
+        let tank = try #require(toys.aquarium)
+        defer { toys.shutdown() }
+        #expect(tank.switchLabel == "Aquarium")
+        tank.isOn = true
+        tank.closeWindow()
+        #expect(tank.isOn && !tank.ownsWindow && !tank.game.windowOpen)
+        #expect(tank.economyRunning && tank.sessionObservationRunning && tank.connectionObservationRunning)
+        core.apply(.state(CoreState(sessions: [CoreSession(id: "closed", provider: "claude", mode: "completed")], asks: [])))
+        await drain()
+        tank.noteEvent(CoreEvent(id: "reset", kind: "quota_reset", provider: "claude"))
+        #expect(tank.game.away.completions == 1)
+        #expect(tank.game.pendingVisitors.contains(.submarine))
+        #expect(tank.lastResetAt != nil)
+        // Changing an ambient switch while closed must not reopen the window.
+        toys.state.aquarium.idleFillMinutes = 10
+        #expect(!tank.ownsWindow && tank.ambientRunning)
+        toys.state.aquarium.idleFillMinutes = 0
+        #expect(!tank.ownsWindow && !tank.ambientRunning)
+        tank.isOn = true
+        #expect(tank.awayNotice?.completions == 1)
+        #expect(tank.game.away.isEmpty)
+        tank.isOn = false
+        await drain()
+        let game = tank.game
+        let resetAt = tank.lastResetAt
+        tank.noteEvent(CoreEvent(id: "off-reset", kind: "quota_reset", provider: "claude"))
+        core.apply(.state(CoreState(sessions: [CoreSession(id: "off", provider: "claude", mode: "completed")], asks: [])))
+        await drain()
+        #expect(tank.game == game && tank.lastResetAt == resetAt)
+        stopped(tank.lifecycleResources, feature: "aquarium")
+    }
+
     @Test("every registered owner releases what it starts", arguments: FeatureLifecycleRegistry.features)
     func onThenOff(_ contract: FeatureLifecycleContract) async throws {
         switch contract.id {

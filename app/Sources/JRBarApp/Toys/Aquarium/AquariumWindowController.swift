@@ -4,8 +4,7 @@ import SwiftUI
 /// The tank's window (docs/TOYS.md): resizable, remembers its frame, the
 /// water running edge to edge under a clear title bar with only the
 /// traffic lights floating over it. "Fill screen" turns it borderless
-/// across the main screen until Esc; closing it switches the toy off
-/// through the store.
+/// across the main screen until Esc. Closing it leaves Aquarium on.
 @MainActor
 final class AquariumWindowController: NSObject, NSWindowDelegate {
     /// The owning toy. The controller keeps it — the window's view

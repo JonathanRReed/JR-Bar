@@ -9,8 +9,9 @@ import SwiftUI
 /// schooling around it. An ask rises to bob with a bubble, a failed
 /// run sinks grey & settles on the sand, a completion drifts off the
 /// edge — school and all. Reads `core.state.sessions` (mains AND
-/// workers); the timeline pauses while the window is covered. Off by
-/// default.
+/// workers); the timeline pauses while the window is covered. Closing
+/// the window keeps the game counting and the ambient displays running.
+/// Switching Aquarium off stops its observations and economy. Off by default.
 @MainActor
 @Observable
 final class AquariumToy: Toy {
@@ -210,11 +211,12 @@ final class AquariumToy: Toy {
     /// tick in line with the imported `enabled`, as the switch would have.
     func stateReplaced() {
         guard !isShutdown else { return }
+        let wasOn = economyRunning
         syncRuntime()
         syncAmbientSettings()
         syncRosterSettings()
         if isOn {
-            if windowController == nil { present(activate: false) }
+            if !wasOn { present(activate: false) }
         } else {
             closeWindow()
         }
@@ -241,7 +243,7 @@ final class AquariumToy: Toy {
         }
     }
 
-    private func closeWindow() {
+    func closeWindow() {
         let controller = windowController
         windowController = nil
         controller?.close()
@@ -414,7 +416,7 @@ final class AquariumToy: Toy {
     /// "Fill screen" opens the tank first when the toy is off — the
     /// button is a reason to look, not a trapdoor.
     func fillScreen() {
-        if !isOn { isOn = true }
+        if isOn { present(activate: true) } else { isOn = true }
         windowController?.fillScreen()
     }
 
@@ -429,14 +431,12 @@ final class AquariumToy: Toy {
         persist()
     }
 
-    /// The window's close button routes back through the store, so the
-    /// card's toggle and the tank can never disagree. Goes through the
-    /// `isOn` setter — writing `enabled` raw would leave the game timer
-    /// running the economy on a tank the card reads as off.
+    /// Closing the window leaves Aquarium on. Completions, quota resets
+    /// and the away summary keep accruing; ambient displays keep their
+    /// own switches. The Aquarium switch stops all of them.
     func windowDidClose() {
         windowController = nil
         windowOccluded = false
-        isOn = false
         let now = Date()
         note(game.apply(.setWindowOpen(false), now: now), now: now)
         persist()
@@ -618,7 +618,7 @@ final class AquariumToy: Toy {
     func openShop() {
         store?.wantsAquariumShop = true
         if isOn {
-            windowController?.show(activate: true)
+            present(activate: true)
         } else {
             isOn = true
         }
