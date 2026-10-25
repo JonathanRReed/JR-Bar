@@ -596,3 +596,85 @@ def test_fork_heavy_append_resolves_only_changed_events(tmp_path):
     (root / "parent.jsonl").unlink()
     assert index.scan(roots).codex_tokens == 4100
     assert index.resolved_last_pass == 240
+
+
+def test_corruption_is_quarantined_then_rebuilt_after_backoff(tmp_path, monkeypatch):
+    from jrbar import token_history_index as module
+    root = tmp_path / "claude"
+    root.mkdir()
+    (root / "one.jsonl").write_text(claude("one", "2026-10-25T01:00:00Z"))
+    path = tmp_path / "state/history.sqlite3"
+    path.parent.mkdir()
+    path.write_bytes(b"damaged synthetic cache")
+    index = TokenHistoryIndex(path)
+    clock = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    failed = index.scan({"claude": (root,)})
+    assert failed.source_coverage["claude"].status == usage.UsageSourceStatus.FAILED
+    assert len(list(path.parent.glob("*.damaged-*"))) == 1
+    assert not path.exists()
+    assert index.scan({"claude": (root,)}).records == []
+    assert not path.exists()
+    clock[0] += 61
+    assert index.scan({"claude": (root,)}).input_tokens == 100
+    assert index.error is None
+
+
+def test_sqlite_full_stops_parsing_for_an_hour(tmp_path, monkeypatch):
+    import sqlite3
+
+    from jrbar import token_history_index as module
+    root = tmp_path / "claude"
+    root.mkdir()
+    (root / "one.jsonl").write_text(claude("one", "2026-10-25T01:00:00Z"))
+    index = TokenHistoryIndex(tmp_path / "state/history.sqlite3")
+    calls = []
+    def full(*args):
+        calls.append(1)
+        error = sqlite3.OperationalError("database or disk is full")
+        error.sqlite_errorcode = sqlite3.SQLITE_FULL
+        raise error
+    monkeypatch.setattr(index, "_append", full)
+    monkeypatch.setattr(module.time, "monotonic", lambda: 100.0)
+    assert index.scan({"claude": (root,)}).source_coverage["claude"].status == usage.UsageSourceStatus.FAILED
+    for _ in range(60):
+        index.scan({"claude": (root,)})
+    assert calls == [1]
+    assert index.error == "history_disk_full"
+    assert index.retry_at == 3700
+    assert not list(index.path.parent.glob("*.damaged-*"))
+
+
+def test_cached_card_reads_committed_view_during_a_scan(tmp_path, monkeypatch):
+    import threading
+
+    from jrbar import token_history_index as module
+    monkeypatch.setattr(module, "_ENABLED", True)
+    monkeypatch.setattr(module, "_INDEXES", {})
+    root = tmp_path / ".claude/projects"
+    root.mkdir(parents=True)
+    path = root / "one.jsonl"
+    path.write_text(claude("one", "2026-10-25T01:00:00Z"))
+    index = module.shared_index(tmp_path / ".local/state/jrbar/token-history.sqlite3")
+    roots = {"claude": (root,)}
+    observed = datetime.fromisoformat("2026-10-25T12:00:00+00:00").timestamp()
+    index.scan(roots)
+    assert module.cached_card("claude", tmp_path, observed)["input_tokens"] == 100
+    path.write_text(path.read_text() + claude("two", "2026-10-25T02:00:00Z"))
+    entered, release = threading.Event(), threading.Event()
+    parser = usage._parse_file_tail
+    def blocked(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return parser(*args, **kwargs)
+    monkeypatch.setattr(usage, "_parse_file_tail", blocked)
+    thread = threading.Thread(target=lambda: index.scan(roots))
+    thread.start()
+    try:
+        assert entered.wait(5)
+        assert module.cached_card("claude", tmp_path, observed)["input_tokens"] == 100
+    finally:
+        release.set()
+        thread.join(5)
+    assert not thread.is_alive()
+    assert module.cached_card("claude", tmp_path, observed)["input_tokens"] == 200

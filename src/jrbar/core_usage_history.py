@@ -381,6 +381,8 @@ def scan_provider_pass(
         **options,
     )
     coverage = totals.source_coverage.get(provider)
+    if coverage is not None and coverage.status == usage_stats.UsageSourceStatus.FAILED:
+        raise UsageHistoryScanError()
     return ScanPass(
         [record for record in totals.records if record and record[0] == provider],
         coverage.pending_files if coverage is not None else 0,

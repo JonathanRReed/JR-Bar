@@ -128,6 +128,11 @@ class TokenHistoryIndex:
         self.path = path
         self.enabled = True
         self.lock = threading.RLock()
+        self.scan_lock = threading.Lock()
+        self.cards = OrderedDict()
+        self.retry_at = 0.0
+        self.error = None
+        self.checked_identity = None
         self.views = OrderedDict()
         self.view_bytes = 0
         self.generation = None
@@ -155,6 +160,11 @@ class TokenHistoryIndex:
             db = sqlite3.connect(target, timeout=0.05)
             try:
                 _require_leaf_identity(target, parent, name, expected)
+                identity = (expected.st_dev, expected.st_ino)
+                if self.checked_identity != identity:
+                    if db.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                        raise sqlite3.DatabaseError("history cache quick_check failed")
+                    self.checked_identity = identity
                 db.execute("PRAGMA journal_mode=WAL")
                 db.execute("PRAGMA synchronous=NORMAL")
                 db.execute("PRAGMA cache_size=-32768")
@@ -350,17 +360,68 @@ class TokenHistoryIndex:
             self.resolved_last_pass += 1
         db.execute("DROP TABLE resolve")
 
+    def _failed_totals(self, roots):
+        totals = usage.UsageTotals()
+        totals.source_coverage = {p: usage._CoverageState(p, root_present=True, unreadable_files=1).finalize() for p in roots}
+        return totals
+
+    def _recover(self, error):
+        full = getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_FULL
+        self.error = "history_disk_full" if full else "history_cache_unavailable"
+        self.retry_at = time.monotonic() + (3600 if full else 60)
+        if not full and isinstance(error, sqlite3.DatabaseError) and not isinstance(error, sqlite3.OperationalError):
+            # Preserve damaged bytes for diagnosis; never repeatedly rebuild a
+            # damaged cache in the maintenance loop. Refuse unsafe leaves.
+            from .private_io import _private_parent, _require_private_leaf
+            try:
+                with _private_parent(self.path) as (target, parent, name):
+                    _require_private_leaf(target, parent, name)
+                    suffix = ".damaged-" + secrets.token_hex(6)
+                    for ending in ("", "-wal", "-shm", "-journal"):
+                        leaf = Path(str(target) + ending)
+                        if _require_private_leaf(leaf, parent, leaf.name) is not None:
+                            os.rename(leaf.name, name + suffix + ending, src_dir_fd=parent, dst_dir_fd=parent)
+                self.checked_identity = None
+            except OSError:
+                pass
+
+    def _cached_totals(self, roots, since_epoch):
+        if not self.path.exists() or time.monotonic() < self.retry_at:
+            return None
+        db = self._connect()
+        try:
+            for provider, paths in roots.items():
+                manifest = json.dumps([os.path.realpath(root) for root in paths])
+                if db.execute("SELECT value FROM meta WHERE key=?", ("roots:" + provider,)).fetchone() != (manifest,):
+                    return None
+            totals = self._totals(db, roots, since_epoch)
+            totals.history_stale = any(db.execute("SELECT value FROM meta WHERE key=?", ("complete:" + p,)).fetchone() != ("True",) for p in roots)
+            return totals
+        finally:
+            db.close()
+
     def scan(self, roots, *, since_epoch=0.0, budget=None, cached_only=False, source_bindings=None):
+        try:
+            if cached_only:
+                return self._cached_totals(roots, since_epoch)
+            if time.monotonic() < self.retry_at:
+                return self._failed_totals(roots)
+            from .usage_graph_worker import _drop_to_utility_qos
+            _drop_to_utility_qos()
+            return self._scan(roots, since_epoch=since_epoch, budget=budget, source_bindings=source_bindings)
+        except (OSError, ValueError, sqlite3.Error) as error:
+            self._recover(error)
+            return None if cached_only else self._failed_totals(roots)
+
+    def _scan(self, roots, *, since_epoch=0.0, budget=None, source_bindings=None):
         """Update changed files and return compact records for one window.
 
         All roots of each provider are reconciled together, so duplicates
         across configured homes count once. Incomplete walks retain files.
         """
-        with self.lock:
+        with self.scan_lock:
             if self.stopping.is_set() or not self.enabled:
                 return usage.UsageTotals()
-            if cached_only and not self.path.exists():
-                return None
             db = self._connect()
             db.set_progress_handler(lambda: int(self.stopping.is_set() or not self.enabled), 1000)
             try:
@@ -371,26 +432,11 @@ class TokenHistoryIndex:
                     key = "source:" + provider
                     encoded = json.dumps(binding, sort_keys=True)
                     previous = db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
-                    if cached_only and previous != (encoded,):
-                        return None
                     if previous != (encoded,):
                         for (file,) in db.execute("SELECT id FROM files WHERE provider=?", (provider,)).fetchall():
                             self._remove(db, file)
                         db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (key, encoded))
                         changed = True
-                if cached_only:
-                    if not all(
-                        db.execute("SELECT value FROM meta WHERE key=?", ("complete:" + p,)).fetchone() == ("True",)
-                        for p in roots
-                    ):
-                        return None
-                    for provider, paths in roots.items():
-                        manifest = json.dumps([os.path.realpath(root) for root in paths])
-                        if db.execute("SELECT value FROM meta WHERE key=?", ("roots:" + provider,)).fetchone() != (
-                            manifest,
-                        ):
-                            return None
-                    return self._totals(db, roots, since_epoch)
                 changed = self._rebucket(db) or changed
                 cutoff = time.time() - RETENTION_SECONDS
                 prune_day = str(int(cutoff // 86400))
@@ -555,6 +601,7 @@ class TokenHistoryIndex:
                 db.commit()
                 totals = self._totals(db, roots, since_epoch)
                 totals.source_coverage = coverage
+                self.error = None
                 return totals
             except sqlite3.OperationalError:
                 if self.stopping.is_set() or not self.enabled:
@@ -577,6 +624,10 @@ class TokenHistoryIndex:
         return totals
 
     def _records(self, db, roots, since_epoch):
+        with self.lock:
+            return self._locked_records(db, roots, since_epoch)
+
+    def _locked_records(self, db, roots, since_epoch):
         generation = db.execute("SELECT value FROM meta WHERE key='generation'").fetchone()
         if generation != self.generation:
             self.views.clear()
@@ -708,8 +759,10 @@ def set_enabled(enabled):
             index.enabled = enabled
             if not enabled:
                 index.stopping.set()
-                index.views.clear()
-                index.view_bytes = 0
+                with index.lock:
+                    index.views.clear()
+                    index.view_bytes = 0
+                    index.cards.clear()
 
 
 def history_enabled():
@@ -728,16 +781,17 @@ def cached_card(provider, home, observed_at, *, extra_homes=None):
         return None
     roots = home_scan_roots((provider,), home=home, extras={provider: extra_homes} if extra_homes is not None else None)
     index = shared_index(path)
-    if not index.lock.acquire(blocking=False):
-        return None
+    card_key = (provider, usage.card_window_start(observed_at))
+    def previous():
+        with index.lock:
+            card = index.cards.get(card_key)
+            return {**card, "history_stale": True} if card is not None else None
     try:
         totals = index.scan(roots, since_epoch=usage.card_window_start(observed_at), cached_only=True)
     except (OSError, ValueError, sqlite3.Error):
-        return None
-    finally:
-        index.lock.release()
+        return previous()
     if totals is None:
-        return None
+        return previous()
     records = totals.records
     # Card pricing preserves its established semantics, while History prices
     # every provider's individual request, including long-context tiers.
@@ -756,6 +810,11 @@ def cached_card(provider, home, observed_at, *, extra_homes=None):
         "cache_savings_usd": amounts.estimated_cache_savings_usd if fully_priced else None,
     }
 
+    document["history_stale"] = bool(getattr(totals, "history_stale", False))
+    with index.lock:
+        index.cards[card_key] = document
+        while len(index.cards) > 16:
+            index.cards.popitem(last=False)
     if provider == "codex":
         document["windows"] = list(totals.codex_rate_limit_evidence)
         document["windows_observed_at"] = totals.codex_rate_limit_observed_at
