@@ -17,6 +17,48 @@ import Testing
 @MainActor
 struct SettingsRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
+    private static var applicationPrepared = false
+
+    @Test("the mock's notification setting survives decoding and binding")
+    func notificationBinding() throws {
+        let fixture = try Self.fixture()
+        defer { fixture.toys.shutdown() }
+        #expect(fixture.core.settings?.document["completion_notification_enabled"] == .bool(true))
+        #expect(fixture.settings.bool("completion_notification_enabled").wrappedValue)
+        #expect(fixture.settings.bool("dnd_schedule_enabled").wrappedValue == false)
+    }
+
+    @Test("native switch proofs distinguish on from off", .enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1"))
+    func toggleStates() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        defer { fixture.toys.shutdown() }
+        let original = try #require(fixture.core.settings?.document)
+        for dark in [false, true] {
+            var saturated: [Int] = []
+            for on in [false, true] {
+                let document = SettingsDocument(original).replacing("completion_notification_enabled", with: .bool(on))
+                fixture.core.apply(.settings(CoreSettings(generation: on ? 3 : 2, schema: CoreProtocol.knownSettingsSchema,
+                                                          document: document.root)))
+                #expect(fixture.settings.bool("completion_notification_enabled").wrappedValue == on)
+                let view = Form {
+                    SettingToggle(fixture.settings, "Notification banner", path: "completion_notification_enabled")
+                }.formStyle(.grouped)
+                let rep = try Self.snapshot(view, size: CGSize(width: 560, height: 140), dark: dark)
+                try Self.write(rep, named: "toggle-\(on ? "on" : "off")-\(dark ? "dark" : "light")")
+                var count = 0
+                for y in stride(from: 0, to: rep.pixelsHigh, by: 4) {
+                    for x in stride(from: 0, to: rep.pixelsWide, by: 4) {
+                        let color = try #require(rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                        let channels = [color.redComponent, color.greenComponent, color.blueComponent]
+                        if channels.max()! - channels.min()! > 0.15 { count += 1 }
+                    }
+                }
+                saturated.append(count)
+            }
+            #expect(saturated[1] > saturated[0] + 20, "the on switch must draw its active tint")
+        }
+    }
 
     /// The detail pane's width at the window's older default size;
     /// `JRBAR_RENDER_PROOF_WIDTH=430` draws the narrowest the window allows.
@@ -120,20 +162,47 @@ struct SettingsRenderProofTests {
     /// appearance and returns its layer tree as a bitmap — AppKit-backed
     /// controls included, which `ImageRenderer` cannot draw.
     static func snapshot<V: View>(_ view: V, size: CGSize, dark: Bool) throws -> NSBitmapImageRep {
+        let application = NSApplication.shared
+        let previousApplication = Self.enabled ? NSWorkspace.shared.frontmostApplication : nil
+        if Self.enabled {
+            application.setActivationPolicy(.accessory)
+            if !applicationPrepared {
+                application.finishLaunching()
+                applicationPrepared = true
+            }
+        }
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let hosting = NSHostingView(rootView: view
             .environment(\.colorScheme, dark ? .dark : .light)
             .frame(width: size.width, height: size.height))
         let window = NSWindow(contentRect: NSRect(origin: CGPoint(x: -20000, y: -20000), size: size),
-                              styleMask: [.borderless], backing: .buffered, defer: false)
+                              styleMask: Self.enabled ? [.titled] : [.borderless], backing: .buffered, defer: false)
         window.appearance = appearance
         window.isReleasedWhenClosed = false
         window.contentView = hosting
         hosting.frame = NSRect(origin: .zero, size: size)
+        if Self.enabled {
+            application.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+        }
+        defer {
+            window.contentView = nil
+            window.close()
+            if let previousApplication, previousApplication.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                previousApplication.activate()
+            }
+        }
         for _ in 0..<6 {
             hosting.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            if Self.enabled {
+                while let event = application.nextEvent(matching: [.appKitDefined, .applicationDefined, .systemDefined],
+                                                       until: Date(), inMode: .default, dequeue: true) {
+                    application.sendEvent(event)
+                }
+                application.updateWindows()
+            }
         }
         let scale: CGFloat = 2
         let rep = try #require(NSBitmapImageRep(
@@ -148,8 +217,6 @@ struct SettingsRenderProofTests {
             hosting.cacheDisplay(in: hosting.bounds, to: rep)
         }
         NSGraphicsContext.restoreGraphicsState()
-        window.contentView = nil
-        window.close()
         return rep
     }
 
