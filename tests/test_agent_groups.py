@@ -203,8 +203,10 @@ def test_factory_headers_supply_a_root_without_inventing_activity(tmp_path):
         path.write_text(json.dumps(payload) + "\n")
         os.utime(path, (NOW, NOW))
     rows = LocalLineageReader(tmp_path).read(frozenset({"factory"}), now=NOW)
-    group, = resolve_agent_groups(rows, now=NOW).groups
-    assert group.members == ("factory:session:native-factory", "factory:session:native-factory-worker")
+    assert len(rows) == 1
+    assert rows[0].agent_id == "factory:session:native-factory-worker"
+    assert rows[0].parent_links[0].parent == "factory:session:native-factory"
+    assert resolve_agent_groups(rows, now=NOW).unlinked_workers == {rows[0].agent_id}
     assert active_agent_groups(snapshot(rows)) == ()
 
 
@@ -313,3 +315,81 @@ def test_native_t3_task_and_transcript_use_the_same_member_key(provider, thread,
     native_link = next(link for link in links if link.child.endswith(native))
     assert native_link.child == f"{'factory' if provider == 'acpRegistry' else provider}:session:{native}"
     assert native_link.parent == keys[thread]
+
+
+@pytest.mark.parametrize("thread_id", ["task/with/slashes", "x" * 300])
+def test_t3_unbound_ids_are_unique_stable_and_publishable(thread_id):
+    from jrbar.collector import LiveAgentMonitor
+
+    threads = [{"thread_id": key, "default_provider": "codex", "active_provider_thread_id": "shared"}
+               for key in (thread_id, thread_id + "-other", "ordinary")]
+    bindings = [{"thread_id": row["thread_id"], "provider_thread_id": "shared", "driver": "codex",
+                 "payload_json": {"nativeThreadRef": {"driver": "codex", "nativeId": "same-native"}}}
+                for row in threads]
+    keys, _ = t3_parent_links(threads, bindings, observed_at=NOW)
+    assert len(set(keys.values())) == len(threads)
+    assert keys == t3_parent_links(threads[::-1], bindings, observed_at=NOW)[0]
+    monitor = LiveAgentMonitor()
+    monitor.replace_external_statuses("t3code", tuple(status(key) for key in keys.values()))
+
+
+def test_named_absent_devin_parent_never_uses_the_single_session_fallback():
+    root = status("devin:session:unrelated")
+    worker = status("devin:agent:worker", session_id="absent")
+    assert resolve_agent_groups([root, worker], now=NOW).unlinked_workers == {worker.agent_id}
+
+
+@pytest.mark.parametrize("age", [86_401, -60])
+def test_a_rows_own_link_does_not_expire(age):
+    worker = replace(status("claude:agent:worker", session_id="root"),
+                     updated_at=datetime.fromtimestamp(NOW-age, timezone.utc))
+    result = resolve_agent_groups([status("claude:session:root"), worker], now=NOW)
+    assert not result.unlinked_workers
+
+
+def test_external_link_allows_five_seconds_of_clock_skew():
+    root = status("claude:session:root")
+    worker = status("codex:session:worker", links=[ParentLink("codex:session:worker", root.agent_id, "t3code", NOW+2)])
+    assert not resolve_agent_groups([root, worker], now=NOW).unlinked_workers
+
+
+@pytest.mark.parametrize("source", ["review", "compact"])
+def test_string_codex_subagent_sources_keep_their_parent(source):
+    row = {"type": "session_meta", "payload": {"id": "worker", "parent_thread_id": "root", "source": {"subagent": source}}}
+    assert codex_parent_links(row, observed_at=NOW) == (ParentLink("codex:session:worker", "codex:session:root", "codex", NOW),)
+    del row["payload"]["parent_thread_id"]
+    assert codex_parent_links(row, observed_at=NOW)[0].parent is None
+
+
+def test_unchanged_directory_index_never_walks_again_and_newest_files_win(tmp_path, monkeypatch):
+    root = tmp_path / ".codex/sessions/2026/10/25"
+    root.mkdir(parents=True)
+    for index in range(520):
+        path = root / f"{index:04}.jsonl"
+        path.write_text(json.dumps({"type": "session_meta", "payload": {"id": f"worker-{index}", "parent_thread_id": "root"}}))
+        os.utime(path, (NOW-1000+index, NOW-1000+index))
+    reader = LocalLineageReader(tmp_path)
+    rows = reader.read(frozenset({"codex"}), now=NOW)
+    assert len(rows) == 512
+    assert "codex:session:worker-519" in {row.agent_id for row in rows}
+    assert "codex:session:worker-0" not in {row.agent_id for row in rows}
+    monkeypatch.setattr(Path, "iterdir", lambda path: pytest.fail("unchanged directory was walked"))
+    assert reader.read(frozenset({"codex"}), now=NOW) == rows
+
+
+def test_active_header_is_reparsed_only_after_its_file_changes(tmp_path, monkeypatch):
+    root = tmp_path / ".codex/sessions"
+    root.mkdir(parents=True)
+    path = root / "worker.jsonl"
+    def write(parent, stamp):
+        path.write_text(json.dumps({"type": "session_meta", "payload": {"id": "worker", "parent_thread_id": parent}}))
+        os.utime(path, (stamp, stamp))
+    write("first", NOW-1)
+    reader = LocalLineageReader(tmp_path)
+    first = reader.read(frozenset({"codex"}), now=NOW, active_paths=(path,))
+    write("second", NOW)
+    second = reader.read(frozenset({"codex"}), now=NOW, active_paths=(path,))
+    assert first[0].parent_links[0].parent.endswith("first")
+    assert second[0].parent_links[0].parent.endswith("second")
+    monkeypatch.setattr(Path, "open", lambda *a, **k: pytest.fail("unchanged file was read"))
+    assert reader.read(frozenset({"codex"}), now=NOW, active_paths=(path,)) == second

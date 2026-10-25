@@ -6,6 +6,7 @@ in LocalLineageReader. Readers never open a network connection.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -13,7 +14,7 @@ import threading
 import time
 from contextlib import closing
 from datetime import datetime, timezone
-from itertools import islice
+from functools import lru_cache
 from pathlib import Path
 
 from .models import AgentMode, AgentStatus, ParentLink
@@ -45,6 +46,15 @@ def t3_registry_providers(document: dict) -> dict[str, str]:
 
 
 def read_t3_registry_providers(path: Path) -> dict[str, str]:
+    try:
+        stat = path.stat()
+        return _read_t3_registry_providers(path, stat.st_mtime_ns, stat.st_size, stat.st_ino)
+    except OSError:
+        return {}
+
+
+@lru_cache(maxsize=8)
+def _read_t3_registry_providers(path: Path, modified: int, size: int, inode: int) -> dict[str, str]:
     try:
         with path.open("rb") as stream:
             raw = stream.read(512 * 1024 + 1)
@@ -94,7 +104,7 @@ def codex_parent_links(row: dict, *, observed_at: float) -> tuple[ParentLink, ..
     nested_parent = spawn.get("parent_thread_id") if type(spawn) is dict else None
     explicit_parent = payload.get("parent_thread_id")
     # forked_from_id is copied history, never delegation.
-    declared_worker = type(source) is dict and type(source.get("subagent")) is dict
+    declared_worker = type(source) is dict and isinstance(source.get("subagent"), (dict, str))
     if not explicit_parent and not nested_parent and not declared_worker:
         return ()
     child = member_key("codex", payload.get("id"))
@@ -135,13 +145,21 @@ def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: f
     threads or provider instances claiming one native ID make it ambiguous.
     Unbound workers retain a T3-qualified identity and a rejected link.
     """
+    def unbound_key(thread, provider):
+        identifier = "t3-" + thread
+        if not _ID.fullmatch(identifier):
+            identifier = "t3-" + hashlib.sha256(thread.encode("utf-8")).hexdigest()[:32]
+        return f"{provider}:session:{identifier}"
+
     keys: dict[str, str] = {}
     ambiguous = set()
     owners: dict[str, set[tuple[str, str]]] = {}
+    bindings_by_thread = {}
+    for binding in bindings:
+        bindings_by_thread.setdefault((binding.get("thread_id"), binding.get("provider_thread_id")), []).append(binding)
     for thread in threads:
         tid = thread["thread_id"]
-        candidates = [b for b in bindings if b.get("provider_thread_id") == thread.get("active_provider_thread_id")
-                      and b.get("thread_id") == tid]
+        candidates = bindings_by_thread.get((tid, thread.get("active_provider_thread_id")), ())
         candidates = [b for b in candidates if not b.get("status") or b["status"] not in {"closed", "archived", "deleted"}]
         valid = []
         for binding in candidates:
@@ -164,11 +182,11 @@ def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: f
         else:
             ambiguous.add(tid)
             provider = _provider(thread.get("default_provider"))
-            keys[tid] = member_key(provider, "t3-" + tid) or f"other:session:t3-unbound-{len(keys)}"
+            keys[tid] = unbound_key(tid, provider)
     ambiguous.update(tid for tid, key in keys.items() if len(owners.get(key, ())) > 1)
     for tid in ambiguous:
         provider = keys[tid].split(":", 1)[0]
-        keys[tid] = member_key(provider, "t3-" + tid) or f"other:session:t3-unbound-{len(keys)}"
+        keys[tid] = unbound_key(tid, provider)
     links = []
     for thread in threads:
         payload = thread.get("payload_json", {})
@@ -235,46 +253,70 @@ class LocalLineageReader:
     def __init__(self, home: Path):
         self.home = home
         self._cache: dict[Path, tuple[tuple[int, int], tuple[ParentLink, ...]]] = {}
-        self._root_headers: dict[Path, str] = {}
+        self._directories: dict[Path, tuple[int, tuple[Path, ...]]] = {}
         self._lock = threading.Lock()
         self._rows: tuple[AgentStatus, ...] = ()
         self._running = False
         self._next_scan = 0.0
 
-    def read(self, providers: frozenset[str], *, now: float) -> tuple[AgentStatus, ...]:
-        links = []
-        eligible = set()
+    def _changed_paths(self, root: Path, pattern: str, *, now: float):
+        """List a directory again only when its entries changed."""
+        pending = [root]
+        while pending:
+            directory = pending.pop()
+            try:
+                modified = directory.stat().st_mtime_ns
+                cached = self._directories.get(directory)
+                if cached and cached[0] == modified:
+                    pending.extend(cached[1])
+                    continue
+                children = []
+                for path in directory.iterdir():
+                    if path.is_symlink():
+                        continue
+                    if path.is_dir():
+                        children.append(path)
+                    elif path.match(pattern):
+                        stamp = path.stat().st_mtime
+                        if -5 <= now - stamp <= 86_400:
+                            yield stamp, path
+                self._directories[directory] = (modified, tuple(children))
+                pending.extend(children)
+            except OSError:
+                self._directories.pop(directory, None)
+
+    def read(self, providers: frozenset[str], *, now: float, active_paths=()) -> tuple[AgentStatus, ...]:
         formats = (
-            ("claude", ".claude/projects", "*/**/agent-*.meta.json", claude_parent_links),
-            ("codex", ".codex/sessions", "**/*.jsonl", codex_parent_links),
-            ("factory", ".factory/sessions", "*/*.jsonl", factory_parent_links),
+            ("claude", ".claude/projects", "agent-*.meta.json", claude_parent_links),
+            ("codex", ".codex/sessions", "*.jsonl", codex_parent_links),
+            ("factory", ".factory/sessions", "*.jsonl", factory_parent_links),
         )
         for provider, root, pattern, parser in formats:
             if provider not in providers:
                 continue
-            # Bound enumeration as well as reads. Missing coverage stays unlinked.
-            candidates = []
-            for path in islice((self.home / root).glob(pattern), MAX_FILES * 16):
-                try:
-                    modified = path.stat().st_mtime
-                    if 0 <= now - modified <= 86_400:
-                        candidates.append((modified, str(path), path))
-                except OSError:
+            base = self.home / root
+            changed = list(self._changed_paths(base, pattern, now=now))
+            known = set(active_paths)
+            for path in known:
+                if path.is_relative_to(base) and path.match(pattern):
+                    try:
+                        changed.append((path.stat().st_mtime, path))
+                    except OSError:
+                        self._cache.pop(path, None)
+            paths = sorted(set(changed), key=lambda item: (item[0], str(item[1])), reverse=True)
+            for modified, path in paths[:MAX_FILES]:
+                if not -5 <= now - modified <= 86_400:
+                    self._cache.pop(path, None)
                     continue
-            paths = [item[2] for item in sorted(candidates, reverse=True)[:MAX_FILES]]
-            for path in paths:
                 try:
                     stat = path.stat()
-                    if not 0 <= now - stat.st_mtime <= 86_400:
-                        continue
-                    eligible.add(path)
                     signature = (stat.st_mtime_ns, stat.st_size)
                     cached = self._cache.get(path)
                     if cached and cached[0] == signature:
-                        links.extend(cached[1])
                         continue
                     with path.open("rb") as stream:
                         raw = stream.readline(MAX_HEADER_BYTES + 1)
+                    self._cache.pop(path, None)
                     if len(raw) > MAX_HEADER_BYTES:
                         continue
                     payload = json.loads(raw)
@@ -284,37 +326,31 @@ class LocalLineageReader:
                     if provider == "claude":
                         kwargs["agent_id"] = path.name[len("agent-"):-len(".meta.json")]
                     parsed = parser(payload, **kwargs)
-                    root_id = payload.get("id") if provider == "factory" else None
-                    if provider == "codex" and payload.get("type") == "session_meta" and type(payload.get("payload")) is dict:
-                        root_id = payload["payload"].get("id")
-                    root_key = member_key(provider, root_id)
-                    if root_key and not parsed:
-                        self._root_headers[path] = root_key
-                    else:
-                        self._root_headers.pop(path, None)
+                    # Roots supply identity only. A header proves no live work.
                     self._cache[path] = (signature, parsed)
-                    links.extend(parsed)
                 except (OSError, ValueError, RecursionError):
                     continue
-        self._cache = {path: value for path, value in self._cache.items() if path in eligible}
-        self._root_headers = {path: key for path, key in self._root_headers.items() if path in eligible}
+        self._cache = dict(sorted(
+            ((path, value) for path, value in self._cache.items()
+             if -5 <= now - value[0][0] / 1_000_000_000 <= 86_400),
+            key=lambda item: item[1][0][0], reverse=True,
+        )[:MAX_FILES])
+        links = [link for path, (_, evidence) in self._cache.items()
+                 if any(path.is_relative_to(self.home / root) and provider in providers
+                        for provider, root, _, _ in formats) for link in evidence]
         if "devin" in providers:
             links.extend(read_devin_links(self.home / ".local/share/devin/cli/sessions.db", observed_at=now))
         by_child: dict[str, list[ParentLink]] = {}
-        root_observed = {}
-        for path, key in self._root_headers.items():
-            by_child.setdefault(key, [])
-            root_observed[key] = self._cache[path][0][0] / 1_000_000_000
         for link in links:
             by_child.setdefault(link.child, []).append(link)
         return tuple(AgentStatus(
             provider=child.split(":", 1)[0], agent_id=child,
             display_name="Worker", mode=AgentMode.UNKNOWN,
-            updated_at=datetime.fromtimestamp(max((link.observed_at for link in evidence), default=root_observed.get(child, now)), timezone.utc),
+            updated_at=datetime.fromtimestamp(max(link.observed_at for link in evidence), timezone.utc),
             event_name="LineageObserved", parent_links=tuple(evidence),
         ) for child, evidence in sorted(by_child.items())[:MAX_FILES])
 
-    def request(self, providers: frozenset[str]) -> tuple[AgentStatus, ...]:
+    def request(self, providers: frozenset[str], *, active_paths=()) -> tuple[AgentStatus, ...]:
         if not providers:
             return ()
         with self._lock:
@@ -325,7 +361,7 @@ class LocalLineageReader:
             self._next_scan = time.monotonic() + 10.0
         def scan():
             try:
-                updated = self.read(providers, now=time.time())
+                updated = self.read(providers, now=time.time(), active_paths=active_paths)
                 with self._lock:
                     self._rows = updated
             finally:
@@ -349,4 +385,8 @@ def update_lineage_runtime(target) -> None:
     if reader is None:
         reader = LocalLineageReader(Path.home())
         target._local_lineage_reader = reader
-    publish("lineage", tuple(row for row in reader.request(providers) if row.provider in providers))
+    paths = getattr(monitor, "lineage_paths_by_session", {})
+    active_paths = tuple(Path(path) for status in getattr(snapshot, "statuses", ()) if not status.stale
+                         for key in (status.agent_id, status.parent_agent_id)
+                         if (path := paths.get(key)))
+    publish("lineage", tuple(row for row in reader.request(providers, active_paths=active_paths) if row.provider in providers))
