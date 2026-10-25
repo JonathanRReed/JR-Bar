@@ -83,3 +83,36 @@ def test_cli_option_does_not_bypass_usage_consent(tmp_path):
     preference = default_provider_usage_settings().preference("claude").with_option("cli_fallback", "true")
     gated = ConsentGatedCollector("claude", lambda *_: pytest.fail("CLI or credential read without consent"))
     assert gated(preference, tmp_path, 1000, None).reason_code == "usage_not_turned_on"
+
+
+def test_probe_stops_on_parsed_usage_and_reaps_before_removing_config(tmp_path, monkeypatch):
+    from pathlib import Path
+    from jrbar import claude_cli_usage as module
+
+    executable = tmp_path / "synthetic-claude"
+    executable.write_text("#!/bin/sh\nprintf 'Current session\\n25%% used\\n'\nread answer\n")
+    executable.chmod(0o700)
+    monkeypatch.setattr(module, "resolve_cli", lambda _: str(executable))
+    original = module._kill_group
+    spawn = module.subprocess.Popen
+    configs, processes, killed = [], [], []
+
+    def start(args, **kwargs):
+        configs.append(Path(kwargs["cwd"]))
+        process = spawn(args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(module.subprocess, "Popen", start)
+
+    def kill(process):
+        assert configs[0].is_dir()
+        killed.append(True)
+        original(process)
+
+    monkeypatch.setattr(module, "_kill_group", kill)
+    # Parsing succeeds without waiting for the child to exit or its timeout.
+    assert module.probe_usage("synthetic-access", timeout=2)[0]["utilization"] == 25
+    assert killed == [True]
+    assert processes[0].poll() is not None
+    assert not configs[0].exists()

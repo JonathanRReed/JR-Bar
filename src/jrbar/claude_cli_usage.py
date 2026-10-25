@@ -72,37 +72,42 @@ def probe_usage(access_token: str, *, timeout: float = 20.0) -> list[dict]:
                 CLAUDE_CONFIG_DIR=working, CLAUDE_CODE_OAUTH_TOKEN=access_token,
                 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1",
             )
-            process = subprocess.Popen(
-                [executable, "/usage"], stdin=slave, stdout=slave, stderr=slave,
-                cwd=working, start_new_session=True,
-                env=environment,
-            )
-            os.close(slave)
-            slave = -1
-            deadline = time.monotonic() + timeout
-            output = bytearray()
-            while time.monotonic() < deadline and len(output) < 256 * 1024:
-                remaining = max(0, deadline - time.monotonic())
-                ready, _, _ = select.select([master], [], [], min(0.25, remaining))
-                if ready:
-                    try:
-                        chunk = os.read(master, 8192)
-                    except OSError:
+            try:
+                process = subprocess.Popen(
+                    [executable, "/usage"], stdin=slave, stdout=slave, stderr=slave,
+                    cwd=working, start_new_session=True,
+                    env=environment,
+                )
+                os.close(slave)
+                slave = -1
+                deadline = time.monotonic() + timeout
+                output = bytearray()
+                while time.monotonic() < deadline and len(output) < 256 * 1024:
+                    remaining = max(0, deadline - time.monotonic())
+                    ready, _, _ = select.select([master], [], [], min(0.25, remaining))
+                    if ready:
+                        try:
+                            chunk = os.read(master, 8192)
+                        except OSError:
+                            break
+                        if not chunk:
+                            break
+                        output.extend(chunk)
+                        try:
+                            return parse_usage_screen(output.decode("utf-8", errors="replace"))
+                        except ValueError:
+                            pass
+                    elif process.poll() is not None:
                         break
-                    if not chunk:
-                        break
-                    output.extend(chunk)
-                elif process.poll() is not None:
-                    break
-            return parse_usage_screen(output.decode("utf-8", errors="replace"))
+                raise ValueError("claude_cli_usage_unavailable")
+            finally:
+                if process is not None:
+                    _kill_group(process)
+                    process.wait(timeout=2)
+
     except (OSError, subprocess.SubprocessError):
         raise ValueError("claude_cli_usage_unavailable") from None
     finally:
-        try:
-            if process is not None:
-                _kill_group(process)
-                process.wait(timeout=2)
-        finally:
-            os.close(master)
-            if slave >= 0:
-                os.close(slave)
+        os.close(master)
+        if slave >= 0:
+            os.close(slave)
