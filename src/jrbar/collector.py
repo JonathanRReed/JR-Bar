@@ -513,6 +513,7 @@ def agent_status_from_canonical_work(
             and matching_overlay
         ),
         work_key=work.key,
+        parent_links=overlay.status.parent_links if overlay is not None else (),
         request_key=_status_request_key(work, requests),
         terminal_cause=(work.terminal_cause if projected_mode is AgentMode.BLOCKED_ERROR
                         else ProviderTerminalCause.NONE),
@@ -581,6 +582,15 @@ def _snapshot_from_operator_state(
             ),
         )
     )
+    # Lineage does not compete with lifecycle authority. A header-only or
+    # older T3 observation may lose the mode comparison and still prove a
+    # parent, including a conflicting parent the resolver must reject.
+    lineage_by_id: dict[str, set] = {}
+    for candidate in (*projected, *supplemental_statuses):
+        lineage_by_id.setdefault(candidate.agent_id, set()).update(candidate.parent_links)
+    merged = tuple(replace(status, parent_links=tuple(sorted(lineage_by_id.get(status.agent_id, ()),
+                           key=lambda link: (link.harness, link.parent or "", link.observed_at))))
+                   for status in merged)
     merged = _reconcile_delegating_parents(merged, collected_at)
     if dismissed_asks:
         merged = tuple(
@@ -1773,7 +1783,7 @@ class LiveAgentMonitor(LiveSessionMemory):
             *(
                 status
                 for status in external
-                if not (status.stale and status.agent_id in protected_agent_ids)
+                if status.parent_links or not (status.stale and status.agent_id in protected_agent_ids)
             ),
         )
 
@@ -1788,7 +1798,7 @@ class LiveAgentMonitor(LiveSessionMemory):
             # copy under the lock (ingest_record mutates these)
             overlays = MappingProxyType(dict(self._status_overlays_by_work_key))
             supplemental = self._supplemental_statuses_locked(state, overlays)
-        return _snapshot_from_operator_state(
+        snapshot = _snapshot_from_operator_state(
             state,
             events=events,
             sources=self.sources,
@@ -1805,6 +1815,17 @@ class LiveAgentMonitor(LiveSessionMemory):
             session_is_live=self.session_is_live,
             dismissed_asks=self._dismissed_ask_keys(),
         )
+        import logging
+
+        from .agent_groups import resolve_agent_groups
+
+        resolution = resolve_agent_groups((*snapshot.statuses, *snapshot.stale_statuses), now=now.timestamp())
+        failures = set(resolution.rejected)
+        previous = getattr(self, "_lineage_failures", set())
+        for _child, harness, reason in sorted(failures - previous):
+            logging.getLogger(__name__).info("unlinked worker: harness=%s reason=%s", harness, reason)
+        self._lineage_failures = failures
+        return snapshot
 
     def load_latest_state(self) -> None:
         if self.latest_state_path is None:
@@ -3765,11 +3786,15 @@ def _merged_status_candidates(
     statuses: Iterable[AgentStatus],
 ) -> tuple[AgentStatus, ...]:
     merged: dict[str, AgentStatus] = {}
+    links_by_id: dict[str, set] = {}
     for status in statuses:
+        links_by_id.setdefault(status.agent_id, set()).update(status.parent_links)
         existing = merged.get(status.agent_id)
         if existing is None or _status_merge_key(status) > _status_merge_key(existing):
             merged[status.agent_id] = status
-    return tuple(merged[agent_id] for agent_id in sorted(merged))
+    return tuple(replace(merged[agent_id], parent_links=tuple(sorted(links_by_id[agent_id],
+                         key=lambda link: (link.harness, link.parent or "", link.observed_at))))
+                 for agent_id in sorted(merged))
 
 
 def _status_without_dismissed_ask(

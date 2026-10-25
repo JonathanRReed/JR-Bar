@@ -446,3 +446,22 @@ def test_the_real_ingress_takes_an_oversize_ask_as_an_ordinary_hook_and_parks_no
     assert broker.parks == 0
     assert len(seen) == 1 and seen[0].decide_ms is None
     assert json.loads(seen[0].payload_text)["payload_truncated"] is True
+
+
+def test_oversize_payload_preserves_bounded_lineage_fields(shim: Path, sock_dir: Path) -> None:
+    lineage = {
+        "agent_id": "synthetic-worker",
+        "parent_agent_id": "synthetic-parent-agent",
+        "parentAgentId": "synthetic-parent-agent",
+        "parent_thread_id": "synthetic-parent-thread",
+        "parent_session_id": "synthetic-parent-session",
+        "callingSessionId": "synthetic-calling-session",
+        "callingToolUseId": "synthetic-calling-tool",
+    }
+    # Metadata precedes the oversized response, as real hook headers do.
+    payload = {**lineage, **_post_tool_use()}
+    request = _delivered(shim, sock_dir, "claude", _compact(payload))
+    assert request is not None
+    forwarded = json.loads(request.payload_text)
+    assert all(forwarded.get(key) == value for key, value in lineage.items())
+    assert "tool_response" not in forwarded

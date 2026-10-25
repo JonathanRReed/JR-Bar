@@ -1475,7 +1475,9 @@ def minimize_hook_event(
         # belongs under the session that spawned it.
         agent_id = _devin_subagent_agent_id(record)
     if agent_id is not None:
-        candidate_parent = _work_identifier(record.session_id)
+        candidate_parent = _work_identifier(
+            record.raw.get("parentAgentId") or record.raw.get("parent_agent_id") or record.session_id
+        )
         if candidate_parent != work_id:
             parent_id = candidate_parent
     request_id = _request_identifier(_first_raw_value(record.raw, _REQUEST_ID_FIELDS))

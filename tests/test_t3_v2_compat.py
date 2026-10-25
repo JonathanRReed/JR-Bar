@@ -315,7 +315,7 @@ def test_only_an_active_proposed_plan_is_actionable(tmp_path: Path) -> None:
     assert by_id["thread-3"].has_actionable_plan is False
 
 
-def test_subagent_archived_and_deleted_threads_are_not_listed(tmp_path: Path) -> None:
+def test_subagents_are_retained_but_archived_and_deleted_threads_are_not_listed(tmp_path: Path) -> None:
     database = _v2(tmp_path)
     _thread(database, "thread-main")
     _thread(database, "thread-sub", relationship="subagent")
@@ -324,7 +324,8 @@ def test_subagent_archived_and_deleted_threads_are_not_listed(tmp_path: Path) ->
 
     snapshot = read_t3_snapshot(base_dir=tmp_path)
 
-    assert [thread.thread_id for thread in snapshot.threads] == ["thread-main"]
+    assert [thread.thread_id for thread in snapshot.threads] == ["thread-main", "thread-sub"]
+    assert snapshot.threads[1].to_agent_status().is_subagent
 
 
 @pytest.mark.parametrize(
@@ -637,3 +638,42 @@ def test_rereading_old_running_row_does_not_prove_owner_liveness(tmp_path: Path,
         row.mode is AgentMode.WORKING and not row.stale
         for row in monitor.snapshot().statuses
     )
+
+
+def test_native_bindings_and_subagents_join_cross_provider_groups_read_only(tmp_path):
+    from jrbar.agent_groups import resolve_agent_groups
+    from tests.test_agent_groups import NOW as LINEAGE_NOW
+    from tests.test_agent_groups import fixture
+
+    database = _v2(tmp_path)
+    data = fixture("t3")
+    for row in data["threads"]:
+        _thread(database, row["thread_id"], provider=row["default_provider"],
+                active_provider_thread_id=row["active_provider_thread_id"])
+        _run(database, row["thread_id"], 1, "running",
+             provider=row["default_provider"], provider_thread=row["active_provider_thread_id"])
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE orchestration_v2_projection_provider_threads "
+                           "(provider_thread_id TEXT, thread_id TEXT, driver TEXT, provider_instance_id TEXT, payload_json TEXT)")
+        for binding in data["bindings"]:
+            connection.execute("INSERT INTO orchestration_v2_projection_provider_threads VALUES (?,?,?,?,?)",
+                               (binding["provider_thread_id"], binding["thread_id"], binding["driver"],
+                                binding["provider_instance_id"], json.dumps(binding["payload_json"])))
+        for row in data["threads"]:
+            payload = row["payload_json"] if row["thread_id"] != "factory-child" else {}
+            connection.execute("UPDATE orchestration_v2_projection_threads SET payload_json=? WHERE thread_id=?",
+                               (json.dumps(payload), row["thread_id"]))
+        connection.execute("CREATE TABLE orchestration_v2_projection_subagents "
+                           "(thread_id TEXT, child_thread_id TEXT, status TEXT, payload_json TEXT)")
+        connection.execute("INSERT INTO orchestration_v2_projection_subagents VALUES ('root','factory-child','running','{}')")
+    before = database.read_bytes()
+    from datetime import datetime, timezone
+    snapshot = read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromtimestamp(LINEAGE_NOW, timezone.utc))
+    assert snapshot.compatible
+    statuses = snapshot.agent_statuses()
+    assert len(statuses) == 4
+    result = resolve_agent_groups(statuses, now=LINEAGE_NOW)
+    assert len(result.groups) == 1
+    assert result.groups[0].root_work_key == "claude:session:native-root"
+    assert result.groups[0].members == tuple(sorted(s.agent_id for s in statuses))
+    assert database.read_bytes() == before

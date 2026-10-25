@@ -16,13 +16,13 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from urllib.parse import quote
 
-from .models import AgentMode, AgentStatus, parse_datetime
+from .models import AgentMode, AgentStatus, ParentLink, parse_datetime
 from .provider_facts import SourceKey, WorkIdentifier, WorkKey
 
 _log = logging.getLogger(__name__)
@@ -162,6 +162,9 @@ _PROVIDER_ALIASES = {
     "open-code": "opencode",
     "antigravity": "antigravity",
     "devin": "devin",
+    "factory": "factory",
+    "factorydroid": "factory",
+    "droid": "factory",
 }
 _SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~:-]{0,255}\Z")
 
@@ -258,6 +261,7 @@ class T3ThreadView:
     updated_at: datetime
     deep_link: str | None
     turn_state: str | None = None
+    parent_links: tuple[ParentLink, ...] = ()
 
     @property
     def needs_user(self) -> bool:
@@ -315,6 +319,7 @@ class T3ThreadView:
             origin=origin,
             stale=stale,
             work_key=work_key,
+            parent_links=self.parent_links,
         )
 
 
@@ -328,9 +333,11 @@ class T3Snapshot:
     compatible: bool = True
     truncated: bool = False
     reason: str | None = None
+    native_workers: tuple[AgentStatus, ...] = ()
 
     def agent_statuses(self, *, stale: bool = False) -> tuple[AgentStatus, ...]:
-        return tuple(thread.to_agent_status(stale=stale) for thread in self.threads)
+        return (*tuple(thread.to_agent_status(stale=stale) for thread in self.threads),
+                *tuple(replace(status, stale=stale) for status in self.native_workers))
 
     @property
     def active_count(self) -> int:
@@ -830,6 +837,7 @@ _V2_UNHELD_RUN = (
 _V2_THREADS_SQL = f"""
 SELECT
   threads.thread_id,
+  threads.payload_json,
   threads.project_id,
   projects.title AS project_title,
   threads.title AS thread_title,
@@ -884,8 +892,6 @@ LEFT JOIN orchestration_v2_projection_runs AS active_run
 WHERE threads.deleted_at IS NULL
   AND projects.deleted_at IS NULL
   AND threads.archived_at IS NULL
-  AND COALESCE(json_extract(threads.payload_json, '$.lineage.relationshipToParent'), '')
-      <> 'subagent'
 ORDER BY
   MAX(
     COALESCE(threads.updated_at, ''),
@@ -1038,12 +1044,59 @@ def _read_v2_snapshot(
                     ),
                 )
             )
+        from .lineage_adapters import t3_parent_links
+
+        # Bind only the selected provider thread. Native IDs, not T3's own
+        # provider-thread handles, join the hook/transcript roster.
+        lineage_rows = []
+        bindings = []
+        for row, thread in zip(rows[:T3_MAX_THREADS], threads, strict=True):
+            lineage_rows.append({
+                "thread_id": thread.thread_id,
+                "default_provider": thread.provider,
+                "active_provider_thread_id": thread.provider_thread_id,
+                "payload_json": row["payload_json"],
+            })
+            if {"provider_thread_id", "thread_id", "driver", "payload_json"}.issubset(binding_columns):
+                bindings.extend(dict(binding) for binding in connection.execute(
+                    "SELECT * FROM orchestration_v2_projection_provider_threads "
+                    "WHERE provider_thread_id = ? LIMIT 2", (thread.provider_thread_id,),
+                ))
+        subagent_columns = _table_columns(connection, "orchestration_v2_projection_subagents")
+        subagents = []
+        if {"thread_id", "child_thread_id", "payload_json"}.issubset(subagent_columns):
+            status_column = "status" if "status" in subagent_columns else "NULL"
+            ordering = " ORDER BY updated_at DESC" if "updated_at" in subagent_columns else ""
+            placeholders = ",".join("?" for _ in lineage_rows)
+            if lineage_rows:
+                subagents = [dict(row) for row in connection.execute(
+                    f"SELECT thread_id, child_thread_id, {status_column} AS status, "
+                    "json_extract(payload_json, '$.nativeTaskRef') AS native_task_ref "
+                    f"FROM orchestration_v2_projection_subagents WHERE thread_id IN ({placeholders})"
+                    f"{ordering} LIMIT ?", (*[row["thread_id"] for row in lineage_rows], T3_MAX_THREADS),
+                )]
+        observed_at = now()
+        keys, links = t3_parent_links(lineage_rows, bindings, observed_at=observed_at.timestamp(), subagents=subagents)
+        for index, thread in enumerate(threads):
+            key = keys[thread.thread_id]
+            evidence = tuple(link for link in links if link.child == key)
+            # Older projections have no native binding table. Keep their
+            # observation identity, but do not claim cross-provider lineage.
+            native = key.split(":session:", 1)[1]
+            if bindings or links:
+                threads[index] = replace(thread, provider_thread_id=native, parent_links=evidence)
         return T3Snapshot(
             observed_at=now(),
             database_path=database,
             schema_fingerprint=_actual_schema_fingerprint(connection, _V2_REQUIRED_COLUMNS),
             sqlite_user_version=user_version,
             threads=tuple(threads),
+            native_workers=tuple(AgentStatus(
+                provider=child.split(":", 1)[0], agent_id=child,
+                display_name="Worker", mode=AgentMode.UNKNOWN,
+                updated_at=observed_at, event_name="LineageObserved",
+                parent_links=tuple(link for link in links if link.child == child),
+            ) for child in sorted({link.child for link in links} - set(keys.values()))),
             truncated=truncated,
         )
     finally:

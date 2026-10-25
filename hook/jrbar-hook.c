@@ -177,7 +177,7 @@ static double parent_start_time(pid_t ppid) {
 #define META_VALUE_BYTES 256
 #define META_PATH_BYTES 1024
 #define META_INPUT_BYTES (64 * 1024)
-#define META_RECORD_BYTES (META_INPUT_BYTES + 4096)
+#define META_RECORD_BYTES (META_INPUT_BYTES + 8192)
 
 struct meta_key { const char *name; size_t cap; };
 /* Order is the order they are written. The first two are required;
@@ -189,6 +189,12 @@ static const struct meta_key META_KEYS[] = {
     { "tool_name", META_VALUE_BYTES },
     { "turn_id", META_VALUE_BYTES },
     { "agent_id", META_VALUE_BYTES },
+    { "parent_agent_id", META_VALUE_BYTES },
+    { "parentAgentId", META_VALUE_BYTES },
+    { "parent_thread_id", META_VALUE_BYTES },
+    { "parent_session_id", META_VALUE_BYTES },
+    { "callingSessionId", META_VALUE_BYTES },
+    { "callingToolUseId", META_VALUE_BYTES },
     { "transcript_path", META_PATH_BYTES },
 };
 #define META_KEY_COUNT (sizeof META_KEYS / sizeof META_KEYS[0])
