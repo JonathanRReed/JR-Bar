@@ -59,6 +59,7 @@ final class ControlCenterWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         if let closing = notification.object as? NSWindow { WindowContentLifecycle.detach(from: closing) }
+        window = nil
         store.windowDidClose()
         WindowContentLifecycle.retractWhenLastWindowCloses()
     }
