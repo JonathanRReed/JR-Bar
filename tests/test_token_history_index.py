@@ -678,3 +678,34 @@ def test_cached_card_reads_committed_view_during_a_scan(tmp_path, monkeypatch):
         thread.join(5)
     assert not thread.is_alive()
     assert module.cached_card("claude", tmp_path, observed)["input_tokens"] == 200
+
+
+def test_budgeted_reconciliation_resumes_without_reparsing(tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    from tests.test_codex_usage_lineage import _meta, _tokens, _write
+    root = tmp_path / "codex"
+    start = datetime.fromisoformat("2026-10-25T10:00:00+00:00")
+    events = [_tokens((i + 1) * 100, 100, (start + timedelta(seconds=i)).isoformat()) for i in range(600)]
+    _write(root / "fork.jsonl", [_meta("fork", forked_from_id="absent", timestamp="2026-10-25T11:00:00Z"), *events])
+    index = TokenHistoryIndex(tmp_path / "state/history.sqlite3")
+    class Budget:
+        stopped = False
+        def expired(self):
+            return self.stopped
+        def share(self, parts):
+            return self
+    budget = Budget()
+    lineage = index._lineage
+    def bounded(db, allowance):
+        lineage(db, allowance)
+        budget.stopped = True
+    monkeypatch.setattr(index, "_lineage", bounded)
+    first = index.scan({"codex": (root,)}, budget=budget)
+    assert first.source_coverage["codex"].pending_files == 1
+    assert index.resolved_last_pass <= 256
+    monkeypatch.setattr(usage, "_parse_codex_file", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("reparse")))
+    reopened = TokenHistoryIndex(index.path)
+    final = reopened.scan({"codex": (root,)})
+    assert final.codex_tokens == 60000
+    assert final.source_coverage["codex"].pending_files == 0

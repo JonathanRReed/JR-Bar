@@ -23,7 +23,7 @@ from . import local_token_history as local
 from . import usage_stats as usage
 from .private_io import ensure_private_file
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 RETENTION_SECONDS = 368 * 86400
 MAX_DATABASE_BYTES = 4 * 1024**3
 VIEW_BYTES = 4 * 1024 * 1024
@@ -174,9 +174,8 @@ class TokenHistoryIndex:
                 version = json.dumps(semantics())
                 old = db.execute("SELECT value FROM meta WHERE key='version'").fetchone()
                 if old != (version,):
-                    self.views.clear()
-                    self.view_bytes = 0
-                    for table in ("files", "raw", "events", "hours", "days", "conflicts", "canonicals", "parents", "resolutions", "dependencies"):
+                    self._clear_views()
+                    for table in ("files", "raw", "events", "hours", "days", "conflicts", "canonicals", "parents", "resolutions", "dependencies", "dirty", "own_dirty", "parent_dirty", "resolve_dirty", "resolve_queue"):
                         db.execute(f"DROP TABLE IF EXISTS {table}")
                     db.execute("DELETE FROM meta")
                     db.executemany("INSERT INTO meta VALUES (?,?)", [("version", version), ("secret", secrets.token_hex(32))])
@@ -207,10 +206,11 @@ class TokenHistoryIndex:
                 CREATE TABLE IF NOT EXISTS dependencies (
                     ancestor TEXT,event TEXT,owner TEXT,PRIMARY KEY(ancestor,event,owner)) WITHOUT ROWID;
                 CREATE INDEX IF NOT EXISTS dependency_owner ON dependencies(owner,event);
-                CREATE TEMP TABLE dirty (key BLOB PRIMARY KEY) WITHOUT ROWID;
-                CREATE TEMP TABLE resolve_dirty (owner TEXT,event TEXT,PRIMARY KEY(owner,event)) WITHOUT ROWID;
-                CREATE TEMP TABLE own_dirty (owner TEXT,event TEXT,PRIMARY KEY(owner,event)) WITHOUT ROWID;
-                CREATE TEMP TABLE parent_dirty (owner TEXT PRIMARY KEY) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS dirty (key BLOB PRIMARY KEY) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS resolve_dirty (owner TEXT,event TEXT,PRIMARY KEY(owner,event)) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS own_dirty (owner TEXT,event TEXT,PRIMARY KEY(owner,event)) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS parent_dirty (owner TEXT PRIMARY KEY) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS resolve_queue (owner TEXT,event TEXT,PRIMARY KEY(owner,event)) WITHOUT ROWID;
                 """)
                 db.commit()
                 return db
@@ -226,27 +226,33 @@ class TokenHistoryIndex:
         db.execute("CREATE INDEX IF NOT EXISTS raw_parent ON raw(owner) WHERE parent IS NOT NULL")
         db.execute("CREATE INDEX IF NOT EXISTS events_hour ON events(provider,session,model,day,hour,long_context)")
 
-    def _reconcile(self, db):
+    def _reconcile(self, db, budget=None):
         self._indexes(db)
-        self._lineage(db)
+        self._lineage(db, budget)
+        if db.execute("SELECT 1 FROM resolve_queue LIMIT 1").fetchone():
+            return
+        limit = 4096 if budget is not None else -1
+        db.execute("CREATE TEMP TABLE active_dirty AS SELECT key FROM dirty LIMIT ?", (limit,))
         keys = "provider,session,model,day,hour,long_context"
-        db.execute(f"CREATE TEMP TABLE affected AS SELECT DISTINCT {keys} FROM events WHERE dedupe IN (SELECT key FROM dirty)")
-        db.execute("DELETE FROM events WHERE dedupe IN (SELECT key FROM dirty)")
-        db.execute("DELETE FROM conflicts WHERE dedupe IN (SELECT key FROM dirty)")
+        db.execute(f"CREATE TEMP TABLE affected AS SELECT DISTINCT {keys} FROM events WHERE dedupe IN (SELECT key FROM active_dirty)")
+        db.execute("DELETE FROM events WHERE dedupe IN (SELECT key FROM active_dirty)")
+        db.execute("DELETE FROM conflicts WHERE dedupe IN (SELECT key FROM active_dirty)")
         db.execute("""INSERT INTO conflicts SELECT canonical FROM raw
-            WHERE canonical IN (SELECT key FROM dirty) GROUP BY canonical HAVING MIN(day)!=MAX(day)""")
+            WHERE canonical IN (SELECT key FROM active_dirty) GROUP BY canonical HAVING MIN(day)!=MAX(day)""")
         db.execute("""INSERT INTO events
             SELECT canonical,provider,session,model,epoch,inp,cached,created,out,day,hour,long_context FROM (
                 SELECT r.*,ROW_NUMBER() OVER (PARTITION BY canonical ORDER BY f.ordering,r.seq) AS position
                 FROM raw r JOIN files f ON f.id=r.file
-                WHERE canonical IN (SELECT key FROM dirty) AND canonical NOT IN (SELECT dedupe FROM conflicts)
+                WHERE canonical IN (SELECT key FROM active_dirty) AND canonical NOT IN (SELECT dedupe FROM conflicts)
             ) WHERE position=1""")
-        db.execute(f"INSERT INTO affected SELECT DISTINCT {keys} FROM events WHERE dedupe IN (SELECT key FROM dirty)")
+        db.execute(f"INSERT INTO affected SELECT DISTINCT {keys} FROM events WHERE dedupe IN (SELECT key FROM active_dirty)")
         db.execute(f"DELETE FROM hours WHERE ({keys}) IN (SELECT {keys} FROM affected)")
         db.execute(f"""INSERT INTO hours SELECT {keys},SUM(inp),SUM(cached),SUM(created),SUM(out),COUNT(*),
             SUM(CASE WHEN inp+cached+created+out>0 THEN 1 ELSE 0 END) FROM events
             WHERE ({keys}) IN (SELECT {keys} FROM affected) GROUP BY {keys}""")
         db.execute("DROP TABLE affected")
+        db.execute("DELETE FROM dirty WHERE key IN (SELECT key FROM active_dirty)")
+        db.execute("DROP TABLE active_dirty")
 
     def _rebucket(self, db):
         zone = json.dumps([time.tzname, time.timezone, os.environ.get("TZ")])
@@ -300,7 +306,7 @@ class TokenHistoryIndex:
         db.execute("INSERT OR IGNORE INTO dirty SELECT canonical FROM raw WHERE file=? AND seq>=?", (key, seq))
         self._mark_file(db, key, seq)
 
-    def _lineage(self, db):
+    def _lineage(self, db, budget=None):
         # Resolve only changed copies and copies that depended on changed own
         # events or parent links. A missing ancestor is also a dependency.
         db.execute("DELETE FROM canonicals WHERE (owner,event) IN (SELECT owner,event FROM own_dirty)")
@@ -320,13 +326,20 @@ class TokenHistoryIndex:
             (SELECT parent FROM parents p WHERE p.owner=parent_dirty.owner) IS
             (SELECT parent FROM previous_parents p WHERE p.owner=parent_dirty.owner)""")
         db.execute("DROP TABLE previous_parents")
-        db.execute("""CREATE TEMP TABLE resolve AS
+        db.execute("""INSERT OR IGNORE INTO resolve_queue
             SELECT owner,event FROM resolve_dirty
             UNION SELECT d.owner,d.event FROM dependencies d JOIN own_dirty o
                 ON o.owner=d.ancestor AND o.event=d.event
             UNION SELECT d.owner,d.event FROM dependencies d JOIN parent_dirty p ON p.owner=d.ancestor""")
-        self.resolved_last_pass = 0
-        for session, event in db.execute("SELECT owner,event FROM resolve").fetchall():
+        for table in ("own_dirty", "parent_dirty", "resolve_dirty"):
+            db.execute(f"DELETE FROM {table}")
+        # Raw offsets and the reconciliation queue survive an interrupted pass.
+        db.commit()
+        limit = 256 if budget is not None else -1
+        for session, event in db.execute("SELECT owner,event FROM resolve_queue LIMIT ?", (limit,)).fetchall():
+            if budget is not None and budget.expired():
+                break
+            db.execute("DELETE FROM resolve_queue WHERE owner=? AND event=?", (session, event))
             row = db.execute("""SELECT r.kind,r.parent,r.root,r.dedupe FROM raw r JOIN files f ON f.id=r.file
                 WHERE r.owner=? AND r.event=? AND r.kind IN ('inherited','boundary')
                 ORDER BY f.ordering,r.seq LIMIT 1""", (session, event)).fetchone()
@@ -358,7 +371,6 @@ class TokenHistoryIndex:
                 AND kind IN ('inherited','boundary') AND canonical!=?""", (canonical, session, event, canonical))
             db.execute("INSERT OR IGNORE INTO dirty VALUES (?)", (canonical,))
             self.resolved_last_pass += 1
-        db.execute("DROP TABLE resolve")
 
     def _failed_totals(self, roots):
         totals = usage.UsageTotals()
@@ -366,6 +378,8 @@ class TokenHistoryIndex:
         return totals
 
     def _recover(self, error):
+        if getattr(error, "sqlite_errorcode", None) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_INTERRUPT}:
+            return
         full = getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_FULL
         self.error = "history_disk_full" if full else "history_cache_unavailable"
         self.retry_at = time.monotonic() + (3600 if full else 60)
@@ -395,7 +409,7 @@ class TokenHistoryIndex:
                 if db.execute("SELECT value FROM meta WHERE key=?", ("roots:" + provider,)).fetchone() != (manifest,):
                     return None
             totals = self._totals(db, roots, since_epoch)
-            totals.history_stale = any(db.execute("SELECT value FROM meta WHERE key=?", ("complete:" + p,)).fetchone() != ("True",) for p in roots)
+            totals.history_stale = self.scan_lock.locked() or any(db.execute("SELECT value FROM meta WHERE key=?", ("complete:" + p,)).fetchone() != ("True",) for p in roots)
             return totals
         finally:
             db.close()
@@ -419,11 +433,19 @@ class TokenHistoryIndex:
         All roots of each provider are reconciled together, so duplicates
         across configured homes count once. Incomplete walks retain files.
         """
-        with self.scan_lock:
+        if not self.scan_lock.acquire(timeout=0.05):
+            totals = self._cached_totals(roots, since_epoch)
+            if totals is not None:
+                totals.source_coverage = {p: usage._CoverageState(p, root_present=True, root_walked=True, pending_files=1).finalize() for p in roots}
+                return totals
+            return self._failed_totals(roots)
+        try:
             if self.stopping.is_set() or not self.enabled:
                 return usage.UsageTotals()
             db = self._connect()
             db.set_progress_handler(lambda: int(self.stopping.is_set() or not self.enabled), 1000)
+            parse_budget = budget.share(2) if budget is not None else None
+            self.resolved_last_pass = 0
             try:
                 secret = bytes.fromhex(db.execute("SELECT value FROM meta WHERE key='secret'").fetchone()[0])
                 coverage = {}
@@ -455,7 +477,6 @@ class TokenHistoryIndex:
                     if provider in roots and root not in configured:
                         self._remove(db, key)
                         changed = True
-                parse_started = False
                 for provider, paths in roots.items():
                     for root_rank, root in enumerate(paths):
                         if self.stopping.is_set():
@@ -465,7 +486,6 @@ class TokenHistoryIndex:
                         state = usage._CoverageState.from_coverage(source.coverage)
                         root_key = f"{provider}:{os.path.realpath(root)}"
                         present = set()
-                        attempted = False
                         for candidate in sorted(source.candidates, key=lambda c: -c.info.st_mtime_ns):
                             if candidate.info.st_mtime < cutoff:
                                 continue
@@ -500,14 +520,10 @@ class TokenHistoryIndex:
                             if (
                                 self.stopping.is_set()
                                 or not self.enabled
-                                or (attempted and budget is not None and budget.expired())
+                                or (parse_budget is not None and parse_budget.expired())
                             ):
                                 state.pending_files += 1
                                 continue
-                            if budget is not None and not parse_started:
-                                budget.restart()
-                            parse_started = True
-                            attempted = True
                             result = None
                             offset = (
                                 usage._incremental_resume_offset(entry, info)
@@ -521,7 +537,7 @@ class TokenHistoryIndex:
                                     offset,
                                     provider,
                                     secret,
-                                    budget=_CancelableBudget(self, budget),
+                                    budget=_CancelableBudget(self, parse_budget),
                                     prefix_check=usage._saved_prefix_check(entry),
                                     codex_state=entry.get("resume"),
                                 )
@@ -537,7 +553,7 @@ class TokenHistoryIndex:
                                     )
                                 else:
                                     parser = usage._parse_codex_file if provider == "codex" else usage._parse_file
-                                    result = parser(candidate.path, info, secret, _CancelableBudget(self, budget))
+                                    result = parser(candidate.path, info, secret, _CancelableBudget(self, parse_budget))
                             if not result.read_ok:
                                 state.unreadable_files += 1
                                 continue
@@ -569,6 +585,8 @@ class TokenHistoryIndex:
                             state.malformed_lines += metadata["malformed_lines"]
                             state.pending_files += int(result.stopped_early)
                             changed = True
+                            db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", ("complete:" + provider, "False"))
+                            db.commit()
                         if source.walk_complete:
                             for (key,) in db.execute("SELECT id FROM files WHERE root=?", (root_key,)).fetchall():
                                 if key not in present:
@@ -583,14 +601,27 @@ class TokenHistoryIndex:
                 if self.stopping.is_set() or not self.enabled:
                     db.rollback()
                     return usage.UsageTotals()
-                if changed:
-                    self._reconcile(db)
-                    db.execute(
-                        "INSERT INTO meta VALUES ('generation','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1"
-                    )
-                    self.views.clear()
-                    self.view_bytes = 0
                 db.commit()
+                def pending():
+                    return any(db.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() for table in
+                        ("dirty", "own_dirty", "parent_dirty", "resolve_dirty", "resolve_queue"))
+                while pending() and (budget is None or not budget.expired()):
+                    db.set_progress_handler(lambda: int(self.stopping.is_set() or not self.enabled or (budget is not None and budget.expired())), 1000)
+                    try:
+                        self._reconcile(db, budget)
+                        db.execute("INSERT INTO meta VALUES ('generation','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1")
+                        db.commit()
+                    except sqlite3.OperationalError as error:
+                        db.rollback()
+                        if getattr(error, "sqlite_errorcode", None) != sqlite3.SQLITE_INTERRUPT:
+                            raise
+                        break
+                    finally:
+                        db.set_progress_handler(None, 0)
+                    self._clear_views()
+                unfinished = pending()
+                if unfinished:
+                    coverage = {p: replace(c, status=usage.UsageSourceStatus.PARTIAL, pending_files=max(1, c.pending_files)) for p, c in coverage.items()}
                 for provider, source_coverage in coverage.items():
                     complete = source_coverage.status in {usage.UsageSourceStatus.OK, usage.UsageSourceStatus.MISSING}
                     db.execute("INSERT INTO meta VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE value!=excluded.value", ("complete:" + provider, str(complete)))
@@ -609,6 +640,8 @@ class TokenHistoryIndex:
                 raise
             finally:
                 db.close()
+        finally:
+            self.scan_lock.release()
 
     def _totals(self, db, roots, since_epoch):
         totals = usage._totals_from_window(self._records(db, roots, since_epoch))
@@ -623,9 +656,18 @@ class TokenHistoryIndex:
             totals.codex_rate_limit_observed_at = latest[0] / 1_000_000_000 if latest[0] else None
         return totals
 
-    def _records(self, db, roots, since_epoch):
+    def _clear_views(self):
         with self.lock:
+            self.views.clear()
+            self.view_bytes = 0
+
+    def _records(self, db, roots, since_epoch):
+        if not self.lock.acquire(timeout=0.05):
+            raise sqlite3.OperationalError("history view is busy")
+        try:
             return self._locked_records(db, roots, since_epoch)
+        finally:
+            self.lock.release()
 
     def _locked_records(self, db, roots, since_epoch):
         generation = db.execute("SELECT value FROM meta WHERE key='generation'").fetchone()
