@@ -4,7 +4,7 @@ import Testing
 @testable import JRBarApp
 
 /// The lid-angle pump's rate rule (LidAngleSensor.swift): which readings
-/// earn the 120 Hz armed class and which idle at the sensor's own 10 Hz.
+/// earn the 120 Hz armed class, stay nearby at 10 Hz or rest at 2 Hz.
 /// Pure — no HID device, no queue, no timer.
 @Suite("Fold sensor pump")
 struct FoldSensorTests {
@@ -19,8 +19,17 @@ struct FoldSensorTests {
         #expect(rate(82) == 1, "the band's edge is inside")
         #expect(rate(60) == 1)
         #expect(rate(6) == 1, "just above the closed-lid floor still arms")
-        #expect(rate(82.5) == 0)
+        #expect(rate(82.5) == 2)
         #expect(rate(120) == 0)
+    }
+
+    @Test("distant reads slow down without changing nearby or armed timing")
+    func distantCadence() {
+        #expect(SensorPump.intervals[rate(120)] == 0.5)
+        #expect(SensorPump.intervals[rate(102)] == 0.1)
+        #expect(SensorPump.intervals[rate(102.5)] == 0.5)
+        #expect(SensorPump.intervals[rate(82)] == 1.0 / 120)
+        #expect(SensorPump.intervals[rate(nil)] == 0.1)
     }
 
     @Test("a shut lid stays parked however low it reads")
@@ -36,10 +45,10 @@ struct FoldSensorTests {
         #expect(rate(60, clamshell: nil) == 1, "a desktop Mac has no clamshell to read")
     }
 
-    @Test("no reading, or no band, is the parked class")
+    @Test("unknown readings and movement mode retain the normal cadence")
     func noBand() {
-        #expect(rate(nil) == 0, "before the first good report there is nothing to arm on")
-        #expect(rate(60, band: -.infinity) == 0,
+        #expect(rate(nil) == 2, "before the first good report there is nothing to arm on")
+        #expect(rate(60, band: -.infinity) == 2,
                 "movement mode and a pause clear the band")
     }
 }

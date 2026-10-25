@@ -36,7 +36,7 @@ final class LidAngleSensor {
 
     /// The bottom of the arming band: readings at or below it mean the
     /// fold is showing or about to, so the poll steps up to 120 Hz —
-    /// unless the lid is shut, which the pump keeps at 10 Hz however
+    /// unless the lid is shut, which the pump keeps at 2 Hz however
     /// low it reads. The toy sets it to `activation + margin`, or to
     /// -infinity while nothing in the band could draw; above it idles
     /// at 10 Hz. Reconcile sets it every pass — the queue hop only
@@ -96,7 +96,7 @@ final class LidAngleSensor {
 
 /// Counts the pump's reads for the card's cost line. Written on the
 /// pump's queue, read on the main thread, so it takes a lock; a read is
-/// ten a second at rest, 120 at most.
+/// two a second at distant rest, 120 at most.
 final class SensorReadMeter: @unchecked Sendable {
     /// The span a rate is measured over, as `ToyMeter`'s.
     static let window: TimeInterval = 3
@@ -177,21 +177,9 @@ enum FoldSensorSilence {
 /// queue. Not actor-isolated, not observed — just a pump that publishes
 /// immutable `Sample`s back to the main runloop.
 ///
-/// Two rates only, because the sensor itself only has one cadence: the
-/// report is a 10 Hz device (probed at 240 Hz it changes value every
-/// ~100 ms), so above the arming band polling at its own 10 Hz loses
-/// nothing. Inside the band the poll runs 120 Hz — a read costs ~0.5 ms
-/// and dense polls timestamp each sensor edge to ±8 ms, which is what
-/// the motion's edge timing needs. A shut lid sits under the band
-/// but never arms it: see `rateClassFor`.
-///
-/// The parked class is a background chore and is timed like one:
-/// utility QoS and a 15 ms leeway, so its ten wakes a second can
-/// coalesce with the system's — it runs whenever Fold is on, lid
-/// still, shut or not. Only the armed class earns user-interactive QoS
-/// and a 2 ms leeway. Every sample is still published: the movement
-/// anchor's settle clock needs each one, and the jitter filter is what
-/// keeps a parked wobble off the picture.
+/// A distant open lid polls at 2 Hz. Within 20 degrees of the arming
+/// band it returns to the sensor's 10 Hz cadence. Inside the band the
+/// existing 120 Hz edge timing stays intact. A shut lid also rests at 2 Hz.
 final class SensorPump: @unchecked Sendable {
     /// Publishes a sample on the main runloop; set by the shell.
     var publish: (@MainActor @Sendable (LidAngleSensor.Sample) -> Void)?
@@ -220,7 +208,7 @@ final class SensorPump: @unchecked Sendable {
     /// Whether the toy wants polling at all — a probe only resumes the
     /// poll while it does.
     private var wantsPolling = false
-    /// 0 is the parked 10 Hz, 1 is the armed 120 Hz.
+    /// 0 is distant or shut at 2 Hz, 1 armed at 120 Hz, 2 nearby at 10 Hz.
     private var rateClass = 0 {
         didSet {
             guard oldValue != rateClass, let timer else { return }
@@ -236,8 +224,8 @@ final class SensorPump: @unchecked Sendable {
     private var clamshellCadence = SensorClamshellCadence()
     private var clamshell: Bool?
 
-    private static let intervals = [1.0 / 10.0, 1.0 / 120.0]
-    private static let leewayMilliseconds = [15, 2]
+    static let intervals = [0.5, 1.0 / 120.0, 0.1]
+    private static let leewayMilliseconds = [50, 2, 15]
 
     init() {
         manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -297,35 +285,17 @@ final class SensorPump: @unchecked Sendable {
         }
     }
 
-    /// 10 Hz above the arming band — the sensor's own cadence — and
-    /// 120 Hz inside it, where an edge's poll timestamp is the motion's
-    /// edge time. A shut lid stays parked however low it reads: at or
-    /// under `FoldPause.closedAngle`, or with the clamshell flag set,
-    /// the fold is paused and cannot draw, and a lid shut on an awake
-    /// Mac (clamshell with an external display, or the daemon's
-    /// closed-lid keep-awake) must not hold 120 Hz user-interactive
-    /// reads for as long as it stays shut.
-    ///
-    /// Two layers keep it there. Under the toy the band itself is
-    /// -infinity for as long as any pause holds, so a shut lid is
-    /// mostly parked by the band alone. This floor covers what the
-    /// band cannot: the park on the way down, which lands on the very
-    /// beat that reads the close rather than a main hop and a pass
-    /// later, and a failed read, which leaves the toy's angle nil (no
-    /// angle to pause on) while `lastRaw` here still reads shut. The
-    /// same band is why a reopen does not step up on the beat that
-    /// sees it: that beat still finds -infinity and stays at 10 Hz.
-    /// The step back up comes from the reconcile that lifts the pause
-    /// (the accepted reading above the floor, or the once-a-second
-    /// read that clears the clamshell flag, whichever lands last): it
-    /// restores the band as the half-second resume quiet starts, and
-    /// `setArmingAngle` re-evaluates the class on the queue. Nothing is
-    /// lost: the band is back before the quiet ends and the fold can
-    /// draw. Static and pure so the rule is testable with no HID.
+    /// Slow only while safely outside the arming margin. Unknown readings
+    /// retain the normal cadence so failure detection still takes five seconds.
     static func rateClassFor(rawAngle: Double?, armingAngle: Double, clamshell: Bool?) -> Int {
-        if let angle = rawAngle, angle > FoldPause.closedAngle, angle <= armingAngle,
-           clamshell != true { return 1 }
-        return 0
+        guard clamshell != true else { return 0 }
+        guard let angle = rawAngle else { return 2 }
+        guard angle > FoldPause.closedAngle else { return 0 }
+        // Movement mode has no fixed arming angle and needs the normal
+        // sensor cadence to follow its moving rest angle.
+        guard armingAngle.isFinite else { return 2 }
+        if angle <= armingAngle { return 1 }
+        return angle <= armingAngle + 20 ? 2 : 0
     }
 
     // MARK: Queue side
@@ -367,7 +337,7 @@ final class SensorPump: @unchecked Sendable {
         }
         let clamshellBeat = clamshellCadence.shouldRead(at: now)
         if clamshellBeat { clamshell = ClamshellState.read() }
-        let next = wantedRateClass
+        let next = raw == nil ? 2 : wantedRateClass
         if next != rateClass { rateClass = next }
         if Self.staysQuiet(raw: raw, center: quietCenter, armingAngle: armingAngle, clamshellBeat: clamshellBeat) {
             return
