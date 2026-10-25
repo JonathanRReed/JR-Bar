@@ -1127,9 +1127,9 @@ final class MenuBarBar {
         panel.setFrame(frame(on: screen), display: false)
         if keyboard {
             panel.takesKeys = true
-            panel.makeKeyAndOrderFront(nil)
+            WindowPresenter.automatic.order(panel, as: .key)
         } else {
-            panel.orderFrontRegardless()
+            WindowPresenter.automatic.order(panel)
         }
         self.panel = panel
         isOpen = true
@@ -1272,7 +1272,7 @@ final class MenuBarBar {
         glass.setFrame(MenuBarBarLayout.noteFrame(size: MenuBarBarLayout.noteSize(text), menuBarDepth: depth,
                                                   on: screen.frame, anchorMidX: anchor?.midX),
                        display: false)
-        glass.orderFrontRegardless()
+        WindowPresenter.automatic.order(glass)
         notePanel = glass
         noteExpiry = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(max(0.5, seconds) * 1e9))

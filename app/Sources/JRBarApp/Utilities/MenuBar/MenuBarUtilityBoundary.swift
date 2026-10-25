@@ -297,9 +297,11 @@ extension MenuBarUtility {
         // Anchor at the click itself — the ‹ lives in the host's spacer
         // and the › in the island; the ear's clicks arrive off the
         // monitor where no currentEvent exists, so screen coords it is.
-        menu.popUp(positioning: nil,
-                   at: NSPoint(x: NSEvent.mouseLocation.x, y: NSEvent.mouseLocation.y - 4),
-                   in: nil)
+        WindowPresenter.automatic.perform {
+            _ = menu.popUp(positioning: nil,
+                           at: NSPoint(x: NSEvent.mouseLocation.x, y: NSEvent.mouseLocation.y - 4),
+                           in: nil)
+        }
     }
 
     /// The empty run's teach row: how an item gets hidden. Pure so a test

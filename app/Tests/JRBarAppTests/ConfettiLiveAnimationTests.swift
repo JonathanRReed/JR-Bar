@@ -10,6 +10,7 @@ import Testing
 struct ConfettiLiveAnimationTests {
     private nonisolated static var enabled: Bool {
         ProcessInfo.processInfo.environment["JRBAR_CONFETTI_LIVE_PROOF"] == "1"
+            && ProcessInfo.processInfo.environment["JRBAR_INTERACTIVE_TESTS"] == "1"
     }
 
     private final class Draws {
@@ -68,7 +69,7 @@ struct ConfettiLiveAnimationTests {
             print("CONTROL_UNAVAILABLE: AppKit did not retain the offscreen frame")
             throw ProofError.controlUnavailable
         }
-        panel.orderFrontRegardless()
+        WindowPresenter.automatic.order(panel)
         guard !NSScreen.screens.contains(where: { $0.frame.intersects(panel.frame) }) else {
             panel.orderOut(nil)
             print("CONTROL_UNAVAILABLE: AppKit moved the panel onto a display")

@@ -86,7 +86,7 @@ struct SettingsSealGroup: View {
         } header: {
             Text("Protected settings")
         }
-        .confirmationDialog("Reset protection?", isPresented: $seal.confirmingReset, titleVisibility: .visible) {
+        .confirmationDialog("Reset protection?", isPresented: WindowPresenter.presentation($seal.confirmingReset), titleVisibility: .visible) {
             Button("Reset protection") { Task { await seal.resetProtection() } }
             Button("Cancel", role: .cancel) {}
         } message: {

@@ -181,7 +181,7 @@ struct WindowFrontTests {
         let start = try #require(text.range(of: "private func present() {"))
         let end = try #require(text.range(of: "\n    }\n", range: start.upperBound..<text.endIndex))
         let body = String(text[start.upperBound..<end.lowerBound])
-        #expect(body.contains("orderFrontRegardless()"))
+        #expect(body.contains("WindowPresenter.automatic.order(window)"))
         #expect(!body.contains("WindowFront"))
         #expect(!body.contains("activate"))
     }

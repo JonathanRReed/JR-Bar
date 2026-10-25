@@ -71,11 +71,13 @@ struct ScreenBarFullScreenTests {
 
         videoFillsSelectedScreen = true
         NotificationCenter.default.post(name: ScreenBarGeometry.preferredScreenDidChange, object: nil)
+        #expect(!controller.steppedAsideForVideo, "another test's screen event must not reach this fixture")
+        controller.notificationCenter.post(name: ScreenBarGeometry.preferredScreenDidChange, object: nil)
         #expect(controller.steppedAsideForVideo)
         #expect(liveEdges == [true, false])
 
         videoFillsSelectedScreen = false
-        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        controller.notificationCenter.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
         #expect(!controller.steppedAsideForVideo)
         #expect(liveEdges == [true, false, true])
     }

@@ -309,7 +309,7 @@ final class DockPreviewPanel: NSPanel {
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 animator().setFrame(target, display: true)
             }
-            orderFrontRegardless()
+            WindowPresenter.automatic.order(self)
             return
         }
         let drift = placement.openingDrift
@@ -321,7 +321,7 @@ final class DockPreviewPanel: NSPanel {
         }
         setFrame(start, display: false)
         alphaValue = 0
-        orderFrontRegardless()
+        WindowPresenter.automatic.order(self)
         let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         NSAnimationContext.runAnimationGroup { context in
             context.duration = reduced ? 0.03 : 0.22
@@ -395,7 +395,7 @@ final class DockToastPanel: NSPanel {
                  display: true)
         fadeWork?.cancel()
         alphaValue = 1
-        orderFrontRegardless()
+        WindowPresenter.automatic.order(self)
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }

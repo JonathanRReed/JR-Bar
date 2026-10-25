@@ -2227,7 +2227,7 @@ final class DockSwitcherPanel: NSPanel {
         refit()
         if !isVisible {
             alphaValue = 0
-            orderFrontRegardless()
+            WindowPresenter.automatic.order(self)
             let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = reduced ? 0.03 : 0.14

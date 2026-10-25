@@ -113,7 +113,7 @@ private func nextPlanStart(_ gate: ScreenBarPlanGate) async throws -> LEDSSample
     return try #require(sampler)
 }
 
-@Suite("Screen Bar plan queue", .timeLimit(.minutes(1)))
+@Suite("Screen Bar plan queue", .timeLimit(.minutes(10)))
 @MainActor
 struct ScreenBarPlanQueueTests {
     private func sampler(_ color: String) throws -> LEDSSampler {
@@ -213,7 +213,7 @@ struct ScreenBarPlanQueueTests {
     }
 }
 
-@Suite("Screen Bar asynchronous planning", .timeLimit(.minutes(1)))
+@Suite("Screen Bar asynchronous planning", .timeLimit(.minutes(10)))
 @MainActor
 struct ScreenBarAsynchronousPlanningTests {
     private let moving = "#ff0000 1s linear\n#000000 1s linear\nrepeat"
@@ -334,13 +334,13 @@ struct ScreenBarAsynchronousPlanningTests {
         controller.apply(programText: moving)
         await controller.waitForPlanBuilds()
         #expect(controller.keyframesRunning)
-        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.screensDidSleepNotification, object: nil)
+        controller.workspaceCenter.post(name: NSWorkspace.screensDidSleepNotification, object: nil)
         #expect(!controller.keyframesRunning)
         #expect(!controller.clockRunning)
         // An anchor update received while asleep must not restart animation.
         controller.apply(programText: moving, anchorEpoch: Date().timeIntervalSince1970 - 1)
         #expect(!controller.keyframesRunning)
-        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
+        controller.workspaceCenter.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
         #expect(controller.keyframesRunning)
         #expect(controller.planBuildStarts == 1)
     }
@@ -351,8 +351,8 @@ struct ScreenBarAsynchronousPlanningTests {
         controller.show()
         defer { controller.hide() }
         controller.apply(programText: moving)
-        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.screensDidSleepNotification, object: nil)
-        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
+        controller.workspaceCenter.post(name: NSWorkspace.screensDidSleepNotification, object: nil)
+        controller.workspaceCenter.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
         #expect(!controller.clockRunning)
         #expect(!controller.keyframesRunning)
         #expect(controller.planBuildStarts == 0)

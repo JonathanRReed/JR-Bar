@@ -8,6 +8,7 @@ struct NotchCardOpenLifecycleTests {
     private func presenter() -> NotchCardPresenter {
         let presenter = NotchCardPresenter(model: makeTestCardModel())
         presenter.presentationEnabled = false
+        presenter.model.openNoteTimer = { _, _ in }
         presenter.keySource = CardEscapeWatch.Source(addLocal: { _ in nil }, addGlobal: { _ in nil },
                                                      remove: { _ in })
         presenter.surface = { .glass }

@@ -33,6 +33,7 @@ final class AgentStateMonitor {
     private var watcher: FileWatcher?
     private var pending: DispatchWorkItem?
     private var generation = 0
+    private(set) var readTask: Task<Void, Never>?
 
     init(directory: String = AgentStateMonitor.directory) {
         self.directory = directory
@@ -62,6 +63,7 @@ final class AgentStateMonitor {
         pending?.cancel()
         pending = nil
         generation += 1
+        readTask?.cancel()
     }
 
     private func scheduleRead() {
@@ -75,7 +77,7 @@ final class AgentStateMonitor {
         generation += 1
         let generation = generation
         let path = self.path
-        Task.detached(priority: .utility) {
+        readTask = Task.detached(priority: .utility) {
             let data = try? Data(contentsOf: URL(fileURLWithPath: path))
             // The doc's `last_clock` stamp is checked first; the mtime is
             // the fallback age for a document that carries no clock.

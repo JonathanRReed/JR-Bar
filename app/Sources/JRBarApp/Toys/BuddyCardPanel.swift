@@ -236,7 +236,7 @@ final class BuddyCardPanel: NSPanel {
         setFrame(NSRect(x: (centre.x - size.width / 2).rounded(),
                         y: (centre.y - size.height / 2).rounded(),
                         width: size.width, height: size.height), display: true)
-        orderFrontRegardless()
-        makeKey()
+        WindowPresenter.automatic.order(self)
+        WindowPresenter.automatic.perform { makeKey() }
     }
 }

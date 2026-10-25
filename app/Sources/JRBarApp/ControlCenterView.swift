@@ -22,7 +22,7 @@ struct ControlCenterView: View {
         .frame(minWidth: Self.minSize.width, minHeight: Self.minSize.height)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) { statusPill }
-        .sheet(item: $store.sheet) { sheet in
+        .sheet(item: WindowPresenter.presentation($store.sheet)) { sheet in
             switch sheet {
             case .apply: ApplyKeymapSheet(store: store)
             case .restore: RestoreKeymapSheet(store: store)

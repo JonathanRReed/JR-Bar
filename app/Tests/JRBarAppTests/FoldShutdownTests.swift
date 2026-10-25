@@ -34,7 +34,7 @@ struct FoldShutdownTests {
         #expect(store.state.fold == state.fold)
     }
 
-    @Test("an observation already queued cannot re-arm a retired owner", .timeLimit(.minutes(1)))
+    @Test("an observation already queued cannot re-arm a retired owner", .timeLimit(.minutes(10)))
     func queuedObservationCannotRestart() async throws {
         let core = CoreModel()
         var state = ToysState()

@@ -1373,7 +1373,7 @@ final class ShelfQuickLook: NSObject {
         if panel.isVisible {
             panel.orderOut(nil)
         } else {
-            panel.makeKeyAndOrderFront(nil)
+            WindowPresenter.automatic.order(panel, as: .key)
         }
     }
 

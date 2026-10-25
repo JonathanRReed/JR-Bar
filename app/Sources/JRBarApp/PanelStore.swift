@@ -1540,7 +1540,10 @@ final class PanelStore {
     static let sparklineDelay: TimeInterval = 1.5
     /// `sparklineDelay`, shortened by the tests.
     @ObservationIgnored var sparklineWait = PanelStore.sparklineDelay
-    @ObservationIgnored private var sparklineWork: Task<Void, Never>?
+    @ObservationIgnored var sparklineSleep: @MainActor (TimeInterval) async throws -> Void = {
+        try await Task.sleep(for: .seconds($0))
+    }
+    @ObservationIgnored private(set) var sparklineWork: Task<Void, Never>?
     /// `usage_history` for one provider — the core's in production; tests
     /// stage it.
     @ObservationIgnored var fetchUsageHistory: @MainActor (_ provider: String, _ range: UsageHistoryRange) async throws -> UsageHistory
@@ -1550,8 +1553,9 @@ final class PanelStore {
     private func scheduleSparklines() {
         sparklineWork?.cancel()
         let wait = sparklineWait
+        let sleep = sparklineSleep
         sparklineWork = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(wait))
+            try? await sleep(wait)
             guard !Task.isCancelled, let self, self.isOpen else { return }
             self.sparklineWork = nil
             self.refreshSparklines()

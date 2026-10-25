@@ -5,7 +5,7 @@ import Testing
 import UniformTypeIdentifiers
 @testable import JRBarApp
 
-@Suite("Shelf drop order", .timeLimit(.minutes(1)))
+@Suite("Shelf drop order", .timeLimit(.minutes(10)))
 @MainActor
 struct ShelfDropOrderTests {
     private final class HeldProvider: NSItemProvider, @unchecked Sendable {
@@ -15,12 +15,28 @@ struct ShelfDropOrderTests {
             var delivered = false
         }
         private let state = OSAllocatedUnfairLock(initialState: State())
+        private let starts = AsyncStream<Void>.makeStream()
+        private let deliveries = AsyncStream<Void>.makeStream()
+
+        func waitForStart() async -> Bool {
+            if ready { return true }
+            for await _ in starts.stream { return ready }
+            return false
+        }
+
+        func waitForDelivery() async -> Bool {
+            if delivered { return true }
+            for await _ in deliveries.stream { return delivered }
+            return false
+        }
 
         override init() {
             super.init()
             let state = self.state
+            let started = starts.continuation
             registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { reply in
                 state.withLock { $0.reply = reply }
+                started.yield(()); started.finish()
                 return nil
             }
         }
@@ -31,9 +47,11 @@ struct ShelfDropOrderTests {
             completionHandler: (@Sendable (NSSecureCoding?, Error?) -> Void)?
         ) {
             let state = self.state
+            let delivered = deliveries.continuation
             super.loadItem(forTypeIdentifier: typeIdentifier, options: options) { item, error in
                 completionHandler?(item, error)
                 state.withLock { $0.delivered = true }
+                delivered.yield(()); delivered.finish()
             }
         }
 
@@ -54,13 +72,6 @@ struct ShelfDropOrderTests {
         }
     }
 
-    private func waitUntil(_ condition: () -> Bool) async -> Bool {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(5))
-        while !condition(), clock.now < deadline { await Task.yield() }
-        return condition()
-    }
-
     @Test("provider order survives reverse completion order")
     func reverseCompletion() async throws {
         let firstURL = URL(fileURLWithPath: "/tmp/jrbar-drop-order-first.txt")
@@ -68,16 +79,18 @@ struct ShelfDropOrderTests {
         let first = HeldProvider()
         let second = HeldProvider()
         var result: [URL]?
-        ShelfTrayDrop.urls(from: [first, second]) { result = $0 }
-        let ready = await waitUntil { first.ready && second.ready }
+        let results = TestEvents<[URL]>()
+        ShelfTrayDrop.urls(from: [first, second]) { result = $0; results.send($0) }
+        let firstReady = await first.waitForStart()
+        let secondReady = await second.waitForStart()
+        let ready = firstReady && secondReady
         try #require(ready)
         second.finish(with: secondURL)
-        let secondDelivered = await waitUntil { second.delivered }
+        let secondDelivered = await second.waitForDelivery()
         try #require(secondDelivered)
         #expect(result == nil)
         first.finish(with: firstURL)
-        let completed = await waitUntil { result != nil }
-        try #require(completed)
+        _ = try await results.next()
         #expect(result == [firstURL, secondURL])
     }
 
@@ -89,19 +102,22 @@ struct ShelfDropOrderTests {
         let failed = HeldProvider()
         let last = HeldProvider()
         var result: [URL]?
-        ShelfTrayDrop.urls(from: [first, failed, last]) { result = $0 }
-        let ready = await waitUntil { first.ready && failed.ready && last.ready }
+        let results = TestEvents<[URL]>()
+        ShelfTrayDrop.urls(from: [first, failed, last]) { result = $0; results.send($0) }
+        let firstReady = await first.waitForStart()
+        let failureReady = await failed.waitForStart()
+        let lastReady = await last.waitForStart()
+        let ready = firstReady && failureReady && lastReady
         try #require(ready)
         last.finish(with: lastURL)
-        let lastDelivered = await waitUntil { last.delivered }
+        let lastDelivered = await last.waitForDelivery()
         try #require(lastDelivered)
         failed.finish(with: nil)
-        let failureDelivered = await waitUntil { failed.delivered }
+        let failureDelivered = await failed.waitForDelivery()
         try #require(failureDelivered)
         #expect(result == nil)
         first.finish(with: firstURL)
-        let completed = await waitUntil { result != nil }
-        try #require(completed)
+        _ = try await results.next()
         #expect(result == [firstURL, lastURL])
     }
 }

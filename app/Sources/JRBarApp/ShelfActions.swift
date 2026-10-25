@@ -366,8 +366,8 @@ enum ShelfActions {
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = prompt
-        NSApp.activate()
-        return panel.runModal() == .OK ? panel.url : nil
+        WindowPresenter.automatic.perform { NSApp.activate() }
+        return WindowPresenter.automatic.runModal(panel) == .OK ? panel.url : nil
     }
 }
 

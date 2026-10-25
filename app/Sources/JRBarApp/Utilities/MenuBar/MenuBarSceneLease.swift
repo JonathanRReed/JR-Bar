@@ -15,8 +15,17 @@ final class MenuBarSceneLease {
     var currentState: () -> State? = { nil }
     var send: (Action, String, String?, String?) async -> Reply = { _, _, _, _ in .failed }
     private(set) var isChanging = false
+    private var changeTask: Task<Void, Never>?
+
+    func waitUntilIdle() async -> Bool {
+        while let task = changeTask { await task.value }
+        return !isChanging
+    }
     private weak var core: CoreModel?
     private var renewal: Task<Void, Never>?
+    var waitForRenewal: @MainActor () async throws -> Void = {
+        try await Task.sleep(for: .seconds(10))
+    }
 
     private final class Cycle {
         let id = UUID().uuidString
@@ -102,7 +111,8 @@ final class MenuBarSceneLease {
         if scene != nil {
             renewal = Task { @MainActor [weak self] in
                 while !Task.isCancelled {
-                    do { try await Task.sleep(for: .seconds(10)) } catch { return }
+                    guard let wait = self?.waitForRenewal else { return }
+                    do { try await wait() } catch { return }
                     guard let self, self.desired != nil else { return }
                     self.renew()
                 }
@@ -150,10 +160,11 @@ final class MenuBarSceneLease {
             cycle.needsAcquire = false
             cycle.needsRelease = true
         }
-        Task { @MainActor [self] in
+        changeTask = Task { @MainActor [self] in
             let reply = await send(action, cycle.id, action == .acquire ? cycle.state?.revision : nil,
                                    action == .acquire ? cycle.scene : nil)
             isChanging = false
+            changeTask = nil
             if action == .release {
                 switch reply {
                 case .released, .superseded: active = nil

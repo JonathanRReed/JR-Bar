@@ -537,7 +537,7 @@ final class NotchIslandWindow: NSPanel {
 
     /// Reserve the same native input window for every painted shoulder.
     func setShoulderInput(_ path: CGPath?) {
-        let path = isVisible ? path : nil
+        let path = isPresented ? path : nil
         shoulderScreenPath = path
         let shape = presentedFrame
         if let bounds = path?.boundingBoxOfPath, !frame.contains(bounds) {
@@ -570,6 +570,10 @@ final class NotchIslandWindow: NSPanel {
     /// own. The Screen Bar couples to this, never to the stage.
     var presentedFrame: NSRect { stagedShape ?? frame }
 
+    /// Motion tests supply visibility without ordering the native window.
+    var visibility: (@MainActor () -> Bool)?
+    var isPresented: Bool { visibility?() ?? isVisible }
+
     /// Only the explicit ask or Shelf keyboard command can take typing
     /// from the app in front. Hover remains non-key.
     private var keyboardWanted = false
@@ -583,7 +587,7 @@ final class NotchIslandWindow: NSPanel {
         keyboardWanted = true
         if toy?.runtimeEnabled != false {
             makeFirstResponder(self)
-            makeKey()
+            WindowPresenter.automatic.perform { makeKey() }
         }
     }
 
@@ -597,7 +601,7 @@ final class NotchIslandWindow: NSPanel {
         keyboardWanted = false
         guard isKeyWindow else { return }
         super.orderOut(nil)
-        super.orderFrontRegardless()
+        WindowPresenter.automatic.perform { super.orderFrontRegardless() }
     }
 
     override func keyDown(with event: NSEvent) {
@@ -642,7 +646,7 @@ final class NotchIslandWindow: NSPanel {
     /// screen, nothing moves it (no stage, no pull) and it hangs below the
     /// notch.
     private var shadowWanted: Bool {
-        guard Self.shadowEnabled, isVisible, !isAnimating, pullBase == nil,
+        guard Self.shadowEnabled, isPresented, !isAnimating, pullBase == nil,
               let toy else { return false }
         return NotchShadow.casts(height: presentedFrame.height, notchDepth: toy.notchDepth)
     }
@@ -676,12 +680,13 @@ final class NotchIslandWindow: NSPanel {
     static let didChangeOrderingNotification = Notification.Name("JRBarNotchIslandDidChangeOrdering")
 
     override func orderFrontRegardless() {
-        super.orderFrontRegardless()
+        WindowPresenter.automatic.perform { super.orderFrontRegardless() }
         syncShadow()
         NotificationCenter.default.post(name: Self.didChangeOrderingNotification, object: self)
     }
 
     override func orderOut(_ sender: Any?) {
+        visibility = nil
         shadowPanel?.lift(immediately: true)
         super.orderOut(sender)
         NotificationCenter.default.post(name: Self.didChangeOrderingNotification, object: self)
@@ -731,7 +736,7 @@ final class NotchIslandWindow: NSPanel {
     /// of a change between the card and any other face; the move's
     /// openness reads them.
     func applyFrame(_ frame: NSRect, animated: Bool, flip: NotchMorph? = nil) {
-        guard animated, isVisible, pullBase == nil else {
+        guard animated, isPresented, pullBase == nil else {
             // A live pull owns the frame — a morph arriving under the
             // finger would read as the floor moving.
             cancelSpring(landingOn: frame)

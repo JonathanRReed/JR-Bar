@@ -128,7 +128,7 @@ struct UsageWindowInspectButton: View {
         .accessibilityLabel(inspection.inspectLabel)
         .accessibilityHint("Shows the reset, reading time and forecast evidence for this window.")
         .accessibilityIdentifier("usage-window-inspect-\(provider.identity)-\(window.id)")
-        .popover(isPresented: $inspecting) {
+        .popover(isPresented: WindowPresenter.presentation($inspecting)) {
             UsageWindowInspectionView(inspection: inspection)
         }
     }

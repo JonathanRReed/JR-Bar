@@ -1681,7 +1681,7 @@ final class NotchToy: Toy {
         reframe(currentFace, measured: measuredWithWindow ? frame : nil,
                 animated: !reduceMotion())
         if island?.isVisible != true {
-            island?.orderFrontRegardless()
+            WindowPresenter.automatic.order(island)
         }
         islandVisible = true
         publishSurface()

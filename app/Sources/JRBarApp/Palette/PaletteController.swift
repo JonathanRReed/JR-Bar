@@ -105,7 +105,7 @@ final class PaletteHUD {
         panel.setFrameOrigin(NSPoint(x: (reference.midX - frame.width / 2).rounded(),
                                      y: reference.maxY - frame.height))
         panel.alphaValue = 0
-        panel.orderFrontRegardless()
+        WindowPresenter.automatic.order(panel)
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         NSAnimationContext.runAnimationGroup { context in
             context.duration = reduceMotion ? 0 : 0.14
@@ -231,7 +231,7 @@ final class PaletteController {
     private(set) var panelBuilds = 0
     /// Puts the panel in front. Tests swap in a no-op so the build and
     /// reuse path runs with nothing on anyone's screen.
-    var orderFront: @MainActor (PalettePanel) -> Void = { $0.makeKeyAndOrderFront(nil) }
+    var presentPanel: @MainActor (PalettePanel) -> Void = { WindowPresenter.automatic.order($0, as: .key) }
     private(set) var isOpen = false
     private var openedAtUptime: TimeInterval = 0
     private var monitors: [Any] = []
@@ -268,7 +268,7 @@ final class PaletteController {
         let visible = (NSScreen.screenWithMouse ?? NSScreen.main)?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         panel.setFrameOrigin(PalettePanel.origin(on: visible))
-        orderFront(panel)
+        presentPanel(panel)
         self.panel = panel
         isOpen = true
         openedAtUptime = ProcessInfo.processInfo.systemUptime
