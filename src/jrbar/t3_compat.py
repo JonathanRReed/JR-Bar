@@ -875,7 +875,7 @@ _V2_UNHELD_RUN = (
 @dataclass
 class _V2ReadCache:
     identity: tuple | None = None
-    watermark: str = ""
+    watermark: datetime | None = None
     reconciled_at: datetime | None = None
     rows: dict = field(default_factory=dict)
     truncated: bool = False
@@ -900,7 +900,7 @@ WITH candidate_threads AS (
   FROM orchestration_v2_projection_threads AS threads
   WHERE threads.deleted_at IS NULL AND threads.archived_at IS NULL
     AND {{lineage_filter}}
-  ORDER BY threads.updated_at DESC, threads.thread_id ASC
+  ORDER BY julianday(threads.updated_at) DESC, threads.thread_id ASC
   LIMIT ?
 )
 SELECT
@@ -962,9 +962,9 @@ WHERE threads.deleted_at IS NULL
   AND threads.archived_at IS NULL
 ORDER BY
   MAX(
-    COALESCE(threads.updated_at, ''),
-    COALESCE(latest_run_time, ''),
-    COALESCE(json_extract(threads.payload_json, '$.settledAt'), '')
+    COALESCE(julianday(threads.updated_at), 0),
+    COALESCE(julianday(latest_run_time), 0),
+    COALESCE(julianday(json_extract(threads.payload_json, '$.settledAt')), 0)
   ) DESC,
   threads.thread_id ASC
 """
@@ -1031,17 +1031,22 @@ def _read_v2_snapshot(
             query = query.replace("{" + placeholder + "}", expression)
         subagent_columns = _table_columns(connection, "orchestration_v2_projection_subagents")
         observed_at = now()
-        cutoff = (observed_at - timedelta(seconds=T3_RECENT_WORKER_SECONDS)).isoformat()
+        cutoff = observed_at - timedelta(seconds=T3_RECENT_WORKER_SECONDS)
         stat = database.stat()
         identity = (str(database), stat.st_dev, stat.st_ino, environment_id)
         cache = _v2_read_cache.get() or _V2ReadCache()
         if cache.identity != identity:
             cache = _V2ReadCache(identity=identity)
+        # T3 writes UTC with either Z or +00:00, and optional fractions.
+        # Re-read the watermark second to preserve the indexed text range,
+        # then compare parsed instants so a newer fraction cannot be missed.
+        lower_bound = cache.watermark.astimezone(timezone.utc).isoformat()[:19] if cache.watermark else ""
         metadata = connection.execute(
             "SELECT thread_id, updated_at FROM orchestration_v2_projection_threads "
-            "WHERE project_id IN (SELECT project_id FROM projection_projects) AND updated_at > ?", (cache.watermark,),
+            "WHERE project_id IN (SELECT project_id FROM projection_projects) AND updated_at >= ?", (lower_bound,),
         ).fetchall()
-        changed = {row["thread_id"] for row in metadata}
+        updated = {row["thread_id"]: _latest_time(row["updated_at"]) for row in metadata}
+        changed = {key for key, stamp in updated.items() if cache.watermark is None or stamp > cache.watermark}
         live = {key for key, row in cache.rows.items() if row["active_run_id"] is not None}
         if {"child_thread_id", "status"}.issubset(subagent_columns):
             parent_column = "thread_id" if "thread_id" in subagent_columns else "NULL"
@@ -1060,7 +1065,7 @@ def _read_v2_snapshot(
         if "child_thread_id" in subagent_columns:
             worker_filter = f"(threads.thread_id IN (SELECT child_thread_id FROM orchestration_v2_projection_subagents WHERE child_thread_id IS NOT NULL) OR {worker_filter})"
         recent_worker = (
-            f"(threads.updated_at >= ? OR EXISTS (SELECT 1 FROM orchestration_v2_projection_runs runs "
+            f"(julianday(threads.updated_at) >= julianday(?) OR EXISTS (SELECT 1 FROM orchestration_v2_projection_runs runs "
             f"WHERE runs.thread_id = threads.thread_id AND runs.status IN {_V2_ACTIVE_RUN}))"
         )
         rows_by_id = {key: row for key, row in cache.rows.items() if key not in selected}
@@ -1078,7 +1083,7 @@ def _read_v2_snapshot(
         truncated = cache.truncated
         if not cache.watermark:
             roots = connection.execute(query.replace("{lineage_filter}", f"NOT ({worker_filter})"), (T3_MAX_THREADS + 1,)).fetchall()
-            workers = connection.execute(query.replace("{lineage_filter}", f"{recent_worker} AND ({worker_filter})"), (cutoff, T3_MAX_THREADS + 1,)).fetchall()
+            workers = connection.execute(query.replace("{lineage_filter}", f"{recent_worker} AND ({worker_filter})"), (cutoff.isoformat(), T3_MAX_THREADS + 1,)).fetchall()
             truncated = len(roots) > T3_MAX_THREADS or len(workers) > T3_MAX_THREADS
             rows_by_id.update((row["thread_id"], row) for row in (*roots[:T3_MAX_THREADS], *workers[:T3_MAX_THREADS]))
         # The initial windows must not displace a live child or its parent.
@@ -1093,9 +1098,10 @@ def _read_v2_snapshot(
                 fresh = connection.execute(query.replace("{lineage_filter}", predicate), (*chunk, len(chunk))).fetchall()
                 rows_by_id.update((row["thread_id"], row) for row in fresh)
         # Finished workers age out even when another thread owns all the writes.
+        thread_times = {key: _latest_time(row["thread_updated_at"]) for key, row in rows_by_id.items()}
         rows = sorted(rows_by_id.values(), key=lambda row: (
             row["thread_id"] in live or row["active_run_id"] is not None or row["pending_approval_count"] > 0 or row["pending_user_input_count"] > 0,
-            row["thread_updated_at"], row["thread_id"],
+            thread_times[row["thread_id"]], row["thread_id"],
         ), reverse=True)
         worker_ids = cache.worker_ids & rows_by_id.keys()
         candidate_ids = sorted(rows_by_id.keys() - cache.rows.keys() | selected)
@@ -1117,14 +1123,13 @@ def _read_v2_snapshot(
             payloads[tid] = payload
             worker = row["thread_id"] in worker_ids or (payload.get("lineage") or {}).get("relationshipToParent") == "subagent"
             if worker:
-                if row["thread_updated_at"] >= cutoff or row["active_run_id"] is not None:
+                if thread_times[tid] >= cutoff or row["active_run_id"] is not None:
                     workers.append(row)
             else:
                 roots.append(row)
         truncated |= len(roots) > T3_MAX_THREADS or len(workers) > T3_MAX_THREADS
         rows = sorted((*roots[:T3_MAX_THREADS], *workers[:T3_MAX_THREADS]),
-                      key=lambda row: (row["thread_updated_at"], row["thread_id"]))
-        rows.sort(key=lambda row: row["thread_updated_at"], reverse=True)
+                      key=lambda row: (-thread_times[row["thread_id"]].timestamp(), row["thread_id"]))
         binding_columns = _table_columns(connection, "orchestration_v2_projection_provider_threads")
         has_driver_bindings = {"provider_thread_id", "driver"}.issubset(binding_columns)
         selected_provider_threads = {row["active_run_thread"] or row["active_provider_thread_id"] for row in rows}
@@ -1300,7 +1305,9 @@ def _read_v2_snapshot(
         cache.truncated = truncated
         cache.identity = identity
         cache.rows = {row["thread_id"]: row for row in rows}
-        cache.watermark = max((row["updated_at"] for row in metadata), default=cache.watermark)
+        if updated:
+            latest_update = max(updated.values())
+            cache.watermark = max(cache.watermark, latest_update) if cache.watermark else latest_update
         active_cache = _v2_read_cache.get()
         if active_cache is not None and active_cache is not cache:
             active_cache.__dict__.update(cache.__dict__)

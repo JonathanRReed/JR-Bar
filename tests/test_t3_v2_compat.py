@@ -737,7 +737,7 @@ def test_incremental_reader_joins_only_changed_or_live_threads(tmp_path, monkeyp
         joins = [sql for sql in statements if 'WITH candidate_threads' in sql]
         assert len(joins) == 1
         assert "IN ('changed','live')" in joins[0]
-        assert cache.watermark == '2026-10-07T12:01:00Z'
+        assert cache.watermark == datetime.fromisoformat('2026-10-07T12:01:00Z')
         statements.clear()
         read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromisoformat(NOW))
         assert not any('WITH candidate_threads' in sql for sql in statements)
@@ -840,3 +840,32 @@ def test_periodic_reconciliation_drops_threads_without_timestamp_bumps(tmp_path,
         assert set(cache.rows) == set(cache.payloads) == set(cache.views) == set(cache.final_views) == {'retained'}
     finally:
         t3_compat._v2_read_cache.reset(token)
+
+
+def test_incremental_watermark_handles_z_and_utc_offset_formats(tmp_path):
+    database = _v2(tmp_path)
+    _thread(database, 'same-second', updated_at='2026-10-07T12:00:00Z')
+    cache = t3_compat._V2ReadCache()
+    token = t3_compat._v2_read_cache.set(cache)
+    try:
+        read_t3_snapshot(base_dir=tmp_path)
+        with sqlite3.connect(database) as connection:
+            connection.execute("UPDATE orchestration_v2_projection_threads SET title='Newer fraction', "
+                               "updated_at='2026-10-07T12:00:00.500+00:00' WHERE thread_id='same-second'")
+        assert read_t3_snapshot(base_dir=tmp_path).threads[0].thread_title == 'Newer fraction'
+    finally:
+        t3_compat._v2_read_cache.reset(token)
+
+
+def test_worker_cutoff_and_order_compare_instants_not_iso_spelling(tmp_path, monkeypatch):
+    monkeypatch.setattr(t3_compat, 'T3_MAX_THREADS', 2)
+    database = _v2(tmp_path)
+    _thread(database, 'at-cutoff', relationship='subagent', updated_at='2026-10-07T11:50:00+00:00')
+    _thread(database, 'after-cutoff', relationship='subagent', updated_at='2026-10-07T11:50:00.500Z')
+    _thread(database, 'older-root', updated_at='2026-10-07T11:59:00Z')
+    _thread(database, 'fractional-root', updated_at='2026-10-07T11:59:00.500+00:00')
+    _thread(database, 'newest-root', updated_at='2026-10-07T11:59:01+00:00')
+    snapshot = read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromisoformat(NOW))
+    assert [row.thread_id for row in snapshot.threads] == [
+        'newest-root', 'fractional-root', 'after-cutoff', 'at-cutoff',
+    ]
