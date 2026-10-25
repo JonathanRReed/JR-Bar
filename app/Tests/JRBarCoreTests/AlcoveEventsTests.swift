@@ -74,6 +74,17 @@ struct AlcoveEventsTests {
 
     // MARK: Queue
 
+    @Test("asks interrupt news, timers and meetings without a gap")
+    func askInterrupts() {
+        for kind in [AlcoveNoticeKind.completed, .timer, .meeting] {
+            var queue = AlcoveCapsuleQueue()
+            _ = queue.offer(notice(kind, key: "ordinary"), at: t0)
+            let ask = notice(.ask)
+            #expect(queue.offer(ask, at: t0 + 0.01) == .now)
+            #expect(queue.current == ask)
+        }
+    }
+
     @Test("a lone notice shows now; a second queues; a third replaces it — newest wins")
     func queueOrder() {
         var q = AlcoveCapsuleQueue()

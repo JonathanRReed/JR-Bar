@@ -417,6 +417,12 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
             return .suppressed
         }
         recent[notice.key] = now
+        if notice.kind == .ask, current?.kind != .ask {
+            current = notice
+            currentShownAt = now
+            overlay = nil
+            return .now
+        }
         guard current == nil else {
             wait(notice, at: now)
             return .queued
