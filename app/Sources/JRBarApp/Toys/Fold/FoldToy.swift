@@ -396,11 +396,11 @@ final class FoldToy: Toy {
             store?.state.fold.enabled = newValue
             store?.save()
             if newValue {
-                // Re-enabling is a fresh ask — a stale renderer
-                // failure must not outlive the toggle.
+                // Re-enabling retries the renderer and shader cache immediately.
                 dismissal = FoldDismissal()
                 dismissalKeyUnavailable = false
                 rendererFailed = false
+                FoldShaderCache.shared.clearFailures()
                 captureRetry.reset()
             }
             reconcile()
@@ -1810,9 +1810,9 @@ final class FoldToy: Toy {
         store?.state.fold.provider = provider
         store?.save()
         guard provider != .jrbar else {
-            // Handing the render back to us is a fresh ask — a stale
-            // failure must not outlive the switch.
+            // Taking rendering back retries the shader cache immediately.
             rendererFailed = false
+            FoldShaderCache.shared.clearFailures()
             captureRetry.reset()
             reconcile()
             return

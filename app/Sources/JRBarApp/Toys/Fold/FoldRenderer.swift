@@ -86,7 +86,8 @@ private func foldLogThrottled(_ message: String) {
 /// Metal source takes long enough to drop frames, so the toy asks for it
 /// off the main thread the moment it is on (`prewarm`); a renderer made
 /// later takes the finished pipelines instead of compiling on the first
-/// gesture. Failures stay visible until the retry cooldown expires.
+/// gesture. Failures hold until the retry cooldown expires or the person
+/// explicitly retries.
 final class FoldShaderCache: @unchecked Sendable {
     static let shared = FoldShaderCache()
 
@@ -110,6 +111,11 @@ final class FoldShaderCache: @unchecked Sendable {
     /// What a compile is: swapped by the tests, which have no GPU.
     var compile: @Sendable (MTLPixelFormat) throws -> Compiled = { format in
         try FoldShaderCache.compileShaders(pixelFormat: format)
+    }
+
+    /// Explicit user actions retry immediately without discarding compiled shaders.
+    func clearFailures() {
+        lock.withLock { failures.removeAll() }
     }
 
     func isReady(pixelFormat: MTLPixelFormat) -> Bool {
