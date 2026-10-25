@@ -101,7 +101,7 @@ _KEYCHAIN_FINGERPRINT_TTL_SECONDS = 60.0
 _KEYCHAIN_FINGERPRINT_CACHE: dict[str, tuple[float, tuple]] = {}
 
 
-def keychain_fingerprint(service: str, *, now: float | None = None, fresh: bool = False) -> tuple:
+def keychain_fingerprint(service: str, *, now: float | None = None, fresh: bool = False, cached_only: bool = False) -> tuple:
     """Modification/creation stamps of a Keychain item, no secret read.
 
     `security find-generic-password` WITHOUT -w returns attributes only,
@@ -115,6 +115,8 @@ def keychain_fingerprint(service: str, *, now: float | None = None, fresh: bool 
 
     stamp = _time.monotonic() if now is None else float(now)
     cached = _KEYCHAIN_FINGERPRINT_CACHE.get(service)
+    if cached_only:
+        return cached[1] if cached is not None else ()
     if not fresh and cached is not None and stamp - cached[0] < _KEYCHAIN_FINGERPRINT_TTL_SECONDS:
         return cached[1]
     parts: tuple = ()
@@ -141,7 +143,7 @@ def keychain_fingerprint(service: str, *, now: float | None = None, fresh: bool 
     return parts
 
 
-def credential_fingerprint(home: Path, provider_id: str, *, fresh: bool = False) -> tuple | None:
+def credential_fingerprint(home: Path, provider_id: str, *, fresh: bool = False, cached_only: bool = False) -> tuple | None:
     """A cheap identity for the provider's credential source.
 
     None means "no source exists at all". Any change in the tuple -- a
@@ -163,7 +165,7 @@ def credential_fingerprint(home: Path, provider_id: str, *, fresh: bool = False)
         parts.append((relative, int(info.st_mtime_ns), int(info.st_size), int(info.st_ino)))
     service = KEYCHAIN_SOURCE_SERVICES.get(provider_id)
     if service:
-        parts.extend(keychain_fingerprint(service, fresh=fresh))
+        parts.extend(keychain_fingerprint(service, fresh=fresh, cached_only=cached_only))
     return tuple(parts) or None
 
 

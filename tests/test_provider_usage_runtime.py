@@ -28,6 +28,11 @@ from jrbar.provider_usage_runtime import (
 from jrbar.provider_usage_settings import default_provider_usage_settings
 
 
+@pytest.fixture(autouse=True)
+def fake_keychain_fingerprint(monkeypatch):
+    monkeypatch.setattr("jrbar.provider_reconnect.keychain_fingerprint", lambda *a, **kw: ())
+
+
 def snapshot(
     provider,
     *,
