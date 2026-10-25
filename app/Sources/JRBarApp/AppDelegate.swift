@@ -1671,9 +1671,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
-    /// One sleeping task refreshes the wings and open card at the next ask-age
-    /// or provider-turn boundary. Repeated daemon frames keep the same wake
-    /// when the boundary stays put; one working provider needs no wake.
+    /// One sleeping task refreshes the icon, wings and open card at the next
+    /// ask-age, provider turn or quota reset. Unchanged facts keep the wake.
     private var askAgeTick: Task<Void, Never>?
     private var askAgeTickAt: Double?
     private var rearmingAskAgeTick = false
@@ -1683,7 +1682,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         rearmingAskAgeTick = true
         defer { rearmingAskAgeTick = false }
         store?.compactAwakeEligible = screenBar?.canCycleCompactAwake ?? false
-        let next = store?.nextAskAgeTick()
+        let usage = core?.isLive == true ? core?.usage ?? [] : []
+        let next = AppCoreRefresh.nextTick(askTick: store?.nextAskAgeTick(), usage: usage,
+                                          now: Date().timeIntervalSince1970)
         screenBar?.earMarks = store?.screenBarEarMarks ?? ScreenBarEarMarks()
         guard next != askAgeTickAt || askAgeTick == nil || next == nil else { return }
         askAgeTick?.cancel()
@@ -1696,6 +1697,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, let self else { return }
             self.askAgeTick = nil
+            self.refreshIconStyle()
             self.screenBar?.wings = self.store?.screenBarWings ?? .empty
             self.screenBar?.earMarks = self.store?.screenBarEarMarks ?? ScreenBarEarMarks()
             self.interaction?.card.geometryChanged()

@@ -49,6 +49,21 @@ struct AppCoreRefreshTests {
         #expect(flag.fired)
     }
 
+    @Test("quota expiry schedules its own refresh without a changed frame")
+    func expiryClock() {
+        let usage = [CoreProviderUsage(id: "claude", windows: [
+            CoreUsageWindow(name: "5h", usedPct: 40, resetsAt: 120),
+            CoreUsageWindow(name: "weekly", usedPct: 20, resetsAt: 240)
+        ])]
+        #expect(AppCoreRefresh.nextTick(askTick: nil, usage: usage, now: 100) == 120)
+        #expect(AppCoreRefresh.nextTick(askTick: 110, usage: usage, now: 100) == 110)
+        #expect(AppCoreRefresh.nextTick(askTick: nil, usage: usage, now: 120) == 240)
+        #expect(AppCoreRefresh.nextTick(askTick: nil, usage: usage, now: 240) == nil)
+        #expect(AppCoreRefresh.nextTick(askTick: nil, usage: [], now: 100) == nil)
+        let reading = AppDelegate.meterReading(of: usage[0], window: usage[0].windows[0], now: 120)
+        #expect(reading.fraction == nil && !reading.current)
+    }
+
     @Test("device and quota changes keep their own refreshers")
     func usage() {
         let core = CoreModel(socketPath: "/tmp/jrbar-refresh-unused.sock")

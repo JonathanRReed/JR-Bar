@@ -13,6 +13,12 @@ struct AppCoreRefresh {
         static let lights = Self(rawValue: 1 << 5)
         static let all: Self = [.connection, .settings, .roster, .usage, .devices, .lights]
     }
+    /// Expiry is a clock input even when the daemon publishes no new facts.
+    static func nextTick(askTick: Double?, usage: [CoreProviderUsage], now: Double) -> Double? {
+        let resets = usage.flatMap(\.windows).compactMap(\.resetsAt)
+        return (resets + [askTick].compactMap { $0 }).filter { $0.isFinite && $0 > now }.min()
+    }
+
     private var previous: Snapshot?
 
     @MainActor
