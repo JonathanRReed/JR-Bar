@@ -41,7 +41,7 @@ def availability_document(snapshot, *, now: float, installed: bool | None, hidde
                           action="Hide", action_kind="hide")
             return fields
         fields.update(availability="missing_recent", status_text="Not found on this Mac")
-    elif reason == "quota_service_not_running" or (installed is True and state == "source_not_found"):
+    elif reason == "quota_service_not_running" and snapshot.provider_id == "antigravity":
         fields.update(availability="source_idle", status_text="Quota service is not running",
                       action=f"Open {label} to refresh", action_kind="open_app")
     elif state not in {"ready", "disabled", "unsupported"} and reason != "usage_not_turned_on":

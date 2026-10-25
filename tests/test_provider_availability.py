@@ -124,3 +124,19 @@ def test_claude_access_lost_button_rereads_instead_of_renewing_token(monkeypatch
     result = core_runtime._cmd_provider_action(controller, {"provider": "claude"})
     assert result["message"] == "Read sign-in again."
     assert calls == [(("claude", "default"), {"reason_code": "claude_keychain_access_lost"})]
+
+
+def test_installed_missing_sources_keep_their_own_reason_and_action():
+    for provider, reason, action in (
+        ("gemini", "gemini_auth_missing", "Sign in to Gemini CLI"),
+        ("grok", "grok_auth_missing", "Run grok login"),
+    ):
+        snapshot = replace(reading(provider=provider, reason=reason),
+                           state=ProviderSourceState.SOURCE_NOT_FOUND, action_label=action)
+        row = usage_document(ProviderUsageState((snapshot,), 2000, 3000, False), now=2001,
+                             detected_agents={provider: True})["providers"][0]
+        assert row["reason"] == reason
+        assert row["action"] == action
+        assert row["availability"] == "failing"
+        assert row["action_kind"] is None
+        assert "Quota service" not in row["status_text"]
