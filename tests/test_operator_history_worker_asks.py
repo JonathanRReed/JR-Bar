@@ -1,4 +1,4 @@
-"""A sub-agent's ask is not an attention episode while worker asks are off."""
+"""Linked workers follow the ask preference; unlinked asks always count."""
 
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ def _needs_user(rows) -> int:
     return sum(day.needs_user for day in days)
 
 
-def test_a_workers_ask_adds_no_needs_user_count_while_worker_asks_are_off() -> None:
+def test_an_unlinked_workers_ask_counts_even_while_worker_asks_are_off() -> None:
     snapshot = _snapshot(("agent:worker", "request:worker"))
     opened = [
         event
@@ -107,8 +107,8 @@ def test_a_workers_ask_adds_no_needs_user_count_while_worker_asks_are_off() -> N
 
     rows = _observe(snapshot, alert=False)
 
-    assert _needs_user(rows) == 0
-    assert all(row.kind is not HistoryEventKind.NEEDS_USER for row in rows)
+    assert _needs_user(rows) == 1
+    assert any(row.kind is HistoryEventKind.NEEDS_USER for row in rows)
 
 
 def test_a_workers_ask_counts_when_worker_asks_are_on() -> None:
