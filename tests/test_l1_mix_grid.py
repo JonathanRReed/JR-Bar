@@ -253,3 +253,20 @@ def test_automatic_follows_a_chosen_cycle_without_stretching_it():
     assert plan.played == "round_robin", plan.warnings
     animation, _ = read_program(plan.program)
     assert animation_duration_ms(animation) == 3700
+
+
+@pytest.mark.parametrize("providers", (2, 3))
+def test_owner_automatic_follows_the_chosen_knight_rider_curve_exactly(providers):
+    from jrbar.light_mix import _body
+
+    settings = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", "kitt")
+    agents = _active_agents(statuses(providers), settings)
+    share = tuple(range(0, 8, providers))
+    plan = plan_agent_mix(agents, settings, led_count=8)
+    reference = RawSdLedWasmController(8)
+    actual = RawSdLedWasmController(8)
+    assert reference.parse("\n".join([*_body(agents[0], settings, len(share), compact=True), "repeat"]), 0).ok
+    assert actual.parse(plan.program, 0).ok
+    expected = reference.step_batch(0, 20, 330)
+    frames = actual.step_batch(0, 20, 330)
+    assert [[frame[index] for index in share] for frame in frames] == [frame[:len(share)] for frame in expected]

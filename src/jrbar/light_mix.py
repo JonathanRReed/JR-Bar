@@ -395,6 +395,32 @@ def _shares(agents, settings, count, mode, warnings=None):
                    for index in range(1, len(share) + 1)})
     tracks = [_share_steps(_body(agent, settings, len(share), compact=True), share, grid)
               for agent, share in zip(agents, slots)]
+    explicit = [index for index, agent in enumerate(agents)
+                if settings.agent_animation(agent.provider) not in {"auto", "steady"}]
+    if explicit:
+        chosen_spans = [step_duration_ms(step) for step in tracks[explicit[0]]]
+        period = sum(chosen_spans)
+        default = round(settings.effective_speed_seconds(settings.mix_mode) * 1000)
+        common = all(
+            [step_duration_ms(step) for step in tracks[index]] == chosen_spans
+            and settings.agent_cycle_ms(agents[index].provider, default) == period
+            for index in explicit)
+        if common:
+            # Automatic has no chosen clock. Follow the chosen steps so
+            # their cosine sweeps, pulses and pauses remain untouched.
+            for index, (agent, share) in enumerate(zip(agents, slots)):
+                if settings.agent_animation(agent.provider) != "auto":
+                    continue
+                local = _share_steps(_body(agent, settings, len(share), compact=True),
+                    tuple(range(len(share))))
+                elapsed = 0
+                synchronized = []
+                for span in chosen_spans:
+                    elapsed += span
+                    colors = _share_frame(local, len(share), Fraction(elapsed, period))
+                    synchronized.append(PaintStep((IndexedPaint(tuple(zip(share, colors)),
+                        Timing(span, "linear")),)))
+                tracks[index] = synchronized
     moving = [index for index, agent in enumerate(agents)
               if settings.agent_animation(agent.provider) != "steady"]
     if moving:
