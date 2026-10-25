@@ -570,3 +570,29 @@ def test_arbitrary_since_filters_before_dedupe(tmp_path):
     index = TokenHistoryIndex(tmp_path / "state/history.sqlite3")
     since = datetime.fromisoformat("2026-10-25T01:30:00+00:00").timestamp()
     assert index.scan({"claude": (root,)}, since_epoch=since).input_tokens == 100
+
+
+def test_fork_heavy_append_resolves_only_changed_events(tmp_path):
+    from datetime import timedelta
+
+    from tests.test_codex_usage_lineage import _meta, _tokens, _write
+
+    root = tmp_path / "codex"
+    start = datetime.fromisoformat("2026-10-25T10:00:00+00:00")
+    events = [_tokens((i + 1) * 100, 100, (start + timedelta(seconds=i)).isoformat()) for i in range(40)]
+    _write(root / "parent.jsonl", [_meta("parent", timestamp="2026-10-25T09:00:00Z"), *events])
+    for fork in range(6):
+        _write(root / f"fork-{fork}.jsonl", [
+            _meta(f"fork-{fork}", forked_from_id="parent", timestamp="2026-10-25T10:01:00Z"), *events])
+    index = TokenHistoryIndex(tmp_path / "state/history.sqlite3")
+    roots = {"codex": (root,)}
+    first = index.scan(roots)
+    assert first.codex_tokens == 4000
+    assert index.resolved_last_pass == 240
+    with (root / "fork-0.jsonl").open("a") as handle:
+        handle.write(json.dumps(_tokens(4100, 100, "2026-10-25T10:02:00Z")) + "\n")
+    assert index.scan(roots).codex_tokens == 4100
+    assert index.resolved_last_pass == 0
+    (root / "parent.jsonl").unlink()
+    assert index.scan(roots).codex_tokens == 4100
+    assert index.resolved_last_pass == 240

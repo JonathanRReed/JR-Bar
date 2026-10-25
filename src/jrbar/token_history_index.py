@@ -23,7 +23,7 @@ from . import local_token_history as local
 from . import usage_stats as usage
 from .private_io import ensure_private_file
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 RETENTION_SECONDS = 368 * 86400
 MAX_DATABASE_BYTES = 4 * 1024**3
 VIEW_BYTES = 4 * 1024 * 1024
@@ -166,7 +166,7 @@ class TokenHistoryIndex:
                 if old != (version,):
                     self.views.clear()
                     self.view_bytes = 0
-                    for table in ("files", "raw", "events", "hours", "days", "conflicts"):
+                    for table in ("files", "raw", "events", "hours", "days", "conflicts", "canonicals", "parents", "resolutions", "dependencies"):
                         db.execute(f"DROP TABLE IF EXISTS {table}")
                     db.execute("DELETE FROM meta")
                     db.executemany("INSERT INTO meta VALUES (?,?)", [("version", version), ("secret", secrets.token_hex(32))])
@@ -189,7 +189,18 @@ class TokenHistoryIndex:
                     long_context INTEGER, inp INTEGER, cached INTEGER, created INTEGER,
                     out INTEGER, records INTEGER, positive_records INTEGER,
                     PRIMARY KEY(provider,session,model,day,hour,long_context)) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS canonicals (
+                    owner TEXT, event TEXT, dedupe BLOB, PRIMARY KEY(owner,event)) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS parents (owner TEXT PRIMARY KEY,parent TEXT) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS resolutions (
+                    owner TEXT,event TEXT,canonical BLOB,PRIMARY KEY(owner,event)) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS dependencies (
+                    ancestor TEXT,event TEXT,owner TEXT,PRIMARY KEY(ancestor,event,owner)) WITHOUT ROWID;
+                CREATE INDEX IF NOT EXISTS dependency_owner ON dependencies(owner,event);
                 CREATE TEMP TABLE dirty (key BLOB PRIMARY KEY) WITHOUT ROWID;
+                CREATE TEMP TABLE resolve_dirty (owner TEXT,event TEXT,PRIMARY KEY(owner,event)) WITHOUT ROWID;
+                CREATE TEMP TABLE own_dirty (owner TEXT,event TEXT,PRIMARY KEY(owner,event)) WITHOUT ROWID;
+                CREATE TEMP TABLE parent_dirty (owner TEXT PRIMARY KEY) WITHOUT ROWID;
                 """)
                 db.commit()
                 return db
@@ -239,7 +250,13 @@ class TokenHistoryIndex:
         db.execute("INSERT OR REPLACE INTO meta VALUES ('timezone',?)", (zone,))
         return True
 
+    def _mark_file(self, db, key, seq=0):
+        db.execute("INSERT OR IGNORE INTO resolve_dirty SELECT owner,event FROM raw WHERE file=? AND seq>=? AND kind IN ('inherited','boundary')", (key, seq))
+        db.execute("INSERT OR IGNORE INTO own_dirty SELECT owner,event FROM raw WHERE file=? AND seq>=? AND kind='own'", (key, seq))
+        db.execute("INSERT OR IGNORE INTO parent_dirty SELECT owner FROM raw WHERE file=? AND seq>=? AND parent IS NOT NULL", (key, seq))
+
     def _remove(self, db, key):
+        self._mark_file(db, key)
         db.execute("INSERT OR IGNORE INTO dirty SELECT canonical FROM raw WHERE file=?", (key,))
         db.execute("DELETE FROM raw WHERE file=?", (key,))
         db.execute("DELETE FROM files WHERE id=?", (key,))
@@ -271,45 +288,67 @@ class TokenHistoryIndex:
 
         db.executemany("INSERT INTO raw VALUES (" + ",".join("?" for _ in range(20)) + ")", rows())
         db.execute("INSERT OR IGNORE INTO dirty SELECT canonical FROM raw WHERE file=? AND seq>=?", (key, seq))
+        self._mark_file(db, key, seq)
 
     def _lineage(self, db):
-        # Only copy/boundary rows need reconciliation. Own events stay on
-        # disk and are found by an indexed lookup, never a Python event map.
-        parents = dict(
-            db.execute("""SELECT owner,parent FROM (
-                SELECT r.owner,r.parent,ROW_NUMBER() OVER (
-                    PARTITION BY r.owner ORDER BY f.ordering,r.seq) AS position
-                FROM raw r JOIN files f ON f.id=r.file WHERE r.parent IS NOT NULL
-            ) WHERE position=1""")
-        )
-        for file, seq, dedupe, previous in db.execute(
-            "SELECT file,seq,dedupe,canonical FROM raw WHERE kind IN ('inherited','boundary')"
-        ):
-            kind, session, parent, root, event = db.execute(
-                "SELECT kind,owner,parent,root,event FROM raw WHERE file=? AND seq=?", (file, seq)
-            ).fetchone()
+        # Resolve only changed copies and copies that depended on changed own
+        # events or parent links. A missing ancestor is also a dependency.
+        db.execute("DELETE FROM canonicals WHERE (owner,event) IN (SELECT owner,event FROM own_dirty)")
+        db.execute("""INSERT INTO canonicals SELECT owner,event,dedupe FROM (
+            SELECT r.owner,r.event,r.dedupe,ROW_NUMBER() OVER (
+                PARTITION BY r.owner,r.event ORDER BY f.ordering,r.seq) AS position
+            FROM own_dirty d JOIN raw r ON r.owner=d.owner AND r.event=d.event
+            JOIN files f ON f.id=r.file WHERE r.kind='own') WHERE position=1""")
+        db.execute("CREATE TEMP TABLE previous_parents AS SELECT * FROM parents WHERE owner IN (SELECT owner FROM parent_dirty)")
+        db.execute("DELETE FROM parents WHERE owner IN (SELECT owner FROM parent_dirty)")
+        db.execute("""INSERT INTO parents SELECT owner,parent FROM (
+            SELECT r.owner,r.parent,ROW_NUMBER() OVER (
+                PARTITION BY r.owner ORDER BY f.ordering,r.seq) AS position
+            FROM parent_dirty d JOIN raw r ON r.owner=d.owner JOIN files f ON f.id=r.file
+            WHERE r.parent IS NOT NULL) WHERE position=1""")
+        db.execute("""DELETE FROM parent_dirty WHERE
+            (SELECT parent FROM parents p WHERE p.owner=parent_dirty.owner) IS
+            (SELECT parent FROM previous_parents p WHERE p.owner=parent_dirty.owner)""")
+        db.execute("DROP TABLE previous_parents")
+        db.execute("""CREATE TEMP TABLE resolve AS
+            SELECT owner,event FROM resolve_dirty
+            UNION SELECT d.owner,d.event FROM dependencies d JOIN own_dirty o
+                ON o.owner=d.ancestor AND o.event=d.event
+            UNION SELECT d.owner,d.event FROM dependencies d JOIN parent_dirty p ON p.owner=d.ancestor""")
+        self.resolved_last_pass = 0
+        for session, event in db.execute("SELECT owner,event FROM resolve").fetchall():
+            row = db.execute("""SELECT r.kind,r.parent,r.root,r.dedupe FROM raw r JOIN files f ON f.id=r.file
+                WHERE r.owner=? AND r.event=? AND r.kind IN ('inherited','boundary')
+                ORDER BY f.ordering,r.seq LIMIT 1""", (session, event)).fetchone()
+            db.execute("DELETE FROM dependencies WHERE owner=? AND event=?", (session, event))
+            db.execute("DELETE FROM resolutions WHERE owner=? AND event=?", (session, event))
+            if row is None:
+                continue
+            kind, parent, root, dedupe = row
             owner, visited, canonical = parent, set(), None
             while owner is not None and owner not in visited:
                 visited.add(owner)
-                own = db.execute(
-                    "SELECT r.dedupe FROM raw r JOIN files f ON f.id=r.file WHERE r.owner=? AND r.event=? AND r.kind='own' ORDER BY f.ordering,r.seq LIMIT 1",
-                    (owner, event),
-                ).fetchone()
+                own = db.execute("SELECT dedupe FROM canonicals WHERE owner=? AND event=?", (owner, event)).fetchone()
                 if own:
                     canonical = own[0]
                     break
-                owner = parents.get(owner)
+                ancestor = db.execute("SELECT parent FROM parents WHERE owner=?", (owner,)).fetchone()
+                owner = ancestor[0] if ancestor else None
             if canonical is None and root is not None:
-                own = db.execute(
-                    "SELECT r.dedupe FROM raw r JOIN files f ON f.id=r.file WHERE r.owner=? AND r.event=? AND r.kind='own' ORDER BY f.ordering,r.seq LIMIT 1",
-                    (root, event),
-                ).fetchone()
+                visited.add(root)
+                own = db.execute("SELECT dedupe FROM canonicals WHERE owner=? AND event=?", (root, event)).fetchone()
                 canonical = own[0] if own else None
             if canonical is None:
                 canonical = dedupe if kind == "boundary" else _digest(f"codex-unresolved:{parent or root or session}:{event}")
-            if canonical != previous:
-                db.executemany("INSERT OR IGNORE INTO dirty VALUES (?)", [(previous,), (canonical,)])
-                db.execute("UPDATE raw SET canonical=? WHERE file=? AND seq=?", (canonical, file, seq))
+            db.executemany("INSERT OR IGNORE INTO dependencies VALUES (?,?,?)", ((owner, event, session) for owner in visited))
+            db.execute("INSERT INTO resolutions VALUES (?,?,?)", (session, event, canonical))
+            db.execute("""INSERT OR IGNORE INTO dirty SELECT canonical FROM raw
+                WHERE owner=? AND event=? AND kind IN ('inherited','boundary') AND canonical!=?""", (session, event, canonical))
+            db.execute("""UPDATE raw SET canonical=? WHERE owner=? AND event=?
+                AND kind IN ('inherited','boundary') AND canonical!=?""", (canonical, session, event, canonical))
+            db.execute("INSERT OR IGNORE INTO dirty VALUES (?)", (canonical,))
+            self.resolved_last_pass += 1
+        db.execute("DROP TABLE resolve")
 
     def scan(self, roots, *, since_epoch=0.0, budget=None, cached_only=False, source_bindings=None):
         """Update changed files and return compact records for one window.
@@ -358,6 +397,8 @@ class TokenHistoryIndex:
                 if db.execute("SELECT value FROM meta WHERE key='pruned'").fetchone() != (prune_day,):
                     db.execute("INSERT OR IGNORE INTO dirty SELECT canonical FROM raw WHERE epoch<?", (cutoff,))
                     if db.execute("SELECT 1 FROM dirty LIMIT 1").fetchone():
+                        for (file,) in db.execute("SELECT DISTINCT file FROM raw WHERE epoch<?", (cutoff,)).fetchall():
+                            self._mark_file(db, file)
                         db.execute("DELETE FROM raw WHERE epoch<?", (cutoff,))
                         changed = True
                     db.execute("INSERT OR REPLACE INTO meta VALUES ('pruned',?)", (prune_day,))
@@ -397,6 +438,7 @@ class TokenHistoryIndex:
                             sidecar = _sidecar_stamp(candidate.path)
                             if saved and saved[1] != ordering:
                                 db.execute("INSERT OR IGNORE INTO dirty SELECT canonical FROM raw WHERE file=?", (key,))
+                                self._mark_file(db, key)
                                 db.execute("UPDATE files SET ordering=? WHERE id=?", (ordering, key))
                                 changed = True
                             if (
@@ -454,6 +496,7 @@ class TokenHistoryIndex:
                                 state.unreadable_files += 1
                                 continue
                             if not append:
+                                self._mark_file(db, key)
                                 db.execute("INSERT OR IGNORE INTO dirty SELECT canonical FROM raw WHERE file=?", (key,))
                                 db.execute("DELETE FROM raw WHERE file=?", (key,))
                             self._append(db, key, (row for row in result.records if row[3] >= cutoff))
