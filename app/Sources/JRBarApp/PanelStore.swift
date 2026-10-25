@@ -1619,12 +1619,7 @@ final class PanelStore {
     /// A provider whose row would say nothing: no window, every window at
     /// 0 %, or a source that is switched off or was never found.
     static func foldsIntoQuietRow(_ usage: CoreProviderUsage) -> Bool {
-        if usage.statusText != nil { return false }
-        if usage.windows.isEmpty { return true }
-        if let state = usage.state?.lowercased(), state == "disabled" || state == "source_not_found" { return true }
-        // An old reading or a vendor outage is news; a row of "at 0%" would bury it.
-        if usage.isStale || usage.incident?.isEmpty == false { return false }
-        return usage.windows.allSatisfy { ($0.usedPct ?? 1) < 0.5 }
+        usage.foldsIntoQuietPanelRow
     }
 
     /// Why a provider sits in the quiet row, in the fewest words.

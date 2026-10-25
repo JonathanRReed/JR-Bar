@@ -1404,6 +1404,15 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         actionKind = try? c.decodeIfPresent(String.self, forKey: .actionKind)
     }
 
+    /// A status needs its own panel row even when no window has a number.
+    public var foldsIntoQuietPanelRow: Bool {
+        if statusText != nil { return false }
+        if windows.isEmpty { return true }
+        if let state = state?.lowercased(), state == "disabled" || state == "source_not_found" { return true }
+        if isStale || incident?.isEmpty == false { return false }
+        return windows.allSatisfy { ($0.usedPct ?? 1) < 0.5 }
+    }
+
     /// Stable identity across multi-account rows of the same provider;
     /// the default instance collapses to the bare id.
     public var identity: String {
