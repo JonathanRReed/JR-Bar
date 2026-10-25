@@ -480,3 +480,13 @@ def test_cursor_oversize_keeps_explicit_child_and_parent(shim: Path, sock_dir: P
     assert record["subagent_id"] == "cursor-worker"
     assert record["parent_conversation_id"] == "cursor-parent"
     assert "task" not in record
+
+
+def test_hermes_oversize_keeps_callback_parent_fields(shim: Path, sock_dir: Path) -> None:
+    payload = {"hook_event_name": "subagent_start", "child_session_id": "hermes-session",
+               "child_subagent_id": "hermes-worker", "parent_session_id": "hermes-root",
+               "parent_subagent_id": "hermes-parent-worker", "child_goal": "A" * (MIB + 4096)}
+    record = json.loads(_delivered(shim, sock_dir, "hermes", _compact(payload)).payload_text)
+    for key in ('child_session_id', 'child_subagent_id', 'parent_session_id', 'parent_subagent_id'):
+        assert record[key] == payload[key]
+    assert 'child_goal' not in record

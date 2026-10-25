@@ -97,6 +97,14 @@ def cursor_parent_links(payload: dict, *, observed_at: float) -> tuple[ParentLin
     return _link(member_key("cursor", child), member_key("cursor", parent), "cursor", observed_at)
 
 
+def hermes_parent_links(payload: dict, *, observed_at: float) -> tuple[ParentLink, ...]:
+    child = (member_key("hermes", payload.get("child_session_id"))
+             or member_key("hermes", payload.get("child_subagent_id")))
+    parent = (member_key("hermes", payload.get("parent_session_id"))
+              or member_key("hermes", payload.get("parent_subagent_id")))
+    return _link(child, parent, "hermes", observed_at)
+
+
 def persisted_parent_links(payload: object, provider: str) -> tuple[ParentLink, ...]:
     """Validate the optional content-free hook lineage extension."""
     if type(payload) is not list or not 1 <= len(payload) <= 4:
@@ -126,7 +134,26 @@ def hook_parent_links(record) -> tuple[ParentLink, ...]:
         return persisted_parent_links(raw["parent_links"], record.provider)
     if record.provider == "cursor":
         return cursor_parent_links(raw, observed_at=record.logged_at.timestamp())
+    if record.provider == "hermes":
+        return hermes_parent_links(raw, observed_at=record.logged_at.timestamp())
     return ()
+
+
+def read_hermes_links(database: Path, *, observed_at: float) -> tuple[ParentLink, ...]:
+    """Read identities and creation times only, never session content."""
+    if not database.is_file():
+        return ()
+    try:
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.1)) as connection:
+            connection.execute("PRAGMA query_only=ON")
+            rows = connection.execute(
+                "SELECT id, parent_session_id, started_at FROM sessions WHERE parent_session_id IS NOT NULL "
+                "ORDER BY started_at DESC LIMIT ?", (MAX_FILES,)).fetchall()
+            return tuple(link for child, parent, stamp in rows
+                         for link in hermes_parent_links({"child_session_id": child, "parent_session_id": parent},
+                             observed_at=float(stamp) if type(stamp) in {int, float} else 0.0))
+    except (OSError, sqlite3.Error):
+        return ()
 
 
 def claude_parent_links(payload: dict, *, observed_at: float, agent_id: str | None = None) -> tuple[ParentLink, ...]:
@@ -386,6 +413,8 @@ class LocalLineageReader:
                         for provider, root, _, _ in formats) for link in evidence]
         if "devin" in providers:
             links.extend(read_devin_links(self.home / ".local/share/devin/cli/sessions.db", observed_at=now))
+        if "hermes" in providers:
+            links.extend(read_hermes_links(self.home / ".hermes/state.db", observed_at=now))
         by_child: dict[str, list[ParentLink]] = {}
         for link in links:
             by_child.setdefault(link.child, []).append(link)

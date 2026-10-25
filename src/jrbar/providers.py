@@ -2205,6 +2205,11 @@ def parse_log_line(provider: str, line: str) -> HookEvent | None:
         session_id = normalized_raw["subagent_id"]
         for alias in ("session_id", "sessionId"):
             normalized_raw.pop(alias, None)
+    if provider == "hermes" and ("child_session_id" in normalized_raw or "child_subagent_id" in normalized_raw):
+        session_id = _first_string(normalized_raw, "child_session_id")
+        agent_id = None if session_id else _first_string(normalized_raw, "child_subagent_id")
+        # The plugin callback's session_id, when present, still names the parent.
+        normalized_raw.pop("session_id", None)
     # Normalized ledger records carry identity as WORK ids: the work IS
     # the session for a main, and the agent for a sub-agent (whose
     # parent_work_id names its session). Reading only session_id/agent_id

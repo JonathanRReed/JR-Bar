@@ -195,6 +195,9 @@ static const struct meta_key META_KEYS[] = {
     { "parent_session_id", META_VALUE_BYTES },
     { "subagent_id", META_VALUE_BYTES },
     { "parent_conversation_id", META_VALUE_BYTES },
+    { "child_session_id", META_VALUE_BYTES },
+    { "child_subagent_id", META_VALUE_BYTES },
+    { "parent_subagent_id", META_VALUE_BYTES },
     { "callingSessionId", META_VALUE_BYTES },
     { "callingToolUseId", META_VALUE_BYTES },
     { "transcript_path", META_PATH_BYTES },
@@ -213,7 +216,8 @@ static uint64_t fnv1a64(const char *p, size_t n) {
 }
 
 static int metadata_provider(const char *provider) {
-    return !strcmp(provider, "claude") || !strcmp(provider, "codex") || !strcmp(provider, "cursor");
+    return !strcmp(provider, "claude") || !strcmp(provider, "codex") || !strcmp(provider, "cursor")
+        || !strcmp(provider, "hermes");
 }
 
 static size_t json_skip_ws(const char *b, size_t i, size_t n) {
@@ -319,6 +323,14 @@ static size_t build_metadata(const char *b, size_t n, char *out, size_t cap) {
             }
         }
         i = end;
+    }
+    if (!found[1].len) {
+        for (size_t k = 2; k < META_KEY_COUNT; k++) {
+            if (!strcmp(META_KEYS[k].name, "child_session_id") && found[k].len) {
+                found[1] = found[k];
+                break;
+            }
+        }
     }
     if (!found[0].len || !found[1].len) return 0;
     size_t o = 0;

@@ -712,3 +712,9 @@ Cursor's [hooks reference](https://cursor.com/docs/hooks#subagentstart),
 checked 2026-10-25, documents `subagent_id` and `parent_conversation_id`.
 No Cursor executable or app was available to version locally. The synthetic
 fixture names the documentation date. No Cursor source code was copied.
+
+Hermes' [subagent hook reference](https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks#subagent_start)
+and local `sessions` table columns were checked on 2026-10-25. The local CLI
+was unavailable, so the fixture identifies the schema observation date.
+The adapter reads `id`, `parent_session_id` and `started_at` only. Hermes
+Agent is MIT licensed. No source code was copied.

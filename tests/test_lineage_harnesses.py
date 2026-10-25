@@ -68,3 +68,47 @@ def test_t3_cursor_child_with_native_worker_resolves_one_group():
     group, = resolve_agent_groups([*rows, worker], now=NOW).groups
     assert group.root_work_key == keys['root']
     assert len(group.members) == 3
+
+
+def test_hermes_hook_and_database_use_the_same_session_identity(tmp_path):
+    import sqlite3
+
+    from jrbar.lineage_adapters import LocalLineageReader, read_hermes_links
+
+    data = fixture('hermes-state-db-v0-docs-2026-10-25.json')
+    child, encoded = replay('hermes', data)
+    database = tmp_path / '.hermes/state.db'
+    database.parent.mkdir()
+    with sqlite3.connect(database) as connection:
+        connection.execute('CREATE TABLE sessions(id TEXT, parent_session_id TEXT, started_at REAL, system_prompt TEXT)')
+        connection.execute('INSERT INTO sessions VALUES (?, ?, ?, ?)',
+                           ('hermes-child-session', 'hermes-root', NOW, 'synthetic content'))
+    before = database.read_bytes()
+    assert read_hermes_links(database, observed_at=NOW) == child.parent_links
+    providers = frozenset({'hermes'})
+    recovered = LocalLineageReader(tmp_path).read(providers, now=NOW)
+    assert recovered == LocalLineageReader(tmp_path).read(providers, now=NOW)
+    group, = resolve_agent_groups([row('hermes:session:hermes-root'), *recovered], now=NOW).groups
+    assert child.agent_id in group.members
+    assert database.read_bytes() == before
+    assert 'synthetic content' not in json.dumps(encoded)
+
+
+def test_hermes_missing_parent_is_unlinked():
+    data = fixture('hermes-state-db-v0-docs-2026-10-25.json')
+    data['parent_session_id'] = None
+    child, _ = replay('hermes', data)
+    assert resolve_agent_groups([child], now=NOW).unlinked_workers == {child.agent_id}
+
+
+def test_hermes_nested_hook_and_agent_only_fallback():
+    data = fixture('hermes-state-db-v0-docs-2026-10-25.json')
+    parent, _ = replay('hermes', data)
+    data.update(child_session_id='nested-session', parent_session_id='hermes-child-session',
+                parent_subagent_id='hermes-worker', child_subagent_id='nested-worker')
+    child, _ = replay('hermes', data)
+    group, = resolve_agent_groups([row('hermes:session:hermes-root'), parent, child], now=NOW).groups
+    assert len(group.members) == 3
+    data['child_session_id'] = None
+    orphan, _ = replay('hermes', data)
+    assert orphan.agent_id == 'hermes:session:nested-worker'
