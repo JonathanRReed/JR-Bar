@@ -1443,6 +1443,7 @@ class ColorSettings:
             "agent_colors": dict(self.agent_colors),
             "session_colors": dict(sorted(self.session_colors.items())),
             "blend_mode": self.blend_mode,
+            "mix_schema_version": 1,
             "mix_parameters": {key: dict(value) for key, value in self.mix_parameters.items()},
             "fade_floor": dict(self.fade_floor),
             "fade_ceiling": dict(self.fade_ceiling),
@@ -1495,6 +1496,11 @@ class ColorSettings:
         blend_mode = data.get("blend_mode", data.get("mix_mode"))
         if blend_mode not in BLEND_MODE_CHOICES:
             blend_mode = DEFAULT_BLEND_MODE
+
+        # Before the scanner mixes, relay meant Spotlight's provider turns.
+        # Keep those users on provider turns rather than changing the effect.
+        if blend_mode == BLEND_MODE_RELAY and data.get("mix_schema_version") != 1:
+            blend_mode = BLEND_MODE_CYCLE
 
         fade_floor = dict(defaults.fade_floor)
         raw_floor = data.get("fade_floor")

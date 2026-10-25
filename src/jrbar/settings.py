@@ -2212,6 +2212,11 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
     led_display = _led_display_setting(data.get("led_display"), LED_DISPLAY_AGENT)
     parsed_dnd = parse_dnd_settings(data)
     devices = _device_display_settings(data.get("devices"), led_display)
+    color_data = data.get("colors")
+    mix_schema = color_data.get("mix_schema_version") if isinstance(color_data, dict) else None
+    if mix_schema != 1:
+        devices = tuple(replace(device, blend_mode="cycle") if device.blend_mode == "relay" else device
+                        for device in devices)
     return AgentMonitorSettings(
         codex_transcripts_enabled=_bool_setting(transcript.get("codex"), False),
         pi_transcripts_enabled=_bool_setting(transcript.get("pi"), False),
