@@ -95,6 +95,7 @@ def test_cli_option_does_not_bypass_usage_consent(tmp_path):
 
 def test_probe_stops_on_parsed_usage_and_reaps_before_removing_config(tmp_path, monkeypatch):
     from pathlib import Path
+
     from jrbar import claude_cli_usage as module
 
     executable = tmp_path / "synthetic-claude"

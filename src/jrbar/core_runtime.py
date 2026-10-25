@@ -2945,7 +2945,9 @@ def _cmd_provider_action(self, args):
         raise CommandError("invalid_args", "provider is required")
     if not isinstance(instance, str) or not instance:
         raise CommandError("invalid_args", "instance must be a nonempty string")
-    if action is not None and action not in {"resign_in", "hide", "open_app"}:
+    if action is not None and (
+        not isinstance(action, str) or action not in {"resign_in", "hide", "open_app"}
+    ):
         raise CommandError("invalid_args", "action must be resign_in, hide or open_app")
     from .provider_browser_access import perform_provider_usage_action
     from .provider_usage_platform import provider_descriptor
@@ -2966,9 +2968,11 @@ def _cmd_provider_action(self, args):
             if action in {"hide", "open_app"} and availability["action_kind"] != action:
                 raise CommandError("unavailable", "This provider action is no longer available")
             if action == "hide":
-                from .provider_usage_settings import load_provider_usage_settings, save_provider_usage_settings
-
-                from .provider_usage_settings import ProviderUsageSettingsWriteRefusedError
+                from .provider_usage_settings import (
+                    ProviderUsageSettingsWriteRefusedError,
+                    load_provider_usage_settings,
+                    save_provider_usage_settings,
+                )
 
                 def hide():
                     loaded = load_provider_usage_settings()

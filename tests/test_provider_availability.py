@@ -183,7 +183,9 @@ def test_provider_action_hops_state_changes_to_main_but_opens_on_worker(monkeypa
 
 def test_open_timeout_is_a_command_error(monkeypatch):
     import subprocess
+
     import pytest
+
     from jrbar.core_server import CommandError
 
     def timeout(*args, **kw):
@@ -198,6 +200,7 @@ def test_open_timeout_is_a_command_error(monkeypatch):
 
 def test_hide_write_refusal_is_reported_on_main(monkeypatch):
     import pytest
+
     from jrbar.core_server import CommandError
     from jrbar.provider_usage_settings import ProviderUsageSettingsWriteRefusedError
 
@@ -223,8 +226,8 @@ def test_hide_write_refusal_is_reported_on_main(monkeypatch):
 
 
 def test_reconnect_reads_on_worker_and_publishes_on_main(monkeypatch):
-    from jrbar.provider_reconnect import ResignInResult
     from jrbar.provider_browser_access import perform_provider_usage_action
+    from jrbar.provider_reconnect import ResignInResult
 
     main = [False]
     refreshes = []
@@ -263,6 +266,7 @@ def test_reconnect_reads_on_worker_and_publishes_on_main(monkeypatch):
 
 def test_explicit_open_cannot_become_hide_when_inventory_changes(tmp_path, monkeypatch):
     import pytest
+
     from jrbar.core_server import CommandError
 
     monkeypatch.setattr(core_runtime.time, "time", lambda: 1000 + GONE_READING_SECONDS)
