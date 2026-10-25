@@ -872,12 +872,13 @@ def collect_claude(
     quota_fetcher: Callable[[str], list[dict]] = _default_claude_quota_fetch,
     local_scanner: Callable[[Path, float], dict[str, object] | None] = _default_claude_local_scan,
     statusline_reader: Callable[[float], object] | None = None,
+    cli_probe: Callable[[str], list[dict]] | None = None,
 ) -> ProviderUsageSnapshot:
     # Claude Code's status line describes the account signed in on this Mac,
     # so it can only stand in for the default instance.
     default_instance = getattr(preference, "source_instance_id", "default") == "default"
     instance = getattr(preference, "source_instance_id", "default")
-    del preference
+    cli_fallback = default_instance and preference.option("cli_fallback") == "true"
     try:
         from .claude_quota import account_facts_from_claude_config
 
@@ -945,6 +946,24 @@ def collect_claude(
         with _oauth_rest_lock:
             _oauth_rest_until.pop(rest_key, None)
         return snapshot
+    if cli_fallback and reading is None:
+        try:
+            from .claude_cli_usage import probe_usage
+
+            access_token = _credential(credentials, "claude", "oauth-token")
+            if access_token is None:
+                return snapshot
+            windows = (cli_probe or probe_usage)(access_token)
+            fallback = parse_claude_usage(
+                windows=windows, observed_at=observed_at, account_plan=account_plan,
+                account_discriminator=account_discriminator,
+            )
+            if fallback.lanes:
+                return _with_local_usage(replace(
+                    fallback, lanes=tuple(replace(lane, source_id="claude-cli") for lane in fallback.lanes)
+                ), local)
+        except Exception:
+            pass
     if reading is None:
         return snapshot
     identity = _claude_credential_identity(credentials)
@@ -1026,13 +1045,22 @@ def _collect_claude_oauth(
         pass
     access_token = _credential(credentials, "claude", "oauth-token")
     if access_token is None:
+        reason = "usage_connection_required"
+        action = "Connect Claude usage"
+        if source_instance_id == "default":
+            from .credentials import CLAUDE_CODE_KEYCHAIN, KeychainConsentLedger
+            from .providers import default_state_dir
+
+            if KeychainConsentLedger(default_state_dir() / "keychain-consent.json").access_lost(CLAUDE_CODE_KEYCHAIN.service):
+                reason = "claude_keychain_access_lost"
+                action = "Allow Claude Keychain access"
         return _with_local_usage(
             _failure(
                 "claude",
                 observed_at=observed_at,
                 state=ProviderSourceState.NEEDS_CONSENT,
-                reason="usage_connection_required",
-                action="Connect Claude usage",
+                reason=reason,
+                action=action,
             ),
             local,
         )

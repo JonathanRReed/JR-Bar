@@ -800,6 +800,28 @@ Vocabulary:
   `stale` carrying that same `reason` and `action` for one that has a last
   good reading. Every other status, a 403 with a non-JSON body (a proxy's
   page) and a network failure still read `network_unavailable`.
+- `usage.providers[].availability` (additive, 2026-10-25) describes the
+  installed source: `source_idle`, `failing`, `missing_recent`, `not_found`,
+  `absent`, or `available`. An unknown inventory result never means absent.
+  `status_text` names the cause; `last_good_age_seconds`
+  is null when there has been no reading. `panel_visible: false` suppresses
+  a never-used, absent provider or a row the person explicitly hid. Settings
+  still lists it. A removed provider keeps its stale reading for seven days,
+  then says "Not found on this Mac" and offers Hide. Nothing hides itself.
+  `action_kind: open_app` opens the provider; `action_kind: hide` hides only
+  its panel row. Both use `provider_action`, resolved against current facts.
+  A failed installed source keeps its cause, fix and last-good age visible.
+- `usage.providers[].windows[].elapsed` is true when the window reset after
+  its reading. Its historical percentage moves to `last_used_pct` and
+  `used_pct` becomes null. Clients must not present it as current usage.
+- Claude's `set_provider_options` accepts `cli_fallback: "true" or "false"`.
+  It defaults off and additionally requires Claude usage consent. On a failed
+  token read it permits an isolated, bounded `claude /usage` probe. No login
+  or trust question is answered. It uses a temporary config directory and
+  only JR-Bar's stored access token, so it cannot recover a missing token or
+  renew Claude Code's sign-in. Windows from this source say `claude-cli`.
+  `panel_hidden: "true" or "false"` is accepted for any provider to hide or
+  restore its panel row without changing collection or usage consent.
 - `usage.providers[].incident` is the provider's status-feed incident as
   one line (`"Anthropic: Elevated errors"`), or null. It is an outage on
   the vendor's side, never a quota verdict. It is null the moment the feed

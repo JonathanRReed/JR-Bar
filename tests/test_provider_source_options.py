@@ -131,3 +131,13 @@ def test_edit_keeps_existing_consent_and_enabled_choice(home):
     pm.set_provider_options("kimi", {"region": "china"}, credentials=Credentials(), home=home)
     after = load_provider_usage_settings().settings.preference("kimi")
     assert after == before.with_option("region", "china")
+
+
+def test_claude_cli_fallback_requires_its_own_persisted_opt_in(home):
+    assert load_provider_usage_settings().settings.preference("claude").option("cli_fallback") is None
+    row = pm.set_provider_options("claude", {"cli_fallback": "true"}, credentials=Credentials(), home=home)
+    assert row["options"] == {"cli_fallback": "true"}
+    assert not row["usage_consent"]["granted"]
+    assert load_provider_usage_settings().settings.preference("claude").option("cli_fallback") == "true"
+    pm.set_provider_options("claude", {"cli_fallback": "false"}, credentials=Credentials(), home=home)
+    assert load_provider_usage_settings().settings.preference("claude").option("cli_fallback") == "false"

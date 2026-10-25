@@ -78,7 +78,7 @@ _IMPORT_ACCOUNT = "token"
 #: only -- ``csrf_token`` and anything a future provider adds stay inside
 #: the settings store. ``endpoint`` is loopback-validated at write time.
 _PUBLISHABLE_OPTION_KEYS = frozenset(
-    {"organization", "organization_id", "project_id", "endpoint", "region", "source"}
+    {"organization", "organization_id", "project_id", "endpoint", "region", "source", "cli_fallback", "panel_hidden"}
 )
 
 
@@ -475,13 +475,15 @@ def set_provider_options(
         raise ProviderManagementError("unknown_provider", f"unknown provider {provider_id!r}") from exc
     if not isinstance(options, dict):
         raise ProviderManagementError("invalid_args", "options must be an object")
-    allowed = {"kimi": {"region", "source"}, "kilo": {"organization_id"}}.get(provider_id)
-    if allowed is None or any(not isinstance(key, str) or key not in allowed for key in options):
+    allowed = {"kimi": {"region", "source"}, "kilo": {"organization_id"}, "claude": {"cli_fallback"}}.get(provider_id, set()) | {"panel_hidden"}
+    if any(not isinstance(key, str) or key not in allowed for key in options):
         raise ProviderManagementError("invalid_args", "unsupported provider option")
     for key, value in options.items():
         if not isinstance(value, str):
             raise ProviderManagementError("invalid_args", "option values must be strings")
-        if provider_id == "kimi":
+        if key in {"cli_fallback", "panel_hidden"}:
+            valid = value in {"true", "false"}
+        elif provider_id == "kimi":
             choices = {"region": {"china", "international"}, "source": {"auto", "api", "web", "cli"}}
             valid = value in choices[key]
         else:
