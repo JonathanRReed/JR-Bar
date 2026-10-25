@@ -928,9 +928,10 @@ public final class CoreModel {
     /// current action label (clipboard import, reconnect, repair). The
     /// reply carries the message the daemon surfaced; `unsupported`
     /// means no staged action matches the live state.
-    public func providerAction(_ provider: String, instance: String? = nil) async throws -> String {
+    public func providerAction(_ provider: String, instance: String? = nil, action: String? = nil) async throws -> String {
         var args: [String: JSONValue] = ["provider": .string(provider)]
         if let instance { args["instance"] = .string(instance) }
+        if let action { args["action"] = .string(action) }
         let reply = try await send("provider_action", args: args)
         guard reply.ok else {
             throw reply.error ?? CoreReplyError(code: "error", message: "provider_action failed")

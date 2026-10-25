@@ -2945,8 +2945,8 @@ def _cmd_provider_action(self, args):
         raise CommandError("invalid_args", "provider is required")
     if not isinstance(instance, str) or not instance:
         raise CommandError("invalid_args", "instance must be a nonempty string")
-    if action is not None and action != "resign_in":
-        raise CommandError("invalid_args", "action must be resign_in")
+    if action is not None and action not in {"resign_in", "hide", "open_app"}:
+        raise CommandError("invalid_args", "action must be resign_in, hide or open_app")
     from .provider_browser_access import perform_provider_usage_action
     from .provider_usage_platform import provider_descriptor
 
@@ -2955,7 +2955,7 @@ def _cmd_provider_action(self, args):
     except ValueError as exc:
         raise CommandError("unknown_provider", f"unknown provider {provider!r}") from exc
     on_main(lambda: _require_usage_on(self, provider, instance))
-    if action is None:
+    if action in {None, "hide", "open_app"}:
         from .provider_availability import availability_document
 
         snapshot = next((item for item in getattr(getattr(self, "provider_usage_state", None), "snapshots", ())
@@ -2963,7 +2963,9 @@ def _cmd_provider_action(self, args):
         detect = getattr(self, "_core_detected_agents", lambda: {})
         if snapshot is not None:
             availability = availability_document(snapshot, now=time.time(), installed=on_main(detect).get(provider))
-            if availability["action_kind"] == "hide":
+            if action in {"hide", "open_app"} and availability["action_kind"] != action:
+                raise CommandError("unavailable", "This provider action is no longer available")
+            if action == "hide":
                 from .provider_usage_settings import load_provider_usage_settings, save_provider_usage_settings
 
                 from .provider_usage_settings import ProviderUsageSettingsWriteRefusedError
@@ -2979,7 +2981,7 @@ def _cmd_provider_action(self, args):
 
                 on_main(hide)
                 return {"provider": provider, "instance": instance, "message": "Provider hidden from the panel."}
-            if availability["action_kind"] == "open_app":
+            if action == "open_app" or (action is None and availability["action_kind"] == "open_app"):
                 try:
                     completed = subprocess.run(["/usr/bin/open", "-a", descriptor.label],
                                                capture_output=True, timeout=5, check=False)
@@ -2989,6 +2991,8 @@ def _cmd_provider_action(self, args):
                     raise CommandError("not_found", f"Could not open {descriptor.label} on this Mac")
                 on_main(lambda: self._request_provider_usage(force=True, providers=((provider, instance),)))
                 return {"provider": provider, "instance": instance, "message": f"Opening {descriptor.label}."}
+            if availability["action_kind"] == "hide":
+                raise CommandError("invalid_args", "Choose the explicit hide action")
             staged_action = availability.get("action", snapshot.action_label)
             if staged_action in {"Retry", "Retry later"}:
                 on_main(lambda: self._request_provider_usage(force=True, providers=((provider, instance),)))
@@ -2998,6 +3002,8 @@ def _cmd_provider_action(self, args):
                 "Connect Claude usage", "Reconnect Claude", "Allow Claude Keychain access",
             }:
                 action = "resign_in"
+    if action in {"hide", "open_app"}:
+        raise CommandError("unavailable", "No current provider row for this action")
     if provider == "factory" or (provider in {"kimi", "kilo", "kiro"} and action is None):
         snapshots = getattr(getattr(self, "provider_usage_state", None), "snapshots", ())
         if any(item.identity == (provider, instance) and getattr(item.state, "value", item.state) == "disabled"

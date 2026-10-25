@@ -1,6 +1,8 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from jrbar import core_runtime
 from jrbar.core_projection import usage_document
 from jrbar.core_server import ACTION_LANE_COMMANDS
@@ -8,6 +10,12 @@ from jrbar.provider_availability import GONE_READING_SECONDS, availability_docum
 from jrbar.provider_usage_platform import ProviderSourceState, UsageLane, failure_snapshot
 from jrbar.provider_usage_runtime import ProviderUsageState
 from jrbar.provider_usage_settings import load_provider_usage_settings
+
+
+@pytest.fixture(autouse=True)
+def isolated_provider_settings(tmp_path, monkeypatch):
+    monkeypatch.setattr("jrbar.provider_usage_settings.default_provider_usage_settings_path",
+                        lambda: tmp_path / "provider-usage.json")
 
 
 def reading(*, measured=True, provider="antigravity", reason="quota_service_not_running"):
@@ -94,7 +102,7 @@ def test_hide_is_explicit_persisted_and_does_not_disable_tracking(tmp_path, monk
     controller = SimpleNamespace(provider_usage_state=ProviderUsageState((reading(),), 2000, 3000, False),
         _core_detected_agents=lambda: {"antigravity": False}, _request_provider_usage=lambda **_: None)
     before = load_provider_usage_settings().settings.preference("antigravity")
-    core_runtime._cmd_provider_action(controller, {"provider": "antigravity"})
+    core_runtime._cmd_provider_action(controller, {"provider": "antigravity", "action": "hide"})
     after = load_provider_usage_settings().settings.preference("antigravity")
     assert after.enabled == before.enabled
     assert after.usage_consented == before.usage_consented
@@ -211,7 +219,7 @@ def test_hide_write_refusal_is_reported_on_main(monkeypatch):
     controller = SimpleNamespace(provider_usage_state=ProviderUsageState((reading(),), 2000, 3000, False),
         _core_on_main=on_main, _core_detected_agents=lambda: {"antigravity": False})
     with pytest.raises(CommandError, match="settings changed"):
-        core_runtime._cmd_provider_action(controller, {"provider": "antigravity"})
+        core_runtime._cmd_provider_action(controller, {"provider": "antigravity", "action": "hide"})
 
 
 def test_reconnect_reads_on_worker_and_publishes_on_main(monkeypatch):
@@ -251,3 +259,31 @@ def test_reconnect_reads_on_worker_and_publishes_on_main(monkeypatch):
                         lambda *a, **kw: read().message)
     assert perform_provider_usage_action(controller, "claude") == "Read again."
     assert len(refreshes) == 2
+
+
+def test_explicit_open_cannot_become_hide_when_inventory_changes(tmp_path, monkeypatch):
+    import pytest
+    from jrbar.core_server import CommandError
+
+    monkeypatch.setattr(core_runtime.time, "time", lambda: 1000 + GONE_READING_SECONDS)
+    controller = SimpleNamespace(provider_usage_state=ProviderUsageState((reading(),), 2000, 3000, False),
+        _core_detected_agents=lambda: {"antigravity": False})
+    with pytest.raises(CommandError, match="no longer available"):
+        core_runtime._cmd_provider_action(controller, {"provider": "antigravity", "action": "open_app"})
+    with pytest.raises(CommandError, match="explicit hide"):
+        core_runtime._cmd_provider_action(controller, {"provider": "antigravity"})
+    assert load_provider_usage_settings().settings.preference("antigravity").option("panel_hidden") != "true"
+
+
+def test_hide_can_be_undone_without_changing_collection(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(core_runtime.time, "time", lambda: 1000 + GONE_READING_SECONDS)
+    controller = SimpleNamespace(provider_usage_state=ProviderUsageState((reading(),), 2000, 3000, False),
+        _core_detected_agents=lambda: {"antigravity": False}, _request_provider_usage=lambda **_: None)
+    core_runtime._cmd_provider_action(controller, {"provider": "antigravity", "action": "hide"})
+    core_runtime._cmd_set_provider_options(controller, {
+        "provider": "antigravity", "options": {"panel_hidden": "false"}})
+    preference = load_provider_usage_settings().settings.preference("antigravity")
+    assert preference.option("panel_hidden") == "false"
+    assert availability_document(reading(), now=700000, installed=False,
+                                 hidden=preference.option("panel_hidden") == "true")["panel_visible"]

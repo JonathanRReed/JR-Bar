@@ -1762,7 +1762,7 @@ struct UsageRow: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 2)
-                Button("Hide") { store.runUsageAction(usage) }
+                Button("Hide") { store.runUsageAction(usage, action: "hide") }
                     .buttonStyle(.plain)
                     .font(.system(size: 10))
             }
@@ -1821,7 +1821,7 @@ struct UsageRow: View {
                         .truncationMode(.tail)
                     Spacer(minLength: 2)
                     if usage.statusText != nil, let action = usage.action {
-                        Button(action) { store.runUsageAction(usage) }
+                        Button(action) { store.runUsageAction(usage, action: usage.actionKind) }
                             .buttonStyle(.plain)
                             .font(.system(size: 10))
                             .foregroundStyle(.tint)

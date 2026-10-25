@@ -1434,10 +1434,10 @@ final class PanelStore {
     /// silently nor take a 50 pt row each to say "nothing".
     var quietUsage: [CoreProviderUsage] { core.isLive ? core.usage.filter { $0.panelVisible && Self.foldsIntoQuietRow($0) } : [] }
 
-    func runUsageAction(_ usage: CoreProviderUsage) {
+    func runUsageAction(_ usage: CoreProviderUsage, action: String? = nil) {
         Task { [weak self] in
             guard let self else { return }
-            do { self.show(toast: try await self.core.providerAction(usage.id, instance: usage.instance)) }
+            do { self.show(toast: try await self.core.providerAction(usage.id, instance: usage.instance, action: action)) }
             catch { self.show(toast: error.localizedDescription) }
         }
     }
