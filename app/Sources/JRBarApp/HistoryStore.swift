@@ -22,7 +22,9 @@ final class HistoryStore {
 
     /// The daemon's settings document, for provider colour overrides.
     var document: SettingsDocument? { core.settings.map { SettingsDocument($0.document) } }
-    var rows: [CoreHistoryRow] = []
+    var rows: [CoreHistoryRow] = [] {
+        didSet { pruneTimelines(to: Set(rows.map(\.id))) }
+    }
     var filter = HistoryFilter()
     var loading = false
     var error: String?
@@ -115,6 +117,9 @@ final class HistoryStore {
     let expandedViewState = ReconstructedTimelineViewState()
     private(set) var expandedTimelines: [String: SessionReconstruction] = [:]
     private(set) var expandedLoading: Set<String> = []
+    static let timelineCacheLimit = 32
+    @ObservationIgnored private var timelineRecency: [String] = []
+    @ObservationIgnored private var timelineTokens: [String: UUID] = [:]
     /// Rows whose last timeline read failed: the gap line stands in for the
     /// timeline, and opening the row again asks again.
     private(set) var failedTimelines: Set<String> = []
@@ -145,26 +150,65 @@ final class HistoryStore {
     func loadTimeline(for row: CoreHistoryRow, force: Bool = false) -> Task<Void, Never>? {
         guard let session = row.session, core.isLive, !expandedLoading.contains(row.id) else { return nil }
         let running = isLiveSession(session)
+        touchTimeline(row.id)
         guard Self.shouldLoadTimeline(cached: expandedTimelines[row.id] != nil, failed: failedTimelines.contains(row.id),
                                       running: running, force: force || activeTimelineReads.contains(row.id)) else { return nil }
         expandedLoading.insert(row.id)
+        let token = UUID()
+        timelineTokens[row.id] = token
         let read = readTimeline
         return Task { [weak self] in
-            guard let self else { return }
-            defer { self.expandedLoading.remove(row.id) }
+            guard let self, self.timelineTokens[row.id] == token else { return }
+            defer {
+                if self.timelineTokens[row.id] == token {
+                    self.expandedLoading.remove(row.id)
+                    self.timelineTokens.removeValue(forKey: row.id)
+                }
+            }
             do {
                 let page = try await read(row)
+                guard self.timelineTokens[row.id] == token else { return }
                 if running { self.activeTimelineReads.insert(row.id) }
                 else { self.activeTimelineReads.remove(row.id) }
                 self.expandedTimelines[row.id] = SessionReconstructor.reconstruction(
                     from: page.events, gaps: page.gaps, running: running)
                 self.failedTimelines.remove(row.id)
             } catch {
+                guard self.timelineTokens[row.id] == token else { return }
                 self.expandedTimelines[row.id] = SessionReconstructor.reconstruction(
                     from: [], gaps: [UsageCenterStore.describe(error)], running: running)
                 self.failedTimelines.insert(row.id)
             }
+            self.touchTimeline(row.id)
+            self.trimTimelines()
         }
+    }
+
+    private func touchTimeline(_ id: String) {
+        timelineRecency.removeAll { $0 == id }
+        if expandedTimelines[id] != nil { timelineRecency.append(id) }
+    }
+
+    private func evictTimeline(_ id: String) {
+        expandedTimelines.removeValue(forKey: id)
+        failedTimelines.remove(id)
+        activeTimelineReads.remove(id)
+        expandedLoading.remove(id)
+        timelineTokens.removeValue(forKey: id)
+        timelineRecency.removeAll { $0 == id }
+    }
+
+    private func trimTimelines() {
+        while expandedTimelines.count > Self.timelineCacheLimit {
+            guard let oldest = timelineRecency.first else { break }
+            evictTimeline(oldest)
+        }
+    }
+
+    private func pruneTimelines(to live: Set<String>) {
+        let retained = Set(expandedTimelines.keys).union(timelineTokens.keys)
+        for id in retained.subtracting(live) { evictTimeline(id) }
+        if let expandedID, !live.contains(expandedID) { self.expandedID = nil }
     }
 
     /// Whether opening a row reads its timeline again. A read that landed
@@ -280,6 +324,8 @@ final class HistoryStore {
 
     func windowDidClose() {
         windowOpen = false
+        expandedID = nil
+        pruneTimelines(to: [])
         syncReplay()
         clock?.invalidate()
         clock = nil
