@@ -508,12 +508,17 @@ final class OverviewStore {
             // A fresh event naming the selected session refreshes its
             // newest timeline page — the inspector stays current without
             // a manual reload.
-            if read.hasGap || read.events.contains(where: { $0.session == timelineSessionID }) {
+            if Self.shouldRefreshTimeline(session: timelineSessionID, events: read.events, hasGap: read.hasGap) {
                 Task { await refreshTimeline() }
             }
         } else if stale {
             scheduleLoad()
         }
+    }
+
+    static func shouldRefreshTimeline(session: String?, events: [CoreEvent], hasGap: Bool) -> Bool {
+        guard let session else { return false }
+        return hasGap || events.contains { $0.session == session }
     }
 
     /// Event bursts coalesce into one fetch: a 300 ms trailing debounce

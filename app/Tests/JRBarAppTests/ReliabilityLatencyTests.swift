@@ -41,6 +41,30 @@ struct ReliabilityLatencyTests {
         #expect(reflections == 1)
     }
 
+    @Test func overviewRequiresASelectedSessionBeforeRefreshingItsTimeline() {
+        let anonymous = CoreEvent(id: "fixture-anonymous", kind: "completed")
+        let selected = CoreEvent(id: "fixture-selected", kind: "completed", session: "fixture-session")
+        #expect(!OverviewStore.shouldRefreshTimeline(session: nil, events: [anonymous], hasGap: false))
+        #expect(!OverviewStore.shouldRefreshTimeline(session: nil, events: [selected], hasGap: true))
+        #expect(!OverviewStore.shouldRefreshTimeline(session: "fixture-session", events: [anonymous], hasGap: false))
+        #expect(OverviewStore.shouldRefreshTimeline(session: "fixture-session", events: [selected], hasGap: false))
+        #expect(OverviewStore.shouldRefreshTimeline(session: "fixture-session", events: [], hasGap: true))
+    }
+
+    @Test func panelIgnoresReplayedEventIDs() throws {
+        let core = CoreModel()
+        let suite = "jrbar-l7-replay-" + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = PanelStore(core: core, draftsDefaults: defaults)
+        let event = CoreEvent(id: "fixture-replay", kind: "completed")
+        store.noteEvent(event)
+        store.noteEvent(event)
+        #expect(store.recentEvents.map(\.id) == [event.id])
+        store.noteEvent(CoreEvent(id: "fixture-next", kind: "completed"))
+        #expect(store.recentEvents.count == 2)
+    }
+
     @Test func layoutDiagnosticsNameTheTypeAndProposedSizeOnce() {
         final class Lines: @unchecked Sendable {
             let lock = NSLock()

@@ -460,7 +460,7 @@ final class PanelStore {
     }
 
     func noteEvent(_ event: CoreEvent?) {
-        guard let event else { return }
+        guard let event, !recentEvents.contains(where: { $0.id == event.id }) else { return }
         recentEvents.append(event)
         if recentEvents.count > Self.recentEventLimit {
             recentEvents.removeFirst(recentEvents.count - Self.recentEventLimit)
