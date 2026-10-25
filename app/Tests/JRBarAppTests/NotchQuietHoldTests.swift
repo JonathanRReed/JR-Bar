@@ -99,6 +99,44 @@ struct NotchQuietHoldTests {
         #expect(toy.capsuleQueue.current?.session == "claude:c", "one run: a tap opens it")
     }
 
+    @Test("stopping Focus observation clears the reading without replaying held news")
+    func stoppedFocusDoesNotReplay() throws {
+        let (toy, store, core) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        try quiet(core, #"{"mode":"off"}"#)
+        let owner = NotchAnnouncements()
+        owner.startLocalSources = {}
+        owner.stopLocalSources = {}
+        owner.startBluetooth = {}
+        owner.stopBluetooth = {}
+        owner.onFocus = { toy.noteMacFocus(name: $0, on: $1) }
+        owner.onFocusStopped = { toy.stopObservingMacFocus() }
+        owner.start()
+        owner.onFocus("Work", true)
+        toy.offer(news(.completed, id: "held"))
+        #expect(toy.capsuleQueue.held.count == 1)
+        owner.stop()
+        owner.noteDaemonFocus(mode: "dim", source: "focus")
+        #expect(toy.macFocus == nil && toy.quietContext == nil)
+        #expect(toy.capsuleQueue.held.isEmpty)
+        #expect(toy.activeCapsule == nil)
+        toy.noteQuietChange()
+        #expect(toy.activeCapsule == nil)
+    }
+
+    @Test("stopping local Focus observation preserves a daemon quiet stretch")
+    func stoppedLocalFocusPreservesDaemonHold() throws {
+        let (toy, store, core) = makeToy()
+        defer { withExtendedLifetime(store) {} }
+        try quiet(core, #"{"mode":"dim","source":"focus"}"#)
+        toy.noteMacFocus(name: "Work", on: true)
+        toy.offer(news(.completed, id: "held"))
+        toy.stopObservingMacFocus()
+        #expect(toy.macFocus == nil)
+        #expect(toy.quietContext != nil && toy.capsuleQueue.held.count == 1)
+        #expect(toy.activeCapsule == nil)
+    }
+
     @Test("a Focus ending under the grown card keeps its summary for the fold")
     func endUnderCardReplaysOnFold() throws {
         let (toy, store, core) = makeToy()

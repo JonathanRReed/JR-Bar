@@ -26,6 +26,8 @@ final class NotchAnnouncements {
     /// Called after the flip's announcement, so "Focus off" speaks
     /// before anything the Focus held.
     var onFocus: (_ name: String, _ on: Bool) -> Void = { _, _ in }
+    /// The local Focus source stopped; its last reading is no longer current.
+    var onFocusStopped: () -> Void = {}
 
     private let focus = FocusWatcher()
     private let bluetooth = BluetoothWatcher()
@@ -66,7 +68,7 @@ final class NotchAnnouncements {
     }
 
     func stop() {
-        if started { onFocus("", false) }
+        if started { onFocusStopped() }
         if let stopLocalSources { stopLocalSources() }
         else { focus.stop(); capsLock.stop(); displays.stop() }
         if bluetoothStarted {
@@ -170,6 +172,7 @@ final class NotchAnnouncements {
     /// Access still hears a toggle. The file watch stays the primary
     /// reader; the daemon feed only lands when it is unreadable.
     func noteDaemonFocus(mode: String?, source: String?) {
+        guard started else { return }
         focus.noteDaemon(mode: mode, source: source)
     }
 

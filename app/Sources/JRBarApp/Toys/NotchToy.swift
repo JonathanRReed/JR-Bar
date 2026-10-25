@@ -2098,6 +2098,19 @@ final class NotchToy: Toy {
         noteQuietChange()
     }
 
+    /// Losing the source clears its reading without announcing a Focus ending.
+    func stopObservingMacFocus() {
+        macFocus = nil
+        if quietContext == nil {
+            if let ended = lastQuiet {
+                _ = capsuleQueue.releaseHeld(id: UUID().uuidString, during: ended)
+            }
+            lastQuiet = nil
+        } else {
+            noteQuietChange()
+        }
+    }
+
     /// Something quiet moved: a stretch that just ended replays what it
     /// held as one summary capsule ("While you were in Work · 3
     /// finished"). `reconcile`, the Focus and the card's fold call it;
