@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 import Darwin
 import Foundation
@@ -40,7 +41,7 @@ struct AppPerformanceTests {
     }
 
     @Test("ten thousand decoded states keep observation tickets bounded")
-    func stateFeed() throws {
+    func stateFeed() async throws {
         let core = CoreModel(socketPath: "/tmp/jrbar-performance-unused.sock")
         core.handle(.connected)
         let defaults = UserDefaults(suiteName: ScratchDefaults.suiteName("jrbar.performance"))!
@@ -63,7 +64,7 @@ struct AppPerformanceTests {
             registrations += 1
             _ = store.rows
         }
-        func feed(_ count: Int) throws {
+        func feed(_ count: Int) async throws {
             for index in 0..<count {
                 try autoreleasepool {
                     let data = Data("""
@@ -75,18 +76,26 @@ struct AppPerformanceTests {
                     if let host {
                         host.needsLayout = true
                         host.layoutSubtreeIfNeeded()
+                        CATransaction.flush()
                     }
                     #expect(core.sessions.map(\.id) == ["fixture"])
                 }
+                if host != nil {
+                    // Each socket message normally returns to the main
+                    // queue. Drain layout completion work before the next.
+                    await withCheckedContinuation { continuation in
+                        DispatchQueue.main.async { continuation.resume() }
+                    }
+                }
             }
         }
-        try feed(1_000)
+        try await feed(1_000)
         try checkpoint("warm")
         let initial = allocation()
         let start = cpu()
         let builds = store.rowsComputations
         let arms = registrations
-        try feed(10_000)
+        try await feed(10_000)
         let elapsed = cpu() - start
         let final = allocation()
         #expect(Ticket.live == 1, "unchanged settings must not retain retired state observers")

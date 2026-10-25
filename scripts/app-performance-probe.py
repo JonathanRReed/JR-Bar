@@ -58,9 +58,12 @@ def main():
                                        stderr=subprocess.STDOUT, timeout=120, check=False)
                 sampler = None
                 if stage == "warm":
-                    sampler = subprocess.Popen(["/usr/bin/sample", pid, "1", "1", "-file",
+                    sampler = subprocess.Popen(["/usr/bin/sample", pid, "5", "1", "-file",
                                                 str(output / "feed-sample.txt")],
                                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    # Let the profiler attach before this short feed starts.
+                    # Profiling runs are separate from the timing runs.
+                    time.sleep(2)
                 with (output / "continue").open("w") as release:
                     release.write("x")
                 if sampler is not None:
