@@ -168,6 +168,8 @@ def quiet_worker_request_keys(
     *,
     subagent_asks_alert: bool,
     statuses: Iterable[AgentStatus] = (),
+    resolution=None,
+    collected_at: datetime | None = None,
 ) -> frozenset[RequestKey]:
     """The requests that belong to a sub-agent while sub-agent asks are off.
 
@@ -186,7 +188,8 @@ def quiet_worker_request_keys(
     from .agent_groups import resolve_agent_groups
 
     statuses = tuple(statuses)
-    resolution = resolve_agent_groups(statuses, now=max((s.updated_at.timestamp() for s in statuses), default=0))
+    if resolution is None:
+        resolution = resolve_agent_groups(statuses, now=(collected_at or datetime.now(timezone.utc)).timestamp())
     grouped_ids = set()
     observed_ids = set()
     for status in statuses:
@@ -216,6 +219,8 @@ def quiet_waiting_worker_ids(
     settings: AgentMonitorSettings,
     *,
     live_request_keys: frozenset | None = None,
+    resolution=None,
+    collected_at: datetime | None = None,
 ) -> frozenset[str]:
     """The sub-agents that are blocked on a request which stays quiet.
 
@@ -234,7 +239,8 @@ def quiet_waiting_worker_ids(
     from .agent_groups import resolve_agent_groups
 
     statuses = tuple(statuses)
-    resolution = resolve_agent_groups(statuses, now=max((s.updated_at.timestamp() for s in statuses), default=0))
+    if resolution is None:
+        resolution = resolve_agent_groups(statuses, now=(collected_at or datetime.now(timezone.utc)).timestamp())
     quiet: set[str] = set()
     for status in statuses:
         if status.agent_id in resolution.unlinked_workers:

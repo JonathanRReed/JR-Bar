@@ -3696,6 +3696,7 @@ def _quiet_worker_ids(controller, statuses) -> frozenset[str] | None:
             statuses,
             settings,
             live_request_keys=live_keys() if callable(live_keys) else None,
+            resolution=getattr(getattr(controller, "last_snapshot", None), "agent_group_resolution", None),
         )
     except Exception as exc:
         # Not fatal (the rows carry no count), but never silent: one line the

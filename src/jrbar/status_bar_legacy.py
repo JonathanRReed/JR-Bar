@@ -5357,6 +5357,7 @@ class StatusBarController(NSObject):
                     # off: nobody was asked, so it never raises the banner.
                     quiet_requests = quiet_worker_request_keys(
                         state,
+                        resolution=getattr(getattr(self, "last_snapshot", None), "agent_group_resolution", None),
                         statuses=(*getattr(getattr(self, "last_snapshot", None), "statuses", ()),
                                   *getattr(getattr(self, "last_snapshot", None), "stale_statuses", ())),
                         subagent_asks_alert=bool(
@@ -6907,6 +6908,7 @@ class StatusBarController(NSObject):
             worker_count = len(state.works) - primary_count
             quiet_requests = quiet_worker_request_keys(
                 state,
+                resolution=getattr(getattr(self, "last_snapshot", None), "agent_group_resolution", None),
                 statuses=(*getattr(getattr(self, "last_snapshot", None), "statuses", ()),
                                   *getattr(getattr(self, "last_snapshot", None), "stale_statuses", ())),
                 subagent_asks_alert=bool(

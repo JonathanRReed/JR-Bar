@@ -111,7 +111,7 @@ def test_cross_provider_lineage_keeps_canonical_worker_requests_quiet():
     native = canonical.statuses[0]
     linked = replace(native, parent_links=(ParentLink(native.agent_id, "codex:session:root", "t3code", NOW),))
     assert quiet_worker_request_keys(canonical.operator_state, subagent_asks_alert=False) == frozenset()
-    assert quiet_worker_request_keys(canonical.operator_state, subagent_asks_alert=False, statuses=[linked, status("codex:session:root")]) == {native.request_key}
+    assert quiet_worker_request_keys(canonical.operator_state, subagent_asks_alert=False, statuses=[linked, status("codex:session:root")], collected_at=datetime.fromtimestamp(NOW, timezone.utc)) == {native.request_key}
     assert quiet_worker_request_keys(canonical.operator_state, subagent_asks_alert=True, statuses=[linked]) == frozenset()
 
 
@@ -149,3 +149,49 @@ def test_header_only_metadata_never_promotes_a_parent_to_working():
     reconciled = _reconcile_delegating_parents((root, child), datetime.fromtimestamp(NOW, timezone.utc))
     assert reconciled[0].mode is AgentMode.IDLE_READY
 
+
+
+def test_quiet_worker_policy_reuses_snapshot_resolution_at_collection_time(monkeypatch):
+    from jrbar.attention import quiet_waiting_worker_ids, quiet_worker_request_keys
+    from tests.test_attention import _canonical_permission_request_snapshot
+
+    canonical = _canonical_permission_request_snapshot(session_id='child', agent_id=None)
+    native = canonical.statuses[0]
+    linked = replace(native, parent_links=(ParentLink(native.agent_id, 'codex:session:root', 't3code', NOW),))
+    rows = [linked, status('codex:session:root')]
+    collected = replace(canonical, statuses=tuple(rows), stale_statuses=(), collected_at=datetime.fromtimestamp(NOW + 86_401, timezone.utc))
+    resolution = collected.agent_group_resolution
+    assert native.agent_id in resolution.unlinked_workers
+    monkeypatch.setattr('jrbar.agent_groups.resolve_agent_groups', lambda *a, **kw: pytest.fail('resolved twice'))
+    assert quiet_worker_request_keys(canonical.operator_state, subagent_asks_alert=False,
+                                     statuses=rows, resolution=resolution) == frozenset()
+    assert quiet_waiting_worker_ids(rows, AgentMonitorSettings(), resolution=resolution) == frozenset()
+
+
+def test_ambient_fleet_uses_one_band_and_one_completion_for_cross_provider_group(monkeypatch):
+    from types import SimpleNamespace
+
+    from jrbar import ambient_effect_runtime as ambient
+    from jrbar.operator_state import TransitionKind
+    from jrbar.provider_facts import SourceKey, WorkIdentifier, WorkKey, WorkLifecycle
+    from tests.test_ambient_effect_runtime import _canonical_state, _operator_event
+
+    state, root_key, _, watermark = _canonical_state(lifecycle=WorkLifecycle.COMPLETED)
+    child_key = WorkKey(SourceKey('claude', 'hooks', 'local:01', 'live_agent_events'), WorkIdentifier('child'))
+    state = replace(state, works=(*state.works, replace(state.works[0], key=child_key, watermark=replace(watermark, source_key=child_key.source_key))))
+    root = replace(status('codex:session:root'), work_key=root_key)
+    child = replace(status('claude:session:child', links=[ParentLink('claude:session:child', root.agent_id, 't3code', NOW)]), work_key=child_key)
+    from jrbar.collector import MonitorSnapshot
+    from jrbar.models import AggregateStatus
+    collected = datetime.fromtimestamp(NOW, timezone.utc)
+    roster = MonitorSnapshot(aggregate=AggregateStatus(AgentMode.WORKING, 2, 0, None), statuses=(root, child), stale_statuses=(), sources=(), collected_at=collected)
+    controller = SimpleNamespace(last_snapshot=roster)
+    fleet = ambient._fleet_plan(controller, state)
+    assert len(fleet.member_slots) == 1
+    completions = []
+    monkeypatch.setattr(ambient, 'plan_firefly_completion', lambda evidence, *a, **kw: completions.append(evidence))
+    for key in (child_key, root_key):
+        ambient._completion_firefly(controller, _operator_event(key, TransitionKind.COMPLETED, replace(watermark, source_key=key.source_key)),
+                                    state, fleet, reduce_motion=False)
+    assert len(completions) == 1
+    assert completions[0].fleet_identity == ambient._opaque_work_identity(root_key, 'fleet')
