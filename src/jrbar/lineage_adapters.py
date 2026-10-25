@@ -137,6 +137,11 @@ def hook_parent_links(record) -> tuple[ParentLink, ...]:
         return cursor_parent_links(raw, observed_at=record.logged_at.timestamp())
     if record.provider == "hermes":
         return hermes_parent_links(raw, observed_at=record.logged_at.timestamp())
+    if record.provider == "openclaw":
+        # Newer native IDs need the local registry's session-key mapping.
+        if "spawnedBySessionId" in raw and "spawnedBy" not in raw:
+            return ()
+        return openclaw_parent_links(raw, observed_at=record.logged_at.timestamp())
     return ()
 
 
@@ -178,6 +183,49 @@ def read_opencode_links(database: Path, *, observed_at: float) -> tuple[ParentLi
                              observed_at=float(stamp) / 1000 if type(stamp) in {int, float} else 0.0))
     except (OSError, sqlite3.Error):
         return ()
+
+
+def openclaw_parent_links(payload: dict, *, observed_at: float, session_keys=None) -> tuple[ParentLink, ...]:
+    if "spawnedBy" not in payload and "spawnedBySessionId" not in payload:
+        key = payload.get("session_id")
+        if type(key) is not str or ":subagent:" not in key:
+            return ()
+    parent = payload.get("spawnedBy")
+    if not parent:
+        native = payload.get("spawnedBySessionId")
+        parent = (session_keys or {}).get(native) if type(native) is str else None
+    return _link(member_key("openclaw", payload.get("session_id")), member_key("openclaw", parent),
+                 "openclaw", observed_at)
+
+
+def read_openclaw_links(home: Path) -> tuple[ParentLink, ...]:
+    """The session registry maps native session IDs to hook session keys."""
+    entries = []
+    for path in islice((home / ".openclaw/agents").glob("*/sessions/sessions.json"), 32):
+        try:
+            with path.open("rb") as stream:
+                raw = stream.read(512 * 1024 + 1)
+            if len(raw) > 512 * 1024:
+                continue
+            rows = json.loads(raw)
+            if type(rows) is not dict or len(rows) > MAX_FILES:
+                continue
+            for key, entry in rows.items():
+                if type(entry) is not dict:
+                    continue
+                stamp = entry.get("updatedAt")
+                stamp = float(stamp) / 1000 if type(stamp) in {int, float} and math.isfinite(stamp) else 0.0
+                entries.append((key, entry, stamp))
+        except (OSError, ValueError, RecursionError):
+            continue
+    entries = sorted(entries, key=lambda item: item[2], reverse=True)[:MAX_FILES]
+    keys = {}
+    for key, entry, _ in entries:
+        native = entry.get("sessionId")
+        if type(native) is str:
+            keys[native] = key if native not in keys else None
+    return tuple(link for key, entry, stamp in entries for link in openclaw_parent_links(
+        dict(entry, session_id=key), observed_at=stamp, session_keys=keys))
 
 
 def match_opencode_roster(rows: tuple[AgentStatus, ...], observed: frozenset[str]) -> tuple[AgentStatus, ...]:
@@ -466,6 +514,8 @@ class LocalLineageReader:
             links.extend(read_hermes_links(self.home / ".hermes/state.db", observed_at=now))
         if "opencode" in providers:
             links.extend(read_opencode_links(self.home / ".local/share/opencode/opencode.db", observed_at=now))
+        if "openclaw" in providers:
+            links.extend(read_openclaw_links(self.home))
         by_child: dict[str, list[ParentLink]] = {}
         for link in links:
             by_child.setdefault(link.child, []).append(link)

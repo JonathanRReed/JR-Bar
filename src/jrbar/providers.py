@@ -316,7 +316,8 @@ OPENCODE_PLUGIN_MARKER = "jrbar-opencode-plugin-v2"
 _OPENCODE_PLUGIN_V1_MARKER = "jrbar-opencode-plugin-v1"
 LEGACY_OPENCODE_PLUGIN_MARKER = "sidepulse-opencode-plugin-v1"
 _OPENCODE_PLUGIN_MAX_SOURCE_BYTES = 32 * 1024
-OPENCLAW_HANDLER_MARKER = "jrbar-openclaw-handler-v2"
+OPENCLAW_HANDLER_MARKER = "jrbar-openclaw-handler-v3"
+_OPENCLAW_HANDLER_V2_MARKER = "jrbar-openclaw-handler-v2"
 LEGACY_OPENCLAW_HANDLER_MARKER = "sidepulse-openclaw-handler-v2"
 
 # Module entry points that mark a hook command as ours. The first two are
@@ -892,6 +893,83 @@ const handler = async (event) => {{
   if (!mapped) return;
   const sessionId = opaqueIdentifier(event.sessionKey);
   if (event.sessionKey !== undefined && !sessionId) return;
+  const entry = event.context?.sessionEntry;
+  const spawnedBy = opaqueIdentifier(entry?.spawnedBy ?? event.context?.spawnedBy);
+  const spawnedBySessionId = opaqueIdentifier(entry?.spawnedBySessionId ?? event.context?.spawnedBySessionId);
+  const payload = JSON.stringify({{
+    hook_event_name: mapped,
+    session_id: sessionId ?? null,
+    ...(spawnedBy ? {{ spawnedBy }} : {{}}),
+    ...(spawnedBySessionId ? {{ spawnedBySessionId }} : {{}}),
+    logged_at: new Date().toISOString(),
+  }});
+  if (payload.length > JRBAR_MAX_PAYLOAD_BYTES) return;
+  const admitted = ingressTail.then(
+    () => forward(payload),
+    () => forward(payload),
+  );
+  ingressTail = admitted;
+  await admitted;
+}};
+
+export default handler;
+'''
+
+
+def _openclaw_handler_v2_source_for_arguments(
+    hook_arguments: list[str] | tuple[str, ...],
+) -> str:
+    """Build the exact bounded, ordered OpenClaw event bridge."""
+    arguments = _valid_openclaw_hook_arguments(list(hook_arguments))
+    if arguments is None:
+        raise ValueError("invalid OpenClaw hook arguments")
+    encoded_arguments = json.dumps(arguments, separators=(",", ":"))
+    return f'''// Managed by JR-Bar -- {_OPENCLAW_HANDLER_V2_MARKER}
+const JRBAR_HOOK_ARGS = Object.freeze({encoded_arguments});
+import {{ spawn }} from "node:child_process";
+
+const JRBAR_MAX_ID_LENGTH = 128;
+const JRBAR_MAX_PAYLOAD_BYTES = 1024;
+
+const EVENT_MAP = {{
+  "command:new": "SessionStart",
+  "message:received": "UserPromptSubmit",
+  "message:sent": "Stop",
+  "command:stop": "SessionEnd",
+}};
+
+let ingressTail = Promise.resolve();
+
+function opaqueIdentifier(value) {{
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= JRBAR_MAX_ID_LENGTH
+    && /^[A-Za-z0-9._:-]+$/.test(value)
+    && !/^(?:sk|token|secret|api[_-]?key)[._:-]/i.test(value)
+    ? value : undefined;
+}}
+
+async function forward(payload) {{
+  try {{
+    await new Promise((resolve) => {{
+      const child = spawn(
+        JRBAR_HOOK_ARGS[0],
+        JRBAR_HOOK_ARGS.slice(1),
+        {{ stdio: ["pipe", "ignore", "ignore"] }},
+      );
+      child.once("close", resolve);
+      child.once("error", resolve);
+      child.stdin.on("error", () => {{}});
+      child.stdin.end(payload);
+    }});
+  }} catch {{}}
+}}
+
+const handler = async (event) => {{
+  const mapped = EVENT_MAP[`${{event.type}}:${{event.action}}`];
+  if (!mapped) return;
+  const sessionId = opaqueIdentifier(event.sessionKey);
+  if (event.sessionKey !== undefined && !sessionId) return;
   const payload = JSON.stringify({{
     hook_event_name: mapped,
     session_id: sessionId ?? null,
@@ -919,8 +997,12 @@ def managed_openclaw_handler_log_path(text: str) -> Path | None:
         f"// Managed by SidePulse -- {LEGACY_OPENCLAW_HANDLER_MARKER}\n"
         "const SIDEPULSE_HOOK_ARGS = Object.freeze("
     )
+    v2_marker = marker.replace(OPENCLAW_HANDLER_MARKER, _OPENCLAW_HANDLER_V2_MARKER)
+    v2 = text.startswith(v2_marker)
     legacy = text.startswith(legacy_marker)
-    if legacy:
+    if v2:
+        marker = v2_marker
+    elif legacy:
         marker = legacy_marker
     elif not text.startswith(marker):
         return None
@@ -937,6 +1019,7 @@ def managed_openclaw_handler_log_path(text: str) -> Path | None:
     expected = (
         legacy_openclaw_handler_source_for_arguments(valid_arguments)
         if legacy
+        else _openclaw_handler_v2_source_for_arguments(valid_arguments) if v2
         else openclaw_handler_source_for_arguments(valid_arguments)
     )
     if text != expected:
@@ -2481,9 +2564,9 @@ def legacy_opencode_plugin_source_for_arguments(arguments) -> str:
 def legacy_openclaw_handler_source_for_arguments(arguments) -> str:
     """The OpenClaw handler exactly as the pre-rename installer wrote it."""
     return (
-        openclaw_handler_source_for_arguments(arguments)
+        _openclaw_handler_v2_source_for_arguments(arguments)
         .replace(
-            f"// Managed by JR-Bar -- {OPENCLAW_HANDLER_MARKER}\n",
+            f"// Managed by JR-Bar -- {_OPENCLAW_HANDLER_V2_MARKER}\n",
             f"// Managed by SidePulse -- {LEGACY_OPENCLAW_HANDLER_MARKER}\n",
             1,
         )

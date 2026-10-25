@@ -724,3 +724,11 @@ inspection. Its `session.parent_id` and millisecond `time_updated` fields
 supply restart recovery. The existing bridge reads `info.id` and
 `info.parentID` on session events. The [plugin reference](https://opencode.ai/docs/plugins/)
 describes those events. OpenCode is MIT licensed. No source code was copied.
+
+OpenClaw 2026.3.2's installed hook and session declarations document
+`event.sessionKey`, `context` and `SessionEntry.spawnedBy`. The
+[nesting reference](https://docs.openclaw.ai/tools/subagents/nesting), checked
+2026-10-25, also names `spawnedBySessionId`. The local registry maps that
+native ID back to the hook's session key. The fixture for the newer field
+names the documentation date, since it is absent from the installed version.
+OpenClaw is MIT licensed. No source code was copied.

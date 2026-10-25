@@ -198,6 +198,8 @@ static const struct meta_key META_KEYS[] = {
     { "child_session_id", META_VALUE_BYTES },
     { "child_subagent_id", META_VALUE_BYTES },
     { "parent_subagent_id", META_VALUE_BYTES },
+    { "spawnedBy", META_VALUE_BYTES },
+    { "spawnedBySessionId", META_VALUE_BYTES },
     { "callingSessionId", META_VALUE_BYTES },
     { "callingToolUseId", META_VALUE_BYTES },
     { "transcript_path", META_PATH_BYTES },

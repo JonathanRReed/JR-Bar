@@ -155,3 +155,69 @@ def test_opencode_missing_parent_and_ambiguous_roster_stay_unlinked():
     observed = frozenset({child.agent_id, child.agent_id.replace(':session:', ':agent:')})
     matched, = match_opencode_roster((child,), observed)
     assert matched.parent_links[0].parent is None
+
+
+def test_openclaw_registry_recovers_newer_native_parent_id(tmp_path):
+    from jrbar.lineage_adapters import LocalLineageReader
+
+    path = tmp_path / '.openclaw/agents/synthetic/sessions/sessions.json'
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(fixture('openclaw-nesting-docs-2026-10-25.json')))
+    before = path.read_bytes()
+    providers = frozenset({'openclaw'})
+    rows = LocalLineageReader(tmp_path).read(providers, now=NOW)
+    assert rows == LocalLineageReader(tmp_path).read(providers, now=NOW)
+    group, = resolve_agent_groups([row('openclaw:session:agent:synthetic:main'), *rows], now=NOW).groups
+    assert len(group.members) == 2
+    assert path.read_bytes() == before
+
+
+def test_openclaw_missing_parent_is_unlinked():
+    child, _ = replay('openclaw', {'hook_event_name': 'UserPromptSubmit',
+                                 'session_id': 'agent:synthetic:subagent:worker', 'spawnedBy': ''})
+    assert resolve_agent_groups([child], now=NOW).unlinked_workers == {child.agent_id}
+
+
+def test_openclaw_bridge_forwards_only_bounded_parent_fields(tmp_path):
+    import shutil
+    import subprocess
+    import sys
+
+    import pytest
+
+    from jrbar.providers import (
+        _openclaw_handler_v2_source_for_arguments,
+        legacy_openclaw_handler_source_for_arguments,
+        managed_openclaw_handler_log_path,
+        openclaw_handler_source_for_arguments,
+    )
+
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node unavailable')
+    target = tmp_path / 'forwarded.json'
+    script = tmp_path / 'capture.py'
+    script.write_text('import sys\nfrom pathlib import Path\nPath(sys.argv[1]).write_text(sys.stdin.read())\n')
+    # Hook argv validation requires the normal command shape; replace spawn
+    # only in this test runner to capture the bridge's actual outgoing bytes.
+    log = tmp_path / 'openclaw.jsonl'
+    args = [sys.executable, '-m', 'jrbar.hook_client', '--provider', 'openclaw', '--log', str(log)]
+    source = openclaw_handler_source_for_arguments(args)
+    for version in (source, _openclaw_handler_v2_source_for_arguments(args), legacy_openclaw_handler_source_for_arguments(args)):
+        assert managed_openclaw_handler_log_path(version) == log
+        assert managed_openclaw_handler_log_path(version + '// changed') is None
+    source = source.replace('JRBAR_HOOK_ARGS[0],\n        JRBAR_HOOK_ARGS.slice(1),',
+                            json.dumps(sys.executable) + ',\n        ' + json.dumps([str(script), str(target)]) + ',')
+    event = fixture('openclaw-2026.3.2.json')
+    event['context']['sessionEntry']['spawnedBySessionId'] = 'openclaw-root-native'
+    source = source.replace('export default handler;', 'await handler(' + json.dumps(event) + ');')
+    runner = tmp_path / 'bridge.mjs'
+    runner.write_text(source)
+    subprocess.run([node, str(runner)], check=True, capture_output=True, timeout=10)
+    payload = json.loads(target.read_text())
+    assert payload['spawnedBy'] == 'agent:synthetic:main'
+    assert payload['spawnedBySessionId'] == 'openclaw-root-native'
+    child, encoded = replay('openclaw', payload)
+    group, = resolve_agent_groups([row('openclaw:session:agent:synthetic:main'), child], now=NOW).groups
+    assert len(group.members) == 2
+    assert 'synthetic content' not in json.dumps(encoded)
