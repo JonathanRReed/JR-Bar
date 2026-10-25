@@ -50,6 +50,8 @@ CODEX_AUTH_MAX_BYTES = 256 * 1024
 
 # A denial is an answer, not an error to retry. Back off hard, and remember
 # across restarts -- re-prompting on every launch is how an app gets deleted.
+_ACCESS_LOST_RETRY_SECONDS = 300.0
+
 _COOLDOWN_SECONDS = (60.0 * 60.0, 24.0 * 60.0 * 60.0)
 
 
@@ -135,7 +137,7 @@ class KeychainConsentLedger:
             pass
         return deadline
 
-    def record_success(self, service: str, now: float) -> None:
+    def record_success(self, service: str, now: float, *, security: bool = False) -> None:
         """A read succeeded: retain permission for noninteractive attempts.
 
         The stamp cannot distinguish Allow from Always Allow. Background
@@ -143,7 +145,12 @@ class KeychainConsentLedger:
         A later explicit denial clears this record.
         """
         payload = self._read()
-        payload[service] = {"granted_at": float(now)}
+        old = payload.get(service, {})
+        entry = {"granted_at": float(now)}
+        security_stamp = float(now) if security else old.get("security_granted_at")
+        if security_stamp is not None:
+            entry["security_granted_at"] = security_stamp
+        payload[service] = entry
         try:
             atomic_private_write(self.path, json.dumps(payload, separators=(",", ":")))
         except OSError:
@@ -158,17 +165,28 @@ class KeychainConsentLedger:
         except (TypeError, ValueError):
             return False
 
+    def security_grant(self, service: str) -> bool:
+        entry = self._read().get(service, {})
+        return isinstance(entry, dict) and bool(entry.get("security_granted_at"))
+
     def access_lost(self, service: str) -> bool:
         entry = self._read().get(service)
         return isinstance(entry, dict) and "access_lost_at" in entry
 
-    def record_access_lost(self, service: str, now: float) -> None:
+    def record_access_lost(self, service: str, now: float) -> float:
         payload = self._read()
-        payload[service] = {"access_lost_at": float(now)}
+        old = payload.get(service, {})
+        deadline = now + _ACCESS_LOST_RETRY_SECONDS
+        entry = {"access_lost_at": float(now), "retry_at": deadline}
+        if isinstance(old, dict) and old.get("security_granted_at"):
+            entry["security_granted_at"] = old["security_granted_at"]
+        payload[service] = entry
         try:
             atomic_private_write(self.path, json.dumps(payload, separators=(",", ":")))
         except OSError:
             pass
+
+        return deadline
 
     def clear(self, service: str) -> None:
         payload = self._read()
@@ -210,72 +228,82 @@ def _run_security_reader(item: KeychainItem, *, timeout: float) -> subprocess.Co
     return subprocess.run(arguments, capture_output=True, text=True, timeout=timeout, check=False)
 
 
-def read_keychain_secret(
-    item: KeychainItem,
-    *,
-    allow_prompt: bool,
-    ledger: KeychainConsentLedger | None = None,
-    now: float | None = None,
-    runner=None,
-    security_runner=None,
-) -> CredentialResult:
-    """Read one Keychain secret.
-
-    `allow_prompt` must be True only on a path the user just initiated. It is
-    a parameter rather than a policy check inside this function so that the
-    call site has to state, in code, that a dialog is expected right now.
-    """
-    reference = time.time() if now is None else float(now)
-    if not allow_prompt and not (
-        ledger is not None and (
-            ledger.standing_grant(item.service)
-            or (item == CLAUDE_CODE_KEYCHAIN and ledger.access_lost(item.service)
-                and (runner is None or security_runner is not None))
+def _keychain_is_unlocked() -> bool:
+    """Inspect lock status in an isolated process with interaction disabled."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "jrbar.keychain_read", "--check-unlocked"],
+            capture_output=True, timeout=_SECURITY_BACKGROUND_TIMEOUT_SECONDS, check=False,
         )
-    ):
-        # No standing grant on record: a background read could surprise
-        # the user with a Keychain dialog, so it is refused outright.
-        outcome = CredentialOutcome.ACCESS_LOST if ledger is not None and ledger.access_lost(item.service) else CredentialOutcome.PROMPT_NOT_ALLOWED
-        return CredentialResult(outcome)
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def read_keychain_secret(
+    item: KeychainItem, *, allow_prompt: bool,
+    ledger: KeychainConsentLedger | None = None, now: float | None = None,
+    runner=None, security_runner=None,
+) -> CredentialResult:
+    """Read only after consent. Each reader needs its own foreground grant."""
+    reference = time.time() if now is None else float(now)
+    lost = ledger is not None and ledger.access_lost(item.service)
     if ledger is not None:
         retry_at = ledger.retry_at(item.service, reference)
-        if retry_at is not None:
-            return CredentialResult(CredentialOutcome.COOLING_DOWN, retry_at=retry_at)
+        if retry_at is not None and not (allow_prompt and lost):
+            outcome = CredentialOutcome.ACCESS_LOST if lost else CredentialOutcome.COOLING_DOWN
+            return CredentialResult(outcome, retry_at=retry_at)
+    security_granted = ledger is not None and ledger.security_grant(item.service)
+    if not allow_prompt and not (ledger is not None and (
+        ledger.standing_grant(item.service) or security_granted
+    )):
+        return CredentialResult(CredentialOutcome.ACCESS_LOST if lost else CredentialOutcome.PROMPT_NOT_ALLOWED)
 
+    def denial():
+        deadline = ledger.record_denial(item.service, reference) if ledger is not None else None
+        return CredentialResult(CredentialOutcome.DENIED, retry_at=deadline)
+
+    def access_lost():
+        deadline = ledger.record_access_lost(item.service, reference) if ledger is not None else None
+        return CredentialResult(CredentialOutcome.ACCESS_LOST, retry_at=deadline)
+
+    timeout = _SECURITY_PROMPT_TIMEOUT_SECONDS if allow_prompt else _SECURITY_BACKGROUND_TIMEOUT_SECONDS
+    use_security = (item == CLAUDE_CODE_KEYCHAIN
+                    and (runner is None or security_runner is not None)
+                    and (allow_prompt or security_granted))
+    if use_security:
+        if not allow_prompt and not _keychain_is_unlocked():
+            return access_lost()
+        try:
+            completed = (security_runner or _run_security_reader)(item, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # A killed consent dialog is never followed by another reader.
+            return denial() if allow_prompt else access_lost()
+        except (OSError, subprocess.SubprocessError):
+            completed = None
+        if completed is not None:
+            secret = (completed.stdout or "").strip()
+            if completed.returncode == 0 and 0 < len(secret.encode("utf-8")) <= CODEX_AUTH_MAX_BYTES:
+                if ledger is not None:
+                    # Quiet reads cannot establish consent for the tool.
+                    ledger.record_success(item.service, reference, security=allow_prompt)
+                return CredentialResult(CredentialOutcome.OK, secret=secret)
+            error = (completed.stderr or "").lower()
+            if completed.returncode in (_SECURITY_USER_CANCELED, EXIT_INTERACTION_REQUIRED) or any(
+                word in error for word in ("interaction", "user cancel", "user canceled", "user cancelled", "denied")
+            ):
+                return denial()
+        if not allow_prompt and lost:
+            return access_lost()
     try:
-        if item == CLAUDE_CODE_KEYCHAIN and (runner is None or security_runner is not None):
-            tool = security_runner or _run_security_reader
-            try:
-                completed = tool(item, timeout=_SECURITY_BACKGROUND_TIMEOUT_SECONDS)
-                secret = (completed.stdout or "").strip()
-                if completed.returncode == 0 and 0 < len(secret.encode("utf-8")) <= CODEX_AUTH_MAX_BYTES:
-                    if ledger is not None:
-                        ledger.record_success(item.service, reference)
-                    return CredentialResult(CredentialOutcome.OK, secret=secret)
-            except (OSError, subprocess.SubprocessError):
-                pass
-            # The old grant cannot authorize a direct read after a rewrite.
-            # The trusted tool is still retried on the next quiet refresh.
-            if not allow_prompt and ledger is not None and ledger.access_lost(item.service):
-                return CredentialResult(CredentialOutcome.ACCESS_LOST)
-        if runner is not None:
-            completed = runner(item)
-        else:
-            completed = _run_keychain_reader(
-                item,
-                allow_prompt=allow_prompt,
-                timeout=(
-                    _SECURITY_PROMPT_TIMEOUT_SECONDS
-                    if allow_prompt
-                    else _SECURITY_BACKGROUND_TIMEOUT_SECONDS
-                ),
-            )
+        completed = runner(item) if runner is not None else _run_keychain_reader(
+            item, allow_prompt=allow_prompt, timeout=timeout,
+        )
     except (OSError, subprocess.SubprocessError):
         return CredentialResult(CredentialOutcome.UNAVAILABLE)
-
     if completed.returncode == 0:
         secret = (completed.stdout or "").strip()
-        if not secret:
+        if not secret or len(secret.encode("utf-8")) > CODEX_AUTH_MAX_BYTES:
             return CredentialResult(CredentialOutcome.NOT_FOUND)
         if ledger is not None:
             ledger.record_success(item.service, reference)
@@ -283,16 +311,9 @@ def read_keychain_secret(
     if completed.returncode == EXIT_UNAVAILABLE:
         return CredentialResult(CredentialOutcome.UNAVAILABLE)
     if completed.returncode == EXIT_INTERACTION_REQUIRED and not allow_prompt:
-        if ledger is not None:
-            ledger.record_access_lost(item.service, reference)
-        return CredentialResult(CredentialOutcome.ACCESS_LOST)
+        return access_lost()
     if completed.returncode in (_SECURITY_USER_CANCELED, EXIT_INTERACTION_REQUIRED):
-        deadline = (
-            ledger.record_denial(item.service, reference)
-            if ledger is not None
-            else None
-        )
-        return CredentialResult(CredentialOutcome.DENIED, retry_at=deadline)
+        return denial()
     return CredentialResult(CredentialOutcome.NOT_FOUND)
 
 

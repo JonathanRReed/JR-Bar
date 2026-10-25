@@ -88,6 +88,30 @@ def _read_secret(service: str, account: str | None = None, *, allow_prompt: bool
                         pass
 
 
+def _is_unlocked(*, api=None) -> bool:
+    """Read default Keychain status without unlocking it or reading an item."""
+    api = _load_api() if api is None else api
+    keychain = ctypes.c_void_p()
+    try:
+        if api.set_interaction(False) != 0:
+            return False
+        copy_default = api._sec.SecKeychainCopyDefault
+        copy_default.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+        copy_default.restype = ctypes.c_int32
+        get_status = api._sec.SecKeychainGetStatus
+        get_status.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+        get_status.restype = ctypes.c_int32
+        if copy_default(ctypes.byref(keychain)) != 0 or not keychain.value:
+            return False
+        status = ctypes.c_uint32()
+        return get_status(keychain, ctypes.byref(status)) == 0 and bool(status.value & 1)
+    except Exception:
+        return False
+    finally:
+        if keychain.value:
+            api.release(keychain)
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
         raise ValueError
@@ -95,11 +119,16 @@ class _Parser(argparse.ArgumentParser):
 
 def main(argv: list[str] | None = None) -> int:
     parser = _Parser(description="Read one Keychain item in an isolated process.")
-    parser.add_argument("--service", required=True)
+    parser.add_argument("--service")
+    parser.add_argument("--check-unlocked", action="store_true")
     parser.add_argument("--account")
     parser.add_argument("--allow-prompt", action="store_true")
     try:
         args = parser.parse_args(argv)
+        if args.check_unlocked:
+            return 0 if _is_unlocked() else EXIT_INTERACTION_REQUIRED
+        if not args.service:
+            raise ValueError
         code, secret = _read_secret(args.service, args.account, allow_prompt=args.allow_prompt)
         if code == 0 and secret is not None:
             sys.stdout.write(secret)

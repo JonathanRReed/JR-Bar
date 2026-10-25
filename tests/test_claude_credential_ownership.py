@@ -194,7 +194,7 @@ def test_noninteractive_refusal_preserves_stored_claude_token(tmp_path, monkeypa
     original = store.secrets.copy()
     assert not sync_claude_credential_in_background(store, home=tmp_path, now=1_000)
     assert store.secrets == original
-    assert len(calls) == 2
+    assert len(calls) == 1
 
 
 def test_rewritten_keychain_item_keeps_live_usage_via_system_tool(tmp_path, monkeypatch):
@@ -205,7 +205,8 @@ def test_rewritten_keychain_item_keeps_live_usage_via_system_tool(tmp_path, monk
 
     monkeypatch.setattr(providers, "default_state_dir", lambda: tmp_path)
     ledger = KeychainConsentLedger(tmp_path / "keychain-consent.json")
-    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000)
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000, security=True)
+    monkeypatch.setattr(credentials, "_keychain_is_unlocked", lambda: True)
     # The direct reader has lost its ACL after Claude Code replaced the item.
     ledger.record_access_lost(CLAUDE_CODE_KEYCHAIN.service, 1001)
     calls = []
@@ -227,7 +228,7 @@ def test_rewritten_keychain_item_keeps_live_usage_via_system_tool(tmp_path, monk
         fetched.append(token)
         return [{"label": "5-hour", "utilization": 25, "resets_at": 3000}]
 
-    for now in (1002, 1702):
+    for now in (1302, 1702):
         result = collect_claude(default_provider_usage_settings().preference("claude"),
             home=tmp_path, observed_at=now, credentials=store, quota_fetcher=fetch,
             local_scanner=lambda *_: None, statusline_reader=lambda *_: None)
