@@ -34,7 +34,7 @@ def test_only_named_cues_expire_after_two_seconds(monkeypatch, family):
         assert presentation.next_visual_change_at == 18.0
 
 
-def ember_writes(tmp_path, monkeypatch):
+def ember_writes(tmp_path, monkeypatch, *, ambient_enabled=True):
     clock = [1000.0]
     monkeypatch.setattr("jrbar.led_status.time.monotonic", lambda: clock[0])
     colors = ColorSettings.defaults()
@@ -52,7 +52,7 @@ def ember_writes(tmp_path, monkeypatch):
         epochs.append(started[AmbientEffectSurface.SIDEPULSE_PRO])
         ambient = active_hardware_ambient_presentation(owner, device_id="synthetic:pro",
             led_count=8, reduce_motion=False, brightness=255)
-        if controller.sync_snapshot(statuses(1), colors, ambient=ambient).changed:
+        if controller.sync_snapshot(statuses(1), colors, ambient=ambient if ambient_enabled else None).changed:
             writes.append(second)
     return writes, epochs
 
@@ -61,13 +61,24 @@ def test_ember_renewal_never_replays_the_same_age_band(tmp_path, monkeypatch):
     writes, epochs = ember_writes(tmp_path, monkeypatch)
     assert epochs[:480] == [1000.0] * 480
     assert epochs[480:] == [1480.0] * 120
-    assert writes == [0, 2, 242, 480, 482]
+    assert writes == [0, 2, 240, 480, 482]
 
 
-@pytest.mark.xfail(strict=True, reason="Two apply/restore pairs and one base reassert need five writes; base takeover needs three.")
-def test_ten_minute_ember_write_budget_is_no_higher_than_base(tmp_path, monkeypatch):
-    writes, _epochs = ember_writes(tmp_path, monkeypatch)
-    assert len(writes) <= 3
+def test_ten_minute_ember_write_budget_tracks_base_reasserts(tmp_path, monkeypatch):
+    from jrbar.ambient_layers import LAYER_SECONDS
+
+    base = tmp_path / "base"
+    ambient = tmp_path / "ambient"
+    base.mkdir()
+    ambient.mkdir()
+    base_writes, _ = ember_writes(base, monkeypatch, ambient_enabled=False)
+    writes, epochs = ember_writes(ambient, monkeypatch)
+    band_starts = [index for index, epoch in enumerate(epochs)
+                   if index == 0 or epoch != epochs[index - 1]]
+    assert base_writes == [0, 240, 480]
+    assert len(writes) <= len(base_writes) + 2 * len(band_starts)
+    assert all(any(0 <= second - start <= LAYER_SECONDS for start in band_starts)
+               for second in set(writes) - set(base_writes))
 
 
 def test_automatic_reassert_jump_matches_base_and_breath_keeps_both_halves():

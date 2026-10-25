@@ -1817,6 +1817,7 @@ class AgentLedController:
             dedupe_token=("snapshot", identity) if identity is not None else None,
             nominal=nominal,
             single_track=self._single_provider(statuses, colors),
+            cadence_token=("program", nominal),
         )
 
     def sync_projection(
@@ -1867,6 +1868,7 @@ class AgentLedController:
             dedupe_token=("projection", identity) if identity is not None else None,
             nominal=nominal,
             single_track=self._single_provider(projection, colors),
+            cadence_token=("program", nominal),
         )
 
     @staticmethod
@@ -1906,6 +1908,7 @@ class AgentLedController:
         from the strip's running one, and ``timing`` for the write boundary
         to rotate and retime it (``linked_sync.DeviceTiming``)."""
         self.ambient_layer_until = None
+        cadence_token = ("program", program)
         if ambient is not None and state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
             from .ambient_layers import compose_ambient_layer
 
@@ -1927,6 +1930,7 @@ class AgentLedController:
             force=force,
             trim_on_reassert=trim_on_reassert,
             single_track=single_track,
+            cadence_token=cadence_token,
             timing=timing,
         )
 
@@ -2063,6 +2067,7 @@ class AgentLedController:
         force: bool = False,
         trim_on_reassert: bool = True,
         single_track: bool = False,
+        cadence_token: object | None = None,
         timing: object | None = None,
     ) -> LedStatusWrite:
         now = time.monotonic()
@@ -2072,6 +2077,10 @@ class AgentLedController:
             if dedupe_token is not None
             else ("program", program)
         )
+
+        cadence_token = identity if cadence_token is None else cadence_token
+        cadence_changed = cadence_token != getattr(self, "_reassert_cadence_token", None)
+        cadence_at = getattr(self, "_reassert_cadence_at", now)
 
         if getattr(self, "pending_reboot_repaint", False):
             # Set by the background keepalive poke after it saw the
@@ -2088,7 +2097,8 @@ class AgentLedController:
             not force
             and identity == self.last_program_identity
             and self.last_error is None
-            and now - self.last_attempt_monotonic < self.reassert_after_seconds
+            and not cadence_changed
+            and now - cadence_at < self.reassert_after_seconds
         ):
             return LedStatusWrite(state=state, target=self.last_target, program="", changed=False)
         if (
@@ -2123,6 +2133,7 @@ class AgentLedController:
                 # A second writer twice inside ten minutes: stop fighting
                 # it (and wearing the flash); the device card says so.
                 self.last_attempt_monotonic = now
+                self._reassert_cadence_at = now
                 return LedStatusWrite(state=state, target=self.last_target, program="", changed=False)
         self.last_attempt_monotonic = now
         trim = reassert and trim_on_reassert
@@ -2154,6 +2165,10 @@ class AgentLedController:
                 error=self.last_error,
             )
         receipt = take_receipt()
+        # Cue apply/restore writes do not move the base's reassert clock.
+        if force or cadence_changed or now - cadence_at >= self.reassert_after_seconds:
+            self._reassert_cadence_at = now
+        self._reassert_cadence_token = cadence_token
 
         self.last_state = state
         # Report what is RUNNING, not what was asked for: on a reassert the
