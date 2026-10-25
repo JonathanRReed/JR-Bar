@@ -477,6 +477,7 @@ final class ScreenBarController {
     private var completedPlanGeneration: UInt64?
     private var anchor: CFTimeInterval = 0
     private var lastCodes: [RGB8] = []
+    private var pendingStateCodes: [RGB8]?
     private var lastRaw: [RGB8] = Array(repeating: .black, count: ScreenBarGeometry.ledCount)
     /// The island frame the last scan saw — the watcher's dedup, so a
     /// poll that finds nothing new runs no layout.
@@ -835,6 +836,8 @@ final class ScreenBarController {
         settleVisibility()
     }
     @objc private func screensDidWake(_ note: Notification) {
+        let interval = AppLatency.begin("Screen Bar wake")
+        defer { AppLatency.end("Screen Bar wake", interval) }
         visibility.displayAsleep = false
         if let epoch = lastAnchorEpoch {
             let now = CACurrentMediaTime()
@@ -1437,6 +1440,7 @@ final class ScreenBarController {
         programText = compiledText
         let sampler = LEDSSampler(program: program, ledCount: ScreenBarGeometry.ledCount, initialCodes: lastRaw)
         self.sampler = sampler
+        pendingStateCodes = transfer == nil ? Self.immediateStateCodes(program: program, initial: lastRaw) : nil
         plan = nil
         planGeneration &+= 1
         let generation = planGeneration
@@ -1475,6 +1479,7 @@ final class ScreenBarController {
     private func accept(plan built: LEDSKeyframePlan?, generation: UInt64,
                         sampler: LEDSSampler) {
         guard generation == planGeneration, self.sampler === sampler, stripTransfer == nil else { return }
+        pendingStateCodes = nil
         completedPlanGeneration = generation
         plan = built
         present()
@@ -1639,10 +1644,26 @@ final class ScreenBarController {
         }
     }
 
+    /// The first paint's destination is the state colour, independent of
+    /// its entrance duration. Keep it visible until keyframes are ready.
+    static func immediateStateCodes(program: LEDSProgram, initial: [RGB8]) -> [RGB8] {
+        for step in program.steps {
+            guard case .paint(let segments) = step else { continue }
+            let immediate = segments.map { segment in
+                LEDSSegment(kind: segment.kind, timing: LEDSTiming(durationMs: 0, easing: LEDSEasing.none, delayMs: 0))
+            }
+            let still = LEDSProgram(steps: [.brightness(program.brightness), .paint(immediate)],
+                                    ledCount: program.ledCount)
+            return LEDSSampler(program: still, ledCount: program.ledCount, initialCodes: initial).codes(atMilliseconds: 0)
+        }
+        return initial
+    }
+
     private func renderCurrentFrame(at time: CFTimeInterval? = nil) {
         guard let sampler else { return }
         let ms = max(0, milliseconds(time ?? CACurrentMediaTime()))
-        let codes = stripTransfer == nil ? sampler.codes(atMilliseconds: ms) : sampler.rawCodes(atMilliseconds: ms)
+        let sampled = stripTransfer == nil ? sampler.codes(atMilliseconds: ms) : sampler.rawCodes(atMilliseconds: ms)
+        let codes = pendingStateCodes ?? sampled
         if codes == lastCodes { return }
         lastCodes = codes
         view.display(colors: displayColors(codes, brightness: sampler.brightness))
