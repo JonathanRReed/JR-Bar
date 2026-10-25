@@ -437,25 +437,25 @@ import Testing
     }
 
     @MainActor
-    @Test func aBusyCompileNeverBlocksTheMainActor() throws {
+    @Test func aBusyCompileNeverBlocksTheMainActor() async throws {
         let cache = FoldShaderCache()
-        let entered = DispatchSemaphore(value: 0)
-        let release = DispatchSemaphore(value: 0)
-        let finished = DispatchSemaphore(value: 0)
+        let entered = TestEvents<Void>()
+        let release = TestGate()
+        let finished = TestEvents<Void>()
+        defer { release.signal() }
         let real = cache.compile
         cache.compile = { format in
-            entered.signal()
-            guard release.wait(timeout: .now() + 10) == .success else { throw FoldRendererError.noDevice }
+            entered.send(())
+            release.wait()
             return try real(format)
         }
-        cache.prewarm(pixelFormat: .bgra8Unorm) { finished.signal() }
-        #expect(entered.wait(timeout: .now() + 5) == .success)
-        defer { release.signal() }
+        cache.prewarm(pixelFormat: .bgra8Unorm) { finished.send(()) }
+        try await entered.next()
         #expect(throws: FoldRendererError.self) { try cache.compiled(pixelFormat: .bgra8Unorm) }
         // Even an unrelated cache operation must return while compile is blocked.
         cache.prewarm(pixelFormat: .bgra8Unorm)
         release.signal()
-        #expect(finished.wait(timeout: .now() + 30) == .success)
+        try await finished.next()
         _ = try cache.compiled(pixelFormat: .bgra8Unorm)
         #expect(cache.compileCount == 1)
     }
