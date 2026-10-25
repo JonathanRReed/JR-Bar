@@ -784,11 +784,12 @@ else:
                     trailing.invalidate()
                     self._trailing_refresh_timer = None
             last = float(getattr(self, "_last_event_refresh_at", 0.0) or 0.0)
-            if not urgent and now - last < EVENT_COALESCE_SECONDS:
+            floor = 0.05 if urgent else EVENT_COALESCE_SECONDS
+            if now - last < floor:
                 if getattr(self, "_trailing_refresh_timer", None) is None:
                     self._trailing_refresh_timer = (
                         _legacy.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                            EVENT_COALESCE_SECONDS,
+                            max(0.0, floor - (now - last)),
                             self,
                             "trailingRefreshFire:",
                             None,

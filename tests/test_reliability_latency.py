@@ -110,3 +110,33 @@ def test_success_logs_use_debug_and_do_not_write_stdout(caplog, capsys):
         debug('quiet success')
     assert caplog.records[-1].levelno == logging.DEBUG
     assert capsys.readouterr().out == ''
+
+
+def test_urgent_burst_has_one_trailing_refresh_within_fifty_milliseconds():
+    now = [100.0]
+    timers = []
+    def timer(delay, *args):
+        result = SimpleNamespace(delay=delay, invalidated=False)
+        result.invalidate = lambda: setattr(result, 'invalidated', True)
+        timers.append(result)
+        return result
+    namespace = dict(time=SimpleNamespace(monotonic=lambda: now[0]), EVENT_COALESCE_SECONDS=.25,
+                     _legacy=SimpleNamespace(NSTimer=SimpleNamespace(
+                         scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_=timer)))
+    refresh = method('_status_bar_production.py', 'refreshFromEvent_', namespace)
+    trailing = method('_status_bar_production.py', 'trailingRefreshFire_', namespace)
+    calls = []
+    target = SimpleNamespace(_last_event_refresh_at=99.0, refresh_=lambda _: calls.append(now[0]))
+    target._event_refresh_urgent = True
+    refresh(target, None)
+    for index in range(20):
+        now[0] = 100.001 + index * .001
+        target._event_refresh_urgent = True
+        refresh(target, None)
+    assert calls == [100.0]
+    assert len([t for t in timers if not t.invalidated]) == 1
+    assert abs(now[0] + timers[-1].delay - 100.05) < 1e-9
+    assert target._production_force_refresh
+    now[0] = 100.05
+    trailing(target, timers[-1])
+    assert calls == [100.0, 100.05]
