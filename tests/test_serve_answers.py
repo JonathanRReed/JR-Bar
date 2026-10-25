@@ -467,7 +467,7 @@ def test_no_source_wired_means_no_answer_routes() -> None:
         create_serve_server(port=0, answers=object())
 
 
-def test_the_cli_wires_answers_only_when_asked(monkeypatch) -> None:
+def test_the_cli_wires_answers_only_when_asked(monkeypatch, capsys) -> None:
     from jrbar.cli import SERVE_ACCESS_TOKEN_ENV, build_jrbar_parser, cmd_serve
 
     parser = build_jrbar_parser()
@@ -477,8 +477,10 @@ def test_the_cli_wires_answers_only_when_asked(monkeypatch) -> None:
     assert cmd_serve(parser.parse_args(["serve"])) == 0
     assert calls[-1]["answers"] is None
     monkeypatch.setattr(CoreSocketAnswers, "enabled", lambda self: False)
-    assert cmd_serve(parser.parse_args(["serve", "--allow-answers"])) == 2
-    assert len(calls) == 1
+    assert cmd_serve(parser.parse_args(["serve", "--allow-answers"])) == 0
+    assert len(calls) == 2
+    assert isinstance(calls[-1]["answers"], CoreSocketAnswers)
+    assert "status is still served" in capsys.readouterr().err
     monkeypatch.setattr(CoreSocketAnswers, "enabled", lambda self: True)
     assert cmd_serve(parser.parse_args(["serve", "--allow-answers"])) == 0
     assert isinstance(calls[-1]["answers"], CoreSocketAnswers)
@@ -497,7 +499,7 @@ def test_answering_from_serve_is_off_by_default_and_round_trips(tmp_path: Path) 
 
 
 def test_a_poll_reads_the_switch_and_the_asks_over_one_connection__and_1_more() -> None:
-    # --- scenario: one connection serves the reads for a second, then a fresh one
+    # --- scenario: each consent check opens fresh settings; its ask read shares the connection
     opened: list[_Connection] = []
     clock = [100.0]
 
@@ -508,10 +510,10 @@ def test_a_poll_reads_the_switch_and_the_asks_over_one_connection__and_1_more() 
     answers = CoreSocketAnswers(Path("/tmp/core.sock"), connect=connect, monotonic=lambda: clock[0])
     assert answers.enabled() and len(answers.asks()) == 2
     assert answers.enabled() and len(answers.asks()) == 2
-    assert len(opened) == 1
+    assert len(opened) == 2
     clock[0] += READ_CACHE_SECONDS
     assert answers.enabled()
-    assert len(opened) == 2
+    assert len(opened) == 3
 
     # --- scenario: a failed read caches nothing
     failures = [ControlError("the JR-Bar monitor is not running", 1)]
@@ -566,3 +568,17 @@ def test_a_slot_answer_waits_out_an_ask_that_just_replaced_the_keys__and_2_more(
         standalone.answer({"slot": 5, "decision": "deny"})
     assert refused.value.code == "stale_request"
     assert connection.commands == []
+
+
+def test_consent_revocation_is_seen_even_inside_the_read_cache_window():
+    consent = [True]
+    class Connection(_Connection):
+        def document(self, kind):
+            if kind == "settings":
+                return {"serve_answer_enabled": consent[0]}
+            return super().document(kind)
+    answers = CoreSocketAnswers(Path("/fixture.sock"), connect=lambda *a, **kw: Connection(),
+                                monotonic=lambda: 100.0)
+    assert answers.enabled()
+    consent[0] = False
+    assert not answers.enabled()

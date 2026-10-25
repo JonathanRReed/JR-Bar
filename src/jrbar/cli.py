@@ -1089,10 +1089,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
         answers = CoreSocketAnswers(default_socket_path())
         if not answers.enabled():
             print(
-                "jrbar serve: answering needs consent in Settings > Devices & Lighting > Stream Deck",
+                "jrbar serve: warning: answering is unavailable; status is still served. "
+                "Check the monitor and consent in Settings > Devices & Lighting > Stream Deck",
                 file=sys.stderr,
             )
-            return 2
     try:
         serve(
             port=int(getattr(args, "port", 8737)),
