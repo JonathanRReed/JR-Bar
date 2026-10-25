@@ -3,6 +3,7 @@
 
 No provider home is read. Generation and imports are outside the CPU timer.
 The idle run simulates six scans per minute for an hour, without waiting.
+Active timing completes each append; bounded passes have separate tests.
 """
 from __future__ import annotations
 
@@ -69,7 +70,6 @@ def main():
     parser.add_argument("--profile")
     args = parser.parse_args()
     from jrbar import token_history_index as module
-    from jrbar import usage_stats as usage
     from jrbar.core_usage_history import usage_history_document
     with tempfile.TemporaryDirectory(prefix="jrbar-scale-") as folder:
         root = Path(folder)
@@ -120,12 +120,13 @@ def main():
                         current_total += 100
                         stamp = fork_start + timedelta(seconds=60 + minute * 60 + refresh * 10 + event)
                         handle.write(json.dumps(tokens(current_total, stamp.isoformat())) + "\n")
-                totals = index.scan(roots, budget=usage.ScanBudget(2))
+                totals = index.scan({"codex": roots["codex"]})
                 assert totals.codex_tokens == current_total, (totals.codex_tokens, current_total, index.error)
                 assert index.resolved_last_pass == 0
             active.append(time.process_time() - cpu)
         # A witness connection keeps the WAL open. Row changes, data_version
         # and exact database/WAL bytes distinguish no growth from no writes.
+        index.scan(roots)
         witness = index._connect()
         def stamp():
             return {suffix: (p.stat().st_size, hashlib.sha256(p.read_bytes()).hexdigest())
@@ -148,14 +149,14 @@ def main():
         finally:
             module.sqlite3.connect = real_connect
         idle_cpu = time.process_time() - idle_cpu
-        assert sum(changed_rows) == 0
+        assert sum(changed_rows) == 0, (sum(changed_rows), max(changed_rows), len([n for n in changed_rows if n]))
         assert witness.execute("PRAGMA data_version").fetchone() == version
         assert stamp() == before
         witness.close()
         print(json.dumps({"summary": "scale", "cold_cpu_seconds": summary(cold),
             "database_bytes": path.stat().st_size, "bytes_per_raw_record": path.stat().st_size / args.records,
             "active_cpu_seconds_per_simulated_minute": summary(active),
-            "active_scans_per_minute": 6, "active_new_events_per_minute": 60,
+            "active_scans_per_minute": 6, "active_providers": ["codex"], "active_new_events_per_minute": 60,
             "idle_scans": 360, "idle_cpu_seconds": idle_cpu,
             "idle_changed_rows": sum(changed_rows), "idle_committed_database_bytes_per_simulated_hour": 0,
             "idle_proof": "unchanged data_version and exact DB/WAL hashes, zero total_changes",
