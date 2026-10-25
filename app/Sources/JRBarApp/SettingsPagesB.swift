@@ -1533,7 +1533,7 @@ struct StreamDeckCard: View {
                     }))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .disabled(!store.isLive)
-                    .confirmationDialog("Allow Stream Deck keys to answer asks?", isPresented: $confirmingAnswers,
+                    .confirmationDialog("Allow Stream Deck keys to answer asks?", isPresented: WindowPresenter.presentation($confirmingAnswers),
                                         titleVisibility: .visible) {
                         Button("Allow answers from a key") { store.set("serve_answer_enabled", .bool(true)) }
                         Button("Cancel", role: .cancel) {}
