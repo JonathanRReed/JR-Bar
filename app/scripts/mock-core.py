@@ -1293,6 +1293,7 @@ def default_settings_document() -> dict:
         "subagent_asks_alert": False,
         "tips_enabled": True,
         "transcript_monitoring": {"claude": False, "codex": False, "gemini": False, "pi": False},
+        "token_history_enabled": True,
         "usage_display_mode": "tokens",
         "usage_event_hook_path": "",
         "usage_graph_days": 7,
