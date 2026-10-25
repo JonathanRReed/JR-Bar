@@ -73,3 +73,40 @@ def test_persistence_deadline_replaces_later_delivery_timer():
     namespace['next_reset_retry_delay'] = lambda *args, **kw: None
     schedule(target, 100)
     assert target._jrbar_reset_delivery_timer is timers[-1]
+
+
+def test_transcript_lifecycle_edges_bypass_coalescing_while_detail_changes_do_not():
+    import threading
+    from types import MethodType
+
+    edge = method('status_bar_legacy.py', '_event_refresh_edge', {})
+    apply = method('_status_bar_production.py', 'applyTranscriptFallbackBatch_',
+                   dict(TranscriptFallbackBatch=SimpleNamespace))
+    for change in ('start', 'stop', 'ask', 'detail'):
+        old = SimpleNamespace(key='fixture', lifecycle='working', request_keys=())
+        new = SimpleNamespace(key='fixture', lifecycle='done' if change == 'stop' else 'working',
+                              request_keys=('ask',) if change == 'ask' else ())
+        monitor = SimpleNamespace(lock=threading.Lock(), operator_state=SimpleNamespace(
+            works=() if change == 'start' else (old,)), current_statuses_by_key=lambda: {})
+        monitor.ingest_record = lambda record: setattr(monitor.operator_state, 'works', (new,))
+        calls = []
+        transcript_monitor = object()
+        target = SimpleNamespace(monitor=monitor, transcript_monitor=transcript_monitor, _runtime_started=True,
+                                 schedule_event_refresh=lambda **kw: calls.append(kw))
+        target._event_refresh_edge = MethodType(edge, target)
+        batch = SimpleNamespace(monitor_identity=id(transcript_monitor), generation=1, accepted=True,
+                                records=(SimpleNamespace(logged_at=100),), signature='fixture')
+        apply(target, batch)
+        assert calls == [dict(urgent=change != 'detail')]
+
+
+def test_success_logs_use_debug_and_do_not_write_stdout(caplog, capsys):
+    import logging
+
+    debug = method('status_bar_legacy.py', 'log_status_bar_debug', {})
+    debug('quiet success')
+    assert not caplog.records
+    with caplog.at_level(logging.DEBUG, logger='jrbar.status'):
+        debug('quiet success')
+    assert caplog.records[-1].levelno == logging.DEBUG
+    assert capsys.readouterr().out == ''

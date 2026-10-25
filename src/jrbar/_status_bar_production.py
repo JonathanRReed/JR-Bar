@@ -293,6 +293,7 @@ else:
             watermark = getattr(self, "transcript_watermark", None)
             newest = watermark
             accepted = 0
+            edge = self._event_refresh_edge()
             for record in batch.records:
                 logged_at = getattr(record, "logged_at", None)
                 if logged_at is None or (
@@ -314,7 +315,7 @@ else:
                 self.transcript_watermark = newest
             self.transcript_fallback_signature = batch.signature
             if accepted and getattr(self, "_runtime_started", False):
-                self.schedule_event_refresh()
+                self.schedule_event_refresh(urgent=edge != self._event_refresh_edge())
 
         def _intake_service(self) -> IntakeProbeService:
             service = getattr(self, "_production_intake_service", None)
