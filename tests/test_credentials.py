@@ -419,3 +419,69 @@ def test_prompt_tool_gets_thirty_seconds_and_timeout_never_opens_second_dialog(t
         security_runner=tool, runner=lambda _: pytest.fail("second dialog"), now=1000)
     assert result.outcome is CredentialOutcome.DENIED
     assert result.retry_at == 4600
+
+
+def test_background_security_timeout_revokes_grant_until_another_click(tmp_path, monkeypatch):
+    monkeypatch.setattr("jrbar.credentials._keychain_is_unlocked", lambda: True)
+    ledger_path = tmp_path / "consent.json"
+    ledger = KeychainConsentLedger(ledger_path)
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000, security=True)
+    attempts = []
+
+    def tool(item, *, timeout):
+        attempts.append(True)
+        raise subprocess.TimeoutExpired("synthetic", timeout)
+
+    for now in (2000, 2301, 2700, 3002):
+        result = read_keychain_secret(
+            CLAUDE_CODE_KEYCHAIN, allow_prompt=False,
+            ledger=KeychainConsentLedger(ledger_path), now=now,
+            security_runner=tool, runner=lambda _: pytest.fail("second reader"),
+        )
+        assert result.outcome is CredentialOutcome.ACCESS_LOST
+    assert attempts == [True]
+    assert not ledger.security_grant(CLAUDE_CODE_KEYCHAIN.service)
+    assert not ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service)
+    assert read_keychain_secret(
+        CLAUDE_CODE_KEYCHAIN, allow_prompt=True, ledger=ledger, now=3003,
+        security_runner=lambda *a, **kw: _completed(0, "synthetic"),
+    ).ok
+    assert ledger.security_grant(CLAUDE_CODE_KEYCHAIN.service)
+
+
+@pytest.mark.parametrize("elapsed,granted", [(0.99, True), (1.0, False), (5.0, False)])
+def test_only_a_quick_foreground_security_read_can_arm_background_tool(tmp_path, monkeypatch, elapsed, granted):
+    ledger = KeychainConsentLedger(tmp_path / "consent.json")
+    # A slow foreground read must clear even an older security grant.
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000, security=True)
+    ticks = iter((10.0, 10.0 + elapsed))
+    monkeypatch.setattr("jrbar.credentials.time.monotonic", lambda: next(ticks))
+    result = read_keychain_secret(
+        CLAUDE_CODE_KEYCHAIN, allow_prompt=True, ledger=ledger, now=2000,
+        security_runner=lambda *a, **kw: _completed(0, "synthetic"),
+    )
+    assert result.ok
+    assert ledger.security_grant(CLAUDE_CODE_KEYCHAIN.service) is granted
+
+
+@pytest.mark.parametrize("code,size", [(1, 0), (44, 0), (0, 256 * 1024 + 1)])
+def test_foreground_security_failure_never_falls_through_to_another_prompt(tmp_path, code, size):
+    result = read_keychain_secret(
+        CLAUDE_CODE_KEYCHAIN, allow_prompt=True,
+        ledger=KeychainConsentLedger(tmp_path / "consent.json"), now=1000,
+        security_runner=lambda *a, **kw: _completed(code, "x" * size),
+        runner=lambda _: pytest.fail("second dialog"),
+    )
+    assert result.outcome is CredentialOutcome.NOT_FOUND
+
+
+def test_foreground_security_process_error_never_falls_through(tmp_path):
+    def tool(*args, **kwargs):
+        raise OSError("synthetic process error")
+
+    result = read_keychain_secret(
+        CLAUDE_CODE_KEYCHAIN, allow_prompt=True,
+        ledger=KeychainConsentLedger(tmp_path / "consent.json"),
+        security_runner=tool, runner=lambda _: pytest.fail("second dialog"),
+    )
+    assert result.outcome is CredentialOutcome.UNAVAILABLE

@@ -46,6 +46,8 @@ _SECURITY_USER_CANCELED = 128
 #: read is noninteractive and must also have a bounded process lifetime.
 _SECURITY_PROMPT_TIMEOUT_SECONDS = 30.0
 _SECURITY_BACKGROUND_TIMEOUT_SECONDS = 2.0
+# A slower foreground success may have needed a one-time Allow dialog.
+_SECURITY_QUIET_READ_SECONDS = 1.0
 # Codex writes plain JSON; a real one is a few KB. Anything larger is not it.
 CODEX_AUTH_MAX_BYTES = 256 * 1024
 
@@ -138,19 +140,22 @@ class KeychainConsentLedger:
             pass
         return deadline
 
-    def record_success(self, service: str, now: float, *, security: bool = False) -> None:
+    def record_success(self, service: str, now: float, *, security: bool | None = None) -> None:
         """A read succeeded: retain permission for noninteractive attempts.
 
-        The stamp cannot distinguish Allow from Always Allow. Background
-        reads must still prohibit interaction at the operating-system API.
-        A later explicit denial clears this record.
+        Direct reads prohibit interaction at the operating-system API.
+        For the system tool, True records a quick foreground success,
+        False revokes its grant, and None preserves an existing grant.
+        A denial or lost access clears both grants.
         """
         payload = self._read()
         old = payload.get(service, {})
         if not isinstance(old, dict):
             old = {}
         entry = {"granted_at": float(now)}
-        security_stamp = float(now) if security else old.get("security_granted_at")
+        security_stamp = old.get("security_granted_at") if security is None else (
+            float(now) if security else None
+        )
         if security_stamp is not None:
             entry["security_granted_at"] = security_stamp
         payload[service] = entry
@@ -181,11 +186,8 @@ class KeychainConsentLedger:
 
     def record_access_lost(self, service: str, now: float) -> float:
         payload = self._read()
-        old = payload.get(service, {})
         deadline = now + _ACCESS_LOST_RETRY_SECONDS
         entry = {"access_lost_at": float(now), "retry_at": deadline}
-        if isinstance(old, dict) and old.get("security_granted_at"):
-            entry["security_granted_at"] = old["security_granted_at"]
         payload[service] = entry
         try:
             atomic_private_write(self.path, json.dumps(payload, separators=(",", ":")))
@@ -280,27 +282,30 @@ def read_keychain_secret(
     if use_security:
         if not allow_prompt and not _keychain_is_unlocked():
             return access_lost()
+        started = time.monotonic()
         try:
             completed = (security_runner or _run_security_reader)(item, timeout=timeout)
         except subprocess.TimeoutExpired:
             # A killed consent dialog is never followed by another reader.
             return denial() if allow_prompt else access_lost()
         except (OSError, subprocess.SubprocessError):
-            completed = None
+            return CredentialResult(CredentialOutcome.UNAVAILABLE) if allow_prompt else access_lost()
         if completed is not None:
             secret = (completed.stdout or "").strip()
             if completed.returncode == 0 and 0 < len(secret.encode("utf-8")) <= CODEX_AUTH_MAX_BYTES:
                 if ledger is not None:
-                    # Quiet reads cannot establish consent for the tool.
-                    ledger.record_success(item.service, reference, security=allow_prompt)
+                    # Only a quick foreground read can arm the system tool.
+                    # A slow read may have succeeded through one-time Allow.
+                    security = time.monotonic() - started < _SECURITY_QUIET_READ_SECONDS if allow_prompt else None
+                    ledger.record_success(item.service, reference, security=security)
                 return CredentialResult(CredentialOutcome.OK, secret=secret)
             error = (completed.stderr or "").lower()
             if completed.returncode in (_SECURITY_USER_CANCELED, EXIT_INTERACTION_REQUIRED) or any(
                 word in error for word in ("interaction", "user cancel", "user canceled", "user cancelled", "denied")
             ):
                 return denial()
-        if not allow_prompt and lost:
-            return access_lost()
+        # The tool may already have shown a dialog. Never try another reader.
+        return CredentialResult(CredentialOutcome.NOT_FOUND) if allow_prompt else access_lost()
     try:
         completed = runner(item) if runner is not None else _run_keychain_reader(
             item, allow_prompt=allow_prompt, timeout=timeout,
