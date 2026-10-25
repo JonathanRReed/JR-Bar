@@ -43,7 +43,10 @@ It refuses to start without that token, unless you pass
 takes 0 to 65535 and defaults to 8737; a taken port is named with an exit of
 1. `--allow-answers` adds the two answering routes above, reaching the
 running monitor over its socket, and they still act only while
-`serve_answer_enabled` is on and never without the token.
+`serve_answer_enabled` is on and never without the token. If the monitor is
+unreachable or consent is off, serve prints a warning and keeps serving
+status. Each answering request checks consent again and refuses while it
+is off.
 
 ## The command line
 

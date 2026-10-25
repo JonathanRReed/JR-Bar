@@ -53,7 +53,7 @@ public final class CoreModel {
     /// A reconnect can deliver unchanged settings from the same daemon stream.
     public private(set) var settingsConnectionRevision: UInt64 = 0
     public var settings: CoreSettings? { settingsFrame?.settings }
-    /// The most recent transient event; consumers compare ids.
+    /// The newest event for display. Consumers drain by sequence.
     public private(set) var lastEvent: CoreEvent?
     /// How many events the model keeps for a reader that was busy when a
     /// burst arrived.
@@ -69,10 +69,19 @@ public final class CoreModel {
     /// The retained events numbered after `sequence`, oldest first: what a
     /// reader that last looked at `sequence` has not seen.
     public func events(after sequence: Int) -> [CoreEvent] {
+        readEvents(after: sequence).events
+    }
+
+    public struct EventRead: Sendable {
+        public let events: [CoreEvent]
+        public let hasGap: Bool
+    }
+
+    public func readEvents(after sequence: Int) -> EventRead {
         let firstKept = eventSequence - recentEvents.count
         let start = max(0, sequence - firstKept)
-        guard start < recentEvents.count else { return [] }
-        return Array(recentEvents[start...])
+        let events = start < recentEvents.count ? Array(recentEvents[start...]) : []
+        return EventRead(events: events, hasGap: sequence < firstKept)
     }
     public private(set) var lastLog: CoreLog?
     /// The daemon's recent `log` messages, oldest first, bounded.

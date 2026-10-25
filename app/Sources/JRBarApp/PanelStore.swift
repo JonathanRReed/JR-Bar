@@ -442,20 +442,25 @@ final class PanelStore {
     /// One observation per frame, like the Replay store's: two events in
     /// the same turn can coalesce to the last one, which a four-line log
     /// can afford — the journal in History is the complete record.
+    @ObservationIgnored private var lastLightEventSequence = 0
+
     private func observeEvents() {
         withObservationTracking {
-            _ = core.lastEvent?.id
+            _ = core.eventSequence
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.noteEvent(self.core.lastEvent)
+                let read = self.core.readEvents(after: self.lastLightEventSequence)
+                self.lastLightEventSequence = self.core.eventSequence
+                if read.hasGap { self.recentEvents.removeAll() }
+                for event in read.events { self.noteEvent(event) }
                 self.observeEvents()
             }
         }
     }
 
     func noteEvent(_ event: CoreEvent?) {
-        guard let event, recentEvents.last?.id != event.id else { return }
+        guard let event, !recentEvents.contains(where: { $0.id == event.id }) else { return }
         recentEvents.append(event)
         if recentEvents.count > Self.recentEventLimit {
             recentEvents.removeFirst(recentEvents.count - Self.recentEventLimit)

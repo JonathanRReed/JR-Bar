@@ -15,6 +15,8 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
     }
 
     func show(effect: String? = nil) {
+        let interval = AppLatency.begin("Studio open")
+        defer { AppLatency.end("Studio open", interval) }
         let window = self.window ?? makeWindow()
         self.window = window
         attachContent(to: window)

@@ -481,8 +481,13 @@ class _ServeHandler(BaseHTTPRequestHandler):
             return None
         try:
             enabled = bool(configuration.answers.enabled())
+        except ServeAnswerRefused as refusal:
+            self._send_json(refusal.http_status, refusal.document())
+            return None
         except Exception:
-            enabled = False
+            refusal = ServeAnswerRefused("unavailable", "the monitor could not be reached")
+            self._send_json(refusal.http_status, refusal.document())
+            return None
         if not enabled:
             refusal = ServeAnswerRefused(
                 "answering_off",

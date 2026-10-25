@@ -65,7 +65,7 @@ final class OverviewStore {
     var activeSavedFilter: String?
 
     @ObservationIgnored private var clock: Timer?
-    @ObservationIgnored private var lastEventID: String?
+    @ObservationIgnored private var lastEventSequence = 0
     /// The roster is a query surface: the daemon may retain things no
     /// event names, so absent events this is the cadence.
     static let refreshInterval: TimeInterval = 15
@@ -462,7 +462,7 @@ final class OverviewStore {
         now = Date()
         linksClock = now
         selectLink(id)
-        lastEventID = core.lastEvent?.id
+        lastEventSequence = core.eventSequence
         clock?.invalidate()
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -499,20 +499,26 @@ final class OverviewStore {
         // The roster is a query surface: rows move with each collector
         // snapshot, not just named events — reload on events and every
         // `refreshInterval` regardless.
-        let eventID = core.lastEvent?.id
+        let read = core.readEvents(after: lastEventSequence)
+        let sequence = core.eventSequence
         let stale = loadedAt.map { now.timeIntervalSince($0) > Self.refreshInterval } ?? true
-        if eventID != lastEventID {
-            lastEventID = eventID
+        if sequence != lastEventSequence {
+            lastEventSequence = sequence
             scheduleLoad(eventDriven: true)
             // A fresh event naming the selected session refreshes its
             // newest timeline page — the inspector stays current without
             // a manual reload.
-            if let session = core.lastEvent?.session, session == timelineSessionID {
+            if Self.shouldRefreshTimeline(session: timelineSessionID, events: read.events, hasGap: read.hasGap) {
                 Task { await refreshTimeline() }
             }
         } else if stale {
             scheduleLoad()
         }
+    }
+
+    static func shouldRefreshTimeline(session: String?, events: [CoreEvent], hasGap: Bool) -> Bool {
+        guard let session else { return false }
+        return hasGap || events.contains { $0.session == session }
     }
 
     /// Event bursts coalesce into one fetch: a 300 ms trailing debounce

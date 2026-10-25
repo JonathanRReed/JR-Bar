@@ -93,6 +93,49 @@ final class ConfettiToy: Toy {
     /// Where a `quota_reset`'s verdict goes — the daemon's `reset_receipt`.
     /// The tests swap it.
     @ObservationIgnored var receiptSink: (@MainActor (ConfettiResetReceipt) -> Void)?
+    @ObservationIgnored var readPendingResets: (@MainActor () async throws -> [CoreEvent])?
+    @ObservationIgnored private var reconciliation: Task<Void, Never>?
+    private(set) var needsResetReconciliation = true
+    @ObservationIgnored private var reconciliationToken: UUID?
+
+    func waitForResetReconciliation() async { await reconciliation?.value }
+
+    /// A full local queue keeps the daemon as the authority for omitted facts.
+    func reconcileResets() {
+        guard isOn, !isShutdown, needsResetReconciliation, reconciliation == nil,
+              (held?.facts.count ?? 0) < Self.maximumHeldFacts else { return }
+        let reader = readPendingResets
+        let core = store?.core
+        guard reader != nil || core?.isLive == true else { return }
+        needsResetReconciliation = false
+        let token = UUID()
+        reconciliationToken = token
+        reconciliation = Task { [weak self] in
+            defer {
+                if self?.reconciliationToken == token { self?.reconciliation = nil }
+            }
+            do {
+                let events: [CoreEvent]
+                if let reader { events = try await reader() }
+                else if let core {
+                    let reply = try await core.send("reset_status")
+                    guard reply.ok else { self?.needsResetReconciliation = true; return }
+                    let data = try JSONEncoder().encode(reply.result?["events"] ?? .array([]))
+                    events = try JSONDecoder().decode([CoreEvent].self, from: data)
+                } else { return }
+                guard let self, !self.isShutdown, !Task.isCancelled,
+                      self.reconciliationToken == token else { return }
+                for event in events {
+                    guard (self.held?.facts.count ?? 0) < Self.maximumHeldFacts else {
+                        self.needsResetReconciliation = true
+                        break
+                    }
+                    self.noteEvent(event)
+                }
+            } catch { self?.needsResetReconciliation = true }
+        }
+    }
+
     /// Re-reads the room while a burst is held; exists only then.
     @ObservationIgnored private var recheck: Timer?
     /// When an outside caller last got a burst — `requestCooldown`.
@@ -135,6 +178,8 @@ final class ConfettiToy: Toy {
     func shutdown() {
         guard !isShutdown else { return }
         isShutdown = true
+        reconciliation?.cancel()
+        reconciliation = nil
         dropHeld()
         stopBurst()
     }
@@ -290,11 +335,15 @@ final class ConfettiToy: Toy {
     /// The daemon connection dropped: the next document is a new run's and
     /// only seeds the edges.
     func noteConnectionLost() {
+        needsResetReconciliation = true
+        reconciliation?.cancel()
+        reconciliation = nil
         edges.reseed(session: UUID().uuidString)
     }
 
     func noteState(_ state: CoreState) {
         guard !isShutdown else { return }
+        reconcileResets()
         for decision in edges.note(state, triggers: settings.triggers) {
             deliver(decision, event: nil)
         }
@@ -385,6 +434,7 @@ final class ConfettiToy: Toy {
                 if let fact, !waiting.facts.contains(where: { $0.key == fact.key }) {
                     if waiting.facts.count >= Self.maximumHeldFacts {
                         let oldest = waiting.facts.removeFirst()
+                        needsResetReconciliation = true
                         report(oldest, .expired, "hold_capacity")
                     }
                     waiting.facts.append(fact)
@@ -410,7 +460,7 @@ final class ConfettiToy: Toy {
     /// (smaller) once the room is clear, and is let go once it is old.
     func roomChanged(at now: Date = Date()) {
         guard !isShutdown else { return }
-        guard held != nil else { return }
+        guard held != nil else { reconcileResets(); return }
         guard isOn else {
             dropHeld(.dropped, "toy_off")
             return
@@ -444,6 +494,7 @@ final class ConfettiToy: Toy {
         dropHeld()
         present(held.shot, on: screens, densityScale: ConfettiRoom.replayDensity)
         for fact in held.facts { settle(fact, .delivered, "after_hold") }
+        reconcileResets()
     }
 
     private func pruneHeldFacts() {
@@ -542,7 +593,15 @@ final class ConfettiToy: Toy {
         if let receiptSink {
             receiptSink(receipt)
         } else {
-            store?.core.post("reset_receipt", args: receipt.args)
+            guard let core = store?.core else { return }
+            Task { [weak self] in
+                let reply = try? await core.send("reset_receipt", args: receipt.args)
+                guard let self, reply?.ok == true else { return }
+                if outcome == .delivered || outcome == .dropped {
+                    self.needsResetReconciliation = true
+                    self.reconcileResets()
+                }
+            }
         }
     }
 

@@ -7,6 +7,8 @@ import threading
 from datetime import datetime
 from types import SimpleNamespace
 
+import pytest
+
 from jrbar.persistence_writer import (
     PersistenceDisposition,
     SerialPersistenceWriter,
@@ -48,6 +50,30 @@ def _retention(*policies):
             for provider, instance, days in policies
         )
     )
+
+
+def test_retention_appends_without_rewriting_unchanged_history(monkeypatch, tmp_path):
+    import jrbar.usage_percent_history as history
+
+    target = tmp_path / "history.jsonl"
+    retention = _retention(("claude", "default", 7))
+    record = dict(provider_id="claude", source_instance_id="default", lane_id="weekly",
+                  remaining_percent=71.0, observed_at_epoch=NOW_EPOCH)
+    append_percent_observations(target, [record], retention_projection=retention,
+                                now_epoch=NOW_EPOCH)
+    original = target.read_bytes()
+
+    def refuse_rewrite(*args, **kwargs):
+        raise AssertionError("unchanged history must be appended, not replaced")
+
+    monkeypatch.setattr(history, "atomic_private_write", refuse_rewrite)
+    append_percent_observations(target, [], retention_projection=retention,
+                                now_epoch=NOW_EPOCH + 60)
+    next_record = {**record, "remaining_percent": 70.0, "observed_at_epoch": NOW_EPOCH + 120}
+    append_percent_observations(target, [next_record], retention_projection=retention,
+                                now_epoch=NOW_EPOCH + 120)
+    assert target.read_bytes().startswith(original)
+    assert [json.loads(line) for line in target.read_text().splitlines()] == [record, next_record]
 
 
 def test_graph_skips_nonfinite_and_unrepresentable_timestamps() -> None:
@@ -585,3 +611,48 @@ def test_a_stale_reading_is_not_recorded_as_a_new_observation(monkeypatch, tmp_p
     assert writer.close(timeout_seconds=1.0) is True
     stored = [json.loads(line) for line in target.read_text().splitlines()]
     assert [row["provider_id"] for row in stored] == ["codex"]
+
+
+def test_recording_batches_expiry_but_applies_policy_changes_immediately(monkeypatch, tmp_path):
+    target = tmp_path / "history.jsonl"
+    controller = SimpleNamespace()
+    clock = [NOW_EPOCH]
+    monkeypatch.setattr("jrbar.usage_percent_history.time.time", lambda: clock[0])
+    monkeypatch.setattr("jrbar.usage_percent_history.default_percent_history_path", lambda: target)
+    retention = _retention(("claude", "default", 7))
+    old = dict(provider_id="claude", source_instance_id="default", lane_id="weekly",
+               remaining_percent=50.0, observed_at_epoch=NOW_EPOCH - 7 * 86400 + 1)
+    append_percent_observations(target, [old], retention_projection=retention, now_epoch=clock[0])
+    writer = SerialPersistenceWriter()
+    assert record_state_observations(controller, (), writer=writer, retention_projection=retention)
+    assert writer.wait_idle(timeout_seconds=2)
+    clock[0] += 15
+    snapshot = SimpleNamespace(provider_id="claude", lanes=(SimpleNamespace(lane_id="weekly", remaining_percent=49),))
+    inode = target.stat().st_ino
+    assert record_state_observations(controller, (snapshot,), writer=writer, retention_projection=retention)
+    assert writer.wait_idle(timeout_seconds=2)
+    assert target.stat().st_ino == inode
+    clock[0] = NOW_EPOCH + 1800
+    assert record_state_observations(controller, (), writer=writer, retention_projection=retention)
+    assert writer.wait_idle(timeout_seconds=2)
+    assert len(target.read_text().splitlines()) == 1
+    assert record_state_observations(controller, (), writer=writer,
+                                      retention_projection=_retention(("claude", "default", 0)))
+    assert writer.wait_idle(timeout_seconds=2)
+    assert target.read_text() == ""
+    assert writer.close(timeout_seconds=2)
+
+
+@pytest.mark.parametrize("with_retention", [False, True])
+def test_append_separates_a_torn_tail_from_the_next_record(tmp_path, with_retention):
+    target = tmp_path / "history.jsonl"
+    torn = '{"provider_id":"claude","lane_id":'
+    target.write_text(torn)
+    record = dict(provider_id="claude", source_instance_id="default", lane_id="weekly",
+                  remaining_percent=71.0, observed_at_epoch=NOW_EPOCH)
+    retention = _retention(("claude", "default", 7)) if with_retention else None
+    assert append_percent_observations(target, [record], retention_projection=retention,
+                                       prune_existing=False, now_epoch=NOW_EPOCH) == 1
+    lines = target.read_text().splitlines()
+    assert lines[0] == torn
+    assert json.loads(lines[1]) == record

@@ -441,12 +441,18 @@ def _judge_candidate(
     ):
         return "discard"
     full_refill = (
-        candidate.trigger == RESET_TRIGGER_EARLY_WEEKLY
-        and candidate.after_remaining >= RESET_UNUSED_REMAINING
+        candidate.after_remaining >= RESET_UNUSED_REMAINING
         and candidate.after_remaining > candidate.before_remaining
     )
     if full_refill:
-        replenishment_holds = lane.remaining_percent >= RESET_UNUSED_REMAINING
+        # A full new window can be used before the confirming poll. Keep
+        # the existing near-full floor used for lapsed refills, and require
+        # a net gain over the old window. Identity and boundary checks still
+        # reject rolling windows, switched accounts and reverted readings.
+        replenishment_holds = (
+            lane.remaining_percent >= RESET_LAPSED_REFILL_REMAINING
+            and lane.remaining_percent > candidate.before_remaining
+        )
     else:
         required_gain = (
             RESET_TIMING_POINTS

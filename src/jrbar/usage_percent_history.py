@@ -26,7 +26,12 @@ from .persistence_writer import (
     PersistenceOutcome,
     PersistenceReceipt,
 )
-from .private_io import append_private_text, atomic_private_write, read_private_text
+from .private_io import (
+    append_private_text,
+    atomic_private_write,
+    read_private_bytes_with_identity,
+    read_private_text,
+)
 from .provider_feature_settings import ProviderInstanceRetentionProjection
 from .providers import default_state_dir
 
@@ -167,23 +172,40 @@ def _retained_history_records(
     return retained
 
 
+def _append_history_rows(path: Path, text: str) -> None:
+    try:
+        tail, _ = read_private_bytes_with_identity(path, max_bytes=1, tail=True)
+    except FileNotFoundError:
+        tail = b""
+    append_private_text(path, ("\n" if tail and tail != b"\n" else "") + text)
+
+
 def append_percent_observations(
     path: Path,
     records: list[dict],
     *,
     retention_projection: ProviderInstanceRetentionProjection | None = None,
     now_epoch: float | None = None,
+    prune_existing: bool = True,
 ) -> int:
     """Persist pre-filtered records and enforce exact-instance retention."""
     if retention_projection is None:
         if not records:
             return 0
         text = _serialize_history(records)
-        append_private_text(path, text)
+        _append_history_rows(path, text)
         audit.compact_jsonl_file(path)
         return len(records)
 
     current_epoch = time.time() if now_epoch is None else float(now_epoch)
+    if not prune_existing:
+        retained_new = _retained_history_records(
+            _serialize_history(records), retention_projection, now_epoch=current_epoch,
+        )
+        if retained_new:
+            _append_history_rows(path, _serialize_history(retained_new))
+            audit.compact_jsonl_file(path)
+        return len(retained_new)
     try:
         existing = read_private_text(path, errors="replace")
         existed = True
@@ -194,14 +216,23 @@ def append_percent_observations(
         json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n"
         for record in records
     )
-    retained = _retained_history_records(
-        existing + text,
-        retention_projection,
-        now_epoch=current_epoch,
-    )
-    if not existed and not retained:
+    retained_existing = _serialize_history(_retained_history_records(
+        existing, retention_projection, now_epoch=current_epoch,
+    ))
+    retained_new = _serialize_history(_retained_history_records(
+        text, retention_projection, now_epoch=current_epoch,
+    ))
+    if not existed and not retained_new:
         return 0
-    atomic_private_write(path, _serialize_history(retained))
+    # Retention normally removes nothing. Append only the new rows instead
+    # of rewriting months of history for each one-percent change. A policy
+    # change, expiry or legacy row still compacts the file immediately.
+    if retained_existing != existing:
+        atomic_private_write(path, retained_existing + retained_new)
+    elif retained_new:
+        _append_history_rows(path, retained_new)
+    else:
+        return 0
     audit.compact_jsonl_file(path)
     eligible_identities = {
         policy.identity
@@ -502,10 +533,11 @@ def record_state_observations(
                         and value[1]
                         >= observed_epoch - retention_now[key[:2]] * 86_400.0
                     }
-                    controller._jrbar_percent_history_retention_signature = (
-                        completed.retention_signature
-                    )
-                    controller._jrbar_percent_history_retention_epoch = observed_epoch
+                    if needs_retention:
+                        controller._jrbar_percent_history_retention_signature = (
+                            completed.retention_signature
+                        )
+                        controller._jrbar_percent_history_retention_epoch = observed_epoch
                 for record in completed.records:
                     committed_now[
                         (
@@ -528,6 +560,7 @@ def record_state_observations(
             list(records),
             retention_projection=retention,
             now_epoch=observed_epoch,
+            prune_existing=needs_retention,
         )
 
     try:

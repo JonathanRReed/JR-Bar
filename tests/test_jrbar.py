@@ -8335,7 +8335,7 @@ class TranscriptFallbackTests(unittest.TestCase):
             self.controller.handle_hook_event_message(hint)
 
         reconcile.assert_called_once_with(hint, log_path=log_path)
-        schedule.assert_called_once_with()
+        schedule.assert_called_once_with(urgent=False)
 
 
 class SignalEngineTests(unittest.TestCase):

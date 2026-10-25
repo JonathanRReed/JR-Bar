@@ -835,6 +835,8 @@ final class ScreenBarController {
         settleVisibility()
     }
     @objc private func screensDidWake(_ note: Notification) {
+        let interval = AppLatency.begin("Screen Bar wake")
+        defer { AppLatency.end("Screen Bar wake", interval) }
         visibility.displayAsleep = false
         if let epoch = lastAnchorEpoch {
             let now = CACurrentMediaTime()
@@ -1639,10 +1641,17 @@ final class ScreenBarController {
         }
     }
 
+    /// Both playback paths use the program's phase, including its entrance.
+    func frameCodes(atMilliseconds ms: Int) -> [RGB8] {
+        guard let sampler else { return [] }
+        if stripTransfer != nil { return sampler.rawCodes(atMilliseconds: ms) }
+        return plan?.codes(atMilliseconds: ms) ?? sampler.codes(atMilliseconds: ms)
+    }
+
     private func renderCurrentFrame(at time: CFTimeInterval? = nil) {
         guard let sampler else { return }
         let ms = max(0, milliseconds(time ?? CACurrentMediaTime()))
-        let codes = stripTransfer == nil ? sampler.codes(atMilliseconds: ms) : sampler.rawCodes(atMilliseconds: ms)
+        let codes = frameCodes(atMilliseconds: ms)
         if codes == lastCodes { return }
         lastCodes = codes
         view.display(colors: displayColors(codes, brightness: sampler.brightness))

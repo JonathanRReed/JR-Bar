@@ -6394,7 +6394,7 @@ class StatusBarController(NSObject):
         def _run():
             try:
                 if self.reap_dead_agent_processes():
-                    self.schedule_event_refresh()
+                    self.schedule_event_refresh(urgent=True)
                 self._liveness_worker_sweep_at = time.monotonic()
             finally:
                 self._liveness_sweep_running = False
@@ -6411,13 +6411,14 @@ class StatusBarController(NSObject):
         if not callable(take):
             self.handle_hook_event_message(hint)
             return
+        edge = self._event_refresh_edge()
         try:
             take(
                 hint,
                 appended,
                 log_path=detect_log_path(hint.source_key.provider_id),
             )
-            self.schedule_event_refresh()
+            self.schedule_event_refresh(urgent=edge != self._event_refresh_edge())
         except Exception:
             # The line is durable in the log, so the rereading reconcile
             # still lands it — dropping the refresh here would leave the
@@ -6434,16 +6435,25 @@ class StatusBarController(NSObject):
         """
         if type(hint) is not ProviderRefreshHint:
             return
+        edge = self._event_refresh_edge()
         try:
             self.monitor.reconcile_refresh_hint(
                 hint,
                 log_path=detect_log_path(hint.source_key.provider_id),
             )
-            self.schedule_event_refresh()
+            self.schedule_event_refresh(urgent=edge != self._event_refresh_edge())
         except Exception:
             log_status_bar("event_server reconciliation error")
 
-    def schedule_event_refresh(self) -> None:
+    def _event_refresh_edge(self):
+        # Canonical lifecycle and ask identities, never raw hook text.
+        with self.monitor.lock:
+            return tuple((work.key, work.lifecycle, work.request_keys)
+                         for work in self.monitor.operator_state.works)
+
+    def schedule_event_refresh(self, *, urgent: bool = False) -> None:
+        if urgent:
+            self._event_refresh_urgent = True
         if self.event_refresh_pending:
             return
         self.event_refresh_pending = True
@@ -9304,7 +9314,7 @@ class StatusBarController(NSObject):
             self.device_errors.pop(device.device_id, None)
             if write.changed:
                 target = write.target if write.target is not None else "-"
-                log_status_bar(f"leds={result.label} target={target}")
+                log_status_bar_debug(f"leds={result.label} target={target}")
         self.last_led_error = next(iter(self.device_errors.values()), None)
 
         presentation_sync = hardware_presentation_sync_for_result(result)
@@ -11282,6 +11292,12 @@ def image_for_symbol(symbol: str, description: str):
     if image is not None:
         _symbol_image_cache[key] = image
     return image
+
+
+def log_status_bar_debug(message: str) -> None:
+    import logging
+
+    logging.getLogger("jrbar.status").debug(message)
 
 
 def log_status_bar(message: str) -> None:

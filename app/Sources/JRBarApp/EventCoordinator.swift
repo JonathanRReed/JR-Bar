@@ -35,7 +35,21 @@ final class EventCoordinator {
     static let askBannerWait: Duration = .seconds(1)
     /// Ask banners waiting on that state, by identifier; a withdrawal
     /// while one waits means it is never posted.
-    private var waitingAskBanners: [String: UUID] = [:]
+    var bannerSink: (@MainActor (EventDelivery.Notification, String?) -> Void)?
+    var scheduleAskBannerDeadline: (@MainActor @escaping () -> Void) -> Task<Void, Never> = { expire in
+        Task { @MainActor in
+            do { try await Task.sleep(for: EventCoordinator.askBannerWait) } catch { return }
+            expire()
+        }
+    }
+    private struct WaitingBanner {
+        let token: UUID
+        let notification: EventDelivery.Notification
+        let session: String
+        let request: String?
+        let deadline: Task<Void, Never>
+    }
+    private var waitingAskBanners: [String: WaitingBanner] = [:]
     /// Where a banner click's refused open is said — the panel is closed
     /// when a banner is clicked, so the delegate points it at the HUD.
     /// Unset, the refusal is only logged.
@@ -191,24 +205,35 @@ final class EventCoordinator {
     /// `askBannerWait` has passed), in the category that ask's verbs
     /// allow and pinned to its request. Time-sensitive either way: the
     /// category drops the actions, never the urgency of "X needs you".
-    private func deliverAskBanner(_ notification: EventDelivery.Notification, session: String, request: String?) {
+    func deliverAskBanner(_ notification: EventDelivery.Notification, session: String, request: String?) {
         let token = UUID()
-        waitingAskBanners[notification.identifier] = token
-        Task { [weak self] in
-            var ask = self.flatMap { NotificationBridge.liveAsk(session: session, request: request, in: $0.core.openAsks) }
-            let step = Duration.milliseconds(50)
-            var waited = Duration.zero
-            while ask == nil, waited < Self.askBannerWait {
-                try? await Task.sleep(for: step)
-                waited += step
-                ask = self.flatMap { NotificationBridge.liveAsk(session: session, request: request, in: $0.core.openAsks) }
-            }
-            guard let self, self.waitingAskBanners[notification.identifier] == token else { return }
-            self.waitingAskBanners[notification.identifier] = nil
-            var banner = notification
-            banner.category = Self.bannerCategory(for: ask)
-            self.notifications.deliver(banner, request: ask?.request ?? request, timeSensitive: true)
+        waitingAskBanners.removeValue(forKey: notification.identifier)?.deadline.cancel()
+        let deadline = scheduleAskBannerDeadline { [weak self] in
+            guard let self, self.waitingAskBanners[notification.identifier]?.token == token else { return }
+            self.finishAskBanner(notification.identifier)
         }
+        waitingAskBanners[notification.identifier] = WaitingBanner(
+            token: token, notification: notification, session: session, request: request, deadline: deadline)
+        deliverReadyAskBanners()
+    }
+
+    func deliverReadyAskBanners() {
+        for (id, waiting) in waitingAskBanners {
+            if NotificationBridge.liveAsk(session: waiting.session, request: waiting.request, in: core.openAsks) != nil {
+                finishAskBanner(id)
+            }
+        }
+    }
+
+    private func finishAskBanner(_ id: String) {
+        guard let waiting = waitingAskBanners.removeValue(forKey: id) else { return }
+        waiting.deadline.cancel()
+        let ask = NotificationBridge.liveAsk(session: waiting.session, request: waiting.request, in: core.openAsks)
+        var banner = waiting.notification
+        banner.category = Self.bannerCategory(for: ask)
+        let request = ask?.request ?? waiting.request
+        if let bannerSink { bannerSink(banner, request) }
+        else { notifications.deliver(banner, request: request, timeSensitive: true) }
     }
 
     /// The parts of `state` the toys and the HUD read below: the credits
@@ -239,6 +264,7 @@ final class EventCoordinator {
                 if case .connected = self.core.connection {} else {
                     self.toys?.confetti.noteConnectionLost()
                 }
+                self.deliverReadyAskBanners()
                 if let state = self.core.state {
                     self.toys?.confetti.noteState(state)
                     self.toys?.notchBuddy.noteState(state)
@@ -332,7 +358,7 @@ final class EventCoordinator {
     func apply(_ delivery: EventDelivery, for event: CoreEvent) {
         if let sound = delivery.sound { sounds.play(sound, repeats: delivery.soundRepeats) }
         if let identifier = delivery.withdrawNotification {
-            waitingAskBanners[identifier] = nil
+            waitingAskBanners.removeValue(forKey: identifier)?.deadline.cancel()
             notifications.withdraw(identifier: identifier)
         }
         if let notification = delivery.notification {

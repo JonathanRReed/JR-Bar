@@ -10,6 +10,12 @@ import Testing
 /// real offscreen draws, so a broken shader — or a blur uniform that
 /// never reaches the fragment — fails here, not on screen.
 @Suite @MainActor struct FoldRendererTests {
+    init() async {
+        await withCheckedContinuation { continuation in
+            FoldShaderCache.shared.prewarm(pixelFormat: .bgra8Unorm) { continuation.resume() }
+        }
+    }
+
     @Test func pipelineBuildsOnTheSystemDevice() throws {
         let renderer = try FoldRenderer(pixelFormat: .bgra8Unorm)
         #expect(renderer.device.name.isEmpty == false)
@@ -429,7 +435,31 @@ import Testing
         }
     }
 
-    @Test func aSecondAskCompilesNothing() throws {
+    @MainActor
+    @Test func aBusyCompileNeverBlocksTheMainActor() throws {
+        let cache = FoldShaderCache()
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let real = cache.compile
+        cache.compile = { format in
+            entered.signal()
+            guard release.wait(timeout: .now() + 10) == .success else { throw FoldRendererError.noDevice }
+            return try real(format)
+        }
+        cache.prewarm(pixelFormat: .bgra8Unorm) { finished.signal() }
+        #expect(entered.wait(timeout: .now() + 5) == .success)
+        defer { release.signal() }
+        #expect(throws: FoldRendererError.self) { try cache.compiled(pixelFormat: .bgra8Unorm) }
+        // Even an unrelated cache operation must return while compile is blocked.
+        cache.prewarm(pixelFormat: .bgra8Unorm)
+        release.signal()
+        #expect(finished.wait(timeout: .now() + 30) == .success)
+        _ = try cache.compiled(pixelFormat: .bgra8Unorm)
+        #expect(cache.compileCount == 1)
+    }
+
+    @Test func aSecondAskCompilesNothing() async throws {
         let cache = FoldShaderCache()
         let record = Record()
         let real = cache.compile
@@ -437,10 +467,54 @@ import Testing
             record.note(Thread.isMainThread)
             return try real(format)
         }
+        await withCheckedContinuation { continuation in
+            cache.prewarm(pixelFormat: .bgra8Unorm) { continuation.resume() }
+        }
+        cache.clearFailures()
         _ = try cache.compiled(pixelFormat: .bgra8Unorm)
-        _ = try cache.compiled(pixelFormat: .bgra8Unorm)
-        _ = try FoldRenderer(pixelFormat: .bgra8Unorm)
+        _ = try FoldRenderer(pixelFormat: .bgra8Unorm, cache: cache)
         #expect(record.onMain.count == 1)
+        #expect(cache.compileCount == 1)
+    }
+
+    @Test func failureWithoutAWaiterRespectsCooldown() async {
+        let cache = FoldShaderCache()
+        let record = Record()
+        cache.clock = { 100 }
+        cache.compile = { _ in
+            record.note(Thread.isMainThread)
+            throw FoldRendererError.noDevice
+        }
+        _ = await Task.detached {
+            #expect(throws: FoldRendererError.self) { try cache.compiled(pixelFormat: .bgra8Unorm) }
+        }.value
+        await withCheckedContinuation { continuation in
+            cache.prewarm(pixelFormat: .bgra8Unorm) { continuation.resume() }
+        }
+        #expect(throws: FoldRendererError.self) { try FoldRenderer(pixelFormat: .bgra8Unorm, cache: cache) }
+        #expect(record.onMain.count == 1)
+        cache.clock = { 130 }
+        await withCheckedContinuation { continuation in
+            cache.prewarm(pixelFormat: .bgra8Unorm) { continuation.resume() }
+        }
+        #expect(record.onMain.count == 2)
+    }
+
+    @Test func explicitRetryClearsFailureBeforeCooldown() async throws {
+        let cache = FoldShaderCache()
+        cache.clock = { 100 }
+        let real = cache.compile
+        cache.compile = { _ in throw FoldRendererError.noDevice }
+        await withCheckedContinuation { continuation in
+            cache.prewarm(pixelFormat: .bgra8Unorm) { continuation.resume() }
+        }
+        cache.compile = real
+        #expect(throws: FoldRendererError.self) { try cache.compiled(pixelFormat: .bgra8Unorm) }
+        cache.clearFailures()
+        await withCheckedContinuation { continuation in
+            cache.prewarm(pixelFormat: .bgra8Unorm) { continuation.resume() }
+        }
+        _ = try cache.compiled(pixelFormat: .bgra8Unorm)
         #expect(cache.compileCount == 1)
     }
 
@@ -450,10 +524,9 @@ import Testing
         let real = cache.compile
         cache.compile = { format in
             record.note(Thread.isMainThread)
-            defer { record.done.signal() }
             return try real(format)
         }
-        cache.prewarm(pixelFormat: .bgra8Unorm)
+        cache.prewarm(pixelFormat: .bgra8Unorm) { record.done.signal() }
         cache.prewarm(pixelFormat: .bgra8Unorm)
         // Bounded: a hung compile fails the test instead of hanging it.
         #expect(record.done.wait(timeout: .now() + 60) == .success)

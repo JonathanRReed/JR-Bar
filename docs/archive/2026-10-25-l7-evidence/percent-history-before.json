@@ -1,0 +1,37 @@
+[
+  {
+    "initial_bytes": 321360,
+    "bytes_per_synthetic_hour": 80997615,
+    "writes": 240,
+    "rows": 2640,
+    "failures": 0
+  },
+  {
+    "initial_bytes": 321360,
+    "bytes_per_synthetic_hour": 80997615,
+    "writes": 240,
+    "rows": 2640,
+    "failures": 0
+  },
+  {
+    "initial_bytes": 321360,
+    "bytes_per_synthetic_hour": 80997615,
+    "writes": 240,
+    "rows": 2640,
+    "failures": 0
+  },
+  {
+    "initial_bytes": 321360,
+    "bytes_per_synthetic_hour": 80997615,
+    "writes": 240,
+    "rows": 2640,
+    "failures": 0
+  },
+  {
+    "initial_bytes": 321360,
+    "bytes_per_synthetic_hour": 80997615,
+    "writes": 240,
+    "rows": 2640,
+    "failures": 0
+  }
+]

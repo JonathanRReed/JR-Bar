@@ -43,7 +43,7 @@ final class HistoryStore {
     private var windowOpen = false
 
     @ObservationIgnored private var clock: Timer?
-    @ObservationIgnored private var lastEventID: String?
+    @ObservationIgnored private var lastEventSequence = 0
     @ObservationIgnored private var loadToken: UUID?
     @ObservationIgnored private var readDuringVisit = false
     private let schedulingEnabled: Bool
@@ -250,7 +250,7 @@ final class HistoryStore {
         }
         windowOpen = true
         syncReplay()
-        lastEventID = core.lastEvent?.id
+        lastEventSequence = core.eventSequence
         clock?.invalidate()
         clock = nil
         if schedulingEnabled {
@@ -271,10 +271,10 @@ final class HistoryStore {
         guard windowOpen else { return nil }
         now = Date()
         guard core.isLive else { return nil }
-        let eventID = core.lastEvent?.id
+        let sequence = core.eventSequence
         let stale = loadedAt.map { now.timeIntervalSince($0) > Self.refreshInterval } ?? true
-        guard eventID != lastEventID || stale else { return nil }
-        lastEventID = eventID
+        guard sequence != lastEventSequence || stale else { return nil }
+        lastEventSequence = sequence
         return reload()
     }
 

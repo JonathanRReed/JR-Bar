@@ -1084,9 +1084,23 @@ def cmd_serve(args: argparse.Namespace) -> int:
     answers = None
     if getattr(args, "allow_answers", False):
         from .cli_control import default_socket_path
-        from .serve_answers import CoreSocketAnswers
+        from .serve_answers import CoreSocketAnswers, ServeAnswerRefused
 
         answers = CoreSocketAnswers(default_socket_path())
+        try:
+            enabled = answers.enabled()
+        except ServeAnswerRefused as refusal:
+            print(
+                f"jrbar serve: warning: {refusal.message}; status is still served.",
+                file=sys.stderr,
+            )
+        else:
+            if not enabled:
+                print(
+                    "jrbar serve: warning: answering is off; status is still served. "
+                    "Check consent in Settings > Devices & Lighting > Stream Deck",
+                    file=sys.stderr,
+                )
     try:
         serve(
             port=int(getattr(args, "port", 8737)),

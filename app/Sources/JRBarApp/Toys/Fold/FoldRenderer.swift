@@ -22,10 +22,12 @@ private struct SendBox<T>: @unchecked Sendable {
 
 enum FoldRendererError: LocalizedError {
     case noDevice
+    case notReady
 
     var errorDescription: String? {
         switch self {
         case .noDevice: return "no Metal device"
+        case .notReady: return "shaders are preparing"
         }
     }
 }
@@ -84,8 +86,8 @@ private func foldLogThrottled(_ message: String) {
 /// Metal source takes long enough to drop frames, so the toy asks for it
 /// off the main thread the moment it is on (`prewarm`); a renderer made
 /// later takes the finished pipelines instead of compiling on the first
-/// gesture. A failed compile is not kept, so the renderer's own retry
-/// still has something to retry.
+/// gesture. Failures hold until the retry cooldown expires or the person
+/// explicitly retries.
 final class FoldShaderCache: @unchecked Sendable {
     static let shared = FoldShaderCache()
 
@@ -98,38 +100,92 @@ final class FoldShaderCache: @unchecked Sendable {
     private let lock = NSLock()
     private var compiledByFormat: [UInt: Compiled] = [:]
     private var warming: Set<UInt> = []
+    private var failures: [UInt: (error: Error, at: TimeInterval)] = [:]
+    var clock: @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    static let retryCooldown: TimeInterval = 30
+    private var waiters: [UInt: [@Sendable () -> Void]] = [:]
     /// How many times the source was compiled — the tests prove a second
     /// ask is free.
-    private(set) var compileCount = 0
+    private var compilations = 0
+    var compileCount: Int { lock.withLock { compilations } }
     /// What a compile is: swapped by the tests, which have no GPU.
     var compile: @Sendable (MTLPixelFormat) throws -> Compiled = { format in
         try FoldShaderCache.compileShaders(pixelFormat: format)
     }
 
-    /// The pipelines for `pixelFormat`, compiling here if nobody has —
-    /// the caller waits out a compile that is already running.
-    func compiled(pixelFormat: MTLPixelFormat) throws -> Compiled {
-        lock.lock()
-        defer { lock.unlock() }
-        if let done = compiledByFormat[pixelFormat.rawValue] { return done }
-        let built = try compile(pixelFormat)
-        compileCount += 1
-        compiledByFormat[pixelFormat.rawValue] = built
-        return built
+    /// Explicit user actions retry immediately without discarding compiled shaders.
+    func clearFailures() {
+        lock.withLock { failures.removeAll() }
     }
 
-    /// Starts the compile on a utility queue, once per format.
-    func prewarm(pixelFormat: MTLPixelFormat) {
+    func isReady(pixelFormat: MTLPixelFormat) -> Bool {
+        lock.withLock { compiledByFormat[pixelFormat.rawValue] != nil }
+    }
+
+    /// A warming format returns immediately. Compilation never owns the lock.
+    func compiled(pixelFormat: MTLPixelFormat) throws -> Compiled {
         lock.lock()
-        let wanted = compiledByFormat[pixelFormat.rawValue] == nil
-            && warming.insert(pixelFormat.rawValue).inserted
+        if let done = compiledByFormat[pixelFormat.rawValue] {
+            lock.unlock()
+            return done
+        }
+        if let failure = failures[pixelFormat.rawValue], clock() - failure.at < Self.retryCooldown {
+            lock.unlock()
+            throw failure.error
+        }
+        let busy = warming.contains(pixelFormat.rawValue)
+        if !busy && !Thread.isMainThread { warming.insert(pixelFormat.rawValue) }
+        lock.unlock()
+        if busy { throw FoldRendererError.notReady }
+        if Thread.isMainThread {
+            prewarm(pixelFormat: pixelFormat)
+            throw FoldRendererError.notReady
+        }
+        return try build(pixelFormat: pixelFormat)
+    }
+
+    private func build(pixelFormat: MTLPixelFormat) throws -> Compiled {
+        do {
+            let built = try compile(pixelFormat)
+            lock.lock()
+            compilations += 1
+            compiledByFormat[pixelFormat.rawValue] = built
+            failures.removeValue(forKey: pixelFormat.rawValue)
+            warming.remove(pixelFormat.rawValue)
+            let callbacks = waiters.removeValue(forKey: pixelFormat.rawValue) ?? []
+            lock.unlock()
+            for callback in callbacks { callback() }
+            return built
+        } catch {
+            lock.lock()
+            failures[pixelFormat.rawValue] = (error, clock())
+            warming.remove(pixelFormat.rawValue)
+            let callbacks = waiters.removeValue(forKey: pixelFormat.rawValue) ?? []
+            lock.unlock()
+            for callback in callbacks { callback() }
+            throw error
+        }
+    }
+
+    /// Starts one compile per format on a utility queue.
+    func prewarm(pixelFormat: MTLPixelFormat) {
+        prewarm(pixelFormat: pixelFormat, completion: nil)
+    }
+
+    func prewarm(pixelFormat: MTLPixelFormat, completion: (@Sendable () -> Void)?) {
+        lock.lock()
+        let coolingDown = failures[pixelFormat.rawValue].map { clock() - $0.at < Self.retryCooldown } ?? false
+        if compiledByFormat[pixelFormat.rawValue] != nil || coolingDown {
+            lock.unlock()
+            completion?()
+            return
+        }
+        if let completion { waiters[pixelFormat.rawValue, default: []].append(completion) }
+        let wanted = warming.insert(pixelFormat.rawValue).inserted
         lock.unlock()
         guard wanted else { return }
         DispatchQueue.global(qos: .utility).async { [self] in
-            _ = try? compiled(pixelFormat: pixelFormat)
-            lock.lock()
-            warming.remove(pixelFormat.rawValue)
-            lock.unlock()
+            _ = try? build(pixelFormat: pixelFormat)
         }
     }
 
@@ -280,8 +336,8 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         drawnGeneration = textureGeneration
     }
 
-    init(pixelFormat: MTLPixelFormat) throws {
-        let compiled = try FoldShaderCache.shared.compiled(pixelFormat: pixelFormat)
+    init(pixelFormat: MTLPixelFormat, cache: FoldShaderCache = .shared) throws {
+        let compiled = try cache.compiled(pixelFormat: pixelFormat)
         let device = compiled.device
         self.device = device
         pipeline = compiled.pipeline

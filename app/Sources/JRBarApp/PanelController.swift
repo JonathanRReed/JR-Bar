@@ -38,7 +38,7 @@ final class PanelController {
 
     init(store: PanelStore) {
         self.store = store
-        hosting = NSHostingView(rootView: PanelView(store: store))
+        hosting = DiagnosedHostingView(rootView: PanelView(store: store))
         // The window is sized from `PanelLayout`, never from the view: the
         // hosting view just fills whatever frame the window has.
         hosting.sizingOptions = []
@@ -125,6 +125,8 @@ final class PanelController {
     }
 
     func open() {
+        let interval = AppLatency.begin("Panel open")
+        defer { AppLatency.end("Panel open", interval) }
         guard !isOpen else { return }
         isOpen = true
         store.panelDidOpen()

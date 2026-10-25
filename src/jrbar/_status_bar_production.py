@@ -293,6 +293,7 @@ else:
             watermark = getattr(self, "transcript_watermark", None)
             newest = watermark
             accepted = 0
+            edge = self._event_refresh_edge()
             for record in batch.records:
                 logged_at = getattr(record, "logged_at", None)
                 if logged_at is None or (
@@ -314,7 +315,7 @@ else:
                 self.transcript_watermark = newest
             self.transcript_fallback_signature = batch.signature
             if accepted and getattr(self, "_runtime_started", False):
-                self.schedule_event_refresh()
+                self.schedule_event_refresh(urgent=edge != self._event_refresh_edge())
 
         def _intake_service(self) -> IntakeProbeService:
             service = getattr(self, "_production_intake_service", None)
@@ -774,12 +775,21 @@ else:
         def refreshFromEvent_(self, _sender):
             self.event_refresh_pending = False
             now = time.monotonic()
+            urgent = bool(getattr(self, "_event_refresh_urgent", False))
+            self._event_refresh_urgent = False
+            if urgent:
+                self._production_force_refresh = True
+                trailing = getattr(self, "_trailing_refresh_timer", None)
+                if trailing is not None:
+                    trailing.invalidate()
+                    self._trailing_refresh_timer = None
             last = float(getattr(self, "_last_event_refresh_at", 0.0) or 0.0)
-            if now - last < EVENT_COALESCE_SECONDS:
+            floor = 0.05 if urgent else EVENT_COALESCE_SECONDS
+            if now - last < floor:
                 if getattr(self, "_trailing_refresh_timer", None) is None:
                     self._trailing_refresh_timer = (
                         _legacy.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                            EVENT_COALESCE_SECONDS,
+                            max(0.0, floor - (now - last)),
                             self,
                             "trailingRefreshFire:",
                             None,

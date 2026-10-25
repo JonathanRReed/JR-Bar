@@ -467,7 +467,7 @@ def test_no_source_wired_means_no_answer_routes() -> None:
         create_serve_server(port=0, answers=object())
 
 
-def test_the_cli_wires_answers_only_when_asked(monkeypatch) -> None:
+def test_the_cli_wires_answers_only_when_asked(monkeypatch, capsys) -> None:
     from jrbar.cli import SERVE_ACCESS_TOKEN_ENV, build_jrbar_parser, cmd_serve
 
     parser = build_jrbar_parser()
@@ -476,8 +476,25 @@ def test_the_cli_wires_answers_only_when_asked(monkeypatch) -> None:
     monkeypatch.setenv(SERVE_ACCESS_TOKEN_ENV, TOKEN.decode())
     assert cmd_serve(parser.parse_args(["serve"])) == 0
     assert calls[-1]["answers"] is None
+    monkeypatch.setattr(CoreSocketAnswers, "enabled", lambda self: False)
+    assert cmd_serve(parser.parse_args(["serve", "--allow-answers"])) == 0
+    assert len(calls) == 2
+    assert isinstance(calls[-1]["answers"], CoreSocketAnswers)
+    assert "status is still served" in capsys.readouterr().err
+    monkeypatch.setattr(CoreSocketAnswers, "enabled", lambda self: True)
     assert cmd_serve(parser.parse_args(["serve", "--allow-answers"])) == 0
     assert isinstance(calls[-1]["answers"], CoreSocketAnswers)
+
+    def unavailable(self):
+        raise ServeAnswerRefused("unavailable", "the monitor is not running")
+
+    monkeypatch.setattr(CoreSocketAnswers, "enabled", unavailable)
+    assert cmd_serve(parser.parse_args(["serve", "--allow-answers"])) == 0
+    assert isinstance(calls[-1]["answers"], CoreSocketAnswers)
+    warning = capsys.readouterr().err
+    assert "the monitor is not running" in warning
+    assert "status is still served" in warning
+    assert "consent" not in warning
 
 
 def test_answering_from_serve_is_off_by_default_and_round_trips(tmp_path: Path) -> None:
@@ -493,7 +510,7 @@ def test_answering_from_serve_is_off_by_default_and_round_trips(tmp_path: Path) 
 
 
 def test_a_poll_reads_the_switch_and_the_asks_over_one_connection__and_1_more() -> None:
-    # --- scenario: one connection serves the reads for a second, then a fresh one
+    # --- scenario: consent and asks share a one-second cached read
     opened: list[_Connection] = []
     clock = [100.0]
 
@@ -519,7 +536,9 @@ def test_a_poll_reads_the_switch_and_the_asks_over_one_connection__and_1_more() 
             return self
 
     flaky = CoreSocketAnswers(Path("/x"), connect=lambda _path, **_kw: _Down(), monotonic=lambda: 5.0)
-    assert not flaky.enabled()
+    with pytest.raises(ServeAnswerRefused) as refused:
+        flaky.enabled()
+    assert refused.value.code == "unavailable"
     assert flaky.enabled()
 
 
@@ -562,3 +581,38 @@ def test_a_slot_answer_waits_out_an_ask_that_just_replaced_the_keys__and_2_more(
         standalone.answer({"slot": 5, "decision": "deny"})
     assert refused.value.code == "stale_request"
     assert connection.commands == []
+
+
+def test_consent_revocation_is_seen_when_the_one_second_cache_expires():
+    consent = [True]
+    now = [100.0]
+    class Connection(_Connection):
+        def document(self, kind):
+            if kind == "settings":
+                return {"serve_answer_enabled": consent[0]}
+            return super().document(kind)
+    answers = CoreSocketAnswers(Path("/fixture.sock"), connect=lambda *a, **kw: Connection(),
+                                monotonic=lambda: now[0])
+    assert answers.enabled()
+    consent[0] = False
+    now[0] += READ_CACHE_SECONDS - 0.001
+    assert answers.enabled()
+    now[0] += 0.001
+    assert not answers.enabled()
+
+
+@pytest.mark.parametrize("route,method", [("/asks.json", "GET"), ("/answer?slot=1&decision=approve", "POST")])
+def test_daemon_unreachable_is_not_reported_as_consent_off(route, method):
+    def connect(*_args, **_kwargs):
+        raise ControlError("the JR-Bar monitor is not running", 1)
+
+    answers = CoreSocketAnswers(Path("/fixture.sock"), connect=connect)
+    server, base = _serve(answers, status_access_token=TOKEN)
+    try:
+        status, body = _call(base + route, method=method)
+        assert status == 503
+        assert body["error"]["code"] == "unavailable"
+        assert "serve_answer_enabled" not in body["error"]["message"]
+    finally:
+        server.shutdown()
+        server.server_close()

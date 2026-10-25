@@ -375,8 +375,8 @@ class CoreSocketAnswers:
 
         try:
             settings, _state = self._documents()
-        except ControlError:
-            return False
+        except ControlError as error:
+            raise ServeAnswerRefused("unavailable", str(error)) from None
         document = settings.get("document") if isinstance(settings.get("document"), dict) else settings
         return document.get("serve_answer_enabled") is True
 

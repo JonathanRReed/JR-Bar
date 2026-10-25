@@ -320,7 +320,8 @@ def apply_app_receipt(
             updated.append(event)
             continue
         found = True
-        if _app_terminal(event):
+        delivered = any(receipt.outcome == "delivered" for receipt in event.app_receipts)
+        if delivered or (_app_terminal(event) and outcome != "delivered"):
             updated.append(event)
             continue
         receipt = AppDeliveryReceipt(outcome, reason, recorded_at)
