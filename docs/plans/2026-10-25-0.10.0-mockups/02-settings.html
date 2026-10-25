@@ -1,0 +1,937 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>02 · Settings · JR-Bar 0.10.0 mockups</title>
+<style>
+/* JR-Bar 0.10.0 mockups: shared tokens and native-macOS-26 approximations.
+   Every size and colour a mockup uses comes from here. */
+
+:root {
+  color-scheme: light dark;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, "Helvetica Neue", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Type ramp (pt == CSS px at 1x). Nothing below 11. */
+  --fs-large: 26px;   --lh-large: 32px;
+  --fs-title1: 22px;  --lh-title1: 28px;
+  --fs-title2: 17px;  --lh-title2: 22px;
+  --fs-title3: 15px;  --lh-title3: 20px;
+  --fs-body: 13px;    --lh-body: 18px;
+  --fs-callout: 12px; --lh-callout: 16px;
+  --fs-caption: 11px; --lh-caption: 14px;
+
+  /* Radii */
+  --r-xs: 4px;   /* swatch, keycap */
+  --r-sm: 6px;   /* small control, mark tile */
+  --r-md: 8px;   /* button, field, row highlight */
+  --r-lg: 12px;  /* grouped box, card */
+  --r-xl: 16px;  /* panel, popover */
+  --r-win: 18px; /* window (macOS 26) */
+  --r-pill: 999px;
+
+  /* Spacing (4 pt grid) */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-in-out: cubic-bezier(.45, 0, .25, 1);
+  --d-quick: 100ms;   /* exit, press */
+  --d-enter: 140ms;   /* entrance */
+  --d-change: 160ms;  /* crossfade in place */
+  --d-settle: 250ms;  /* notch / size morph */
+
+  /* Provider accents (ProviderStyle.table) */
+  --p-claude: #D97757; --p-codex: #2B8FFF; --p-gemini: #34C759; --p-antigravity: #ABE17E;
+  --p-cursor: #FFCC00; --p-factory: #E76F32; --p-devin: #5C84B0; --p-opencode: #AF52DE;
+  --p-kiro: #A00848; --p-t3code: #00B8D9; --p-grok: #8E8E93; --p-openclaw: #B23400;
+}
+
+/* ---------- Light ---------- */
+:root, [data-theme="light"] {
+  --label: rgba(0,0,0,.86);
+  --label2: rgba(0,0,0,.56);
+  --label3: rgba(0,0,0,.32);
+  --label4: rgba(0,0,0,.18);
+  --sep: rgba(0,0,0,.10);
+  --sep-strong: rgba(0,0,0,.16);
+  --fill: rgba(0,0,0,.045);
+  --fill2: rgba(0,0,0,.075);
+  --fill3: rgba(0,0,0,.11);
+  --hover: rgba(0,0,0,.05);
+
+  --window: #F3F3F5;
+  --content: #FFFFFF;
+  --group: rgba(255,255,255,.9);
+  --group-edge: rgba(0,0,0,.08);
+  --sidebar: rgba(236,236,240,.72);
+  --glass: rgba(250,250,252,.62);
+  --glass-strong: rgba(250,250,252,.82);
+  --glass-edge: rgba(255,255,255,.75);
+  --glass-rim: rgba(0,0,0,.12);
+  --shadow-win: 0 0 0 .5px rgba(0,0,0,.14), 0 18px 50px rgba(0,0,0,.20), 0 4px 12px rgba(0,0,0,.08);
+  --shadow-pop: 0 0 0 .5px rgba(0,0,0,.12), 0 12px 36px rgba(0,0,0,.18);
+  --control: #FFFFFF;
+  --control-edge: rgba(0,0,0,.14);
+  --thumb: #FFFFFF;
+  --track-off: rgba(0,0,0,.12);
+
+  --accent: #007AFF;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(0,122,255,.12);
+  --live: #30B0C7;      /* the teal status dot */
+  --working: #007AFF;
+  --ask: #FF9500;
+  --done: #28A745;
+  --failed: #E5352B;
+  --stale: rgba(0,0,0,.50);  /* grey + age, never orange */
+  --reset: #5E5CE6;
+
+  --wall: radial-gradient(1200px 700px at 12% -10%, #9ec5ff 0%, transparent 60%),
+          radial-gradient(1000px 800px at 95% 10%, #f7b6d2 0%, transparent 55%),
+          radial-gradient(900px 700px at 50% 110%, #b7f0e0 0%, transparent 60%),
+          linear-gradient(160deg, #dfe8f7, #eadff1);
+  --stage-bg: #E6E7EB;
+  --device: #2B2C30;
+  --device-rim: rgba(255,255,255,.12);
+}
+
+/* ---------- Dark ---------- */
+[data-theme="dark"] {
+  --label: rgba(255,255,255,.90);
+  --label2: rgba(255,255,255,.60);
+  --label3: rgba(255,255,255,.36);
+  --label4: rgba(255,255,255,.20);
+  --sep: rgba(255,255,255,.10);
+  --sep-strong: rgba(255,255,255,.16);
+  --fill: rgba(255,255,255,.06);
+  --fill2: rgba(255,255,255,.10);
+  --fill3: rgba(255,255,255,.15);
+  --hover: rgba(255,255,255,.07);
+
+  --window: #1E1E20;
+  --content: #232325;
+  --group: rgba(255,255,255,.055);
+  --group-edge: rgba(255,255,255,.07);
+  --sidebar: rgba(44,44,48,.66);
+  --glass: rgba(36,36,40,.58);
+  --glass-strong: rgba(36,36,40,.80);
+  --glass-edge: rgba(255,255,255,.14);
+  --glass-rim: rgba(0,0,0,.5);
+  --shadow-win: 0 0 0 .5px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06) inset, 0 20px 60px rgba(0,0,0,.55);
+  --shadow-pop: 0 0 0 .5px rgba(0,0,0,.6), 0 14px 40px rgba(0,0,0,.5);
+  --control: rgba(255,255,255,.10);
+  --control-edge: rgba(255,255,255,.10);
+  --thumb: #F2F2F2;
+  --track-off: rgba(255,255,255,.16);
+
+  --accent: #0A84FF;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(10,132,255,.22);
+  --live: #40C8E0;
+  --working: #0A84FF;
+  --ask: #FF9F0A;
+  --done: #30D158;
+  --failed: #FF453A;
+  --stale: rgba(255,255,255,.52);
+  --reset: #7D7AFF;
+
+  --wall: radial-gradient(1100px 700px at 10% -10%, #1d3b74 0%, transparent 60%),
+          radial-gradient(900px 800px at 95% 0%, #4a1f4f 0%, transparent 55%),
+          radial-gradient(900px 700px at 50% 120%, #0f3b39 0%, transparent 60%),
+          linear-gradient(160deg, #10131c, #160f1b);
+  --stage-bg: #2A2A2D;
+  --device: #0E0E10;
+  --device-rim: rgba(255,255,255,.16);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font: var(--fs-body)/var(--lh-body) var(--font);
+  color: var(--label);
+  -webkit-font-smoothing: antialiased;
+  background: var(--wall);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+button, input, select { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); font-size: var(--fs-callout); }
+
+/* Type styles */
+.t-large { font: 700 var(--fs-large)/var(--lh-large) var(--font-display); letter-spacing: -.01em; }
+.t-title1 { font: 700 var(--fs-title1)/var(--lh-title1) var(--font-display); letter-spacing: -.005em; }
+.t-title2 { font: 600 var(--fs-title2)/var(--lh-title2) var(--font-display); }
+.t-title3 { font: 600 var(--fs-title3)/var(--lh-title3) var(--font); }
+.t-headline { font: 600 var(--fs-body)/var(--lh-body) var(--font); }
+.t-body { font: 400 var(--fs-body)/var(--lh-body) var(--font); }
+.t-callout { font: 400 var(--fs-callout)/var(--lh-callout) var(--font); }
+.t-caption { font: 400 var(--fs-caption)/var(--lh-caption) var(--font); }
+.t-section { font: 600 var(--fs-caption)/var(--lh-caption) var(--font); color: var(--label2); letter-spacing: .01em; }
+.c2 { color: var(--label2); } .c3 { color: var(--label3); }
+
+/* ---------- Mockup chrome (annotation, not product) ---------- */
+.mk-bar {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px; height: 44px;
+  background: rgba(20,20,24,.86); color: #fff;
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  font-size: 12px; border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.mk-bar a { color: #9cc8ff; text-decoration: none; }
+.mk-bar .mk-title { font-weight: 600; font-size: 13px; }
+.mk-bar .mk-sp { flex: 1; }
+.mk-bar button {
+  background: rgba(255,255,255,.12); border: 0; color: #fff; padding: 4px 10px;
+  border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.mk-bar button[aria-pressed="true"] { background: #fff; color: #000; }
+.mk-bar .mk-group { display: flex; gap: 2px; background: rgba(255,255,255,.08); padding: 2px; border-radius: 8px; }
+.mk-bar .mk-group button { background: transparent; }
+.mk-bar .mk-group button[aria-pressed="true"] { background: rgba(255,255,255,.9); color: #000; }
+
+.mk-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; min-height: calc(100vh - 44px); }
+.mk-stage { position: relative; padding: 32px; overflow: auto; }
+.mk-notes {
+  background: rgba(20,20,24,.88); color: rgba(255,255,255,.88);
+  padding: 20px 20px 40px; font-size: 12.5px; line-height: 1.5;
+  border-left: 1px solid rgba(255,255,255,.08); overflow: auto;
+  max-height: calc(100vh - 44px); position: sticky; top: 44px;
+}
+.mk-notes h2 { font-size: 13px; margin: 18px 0 6px; color: #fff; }
+.mk-notes h2:first-child { margin-top: 0; }
+.mk-notes ul, .mk-notes ol { margin: 0; padding-left: 18px; }
+.mk-notes li { margin: 4px 0; }
+.mk-notes code { font-family: var(--mono); font-size: 11.5px; background: rgba(255,255,255,.08); padding: 0 4px; border-radius: 4px; }
+.mk-notes .q li::marker { color: #ffcc66; }
+.mk-notes .fix li::marker { color: #6fe3a8; }
+.mk-caption { font-size: 12px; color: var(--label2); margin: 0 0 10px; font-weight: 500; }
+.mk-row { display: flex; gap: 32px; flex-wrap: wrap; align-items: flex-start; }
+.mk-tag { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 2px 8px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; }
+
+/* ---------- Menu bar ---------- */
+.menubar {
+  height: 28px; display: flex; align-items: center; gap: 18px; padding: 0 14px;
+  font-size: 13px; color: var(--label);
+  background: transparent;
+}
+[data-theme="dark"] .menubar { color: rgba(255,255,255,.92); }
+.menubar .mb-app { font-weight: 700; }
+.menubar .mb-sp { flex: 1; }
+.menubar .mb-item { display: flex; align-items: center; height: 22px; padding: 0 6px; border-radius: 6px; }
+.menubar .mb-item.open { background: var(--fill3); }
+
+/* ---------- Glass / windows ---------- */
+.glass {
+  background: var(--glass);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  box-shadow: var(--shadow-pop), inset 0 0.5px 0 var(--glass-edge);
+}
+.window {
+  background: var(--window);
+  border-radius: var(--r-win);
+  box-shadow: var(--shadow-win);
+  overflow: hidden; position: relative;
+  display: flex; flex-direction: column;
+}
+.titlebar {
+  height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 16px; flex: none;
+}
+.traffic { display: flex; gap: 8px; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.18); }
+.traffic i:nth-child(1) { background: #FF5F57; } .traffic i:nth-child(2) { background: #FEBC2E; } .traffic i:nth-child(3) { background: #28C840; }
+.titlebar .tb-title { font-weight: 600; font-size: 15px; }
+
+.split { display: flex; flex: 1; min-height: 0; }
+.sidebar {
+  width: 220px; flex: none; margin: 8px 0 8px 8px; border-radius: var(--r-lg);
+  background: var(--sidebar);
+  backdrop-filter: blur(30px) saturate(160%); -webkit-backdrop-filter: blur(30px) saturate(160%);
+  box-shadow: 0 0 0 .5px var(--group-edge), inset 0 .5px 0 var(--glass-edge);
+  padding: 44px 10px 10px; display: flex; flex-direction: column; gap: 2px; overflow: auto;
+  position: relative;
+}
+.sidebar .traffic { position: absolute; top: 14px; left: 14px; }
+.sb-search {
+  display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; margin: 0 0 8px;
+  border-radius: var(--r-md); background: var(--fill); color: var(--label3); font-size: var(--fs-body);
+}
+.sb-head { font: 600 var(--fs-caption)/var(--lh-caption) var(--font); color: var(--label3); padding: 10px 8px 4px; }
+.sb-item {
+  display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px;
+  border-radius: var(--r-md); cursor: default; user-select: none; color: var(--label);
+}
+.sb-item:hover { background: var(--hover); }
+.sb-item .sb-badge { margin-left: auto; font-size: var(--fs-caption); color: var(--label2); }
+/* Selection: accent fill, white text, white icon -- readable in both appearances. */
+.sb-item.sel { background: var(--accent); color: var(--accent-ink); }
+.sb-item.sel .sb-badge { color: rgba(255,255,255,.85); }
+.sb-item.sel .ico-tile { box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
+.detail { flex: 1; min-width: 0; overflow: auto; position: relative; }
+
+.ico-tile {
+  width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex: none;
+  color: #fff;
+}
+.ico-tile svg { width: 14px; height: 14px; }
+
+/* ---------- Grouped form (System Settings) ---------- */
+.form { padding: 4px 28px 28px; max-width: 680px; margin: 0 auto; }
+.form-title { display: flex; align-items: center; gap: 10px; padding: 14px 0 16px; }
+.group-label { font: 600 var(--fs-body)/var(--lh-body) var(--font); color: var(--label); margin: 18px 4px 8px; }
+.group-note { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--label2); margin: 6px 4px 0; }
+.group {
+  background: var(--group); border-radius: var(--r-lg);
+  box-shadow: 0 0 0 .5px var(--group-edge);
+}
+.row {
+  display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 12px;
+  position: relative;
+}
+.row + .row::before { content: ""; position: absolute; top: 0; left: 12px; right: 0; height: .5px; background: var(--sep); }
+.row.ind + .row.ind::before { left: 46px; }
+.row-main { flex: 1; min-width: 0; }
+.row-title { font-size: var(--fs-body); }
+.row-sub { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--label2); margin-top: 1px; }
+.row.nav { cursor: default; }
+.row.nav:hover { background: var(--hover); }
+.row:first-child { border-top-left-radius: var(--r-lg); border-top-right-radius: var(--r-lg); }
+.row:last-child { border-bottom-left-radius: var(--r-lg); border-bottom-right-radius: var(--r-lg); }
+.chev { color: var(--label3); width: 8px; flex: none; }
+
+/* ---------- Controls ---------- */
+.switch { position: relative; width: 32px; height: 18px; flex: none; cursor: pointer; display: inline-block; }
+.switch input { appearance: none; -webkit-appearance: none; position: absolute; inset: 0; margin: 0; border-radius: 999px; background: var(--track-off); transition: background var(--d-change) var(--ease-out); cursor: pointer; }
+.switch input:checked { background: var(--accent); }
+.switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--thumb); box-shadow: 0 1px 2px rgba(0,0,0,.25), 0 0 0 .5px rgba(0,0,0,.06); transition: transform var(--d-change) var(--ease-out); }
+.switch input:checked::after { transform: translateX(14px); }
+.switch input:disabled { opacity: .4; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 24px; padding: 0 10px; border-radius: var(--r-md);
+  background: var(--control); border: 0; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 0 0 .5px var(--control-edge), 0 .5px 1px rgba(0,0,0,.08);
+  font-size: var(--fs-body); color: var(--label);
+}
+.btn:active { filter: brightness(.94); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); box-shadow: none; }
+.btn.plain { background: transparent; box-shadow: none; color: var(--accent); padding: 0 4px; }
+.btn.glass { border-radius: 999px; background: var(--fill2); box-shadow: inset 0 .5px 0 var(--glass-edge); height: 28px; padding: 0 12px; }
+.btn.lg { height: 30px; padding: 0 14px; border-radius: 10px; }
+.btn.icon { width: 28px; padding: 0; }
+.btn svg { width: 14px; height: 14px; }
+
+.popup {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px 0 10px;
+  border-radius: var(--r-md); background: var(--control);
+  box-shadow: 0 0 0 .5px var(--control-edge), 0 .5px 1px rgba(0,0,0,.08); font-size: var(--fs-body);
+  white-space: nowrap; cursor: default;
+}
+.popup::after {
+  content: ""; width: 14px; height: 16px; flex: none; border-radius: 4px; background: var(--accent);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat;
+}
+.select { position: relative; display: inline-flex; }
+.select select { appearance: none; -webkit-appearance: none; border: 0; height: 24px; padding: 0 26px 0 10px; border-radius: var(--r-md);
+  background: var(--control); box-shadow: 0 0 0 .5px var(--control-edge), 0 .5px 1px rgba(0,0,0,.08); font-size: var(--fs-body); cursor: pointer; color: var(--label); }
+.select::after { content: ""; position: absolute; right: 5px; top: 4px; width: 14px; height: 16px; border-radius: 4px; background: var(--accent); pointer-events: none;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat; }
+[data-theme="dark"] .select select option { background: #2a2a2d; }
+
+.seg {
+  display: inline-flex; padding: 2px; border-radius: var(--r-md); background: var(--fill2); gap: 0; position: relative;
+}
+.seg button {
+  border: 0; background: transparent; height: 22px; padding: 0 12px; border-radius: 6px; cursor: pointer;
+  font-size: var(--fs-body); color: var(--label); position: relative; z-index: 1;
+}
+.seg button[aria-pressed="true"] { background: var(--control); box-shadow: 0 0 0 .5px var(--control-edge), 0 1px 2px rgba(0,0,0,.12); font-weight: 500; }
+[data-theme="dark"] .seg button[aria-pressed="true"] { background: rgba(255,255,255,.22); }
+
+input[type=range].slider { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; width: 160px; }
+input[type=range].slider::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: linear-gradient(to right, var(--accent) var(--v, 50%), var(--fill3) var(--v, 50%)); }
+input[type=range].slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -7px; border-radius: 50%; background: var(--thumb); box-shadow: 0 0 0 .5px rgba(0,0,0,.18), 0 1px 3px rgba(0,0,0,.25); }
+
+.check { width: 14px; height: 14px; border-radius: 4px; background: var(--control); box-shadow: 0 0 0 .5px var(--control-edge); display: inline-grid; place-items: center; }
+.check.on { background: var(--accent); box-shadow: none; }
+
+.kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: var(--r-xs); background: var(--fill2); color: var(--label2);
+  font: 500 var(--fs-caption)/1 var(--font); box-shadow: inset 0 -.5px 0 var(--sep-strong);
+}
+.recorder { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 8px; border-radius: var(--r-md); background: var(--fill); min-width: 96px; justify-content: center; color: var(--label); font-size: var(--fs-body); }
+.recorder.empty { color: var(--label3); }
+
+.badge { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 7px; border-radius: 999px; font-size: var(--fs-caption); font-weight: 500; background: var(--fill2); color: var(--label2); }
+.badge.accent { background: var(--accent-soft); color: var(--accent); }
+.badge.good { background: color-mix(in srgb, var(--done) 16%, transparent); color: var(--done); }
+
+/* Provider mark tile (the app draws the real mark; mockups use a monogram). */
+.mark {
+  width: 20px; height: 20px; border-radius: 6px; flex: none; display: inline-grid; place-items: center;
+  font: 700 11px/1 var(--font-display); color: #fff; background: var(--pc, #8E8E93);
+  box-shadow: inset 0 0 0 .5px rgba(0,0,0,.12);
+}
+.mark.sm { width: 16px; height: 16px; border-radius: 5px; font-size: 11px; }
+.mark.lg { width: 28px; height: 28px; border-radius: 8px; font-size: 14px; }
+.mark.xl { width: 40px; height: 40px; border-radius: 11px; font-size: 19px; }
+.mark.dim { background: var(--fill3); color: var(--label2) !important; box-shadow: inset 0 0 0 .5px var(--sep); }
+.mark[data-p="cursor"], .mark[data-p="antigravity"] { color: rgba(0,0,0,.78); }
+
+/* State dot */
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--dc, var(--label3)); display: inline-block; }
+.dot.working { --dc: var(--working); animation: breathe 1.6s var(--ease-in-out) infinite; }
+.dot.ask { --dc: var(--ask); animation: breathe 1s var(--ease-in-out) infinite; }
+.dot.done { --dc: var(--done); }
+.dot.failed { --dc: var(--failed); }
+.dot.stale { --dc: var(--label3); }
+.dot.live { --dc: var(--live); }
+@keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* The one gauge: a continuous capsule bar with its number beside it. */
+.gauge { position: relative; height: 4px; border-radius: 4px; background: var(--fill3); overflow: hidden; }
+.gauge > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--gc, var(--label)); width: var(--v, 0%); transition: width var(--d-change) var(--ease-out); }
+.gauge.stale > i { background: var(--label3); }
+.gauge .pace { position: absolute; top: -2px; bottom: -2px; width: 1.5px; background: var(--label2); left: var(--pace, 50%); border-radius: 1px; }
+
+.hairline { height: .5px; background: var(--sep); }
+.sym { width: 14px; height: 14px; flex: none; display: inline-block; vertical-align: -2px; }
+.sym-lg { width: 18px; height: 18px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0s !important; transition-duration: 80ms !important; }
+}
+
+</style>
+<style>
+.win-settings { width: 1000px; height: 720px; margin: 0 auto; }
+.win-settings .split { height: 100%; }
+.detail-bar { position: sticky; top: 0; z-index: 5; height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 20px;
+  background: color-mix(in srgb, var(--window) 82%, transparent); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+.detail-bar .navs { display: flex; gap: 2px; }
+.detail-bar .navs button { width: 28px; height: 28px; border-radius: 999px; border: 0; background: var(--fill); color: var(--label2); display: grid; place-items: center; }
+.detail-bar .navs button:disabled { color: var(--label4); }
+.detail-bar .t-title3 { margin-left: 4px; }
+.detail-bar .crumb { color: var(--label2); font-weight: 400; }
+
+.page-hero { display: flex; gap: 14px; align-items: center; padding: 6px 4px 6px; }
+.page-hero .ico-tile { width: 40px; height: 40px; border-radius: 10px; }
+.page-hero .ico-tile svg { width: 22px; height: 22px; }
+.page-hero p { margin: 2px 0 0; color: var(--label2); font-size: var(--fs-callout); line-height: var(--lh-callout); }
+
+/* Providers table */
+.pt-head, .pt-row { display: grid; grid-template-columns: 16px 24px minmax(0,1fr) 56px 64px 52px 14px; align-items: center; column-gap: 10px; }
+.pt-head { padding: 0 12px 6px; font-size: var(--fs-caption); color: var(--label2); font-weight: 500; }
+.pt-head span:nth-child(n+4) { text-align: center; }
+.pt-row { padding: 8px 12px; min-height: 48px; position: relative; }
+.pt-row + .pt-row::before { content: ""; position: absolute; top: 0; left: 62px; right: 0; height: .5px; background: var(--sep); }
+.pt-row .grip { color: var(--label3); cursor: grab; }
+.pt-row .cell { display: grid; place-items: center; }
+.pt-row .eye { width: 30px; height: 24px; border: 0; background: transparent; color: var(--accent); border-radius: var(--r-md); display: grid; place-items: center; cursor: pointer; }
+.pt-row .eye.off { color: var(--label3); }
+.pt-row .eye:disabled { color: var(--label4); cursor: default; }
+.pt-row:hover { background: var(--hover); }
+.pt-row.drop-before::after { content: ""; position: absolute; left: 10px; right: 10px; top: -1px; height: 2px; background: var(--accent); border-radius: 2px; }
+.pt-row.dragging { opacity: .45; }
+.p-status { font-size: var(--fs-caption); color: var(--label2); display: flex; align-items: center; gap: 5px; }
+.p-status .dot { width: 6px; height: 6px; }
+.pt-row.off .mark { filter: saturate(0) opacity(.5); }
+.pt-row.off .row-title { color: var(--label2); }
+
+/* Devices */
+.dev-card { padding: 0; }
+.dev-head { display: flex; gap: 14px; align-items: center; padding: 14px; }
+.dev-art { width: 96px; height: 40px; border-radius: 9px; background: var(--device); box-shadow: 0 0 0 1px var(--device-rim); display: flex; align-items: center; justify-content: space-evenly; padding: 0 6px; flex: none; }
+.dev-art i { width: 7px; height: 7px; border-radius: 2px; background: var(--dc, #2d2d30); box-shadow: 0 0 6px var(--dc, transparent); }
+.dev-art.dot-art { width: 40px; justify-content: center; }
+.dev-art.dot-art i { width: 12px; height: 12px; border-radius: 50%; }
+.dev-art.bar-art { background: linear-gradient(#cfd6e6, #a9b4cc); }
+[data-theme="dark"] .dev-art.bar-art { background: linear-gradient(#2a3348, #1a2030); }
+.dev-art.bar-art::before { content: ""; width: 86px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, #D97757, #00B8D9, #2B8FFF); align-self: flex-start; margin-top: 4px; }
+.dev-head .row-main .t-headline { font-size: var(--fs-title3); }
+.dev-off { opacity: .45; pointer-events: none; }
+.banner { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-radius: var(--r-lg); background: var(--fill); box-shadow: 0 0 0 .5px var(--group-edge); margin-bottom: 12px; }
+.banner .row-main .t-headline { font-weight: 600; }
+.studio-link { display: flex; gap: 12px; align-items: center; padding: 12px; }
+.val { min-width: 36px; text-align: right; color: var(--label2); font-variant-numeric: tabular-nums; }
+
+/* Utilities & Toys */
+.toys { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.toy { border-radius: var(--r-lg); background: var(--group); box-shadow: 0 0 0 .5px var(--group-edge); overflow: hidden; }
+.toy-art { height: 92px; position: relative; overflow: hidden; }
+.toy-body { display: flex; align-items: center; gap: 10px; padding: 10px 12px 12px; }
+.toy-body .row-main .t-headline { margin-bottom: 1px; }
+.art-confetti { background: linear-gradient(135deg, #2b2f5a, #5b2c6f); }
+.art-confetti i { position: absolute; width: 6px; height: 10px; border-radius: 2px; }
+.art-buddy { background: linear-gradient(#10131c, #232838); }
+.art-buddy .notch { position: absolute; left: 50%; top: 0; width: 120px; height: 22px; margin-left: -60px; background: #000; border-radius: 0 0 12px 12px; }
+.art-buddy .buddy { position: absolute; top: 22px; left: 58%; width: 18px; height: 16px; border-radius: 8px 8px 4px 4px; background: #ABE17E; animation: stroll 4s var(--ease-in-out) infinite alternate; }
+.art-buddy .buddy::before, .art-buddy .buddy::after { content: ""; position: absolute; top: 5px; width: 3px; height: 3px; border-radius: 50%; background: #10131c; }
+.art-buddy .buddy::before { left: 4px; } .art-buddy .buddy::after { right: 4px; }
+@keyframes stroll { from { transform: translateX(-60px); } to { transform: translateX(20px); } }
+.art-aqua { background: linear-gradient(#1b6fa8, #0d3a63); }
+.art-aqua .fish { position: absolute; width: 22px; height: 11px; border-radius: 50%; animation: swim 6s linear infinite; }
+.art-aqua .fish::after { content: ""; position: absolute; right: -7px; top: 1px; border: 4.5px solid transparent; border-right: 8px solid; border-right-color: inherit; }
+@keyframes swim { from { transform: translateX(-40px); } to { transform: translateX(380px); } }
+.art-fold { background: linear-gradient(135deg, #f6d365, #fda085); }
+.art-fold .sheet { position: absolute; left: 30%; top: 16px; width: 40%; height: 60px; background: rgba(255,255,255,.85); clip-path: polygon(0 0, 78% 0, 100% 28%, 100% 100%, 0 100%); border-radius: 4px; }
+.art-fold .sheet::after { content: ""; position: absolute; right: 0; top: 0; width: 22%; height: 28%; background: rgba(0,0,0,.18); clip-path: polygon(0 0, 100% 100%, 0 100%); }
+.placeholder { padding: 40px; text-align: center; color: var(--label2); }
+.placeholder ul { text-align: left; display: inline-block; margin-top: 12px; }
+.recorder-row .recorder { min-width: 110px; }
+.tag-fixed { font-size: var(--fs-caption); color: var(--label3); }
+</style>
+</head>
+<body>
+<div class="mk-layout">
+  <main class="mk-stage">
+    <div class="window win-settings">
+      <div class="split">
+        <nav class="sidebar" id="sb">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <div class="sb-search">${ICON.search}Search</div>
+        </nav>
+        <section class="detail" id="detail"></section>
+      </div>
+    </div>
+  </main>
+  <aside class="mk-notes">
+    <h2>Proposed page list</h2>
+    <ol>
+      <li><b>General</b>: login, menu bar icon, panel, updates, monitor</li>
+      <li><b>Providers</b>: the one list (Track, Menu bar, Panel, order), each with its own sub-page</li>
+      <li><b>Alerts</b>: banners, sounds and Focus, arranged by event</li>
+      <li><b>Shortcuts</b></li>
+      <li><b>Devices</b>: hardware only</li>
+      <li><b>Notch &amp; Shelf</b></li>
+      <li><b>Utilities &amp; Toys</b></li>
+      <li><b>Remote</b>: Stream Deck and phone</li>
+      <li><b>Privacy</b>: every request that leaves the Mac, in one place, all off until turned on</li>
+      <li><b>Advanced</b>: links, diagnostics, import and export</li>
+      <li>Sidebar footer: <b>Studio ↗</b>. Every light setting lives there.</li>
+    </ol>
+    <h2>Key choices</h2>
+    <ul>
+      <li>This uses the macOS 26 System Settings pattern: a floating glass sidebar, a toolbar title with back and forward buttons, grouped inset forms and sub-pages (try Providers › Claude). Folds inside folds are gone.</li>
+      <li>A selected sidebar row is an accent fill with white text and a white-rimmed icon. It reads clearly in both appearances.</li>
+      <li>Providers is a single table with logos and Track, Menu bar and Panel columns. Drag a row to reorder. Turning off Track greys out the other two columns, because nothing is collected. Providers that are not installed stay in their own group at the bottom.</li>
+      <li>Devices shows one card per device. A missing device collapses to one line. A stopped monitor shows one banner at the top, not a note on every row (try the toggle above).</li>
+      <li>Every utility row has one switch, and clicking the row opens its options. Toys get their own section with live illustrations.</li>
+    </ul>
+    <h2>Audit findings fixed</h2>
+    <ul class="fix">
+      <li>Sidebar selection unreadable in dark mode</li>
+      <li>Providers chosen in three places with checkboxes and arrows</li>
+      <li>Devices about 2,600 px tall with folds inside folds. It now fits on one screen.</li>
+      <li>"Monitor not connected" repeated on every row</li>
+      <li>Utility rows with two controls</li>
+      <li>Blend mode set in three places. It now lives only in Studio › Mix.</li>
+    </ul>
+    <h2>Open questions</h2>
+    <ul class="q">
+      <li>Should Notch &amp; Shelf be its own page, or a sub-page of Utilities?</li>
+      <li>Should Privacy be a page, or a group at the top of Advanced?</li>
+      <li>Should Track off on a provider also remove its hooks, or only stop collection?</li>
+      <li>Should the sidebar Studio entry open the Studio window (as shown) or embed Studio as a page?</li>
+    </ul>
+  </aside>
+</div>
+
+<script>
+/* JR-Bar 0.10.0 mockups: shared helpers. */
+(function () {
+  const root = document.documentElement;
+  const stored = (location.hash.match(/(light|dark)/) || [])[1];
+  const prefers = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  root.dataset.theme = stored || prefers;
+
+  const S = (d, extra = "") =>
+    `<svg class="sym ${extra}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const F = (d, extra = "") =>
+    `<svg class="sym ${extra}" viewBox="0 0 16 16" fill="currentColor">${d}</svg>`;
+
+  window.ICON = {
+    gear: S('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7L3.6 3.6"/>'),
+    person: S('<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6"/>'),
+    stack: S('<rect x="2.5" y="2.5" width="11" height="4" rx="1.2"/><rect x="2.5" y="9.5" width="11" height="4" rx="1.2"/>'),
+    bell: S('<path d="M4 11V7.2a4 4 0 0 1 8 0V11l1 1.2H3z"/><path d="M6.6 13.8a1.5 1.5 0 0 0 2.8 0"/>'),
+    command: S('<path d="M6 6V4.2A1.7 1.7 0 1 0 4.2 6H11.8A1.7 1.7 0 1 0 10 4.2V11.8A1.7 1.7 0 1 0 11.8 10H4.2A1.7 1.7 0 1 0 6 11.8z"/>'),
+    display: S('<rect x="1.8" y="2.5" width="12.4" height="8.5" rx="1.4"/><path d="M5.5 13.5h5"/>'),
+    strip: S('<rect x="1.5" y="6" width="13" height="4" rx="2"/><circle cx="4.5" cy="8" r=".6" fill="currentColor"/><circle cx="8" cy="8" r=".6" fill="currentColor"/><circle cx="11.5" cy="8" r=".6" fill="currentColor"/>'),
+    notch: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="M5.8 2.5v1.3a1 1 0 0 0 1 1h2.4a1 1 0 0 0 1-1V2.5"/>'),
+    wrench: S('<path d="M10.8 2.2a3 3 0 0 0-3.4 4L2.6 11a1.3 1.3 0 0 0 1.8 1.8l4.8-4.8a3 3 0 0 0 4-3.4l-1.8 1.8-1.7-.4-.4-1.7z"/>'),
+    party: S('<path d="M2.5 13.5l3-8 5 5z"/><path d="M9 2v1.5M12.5 3.5l-1 1M14 7h-1.5M10 6l1.5-1.5"/>'),
+    antenna: S('<circle cx="8" cy="7" r="1.3"/><path d="M8 8.3V14M5 4a4.2 4.2 0 0 0 0 6M11 4a4.2 4.2 0 0 1 0 6M3 2.2a7 7 0 0 0 0 9.6M13 2.2a7 7 0 0 1 0 9.6"/>'),
+    hand: S('<path d="M8 1.8l5 2v3.6c0 3.2-2.1 5.6-5 6.8-2.9-1.2-5-3.6-5-6.8V3.8z"/>'),
+    sliders: S('<path d="M2.5 4.5h7M12.5 4.5h1M2.5 11.5h1M6.5 11.5h7"/><circle cx="11" cy="4.5" r="1.5"/><circle cx="5" cy="11.5" r="1.5"/>'),
+    chevR: S('<path d="M6 3.5L10.5 8 6 12.5"/>'),
+    chevD: S('<path d="M3.5 6L8 10.5 12.5 6"/>'),
+    chevL: S('<path d="M10 3.5L5.5 8l4.5 4.5"/>'),
+    eye: S('<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>'),
+    eyeOff: S('<path d="M2.5 2.5l11 11M6.4 4a6.6 6.6 0 0 1 1.6-.5c4.1 0 6.5 4.5 6.5 4.5a11 11 0 0 1-1.9 2.4M10 11.9a5.6 5.6 0 0 1-2 .6C3.9 12.5 1.5 8 1.5 8a11.3 11.3 0 0 1 2.4-2.9"/>'),
+    grip: F('<circle cx="6" cy="4" r="1.1"/><circle cx="10" cy="4" r="1.1"/><circle cx="6" cy="8" r="1.1"/><circle cx="10" cy="8" r="1.1"/><circle cx="6" cy="12" r="1.1"/><circle cx="10" cy="12" r="1.1"/>'),
+    plus: S('<path d="M8 3v10M3 8h10"/>'),
+    info: S('<circle cx="8" cy="8" r="6.2"/><path d="M8 7.2V11"/><circle cx="8" cy="4.9" r=".5" fill="currentColor"/>'),
+    warn: S('<path d="M8 2.2l6.2 11H1.8z"/><path d="M8 6.5v3"/><circle cx="8" cy="11.3" r=".5" fill="currentColor"/>'),
+    check: S('<path d="M3.5 8.5l3 3 6-7"/>'),
+    xmark: S('<path d="M4 4l8 8M12 4l-8 8"/>'),
+    arrowUR: S('<path d="M5 11l6-6M6 5h5v5"/>'),
+    chart: S('<path d="M2.5 13.5h11M4.5 11V8M8 11V4.5M11.5 11V6.5"/>'),
+    clock: S('<circle cx="8" cy="8" r="6.2"/><path d="M8 4.5V8l2.3 1.5"/>'),
+    play: F('<path d="M5 3.2v9.6L12.6 8z"/>'),
+    pause: F('<rect x="4" y="3.2" width="2.6" height="9.6" rx=".8"/><rect x="9.4" y="3.2" width="2.6" height="9.6" rx=".8"/>'),
+    refresh: S('<path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3"/>'),
+    palette: S('<path d="M8 1.8a6.2 6.2 0 1 0 0 12.4c1 0 1.3-.8.9-1.6-.5-1 .1-1.9 1.2-1.9h1.6a2.5 2.5 0 0 0 2.5-2.5C14.2 4.6 11.5 1.8 8 1.8z"/><circle cx="5" cy="7" r=".8" fill="currentColor"/><circle cx="7.6" cy="4.8" r=".8" fill="currentColor"/><circle cx="10.6" cy="5.6" r=".8" fill="currentColor"/>'),
+    sparkles: S('<path d="M7 2l1.2 3.3L11.5 6.5 8.2 7.7 7 11 5.8 7.7 2.5 6.5l3.3-1.2zM12 9.5l.6 1.6 1.6.6-1.6.6-.6 1.7-.6-1.7-1.6-.6 1.6-.6z"/>'),
+    terminal: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="M4.5 6.5L6.5 8l-2 1.5M8 10h3"/>'),
+    key: S('<circle cx="5" cy="10" r="2.6"/><path d="M6.9 8.1L13 2M10.5 4.5l1.5 1.5"/>'),
+    moon: S('<path d="M13 9.5A5.5 5.5 0 1 1 6.5 3a4.5 4.5 0 0 0 6.5 6.5z"/>'),
+    cup: S('<path d="M2.5 5.5h9v4a3.5 3.5 0 0 1-3.5 3.5h-2a3.5 3.5 0 0 1-3.5-3.5zM11.5 6.5h1a1.6 1.6 0 0 1 0 3.2h-1"/>'),
+    dock: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><rect x="4" y="10" width="8" height="2" rx=".8"/>'),
+    menubar: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="M1.8 5.5h12.4"/>'),
+    fish: S('<path d="M2 8c2-3 6.5-4 9.5 0-3 4-7.5 3-9.5 0zM11.5 8L14 5.5v5z"/><circle cx="5" cy="7.4" r=".5" fill="currentColor"/>'),
+    ghost: S('<path d="M3.5 14V7a4.5 4.5 0 0 1 9 0v7l-1.5-1-1.5 1-1.5-1-1.5 1-1.5-1z"/><circle cx="6.3" cy="7" r=".6" fill="currentColor"/><circle cx="9.7" cy="7" r=".6" fill="currentColor"/>'),
+    fold: S('<path d="M2.5 3h11v10h-11zM2.5 3l5.5 5 5.5-5"/>'),
+    calendar: S('<rect x="2" y="3" width="12" height="11" rx="1.6"/><path d="M2 6.5h12M5 1.8v2.4M11 1.8v2.4"/>'),
+    timer: S('<circle cx="8" cy="9" r="5"/><path d="M8 9V6.5M6.5 1.8h3"/>'),
+    doc: S('<path d="M4 1.8h5l3 3v9.4H4z"/><path d="M9 1.8v3h3"/>'),
+    list: S('<path d="M5.5 4.5h8M5.5 8h8M5.5 11.5h8"/><circle cx="2.8" cy="4.5" r=".7" fill="currentColor"/><circle cx="2.8" cy="8" r=".7" fill="currentColor"/><circle cx="2.8" cy="11.5" r=".7" fill="currentColor"/>'),
+    search: S('<circle cx="7" cy="7" r="4.3"/><path d="M10.2 10.2l3.3 3.3"/>'),
+    deck: S('<rect x="2" y="3" width="12" height="10" rx="1.6"/><path d="M5 6h1M7.5 6h1M10 6h1M5 9h1M7.5 9h1M10 9h1"/>'),
+    lightbulb: S('<path d="M5.5 10.5a4.5 4.5 0 1 1 5 0V12h-5z"/><path d="M6 14h4"/>'),
+    ellipsis: F('<circle cx="3.5" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.5" cy="8" r="1.2"/>'),
+    trash: S('<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 9h5.8l.6-9"/>'),
+  };
+
+  window.PROVIDERS = {
+    claude: { name: "Claude", c: "#D97757", l: "C" },
+    codex: { name: "Codex", c: "#2B8FFF", l: "X" },
+    gemini: { name: "Gemini", c: "#34C759", l: "G" },
+    antigravity: { name: "Antigravity", c: "#ABE17E", l: "A" },
+    cursor: { name: "Cursor", c: "#FFCC00", l: "Cu" },
+    factory: { name: "Factory", c: "#E76F32", l: "F" },
+    devin: { name: "Devin", c: "#5C84B0", l: "D" },
+    opencode: { name: "OpenCode", c: "#AF52DE", l: "O" },
+    kiro: { name: "Kiro", c: "#A00848", l: "K" },
+    t3code: { name: "T3 Code", c: "#00B8D9", l: "T3" },
+  };
+  window.mark = (p, size = "", dim = false) => {
+    const d = PROVIDERS[p];
+    return `<span class="mark ${size} ${dim ? "dim" : ""}" data-p="${p}" style="--pc:${d.c}" aria-label="${d.name}">${d.l}</span>`;
+  };
+
+  /* The owner's menu bar meter icon, kept as it is: a chevron, the teal
+     status dot, then one small vertical bar per provider (first orange). */
+  window.menuBarIcon = (bars, opts = {}) => {
+    const dark = root.dataset.theme === "dark";
+    const ink = dark ? "rgba(255,255,255,.92)" : "rgba(0,0,0,.82)";
+    const trackInk = dark ? "rgba(255,255,255,.28)" : "rgba(0,0,0,.22)";
+    const w = 30 + bars.length * 6;
+    let s = `<svg width="${w}" height="18" viewBox="0 0 ${w} 18" aria-label="JR-Bar">`;
+    s += `<path d="M7 5L3.5 9 7 13" stroke="${ink}" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+    s += `<circle cx="15" cy="9" r="3.4" fill="${opts.dot || "var(--live)"}"/>`;
+    bars.forEach((b, i) => {
+      const x = 23 + i * 6, h = 12, fill = Math.max(1.5, h * b.v);
+      s += `<rect x="${x}" y="3" width="3.2" height="${h}" rx="1.4" fill="${trackInk}"/>`;
+      s += `<rect x="${x}" y="${3 + h - fill}" width="3.2" height="${fill}" rx="1.4" fill="${b.c || ink}"/>`;
+    });
+    return s + "</svg>";
+  };
+
+  /* Mockup chrome */
+  window.mkBar = (title, extra = "") => {
+    const bar = document.createElement("header");
+    bar.className = "mk-bar";
+    bar.innerHTML = `<a href="index.html">‹ All surfaces</a><span class="mk-title">${title}</span>${extra}<span class="mk-sp"></span>
+      <span class="c-note" style="opacity:.6">T toggles appearance</span>
+      <div class="mk-group" role="group" aria-label="Appearance">
+        <button data-theme-btn="light">Light</button><button data-theme-btn="dark">Dark</button>
+      </div>`;
+    document.body.prepend(bar);
+    const sync = () => bar.querySelectorAll("[data-theme-btn]").forEach(b =>
+      b.setAttribute("aria-pressed", String(b.dataset.themeBtn === root.dataset.theme)));
+    bar.addEventListener("click", e => {
+      const t = e.target.closest("[data-theme-btn]");
+      if (t) setTheme(t.dataset.themeBtn);
+    });
+    window.addEventListener("keydown", e => {
+      if (e.key.toLowerCase() === "t" && !e.metaKey && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
+        setTheme(root.dataset.theme === "dark" ? "light" : "dark");
+      }
+    });
+    function setTheme(t) {
+      root.dataset.theme = t; history.replaceState(null, "", "#" + t); sync();
+      window.dispatchEvent(new CustomEvent("themechange"));
+    }
+    sync();
+    return bar;
+  };
+
+  /* Deterministic random for synthetic data. */
+  window.rng = seed => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+
+  window.$ = (s, el = document) => el.querySelector(s);
+  window.$$ = (s, el = document) => [...el.querySelectorAll(s)];
+})();
+
+</script>
+<script>
+mkBar("02 · Settings", `<button id="monBtn" aria-pressed="false">Simulate: monitor stopped</button>`);
+
+const PAGES = [
+  { id: "general", t: "General", i: "gear", c: "#8E8E93" },
+  { id: "providers", t: "Providers", i: "person", c: "#0A84FF" },
+  { id: "alerts", t: "Alerts", i: "bell", c: "#FF3B30" },
+  { id: "shortcuts", t: "Shortcuts", i: "command", c: "#636366" },
+  { head: "Hardware" },
+  { id: "devices", t: "Devices", i: "strip", c: "#FF9500" },
+  { id: "notch", t: "Notch & Shelf", i: "notch", c: "#1C1C1E" },
+  { head: "More" },
+  { id: "utilities", t: "Utilities & Toys", i: "wrench", c: "#5E5CE6" },
+  { id: "remote", t: "Remote", i: "antenna", c: "#30B0C7" },
+  { id: "privacy", t: "Privacy", i: "hand", c: "#34C759" },
+  { id: "advanced", t: "Advanced", i: "sliders", c: "#8E8E93" },
+];
+let cur = (location.hash.match(/#(\w+)/) || [])[1];
+if (!PAGES.some(p => p.id === cur)) cur = "providers";
+let sub = null, monitorDown = false;
+
+const providers = [
+  { p: "claude", st: "live", s: "Live · read 1 m ago", track: true, mb: true, panel: true },
+  { p: "codex", st: "failed", s: "Signed out of Codex", track: true, mb: true, panel: true },
+  { p: "gemini", st: "live", s: "Live · 5 h window reset at 1:00 PM", track: true, mb: true, panel: true },
+  { p: "antigravity", st: "stale", s: "Open Antigravity to refresh · 3 h ago", track: true, mb: false, panel: true },
+  { p: "t3code", st: "live", s: "Token history only, no quota source", track: true, mb: false, panel: true },
+  { p: "factory", st: "live", s: "Sessions only, no quota source", track: true, mb: false, panel: false },
+  { p: "cursor", st: "off", s: "Not tracked", track: false, mb: false, panel: false },
+];
+const absent = [
+  { p: "kiro", s: "Used before · not found on this Mac", hide: true },
+  { p: "devin", s: "Not installed" },
+  { p: "opencode", s: "Not installed" },
+];
+
+function sidebar() {
+  const sb = $("#sb");
+  sb.innerHTML = `<div class="traffic"><i></i><i></i><i></i></div><div class="sb-search">${ICON.search}<span>Search</span></div>` +
+    PAGES.map(p => p.head ? `<div class="sb-head">${p.head}</div>` :
+      `<div class="sb-item ${p.id === cur ? "sel" : ""}" data-page="${p.id}"><span class="ico-tile" style="background:${p.c}">${ICON[p.i]}</span>${p.t}${p.id === "providers" ? `<span class="sb-badge" title="One provider needs attention"><span class="dot failed" style="width:6px;height:6px"></span></span>` : ""}</div>`).join("") +
+    `<div style="flex:1"></div><div class="sb-item" data-studio><span class="ico-tile" style="background:linear-gradient(135deg,#FF2D55,#AF52DE,#0A84FF)">${ICON.palette}</span>Studio<span class="sb-badge">${ICON.arrowUR}</span></div>`;
+}
+
+const sw = (on, dis) => `<label class="switch"><input type="checkbox" ${on ? "checked" : ""} ${dis ? "disabled" : ""}></label>`;
+const row = (title, subt, ctrl, cls = "") => `<div class="row ${cls}"><div class="row-main"><div class="row-title">${title}</div>${subt ? `<div class="row-sub">${subt}</div>` : ""}</div>${ctrl || ""}</div>`;
+const nav = (title, subt, val = "") => `<div class="row nav"><div class="row-main"><div class="row-title">${title}</div>${subt ? `<div class="row-sub">${subt}</div>` : ""}</div>${val ? `<span class="c2">${val}</span>` : ""}<span class="chev">${ICON.chevR}</span></div>`;
+const slider = (v, unit = "%") => `<input type="range" class="slider" value="${v}" style="--v:${v}%" oninput="this.style.setProperty('--v',this.value+'%');this.nextElementSibling.textContent=this.value+'${unit}'"><span class="val">${v}${unit}</span>`;
+const seg = (opts, sel) => `<div class="seg">${opts.map((o, i) => `<button aria-pressed="${i === sel}">${o}</button>`).join("")}</div>`;
+const hero = (p, desc) => `<div class="page-hero"><span class="ico-tile" style="background:${p.c}">${ICON[p.i]}</span><div><div class="t-title2">${p.t}</div><p>${desc}</p></div></div>`;
+
+const RENDER = {
+  general: p => `${hero(p, "How JR-Bar starts, where it shows and how it stays up to date.")}
+    <div class="group-label">JR-Bar</div><div class="group">
+      ${row("Open at login", "", sw(true))}
+      ${row("Menu bar icon", "One item. The bars follow the provider order and the Menu bar column in Providers.", `<span style="display:flex;align-items:center;gap:10px"><span style="padding:3px 6px;border-radius:6px;background:var(--fill)">${menuBarIcon([{ v: .42, c: "#D97757" }, { v: .23, c: "#2B8FFF" }, { v: .1, c: "#34C759" }])}</span><span class="popup">Meters</span></span>`)}
+      ${row("Panel opens with", "Or click the icon.", `<span class="recorder">⌥ Space</span>`)}
+      ${row("Show agents that finished", "They leave the panel after this long.", `<span class="popup">5 minutes</span>`)}
+    </div>
+    <div class="group-label">Updates</div><div class="group">
+      ${row("Check for updates automatically", "", sw(true))}
+      ${row("Version 0.10.0", "Build 3412 · you're up to date", `<button class="btn">Check Now</button>`)}
+      ${nav("What's New in 0.10.0")}
+    </div>
+    <div class="group-label">Monitor</div><div class="group">
+      ${row(`<span style="display:flex;gap:8px;align-items:center"><span class="dot ${monitorDown ? "failed" : "live"}"></span>${monitorDown ? "Not running" : "Running"}</span>`, monitorDown ? "Device, provider and light settings wait for it." : "jrbar-core · 38 MB · under 1% CPU · up 3 days", `<button class="btn">${monitorDown ? "Start" : "Restart"}</button>`)}
+      ${nav("Run Setup Again", "Agents, devices and permissions, step by step.")}
+    </div>`,
+
+  providers: p => sub ? providerSub(sub) : `${hero(p, "One list for the whole app. The order here is the order in the menu bar, the panel and the Usage Center.")}
+    <div class="group-label" style="display:flex;justify-content:space-between;align-items:baseline">On this Mac<span class="t-caption c2" style="font-weight:400">Drag to reorder</span></div>
+    <div class="pt-head"><span></span><span></span><span></span><span>Track</span><span>Menu bar</span><span>Panel</span><span></span></div>
+    <div class="group" id="ptList">${providers.map(provRow).join("")}</div>
+    <div class="group-note">Track off stops all collection for that provider: no jobs, no reads, no history. Menu bar and Panel only choose where a tracked provider shows.</div>
+    <div class="group-label">Not on this Mac</div>
+    <div class="group">${absent.map(a => `<div class="row">${mark(a.p, "", true)}<div class="row-main"><div class="row-title">${PROVIDERS[a.p].name}</div><div class="row-sub">${a.s}</div></div>${a.hide ? `<button class="btn">Hide</button>` : `<button class="btn plain">How to Install</button>`}</div>`).join("")}</div>`,
+
+  alerts: p => `${hero(p, "What happens when an agent needs you, finishes or fails. Lights are set in Studio.")}
+    <div class="group-label">An agent asks</div><div class="group">
+      ${row("Banner", "Shows the question and answers with ↩ and ⌘⌫.", sw(true))}
+      ${row("Notch", "Opens the notch with the ask, even over a notice.", sw(true))}
+      ${row("Sound", "", `<span class="popup">Glass</span>`)}
+      ${row("Remind me after", "If no one has answered.", `<span class="popup">2 minutes</span>`)}
+    </div>
+    <div class="group-label">An agent finishes</div><div class="group">
+      ${row("Banner", "", sw(false))}
+      ${row("Notch notice", "", sw(true))}
+      ${row("Sound", "", `<span class="popup">Hero</span>`)}
+      ${row("Only when I'm away from its window", "", sw(true))}
+    </div>
+    <div class="group-label">An agent fails</div><div class="group">
+      ${row("Banner", "", sw(true))}
+      ${row("Sound", "", `<span class="popup">Basso</span>`)}
+    </div>
+    <div class="group-label">Sound</div><div class="group">
+      ${row("Volume", "Apart from the Mac's own volume.", `<span style="display:flex;align-items:center;gap:8px">${slider(70)}</span>`)}
+      ${row("Play through the alert device", "A chime stays off your AirPods on a call.", sw(true))}
+      ${row("Quiet while the microphone is live", "Lights and banners still arrive.", sw(true))}
+      ${row("Follow Focus", "During a Focus, only asks make a sound.", sw(true))}
+    </div>`,
+
+  shortcuts: p => `${hero(p, "No key until you record one, except the panel's. Click a field and press the keys.")}
+    <div class="group-label">Windows</div><div class="group">
+      ${row("Show the panel", "", `<span class="recorder">⌥ Space</span>`, "recorder-row")}
+      ${row("Open Studio", "", `<span class="recorder">⌥ ⌘ L</span>`, "recorder-row")}
+      ${row("Open the Usage Center", "", `<span class="recorder">⌥ ⌘ U</span>`, "recorder-row")}
+      ${row("Open the shelf", "A second press folds it again.", `<span class="recorder empty">Record Shortcut</span>`, "recorder-row")}
+    </div>
+    <div class="group-label">Answering an ask</div><div class="group">
+      ${row("Allow once", "In the panel, the notch and the banner.", `<span class="tag-fixed">Always</span><span class="recorder">↩</span>`, "recorder-row")}
+      ${row("Deny", "", `<span class="tag-fixed">Always</span><span class="recorder">⌘ ⌫</span>`, "recorder-row")}
+      ${row("Show the next ask", "", `<span class="recorder">⌥ ⌘ ]</span>`, "recorder-row")}
+    </div>
+    <div class="group-note">A shortcut only answers an ask that is on screen. Links and rules never answer one.</div>
+    <div class="group-label">Lights</div><div class="group">
+      ${row("Next scene", "", `<span class="recorder empty">Record Shortcut</span>`, "recorder-row")}
+      ${row("Lights off for an hour", "", `<span class="recorder empty">Record Shortcut</span>`, "recorder-row")}
+    </div>`,
+
+  devices: p => `${hero(p, "The hardware: connection, firmware, brightness, direction and where the Screen Bar sits.")}
+    ${monitorDown ? `<div class="banner"><span style="color:var(--failed)">${ICON.warn}</span><div class="row-main"><div class="t-headline">The monitor isn't running</div><div class="row-sub">Device settings come back as soon as it starts.</div></div><button class="btn primary">Start Monitor</button></div>` : ""}
+    <div class="${monitorDown ? "dev-off" : ""}">
+    <div class="group dev-card">
+      <div class="dev-head"><div class="dev-art">${["#D97757","#D97757","#D97757","#D97757","#00B8D9","#00B8D9","#00B8D9","#00B8D9"].map(c => `<i style="--dc:${c}"></i>`).join("")}</div>
+        <div class="row-main"><div class="t-headline">SidePulse Pro</div><div class="row-sub"><span class="dot live" style="width:6px;height:6px"></span> Connected over USB · 8 LEDs · firmware 2.4.1, up to date</div></div>
+        <button class="btn">Flash to Find</button></div>
+      <div class="hairline" style="margin-left:14px"></div>
+      ${row("Brightness", "", `<span style="display:flex;align-items:center;gap:8px">${slider(64)}</span>`)}
+      ${row("Direction", "Which end the animations start from.", seg(["Left to right", "Right to left"], 0))}
+      ${row("Dim with the room", "Uses the Mac's light sensor.", sw(true))}
+    </div>
+    <div style="height:12px"></div>
+    <div class="group dev-card">
+      <div class="dev-head"><div class="dev-art dot-art"><i style="--dc:#2a2a2d;box-shadow:none"></i></div>
+        <div class="row-main"><div class="t-headline">PulseDot</div><div class="row-sub">Not connected. Plug it in and its settings come back.</div></div></div>
+    </div>
+    <div style="height:12px"></div>
+    <div class="group dev-card">
+      <div class="dev-head"><div class="dev-art bar-art"></div>
+        <div class="row-main"><div class="t-headline">Screen Bar</div><div class="row-sub">The strip's colours as a thin line along the top of a display</div></div>${sw(true)}</div>
+      <div class="hairline" style="margin-left:14px"></div>
+      ${row("Display", "", `<span class="popup">Built-in Display</span>`)}
+      ${row("Position", "", seg(["Under the menu bar", "At the top edge"], 0))}
+      ${row("Thickness", "", `<span class="popup">3 pt</span>`)}
+      ${row("Hide in full screen", "", sw(true))}
+    </div>
+    </div>
+    <div style="height:12px"></div>
+    <div class="group studio-link"><span class="ico-tile" style="background:linear-gradient(135deg,#FF2D55,#AF52DE,#0A84FF)">${ICON.palette}</span><div class="row-main"><div class="row-title">Colours, animations and per-device overrides</div><div class="row-sub">All of it lives in Studio.</div></div><button class="btn">Open Studio</button></div>`,
+
+  utilities: p => `${hero(p, "Small helpers and a few toys. Each one is off until you turn it on. Click a row for its options.")}
+    <div class="group-label">Utilities</div><div class="group">
+      ${util("menubar", "#0A84FF", "Menu Bar", "Tuck menu bar items behind a chevron.", true)}
+      ${util("dock", "#5E5CE6", "Dock", "Window previews and a switcher.", true)}
+      ${util("cup", "#A2845E", "Keep Awake", "Hold the Mac awake from the panel.", false)}
+      ${util("bell", "#FF9500", "Agent Alert Rules", "Raise or quiet alerts by project.", false)}
+    </div>
+    <div class="group-label">Toys</div>
+    <div class="toys">
+      ${toy("art-confetti", confettiArt(), "Confetti", "A burst when a long turn finishes.", true)}
+      ${toy("art-buddy", `<div class="notch"></div><div class="buddy"></div>`, "Notch Buddy", "A small friend that walks under the notch.", true)}
+      ${toy("art-aqua", `<div class="fish" style="top:22px;background:#D97757;border-color:#D97757"></div><div class="fish" style="top:52px;background:#2B8FFF;border-color:#2B8FFF;animation-delay:-2.4s;animation-duration:8s"></div><div class="fish" style="top:36px;background:#34C759;border-color:#34C759;animation-delay:-4s;animation-duration:7s"></div>`, "Aquarium", "A fish for each running agent.", false)}
+      ${toy("art-fold", `<div class="sheet"></div>`, "Fold", "Fold a window's corner to peek behind it.", false)}
+    </div>`,
+};
+
+function util(i, c, t, s, on) {
+  return `<div class="row nav ind"><span class="ico-tile" style="background:${c}">${ICON[i]}</span><div class="row-main"><div class="row-title">${t}</div><div class="row-sub">${s}</div></div>${sw(on)}<span class="chev">${ICON.chevR}</span></div>`;
+}
+function toy(cls, art, t, s, on) {
+  return `<div class="toy"><div class="toy-art ${cls}">${art}</div><div class="toy-body"><div class="row-main"><div class="t-headline">${t}</div><div class="row-sub">${s}</div></div>${sw(on)}</div></div>`;
+}
+function confettiArt() {
+  const r = rng(7), cs = ["#FFCC00", "#FF2D55", "#34C759", "#0A84FF", "#FF9500", "#AF52DE"];
+  return Array.from({ length: 26 }, (_, i) => `<i style="left:${(r() * 100).toFixed(1)}%;top:${(r() * 90).toFixed(1)}%;background:${cs[i % 6]};transform:rotate(${(r() * 180) | 0}deg)"></i>`).join("");
+}
+
+function provRow(x) {
+  const st = { live: "live", failed: "failed", stale: "stale", off: "" }[x.st];
+  return `<div class="pt-row ${x.track ? "" : "off"}" draggable="true" data-p="${x.p}">
+    <span class="grip">${ICON.grip}</span>${mark(x.p, "lg")}
+    <div class="row-main"><div class="row-title">${PROVIDERS[x.p].name}</div><div class="p-status">${st ? `<span class="dot ${st}"></span>` : ""}${x.s}</div></div>
+    <span class="cell">${sw(x.track)}</span>
+    <span class="cell"><button class="eye ${x.mb ? "" : "off"}" ${x.track ? "" : "disabled"} data-eye="mb">${x.mb && x.track ? ICON.eye : ICON.eyeOff}</button></span>
+    <span class="cell"><button class="eye ${x.panel ? "" : "off"}" ${x.track ? "" : "disabled"} data-eye="panel">${x.panel && x.track ? ICON.eye : ICON.eyeOff}</button></span>
+    <span class="chev" data-open="${x.p}">${ICON.chevR}</span></div>`;
+}
+
+function providerSub(pid) {
+  const pr = PROVIDERS[pid];
+  return `<div class="page-hero">${mark(pid, "xl")}<div><div class="t-title2">${pr.name}</div><p>Live · 5 h 42% · 7 d 18% · read 1 m ago</p></div></div>
+    <div class="group-label">Usage source</div><div class="group">
+      ${row("Claude Code's sign-in", "Read from the Keychain item “Claude Code-credentials” through /usr/bin/security. JR-Bar never refreshes or writes it.", `<span class="badge good">${ICON.check} Working</span>`)}
+      ${row("Fall back to <span class='mono'>claude /usage</span>", "Off by default. When the Keychain read fails, JR-Bar runs Claude Code's own usage command.", sw(false))}
+    </div>
+    <div class="group-label">Collection</div><div class="group">
+      ${row("Track", "Off stops every read and job for Claude.", sw(true))}
+      ${row("Token history", "Hour, day and model totals from transcripts on this Mac.", sw(true))}
+      ${nav("Hooks", "Installed in Claude Code's settings", "Up to date")}
+    </div>
+    <div class="group-label">Shown in</div><div class="group">
+      ${row("Menu bar", "", sw(true))}
+      ${row("Panel", "", sw(true))}
+      ${row("Colour and animation", "Set in Studio.", `<span style="display:flex;gap:8px;align-items:center"><span style="width:16px;height:16px;border-radius:5px;background:${pr.c}"></span><button class="btn">Open Studio</button></span>`)}
+    </div>`;
+}
+
+function render() {
+  sidebar();
+  const p = PAGES.find(x => x.id === cur);
+  const body = RENDER[cur] ? RENDER[cur](p) : `<div class="placeholder"><div class="t-title2">${p.t}</div><p>Not drawn in this round. It would hold:</p>${({
+    notch: "<ul><li>Island on or off, and which display</li><li>What it shows: asks, notices, pages</li><li>Shelf: files, timers, calendar, reminders</li></ul>",
+    remote: "<ul><li>Stream Deck: connect and choose keys</li><li>Phone: pair, then answer asks from it</li><li>Each one asks for consent before it can answer</li></ul>",
+    privacy: "<ul><li>Every outbound request with its own switch, all off by default</li><li>Usage sources that reach a provider's API</li><li>Update checks</li><li>A log of the last outbound request of each kind</li></ul>",
+    advanced: "<ul><li>jrbar:// links and their “don't ask again” list</li><li>Diagnostics report (copy)</li><li>Export and import settings</li><li>Reset</li></ul>",
+  })[cur] || ""}</div>`;
+  const title = cur === "providers" && sub ? `<span class="crumb">Providers ›</span> ${PROVIDERS[sub].name}` : p.t;
+  $("#detail").innerHTML = `<div class="detail-bar"><div class="navs"><button data-back ${sub ? "" : "disabled"}>${ICON.chevL}</button><button disabled>${ICON.chevR}</button></div><span class="t-title3">${title}</span></div><div class="form">${body}</div>`;
+  if (cur === "providers" && !sub) wireDrag();
+}
+
+document.addEventListener("click", e => {
+  const pg = e.target.closest("[data-page]");
+  if (pg) { cur = pg.dataset.page; sub = null; history.replaceState(null, "", `#${cur}-${document.documentElement.dataset.theme}`); render(); return; }
+  if (e.target.closest("[data-back]")) { sub = null; render(); return; }
+  const op = e.target.closest("[data-open]") || (e.target.closest(".pt-row") && !e.target.closest("button,label,.grip") ? e.target.closest(".pt-row") : null);
+  if (op) { const id = op.dataset.open || op.dataset.p; if (id === "claude") { sub = id; render(); } return; }
+  const eye = e.target.closest("[data-eye]");
+  if (eye) { const x = providers.find(q => q.p === eye.closest(".pt-row").dataset.p); x[eye.dataset.eye] = !x[eye.dataset.eye]; render(); }
+});
+document.addEventListener("change", e => {
+  const r = e.target.closest(".pt-row");
+  if (r) { const x = providers.find(q => q.p === r.dataset.p); x.track = e.target.checked; x.s = x.track ? "Tracking" : "Not tracked"; x.st = x.track ? "live" : "off"; render(); }
+});
+function wireDrag() {
+  let drag = null;
+  $$(".pt-row").forEach(r => {
+    r.addEventListener("dragstart", () => { drag = r.dataset.p; r.classList.add("dragging"); });
+    r.addEventListener("dragend", () => r.classList.remove("dragging"));
+    r.addEventListener("dragover", e => { e.preventDefault(); $$(".drop-before").forEach(x => x.classList.remove("drop-before")); r.classList.add("drop-before"); });
+    r.addEventListener("drop", e => {
+      e.preventDefault(); const from = providers.findIndex(x => x.p === drag); const it = providers.splice(from, 1)[0];
+      providers.splice(providers.findIndex(x => x.p === r.dataset.p), 0, it); render();
+    });
+  });
+}
+$("#monBtn").onclick = () => { monitorDown = !monitorDown; $("#monBtn").setAttribute("aria-pressed", monitorDown); if (cur !== "general") cur = "devices"; render(); };
+window.addEventListener("themechange", render);
+render();
+</script>
+</body>
+</html>

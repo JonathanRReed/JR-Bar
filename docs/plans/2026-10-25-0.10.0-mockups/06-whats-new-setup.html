@@ -1,0 +1,844 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>06 · What's New and Setup · JR-Bar 0.10.0 mockups</title>
+<style>
+/* JR-Bar 0.10.0 mockups: shared tokens and native-macOS-26 approximations.
+   Every size and colour a mockup uses comes from here. */
+
+:root {
+  color-scheme: light dark;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, "Helvetica Neue", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Type ramp (pt == CSS px at 1x). Nothing below 11. */
+  --fs-large: 26px;   --lh-large: 32px;
+  --fs-title1: 22px;  --lh-title1: 28px;
+  --fs-title2: 17px;  --lh-title2: 22px;
+  --fs-title3: 15px;  --lh-title3: 20px;
+  --fs-body: 13px;    --lh-body: 18px;
+  --fs-callout: 12px; --lh-callout: 16px;
+  --fs-caption: 11px; --lh-caption: 14px;
+
+  /* Radii */
+  --r-xs: 4px;   /* swatch, keycap */
+  --r-sm: 6px;   /* small control, mark tile */
+  --r-md: 8px;   /* button, field, row highlight */
+  --r-lg: 12px;  /* grouped box, card */
+  --r-xl: 16px;  /* panel, popover */
+  --r-win: 18px; /* window (macOS 26) */
+  --r-pill: 999px;
+
+  /* Spacing (4 pt grid) */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-in-out: cubic-bezier(.45, 0, .25, 1);
+  --d-quick: 100ms;   /* exit, press */
+  --d-enter: 140ms;   /* entrance */
+  --d-change: 160ms;  /* crossfade in place */
+  --d-settle: 250ms;  /* notch / size morph */
+
+  /* Provider accents (ProviderStyle.table) */
+  --p-claude: #D97757; --p-codex: #2B8FFF; --p-gemini: #34C759; --p-antigravity: #ABE17E;
+  --p-cursor: #FFCC00; --p-factory: #E76F32; --p-devin: #5C84B0; --p-opencode: #AF52DE;
+  --p-kiro: #A00848; --p-t3code: #00B8D9; --p-grok: #8E8E93; --p-openclaw: #B23400;
+}
+
+/* ---------- Light ---------- */
+:root, [data-theme="light"] {
+  --label: rgba(0,0,0,.86);
+  --label2: rgba(0,0,0,.56);
+  --label3: rgba(0,0,0,.32);
+  --label4: rgba(0,0,0,.18);
+  --sep: rgba(0,0,0,.10);
+  --sep-strong: rgba(0,0,0,.16);
+  --fill: rgba(0,0,0,.045);
+  --fill2: rgba(0,0,0,.075);
+  --fill3: rgba(0,0,0,.11);
+  --hover: rgba(0,0,0,.05);
+
+  --window: #F3F3F5;
+  --content: #FFFFFF;
+  --group: rgba(255,255,255,.9);
+  --group-edge: rgba(0,0,0,.08);
+  --sidebar: rgba(236,236,240,.72);
+  --glass: rgba(250,250,252,.62);
+  --glass-strong: rgba(250,250,252,.82);
+  --glass-edge: rgba(255,255,255,.75);
+  --glass-rim: rgba(0,0,0,.12);
+  --shadow-win: 0 0 0 .5px rgba(0,0,0,.14), 0 18px 50px rgba(0,0,0,.20), 0 4px 12px rgba(0,0,0,.08);
+  --shadow-pop: 0 0 0 .5px rgba(0,0,0,.12), 0 12px 36px rgba(0,0,0,.18);
+  --control: #FFFFFF;
+  --control-edge: rgba(0,0,0,.14);
+  --thumb: #FFFFFF;
+  --track-off: rgba(0,0,0,.12);
+
+  --accent: #007AFF;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(0,122,255,.12);
+  --live: #30B0C7;      /* the teal status dot */
+  --working: #007AFF;
+  --ask: #FF9500;
+  --done: #28A745;
+  --failed: #E5352B;
+  --stale: rgba(0,0,0,.50);  /* grey + age, never orange */
+  --reset: #5E5CE6;
+
+  --wall: radial-gradient(1200px 700px at 12% -10%, #9ec5ff 0%, transparent 60%),
+          radial-gradient(1000px 800px at 95% 10%, #f7b6d2 0%, transparent 55%),
+          radial-gradient(900px 700px at 50% 110%, #b7f0e0 0%, transparent 60%),
+          linear-gradient(160deg, #dfe8f7, #eadff1);
+  --stage-bg: #E6E7EB;
+  --device: #2B2C30;
+  --device-rim: rgba(255,255,255,.12);
+}
+
+/* ---------- Dark ---------- */
+[data-theme="dark"] {
+  --label: rgba(255,255,255,.90);
+  --label2: rgba(255,255,255,.60);
+  --label3: rgba(255,255,255,.36);
+  --label4: rgba(255,255,255,.20);
+  --sep: rgba(255,255,255,.10);
+  --sep-strong: rgba(255,255,255,.16);
+  --fill: rgba(255,255,255,.06);
+  --fill2: rgba(255,255,255,.10);
+  --fill3: rgba(255,255,255,.15);
+  --hover: rgba(255,255,255,.07);
+
+  --window: #1E1E20;
+  --content: #232325;
+  --group: rgba(255,255,255,.055);
+  --group-edge: rgba(255,255,255,.07);
+  --sidebar: rgba(44,44,48,.66);
+  --glass: rgba(36,36,40,.58);
+  --glass-strong: rgba(36,36,40,.80);
+  --glass-edge: rgba(255,255,255,.14);
+  --glass-rim: rgba(0,0,0,.5);
+  --shadow-win: 0 0 0 .5px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06) inset, 0 20px 60px rgba(0,0,0,.55);
+  --shadow-pop: 0 0 0 .5px rgba(0,0,0,.6), 0 14px 40px rgba(0,0,0,.5);
+  --control: rgba(255,255,255,.10);
+  --control-edge: rgba(255,255,255,.10);
+  --thumb: #F2F2F2;
+  --track-off: rgba(255,255,255,.16);
+
+  --accent: #0A84FF;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(10,132,255,.22);
+  --live: #40C8E0;
+  --working: #0A84FF;
+  --ask: #FF9F0A;
+  --done: #30D158;
+  --failed: #FF453A;
+  --stale: rgba(255,255,255,.52);
+  --reset: #7D7AFF;
+
+  --wall: radial-gradient(1100px 700px at 10% -10%, #1d3b74 0%, transparent 60%),
+          radial-gradient(900px 800px at 95% 0%, #4a1f4f 0%, transparent 55%),
+          radial-gradient(900px 700px at 50% 120%, #0f3b39 0%, transparent 60%),
+          linear-gradient(160deg, #10131c, #160f1b);
+  --stage-bg: #2A2A2D;
+  --device: #0E0E10;
+  --device-rim: rgba(255,255,255,.16);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font: var(--fs-body)/var(--lh-body) var(--font);
+  color: var(--label);
+  -webkit-font-smoothing: antialiased;
+  background: var(--wall);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+button, input, select { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); font-size: var(--fs-callout); }
+
+/* Type styles */
+.t-large { font: 700 var(--fs-large)/var(--lh-large) var(--font-display); letter-spacing: -.01em; }
+.t-title1 { font: 700 var(--fs-title1)/var(--lh-title1) var(--font-display); letter-spacing: -.005em; }
+.t-title2 { font: 600 var(--fs-title2)/var(--lh-title2) var(--font-display); }
+.t-title3 { font: 600 var(--fs-title3)/var(--lh-title3) var(--font); }
+.t-headline { font: 600 var(--fs-body)/var(--lh-body) var(--font); }
+.t-body { font: 400 var(--fs-body)/var(--lh-body) var(--font); }
+.t-callout { font: 400 var(--fs-callout)/var(--lh-callout) var(--font); }
+.t-caption { font: 400 var(--fs-caption)/var(--lh-caption) var(--font); }
+.t-section { font: 600 var(--fs-caption)/var(--lh-caption) var(--font); color: var(--label2); letter-spacing: .01em; }
+.c2 { color: var(--label2); } .c3 { color: var(--label3); }
+
+/* ---------- Mockup chrome (annotation, not product) ---------- */
+.mk-bar {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px; height: 44px;
+  background: rgba(20,20,24,.86); color: #fff;
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  font-size: 12px; border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.mk-bar a { color: #9cc8ff; text-decoration: none; }
+.mk-bar .mk-title { font-weight: 600; font-size: 13px; }
+.mk-bar .mk-sp { flex: 1; }
+.mk-bar button {
+  background: rgba(255,255,255,.12); border: 0; color: #fff; padding: 4px 10px;
+  border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.mk-bar button[aria-pressed="true"] { background: #fff; color: #000; }
+.mk-bar .mk-group { display: flex; gap: 2px; background: rgba(255,255,255,.08); padding: 2px; border-radius: 8px; }
+.mk-bar .mk-group button { background: transparent; }
+.mk-bar .mk-group button[aria-pressed="true"] { background: rgba(255,255,255,.9); color: #000; }
+
+.mk-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; min-height: calc(100vh - 44px); }
+.mk-stage { position: relative; padding: 32px; overflow: auto; }
+.mk-notes {
+  background: rgba(20,20,24,.88); color: rgba(255,255,255,.88);
+  padding: 20px 20px 40px; font-size: 12.5px; line-height: 1.5;
+  border-left: 1px solid rgba(255,255,255,.08); overflow: auto;
+  max-height: calc(100vh - 44px); position: sticky; top: 44px;
+}
+.mk-notes h2 { font-size: 13px; margin: 18px 0 6px; color: #fff; }
+.mk-notes h2:first-child { margin-top: 0; }
+.mk-notes ul, .mk-notes ol { margin: 0; padding-left: 18px; }
+.mk-notes li { margin: 4px 0; }
+.mk-notes code { font-family: var(--mono); font-size: 11.5px; background: rgba(255,255,255,.08); padding: 0 4px; border-radius: 4px; }
+.mk-notes .q li::marker { color: #ffcc66; }
+.mk-notes .fix li::marker { color: #6fe3a8; }
+.mk-caption { font-size: 12px; color: var(--label2); margin: 0 0 10px; font-weight: 500; }
+.mk-row { display: flex; gap: 32px; flex-wrap: wrap; align-items: flex-start; }
+.mk-tag { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 2px 8px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; }
+
+/* ---------- Menu bar ---------- */
+.menubar {
+  height: 28px; display: flex; align-items: center; gap: 18px; padding: 0 14px;
+  font-size: 13px; color: var(--label);
+  background: transparent;
+}
+[data-theme="dark"] .menubar { color: rgba(255,255,255,.92); }
+.menubar .mb-app { font-weight: 700; }
+.menubar .mb-sp { flex: 1; }
+.menubar .mb-item { display: flex; align-items: center; height: 22px; padding: 0 6px; border-radius: 6px; }
+.menubar .mb-item.open { background: var(--fill3); }
+
+/* ---------- Glass / windows ---------- */
+.glass {
+  background: var(--glass);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  box-shadow: var(--shadow-pop), inset 0 0.5px 0 var(--glass-edge);
+}
+.window {
+  background: var(--window);
+  border-radius: var(--r-win);
+  box-shadow: var(--shadow-win);
+  overflow: hidden; position: relative;
+  display: flex; flex-direction: column;
+}
+.titlebar {
+  height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 16px; flex: none;
+}
+.traffic { display: flex; gap: 8px; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.18); }
+.traffic i:nth-child(1) { background: #FF5F57; } .traffic i:nth-child(2) { background: #FEBC2E; } .traffic i:nth-child(3) { background: #28C840; }
+.titlebar .tb-title { font-weight: 600; font-size: 15px; }
+
+.split { display: flex; flex: 1; min-height: 0; }
+.sidebar {
+  width: 220px; flex: none; margin: 8px 0 8px 8px; border-radius: var(--r-lg);
+  background: var(--sidebar);
+  backdrop-filter: blur(30px) saturate(160%); -webkit-backdrop-filter: blur(30px) saturate(160%);
+  box-shadow: 0 0 0 .5px var(--group-edge), inset 0 .5px 0 var(--glass-edge);
+  padding: 44px 10px 10px; display: flex; flex-direction: column; gap: 2px; overflow: auto;
+  position: relative;
+}
+.sidebar .traffic { position: absolute; top: 14px; left: 14px; }
+.sb-search {
+  display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; margin: 0 0 8px;
+  border-radius: var(--r-md); background: var(--fill); color: var(--label3); font-size: var(--fs-body);
+}
+.sb-head { font: 600 var(--fs-caption)/var(--lh-caption) var(--font); color: var(--label3); padding: 10px 8px 4px; }
+.sb-item {
+  display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px;
+  border-radius: var(--r-md); cursor: default; user-select: none; color: var(--label);
+}
+.sb-item:hover { background: var(--hover); }
+.sb-item .sb-badge { margin-left: auto; font-size: var(--fs-caption); color: var(--label2); }
+/* Selection: accent fill, white text, white icon -- readable in both appearances. */
+.sb-item.sel { background: var(--accent); color: var(--accent-ink); }
+.sb-item.sel .sb-badge { color: rgba(255,255,255,.85); }
+.sb-item.sel .ico-tile { box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
+.detail { flex: 1; min-width: 0; overflow: auto; position: relative; }
+
+.ico-tile {
+  width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex: none;
+  color: #fff;
+}
+.ico-tile svg { width: 14px; height: 14px; }
+
+/* ---------- Grouped form (System Settings) ---------- */
+.form { padding: 4px 28px 28px; max-width: 680px; margin: 0 auto; }
+.form-title { display: flex; align-items: center; gap: 10px; padding: 14px 0 16px; }
+.group-label { font: 600 var(--fs-body)/var(--lh-body) var(--font); color: var(--label); margin: 18px 4px 8px; }
+.group-note { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--label2); margin: 6px 4px 0; }
+.group {
+  background: var(--group); border-radius: var(--r-lg);
+  box-shadow: 0 0 0 .5px var(--group-edge);
+}
+.row {
+  display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 12px;
+  position: relative;
+}
+.row + .row::before { content: ""; position: absolute; top: 0; left: 12px; right: 0; height: .5px; background: var(--sep); }
+.row.ind + .row.ind::before { left: 46px; }
+.row-main { flex: 1; min-width: 0; }
+.row-title { font-size: var(--fs-body); }
+.row-sub { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--label2); margin-top: 1px; }
+.row.nav { cursor: default; }
+.row.nav:hover { background: var(--hover); }
+.row:first-child { border-top-left-radius: var(--r-lg); border-top-right-radius: var(--r-lg); }
+.row:last-child { border-bottom-left-radius: var(--r-lg); border-bottom-right-radius: var(--r-lg); }
+.chev { color: var(--label3); width: 8px; flex: none; }
+
+/* ---------- Controls ---------- */
+.switch { position: relative; width: 32px; height: 18px; flex: none; cursor: pointer; display: inline-block; }
+.switch input { appearance: none; -webkit-appearance: none; position: absolute; inset: 0; margin: 0; border-radius: 999px; background: var(--track-off); transition: background var(--d-change) var(--ease-out); cursor: pointer; }
+.switch input:checked { background: var(--accent); }
+.switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--thumb); box-shadow: 0 1px 2px rgba(0,0,0,.25), 0 0 0 .5px rgba(0,0,0,.06); transition: transform var(--d-change) var(--ease-out); }
+.switch input:checked::after { transform: translateX(14px); }
+.switch input:disabled { opacity: .4; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 24px; padding: 0 10px; border-radius: var(--r-md);
+  background: var(--control); border: 0; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 0 0 .5px var(--control-edge), 0 .5px 1px rgba(0,0,0,.08);
+  font-size: var(--fs-body); color: var(--label);
+}
+.btn:active { filter: brightness(.94); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); box-shadow: none; }
+.btn.plain { background: transparent; box-shadow: none; color: var(--accent); padding: 0 4px; }
+.btn.glass { border-radius: 999px; background: var(--fill2); box-shadow: inset 0 .5px 0 var(--glass-edge); height: 28px; padding: 0 12px; }
+.btn.lg { height: 30px; padding: 0 14px; border-radius: 10px; }
+.btn.icon { width: 28px; padding: 0; }
+.btn svg { width: 14px; height: 14px; }
+
+.popup {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px 0 10px;
+  border-radius: var(--r-md); background: var(--control);
+  box-shadow: 0 0 0 .5px var(--control-edge), 0 .5px 1px rgba(0,0,0,.08); font-size: var(--fs-body);
+  white-space: nowrap; cursor: default;
+}
+.popup::after {
+  content: ""; width: 14px; height: 16px; flex: none; border-radius: 4px; background: var(--accent);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat;
+}
+.select { position: relative; display: inline-flex; }
+.select select { appearance: none; -webkit-appearance: none; border: 0; height: 24px; padding: 0 26px 0 10px; border-radius: var(--r-md);
+  background: var(--control); box-shadow: 0 0 0 .5px var(--control-edge), 0 .5px 1px rgba(0,0,0,.08); font-size: var(--fs-body); cursor: pointer; color: var(--label); }
+.select::after { content: ""; position: absolute; right: 5px; top: 4px; width: 14px; height: 16px; border-radius: 4px; background: var(--accent); pointer-events: none;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat; }
+[data-theme="dark"] .select select option { background: #2a2a2d; }
+
+.seg {
+  display: inline-flex; padding: 2px; border-radius: var(--r-md); background: var(--fill2); gap: 0; position: relative;
+}
+.seg button {
+  border: 0; background: transparent; height: 22px; padding: 0 12px; border-radius: 6px; cursor: pointer;
+  font-size: var(--fs-body); color: var(--label); position: relative; z-index: 1;
+}
+.seg button[aria-pressed="true"] { background: var(--control); box-shadow: 0 0 0 .5px var(--control-edge), 0 1px 2px rgba(0,0,0,.12); font-weight: 500; }
+[data-theme="dark"] .seg button[aria-pressed="true"] { background: rgba(255,255,255,.22); }
+
+input[type=range].slider { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; width: 160px; }
+input[type=range].slider::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: linear-gradient(to right, var(--accent) var(--v, 50%), var(--fill3) var(--v, 50%)); }
+input[type=range].slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -7px; border-radius: 50%; background: var(--thumb); box-shadow: 0 0 0 .5px rgba(0,0,0,.18), 0 1px 3px rgba(0,0,0,.25); }
+
+.check { width: 14px; height: 14px; border-radius: 4px; background: var(--control); box-shadow: 0 0 0 .5px var(--control-edge); display: inline-grid; place-items: center; }
+.check.on { background: var(--accent); box-shadow: none; }
+
+.kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: var(--r-xs); background: var(--fill2); color: var(--label2);
+  font: 500 var(--fs-caption)/1 var(--font); box-shadow: inset 0 -.5px 0 var(--sep-strong);
+}
+.recorder { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 8px; border-radius: var(--r-md); background: var(--fill); min-width: 96px; justify-content: center; color: var(--label); font-size: var(--fs-body); }
+.recorder.empty { color: var(--label3); }
+
+.badge { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 7px; border-radius: 999px; font-size: var(--fs-caption); font-weight: 500; background: var(--fill2); color: var(--label2); }
+.badge.accent { background: var(--accent-soft); color: var(--accent); }
+.badge.good { background: color-mix(in srgb, var(--done) 16%, transparent); color: var(--done); }
+
+/* Provider mark tile (the app draws the real mark; mockups use a monogram). */
+.mark {
+  width: 20px; height: 20px; border-radius: 6px; flex: none; display: inline-grid; place-items: center;
+  font: 700 11px/1 var(--font-display); color: #fff; background: var(--pc, #8E8E93);
+  box-shadow: inset 0 0 0 .5px rgba(0,0,0,.12);
+}
+.mark.sm { width: 16px; height: 16px; border-radius: 5px; font-size: 11px; }
+.mark.lg { width: 28px; height: 28px; border-radius: 8px; font-size: 14px; }
+.mark.xl { width: 40px; height: 40px; border-radius: 11px; font-size: 19px; }
+.mark.dim { background: var(--fill3); color: var(--label2) !important; box-shadow: inset 0 0 0 .5px var(--sep); }
+.mark[data-p="cursor"], .mark[data-p="antigravity"] { color: rgba(0,0,0,.78); }
+
+/* State dot */
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--dc, var(--label3)); display: inline-block; }
+.dot.working { --dc: var(--working); animation: breathe 1.6s var(--ease-in-out) infinite; }
+.dot.ask { --dc: var(--ask); animation: breathe 1s var(--ease-in-out) infinite; }
+.dot.done { --dc: var(--done); }
+.dot.failed { --dc: var(--failed); }
+.dot.stale { --dc: var(--label3); }
+.dot.live { --dc: var(--live); }
+@keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* The one gauge: a continuous capsule bar with its number beside it. */
+.gauge { position: relative; height: 4px; border-radius: 4px; background: var(--fill3); overflow: hidden; }
+.gauge > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--gc, var(--label)); width: var(--v, 0%); transition: width var(--d-change) var(--ease-out); }
+.gauge.stale > i { background: var(--label3); }
+.gauge .pace { position: absolute; top: -2px; bottom: -2px; width: 1.5px; background: var(--label2); left: var(--pace, 50%); border-radius: 1px; }
+
+.hairline { height: .5px; background: var(--sep); }
+.sym { width: 14px; height: 14px; flex: none; display: inline-block; vertical-align: -2px; }
+.sym-lg { width: 18px; height: 18px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0s !important; transition-duration: 80ms !important; }
+}
+
+</style>
+<style>
+.controls { display: flex; gap: 12px; align-items: center; margin: 0 auto 18px; width: 820px; flex-wrap: wrap; }
+.stage-c { display: grid; place-items: start center; }
+
+/* ---------- What's New ---------- */
+.win-new { width: 740px; }
+.new-head { display: flex; align-items: center; gap: 12px; padding: 18px 24px 4px 24px; }
+.app-icon { width: 44px; height: 44px; border-radius: 11px; flex: none; position: relative;
+  background: linear-gradient(160deg, #3a3d46, #17181c); box-shadow: inset 0 .5px 0 rgba(255,255,255,.25), 0 2px 6px rgba(0,0,0,.25); display: grid; place-items: center; }
+.app-icon svg { width: 34px; height: 18px; }
+.app-icon.lg { width: 72px; height: 72px; border-radius: 17px; }
+.app-icon.lg svg { width: 56px; height: 30px; }
+.new-head .t-title1 { margin: 0; }
+.new-head p { margin: 1px 0 0; color: var(--label2); font-size: var(--fs-callout); }
+.new-body { padding: 14px 24px 0; }
+
+.hero-card { border-radius: var(--r-lg); background: var(--group); box-shadow: 0 0 0 .5px var(--group-edge); overflow: hidden; display: grid; grid-template-columns: 300px minmax(0, 1fr); }
+.hero-art { position: relative; height: 210px; background: var(--wall); overflow: hidden; }
+.hero-copy { padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 6px; }
+.hero-copy .t-title2 { margin: 0; }
+.hero-copy p { margin: 0; color: var(--label2); }
+.hero-copy .sp { flex: 1; }
+.kicker { font: 600 var(--fs-caption)/var(--lh-caption) var(--font); color: var(--accent); letter-spacing: .02em; }
+
+/* mini panel inside the hero art, showing an agent group expanding */
+.mp { position: absolute; left: 22px; right: 22px; top: 22px; border-radius: 14px; padding: 8px; background: var(--glass-strong);
+  backdrop-filter: blur(24px) saturate(170%); -webkit-backdrop-filter: blur(24px) saturate(170%); box-shadow: var(--shadow-pop), inset 0 .5px 0 var(--glass-edge); }
+.mp-row { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 6px; border-radius: 8px; font-size: var(--fs-callout); }
+.mp-row .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-row .ct { color: var(--label2); font-variant-numeric: tabular-nums; }
+.mp-row.root { background: var(--fill); font-weight: 600; }
+.mp-row .chevw { transition: transform var(--d-change) var(--ease-out); color: var(--label2); display: grid; }
+.mp.open .mp-row .chevw { transform: rotate(90deg); }
+.mp-kids { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--d-settle) var(--ease-out); }
+.mp.open .mp-kids { grid-template-rows: 1fr; }
+.mp-kids > div { overflow: hidden; }
+.mp-kids .mp-row { padding-left: 22px; font-weight: 400; }
+.stack { display: flex; }
+.stack .mark { margin-left: -5px; box-shadow: 0 0 0 1.5px var(--glass-strong); }
+.stack .mark:first-child { margin-left: 0; }
+
+.feat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.feat { display: flex; gap: 12px; padding: 12px; border-radius: var(--r-lg); background: var(--group); box-shadow: 0 0 0 .5px var(--group-edge); align-items: flex-start; }
+.feat .ico-tile { width: 30px; height: 30px; border-radius: 8px; }
+.feat .ico-tile svg { width: 17px; height: 17px; }
+.feat .t-headline { margin-bottom: 1px; }
+.feat p { margin: 0; font-size: var(--fs-callout); line-height: var(--lh-callout); color: var(--label2); }
+.feat .btn.plain { margin-top: 4px; height: 20px; font-size: var(--fs-callout); padding: 0; }
+.new-foot { display: flex; align-items: center; gap: 10px; padding: 16px 24px 18px; }
+.new-foot .sp { flex: 1; }
+.new-foot .c2 { font-size: var(--fs-callout); }
+
+/* ---------- Setup ---------- */
+.win-setup { width: 820px; height: 560px; }
+.win-setup .split { height: 100%; }
+.steps { width: 210px; flex: none; padding: 50px 14px 14px; display: flex; flex-direction: column; gap: 2px; position: relative; }
+.steps .traffic { position: absolute; top: 18px; left: 18px; }
+.step { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 8px; border-radius: var(--r-md); color: var(--label2); cursor: default; }
+.step .n { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 600 var(--fs-caption)/1 var(--font); box-shadow: inset 0 0 0 1.25px var(--label3); flex: none; }
+.step.done { color: var(--label); }
+.step.done .n { background: var(--done); color: #fff; box-shadow: none; }
+.step.done .n svg { width: 11px; height: 11px; stroke-width: 2.2; }
+.step.cur { background: var(--fill2); color: var(--label); font-weight: 600; }
+.step.cur .n { background: var(--accent); color: #fff; box-shadow: none; }
+.step .opt { margin-left: auto; font-size: var(--fs-caption); color: var(--label3); font-weight: 400; }
+.steps .sp { flex: 1; }
+.steps .fine { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--label3); padding: 0 8px; }
+
+.s-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--content); margin: 8px 8px 8px 0; border-radius: var(--r-lg); box-shadow: 0 0 0 .5px var(--group-edge); overflow: hidden; }
+[data-theme="light"] .s-main .group, [data-theme="light"] .s-main .point { background: #F6F6F8; }
+.s-body { flex: 1; overflow: auto; padding: 28px 32px 8px; }
+.s-body.enter { animation: s-in var(--d-enter) var(--ease-out); }
+@keyframes s-in { from { opacity: 0; transform: translateX(8px); } }
+.s-body h1 { margin: 0 0 4px; }
+.s-body .lede { margin: 0 0 18px; color: var(--label2); font-size: var(--fs-title3); line-height: var(--lh-title3); max-width: 480px; }
+.s-foot { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: .5px solid var(--sep); }
+.s-foot .sp { flex: 1; }
+.s-foot .c2 { font-size: var(--fs-callout); }
+
+.welcome { display: flex; flex-direction: column; align-items: flex-start; gap: 18px; }
+.mb-demo { display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-radius: var(--r-lg); background: var(--fill); }
+.mb-demo .legend { font-size: var(--fs-callout); color: var(--label2); line-height: var(--lh-callout); }
+.mb-demo .legend b { color: var(--label); font-weight: 600; }
+.points { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 100%; }
+.point { padding: 12px; border-radius: var(--r-lg); background: var(--group); box-shadow: 0 0 0 .5px var(--group-edge); font-size: var(--fs-callout); line-height: var(--lh-callout); color: var(--label2); }
+.point b { display: block; font-size: var(--fs-body); color: var(--label); margin: 8px 0 2px; }
+.point .ico-tile { width: 26px; height: 26px; border-radius: 7px; }
+
+.pv-row .found { font-size: var(--fs-caption); color: var(--label2); }
+.more-line { display: flex; gap: 8px; align-items: center; padding: 10px 12px; color: var(--label2); font-size: var(--fs-callout); }
+.more-line .marks { display: flex; gap: 4px; }
+.lock { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border-radius: var(--r-lg); background: color-mix(in srgb, var(--done) 10%, transparent); margin-bottom: 14px; font-size: var(--fs-callout); line-height: var(--lh-callout); }
+.lock .sym { color: var(--done); width: 18px; height: 18px; margin-top: 1px; }
+.lock b { display: block; font-size: var(--fs-body); }
+
+.ask-demo { border-radius: 18px; background: #000; color: rgba(255,255,255,.92); padding: 14px; width: 380px; box-shadow: 0 10px 30px rgba(0,0,0,.3); margin-bottom: 16px; }
+.ask-demo .h { display: flex; gap: 10px; align-items: center; }
+.ask-demo .h div { font-size: var(--fs-callout); color: rgba(255,255,255,.6); }
+.ask-demo .h b { display: block; font-size: var(--fs-body); color: #fff; }
+.ask-demo pre { margin: 10px 0; padding: 8px 10px; border-radius: 9px; background: rgba(255,255,255,.08); font: var(--fs-callout)/var(--lh-callout) var(--mono); color: rgba(255,255,255,.85); white-space: pre-wrap; }
+.ask-demo .acts { display: flex; gap: 8px; justify-content: flex-end; }
+.ask-demo .acts span { height: 28px; padding: 0 12px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,.14); font-size: var(--fs-body); }
+.ask-demo .acts span.go { background: #0A84FF; }
+.ask-demo .kbd { background: rgba(255,255,255,.18); color: rgba(255,255,255,.85); box-shadow: none; }
+
+.dev-found { display: flex; gap: 14px; align-items: center; padding: 14px; }
+.dev-art { width: 120px; height: 40px; border-radius: 9px; background: var(--device); box-shadow: 0 0 0 1px var(--device-rim); display: flex; align-items: center; justify-content: space-evenly; padding: 0 8px; flex: none; }
+.dev-art i { width: 7px; height: 7px; border-radius: 2px; background: var(--dc); box-shadow: 0 0 6px var(--dc); }
+.done-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.sc-row { display: flex; align-items: center; gap: 10px; }
+.sc-row .sp { flex: 1; }
+</style>
+</head>
+<body>
+<div class="mk-layout">
+  <main class="mk-stage">
+    <div class="controls"><div class="seg" id="viewPick"><button data-view="new">What's New</button><button data-view="setup">Setup</button></div>
+      <span class="c2" style="font-size:12px" id="hint"></span></div>
+    <div class="stage-c" id="stage"></div>
+  </main>
+  <aside class="mk-notes">
+    <h2>Key choices: What's New</h2>
+    <ul>
+      <li>One feature leads, with a moving picture (an agent group folding open), and four smaller ones sit under it. Hierarchy replaces the old flat list of equal bullets.</li>
+      <li>Every feature has a "Show me" link that opens the exact place: the panel, Studio, Settings › Providers.</li>
+      <li>It opens once after an update, as a normal window, never over an ask. Esc or Continue closes it. Full notes live one click away.</li>
+    </ul>
+    <h2>Key choices: Setup</h2>
+    <ul>
+      <li>A step list on the left shows where you are and what is optional. Back and Continue sit in one footer; ↩ continues, ⌘[ goes back.</li>
+      <li>Providers lists only what is on this Mac. The rest is one quiet line, not ten disabled rows.</li>
+      <li>Usage sources start off. Anything that would leave the Mac (an account API, the CLI fallback) has its own switch and says what it reads. Local sources need no switch.</li>
+      <li>Asks shows the real notch card and states the rule: only you answer an ask.</li>
+      <li>Lights is optional and skippable; with nothing connected it says so in one line.</li>
+    </ul>
+    <h2>Audit findings fixed</h2>
+    <ul class="fix">
+      <li>Flat What's New → a lead feature with art, then a grid</li>
+      <li>Flat Setup → numbered steps with done, current and optional states</li>
+      <li>Tiny fonts → title 22 pt, lede 15 pt, body 13 pt</li>
+    </ul>
+    <h2>Open questions</h2>
+    <ul class="q">
+      <li>Which feature should lead 0.10.0: agent groups, Studio, or "lighter and faster"?</li>
+      <li>Can What's New quote the measured CPU and memory numbers once the 24 hour run is done, or should it stay in words?</li>
+      <li>Shortcuts: are ⌥⌘J (panel) and ⌥⌘L (Studio) free on your Mac, or do you want others?</li>
+      <li>Should Setup run again for a new provider (a short sheet), or should that live only in Settings?</li>
+      <li>If Track is turned off in Setup, should the hook be removed from that provider's config, or only ignored?</li>
+    </ul>
+  </aside>
+</div>
+<script>
+/* JR-Bar 0.10.0 mockups: shared helpers. */
+(function () {
+  const root = document.documentElement;
+  const stored = (location.hash.match(/(light|dark)/) || [])[1];
+  const prefers = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  root.dataset.theme = stored || prefers;
+
+  const S = (d, extra = "") =>
+    `<svg class="sym ${extra}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const F = (d, extra = "") =>
+    `<svg class="sym ${extra}" viewBox="0 0 16 16" fill="currentColor">${d}</svg>`;
+
+  window.ICON = {
+    gear: S('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7L3.6 3.6"/>'),
+    person: S('<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6"/>'),
+    stack: S('<rect x="2.5" y="2.5" width="11" height="4" rx="1.2"/><rect x="2.5" y="9.5" width="11" height="4" rx="1.2"/>'),
+    bell: S('<path d="M4 11V7.2a4 4 0 0 1 8 0V11l1 1.2H3z"/><path d="M6.6 13.8a1.5 1.5 0 0 0 2.8 0"/>'),
+    command: S('<path d="M6 6V4.2A1.7 1.7 0 1 0 4.2 6H11.8A1.7 1.7 0 1 0 10 4.2V11.8A1.7 1.7 0 1 0 11.8 10H4.2A1.7 1.7 0 1 0 6 11.8z"/>'),
+    display: S('<rect x="1.8" y="2.5" width="12.4" height="8.5" rx="1.4"/><path d="M5.5 13.5h5"/>'),
+    strip: S('<rect x="1.5" y="6" width="13" height="4" rx="2"/><circle cx="4.5" cy="8" r=".6" fill="currentColor"/><circle cx="8" cy="8" r=".6" fill="currentColor"/><circle cx="11.5" cy="8" r=".6" fill="currentColor"/>'),
+    notch: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="M5.8 2.5v1.3a1 1 0 0 0 1 1h2.4a1 1 0 0 0 1-1V2.5"/>'),
+    wrench: S('<path d="M10.8 2.2a3 3 0 0 0-3.4 4L2.6 11a1.3 1.3 0 0 0 1.8 1.8l4.8-4.8a3 3 0 0 0 4-3.4l-1.8 1.8-1.7-.4-.4-1.7z"/>'),
+    party: S('<path d="M2.5 13.5l3-8 5 5z"/><path d="M9 2v1.5M12.5 3.5l-1 1M14 7h-1.5M10 6l1.5-1.5"/>'),
+    antenna: S('<circle cx="8" cy="7" r="1.3"/><path d="M8 8.3V14M5 4a4.2 4.2 0 0 0 0 6M11 4a4.2 4.2 0 0 1 0 6M3 2.2a7 7 0 0 0 0 9.6M13 2.2a7 7 0 0 1 0 9.6"/>'),
+    hand: S('<path d="M8 1.8l5 2v3.6c0 3.2-2.1 5.6-5 6.8-2.9-1.2-5-3.6-5-6.8V3.8z"/>'),
+    sliders: S('<path d="M2.5 4.5h7M12.5 4.5h1M2.5 11.5h1M6.5 11.5h7"/><circle cx="11" cy="4.5" r="1.5"/><circle cx="5" cy="11.5" r="1.5"/>'),
+    chevR: S('<path d="M6 3.5L10.5 8 6 12.5"/>'),
+    chevD: S('<path d="M3.5 6L8 10.5 12.5 6"/>'),
+    chevL: S('<path d="M10 3.5L5.5 8l4.5 4.5"/>'),
+    eye: S('<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>'),
+    eyeOff: S('<path d="M2.5 2.5l11 11M6.4 4a6.6 6.6 0 0 1 1.6-.5c4.1 0 6.5 4.5 6.5 4.5a11 11 0 0 1-1.9 2.4M10 11.9a5.6 5.6 0 0 1-2 .6C3.9 12.5 1.5 8 1.5 8a11.3 11.3 0 0 1 2.4-2.9"/>'),
+    grip: F('<circle cx="6" cy="4" r="1.1"/><circle cx="10" cy="4" r="1.1"/><circle cx="6" cy="8" r="1.1"/><circle cx="10" cy="8" r="1.1"/><circle cx="6" cy="12" r="1.1"/><circle cx="10" cy="12" r="1.1"/>'),
+    plus: S('<path d="M8 3v10M3 8h10"/>'),
+    info: S('<circle cx="8" cy="8" r="6.2"/><path d="M8 7.2V11"/><circle cx="8" cy="4.9" r=".5" fill="currentColor"/>'),
+    warn: S('<path d="M8 2.2l6.2 11H1.8z"/><path d="M8 6.5v3"/><circle cx="8" cy="11.3" r=".5" fill="currentColor"/>'),
+    check: S('<path d="M3.5 8.5l3 3 6-7"/>'),
+    xmark: S('<path d="M4 4l8 8M12 4l-8 8"/>'),
+    arrowUR: S('<path d="M5 11l6-6M6 5h5v5"/>'),
+    chart: S('<path d="M2.5 13.5h11M4.5 11V8M8 11V4.5M11.5 11V6.5"/>'),
+    clock: S('<circle cx="8" cy="8" r="6.2"/><path d="M8 4.5V8l2.3 1.5"/>'),
+    play: F('<path d="M5 3.2v9.6L12.6 8z"/>'),
+    pause: F('<rect x="4" y="3.2" width="2.6" height="9.6" rx=".8"/><rect x="9.4" y="3.2" width="2.6" height="9.6" rx=".8"/>'),
+    refresh: S('<path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3"/>'),
+    palette: S('<path d="M8 1.8a6.2 6.2 0 1 0 0 12.4c1 0 1.3-.8.9-1.6-.5-1 .1-1.9 1.2-1.9h1.6a2.5 2.5 0 0 0 2.5-2.5C14.2 4.6 11.5 1.8 8 1.8z"/><circle cx="5" cy="7" r=".8" fill="currentColor"/><circle cx="7.6" cy="4.8" r=".8" fill="currentColor"/><circle cx="10.6" cy="5.6" r=".8" fill="currentColor"/>'),
+    sparkles: S('<path d="M7 2l1.2 3.3L11.5 6.5 8.2 7.7 7 11 5.8 7.7 2.5 6.5l3.3-1.2zM12 9.5l.6 1.6 1.6.6-1.6.6-.6 1.7-.6-1.7-1.6-.6 1.6-.6z"/>'),
+    terminal: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="M4.5 6.5L6.5 8l-2 1.5M8 10h3"/>'),
+    key: S('<circle cx="5" cy="10" r="2.6"/><path d="M6.9 8.1L13 2M10.5 4.5l1.5 1.5"/>'),
+    moon: S('<path d="M13 9.5A5.5 5.5 0 1 1 6.5 3a4.5 4.5 0 0 0 6.5 6.5z"/>'),
+    cup: S('<path d="M2.5 5.5h9v4a3.5 3.5 0 0 1-3.5 3.5h-2a3.5 3.5 0 0 1-3.5-3.5zM11.5 6.5h1a1.6 1.6 0 0 1 0 3.2h-1"/>'),
+    dock: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><rect x="4" y="10" width="8" height="2" rx=".8"/>'),
+    menubar: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="M1.8 5.5h12.4"/>'),
+    fish: S('<path d="M2 8c2-3 6.5-4 9.5 0-3 4-7.5 3-9.5 0zM11.5 8L14 5.5v5z"/><circle cx="5" cy="7.4" r=".5" fill="currentColor"/>'),
+    ghost: S('<path d="M3.5 14V7a4.5 4.5 0 0 1 9 0v7l-1.5-1-1.5 1-1.5-1-1.5 1-1.5-1z"/><circle cx="6.3" cy="7" r=".6" fill="currentColor"/><circle cx="9.7" cy="7" r=".6" fill="currentColor"/>'),
+    fold: S('<path d="M2.5 3h11v10h-11zM2.5 3l5.5 5 5.5-5"/>'),
+    calendar: S('<rect x="2" y="3" width="12" height="11" rx="1.6"/><path d="M2 6.5h12M5 1.8v2.4M11 1.8v2.4"/>'),
+    timer: S('<circle cx="8" cy="9" r="5"/><path d="M8 9V6.5M6.5 1.8h3"/>'),
+    doc: S('<path d="M4 1.8h5l3 3v9.4H4z"/><path d="M9 1.8v3h3"/>'),
+    list: S('<path d="M5.5 4.5h8M5.5 8h8M5.5 11.5h8"/><circle cx="2.8" cy="4.5" r=".7" fill="currentColor"/><circle cx="2.8" cy="8" r=".7" fill="currentColor"/><circle cx="2.8" cy="11.5" r=".7" fill="currentColor"/>'),
+    search: S('<circle cx="7" cy="7" r="4.3"/><path d="M10.2 10.2l3.3 3.3"/>'),
+    deck: S('<rect x="2" y="3" width="12" height="10" rx="1.6"/><path d="M5 6h1M7.5 6h1M10 6h1M5 9h1M7.5 9h1M10 9h1"/>'),
+    lightbulb: S('<path d="M5.5 10.5a4.5 4.5 0 1 1 5 0V12h-5z"/><path d="M6 14h4"/>'),
+    ellipsis: F('<circle cx="3.5" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.5" cy="8" r="1.2"/>'),
+    trash: S('<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 9h5.8l.6-9"/>'),
+  };
+
+  window.PROVIDERS = {
+    claude: { name: "Claude", c: "#D97757", l: "C" },
+    codex: { name: "Codex", c: "#2B8FFF", l: "X" },
+    gemini: { name: "Gemini", c: "#34C759", l: "G" },
+    antigravity: { name: "Antigravity", c: "#ABE17E", l: "A" },
+    cursor: { name: "Cursor", c: "#FFCC00", l: "Cu" },
+    factory: { name: "Factory", c: "#E76F32", l: "F" },
+    devin: { name: "Devin", c: "#5C84B0", l: "D" },
+    opencode: { name: "OpenCode", c: "#AF52DE", l: "O" },
+    kiro: { name: "Kiro", c: "#A00848", l: "K" },
+    t3code: { name: "T3 Code", c: "#00B8D9", l: "T3" },
+  };
+  window.mark = (p, size = "", dim = false) => {
+    const d = PROVIDERS[p];
+    return `<span class="mark ${size} ${dim ? "dim" : ""}" data-p="${p}" style="--pc:${d.c}" aria-label="${d.name}">${d.l}</span>`;
+  };
+
+  /* The owner's menu bar meter icon, kept as it is: a chevron, the teal
+     status dot, then one small vertical bar per provider (first orange). */
+  window.menuBarIcon = (bars, opts = {}) => {
+    const dark = root.dataset.theme === "dark";
+    const ink = dark ? "rgba(255,255,255,.92)" : "rgba(0,0,0,.82)";
+    const trackInk = dark ? "rgba(255,255,255,.28)" : "rgba(0,0,0,.22)";
+    const w = 30 + bars.length * 6;
+    let s = `<svg width="${w}" height="18" viewBox="0 0 ${w} 18" aria-label="JR-Bar">`;
+    s += `<path d="M7 5L3.5 9 7 13" stroke="${ink}" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+    s += `<circle cx="15" cy="9" r="3.4" fill="${opts.dot || "var(--live)"}"/>`;
+    bars.forEach((b, i) => {
+      const x = 23 + i * 6, h = 12, fill = Math.max(1.5, h * b.v);
+      s += `<rect x="${x}" y="3" width="3.2" height="${h}" rx="1.4" fill="${trackInk}"/>`;
+      s += `<rect x="${x}" y="${3 + h - fill}" width="3.2" height="${fill}" rx="1.4" fill="${b.c || ink}"/>`;
+    });
+    return s + "</svg>";
+  };
+
+  /* Mockup chrome */
+  window.mkBar = (title, extra = "") => {
+    const bar = document.createElement("header");
+    bar.className = "mk-bar";
+    bar.innerHTML = `<a href="index.html">‹ All surfaces</a><span class="mk-title">${title}</span>${extra}<span class="mk-sp"></span>
+      <span class="c-note" style="opacity:.6">T toggles appearance</span>
+      <div class="mk-group" role="group" aria-label="Appearance">
+        <button data-theme-btn="light">Light</button><button data-theme-btn="dark">Dark</button>
+      </div>`;
+    document.body.prepend(bar);
+    const sync = () => bar.querySelectorAll("[data-theme-btn]").forEach(b =>
+      b.setAttribute("aria-pressed", String(b.dataset.themeBtn === root.dataset.theme)));
+    bar.addEventListener("click", e => {
+      const t = e.target.closest("[data-theme-btn]");
+      if (t) setTheme(t.dataset.themeBtn);
+    });
+    window.addEventListener("keydown", e => {
+      if (e.key.toLowerCase() === "t" && !e.metaKey && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
+        setTheme(root.dataset.theme === "dark" ? "light" : "dark");
+      }
+    });
+    function setTheme(t) {
+      root.dataset.theme = t; history.replaceState(null, "", "#" + t); sync();
+      window.dispatchEvent(new CustomEvent("themechange"));
+    }
+    sync();
+    return bar;
+  };
+
+  /* Deterministic random for synthetic data. */
+  window.rng = seed => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+
+  window.$ = (s, el = document) => el.querySelector(s);
+  window.$$ = (s, el = document) => [...el.querySelectorAll(s)];
+})();
+
+</script>
+<script>
+mkBar("06 · What's New and Setup");
+
+const st = { view: /setup/.test(location.hash) ? "setup" : "new", step: +((location.hash.match(/setup(\d)/) || [])[1] || 0),
+  track: { claude: true, codex: true, t3code: true, factory: true, gemini: false },
+  src: { claudeApi: false, claudeCli: false, cursorPage: false }, asks: { notch: true, notify: true, sound: false } };
+const STEPS = [["Welcome"], ["Providers"], ["Usage sources"], ["Asks"], ["Lights", true], ["Done"]];
+
+const appIcon = (lg = "") => `<span class="app-icon ${lg}">${menuBarIcon([{ v: .7, c: "#FF9500" }, { v: .4, c: "#fff" }, { v: .85, c: "#fff" }]).replace(/rgba\(0,0,0,\.82\)/g, "rgba(255,255,255,.92)").replace(/rgba\(0,0,0,\.22\)/g, "rgba(255,255,255,.28)")}</span>`;
+
+/* ---------- What's New ---------- */
+function whatsNew() {
+  const feat = (bg, ico, t, p, link) => `<div class="feat"><span class="ico-tile" style="background:${bg}">${ICON[ico]}</span><div><div class="t-headline">${t}</div><p>${p}</p><button class="btn plain">${link} ›</button></div></div>`;
+  return `<div class="window win-new">
+    <div class="titlebar" style="height:40px"><div class="traffic"><i></i><i></i><i></i></div></div>
+    <div class="new-head">${appIcon()}<div><h1 class="t-title1">What's new in JR-Bar</h1><p>Version 0.10.0 · October 2026</p></div></div>
+    <div class="new-body">
+      <div class="hero-card">
+        <div class="hero-art"><div class="mp" id="mp">
+          <div class="mp-row root"><span class="chevw">${ICON.chevR}</span><span class="stack">${mark("t3code", "sm")}${mark("factory", "sm")}${mark("claude", "sm")}${mark("codex", "sm")}</span><span class="nm">release-train</span><span class="dot working"></span><span class="ct">7</span></div>
+          <div class="mp-kids"><div>
+            <div class="mp-row">${mark("factory", "sm")}<span class="nm">Factory · tests</span><span class="dot working"></span></div>
+            <div class="mp-row">${mark("claude", "sm")}<span class="nm">Claude · docs pass</span><span class="dot done"></span></div>
+            <div class="mp-row">${mark("codex", "sm")}<span class="nm">Codex · refactor</span><span class="dot working"></span></div>
+            <div class="mp-row" style="color:var(--label2)"><span style="width:16px"></span><span class="nm">+ 3 sub-agents</span></div>
+          </div></div>
+        </div></div>
+        <div class="hero-copy">
+          <span class="kicker">NEW</span>
+          <h2 class="t-title2">Agents that belong together stay together</h2>
+          <p>When one agent starts others, JR-Bar shows them as one row in the root agent's colour, and the strip counts them once. Open the row to see each member. Asks still come one at a time.</p>
+          <span class="sp"></span>
+          <div><button class="btn">Show me in the panel</button></div>
+        </div>
+      </div>
+      <div class="feat-grid">
+        ${feat("linear-gradient(135deg,#FF6B6B,#AF52DE 60%,#0A84FF)", "palette", "Studio is the home of light", "Animations, mixes for several agents, cues and scenes in one window. Open it from the panel or with ⌥⌘L.", "Open Studio")}
+        ${feat("#007AFF", "list", "One list of providers", "Choose what JR-Bar tracks, what sits in the menu bar and the panel, and drag to set the order. Edit it right in the panel.", "Open Providers")}
+        ${feat("#30B0C7", "chart", "A clearer Usage Center", "Each provider gets one page: quota with resets, a token chart you can hover, context, and cost.", "Open Usage Center")}
+        ${feat("#34C759", "timer", "Lighter and quicker", "The panel opens in about 140 ms. The app and its helper use far less memory and stay under 1% CPU while idle.", "See the numbers")}
+      </div>
+    </div>
+    <div class="new-foot"><button class="btn plain" style="padding:0">Full release notes</button><span class="sp"></span><span class="c2">Opens once after each update</span><button class="btn primary lg">Continue</button></div>
+  </div>`;
+}
+
+/* ---------- Setup ---------- */
+const sw = (key, on, dis = "") => `<label class="switch"><input type="checkbox" data-sw="${key}" ${on ? "checked" : ""} ${dis}></label>`;
+function stepBody(i) {
+  if (i === 0) return `<div class="welcome">${appIcon("lg")}
+    <div><h1 class="t-large">Welcome to JR-Bar</h1><p class="lede">JR-Bar watches your coding agents from the menu bar, so you know when one is working, done, or needs you.</p></div>
+    <div class="mb-demo"><span>${menuBarIcon([{ v: .34, c: "#FF9500" }, { v: .61 }, { v: .12 }])}</span><div class="legend"><b>This is all it adds to your menu bar.</b> The dot shows what your agents are doing. Each bar is one provider's quota.</div></div>
+    <div class="points">
+      <div class="point"><span class="ico-tile" style="background:#007AFF">${ICON.eye}</span><b>See every agent</b>Claude, Codex, Factory and more, in one panel.</div>
+      <div class="point"><span class="ico-tile" style="background:#FF9500">${ICON.bell}</span><b>Answer asks fast</b>From the notch, the panel or a key. Only you answer.</div>
+      <div class="point"><span class="ico-tile" style="background:#34C759">${ICON.hand}</span><b>Stays on your Mac</b>Nothing is sent anywhere unless you turn it on.</div>
+    </div></div>`;
+  if (i === 1) {
+    const found = [["claude", "Claude Code"], ["codex", "Codex CLI"], ["t3code", "T3 Code"], ["factory", "Factory Droid"], ["gemini", "Gemini CLI"]];
+    return `<h1 class="t-title1">Which agents should JR-Bar follow?</h1><p class="lede">These are installed on this Mac. JR-Bar adds a small hook to each one you track, and removes it if you turn tracking off.</p>
+      <div class="group-label" style="margin-top:0">Found on this Mac</div><div class="group">${found.map(([p, n]) => `<div class="row pv-row">${mark(p, "lg")}<div class="row-main"><div class="row-title">${n}</div></div><span class="c2" style="font-size:12px">Track</span>${sw("t-" + p, st.track[p])}</div>`).join("")}</div>
+      <div class="more-line"><span class="marks">${mark("cursor", "sm", true)}${mark("devin", "sm", true)}${mark("opencode", "sm", true)}${mark("kiro", "sm", true)}</span>4 more aren't installed. They show up here when you install them.</div>`;
+  }
+  if (i === 2) return `<h1 class="t-title1">Where should usage come from?</h1><p class="lede">JR-Bar reads token counts from local logs. Quota needs a source, and some sources talk to the provider.</p>
+    <div class="lock">${ICON.hand}<div><b>Nothing leaves your Mac unless you turn it on.</b>Local sources are always used. Each source below sends a request, so each starts off.</div></div>
+    <div class="group">
+      <div class="row">${mark("claude", "lg")}<div class="row-main"><div class="row-title">Claude usage</div><div class="row-sub">Asks Anthropic for your 5-hour and 7-day limits, using Claude Code's existing sign-in. Never changes it.</div></div>${sw("s-claudeApi", st.src.claudeApi)}</div>
+      <div class="row">${mark("claude", "lg", true)}<div class="row-main"><div class="row-title">Fall back to <span class="mono">claude /usage</span></div><div class="row-sub">If the sign-in can't be read, run Claude's own command instead.</div></div>${sw("s-claudeCli", st.src.claudeCli, st.src.claudeApi ? "" : "disabled")}</div>
+      <div class="row">${mark("codex", "lg")}<div class="row-main"><div class="row-title">Codex limits</div><div class="row-sub">Read from Codex's local logs. Nothing is sent.</div></div><span class="badge good">Local</span></div>
+    </div>
+    <div class="group-note">You can change these any time in Settings › Privacy.</div>`;
+  if (i === 3) return `<h1 class="t-title1">When an agent asks</h1><p class="lede">An agent may stop to ask before it runs a command. JR-Bar shows the ask so you can answer it without switching apps.</p>
+    <div class="ask-demo"><div class="h">${mark("claude", "lg")}<div><b>Claude asks to run a command</b>atlas-api · Planner</div></div>
+      <pre>npm run migrate -- --dry-run</pre>
+      <div class="acts"><span>Deny <i class="kbd">⌘⌫</i></span><span class="go">Allow <i class="kbd">↩</i></span></div></div>
+    <div class="group">
+      <div class="row ind"><span class="ico-tile" style="background:#1c1c1e">${ICON.notch}</span><div class="row-main"><div class="row-title">Open in the notch</div></div>${sw("a-notch", st.asks.notch)}</div>
+      <div class="row ind"><span class="ico-tile" style="background:#FF3B30">${ICON.bell}</span><div class="row-main"><div class="row-title">Send a notification</div><div class="row-sub">Useful when your Mac has no notch or the notch is off.</div></div>${sw("a-notify", st.asks.notify)}</div>
+      <div class="row ind"><span class="ico-tile" style="background:#FF2D55">${ICON.bell}</span><div class="row-main"><div class="row-title">Play a sound</div></div>${sw("a-sound", st.asks.sound)}</div>
+    </div>
+    <div class="group-note">Only you answer an ask: a click, a key or a Stream Deck button. No rule or link answers one for you.</div>`;
+  if (i === 4) return `<h1 class="t-title1">Lights</h1><p class="lede">If you have a JR-Bar light, it can glow in each agent's colour. You can skip this.</p>
+    <div class="group"><div class="dev-found"><div class="dev-art">${["#D97757", "#D97757", "#2B8FFF", "#2B8FFF", "#00B8D9", "#00B8D9", "#2d2d30", "#2d2d30"].map(c => `<i style="--dc:${c}"></i>`).join("")}</div>
+      <div class="row-main"><div class="t-headline" style="font-size:var(--fs-title3)">SidePulse strip</div><div class="row-sub">Connected over USB · 8 lights</div></div>${sw("l-on", true)}</div>
+      <div class="row"><div class="row-main"><div class="row-title">Brightness</div></div><input type="range" class="slider" value="60" style="--v:60%"></div></div>
+    <div class="group-note">Animations, colours and mixes live in Studio. Setup only turns the light on.</div>
+    <div class="more-line" style="padding-left:4px">${ICON.info}<span>Nothing connected? This step says "No lights found" and Continue reads Skip.</span></div>`;
+  return `<h1 class="t-title1">You're set</h1><p class="lede">JR-Bar is in your menu bar. Here is how to reach it.</p>
+    <div class="done-list">
+      <div class="point"><span class="ico-tile" style="background:#007AFF">${ICON.menubar}</span><b>Open the panel</b><div class="sc-row">Click the icon, or<span class="sp"></span><span class="kbd">⌥</span><span class="kbd">⌘</span><span class="kbd">J</span></div></div>
+      <div class="point"><span class="ico-tile" style="background:linear-gradient(135deg,#FF6B6B,#AF52DE 60%,#0A84FF)">${ICON.palette}</span><b>Open Studio</b><div class="sc-row">From the panel, or<span class="sp"></span><span class="kbd">⌥</span><span class="kbd">⌘</span><span class="kbd">L</span></div></div>
+    </div>
+    <div class="group">
+      <div class="row"><div class="row-main"><div class="row-title">Following</div></div><span class="c2">${Object.entries(st.track).filter(e => e[1]).map(e => PROVIDERS[e[0]].name).join(", ")}</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">Usage sources that send requests</div></div><span class="c2">${st.src.claudeApi ? "Claude usage" : "None"}</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">Open at login</div></div>${sw("login", true)}</div>
+    </div>`;
+}
+function setup(animate) {
+  const i = st.step, last = STEPS.length - 1;
+  const steps = STEPS.map(([n, opt], k) => `<div class="step ${k < i ? "done" : k === i ? "cur" : ""}" data-step="${k}"><span class="n">${k < i ? ICON.check : k + 1}</span>${n}${opt ? `<span class="opt">Optional</span>` : ""}</div>`).join("");
+  const next = i === last ? "Start using JR-Bar" : i === 4 ? "Continue" : "Continue";
+  return `<div class="window win-setup"><div class="split">
+    <nav class="steps"><div class="traffic"><i></i><i></i><i></i></div>${steps}<span class="sp"></span><div class="fine">Setup takes about a minute. Everything here can be changed later in Settings.</div></nav>
+    <section class="s-main"><div class="s-body ${animate ? "enter" : ""}">${stepBody(i)}</div>
+      <div class="s-foot">${i > 0 ? `<button class="btn lg" data-go="-1">Back</button>` : ""}<span class="sp"></span>${i === 4 ? `<button class="btn plain" data-go="1">Skip</button>` : ""}<span class="c2">Step ${i + 1} of ${STEPS.length}</span><button class="btn primary lg" data-go="1">${next}</button></div>
+    </section></div></div>`;
+}
+
+let timer;
+function render(animate = false) {
+  $$("#viewPick button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === st.view)));
+  $("#stage").innerHTML = st.view === "new" ? whatsNew() : setup(animate);
+  $("#hint").textContent = st.view === "new" ? "The group row folds open every few seconds." : "↩ continues · ⌘[ goes back · click a step to jump";
+  clearTimeout(timer);
+  if (st.view === "new") {
+    const mp = $("#mp");
+    const cycle = () => { mp.classList.add("open"); timer = setTimeout(() => { mp.classList.remove("open"); timer = setTimeout(cycle, 1100); }, 3200); };
+    timer = setTimeout(cycle, 300);
+  }
+}
+document.addEventListener("click", e => {
+  const v = e.target.closest("[data-view]"); if (v) { st.view = v.dataset.view; render(); return; }
+  const g = e.target.closest("[data-go]"); if (g) { st.step = Math.max(0, Math.min(STEPS.length - 1, st.step + +g.dataset.go)); render(true); return; }
+  const s = e.target.closest("[data-step]"); if (s) { st.step = +s.dataset.step; render(true); return; }
+});
+document.addEventListener("change", e => {
+  const k = e.target.dataset.sw; if (!k) return;
+  const [a, b] = k.split("-"), on = e.target.checked;
+  if (a === "t") st.track[b] = on; if (a === "s") st.src[b] = on; if (a === "a") st.asks[b] = on;
+  if (k === "s-claudeApi") { if (!on) st.src.claudeCli = false; render(); }
+});
+window.addEventListener("keydown", e => {
+  if (st.view !== "setup") return;
+  if (e.key === "Enter") { st.step = Math.min(STEPS.length - 1, st.step + 1); render(true); }
+  if (e.key === "[" && e.metaKey) { e.preventDefault(); st.step = Math.max(0, st.step - 1); render(true); }
+});
+window.addEventListener("themechange", () => render());
+render();
+</script>
+</body>
+</html>

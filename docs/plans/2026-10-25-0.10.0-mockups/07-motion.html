@@ -1,0 +1,842 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>07 · Motion comparison · JR-Bar 0.10.0 mockups</title>
+<style>
+/* JR-Bar 0.10.0 mockups: shared tokens and native-macOS-26 approximations.
+   Every size and colour a mockup uses comes from here. */
+
+:root {
+  color-scheme: light dark;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, "Helvetica Neue", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Type ramp (pt == CSS px at 1x). Nothing below 11. */
+  --fs-large: 26px;   --lh-large: 32px;
+  --fs-title1: 22px;  --lh-title1: 28px;
+  --fs-title2: 17px;  --lh-title2: 22px;
+  --fs-title3: 15px;  --lh-title3: 20px;
+  --fs-body: 13px;    --lh-body: 18px;
+  --fs-callout: 12px; --lh-callout: 16px;
+  --fs-caption: 11px; --lh-caption: 14px;
+
+  /* Radii */
+  --r-xs: 4px;   /* swatch, keycap */
+  --r-sm: 6px;   /* small control, mark tile */
+  --r-md: 8px;   /* button, field, row highlight */
+  --r-lg: 12px;  /* grouped box, card */
+  --r-xl: 16px;  /* panel, popover */
+  --r-win: 18px; /* window (macOS 26) */
+  --r-pill: 999px;
+
+  /* Spacing (4 pt grid) */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-in-out: cubic-bezier(.45, 0, .25, 1);
+  --d-quick: 100ms;   /* exit, press */
+  --d-enter: 140ms;   /* entrance */
+  --d-change: 160ms;  /* crossfade in place */
+  --d-settle: 250ms;  /* notch / size morph */
+
+  /* Provider accents (ProviderStyle.table) */
+  --p-claude: #D97757; --p-codex: #2B8FFF; --p-gemini: #34C759; --p-antigravity: #ABE17E;
+  --p-cursor: #FFCC00; --p-factory: #E76F32; --p-devin: #5C84B0; --p-opencode: #AF52DE;
+  --p-kiro: #A00848; --p-t3code: #00B8D9; --p-grok: #8E8E93; --p-openclaw: #B23400;
+}
+
+/* ---------- Light ---------- */
+:root, [data-theme="light"] {
+  --label: rgba(0,0,0,.86);
+  --label2: rgba(0,0,0,.56);
+  --label3: rgba(0,0,0,.32);
+  --label4: rgba(0,0,0,.18);
+  --sep: rgba(0,0,0,.10);
+  --sep-strong: rgba(0,0,0,.16);
+  --fill: rgba(0,0,0,.045);
+  --fill2: rgba(0,0,0,.075);
+  --fill3: rgba(0,0,0,.11);
+  --hover: rgba(0,0,0,.05);
+
+  --window: #F3F3F5;
+  --content: #FFFFFF;
+  --group: rgba(255,255,255,.9);
+  --group-edge: rgba(0,0,0,.08);
+  --sidebar: rgba(236,236,240,.72);
+  --glass: rgba(250,250,252,.62);
+  --glass-strong: rgba(250,250,252,.82);
+  --glass-edge: rgba(255,255,255,.75);
+  --glass-rim: rgba(0,0,0,.12);
+  --shadow-win: 0 0 0 .5px rgba(0,0,0,.14), 0 18px 50px rgba(0,0,0,.20), 0 4px 12px rgba(0,0,0,.08);
+  --shadow-pop: 0 0 0 .5px rgba(0,0,0,.12), 0 12px 36px rgba(0,0,0,.18);
+  --control: #FFFFFF;
+  --control-edge: rgba(0,0,0,.14);
+  --thumb: #FFFFFF;
+  --track-off: rgba(0,0,0,.12);
+
+  --accent: #007AFF;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(0,122,255,.12);
+  --live: #30B0C7;      /* the teal status dot */
+  --working: #007AFF;
+  --ask: #FF9500;
+  --done: #28A745;
+  --failed: #E5352B;
+  --stale: rgba(0,0,0,.50);  /* grey + age, never orange */
+  --reset: #5E5CE6;
+
+  --wall: radial-gradient(1200px 700px at 12% -10%, #9ec5ff 0%, transparent 60%),
+          radial-gradient(1000px 800px at 95% 10%, #f7b6d2 0%, transparent 55%),
+          radial-gradient(900px 700px at 50% 110%, #b7f0e0 0%, transparent 60%),
+          linear-gradient(160deg, #dfe8f7, #eadff1);
+  --stage-bg: #E6E7EB;
+  --device: #2B2C30;
+  --device-rim: rgba(255,255,255,.12);
+}
+
+/* ---------- Dark ---------- */
+[data-theme="dark"] {
+  --label: rgba(255,255,255,.90);
+  --label2: rgba(255,255,255,.60);
+  --label3: rgba(255,255,255,.36);
+  --label4: rgba(255,255,255,.20);
+  --sep: rgba(255,255,255,.10);
+  --sep-strong: rgba(255,255,255,.16);
+  --fill: rgba(255,255,255,.06);
+  --fill2: rgba(255,255,255,.10);
+  --fill3: rgba(255,255,255,.15);
+  --hover: rgba(255,255,255,.07);
+
+  --window: #1E1E20;
+  --content: #232325;
+  --group: rgba(255,255,255,.055);
+  --group-edge: rgba(255,255,255,.07);
+  --sidebar: rgba(44,44,48,.66);
+  --glass: rgba(36,36,40,.58);
+  --glass-strong: rgba(36,36,40,.80);
+  --glass-edge: rgba(255,255,255,.14);
+  --glass-rim: rgba(0,0,0,.5);
+  --shadow-win: 0 0 0 .5px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06) inset, 0 20px 60px rgba(0,0,0,.55);
+  --shadow-pop: 0 0 0 .5px rgba(0,0,0,.6), 0 14px 40px rgba(0,0,0,.5);
+  --control: rgba(255,255,255,.10);
+  --control-edge: rgba(255,255,255,.10);
+  --thumb: #F2F2F2;
+  --track-off: rgba(255,255,255,.16);
+
+  --accent: #0A84FF;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(10,132,255,.22);
+  --live: #40C8E0;
+  --working: #0A84FF;
+  --ask: #FF9F0A;
+  --done: #30D158;
+  --failed: #FF453A;
+  --stale: rgba(255,255,255,.52);
+  --reset: #7D7AFF;
+
+  --wall: radial-gradient(1100px 700px at 10% -10%, #1d3b74 0%, transparent 60%),
+          radial-gradient(900px 800px at 95% 0%, #4a1f4f 0%, transparent 55%),
+          radial-gradient(900px 700px at 50% 120%, #0f3b39 0%, transparent 60%),
+          linear-gradient(160deg, #10131c, #160f1b);
+  --stage-bg: #2A2A2D;
+  --device: #0E0E10;
+  --device-rim: rgba(255,255,255,.16);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font: var(--fs-body)/var(--lh-body) var(--font);
+  color: var(--label);
+  -webkit-font-smoothing: antialiased;
+  background: var(--wall);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+button, input, select { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); font-size: var(--fs-callout); }
+
+/* Type styles */
+.t-large { font: 700 var(--fs-large)/var(--lh-large) var(--font-display); letter-spacing: -.01em; }
+.t-title1 { font: 700 var(--fs-title1)/var(--lh-title1) var(--font-display); letter-spacing: -.005em; }
+.t-title2 { font: 600 var(--fs-title2)/var(--lh-title2) var(--font-display); }
+.t-title3 { font: 600 var(--fs-title3)/var(--lh-title3) var(--font); }
+.t-headline { font: 600 var(--fs-body)/var(--lh-body) var(--font); }
+.t-body { font: 400 var(--fs-body)/var(--lh-body) var(--font); }
+.t-callout { font: 400 var(--fs-callout)/var(--lh-callout) var(--font); }
+.t-caption { font: 400 var(--fs-caption)/var(--lh-caption) var(--font); }
+.t-section { font: 600 var(--fs-caption)/var(--lh-caption) var(--font); color: var(--label2); letter-spacing: .01em; }
+.c2 { color: var(--label2); } .c3 { color: var(--label3); }
+
+/* ---------- Mockup chrome (annotation, not product) ---------- */
+.mk-bar {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px; height: 44px;
+  background: rgba(20,20,24,.86); color: #fff;
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  font-size: 12px; border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.mk-bar a { color: #9cc8ff; text-decoration: none; }
+.mk-bar .mk-title { font-weight: 600; font-size: 13px; }
+.mk-bar .mk-sp { flex: 1; }
+.mk-bar button {
+  background: rgba(255,255,255,.12); border: 0; color: #fff; padding: 4px 10px;
+  border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.mk-bar button[aria-pressed="true"] { background: #fff; color: #000; }
+.mk-bar .mk-group { display: flex; gap: 2px; background: rgba(255,255,255,.08); padding: 2px; border-radius: 8px; }
+.mk-bar .mk-group button { background: transparent; }
+.mk-bar .mk-group button[aria-pressed="true"] { background: rgba(255,255,255,.9); color: #000; }
+
+.mk-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; min-height: calc(100vh - 44px); }
+.mk-stage { position: relative; padding: 32px; overflow: auto; }
+.mk-notes {
+  background: rgba(20,20,24,.88); color: rgba(255,255,255,.88);
+  padding: 20px 20px 40px; font-size: 12.5px; line-height: 1.5;
+  border-left: 1px solid rgba(255,255,255,.08); overflow: auto;
+  max-height: calc(100vh - 44px); position: sticky; top: 44px;
+}
+.mk-notes h2 { font-size: 13px; margin: 18px 0 6px; color: #fff; }
+.mk-notes h2:first-child { margin-top: 0; }
+.mk-notes ul, .mk-notes ol { margin: 0; padding-left: 18px; }
+.mk-notes li { margin: 4px 0; }
+.mk-notes code { font-family: var(--mono); font-size: 11.5px; background: rgba(255,255,255,.08); padding: 0 4px; border-radius: 4px; }
+.mk-notes .q li::marker { color: #ffcc66; }
+.mk-notes .fix li::marker { color: #6fe3a8; }
+.mk-caption { font-size: 12px; color: var(--label2); margin: 0 0 10px; font-weight: 500; }
+.mk-row { display: flex; gap: 32px; flex-wrap: wrap; align-items: flex-start; }
+.mk-tag { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 2px 8px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; }
+
+/* ---------- Menu bar ---------- */
+.menubar {
+  height: 28px; display: flex; align-items: center; gap: 18px; padding: 0 14px;
+  font-size: 13px; color: var(--label);
+  background: transparent;
+}
+[data-theme="dark"] .menubar { color: rgba(255,255,255,.92); }
+.menubar .mb-app { font-weight: 700; }
+.menubar .mb-sp { flex: 1; }
+.menubar .mb-item { display: flex; align-items: center; height: 22px; padding: 0 6px; border-radius: 6px; }
+.menubar .mb-item.open { background: var(--fill3); }
+
+/* ---------- Glass / windows ---------- */
+.glass {
+  background: var(--glass);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  box-shadow: var(--shadow-pop), inset 0 0.5px 0 var(--glass-edge);
+}
+.window {
+  background: var(--window);
+  border-radius: var(--r-win);
+  box-shadow: var(--shadow-win);
+  overflow: hidden; position: relative;
+  display: flex; flex-direction: column;
+}
+.titlebar {
+  height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 16px; flex: none;
+}
+.traffic { display: flex; gap: 8px; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.18); }
+.traffic i:nth-child(1) { background: #FF5F57; } .traffic i:nth-child(2) { background: #FEBC2E; } .traffic i:nth-child(3) { background: #28C840; }
+.titlebar .tb-title { font-weight: 600; font-size: 15px; }
+
+.split { display: flex; flex: 1; min-height: 0; }
+.sidebar {
+  width: 220px; flex: none; margin: 8px 0 8px 8px; border-radius: var(--r-lg);
+  background: var(--sidebar);
+  backdrop-filter: blur(30px) saturate(160%); -webkit-backdrop-filter: blur(30px) saturate(160%);
+  box-shadow: 0 0 0 .5px var(--group-edge), inset 0 .5px 0 var(--glass-edge);
+  padding: 44px 10px 10px; display: flex; flex-direction: column; gap: 2px; overflow: auto;
+  position: relative;
+}
+.sidebar .traffic { position: absolute; top: 14px; left: 14px; }
+.sb-search {
+  display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; margin: 0 0 8px;
+  border-radius: var(--r-md); background: var(--fill); color: var(--label3); font-size: var(--fs-body);
+}
+.sb-head { font: 600 var(--fs-caption)/var(--lh-caption) var(--font); color: var(--label3); padding: 10px 8px 4px; }
+.sb-item {
+  display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px;
+  border-radius: var(--r-md); cursor: default; user-select: none; color: var(--label);
+}
+.sb-item:hover { background: var(--hover); }
+.sb-item .sb-badge { margin-left: auto; font-size: var(--fs-caption); color: var(--label2); }
+/* Selection: accent fill, white text, white icon -- readable in both appearances. */
+.sb-item.sel { background: var(--accent); color: var(--accent-ink); }
+.sb-item.sel .sb-badge { color: rgba(255,255,255,.85); }
+.sb-item.sel .ico-tile { box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
+.detail { flex: 1; min-width: 0; overflow: auto; position: relative; }
+
+.ico-tile {
+  width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex: none;
+  color: #fff;
+}
+.ico-tile svg { width: 14px; height: 14px; }
+
+/* ---------- Grouped form (System Settings) ---------- */
+.form { padding: 4px 28px 28px; max-width: 680px; margin: 0 auto; }
+.form-title { display: flex; align-items: center; gap: 10px; padding: 14px 0 16px; }
+.group-label { font: 600 var(--fs-body)/var(--lh-body) var(--font); color: var(--label); margin: 18px 4px 8px; }
+.group-note { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--label2); margin: 6px 4px 0; }
+.group {
+  background: var(--group); border-radius: var(--r-lg);
+  box-shadow: 0 0 0 .5px var(--group-edge);
+}
+.row {
+  display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 12px;
+  position: relative;
+}
+.row + .row::before { content: ""; position: absolute; top: 0; left: 12px; right: 0; height: .5px; background: var(--sep); }
+.row.ind + .row.ind::before { left: 46px; }
+.row-main { flex: 1; min-width: 0; }
+.row-title { font-size: var(--fs-body); }
+.row-sub { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--label2); margin-top: 1px; }
+.row.nav { cursor: default; }
+.row.nav:hover { background: var(--hover); }
+.row:first-child { border-top-left-radius: var(--r-lg); border-top-right-radius: var(--r-lg); }
+.row:last-child { border-bottom-left-radius: var(--r-lg); border-bottom-right-radius: var(--r-lg); }
+.chev { color: var(--label3); width: 8px; flex: none; }
+
+/* ---------- Controls ---------- */
+.switch { position: relative; width: 32px; height: 18px; flex: none; cursor: pointer; display: inline-block; }
+.switch input { appearance: none; -webkit-appearance: none; position: absolute; inset: 0; margin: 0; border-radius: 999px; background: var(--track-off); transition: background var(--d-change) var(--ease-out); cursor: pointer; }
+.switch input:checked { background: var(--accent); }
+.switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--thumb); box-shadow: 0 1px 2px rgba(0,0,0,.25), 0 0 0 .5px rgba(0,0,0,.06); transition: transform var(--d-change) var(--ease-out); }
+.switch input:checked::after { transform: translateX(14px); }
+.switch input:disabled { opacity: .4; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 24px; padding: 0 10px; border-radius: var(--r-md);
+  background: var(--control); border: 0; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 0 0 .5px var(--control-edge), 0 .5px 1px rgba(0,0,0,.08);
+  font-size: var(--fs-body); color: var(--label);
+}
+.btn:active { filter: brightness(.94); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); box-shadow: none; }
+.btn.plain { background: transparent; box-shadow: none; color: var(--accent); padding: 0 4px; }
+.btn.glass { border-radius: 999px; background: var(--fill2); box-shadow: inset 0 .5px 0 var(--glass-edge); height: 28px; padding: 0 12px; }
+.btn.lg { height: 30px; padding: 0 14px; border-radius: 10px; }
+.btn.icon { width: 28px; padding: 0; }
+.btn svg { width: 14px; height: 14px; }
+
+.popup {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px 0 10px;
+  border-radius: var(--r-md); background: var(--control);
+  box-shadow: 0 0 0 .5px var(--control-edge), 0 .5px 1px rgba(0,0,0,.08); font-size: var(--fs-body);
+  white-space: nowrap; cursor: default;
+}
+.popup::after {
+  content: ""; width: 14px; height: 16px; flex: none; border-radius: 4px; background: var(--accent);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat;
+}
+.select { position: relative; display: inline-flex; }
+.select select { appearance: none; -webkit-appearance: none; border: 0; height: 24px; padding: 0 26px 0 10px; border-radius: var(--r-md);
+  background: var(--control); box-shadow: 0 0 0 .5px var(--control-edge), 0 .5px 1px rgba(0,0,0,.08); font-size: var(--fs-body); cursor: pointer; color: var(--label); }
+.select::after { content: ""; position: absolute; right: 5px; top: 4px; width: 14px; height: 16px; border-radius: 4px; background: var(--accent); pointer-events: none;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat; }
+[data-theme="dark"] .select select option { background: #2a2a2d; }
+
+.seg {
+  display: inline-flex; padding: 2px; border-radius: var(--r-md); background: var(--fill2); gap: 0; position: relative;
+}
+.seg button {
+  border: 0; background: transparent; height: 22px; padding: 0 12px; border-radius: 6px; cursor: pointer;
+  font-size: var(--fs-body); color: var(--label); position: relative; z-index: 1;
+}
+.seg button[aria-pressed="true"] { background: var(--control); box-shadow: 0 0 0 .5px var(--control-edge), 0 1px 2px rgba(0,0,0,.12); font-weight: 500; }
+[data-theme="dark"] .seg button[aria-pressed="true"] { background: rgba(255,255,255,.22); }
+
+input[type=range].slider { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; width: 160px; }
+input[type=range].slider::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: linear-gradient(to right, var(--accent) var(--v, 50%), var(--fill3) var(--v, 50%)); }
+input[type=range].slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -7px; border-radius: 50%; background: var(--thumb); box-shadow: 0 0 0 .5px rgba(0,0,0,.18), 0 1px 3px rgba(0,0,0,.25); }
+
+.check { width: 14px; height: 14px; border-radius: 4px; background: var(--control); box-shadow: 0 0 0 .5px var(--control-edge); display: inline-grid; place-items: center; }
+.check.on { background: var(--accent); box-shadow: none; }
+
+.kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: var(--r-xs); background: var(--fill2); color: var(--label2);
+  font: 500 var(--fs-caption)/1 var(--font); box-shadow: inset 0 -.5px 0 var(--sep-strong);
+}
+.recorder { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 8px; border-radius: var(--r-md); background: var(--fill); min-width: 96px; justify-content: center; color: var(--label); font-size: var(--fs-body); }
+.recorder.empty { color: var(--label3); }
+
+.badge { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 7px; border-radius: 999px; font-size: var(--fs-caption); font-weight: 500; background: var(--fill2); color: var(--label2); }
+.badge.accent { background: var(--accent-soft); color: var(--accent); }
+.badge.good { background: color-mix(in srgb, var(--done) 16%, transparent); color: var(--done); }
+
+/* Provider mark tile (the app draws the real mark; mockups use a monogram). */
+.mark {
+  width: 20px; height: 20px; border-radius: 6px; flex: none; display: inline-grid; place-items: center;
+  font: 700 11px/1 var(--font-display); color: #fff; background: var(--pc, #8E8E93);
+  box-shadow: inset 0 0 0 .5px rgba(0,0,0,.12);
+}
+.mark.sm { width: 16px; height: 16px; border-radius: 5px; font-size: 11px; }
+.mark.lg { width: 28px; height: 28px; border-radius: 8px; font-size: 14px; }
+.mark.xl { width: 40px; height: 40px; border-radius: 11px; font-size: 19px; }
+.mark.dim { background: var(--fill3); color: var(--label2) !important; box-shadow: inset 0 0 0 .5px var(--sep); }
+.mark[data-p="cursor"], .mark[data-p="antigravity"] { color: rgba(0,0,0,.78); }
+
+/* State dot */
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--dc, var(--label3)); display: inline-block; }
+.dot.working { --dc: var(--working); animation: breathe 1.6s var(--ease-in-out) infinite; }
+.dot.ask { --dc: var(--ask); animation: breathe 1s var(--ease-in-out) infinite; }
+.dot.done { --dc: var(--done); }
+.dot.failed { --dc: var(--failed); }
+.dot.stale { --dc: var(--label3); }
+.dot.live { --dc: var(--live); }
+@keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* The one gauge: a continuous capsule bar with its number beside it. */
+.gauge { position: relative; height: 4px; border-radius: 4px; background: var(--fill3); overflow: hidden; }
+.gauge > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--gc, var(--label)); width: var(--v, 0%); transition: width var(--d-change) var(--ease-out); }
+.gauge.stale > i { background: var(--label3); }
+.gauge .pace { position: absolute; top: -2px; bottom: -2px; width: 1.5px; background: var(--label2); left: var(--pace, 50%); border-radius: 1px; }
+
+.hairline { height: .5px; background: var(--sep); }
+.sym { width: 14px; height: 14px; flex: none; display: inline-block; vertical-align: -2px; }
+.sym-lg { width: 18px; height: 18px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0s !important; transition-duration: 80ms !important; }
+}
+
+</style>
+<style>
+.controls { display: flex; gap: 12px; align-items: center; margin: 0 0 18px; flex-wrap: wrap; }
+.controls .sp { flex: 1; }
+.controls label { display: inline-flex; gap: 8px; align-items: center; font-size: var(--fs-callout); color: var(--label2); }
+.cmp { display: grid; grid-template-columns: 120px repeat(2, minmax(0, 1fr)); gap: 16px 18px; align-items: start; }
+.col-h { font: 600 var(--fs-title3)/var(--lh-title3) var(--font); }
+.col-h small { display: block; font: 400 var(--fs-callout)/var(--lh-callout) var(--font); color: var(--label2); }
+.row-h { font: 600 var(--fs-body)/var(--lh-body) var(--font); padding-top: 8px; }
+.row-h small { display: block; font: 400 var(--fs-caption)/var(--lh-caption) var(--font); color: var(--label2); margin-top: 2px; }
+
+.cell { border-radius: var(--r-lg); overflow: hidden; background: var(--group); box-shadow: 0 0 0 .5px var(--group-edge); }
+.scr { position: relative; height: 260px; background: var(--wall); overflow: hidden; cursor: pointer; }
+.scr .menubar { position: absolute; left: 0; right: 0; top: 0; background: color-mix(in srgb, var(--glass) 70%, transparent); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+.scr .menubar .mb-sp { flex: 1; }
+.scr[data-play="row"] { height: 150px; }
+.scr[data-play="row"] .rows { top: 30px; }
+.scr[data-play="notch"] { height: 190px; }
+
+/* Panel demo */
+.pnl { position: absolute; top: 32px; right: 10px; width: 280px; border-radius: var(--r-xl); padding: 8px; transform-origin: 85% 0; will-change: transform, opacity; }
+.pnl .r { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 8px; border-radius: 8px; font-size: var(--fs-body); }
+.pnl .r .nm { flex: 1; }
+.pnl .r .c2 { font-size: var(--fs-callout); }
+.pnl .h { font: 600 var(--fs-caption)/var(--lh-caption) var(--font); color: var(--label2); padding: 6px 8px 4px; }
+.pnl .u { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 6px 8px 4px; }
+.pnl .u div { font-size: var(--fs-callout); color: var(--label2); }
+.pnl .u b { color: var(--label); font-variant-numeric: tabular-nums; }
+.pnl .u .gauge { margin-top: 4px; }
+
+/* Notch demo */
+.nt { position: absolute; left: 50%; top: 0; width: 200px; height: 30px; margin-left: -100px; background: #000; border-radius: 0 0 12px 12px; overflow: hidden; will-change: width, height, margin-left; }
+.nt .in { position: absolute; left: 50%; top: 0; width: 420px; margin-left: -210px; padding: 38px 16px 14px; color: rgba(255,255,255,.92); }
+.nt .ah { display: flex; gap: 10px; align-items: center; font-size: var(--fs-body); }
+.nt .ah small { display: block; font-size: var(--fs-callout); color: rgba(255,255,255,.6); }
+.nt pre { margin: 10px 0; padding: 7px 10px; border-radius: 9px; background: rgba(255,255,255,.09); font: var(--fs-callout)/var(--lh-callout) var(--mono); }
+.nt .acts { display: flex; gap: 8px; justify-content: flex-end; }
+.nt .acts span { height: 26px; padding: 0 12px; border-radius: 999px; display: inline-flex; align-items: center; background: rgba(255,255,255,.14); font-size: var(--fs-body); }
+.nt .acts span.go { background: #0A84FF; }
+.nt .wing { position: absolute; top: 7px; display: flex; gap: 6px; align-items: center; font-size: var(--fs-callout); color: rgba(255,255,255,.9); }
+
+/* Row change demo */
+.rows { position: absolute; left: 50%; top: 52px; width: 300px; margin-left: -150px; border-radius: var(--r-xl); padding: 8px; }
+.rows .r { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 8px; border-radius: 8px; }
+.rows .r .nm { flex: 1; }
+.rows .st { position: relative; width: 82px; height: 18px; text-align: right; font-size: var(--fs-callout); }
+.rows .st span { position: absolute; right: 0; top: 0; white-space: nowrap; }
+.rows .st .b { opacity: 0; }
+
+/* Timeline under each demo */
+.tl { padding: 10px 12px 12px; }
+.tl .read { display: flex; gap: 14px; font-size: var(--fs-callout); color: var(--label2); margin-bottom: 8px; flex-wrap: wrap; }
+.tl .read b { color: var(--label); font-variant-numeric: tabular-nums; font-weight: 600; }
+.ruler { position: relative; height: 34px; }
+.ruler .track { position: absolute; left: 0; right: 0; top: 8px; height: 8px; border-radius: 4px; background: var(--fill2); }
+.ruler .dur { position: absolute; top: 8px; height: 8px; border-radius: 4px; background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+.ruler .rd { position: absolute; top: 4px; width: 2px; height: 16px; margin-left: -1px; background: var(--done); border-radius: 1px; }
+.ruler .ph { position: absolute; top: 2px; width: 2px; height: 20px; margin-left: -1px; background: var(--label); border-radius: 1px; opacity: 0; }
+.ruler .tk { position: absolute; top: 20px; font-size: var(--fs-caption); color: var(--label3); transform: translateX(-50%); font-variant-numeric: tabular-nums; }
+.ruler .tk:first-of-type { transform: none; }
+.legend { display: flex; gap: 16px; font-size: var(--fs-callout); color: var(--label2); margin-top: 18px; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 14px; height: 8px; border-radius: 3px; vertical-align: 0; margin-right: 6px; }
+.scrub { display: flex; align-items: center; gap: 10px; font-size: var(--fs-callout); color: var(--label2); }
+.scrub input { width: 240px; }
+.scrub .num { min-width: 52px; color: var(--label); }
+</style>
+</head>
+<body>
+<div class="mk-layout">
+  <main class="mk-stage">
+    <div class="controls">
+      <button class="btn primary lg" id="replay">${'▶'} Replay all</button>
+      <div class="seg" id="dir"><button data-dir="open" aria-pressed="true">Open</button><button data-dir="close" aria-pressed="false">Close</button></div>
+      <div class="seg" id="speed"><button data-speed="1" aria-pressed="true">1×</button><button data-speed="4" aria-pressed="false">¼ speed</button><button data-speed="10" aria-pressed="false">1⁄10</button></div>
+      <span class="sp"></span>
+      <div class="scrub"><span>Scrub</span><input type="range" class="slider" id="scrub" min="0" max="500" value="0" style="--v:0%"><span class="num" id="scrubV">—</span></div>
+    </div>
+    <div class="cmp" id="cmp">
+      <span></span>
+      <div class="col-h">Today<small>0.9.17: panel 260 ms ease-in-out, notch about 450 ms spring with overshoot, content fades in after the frame</small></div>
+      <div class="col-h">Proposed<small>0.10.0: panel 140 ms, notch 250 ms, no overshoot, content drawn on the first frame</small></div>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--accent-soft);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 40%,transparent)"></i>Animation running</span>
+      <span><i style="background:var(--done);width:3px"></i>Content readable</span>
+      <span>Click any screen to replay just that pair. Space replays all. S cycles speed.</span>
+    </div>
+  </main>
+  <aside class="mk-notes">
+    <h2>Key choices</h2>
+    <ul>
+      <li>Content is drawn on the first frame. The panel arrives at 50% opacity and 98% scale with everything in it already laid out, so you can read it while it settles. Today the text fades in only after 120 ms of movement.</li>
+      <li>Entrances are 140 ms with a fast-out curve <code>cubic-bezier(.2,.8,.2,1)</code>. Exits are 100 ms, because closing should feel instant.</li>
+      <li>The notch grows over 250 ms with no overshoot. Its content keeps its final size and the black shape reveals it, so nothing reflows mid-motion. Today's 450 ms spring bounces, then fades the text in.</li>
+      <li>State changes in place (Working → Done) crossfade in 160 ms and never move the row.</li>
+      <li>Reduce Motion: every entrance becomes an 80 ms fade, with no scale and no size morph.</li>
+    </ul>
+    <h2>The numbers</h2>
+    <ul>
+      <li>Panel open: 260 → <b>140 ms</b>, readable at 120 → <b>0 ms</b></li>
+      <li>Panel close: 260 → <b>100 ms</b></li>
+      <li>Notch open: 450 → <b>250 ms</b>, readable at 300 → <b>0 ms</b></li>
+      <li>Notch close: 350 → <b>180 ms</b></li>
+      <li>Row state change: 300 → <b>160 ms</b></li>
+    </ul>
+    <h2>Audit findings fixed</h2>
+    <ul class="fix">
+      <li>Slow, floaty panel and notch → Raycast-speed entrances with content on the first frame</li>
+      <li>Notch bounce → a settled curve with no overshoot</li>
+    </ul>
+    <h2>Open questions</h2>
+    <ul class="q">
+      <li>Is 140 ms right for the panel, or would you go to 120 ms?</li>
+      <li>Should the notch keep a touch of spring (a 2% overshoot), or none at all?</li>
+      <li>Should hovering the notch open it at 250 ms, or wait 150 ms first so a passing pointer doesn't open it?</li>
+      <li>The "today" timings are read from the 0.9.17 code paths and the audit, not measured on screen. Want a screen recording to confirm them before building?</li>
+    </ul>
+  </aside>
+</div>
+<script>
+/* JR-Bar 0.10.0 mockups: shared helpers. */
+(function () {
+  const root = document.documentElement;
+  const stored = (location.hash.match(/(light|dark)/) || [])[1];
+  const prefers = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  root.dataset.theme = stored || prefers;
+
+  const S = (d, extra = "") =>
+    `<svg class="sym ${extra}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const F = (d, extra = "") =>
+    `<svg class="sym ${extra}" viewBox="0 0 16 16" fill="currentColor">${d}</svg>`;
+
+  window.ICON = {
+    gear: S('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7L3.6 3.6"/>'),
+    person: S('<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6"/>'),
+    stack: S('<rect x="2.5" y="2.5" width="11" height="4" rx="1.2"/><rect x="2.5" y="9.5" width="11" height="4" rx="1.2"/>'),
+    bell: S('<path d="M4 11V7.2a4 4 0 0 1 8 0V11l1 1.2H3z"/><path d="M6.6 13.8a1.5 1.5 0 0 0 2.8 0"/>'),
+    command: S('<path d="M6 6V4.2A1.7 1.7 0 1 0 4.2 6H11.8A1.7 1.7 0 1 0 10 4.2V11.8A1.7 1.7 0 1 0 11.8 10H4.2A1.7 1.7 0 1 0 6 11.8z"/>'),
+    display: S('<rect x="1.8" y="2.5" width="12.4" height="8.5" rx="1.4"/><path d="M5.5 13.5h5"/>'),
+    strip: S('<rect x="1.5" y="6" width="13" height="4" rx="2"/><circle cx="4.5" cy="8" r=".6" fill="currentColor"/><circle cx="8" cy="8" r=".6" fill="currentColor"/><circle cx="11.5" cy="8" r=".6" fill="currentColor"/>'),
+    notch: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="M5.8 2.5v1.3a1 1 0 0 0 1 1h2.4a1 1 0 0 0 1-1V2.5"/>'),
+    wrench: S('<path d="M10.8 2.2a3 3 0 0 0-3.4 4L2.6 11a1.3 1.3 0 0 0 1.8 1.8l4.8-4.8a3 3 0 0 0 4-3.4l-1.8 1.8-1.7-.4-.4-1.7z"/>'),
+    party: S('<path d="M2.5 13.5l3-8 5 5z"/><path d="M9 2v1.5M12.5 3.5l-1 1M14 7h-1.5M10 6l1.5-1.5"/>'),
+    antenna: S('<circle cx="8" cy="7" r="1.3"/><path d="M8 8.3V14M5 4a4.2 4.2 0 0 0 0 6M11 4a4.2 4.2 0 0 1 0 6M3 2.2a7 7 0 0 0 0 9.6M13 2.2a7 7 0 0 1 0 9.6"/>'),
+    hand: S('<path d="M8 1.8l5 2v3.6c0 3.2-2.1 5.6-5 6.8-2.9-1.2-5-3.6-5-6.8V3.8z"/>'),
+    sliders: S('<path d="M2.5 4.5h7M12.5 4.5h1M2.5 11.5h1M6.5 11.5h7"/><circle cx="11" cy="4.5" r="1.5"/><circle cx="5" cy="11.5" r="1.5"/>'),
+    chevR: S('<path d="M6 3.5L10.5 8 6 12.5"/>'),
+    chevD: S('<path d="M3.5 6L8 10.5 12.5 6"/>'),
+    chevL: S('<path d="M10 3.5L5.5 8l4.5 4.5"/>'),
+    eye: S('<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>'),
+    eyeOff: S('<path d="M2.5 2.5l11 11M6.4 4a6.6 6.6 0 0 1 1.6-.5c4.1 0 6.5 4.5 6.5 4.5a11 11 0 0 1-1.9 2.4M10 11.9a5.6 5.6 0 0 1-2 .6C3.9 12.5 1.5 8 1.5 8a11.3 11.3 0 0 1 2.4-2.9"/>'),
+    grip: F('<circle cx="6" cy="4" r="1.1"/><circle cx="10" cy="4" r="1.1"/><circle cx="6" cy="8" r="1.1"/><circle cx="10" cy="8" r="1.1"/><circle cx="6" cy="12" r="1.1"/><circle cx="10" cy="12" r="1.1"/>'),
+    plus: S('<path d="M8 3v10M3 8h10"/>'),
+    info: S('<circle cx="8" cy="8" r="6.2"/><path d="M8 7.2V11"/><circle cx="8" cy="4.9" r=".5" fill="currentColor"/>'),
+    warn: S('<path d="M8 2.2l6.2 11H1.8z"/><path d="M8 6.5v3"/><circle cx="8" cy="11.3" r=".5" fill="currentColor"/>'),
+    check: S('<path d="M3.5 8.5l3 3 6-7"/>'),
+    xmark: S('<path d="M4 4l8 8M12 4l-8 8"/>'),
+    arrowUR: S('<path d="M5 11l6-6M6 5h5v5"/>'),
+    chart: S('<path d="M2.5 13.5h11M4.5 11V8M8 11V4.5M11.5 11V6.5"/>'),
+    clock: S('<circle cx="8" cy="8" r="6.2"/><path d="M8 4.5V8l2.3 1.5"/>'),
+    play: F('<path d="M5 3.2v9.6L12.6 8z"/>'),
+    pause: F('<rect x="4" y="3.2" width="2.6" height="9.6" rx=".8"/><rect x="9.4" y="3.2" width="2.6" height="9.6" rx=".8"/>'),
+    refresh: S('<path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3"/>'),
+    palette: S('<path d="M8 1.8a6.2 6.2 0 1 0 0 12.4c1 0 1.3-.8.9-1.6-.5-1 .1-1.9 1.2-1.9h1.6a2.5 2.5 0 0 0 2.5-2.5C14.2 4.6 11.5 1.8 8 1.8z"/><circle cx="5" cy="7" r=".8" fill="currentColor"/><circle cx="7.6" cy="4.8" r=".8" fill="currentColor"/><circle cx="10.6" cy="5.6" r=".8" fill="currentColor"/>'),
+    sparkles: S('<path d="M7 2l1.2 3.3L11.5 6.5 8.2 7.7 7 11 5.8 7.7 2.5 6.5l3.3-1.2zM12 9.5l.6 1.6 1.6.6-1.6.6-.6 1.7-.6-1.7-1.6-.6 1.6-.6z"/>'),
+    terminal: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="M4.5 6.5L6.5 8l-2 1.5M8 10h3"/>'),
+    key: S('<circle cx="5" cy="10" r="2.6"/><path d="M6.9 8.1L13 2M10.5 4.5l1.5 1.5"/>'),
+    moon: S('<path d="M13 9.5A5.5 5.5 0 1 1 6.5 3a4.5 4.5 0 0 0 6.5 6.5z"/>'),
+    cup: S('<path d="M2.5 5.5h9v4a3.5 3.5 0 0 1-3.5 3.5h-2a3.5 3.5 0 0 1-3.5-3.5zM11.5 6.5h1a1.6 1.6 0 0 1 0 3.2h-1"/>'),
+    dock: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><rect x="4" y="10" width="8" height="2" rx=".8"/>'),
+    menubar: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="M1.8 5.5h12.4"/>'),
+    fish: S('<path d="M2 8c2-3 6.5-4 9.5 0-3 4-7.5 3-9.5 0zM11.5 8L14 5.5v5z"/><circle cx="5" cy="7.4" r=".5" fill="currentColor"/>'),
+    ghost: S('<path d="M3.5 14V7a4.5 4.5 0 0 1 9 0v7l-1.5-1-1.5 1-1.5-1-1.5 1-1.5-1z"/><circle cx="6.3" cy="7" r=".6" fill="currentColor"/><circle cx="9.7" cy="7" r=".6" fill="currentColor"/>'),
+    fold: S('<path d="M2.5 3h11v10h-11zM2.5 3l5.5 5 5.5-5"/>'),
+    calendar: S('<rect x="2" y="3" width="12" height="11" rx="1.6"/><path d="M2 6.5h12M5 1.8v2.4M11 1.8v2.4"/>'),
+    timer: S('<circle cx="8" cy="9" r="5"/><path d="M8 9V6.5M6.5 1.8h3"/>'),
+    doc: S('<path d="M4 1.8h5l3 3v9.4H4z"/><path d="M9 1.8v3h3"/>'),
+    list: S('<path d="M5.5 4.5h8M5.5 8h8M5.5 11.5h8"/><circle cx="2.8" cy="4.5" r=".7" fill="currentColor"/><circle cx="2.8" cy="8" r=".7" fill="currentColor"/><circle cx="2.8" cy="11.5" r=".7" fill="currentColor"/>'),
+    search: S('<circle cx="7" cy="7" r="4.3"/><path d="M10.2 10.2l3.3 3.3"/>'),
+    deck: S('<rect x="2" y="3" width="12" height="10" rx="1.6"/><path d="M5 6h1M7.5 6h1M10 6h1M5 9h1M7.5 9h1M10 9h1"/>'),
+    lightbulb: S('<path d="M5.5 10.5a4.5 4.5 0 1 1 5 0V12h-5z"/><path d="M6 14h4"/>'),
+    ellipsis: F('<circle cx="3.5" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.5" cy="8" r="1.2"/>'),
+    trash: S('<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 9h5.8l.6-9"/>'),
+  };
+
+  window.PROVIDERS = {
+    claude: { name: "Claude", c: "#D97757", l: "C" },
+    codex: { name: "Codex", c: "#2B8FFF", l: "X" },
+    gemini: { name: "Gemini", c: "#34C759", l: "G" },
+    antigravity: { name: "Antigravity", c: "#ABE17E", l: "A" },
+    cursor: { name: "Cursor", c: "#FFCC00", l: "Cu" },
+    factory: { name: "Factory", c: "#E76F32", l: "F" },
+    devin: { name: "Devin", c: "#5C84B0", l: "D" },
+    opencode: { name: "OpenCode", c: "#AF52DE", l: "O" },
+    kiro: { name: "Kiro", c: "#A00848", l: "K" },
+    t3code: { name: "T3 Code", c: "#00B8D9", l: "T3" },
+  };
+  window.mark = (p, size = "", dim = false) => {
+    const d = PROVIDERS[p];
+    return `<span class="mark ${size} ${dim ? "dim" : ""}" data-p="${p}" style="--pc:${d.c}" aria-label="${d.name}">${d.l}</span>`;
+  };
+
+  /* The owner's menu bar meter icon, kept as it is: a chevron, the teal
+     status dot, then one small vertical bar per provider (first orange). */
+  window.menuBarIcon = (bars, opts = {}) => {
+    const dark = root.dataset.theme === "dark";
+    const ink = dark ? "rgba(255,255,255,.92)" : "rgba(0,0,0,.82)";
+    const trackInk = dark ? "rgba(255,255,255,.28)" : "rgba(0,0,0,.22)";
+    const w = 30 + bars.length * 6;
+    let s = `<svg width="${w}" height="18" viewBox="0 0 ${w} 18" aria-label="JR-Bar">`;
+    s += `<path d="M7 5L3.5 9 7 13" stroke="${ink}" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+    s += `<circle cx="15" cy="9" r="3.4" fill="${opts.dot || "var(--live)"}"/>`;
+    bars.forEach((b, i) => {
+      const x = 23 + i * 6, h = 12, fill = Math.max(1.5, h * b.v);
+      s += `<rect x="${x}" y="3" width="3.2" height="${h}" rx="1.4" fill="${trackInk}"/>`;
+      s += `<rect x="${x}" y="${3 + h - fill}" width="3.2" height="${fill}" rx="1.4" fill="${b.c || ink}"/>`;
+    });
+    return s + "</svg>";
+  };
+
+  /* Mockup chrome */
+  window.mkBar = (title, extra = "") => {
+    const bar = document.createElement("header");
+    bar.className = "mk-bar";
+    bar.innerHTML = `<a href="index.html">‹ All surfaces</a><span class="mk-title">${title}</span>${extra}<span class="mk-sp"></span>
+      <span class="c-note" style="opacity:.6">T toggles appearance</span>
+      <div class="mk-group" role="group" aria-label="Appearance">
+        <button data-theme-btn="light">Light</button><button data-theme-btn="dark">Dark</button>
+      </div>`;
+    document.body.prepend(bar);
+    const sync = () => bar.querySelectorAll("[data-theme-btn]").forEach(b =>
+      b.setAttribute("aria-pressed", String(b.dataset.themeBtn === root.dataset.theme)));
+    bar.addEventListener("click", e => {
+      const t = e.target.closest("[data-theme-btn]");
+      if (t) setTheme(t.dataset.themeBtn);
+    });
+    window.addEventListener("keydown", e => {
+      if (e.key.toLowerCase() === "t" && !e.metaKey && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
+        setTheme(root.dataset.theme === "dark" ? "light" : "dark");
+      }
+    });
+    function setTheme(t) {
+      root.dataset.theme = t; history.replaceState(null, "", "#" + t); sync();
+      window.dispatchEvent(new CustomEvent("themechange"));
+    }
+    sync();
+    return bar;
+  };
+
+  /* Deterministic random for synthetic data. */
+  window.rng = seed => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+
+  window.$ = (s, el = document) => el.querySelector(s);
+  window.$$ = (s, el = document) => [...el.querySelectorAll(s)];
+})();
+
+</script>
+<script>
+mkBar("07 · Motion comparison");
+$("#replay").innerHTML = ICON.play + " Replay all";
+
+/* A damped spring sampled into a CSS linear() easing. */
+function springEasing(zeta, omega, dur, n = 48) {
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n * dur / 1000;
+    let x;
+    if (zeta < 1) { const wd = omega * Math.sqrt(1 - zeta * zeta); x = 1 - Math.exp(-zeta * omega * t) * (Math.cos(wd * t) + zeta * omega / wd * Math.sin(wd * t)); }
+    else x = 1 - Math.exp(-omega * t) * (1 + omega * t);
+    pts.push(+x.toFixed(4));
+  }
+  pts[n] = 1;
+  return `linear(${pts.join(", ")})`;
+}
+const OUT = "cubic-bezier(.2,.8,.2,1)", INOUT = "cubic-bezier(.45,0,.25,1)", EXIT = "cubic-bezier(.4,0,1,1)";
+const SPRING_NOW = springEasing(.62, 15, 450);
+
+const SPECS = {
+  panel: {
+    title: "Panel", sub: "click the menu bar icon",
+    now: { open: 260, close: 260, readOpen: 120, readClose: 0 },
+    next: { open: 140, close: 100, readOpen: 0, readClose: 0 },
+  },
+  notch: {
+    title: "Notch", sub: "an ask arrives",
+    now: { open: 450, close: 350, readOpen: 300, readClose: 0 },
+    next: { open: 250, close: 180, readOpen: 0, readClose: 0 },
+  },
+  row: {
+    title: "Row change", sub: "Working → Done",
+    now: { open: 300, close: 300, readOpen: 150, readClose: 150 },
+    next: { open: 160, close: 160, readOpen: 0, readClose: 0 },
+  },
+};
+const st = { dir: "open", speed: 1, anims: [], t0: 0, raf: 0, scrub: null };
+
+function screenHTML(kind, ver) {
+  const icon = `<span class="mb-item">${menuBarIcon([{ v: .34, c: "#FF9500" }, { v: .61 }, { v: .12 }])}</span>`;
+  const mb = `<div class="menubar"><span class="mb-app">Finder</span><span>File</span><span>Edit</span><span class="mb-sp"></span>${icon}<span class="num">11:42</span></div>`;
+  if (kind === "panel") return mb + `<div class="pnl glass" data-el="${ver}">
+      <div class="h">Agents</div>
+      <div class="r">${mark("claude")}<span class="nm">atlas-api</span><span class="dot working"></span><span class="c2">4 m</span></div>
+      <div class="r">${mark("codex")}<span class="nm">budget-sheets</span><span class="dot ask"></span><span class="c2">Asks</span></div>
+      <div class="r">${mark("factory")}<span class="nm">release-bot</span><span class="dot done"></span><span class="c2">Done</span></div>
+      <div class="h">Usage</div>
+      <div class="u"><div>Claude 5 h <b>34%</b><div class="gauge" style="--gc:#D97757;--v:34%"><i></i></div></div><div>Codex 5 h <b>12%</b><div class="gauge" style="--gc:#2B8FFF;--v:12%"><i></i></div></div></div>
+    </div>`;
+  if (kind === "notch") return `<div class="nt" data-el="${ver}">
+      <div class="wing" style="left:12px">${mark("claude", "sm")}</div><div class="wing" style="right:12px">Asks</div>
+      <div class="in"><div class="ah">${mark("claude", "lg")}<div>Claude asks to run a command<small>atlas-api · Planner</small></div></div>
+        <pre>npm run migrate -- --dry-run</pre><div class="acts"><span>Deny</span><span class="go">Allow</span></div></div></div>`;
+  return `<div class="rows glass">
+      <div class="r">${mark("claude")}<span class="nm">atlas-api</span><span class="st" data-el="${ver}"><span class="a" style="color:var(--working)">● Working</span><span class="b" style="color:var(--done)">✓ Done</span></span></div>
+      <div class="r">${mark("codex")}<span class="nm">budget-sheets</span><span class="st"><span style="color:var(--working)">● Working</span></span></div>
+    </div>`;
+}
+const RULER_MAX = 500;
+function timelineHTML(kind, ver) {
+  return `<div class="tl"><div class="read" data-read="${kind}-${ver}"></div><div class="ruler" data-ruler="${kind}-${ver}">
+    <div class="track"></div><div class="dur"></div><div class="rd"></div><div class="ph"></div>
+    ${[0, 100, 200, 300, 400, 500].map(v => `<span class="tk" style="left:${v / RULER_MAX * 100}%">${v === 500 ? "" : v + " ms"}</span>`).join("")}</div></div>`;
+}
+function build() {
+  const cmp = $("#cmp");
+  for (const kind of Object.keys(SPECS)) {
+    const s = SPECS[kind];
+    cmp.insertAdjacentHTML("beforeend", `<div class="row-h">${s.title}<small>${s.sub}</small></div>` +
+      ["now", "next"].map(v => `<div class="cell"><div class="scr" data-play="${kind}">${screenHTML(kind, v)}</div>${timelineHTML(kind, v)}</div>`).join(""));
+  }
+}
+function updateRulers() {
+  for (const kind of Object.keys(SPECS)) for (const v of ["now", "next"]) {
+    const s = SPECS[kind][v], dur = s[st.dir], rd = st.dir === "open" ? s.readOpen : s.readClose;
+    const r = $(`[data-ruler="${kind}-${v}"]`);
+    r.querySelector(".dur").style.cssText = `left:0;width:${dur / RULER_MAX * 100}%`;
+    r.querySelector(".rd").style.left = `${rd / RULER_MAX * 100}%`;
+    r.querySelector(".rd").style.display = st.dir === "open" || kind === "row" ? "" : "none";
+    $(`[data-read="${kind}-${v}"]`).innerHTML = st.dir === "open" || kind === "row"
+      ? `<span>Runs <b>${dur} ms</b></span><span>Readable at <b>${rd === 0 ? "first frame" : rd + " ms"}</b></span>`
+      : `<span>Runs <b>${dur} ms</b></span><span>${v === "next" ? "Gone before your hand leaves the mouse" : "Fades while it shrinks"}</span>`;
+  }
+}
+
+function animFor(kind, ver, el) {
+  const s = SPECS[kind][ver], k = st.speed, open = st.dir === "open", dur = s[st.dir] * k, out = [];
+  const add = (target, frames, opts) => { const a = target.animate(frames, { fill: "both", ...opts }); out.push(a); };
+  if (kind === "panel") {
+    const content = el.children;
+    if (ver === "now") {
+      add(el, open ? [{ opacity: 0, transform: "scale(.94)" }, { opacity: 1, transform: "scale(1)" }] : [{ opacity: 1, transform: "scale(1)" }, { opacity: 0, transform: "scale(.94)" }], { duration: dur, easing: INOUT });
+      [...content].forEach(c => add(c, open ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0 }], open ? { duration: 140 * k, delay: 120 * k, easing: "linear" } : { duration: 140 * k, easing: "linear" }));
+    } else {
+      add(el, open ? [{ opacity: .5, transform: "scale(.98)" }, { opacity: 1, transform: "scale(1)" }] : [{ opacity: 1, transform: "scale(1)" }, { opacity: 0, transform: "scale(.98)" }], { duration: dur, easing: open ? OUT : EXIT });
+      [...content].forEach(c => add(c, [{ opacity: 1 }, { opacity: 1 }], { duration: 1 }));
+    }
+  } else if (kind === "notch") {
+    const closed = { width: "200px", height: "30px", marginLeft: "-100px", borderRadius: "0 0 12px 12px" };
+    const opened = { width: "420px", height: "150px", marginLeft: "-210px", borderRadius: "0 0 22px 22px" };
+    const inner = el.querySelector(".in"), wings = el.querySelectorAll(".wing");
+    if (ver === "now") {
+      add(el, open ? [closed, opened] : [opened, closed], { duration: dur, easing: open ? SPRING_NOW : INOUT });
+      add(inner, open ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0 }], open ? { duration: 150 * k, delay: 300 * k } : { duration: 120 * k });
+    } else {
+      add(el, open ? [closed, opened] : [opened, closed], { duration: dur, easing: open ? OUT : EXIT });
+      add(inner, [{ opacity: 1 }, { opacity: 1 }], { duration: 1 });
+    }
+    wings.forEach(w => add(w, open ? [{ opacity: 1 }, { opacity: 0 }] : [{ opacity: 0 }, { opacity: 1 }], { duration: Math.min(dur, 120 * k), delay: open ? 0 : dur - Math.min(dur, 120 * k) }));
+  } else {
+    const a = el.querySelector(".a"), b = el.querySelector(".b"), toDone = open;
+    const [from, to] = toDone ? [a, b] : [b, a];
+    if (ver === "now") {
+      add(from, [{ opacity: 1, transform: "translateY(0)" }, { opacity: 0, transform: "translateY(-6px)" }], { duration: 150 * k, easing: INOUT });
+      add(to, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 150 * k, delay: 150 * k, easing: INOUT });
+    } else {
+      add(from, [{ opacity: 1 }, { opacity: 0 }], { duration: dur, easing: OUT });
+      add(to, [{ opacity: 0 }, { opacity: 1 }], { duration: dur, easing: OUT });
+    }
+  }
+  return out;
+}
+
+function play(only) {
+  st.anims.filter(a => !only || a._kind === only).forEach(a => a.cancel());
+  st.anims = st.anims.filter(a => only && a._kind !== only);
+  for (const kind of Object.keys(SPECS)) {
+    if (only && kind !== only) continue;
+    for (const v of ["now", "next"]) {
+      const el = $(`[data-el="${v}"]`, $$(`[data-play="${kind}"]`)[v === "now" ? 0 : 1]);
+      animFor(kind, v, el).forEach(a => { a._kind = kind; st.anims.push(a); });
+    }
+  }
+  st.scrub = null; $("#scrubV").textContent = "—";
+  runPlayhead(only);
+}
+function runPlayhead(only) {
+  cancelAnimationFrame(st.raf);
+  const t0 = performance.now(), heads = $$(".ruler").filter(r => !only || r.dataset.ruler.startsWith(only)).map(r => r.querySelector(".ph"));
+  const tick = now => {
+    const t = (now - t0) / st.speed;
+    heads.forEach(h => { h.style.opacity = t < RULER_MAX ? 1 : 0; h.style.left = Math.min(100, t / RULER_MAX * 100) + "%"; });
+    if (t < RULER_MAX) st.raf = requestAnimationFrame(tick);
+  };
+  st.raf = requestAnimationFrame(tick);
+}
+function scrubTo(ms) {
+  if (!st.anims.length) play();
+  cancelAnimationFrame(st.raf);
+  st.anims.forEach(a => { a.pause(); a.currentTime = ms * st.speed; });
+  $$(".ruler .ph").forEach(h => { h.style.opacity = 1; h.style.left = ms / RULER_MAX * 100 + "%"; });
+  $("#scrubV").textContent = ms + " ms";
+  const sl = $("#scrub"); sl.style.setProperty("--v", ms / RULER_MAX * 100 + "%");
+}
+
+build(); updateRulers();
+document.addEventListener("click", e => {
+  const p = e.target.closest("[data-play]"); if (p) { play(p.dataset.play); return; }
+  if (e.target.closest("#replay")) { play(); return; }
+  const d = e.target.closest("[data-dir]"); if (d) { st.dir = d.dataset.dir; $$("#dir button").forEach(b => b.setAttribute("aria-pressed", String(b === d))); updateRulers(); play(); return; }
+  const s = e.target.closest("[data-speed]"); if (s) { st.speed = +s.dataset.speed; $$("#speed button").forEach(b => b.setAttribute("aria-pressed", String(b === s))); play(); return; }
+});
+$("#scrub").addEventListener("input", e => scrubTo(+e.target.value));
+window.addEventListener("keydown", e => {
+  if (e.code === "Space") { e.preventDefault(); play(); }
+  if (e.key.toLowerCase() === "s" && !e.metaKey) { const order = [1, 4, 10], i = (order.indexOf(st.speed) + 1) % 3; $$("#speed button")[i].click(); }
+});
+const hs = location.hash.match(/at(\d+)/);
+if (hs) { $("#scrub").value = hs[1]; scrubTo(+hs[1]); } else setTimeout(() => play(), 400);
+</script>
+</body>
+</html>

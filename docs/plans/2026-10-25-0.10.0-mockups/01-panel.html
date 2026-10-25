@@ -1,0 +1,1133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>01 · Panel · JR-Bar 0.10.0 mockups</title>
+<style>
+/* JR-Bar 0.10.0 mockups: shared tokens and native-macOS-26 approximations.
+   Every size and colour a mockup uses comes from here. */
+
+:root {
+  color-scheme: light dark;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, "Helvetica Neue", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Type ramp (pt == CSS px at 1x). Nothing below 11. */
+  --fs-large: 26px;   --lh-large: 32px;
+  --fs-title1: 22px;  --lh-title1: 28px;
+  --fs-title2: 17px;  --lh-title2: 22px;
+  --fs-title3: 15px;  --lh-title3: 20px;
+  --fs-body: 13px;    --lh-body: 18px;
+  --fs-callout: 12px; --lh-callout: 16px;
+  --fs-caption: 11px; --lh-caption: 14px;
+
+  /* Radii */
+  --r-xs: 4px;   /* swatch, keycap */
+  --r-sm: 6px;   /* small control, mark tile */
+  --r-md: 8px;   /* button, field, row highlight */
+  --r-lg: 12px;  /* grouped box, card */
+  --r-xl: 16px;  /* panel, popover */
+  --r-win: 18px; /* window (macOS 26) */
+  --r-pill: 999px;
+
+  /* Spacing (4 pt grid) */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-in-out: cubic-bezier(.45, 0, .25, 1);
+  --d-quick: 100ms;   /* exit, press */
+  --d-enter: 140ms;   /* entrance */
+  --d-change: 160ms;  /* crossfade in place */
+  --d-settle: 250ms;  /* notch / size morph */
+
+  /* Provider accents (ProviderStyle.table) */
+  --p-claude: #D97757; --p-codex: #2B8FFF; --p-gemini: #34C759; --p-antigravity: #ABE17E;
+  --p-cursor: #FFCC00; --p-factory: #E76F32; --p-devin: #5C84B0; --p-opencode: #AF52DE;
+  --p-kiro: #A00848; --p-t3code: #00B8D9; --p-grok: #8E8E93; --p-openclaw: #B23400;
+}
+
+/* ---------- Light ---------- */
+:root, [data-theme="light"] {
+  --label: rgba(0,0,0,.86);
+  --label2: rgba(0,0,0,.56);
+  --label3: rgba(0,0,0,.32);
+  --label4: rgba(0,0,0,.18);
+  --sep: rgba(0,0,0,.10);
+  --sep-strong: rgba(0,0,0,.16);
+  --fill: rgba(0,0,0,.045);
+  --fill2: rgba(0,0,0,.075);
+  --fill3: rgba(0,0,0,.11);
+  --hover: rgba(0,0,0,.05);
+
+  --window: #F3F3F5;
+  --content: #FFFFFF;
+  --group: rgba(255,255,255,.9);
+  --group-edge: rgba(0,0,0,.08);
+  --sidebar: rgba(236,236,240,.72);
+  --glass: rgba(250,250,252,.62);
+  --glass-strong: rgba(250,250,252,.82);
+  --glass-edge: rgba(255,255,255,.75);
+  --glass-rim: rgba(0,0,0,.12);
+  --shadow-win: 0 0 0 .5px rgba(0,0,0,.14), 0 18px 50px rgba(0,0,0,.20), 0 4px 12px rgba(0,0,0,.08);
+  --shadow-pop: 0 0 0 .5px rgba(0,0,0,.12), 0 12px 36px rgba(0,0,0,.18);
+  --control: #FFFFFF;
+  --control-edge: rgba(0,0,0,.14);
+  --thumb: #FFFFFF;
+  --track-off: rgba(0,0,0,.12);
+
+  --accent: #007AFF;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(0,122,255,.12);
+  --live: #30B0C7;      /* the teal status dot */
+  --working: #007AFF;
+  --ask: #FF9500;
+  --done: #28A745;
+  --failed: #E5352B;
+  --stale: rgba(0,0,0,.50);  /* grey + age, never orange */
+  --reset: #5E5CE6;
+
+  --wall: radial-gradient(1200px 700px at 12% -10%, #9ec5ff 0%, transparent 60%),
+          radial-gradient(1000px 800px at 95% 10%, #f7b6d2 0%, transparent 55%),
+          radial-gradient(900px 700px at 50% 110%, #b7f0e0 0%, transparent 60%),
+          linear-gradient(160deg, #dfe8f7, #eadff1);
+  --stage-bg: #E6E7EB;
+  --device: #2B2C30;
+  --device-rim: rgba(255,255,255,.12);
+}
+
+/* ---------- Dark ---------- */
+[data-theme="dark"] {
+  --label: rgba(255,255,255,.90);
+  --label2: rgba(255,255,255,.60);
+  --label3: rgba(255,255,255,.36);
+  --label4: rgba(255,255,255,.20);
+  --sep: rgba(255,255,255,.10);
+  --sep-strong: rgba(255,255,255,.16);
+  --fill: rgba(255,255,255,.06);
+  --fill2: rgba(255,255,255,.10);
+  --fill3: rgba(255,255,255,.15);
+  --hover: rgba(255,255,255,.07);
+
+  --window: #1E1E20;
+  --content: #232325;
+  --group: rgba(255,255,255,.055);
+  --group-edge: rgba(255,255,255,.07);
+  --sidebar: rgba(44,44,48,.66);
+  --glass: rgba(36,36,40,.58);
+  --glass-strong: rgba(36,36,40,.80);
+  --glass-edge: rgba(255,255,255,.14);
+  --glass-rim: rgba(0,0,0,.5);
+  --shadow-win: 0 0 0 .5px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06) inset, 0 20px 60px rgba(0,0,0,.55);
+  --shadow-pop: 0 0 0 .5px rgba(0,0,0,.6), 0 14px 40px rgba(0,0,0,.5);
+  --control: rgba(255,255,255,.10);
+  --control-edge: rgba(255,255,255,.10);
+  --thumb: #F2F2F2;
+  --track-off: rgba(255,255,255,.16);
+
+  --accent: #0A84FF;
+  --accent-ink: #FFFFFF;
+  --accent-soft: rgba(10,132,255,.22);
+  --live: #40C8E0;
+  --working: #0A84FF;
+  --ask: #FF9F0A;
+  --done: #30D158;
+  --failed: #FF453A;
+  --stale: rgba(255,255,255,.52);
+  --reset: #7D7AFF;
+
+  --wall: radial-gradient(1100px 700px at 10% -10%, #1d3b74 0%, transparent 60%),
+          radial-gradient(900px 800px at 95% 0%, #4a1f4f 0%, transparent 55%),
+          radial-gradient(900px 700px at 50% 120%, #0f3b39 0%, transparent 60%),
+          linear-gradient(160deg, #10131c, #160f1b);
+  --stage-bg: #2A2A2D;
+  --device: #0E0E10;
+  --device-rim: rgba(255,255,255,.16);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font: var(--fs-body)/var(--lh-body) var(--font);
+  color: var(--label);
+  -webkit-font-smoothing: antialiased;
+  background: var(--wall);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+button, input, select { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); font-size: var(--fs-callout); }
+
+/* Type styles */
+.t-large { font: 700 var(--fs-large)/var(--lh-large) var(--font-display); letter-spacing: -.01em; }
+.t-title1 { font: 700 var(--fs-title1)/var(--lh-title1) var(--font-display); letter-spacing: -.005em; }
+.t-title2 { font: 600 var(--fs-title2)/var(--lh-title2) var(--font-display); }
+.t-title3 { font: 600 var(--fs-title3)/var(--lh-title3) var(--font); }
+.t-headline { font: 600 var(--fs-body)/var(--lh-body) var(--font); }
+.t-body { font: 400 var(--fs-body)/var(--lh-body) var(--font); }
+.t-callout { font: 400 var(--fs-callout)/var(--lh-callout) var(--font); }
+.t-caption { font: 400 var(--fs-caption)/var(--lh-caption) var(--font); }
+.t-section { font: 600 var(--fs-caption)/var(--lh-caption) var(--font); color: var(--label2); letter-spacing: .01em; }
+.c2 { color: var(--label2); } .c3 { color: var(--label3); }
+
+/* ---------- Mockup chrome (annotation, not product) ---------- */
+.mk-bar {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px; height: 44px;
+  background: rgba(20,20,24,.86); color: #fff;
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  font-size: 12px; border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.mk-bar a { color: #9cc8ff; text-decoration: none; }
+.mk-bar .mk-title { font-weight: 600; font-size: 13px; }
+.mk-bar .mk-sp { flex: 1; }
+.mk-bar button {
+  background: rgba(255,255,255,.12); border: 0; color: #fff; padding: 4px 10px;
+  border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.mk-bar button[aria-pressed="true"] { background: #fff; color: #000; }
+.mk-bar .mk-group { display: flex; gap: 2px; background: rgba(255,255,255,.08); padding: 2px; border-radius: 8px; }
+.mk-bar .mk-group button { background: transparent; }
+.mk-bar .mk-group button[aria-pressed="true"] { background: rgba(255,255,255,.9); color: #000; }
+
+.mk-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; min-height: calc(100vh - 44px); }
+.mk-stage { position: relative; padding: 32px; overflow: auto; }
+.mk-notes {
+  background: rgba(20,20,24,.88); color: rgba(255,255,255,.88);
+  padding: 20px 20px 40px; font-size: 12.5px; line-height: 1.5;
+  border-left: 1px solid rgba(255,255,255,.08); overflow: auto;
+  max-height: calc(100vh - 44px); position: sticky; top: 44px;
+}
+.mk-notes h2 { font-size: 13px; margin: 18px 0 6px; color: #fff; }
+.mk-notes h2:first-child { margin-top: 0; }
+.mk-notes ul, .mk-notes ol { margin: 0; padding-left: 18px; }
+.mk-notes li { margin: 4px 0; }
+.mk-notes code { font-family: var(--mono); font-size: 11.5px; background: rgba(255,255,255,.08); padding: 0 4px; border-radius: 4px; }
+.mk-notes .q li::marker { color: #ffcc66; }
+.mk-notes .fix li::marker { color: #6fe3a8; }
+.mk-caption { font-size: 12px; color: var(--label2); margin: 0 0 10px; font-weight: 500; }
+.mk-row { display: flex; gap: 32px; flex-wrap: wrap; align-items: flex-start; }
+.mk-tag { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 2px 8px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; }
+
+/* ---------- Menu bar ---------- */
+.menubar {
+  height: 28px; display: flex; align-items: center; gap: 18px; padding: 0 14px;
+  font-size: 13px; color: var(--label);
+  background: transparent;
+}
+[data-theme="dark"] .menubar { color: rgba(255,255,255,.92); }
+.menubar .mb-app { font-weight: 700; }
+.menubar .mb-sp { flex: 1; }
+.menubar .mb-item { display: flex; align-items: center; height: 22px; padding: 0 6px; border-radius: 6px; }
+.menubar .mb-item.open { background: var(--fill3); }
+
+/* ---------- Glass / windows ---------- */
+.glass {
+  background: var(--glass);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  box-shadow: var(--shadow-pop), inset 0 0.5px 0 var(--glass-edge);
+}
+.window {
+  background: var(--window);
+  border-radius: var(--r-win);
+  box-shadow: var(--shadow-win);
+  overflow: hidden; position: relative;
+  display: flex; flex-direction: column;
+}
+.titlebar {
+  height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 16px; flex: none;
+}
+.traffic { display: flex; gap: 8px; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.18); }
+.traffic i:nth-child(1) { background: #FF5F57; } .traffic i:nth-child(2) { background: #FEBC2E; } .traffic i:nth-child(3) { background: #28C840; }
+.titlebar .tb-title { font-weight: 600; font-size: 15px; }
+
+.split { display: flex; flex: 1; min-height: 0; }
+.sidebar {
+  width: 220px; flex: none; margin: 8px 0 8px 8px; border-radius: var(--r-lg);
+  background: var(--sidebar);
+  backdrop-filter: blur(30px) saturate(160%); -webkit-backdrop-filter: blur(30px) saturate(160%);
+  box-shadow: 0 0 0 .5px var(--group-edge), inset 0 .5px 0 var(--glass-edge);
+  padding: 44px 10px 10px; display: flex; flex-direction: column; gap: 2px; overflow: auto;
+  position: relative;
+}
+.sidebar .traffic { position: absolute; top: 14px; left: 14px; }
+.sb-search {
+  display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; margin: 0 0 8px;
+  border-radius: var(--r-md); background: var(--fill); color: var(--label3); font-size: var(--fs-body);
+}
+.sb-head { font: 600 var(--fs-caption)/var(--lh-caption) var(--font); color: var(--label3); padding: 10px 8px 4px; }
+.sb-item {
+  display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px;
+  border-radius: var(--r-md); cursor: default; user-select: none; color: var(--label);
+}
+.sb-item:hover { background: var(--hover); }
+.sb-item .sb-badge { margin-left: auto; font-size: var(--fs-caption); color: var(--label2); }
+/* Selection: accent fill, white text, white icon -- readable in both appearances. */
+.sb-item.sel { background: var(--accent); color: var(--accent-ink); }
+.sb-item.sel .sb-badge { color: rgba(255,255,255,.85); }
+.sb-item.sel .ico-tile { box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
+.detail { flex: 1; min-width: 0; overflow: auto; position: relative; }
+
+.ico-tile {
+  width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex: none;
+  color: #fff;
+}
+.ico-tile svg { width: 14px; height: 14px; }
+
+/* ---------- Grouped form (System Settings) ---------- */
+.form { padding: 4px 28px 28px; max-width: 680px; margin: 0 auto; }
+.form-title { display: flex; align-items: center; gap: 10px; padding: 14px 0 16px; }
+.group-label { font: 600 var(--fs-body)/var(--lh-body) var(--font); color: var(--label); margin: 18px 4px 8px; }
+.group-note { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--label2); margin: 6px 4px 0; }
+.group {
+  background: var(--group); border-radius: var(--r-lg);
+  box-shadow: 0 0 0 .5px var(--group-edge);
+}
+.row {
+  display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 12px;
+  position: relative;
+}
+.row + .row::before { content: ""; position: absolute; top: 0; left: 12px; right: 0; height: .5px; background: var(--sep); }
+.row.ind + .row.ind::before { left: 46px; }
+.row-main { flex: 1; min-width: 0; }
+.row-title { font-size: var(--fs-body); }
+.row-sub { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--label2); margin-top: 1px; }
+.row.nav { cursor: default; }
+.row.nav:hover { background: var(--hover); }
+.row:first-child { border-top-left-radius: var(--r-lg); border-top-right-radius: var(--r-lg); }
+.row:last-child { border-bottom-left-radius: var(--r-lg); border-bottom-right-radius: var(--r-lg); }
+.chev { color: var(--label3); width: 8px; flex: none; }
+
+/* ---------- Controls ---------- */
+.switch { position: relative; width: 32px; height: 18px; flex: none; cursor: pointer; display: inline-block; }
+.switch input { appearance: none; -webkit-appearance: none; position: absolute; inset: 0; margin: 0; border-radius: 999px; background: var(--track-off); transition: background var(--d-change) var(--ease-out); cursor: pointer; }
+.switch input:checked { background: var(--accent); }
+.switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--thumb); box-shadow: 0 1px 2px rgba(0,0,0,.25), 0 0 0 .5px rgba(0,0,0,.06); transition: transform var(--d-change) var(--ease-out); }
+.switch input:checked::after { transform: translateX(14px); }
+.switch input:disabled { opacity: .4; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 24px; padding: 0 10px; border-radius: var(--r-md);
+  background: var(--control); border: 0; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 0 0 .5px var(--control-edge), 0 .5px 1px rgba(0,0,0,.08);
+  font-size: var(--fs-body); color: var(--label);
+}
+.btn:active { filter: brightness(.94); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); box-shadow: none; }
+.btn.plain { background: transparent; box-shadow: none; color: var(--accent); padding: 0 4px; }
+.btn.glass { border-radius: 999px; background: var(--fill2); box-shadow: inset 0 .5px 0 var(--glass-edge); height: 28px; padding: 0 12px; }
+.btn.lg { height: 30px; padding: 0 14px; border-radius: 10px; }
+.btn.icon { width: 28px; padding: 0; }
+.btn svg { width: 14px; height: 14px; }
+
+.popup {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px 0 10px;
+  border-radius: var(--r-md); background: var(--control);
+  box-shadow: 0 0 0 .5px var(--control-edge), 0 .5px 1px rgba(0,0,0,.08); font-size: var(--fs-body);
+  white-space: nowrap; cursor: default;
+}
+.popup::after {
+  content: ""; width: 14px; height: 16px; flex: none; border-radius: 4px; background: var(--accent);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat;
+}
+.select { position: relative; display: inline-flex; }
+.select select { appearance: none; -webkit-appearance: none; border: 0; height: 24px; padding: 0 26px 0 10px; border-radius: var(--r-md);
+  background: var(--control); box-shadow: 0 0 0 .5px var(--control-edge), 0 .5px 1px rgba(0,0,0,.08); font-size: var(--fs-body); cursor: pointer; color: var(--label); }
+.select::after { content: ""; position: absolute; right: 5px; top: 4px; width: 14px; height: 16px; border-radius: 4px; background: var(--accent); pointer-events: none;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 16'><path d='M4 6.5L7 3.5L10 6.5M4 9.5L7 12.5L10 9.5' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/14px 16px no-repeat; }
+[data-theme="dark"] .select select option { background: #2a2a2d; }
+
+.seg {
+  display: inline-flex; padding: 2px; border-radius: var(--r-md); background: var(--fill2); gap: 0; position: relative;
+}
+.seg button {
+  border: 0; background: transparent; height: 22px; padding: 0 12px; border-radius: 6px; cursor: pointer;
+  font-size: var(--fs-body); color: var(--label); position: relative; z-index: 1;
+}
+.seg button[aria-pressed="true"] { background: var(--control); box-shadow: 0 0 0 .5px var(--control-edge), 0 1px 2px rgba(0,0,0,.12); font-weight: 500; }
+[data-theme="dark"] .seg button[aria-pressed="true"] { background: rgba(255,255,255,.22); }
+
+input[type=range].slider { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; width: 160px; }
+input[type=range].slider::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: linear-gradient(to right, var(--accent) var(--v, 50%), var(--fill3) var(--v, 50%)); }
+input[type=range].slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -7px; border-radius: 50%; background: var(--thumb); box-shadow: 0 0 0 .5px rgba(0,0,0,.18), 0 1px 3px rgba(0,0,0,.25); }
+
+.check { width: 14px; height: 14px; border-radius: 4px; background: var(--control); box-shadow: 0 0 0 .5px var(--control-edge); display: inline-grid; place-items: center; }
+.check.on { background: var(--accent); box-shadow: none; }
+
+.kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: var(--r-xs); background: var(--fill2); color: var(--label2);
+  font: 500 var(--fs-caption)/1 var(--font); box-shadow: inset 0 -.5px 0 var(--sep-strong);
+}
+.recorder { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 8px; border-radius: var(--r-md); background: var(--fill); min-width: 96px; justify-content: center; color: var(--label); font-size: var(--fs-body); }
+.recorder.empty { color: var(--label3); }
+
+.badge { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 7px; border-radius: 999px; font-size: var(--fs-caption); font-weight: 500; background: var(--fill2); color: var(--label2); }
+.badge.accent { background: var(--accent-soft); color: var(--accent); }
+.badge.good { background: color-mix(in srgb, var(--done) 16%, transparent); color: var(--done); }
+
+/* Provider mark tile (the app draws the real mark; mockups use a monogram). */
+.mark {
+  width: 20px; height: 20px; border-radius: 6px; flex: none; display: inline-grid; place-items: center;
+  font: 700 11px/1 var(--font-display); color: #fff; background: var(--pc, #8E8E93);
+  box-shadow: inset 0 0 0 .5px rgba(0,0,0,.12);
+}
+.mark.sm { width: 16px; height: 16px; border-radius: 5px; font-size: 11px; }
+.mark.lg { width: 28px; height: 28px; border-radius: 8px; font-size: 14px; }
+.mark.xl { width: 40px; height: 40px; border-radius: 11px; font-size: 19px; }
+.mark.dim { background: var(--fill3); color: var(--label2) !important; box-shadow: inset 0 0 0 .5px var(--sep); }
+.mark[data-p="cursor"], .mark[data-p="antigravity"] { color: rgba(0,0,0,.78); }
+
+/* State dot */
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--dc, var(--label3)); display: inline-block; }
+.dot.working { --dc: var(--working); animation: breathe 1.6s var(--ease-in-out) infinite; }
+.dot.ask { --dc: var(--ask); animation: breathe 1s var(--ease-in-out) infinite; }
+.dot.done { --dc: var(--done); }
+.dot.failed { --dc: var(--failed); }
+.dot.stale { --dc: var(--label3); }
+.dot.live { --dc: var(--live); }
+@keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* The one gauge: a continuous capsule bar with its number beside it. */
+.gauge { position: relative; height: 4px; border-radius: 4px; background: var(--fill3); overflow: hidden; }
+.gauge > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--gc, var(--label)); width: var(--v, 0%); transition: width var(--d-change) var(--ease-out); }
+.gauge.stale > i { background: var(--label3); }
+.gauge .pace { position: absolute; top: -2px; bottom: -2px; width: 1.5px; background: var(--label2); left: var(--pace, 50%); border-radius: 1px; }
+
+.hairline { height: .5px; background: var(--sep); }
+.sym { width: 14px; height: 14px; flex: none; display: inline-block; vertical-align: -2px; }
+.sym-lg { width: 18px; height: 18px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0s !important; transition-duration: 80ms !important; }
+}
+
+</style>
+<style>
+.stage-desk { position: relative; padding-bottom: 36px; border-radius: 14px; overflow: hidden; background: var(--wall); box-shadow: 0 0 0 .5px var(--sep); }
+.stage-desk .menubar { position: relative; z-index: 2; }
+[data-theme="light"] .stage-desk .menubar { background: rgba(255,255,255,.22); }
+[data-theme="dark"] .stage-desk .menubar { background: rgba(0,0,0,.18); }
+.panels { position: relative; padding: 6px 18px 0; justify-content: flex-end; display: flex; gap: 28px; align-items: flex-start; }
+.panel-col { display: flex; flex-direction: column; gap: 8px; }
+.panel-col .mk-caption { text-align: center; color: var(--label); opacity: .75; }
+
+.panel { width: 372px; border-radius: var(--r-xl); padding: 6px; background: var(--glass-strong); }
+.panel.enter { animation: panelIn var(--d-enter) var(--ease-out) both; }
+@keyframes panelIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.p-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px 6px; }
+.p-head .t-headline { font-size: var(--fs-title3); }
+.p-sec { padding: 2px 0 4px; }
+.p-sec + .p-sec { border-top: .5px solid var(--sep); margin-top: 2px; padding-top: 6px; }
+.p-sec-h { display: flex; align-items: center; gap: 6px; padding: 4px 10px 4px; min-height: 24px; }
+.p-sec-h .t-section { flex: 1; }
+.p-sec-h .btn.plain { height: 20px; font-size: var(--fs-callout); font-weight: 500; }
+
+.ask { margin: 2px 4px 6px; padding: 10px 12px 12px; border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--ask) 12%, transparent); box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--ask) 35%, transparent);
+  transition: opacity var(--d-change) var(--ease-out), transform var(--d-change) var(--ease-out); }
+.ask-top { display: flex; align-items: center; gap: 8px; }
+.ask-top .t-headline { flex: 1; }
+.ask-q { margin: 8px 0 10px; }
+.ask-cmd { margin-top: 6px; padding: 6px 8px; border-radius: var(--r-md); background: var(--fill2); font: 500 var(--fs-callout)/var(--lh-callout) var(--mono); }
+.ask-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.ask-actions .btn { height: 26px; }
+.ask-actions .kbd { background: rgba(255,255,255,.22); color: inherit; height: 16px; min-width: 16px; }
+.ask-actions .btn:not(.primary) .kbd { background: var(--fill2); color: var(--label2); }
+.ask-done { display: flex; align-items: center; gap: 8px; color: var(--done); font-weight: 600; }
+
+.s-row { display: grid; grid-template-columns: 14px 20px minmax(0,1fr) auto; align-items: center; column-gap: 8px; padding: 6px 8px 6px 6px; border-radius: var(--r-md); min-height: 40px; }
+.s-row:hover { background: var(--hover); }
+.s-row .disc { color: var(--label3); display: grid; place-items: center; transition: transform var(--d-enter) var(--ease-out); }
+.s-row.open .disc { transform: rotate(90deg); }
+.s-title { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.s-title b { font-weight: 600; white-space: nowrap; }
+.s-title span { color: var(--label2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-sub { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--label2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-right { display: flex; align-items: center; gap: 8px; font-size: var(--fs-callout); color: var(--label2); }
+.s-right .word-done { color: var(--done); font-weight: 600; }
+.stack-marks { display: inline-flex; }
+.stack-marks .mark { width: 16px; height: 16px; font-size: 11px; border-radius: 5px; box-shadow: 0 0 0 1.5px var(--glass-strong); }
+.stack-marks .mark + .mark { margin-left: -4px; }
+.members { overflow: hidden; transition: height var(--d-enter) var(--ease-out); }
+.m-row { display: grid; grid-template-columns: 16px minmax(0,1fr) auto; column-gap: 8px; align-items: center; padding: 4px 8px 4px 0; margin-left: 34px; min-height: 28px; position: relative; }
+.m-row::before { content: ""; position: absolute; left: -12px; top: 0; bottom: 0; width: 1px; background: var(--sep-strong); }
+.m-row:last-child::before { bottom: 50%; }
+.m-row::after { content: ""; position: absolute; left: -12px; top: 50%; width: 8px; height: 1px; background: var(--sep-strong); }
+.m-row .t-callout { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-row .role { color: var(--label2); }
+.s-row.dim { opacity: .55; }
+.s-row.dim:hover { opacity: .8; }
+
+/* Usage */
+.u-cols { display: grid; grid-template-columns: 20px minmax(0,1fr) 62px 62px; column-gap: 10px; padding: 0 12px 2px 12px; }
+.u-cols span { font-size: var(--fs-caption); color: var(--label3); text-align: right; font-weight: 500; }
+.u-row { display: grid; grid-template-columns: 20px minmax(0,1fr) 62px 62px; column-gap: 10px; align-items: center; padding: 7px 12px; border-radius: var(--r-md); min-height: 44px; position: relative; background: transparent; }
+.u-row:hover { background: var(--hover); }
+.u-name { font-weight: 600; }
+.u-sub { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--label2); margin-top: 1px; }
+.u-sub.fail { color: var(--label); }
+.u-sub .fail-ico { color: var(--failed); }
+.u-cell { text-align: right; }
+.u-num { font: 600 var(--fs-body)/16px var(--font); font-variant-numeric: tabular-nums; }
+.u-num.stale { color: var(--stale); font-weight: 500; }
+.u-num.reset { color: var(--reset); font-weight: 600; }
+.u-cell .gauge { margin-top: 4px; }
+.u-cell .u-age { font-size: var(--fs-caption); color: var(--stale); line-height: 13px; margin-top: 2px; }
+.u-fix { grid-column: 2 / -1; display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.u-fix .btn { height: 22px; font-size: var(--fs-callout); }
+.u-row.one-line { min-height: 34px; }
+.u-row.one-line .u-line { grid-column: 2 / -1; display: flex; align-items: center; gap: 8px; }
+.u-row.one-line .u-line .c2 { flex: 1; }
+.u-row.one-line .btn { height: 22px; font-size: var(--fs-callout); }
+
+/* Edit mode */
+.u-row.edit, .u-cols.edit { grid-template-columns: 14px 20px minmax(0,1fr) 58px 48px; }
+.u-row.edit { cursor: grab; }
+.u-row.edit .grip { color: var(--label3); display: grid; place-items: center; }
+.u-row.dragging { opacity: .5; }
+.u-row.drop-before::before { content: ""; position: absolute; left: 10px; right: 10px; top: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
+.eye { width: 30px; height: 24px; border-radius: var(--r-md); border: 0; background: transparent; color: var(--accent); display: grid; place-items: center; cursor: pointer; justify-self: end; }
+.eye:hover { background: var(--hover); }
+.eye.off { color: var(--label3); }
+.edit-hint { display: flex; gap: 6px; align-items: flex-start; padding: 8px 12px 6px; font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--label2); }
+.edit-hint a { color: var(--accent); text-decoration: none; }
+
+.p-foot { display: flex; align-items: center; gap: 6px; padding: 8px 6px 4px; border-top: .5px solid var(--sep); margin-top: 4px; }
+.p-foot .btn.glass { gap: 8px; }
+.p-foot .sp { flex: 1; }
+.studio-btn { padding-left: 8px !important; }
+.studio-btn .led-strip { width: auto; }
+.p-foot .kbd { height: 16px; }
+</style>
+</head>
+<body>
+<div class="mk-layout">
+  <main class="mk-stage">
+    <div class="stage-desk">
+      <div class="menubar">
+        <span style="font-size:15px"></span><span class="mb-app">Terminal</span><span>Shell</span><span>Edit</span><span>View</span><span>Window</span><span>Help</span>
+        <span class="mb-sp"></span>
+        <span class="mb-item"><svg width="16" height="14" viewBox="0 0 16 14"><path d="M1 7h2l2-5 3 10 2-6 1.5 1H15" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span class="mb-item open" id="mbIcon"></span>
+        <span class="mb-item"><svg width="22" height="12" viewBox="0 0 22 12"><rect x=".5" y=".5" width="18" height="11" rx="3" stroke="currentColor" fill="none" opacity=".5"/><rect x="2" y="2" width="12" height="8" rx="1.6" fill="currentColor"/><rect x="19.8" y="4" width="1.5" height="4" rx=".7" fill="currentColor" opacity=".5"/></svg></span>
+        <span class="num">Sun 25 Oct 11:42</span>
+      </div>
+      <div class="panels">
+        <div class="panel-col"><div class="panel glass" id="panelA"></div><div class="mk-caption">Panel (click Edit, the group rows and the ask)</div></div>
+        <div class="panel-col"><div class="panel glass" id="panelB"></div><div class="mk-caption">The same panel in Edit mode (drag rows, eyes)</div></div>
+      </div>
+    </div>
+  </main>
+  <aside class="mk-notes">
+    <h2>Key choices</h2>
+    <ul>
+      <li>Three sections, each said once: <b>Needs you</b>, <b>Agents</b>, <b>Usage</b>. A working state is a breathing dot and an elapsed time, never the word. Only loud states (asking, failed) and Done get a word, so "Working" no longer appears three times.</li>
+      <li>An agent group is one row in the root agent's colour: "Claude · 3 workers". The disclosure shows the members with a tree line. A cross-provider group shows the member marks stacked. An unlinked worker is dim and says it gets no share of the strip.</li>
+      <li>Usage shows <b>5 h</b> and <b>7 d</b> as two columns. Each has its own number and a thin continuous bar in the provider's colour, the same colour as its bar in the menu bar icon.</li>
+      <li>Stale numbers turn grey and show their age under the number. Orange means an ask and nothing else. Red appears only as the small icon on a failing source.</li>
+      <li>A window that reset shows <b>Reset</b> in indigo with its time, never the old percentage.</li>
+      <li>Edit happens in place. Drag handles appear, the numbers give way to two eye toggles (Menu bar, Panel), and the menu bar icon updates live. Track stays in Settings, because turning it off stops collection.</li>
+      <li>The footer has a Studio button with a live 8-LED mirror of what the strip is playing, plus <span class="kbd" style="background:rgba(255,255,255,.12);color:#fff">⌥⌘L</span>.</li>
+      <li>Motion: the panel fades in and rises 4 pt over 140 ms. The rows are already in place on the first frame.</li>
+    </ul>
+    <h2>Audit findings fixed</h2>
+    <ul class="fix">
+      <li>One % for two windows → 5 h and 7 d each have a number</li>
+      <li>"Working" three times → said once, in the header count</li>
+      <li>Stale looked like a warning → grey with its age</li>
+      <li>Providers chosen in three places → one list, edited here or in Settings</li>
+      <li>Studio buried → a footer button and a shortcut</li>
+    </ul>
+    <h2>Open questions</h2>
+    <ul class="q">
+      <li>Should a usage cell show <b>used</b> or <b>left</b>? The mockup shows used, which matches how the menu bar bars fill.</li>
+      <li>Should the reset times sit in the row subtitle (as shown) or appear only on hover?</li>
+      <li>When nothing needs you, should the Usage section move to the top?</li>
+      <li>Should a done session leave the list after a set time (5 min?) or stay until the next turn?</li>
+      <li>Should Hide on "not found" also turn off Track, or only hide the row?</li>
+    </ul>
+  </aside>
+</div>
+
+<script>
+/* JR-Bar 0.10.0 mockups: shared helpers. */
+(function () {
+  const root = document.documentElement;
+  const stored = (location.hash.match(/(light|dark)/) || [])[1];
+  const prefers = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  root.dataset.theme = stored || prefers;
+
+  const S = (d, extra = "") =>
+    `<svg class="sym ${extra}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const F = (d, extra = "") =>
+    `<svg class="sym ${extra}" viewBox="0 0 16 16" fill="currentColor">${d}</svg>`;
+
+  window.ICON = {
+    gear: S('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7L3.6 3.6"/>'),
+    person: S('<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6"/>'),
+    stack: S('<rect x="2.5" y="2.5" width="11" height="4" rx="1.2"/><rect x="2.5" y="9.5" width="11" height="4" rx="1.2"/>'),
+    bell: S('<path d="M4 11V7.2a4 4 0 0 1 8 0V11l1 1.2H3z"/><path d="M6.6 13.8a1.5 1.5 0 0 0 2.8 0"/>'),
+    command: S('<path d="M6 6V4.2A1.7 1.7 0 1 0 4.2 6H11.8A1.7 1.7 0 1 0 10 4.2V11.8A1.7 1.7 0 1 0 11.8 10H4.2A1.7 1.7 0 1 0 6 11.8z"/>'),
+    display: S('<rect x="1.8" y="2.5" width="12.4" height="8.5" rx="1.4"/><path d="M5.5 13.5h5"/>'),
+    strip: S('<rect x="1.5" y="6" width="13" height="4" rx="2"/><circle cx="4.5" cy="8" r=".6" fill="currentColor"/><circle cx="8" cy="8" r=".6" fill="currentColor"/><circle cx="11.5" cy="8" r=".6" fill="currentColor"/>'),
+    notch: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="M5.8 2.5v1.3a1 1 0 0 0 1 1h2.4a1 1 0 0 0 1-1V2.5"/>'),
+    wrench: S('<path d="M10.8 2.2a3 3 0 0 0-3.4 4L2.6 11a1.3 1.3 0 0 0 1.8 1.8l4.8-4.8a3 3 0 0 0 4-3.4l-1.8 1.8-1.7-.4-.4-1.7z"/>'),
+    party: S('<path d="M2.5 13.5l3-8 5 5z"/><path d="M9 2v1.5M12.5 3.5l-1 1M14 7h-1.5M10 6l1.5-1.5"/>'),
+    antenna: S('<circle cx="8" cy="7" r="1.3"/><path d="M8 8.3V14M5 4a4.2 4.2 0 0 0 0 6M11 4a4.2 4.2 0 0 1 0 6M3 2.2a7 7 0 0 0 0 9.6M13 2.2a7 7 0 0 1 0 9.6"/>'),
+    hand: S('<path d="M8 1.8l5 2v3.6c0 3.2-2.1 5.6-5 6.8-2.9-1.2-5-3.6-5-6.8V3.8z"/>'),
+    sliders: S('<path d="M2.5 4.5h7M12.5 4.5h1M2.5 11.5h1M6.5 11.5h7"/><circle cx="11" cy="4.5" r="1.5"/><circle cx="5" cy="11.5" r="1.5"/>'),
+    chevR: S('<path d="M6 3.5L10.5 8 6 12.5"/>'),
+    chevD: S('<path d="M3.5 6L8 10.5 12.5 6"/>'),
+    chevL: S('<path d="M10 3.5L5.5 8l4.5 4.5"/>'),
+    eye: S('<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>'),
+    eyeOff: S('<path d="M2.5 2.5l11 11M6.4 4a6.6 6.6 0 0 1 1.6-.5c4.1 0 6.5 4.5 6.5 4.5a11 11 0 0 1-1.9 2.4M10 11.9a5.6 5.6 0 0 1-2 .6C3.9 12.5 1.5 8 1.5 8a11.3 11.3 0 0 1 2.4-2.9"/>'),
+    grip: F('<circle cx="6" cy="4" r="1.1"/><circle cx="10" cy="4" r="1.1"/><circle cx="6" cy="8" r="1.1"/><circle cx="10" cy="8" r="1.1"/><circle cx="6" cy="12" r="1.1"/><circle cx="10" cy="12" r="1.1"/>'),
+    plus: S('<path d="M8 3v10M3 8h10"/>'),
+    info: S('<circle cx="8" cy="8" r="6.2"/><path d="M8 7.2V11"/><circle cx="8" cy="4.9" r=".5" fill="currentColor"/>'),
+    warn: S('<path d="M8 2.2l6.2 11H1.8z"/><path d="M8 6.5v3"/><circle cx="8" cy="11.3" r=".5" fill="currentColor"/>'),
+    check: S('<path d="M3.5 8.5l3 3 6-7"/>'),
+    xmark: S('<path d="M4 4l8 8M12 4l-8 8"/>'),
+    arrowUR: S('<path d="M5 11l6-6M6 5h5v5"/>'),
+    chart: S('<path d="M2.5 13.5h11M4.5 11V8M8 11V4.5M11.5 11V6.5"/>'),
+    clock: S('<circle cx="8" cy="8" r="6.2"/><path d="M8 4.5V8l2.3 1.5"/>'),
+    play: F('<path d="M5 3.2v9.6L12.6 8z"/>'),
+    pause: F('<rect x="4" y="3.2" width="2.6" height="9.6" rx=".8"/><rect x="9.4" y="3.2" width="2.6" height="9.6" rx=".8"/>'),
+    refresh: S('<path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3"/>'),
+    palette: S('<path d="M8 1.8a6.2 6.2 0 1 0 0 12.4c1 0 1.3-.8.9-1.6-.5-1 .1-1.9 1.2-1.9h1.6a2.5 2.5 0 0 0 2.5-2.5C14.2 4.6 11.5 1.8 8 1.8z"/><circle cx="5" cy="7" r=".8" fill="currentColor"/><circle cx="7.6" cy="4.8" r=".8" fill="currentColor"/><circle cx="10.6" cy="5.6" r=".8" fill="currentColor"/>'),
+    sparkles: S('<path d="M7 2l1.2 3.3L11.5 6.5 8.2 7.7 7 11 5.8 7.7 2.5 6.5l3.3-1.2zM12 9.5l.6 1.6 1.6.6-1.6.6-.6 1.7-.6-1.7-1.6-.6 1.6-.6z"/>'),
+    terminal: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="M4.5 6.5L6.5 8l-2 1.5M8 10h3"/>'),
+    key: S('<circle cx="5" cy="10" r="2.6"/><path d="M6.9 8.1L13 2M10.5 4.5l1.5 1.5"/>'),
+    moon: S('<path d="M13 9.5A5.5 5.5 0 1 1 6.5 3a4.5 4.5 0 0 0 6.5 6.5z"/>'),
+    cup: S('<path d="M2.5 5.5h9v4a3.5 3.5 0 0 1-3.5 3.5h-2a3.5 3.5 0 0 1-3.5-3.5zM11.5 6.5h1a1.6 1.6 0 0 1 0 3.2h-1"/>'),
+    dock: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><rect x="4" y="10" width="8" height="2" rx=".8"/>'),
+    menubar: S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="M1.8 5.5h12.4"/>'),
+    fish: S('<path d="M2 8c2-3 6.5-4 9.5 0-3 4-7.5 3-9.5 0zM11.5 8L14 5.5v5z"/><circle cx="5" cy="7.4" r=".5" fill="currentColor"/>'),
+    ghost: S('<path d="M3.5 14V7a4.5 4.5 0 0 1 9 0v7l-1.5-1-1.5 1-1.5-1-1.5 1-1.5-1z"/><circle cx="6.3" cy="7" r=".6" fill="currentColor"/><circle cx="9.7" cy="7" r=".6" fill="currentColor"/>'),
+    fold: S('<path d="M2.5 3h11v10h-11zM2.5 3l5.5 5 5.5-5"/>'),
+    calendar: S('<rect x="2" y="3" width="12" height="11" rx="1.6"/><path d="M2 6.5h12M5 1.8v2.4M11 1.8v2.4"/>'),
+    timer: S('<circle cx="8" cy="9" r="5"/><path d="M8 9V6.5M6.5 1.8h3"/>'),
+    doc: S('<path d="M4 1.8h5l3 3v9.4H4z"/><path d="M9 1.8v3h3"/>'),
+    list: S('<path d="M5.5 4.5h8M5.5 8h8M5.5 11.5h8"/><circle cx="2.8" cy="4.5" r=".7" fill="currentColor"/><circle cx="2.8" cy="8" r=".7" fill="currentColor"/><circle cx="2.8" cy="11.5" r=".7" fill="currentColor"/>'),
+    search: S('<circle cx="7" cy="7" r="4.3"/><path d="M10.2 10.2l3.3 3.3"/>'),
+    deck: S('<rect x="2" y="3" width="12" height="10" rx="1.6"/><path d="M5 6h1M7.5 6h1M10 6h1M5 9h1M7.5 9h1M10 9h1"/>'),
+    lightbulb: S('<path d="M5.5 10.5a4.5 4.5 0 1 1 5 0V12h-5z"/><path d="M6 14h4"/>'),
+    ellipsis: F('<circle cx="3.5" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.5" cy="8" r="1.2"/>'),
+    trash: S('<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 9h5.8l.6-9"/>'),
+  };
+
+  window.PROVIDERS = {
+    claude: { name: "Claude", c: "#D97757", l: "C" },
+    codex: { name: "Codex", c: "#2B8FFF", l: "X" },
+    gemini: { name: "Gemini", c: "#34C759", l: "G" },
+    antigravity: { name: "Antigravity", c: "#ABE17E", l: "A" },
+    cursor: { name: "Cursor", c: "#FFCC00", l: "Cu" },
+    factory: { name: "Factory", c: "#E76F32", l: "F" },
+    devin: { name: "Devin", c: "#5C84B0", l: "D" },
+    opencode: { name: "OpenCode", c: "#AF52DE", l: "O" },
+    kiro: { name: "Kiro", c: "#A00848", l: "K" },
+    t3code: { name: "T3 Code", c: "#00B8D9", l: "T3" },
+  };
+  window.mark = (p, size = "", dim = false) => {
+    const d = PROVIDERS[p];
+    return `<span class="mark ${size} ${dim ? "dim" : ""}" data-p="${p}" style="--pc:${d.c}" aria-label="${d.name}">${d.l}</span>`;
+  };
+
+  /* The owner's menu bar meter icon, kept as it is: a chevron, the teal
+     status dot, then one small vertical bar per provider (first orange). */
+  window.menuBarIcon = (bars, opts = {}) => {
+    const dark = root.dataset.theme === "dark";
+    const ink = dark ? "rgba(255,255,255,.92)" : "rgba(0,0,0,.82)";
+    const trackInk = dark ? "rgba(255,255,255,.28)" : "rgba(0,0,0,.22)";
+    const w = 30 + bars.length * 6;
+    let s = `<svg width="${w}" height="18" viewBox="0 0 ${w} 18" aria-label="JR-Bar">`;
+    s += `<path d="M7 5L3.5 9 7 13" stroke="${ink}" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+    s += `<circle cx="15" cy="9" r="3.4" fill="${opts.dot || "var(--live)"}"/>`;
+    bars.forEach((b, i) => {
+      const x = 23 + i * 6, h = 12, fill = Math.max(1.5, h * b.v);
+      s += `<rect x="${x}" y="3" width="3.2" height="${h}" rx="1.4" fill="${trackInk}"/>`;
+      s += `<rect x="${x}" y="${3 + h - fill}" width="3.2" height="${fill}" rx="1.4" fill="${b.c || ink}"/>`;
+    });
+    return s + "</svg>";
+  };
+
+  /* Mockup chrome */
+  window.mkBar = (title, extra = "") => {
+    const bar = document.createElement("header");
+    bar.className = "mk-bar";
+    bar.innerHTML = `<a href="index.html">‹ All surfaces</a><span class="mk-title">${title}</span>${extra}<span class="mk-sp"></span>
+      <span class="c-note" style="opacity:.6">T toggles appearance</span>
+      <div class="mk-group" role="group" aria-label="Appearance">
+        <button data-theme-btn="light">Light</button><button data-theme-btn="dark">Dark</button>
+      </div>`;
+    document.body.prepend(bar);
+    const sync = () => bar.querySelectorAll("[data-theme-btn]").forEach(b =>
+      b.setAttribute("aria-pressed", String(b.dataset.themeBtn === root.dataset.theme)));
+    bar.addEventListener("click", e => {
+      const t = e.target.closest("[data-theme-btn]");
+      if (t) setTheme(t.dataset.themeBtn);
+    });
+    window.addEventListener("keydown", e => {
+      if (e.key.toLowerCase() === "t" && !e.metaKey && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) {
+        setTheme(root.dataset.theme === "dark" ? "light" : "dark");
+      }
+    });
+    function setTheme(t) {
+      root.dataset.theme = t; history.replaceState(null, "", "#" + t); sync();
+      window.dispatchEvent(new CustomEvent("themechange"));
+    }
+    sync();
+    return bar;
+  };
+
+  /* Deterministic random for synthetic data. */
+  window.rng = seed => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+
+  window.$ = (s, el = document) => el.querySelector(s);
+  window.$$ = (s, el = document) => [...el.querySelectorAll(s)];
+})();
+
+</script>
+<script>
+/* A small LED engine for the mockups: 8-LED SidePulse Pro strip, the
+   Screen Bar drawn from the same 8 colours, one shared animation clock. */
+(function () {
+  const hex = h => { h = h.replace("#", ""); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
+  const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+  const scale = (a, k) => a.map(v => v * k);
+  const add = (a, b) => a.map((v, i) => Math.min(255, v + b[i]));
+  const screen = (a, b) => a.map((v, i) => 255 - (255 - v) * (255 - b[i]) / 255);
+  const brightest = (a, b) => (a[0] + a[1] + a[2] >= b[0] + b[1] + b[2] ? a : b);
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+  const smooth = x => { x = clamp01(x); return x * x * (3 - 2 * x); };
+  const TAU = Math.PI * 2;
+  const OFF = [0, 0, 0];
+
+  /* Provider animations: one colour, (t, i, n, c, p) -> rgb */
+  const ANIM = {
+    breathe: (t, i, n, c, p) => scale(c, .18 + .82 * (.5 - .5 * Math.cos(TAU * t * p.speed / 3.2))),
+    comet: (t, i, n, c, p) => {
+      const span = n + 4, head = (t * p.speed * n / 1.5) % span;
+      const d = head - i;
+      return d < 0 ? scale(c, .04) : scale(c, Math.max(.04, Math.pow(Math.max(0, 1 - d / 3.6), 1.6)));
+    },
+    scanner: (t, i, n, c, p) => {
+      const ph = (t * p.speed / 1.8) % 2, x = (ph < 1 ? ph : 2 - ph) * (n - 1);
+      return scale(c, .05 + .95 * Math.exp(-Math.pow(i - x, 2) / 1.3));
+    },
+    heartbeat: (t, i, n, c, p) => {
+      const ph = (t * p.speed) % 1.4;
+      const b = Math.exp(-Math.pow((ph - .1) / .06, 2)) + .7 * Math.exp(-Math.pow((ph - .34) / .07, 2));
+      return scale(c, .1 + .9 * Math.min(1, b));
+    },
+    twinkle: (t, i, n, c, p) => {
+      const ph = Math.sin(TAU * (t * p.speed * (.23 + (i * 37 % 11) / 30) + i * .618));
+      return scale(c, .12 + .88 * Math.pow(Math.max(0, ph), 3));
+    },
+    chase: (t, i, n, c, p) => {
+      const x = (t * p.speed * 4) % 3;
+      const d = Math.abs(((i - x) % 3 + 3) % 3);
+      return scale(c, d < 1 ? 1 - d * .85 : .08);
+    },
+    ember: (t, i, n, c, p) => {
+      const flick = .55 + .25 * Math.sin(t * 7.1 + i * 1.7) + .2 * Math.sin(t * 3.3 + i * 2.9);
+      const warm = mix(c, [255, 120, 40], .35);
+      return scale(warm, clamp01(.25 + .55 * flick));
+    },
+  };
+  const ANIM_LABEL = { automatic: "Automatic", breathe: "Breathe", comet: "Comet", scanner: "Scanner", heartbeat: "Heartbeat", twinkle: "Twinkle", chase: "Chase", ember: "Ember" };
+
+  /* Mix animations: several colours at once. (t, i, n, cs, p) -> rgb */
+  const MIX = {
+    alternate: (t, i, n, cs, p) => {
+      const per = 2.4 / p.speed, k = cs.length, x = t / per, j = Math.floor(x) % k, f = x % 1;
+      const fade = smooth((f - .7) / .3);
+      const lvl = .55 + .45 * Math.sin(Math.PI * f);
+      return scale(mix(cs[j], cs[(j + 1) % k], fade), lvl);
+    },
+    relay: (t, i, n, cs, p) => {
+      const leg = 1.6 / p.speed, k = cs.length, x = t / leg, j = Math.floor(x) % k, f = x % 1;
+      const head = f * (n + 2.5) - 1;
+      const lit = d => d < 0 ? 0 : Math.pow(Math.max(0, 1 - d / 3), 1.5);
+      const now = scale(cs[j], lit(head - i));
+      const prev = scale(cs[(j + k - 1) % k], lit(head + n + 2.5 - 1 - i) * .9);
+      return add(add(now, prev), scale(cs[(j + 1) % k], .05));
+    },
+    weave: (t, i, n, cs, p) => {
+      const k = cs.length; let acc = [0, 0, 0], wsum = 0;
+      cs.forEach((c, j) => {
+        const dir = j % 2 ? -1 : 1;
+        const w = Math.pow(.5 + .5 * Math.sin(TAU * (i / n * 1.3 - dir * t * p.speed * .45) + TAU * j / k), 2.2) + .02;
+        acc = acc.map((v, m) => v + c[m] * w); wsum += w;
+      });
+      return scale(acc, 1 / wsum);
+    },
+    tide: (t, i, n, cs, p) => {
+      const k = cs.length, x = (i + .5) / n, s = t * p.speed * .55;
+      const edges = [];
+      for (let e = 1; e < k; e++) edges.push(e / k + .16 * Math.sin(TAU * s * .5 + e * 1.9));
+      let band = 0; edges.forEach(e => { if (x > e) band++; });
+      let c = cs[band];
+      edges.forEach((e, ei) => {
+        const d = (x - e) * n / 1.4;
+        if (Math.abs(d) < 1) c = mix(cs[ei], cs[ei + 1], smooth(d * .5 + .5));
+      });
+      const swell = .7 + .3 * Math.sin(TAU * (s * .5 - x * .8));
+      return scale(c, swell);
+    },
+  };
+
+  /* Share mixes: each provider plays its own animation. */
+  const SHARE = {
+    split: (t, i, n, provs, p) => {
+      const k = provs.length, seg = n / k, j = Math.min(k - 1, Math.floor(i / seg));
+      const lo = Math.round(j * seg), hi = Math.round((j + 1) * seg);
+      const pr = provs[j];
+      return ANIM[pr.anim](t + j * .37, i - lo, hi - lo, pr.rgb, p);
+    },
+    oneAtATime: (t, i, n, provs, p) => {
+      const hold = 3.2, k = provs.length, x = t / hold, j = Math.floor(x) % k, f = x % 1;
+      const a = ANIM[provs[j].anim](t, i, n, provs[j].rgb, p);
+      if (f < .9) return a;
+      const nx = provs[(j + 1) % k];
+      return mix(a, ANIM[nx.anim](t, i, n, nx.rgb, p), smooth((f - .9) / .1));
+    },
+    everyone: (t, i, n, provs, p) => {
+      const op = p.blend === "add" ? add : p.blend === "brightest" ? brightest : screen;
+      return provs.reduce((acc, pr, j) => op(acc, scale(ANIM[pr.anim](t + j * .8, i, n, pr.rgb, p), .8)), OFF);
+    },
+  };
+  const CALM = {
+    smooth: (t, i, n, cs, p) => {
+      const x = ((i / (n - 1)) + t * .04 * p.speed) % 1 * cs.length;
+      const j = Math.floor(x) % cs.length, f = x % 1;
+      return scale(mix(cs[j], cs[(j + 1) % cs.length], smooth(f)), .62);
+    },
+    statusOnly: (t, i, n, cs, p) => scale(hex(p.stateColor || "#3D7BFF"), .7),
+  };
+
+  /* Cue layers sit on top for a few seconds, never a takeover. */
+  const CUES = {
+    ask: { dur: Infinity, f: (t, i, n, base) => mix(base, scale(hex("#FF9F0A"), .45 + .55 * (.5 + .5 * Math.sin(TAU * t * 1.4))), .92) },
+    celebration: { dur: 2.5, f: (t, i, n, base, lt) => {
+      const hue = (i / n + lt * .8) % 1, rgb = hsl(hue, 1, .55), env = Math.sin(Math.PI * clamp01(lt / 2.5));
+      const spark = Math.pow(Math.max(0, Math.sin(lt * 23 + i * 4.1)), 6);
+      return mix(base, add(scale(rgb, .8), scale([255, 255, 255], spark * .6)), env);
+    } },
+    milestone: { dur: 1.4, f: (t, i, n, base, lt) => {
+      const x = lt / 1.4 * (n + 2) - 1, w = Math.exp(-Math.pow(i - x, 2) / .8);
+      return add(base, scale([255, 255, 255], w * .9));
+    } },
+    ember: { dur: 3, f: (t, i, n, base, lt) => {
+      const env = Math.sin(Math.PI * clamp01(lt / 3));
+      return mix(base, ANIM.ember(t, i, n, [255, 150, 70], { speed: 1 }), env * .7);
+    } },
+  };
+  function hsl(h, s, l) {
+    const a = s * Math.min(l, 1 - l), f = k => { const m = (k + h * 12) % 12; return l - a * Math.max(-1, Math.min(m - 3, 9 - m, 1)); };
+    return [f(0) * 255, f(8) * 255, f(4) * 255];
+  }
+
+  /* A program: what the strip plays now. */
+  function frame(prog, t, n) {
+    const p = Object.assign({ speed: 1, blend: "screen" }, prog.params || {});
+    const provs = (prog.providers || []).map(x => ({ anim: x.anim === "automatic" || !x.anim ? "breathe" : x.anim, rgb: hex(x.c) }));
+    const cs = provs.map(x => x.rgb);
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      let c;
+      if (prog.kind === "anim") c = ANIM[prog.anim](t, i, n, hex(prog.color), p);
+      else if (prog.kind === "mix") c = MIX[prog.mix](t, i, n, cs, p);
+      else if (prog.kind === "share") c = SHARE[prog.share](t, i, n, provs, p);
+      else if (prog.kind === "calm") c = CALM[prog.calm](t, i, n, cs, p);
+      else c = OFF;
+      out.push(c);
+    }
+    (prog.cues || []).forEach(cue => {
+      const def = CUES[cue.id]; if (!def) return;
+      const lt = t - cue.at; if (lt < 0 || lt > def.dur) return;
+      for (let i = 0; i < n; i++) out[i] = def.f(t, i, n, out[i], lt);
+    });
+    return out;
+  }
+
+  const views = new Set();
+  let t0 = performance.now(), paused = false, pausedAt = 0;
+  function now() { return (paused ? pausedAt : performance.now() - t0) / 1000; }
+
+  class Strip {
+    constructor(el, opts = {}) {
+      this.el = el; this.n = opts.n || 8; this.prog = opts.prog || { kind: "none" };
+      this.bar = opts.screenBar; this.compact = opts.compact; this.micro = opts.micro;
+      el.classList.add("led-strip"); if (opts.compact) el.classList.add("compact"); if (opts.micro) el.classList.add("micro");
+      el.innerHTML = `<div class="led-body">${'<i class="led"></i>'.repeat(this.n)}</div>` +
+        (this.bar ? `<div class="led-sb-wrap"><canvas class="led-sb"></canvas>${opts.barLabel ? `<span class="led-sb-label">Screen Bar</span>` : ""}</div>` : "");
+      this.leds = [...el.querySelectorAll(".led")];
+      this.canvas = el.querySelector("canvas");
+      views.add(this);
+    }
+    set(prog) { this.prog = prog; }
+    draw(t) {
+      const cols = frame(this.prog, t, this.n);
+      this.leds.forEach((led, i) => {
+        const [r, g, b] = cols[i].map(v => Math.round(Math.max(0, Math.min(255, v))));
+        const lum = (r + g + b) / 765;
+        led.style.background = `rgb(${Math.max(r, 26)},${Math.max(g, 26)},${Math.max(b, 28)})`;
+        const k = this.micro ? .35 : 1;
+        led.style.boxShadow = lum > .03 ? `0 0 ${(4 + 10 * lum) * k}px ${(1 + 3 * lum) * k}px rgba(${r},${g},${b},${.25 + .5 * lum})` : "none";
+      });
+      if (this.canvas) {
+        const c = this.canvas, w = c.clientWidth * 2, h = c.clientHeight * 2;
+        if (c.width !== w) { c.width = w; c.height = h; }
+        const ctx = c.getContext("2d"), grd = ctx.createLinearGradient(0, 0, w, 0);
+        cols.forEach((col, i) => grd.addColorStop((i + .5) / this.n, `rgb(${col.map(v => Math.round(Math.min(255, v))).join(",")})`));
+        ctx.clearRect(0, 0, w, h); ctx.fillStyle = grd; ctx.fillRect(0, 0, w, h);
+      }
+    }
+  }
+  function tick() {
+    const t = now();
+    views.forEach(v => { if (v.el.isConnected) v.draw(t); else views.delete(v); });
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  window.LED = {
+    Strip, frame, ANIM, ANIM_LABEL, MIX, SHARE, CALM, CUES, hex, now,
+    pause(on) { if (on && !paused) { pausedAt = performance.now() - t0; paused = true; } else if (!on && paused) { t0 = performance.now() - pausedAt; paused = false; } },
+    get paused() { return paused; },
+  };
+
+  const css = document.createElement("style");
+  css.textContent = `
+  .led-strip { display: flex; flex-direction: column; gap: 14px; align-items: stretch; }
+  .led-body { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 18px; border-radius: 14px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--device) 88%, #fff 12%), var(--device));
+    box-shadow: 0 0 0 1px var(--device-rim), 0 8px 18px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.08); }
+  .led { width: 26px; height: 16px; border-radius: 5px; display: block; flex: none; transition: none; }
+  .led-strip.compact { gap: 8px; }
+  .led-strip.compact .led-body { padding: 7px 10px; gap: 5px; border-radius: 9px; }
+  .led-strip.compact .led { width: 14px; height: 9px; border-radius: 3px; }
+  .led-strip.micro { gap: 0; }
+  .led-strip.micro .led-body { padding: 3px 5px; gap: 3px; border-radius: 6px; box-shadow: 0 0 0 .5px var(--device-rim); }
+  .led-strip.micro .led { width: 5px; height: 5px; border-radius: 2px; }
+  .led-sb-wrap { position: relative; }
+  .led-sb { width: 100%; height: 6px; border-radius: 3px; display: block; box-shadow: 0 0 0 .5px var(--sep), 0 2px 10px rgba(0,0,0,.15); }
+  .led-strip.compact .led-sb { height: 4px; }
+  .led-sb-label { position: absolute; right: 0; top: 10px; font-size: 11px; color: var(--label3); }`;
+  document.head.appendChild(css);
+})();
+
+</script>
+<script>
+mkBar("01 · Panel", `<button id="replay">Replay entrance</button><button id="resetAsk">Reset ask</button>`);
+
+const state = {
+  ask: "open",
+  open: { claude: true, t3: false },
+  usage: [
+    { p: "claude", kind: "live", h5: 42, d7: 18, sub: "Resets 2:40 PM · Thu", mb: true, panel: true },
+    { p: "codex", kind: "fail", h5: 23, d7: 61, age: "41 m ago", cause: "Signed out of Codex", fix: "Sign In…", mb: true, panel: true },
+    { p: "gemini", kind: "reset", d7: 34, age: "1 h ago", sub: "New reading on its next run", mb: true, panel: true },
+    { p: "antigravity", kind: "notrunning", h5: 61, d7: 27, age: "3 h ago", mb: false, panel: true },
+    { p: "cursor", kind: "live", h5: 8, d7: 12, sub: "Hidden from the panel", mb: false, panel: false },
+    { p: "kiro", kind: "gone", mb: false, panel: true },
+  ],
+};
+
+function sessionsHTML() {
+  const g1 = state.open.claude, g2 = state.open.t3;
+  return `
+  <div class="s-row ${g1 ? "open" : ""}" data-toggle="claude">
+    <span class="disc">${ICON.chevR}</span>${mark("claude")}
+    <div><div class="s-title"><b>Claude · 3 workers</b><span>compiler-kit</span></div>
+      <div class="s-sub">Moving the parser to the new tokenizer</div></div>
+    <div class="s-right"><span class="num">14 m</span><span class="dot working"></span></div>
+  </div>
+  <div class="members" data-members="claude" style="height:${g1 ? "auto" : "0px"}">
+    <div class="m-row"><span class="dot working" style="justify-self:center"></span><div class="t-callout"><span class="role">Lead</span> · Planning the migration</div><span class="t-callout c2 num">14 m</span></div>
+    <div class="m-row"><span class="dot working" style="justify-self:center"></span><div class="t-callout"><span class="role">Worker</span> · Writing parser tests</div><span class="t-callout c2 num">6 m</span></div>
+    <div class="m-row"><span class="dot done" style="justify-self:center"></span><div class="t-callout"><span class="role">Worker</span> · Read the old grammar</div><span class="t-callout c2">Done</span></div>
+  </div>
+  <div class="s-row ${g2 ? "open" : ""}" data-toggle="t3">
+    <span class="disc">${ICON.chevR}</span>${mark("t3code")}
+    <div><div class="s-title"><b>T3 Code · 4 agents</b><span>docs-site</span></div>
+      <div class="s-sub">Release checklist for the docs site</div></div>
+    <div class="s-right"><span class="stack-marks">${mark("factory")}${mark("claude")}${mark("codex")}</span><span class="num">32 m</span><span class="dot working"></span></div>
+  </div>
+  <div class="members" data-members="t3" style="height:${g2 ? "auto" : "0px"}">
+    <div class="m-row">${mark("t3code", "sm")}<div class="t-callout"><span class="role">Lead</span> · Coordinating the checklist</div><span class="t-callout c2 num">32 m</span></div>
+    <div class="m-row">${mark("factory", "sm")}<div class="t-callout"><span class="role">Factory</span> · Checking every link</div><span class="t-callout c2 num">11 m</span></div>
+    <div class="m-row">${mark("claude", "sm")}<div class="t-callout"><span class="role">Claude</span> · Rewriting the install page</div><span class="t-callout c2 num">9 m</span></div>
+    <div class="m-row">${mark("codex", "sm")}<div class="t-callout"><span class="role">Codex</span> · Updating screenshots</div><span class="t-callout c2 num">4 m</span></div>
+  </div>
+  <div class="s-row">
+    <span></span>${mark("gemini")}
+    <div><div class="s-title"><b>Gemini</b><span>design-tokens</span></div>
+      <div class="s-sub">Tidied the changelog</div></div>
+    <div class="s-right"><span class="word-done">Done</span><span class="num">2 m ago</span></div>
+  </div>
+  <div class="s-row dim" title="No parent session could be proven, so this worker gets no share of the strip until it asks.">
+    <span></span>${mark("factory", "", true)}
+    <div><div class="s-title"><b>Unlinked worker</b><span>Factory</span></div>
+      <div class="s-sub">No parent found · no share of the strip</div></div>
+    <div class="s-right"><span class="num">5 m</span>${ICON.info}</div>
+  </div>`;
+}
+
+function askHTML() {
+  if (state.ask === "gone") return "";
+  if (state.ask === "allowed" || state.ask === "denied") {
+    const ok = state.ask === "allowed";
+    return `<div class="p-sec"><div class="ask" style="padding:12px"><div class="ask-done" style="color:${ok ? "var(--done)" : "var(--label2)"}">${ok ? ICON.check : ICON.xmark}${ok ? "Allowed once" : "Denied"} · Codex continues</div></div></div>`;
+  }
+  return `<div class="p-sec">
+    <div class="p-sec-h"><span class="t-section">Needs you</span></div>
+    <div class="ask">
+      <div class="ask-top">${mark("codex")}<span class="t-headline">Codex · api-gateway</span><span class="t-callout c2 num">1 m</span></div>
+      <div class="ask-q">Run this command?<div class="ask-cmd">pnpm test --filter auth</div></div>
+      <div class="ask-actions">
+        <button class="btn" data-ans="denied">Deny <span class="kbd">⌘⌫</span></button>
+        <button class="btn primary" data-ans="allowed">Allow Once <span class="kbd">↩</span></button>
+      </div>
+    </div></div>`;
+}
+
+function usageRow(u, edit) {
+  const pr = PROVIDERS[u.p];
+  if (edit) {
+    return `<div class="u-row edit" draggable="true" data-p="${u.p}">
+      <span class="grip">${ICON.grip}</span>${mark(u.p, "", !u.panel && !u.mb)}
+      <div><div class="u-name">${pr.name}</div>${u.kind === "gone" ? `<div class="u-sub">Not found on this Mac</div>` : ""}</div>
+      <button class="eye ${u.mb ? "" : "off"}" data-eye="mb" data-p="${u.p}" title="${u.mb ? "Shown" : "Hidden"} in the menu bar">${u.mb ? ICON.eye : ICON.eyeOff}</button>
+      <button class="eye ${u.panel ? "" : "off"}" data-eye="panel" data-p="${u.p}" title="${u.panel ? "Shown" : "Hidden"} in the panel">${u.panel ? ICON.eye : ICON.eyeOff}</button>
+    </div>`;
+  }
+  if (!u.panel) return "";
+  if (u.kind === "gone") {
+    return `<div class="u-row one-line">${mark(u.p, "", true)}<div class="u-line"><span class="u-name">${pr.name}</span><span class="c2 t-callout">Not found on this Mac</span><button class="btn" data-hide="${u.p}">Hide</button></div></div>`;
+  }
+  const cell = (v, stale, age) => `<div class="u-cell"><div class="u-num ${stale ? "stale" : ""}">${v}%</div><div class="gauge ${stale ? "stale" : ""}" style="--gc:${pr.c};--v:${v}%"><i></i></div>${age ? `<div class="u-age">${age}</div>` : ""}</div>`;
+  if (u.kind === "live") {
+    return `<div class="u-row">${mark(u.p)}<div><div class="u-name">${pr.name}</div><div class="u-sub">${u.sub}</div></div>${cell(u.h5)}${cell(u.d7)}</div>`;
+  }
+  if (u.kind === "fail") {
+    return `<div class="u-row">${mark(u.p)}<div><div class="u-name">${pr.name}</div><div class="u-sub fail"><span class="fail-ico">${ICON.warn}</span> ${u.cause}</div></div>${cell(u.h5, true, u.age)}${cell(u.d7, true, u.age)}
+      <div class="u-fix"><span class="t-caption c2" style="flex:1">Sign in again, or run <span class="mono" style="font-size:11px">codex login</span></span><button class="btn">${u.fix}</button><button class="btn icon" title="Retry">${ICON.refresh}</button></div></div>`;
+  }
+  if (u.kind === "reset") {
+    return `<div class="u-row">${mark(u.p)}<div><div class="u-name">${pr.name}</div><div class="u-sub">${u.sub}</div></div>
+      <div class="u-cell"><div class="u-num reset">Reset</div><div class="u-age" style="color:var(--label2)">1:00 PM</div></div>${cell(u.d7, true, u.age)}</div>`;
+  }
+  if (u.kind === "notrunning") {
+    return `<div class="u-row">${mark(u.p)}<div><div class="u-name">${pr.name}</div><div class="u-sub">Open Antigravity to refresh</div></div>${cell(u.h5, true, u.age)}${cell(u.d7, true, u.age)}
+      <div class="u-fix"><span class="t-caption c2" style="flex:1">Its quota service runs only while the app is open.</span><button class="btn">${ICON.arrowUR}Open</button></div></div>`;
+  }
+}
+
+function render(el, edit) {
+  const rows = state.usage.map(u => usageRow(u, edit)).join("");
+  const running = 2, asking = state.ask === "open" ? 1 : 0;
+  el.innerHTML = `
+    <div class="p-head"><span class="t-headline">Agents</span><span class="t-callout c2 num">${running} working${asking ? " · 1 asking" : ""} · 1 done</span></div>
+    ${askHTML()}
+    <div class="p-sec"><div class="p-sec-h"><span class="t-section">Agents</span></div>${sessionsHTML()}</div>
+    <div class="p-sec">
+      <div class="p-sec-h"><span class="t-section">Usage</span><button class="btn plain" data-edit>${edit ? "Done" : "Edit"}</button></div>
+      ${edit
+        ? `<div class="u-cols edit" style="padding:0 12px 2px"><span></span><span></span><span></span><span>Menu bar</span><span>Panel</span></div>`
+        : `<div class="u-cols"><span></span><span></span><span>5 h</span><span>7 d</span></div>`}
+      <div data-rows>${rows}</div>
+      ${edit ? `<div class="edit-hint">${ICON.info}<span>Drag to change the order everywhere. To stop collecting a provider, turn off Track in <a href="02-settings.html#providers">Settings › Providers</a>.</span></div>` : ""}
+    </div>
+    <div class="p-foot">
+      <button class="btn glass studio-btn" title="Open Studio"><span data-mini></span>Studio <span class="kbd">⌥⌘L</span></button>
+      <button class="btn glass">${ICON.chart}Usage Center</button>
+      <span class="sp"></span>
+      <button class="btn glass icon" title="Settings">${ICON.gear}</button>
+      <button class="btn glass icon" title="More">${ICON.ellipsis}</button>
+    </div>`;
+  el.dataset.edit = edit ? "1" : "";
+  const mini = el.querySelector("[data-mini]");
+  new LED.Strip(mini, { micro: true, prog: { kind: "mix", mix: "weave", providers: [{ c: "#D97757" }, { c: "#00B8D9" }] } });
+  if (edit) wireDrag(el);
+}
+
+function renderAll() {
+  render($("#panelA"), panelAEdit);
+  render($("#panelB"), true);
+  const bars = state.usage.filter(u => u.mb && u.kind !== "gone").map(u => ({
+    v: (u.h5 ?? 0) / 100,
+    c: u.kind === "live" ? PROVIDERS[u.p].c : null,
+  }));
+  $("#mbIcon").innerHTML = menuBarIcon(bars.map(b => b.c ? b : { v: b.v, c: "var(--label3)" }));
+}
+
+let panelAEdit = false;
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-toggle],[data-edit],[data-eye],[data-ans],[data-hide]");
+  if (!t) return;
+  if (t.dataset.toggle) {
+    const k = t.dataset.toggle; state.open[k] = !state.open[k];
+    const panel = t.closest(".panel");
+    const m = panel.querySelector(`[data-members="${k}"]`);
+    const from = m.offsetHeight; m.style.height = "auto"; const full = m.scrollHeight;
+    t.classList.toggle("open", state.open[k]);
+    m.style.height = from + "px"; m.offsetHeight;
+    m.style.height = (state.open[k] ? full : 0) + "px";
+    m.addEventListener("transitionend", () => { if (state.open[k]) m.style.height = "auto"; }, { once: true });
+    return;
+  }
+  if ("edit" in t.dataset) {
+    if (t.closest("#panelA")) { panelAEdit = !panelAEdit; }
+    renderAll(); return;
+  }
+  if (t.dataset.eye) {
+    const u = state.usage.find(x => x.p === t.dataset.p); u[t.dataset.eye] = !u[t.dataset.eye]; renderAll(); return;
+  }
+  if (t.dataset.ans) answer(t.dataset.ans);
+  if (t.dataset.hide) { state.usage = state.usage.filter(u => u.p !== t.dataset.hide); renderAll(); }
+});
+
+function answer(a) {
+  if (state.ask !== "open") return;
+  state.ask = a; renderAll();
+  setTimeout(() => { state.ask = "gone"; renderAll(); }, 1200);
+}
+window.addEventListener("keydown", e => {
+  if (e.key === "Enter") answer("allowed");
+  if (e.key === "Backspace" && e.metaKey) answer("denied");
+});
+
+function wireDrag(el) {
+  let dragP = null;
+  el.querySelectorAll(".u-row.edit").forEach(row => {
+    row.addEventListener("dragstart", e => { dragP = row.dataset.p; row.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
+    row.addEventListener("dragend", () => { row.classList.remove("dragging"); el.querySelectorAll(".drop-before").forEach(r => r.classList.remove("drop-before")); });
+    row.addEventListener("dragover", e => { e.preventDefault(); el.querySelectorAll(".drop-before").forEach(r => r.classList.remove("drop-before")); row.classList.add("drop-before"); });
+    row.addEventListener("drop", e => {
+      e.preventDefault();
+      const from = state.usage.findIndex(u => u.p === dragP), item = state.usage.splice(from, 1)[0];
+      const to = state.usage.findIndex(u => u.p === row.dataset.p);
+      state.usage.splice(to, 0, item); renderAll();
+    });
+  });
+}
+
+$("#replay").onclick = () => $$(".panel").forEach(p => { p.classList.remove("enter"); p.offsetWidth; p.classList.add("enter"); });
+$("#resetAsk").onclick = () => { state.ask = "open"; renderAll(); };
+window.addEventListener("themechange", renderAll);
+renderAll();
+$$(".panel").forEach(p => p.classList.add("enter"));
+</script>
+</body>
+</html>
