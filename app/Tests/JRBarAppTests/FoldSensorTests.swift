@@ -25,7 +25,7 @@ struct FoldSensorTests {
 
     @Test("distant reads slow down without changing nearby or armed timing")
     func distantCadence() {
-        #expect(SensorPump.intervals[rate(170)] == 0.5)
+        #expect(SensorPump.intervals[rate(180)] == 0.5)
         #expect(SensorPump.intervals[rate(115)] == 0.1)
         #expect(SensorPump.intervals[rate(102)] == 0.1)
         #expect(SensorPump.intervals[rate(102.5)] == 0.1)
@@ -51,8 +51,8 @@ struct FoldSensorTests {
     @Test("fast closes arm before the closed angle from every idle sampling phase")
     func fastCloses() {
         for speed in [150.0, 300.0] {
-            for start in [115.0, 170.0] {
-                for phase in stride(from: 0.001, through: 0.499, by: 0.003) {
+            for start in [115.0, 180.0] {
+                for phase in stride(from: 0.0, through: 0.549, by: 0.003) {
                     var cadence = SensorMotionCadence()
                     for _ in 0...SensorMotionCadence.stillReadLimit { cadence.note(start) }
                     var time = 0.0
@@ -62,7 +62,7 @@ struct FoldSensorTests {
                         let rate = SensorPump.rateClassFor(rawAngle: angle, armingAngle: 82,
                                                            clamshell: false, stillReads: cadence.stillReads)
                         if rate == 1 { armed = true; break }
-                        time += SensorPump.intervals[rate]
+                        time += SensorPump.intervals[rate] + Double(SensorPump.leewayMilliseconds[rate]) / 1_000
                         angle = max(0, start - speed * max(0, time - phase))
                         cadence.note(angle)
                     }

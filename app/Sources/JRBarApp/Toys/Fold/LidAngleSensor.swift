@@ -178,8 +178,8 @@ enum FoldSensorSilence {
 /// immutable `Sample`s back to the main runloop.
 ///
 /// A still, distant lid polls at 2 Hz only with enough travel left to
-/// catch a 300 degree/second close. Motion returns it to 10 Hz. Inside the band the
-/// existing 120 Hz edge timing stays intact. A shut lid also rests at 2 Hz.
+/// catch a 300 degree/second close. Motion returns it to 10 Hz. Inside
+/// the band the existing 120 Hz timing stays intact. A shut lid rests at 2 Hz.
 final class SensorPump: @unchecked Sendable {
     /// Publishes a sample on the main runloop; set by the shell.
     var publish: (@MainActor @Sendable (LidAngleSensor.Sample) -> Void)?
@@ -226,7 +226,7 @@ final class SensorPump: @unchecked Sendable {
     private var clamshell: Bool?
 
     static let intervals = [0.5, 1.0 / 120.0, 0.1]
-    private static let leewayMilliseconds = [50, 2, 15]
+    static let leewayMilliseconds = [50, 2, 15]
 
     init() {
         manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -300,7 +300,8 @@ final class SensorPump: @unchecked Sendable {
         guard stillReads >= SensorMotionCadence.stillReadLimit else { return 2 }
         // A first movement sample can arrive half a second after closing
         // starts. Preserve an open sample even at 300 degrees/second.
-        let travelMargin = 300 * intervals[0] + quietBand
+        let idleGap = intervals[0] + Double(leewayMilliseconds[0]) / 1_000
+        let travelMargin = 300 * idleGap + quietBand
         let slowFloor = max(armingAngle + 20, FoldPause.closedAngle + travelMargin)
         return angle > slowFloor ? 0 : 2
     }
