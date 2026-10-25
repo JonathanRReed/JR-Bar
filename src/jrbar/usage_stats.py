@@ -828,10 +828,12 @@ def _record_model_key(model: str) -> str:
 def _token_counts(mapping: dict, keys: tuple[str, ...]) -> tuple[int, ...] | None:
     values: list[int] = []
     for key in keys:
-        if key not in mapping:
-            values.append(0)
+        value = mapping.get(key, 0)
+        # JSON token counts are normally small integers. They need neither a
+        # float allocation nor the general numeric conversion below.
+        if type(value) is int and 0 <= value <= 2**63 - 1:
+            values.append(value)
             continue
-        value = mapping.get(key)
         if (
             isinstance(value, bool)
             or not isinstance(value, (int, float))
@@ -869,7 +871,9 @@ def _records_from_line(line: str, session_id: str, dedupe_secret: bytes) -> list
     return _claude_line(line, session_id, dedupe_secret)[0]
 
 
-def _claude_line(line: str, session_id: str, dedupe_secret: bytes) -> tuple[list[tuple], bool]:
+def _claude_line(
+    line: str, session_id: str, dedupe_secret: bytes, model_keys: dict[str, str] | None = None,
+) -> tuple[list[tuple], bool]:
     """``(records, damaged)`` for one Claude line that carries the usage marker.
 
     ``damaged`` is True when the line should have counted and could not: it is
@@ -909,14 +913,7 @@ def _claude_line(line: str, session_id: str, dedupe_secret: bytes) -> tuple[list
     if not raw_dedupe:
         # No message id means no safe dedupe; skip rather than overcount.
         return [], True
-    dedupe = (
-        "message:"
-        + hmac.new(
-        dedupe_secret,
-        raw_dedupe.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()[:DEDUPE_DIGEST_HEX_CHARS]
-    )
+    dedupe = "message:" + hmac.digest(dedupe_secret, raw_dedupe.encode("utf-8"), "sha256").hex()[:DEDUPE_DIGEST_HEX_CHARS]
     counts = _token_counts(
         usage,
         (
@@ -928,7 +925,16 @@ def _claude_line(line: str, session_id: str, dedupe_secret: bytes) -> tuple[list
     )
     if counts is None:
         return [], True
-    model_key = _record_model_key(str(message.get("model") or ""))
+    model = str(message.get("model") or "")
+    if model_keys is None or len(model) > 256:
+        model_key = _record_model_key(model)
+    else:
+        model_key = model_keys.get(model)
+        if model_key is None:
+            model_key = _record_model_key(model)
+            if len(model_keys) >= 64:
+                model_keys.clear()
+            model_keys[model] = model_key
     one_hour = one_hour_cache_writes(usage, counts[2])
     records = [
         (
@@ -1322,7 +1328,7 @@ def _open_snapshot(
 
 
 def _codex_private_id(prefix: str, value: str, dedupe_secret: bytes) -> str:
-    digest = hmac.new(dedupe_secret, value.encode("utf-8"), hashlib.sha256).hexdigest()
+    digest = hmac.digest(dedupe_secret, value.encode("utf-8"), "sha256").hex()
     return prefix + digest[:DEDUPE_DIGEST_HEX_CHARS]
 
 
@@ -2322,12 +2328,13 @@ def _scan_claude_lines(
 ) -> _ParseResult:
     records: list[tuple] = []
     malformed_lines = 0
+    model_keys = {}
     # T3's mightCarryUsage: the reader skips a line without the marker
     # before it is decoded, let alone parsed.
     for line in snapshot.lines(_CLAUDE_MARKERS):
         found, damaged = (
             ([], True) if line is _OVERSIZED_LINE
-            else _claude_line(line, session_id, dedupe_secret)
+            else _claude_line(line, session_id, dedupe_secret, model_keys)
         )
         records.extend(found)
         if damaged:
