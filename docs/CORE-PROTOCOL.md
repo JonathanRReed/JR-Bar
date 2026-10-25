@@ -137,7 +137,16 @@ Normalized hook logs may include `parent_links`, a list of at most four
 `ParentLink` objects with provider-qualified child and parent IDs, a provider
 name in `harness`, and a finite `observed_at` epoch. A null parent records a
 known worker whose parent is missing. Replay preserves the original timestamp.
-These records contain identities only, never prompts or tool output.
+These records contain identities only, never prompts or tool output. Raw hook
+payloads cannot supply this extension. Malformed raw lineage fields do not
+drop the event. A live Grok worker renews its link timestamp on each event;
+reading a saved record never renews it.
+
+Hermes normalized records may also include `identity_aliases`, up to two
+`[subagent_id, session_id]` pairs explicitly named together by a hook.
+They reconcile hook worker IDs with the session database after restart.
+An unresolved subagent alias cannot override a database session parent.
+Local lineage evidence augments observed sessions and creates no activity rows.
 
 ## Who may send what
 

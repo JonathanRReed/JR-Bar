@@ -459,7 +459,7 @@ def agent_status_from_canonical_work(
         ),
     }[work.lifecycle]
     provider = work.key.source_key.provider_id
-    is_worker = work.parent_key is not None
+    is_worker = work.parent_key is not None or (provider == "openclaw" and ":subagent:" in work.key.work_id.value)
     matching_overlay = overlay is not None and (
         overlay.watermark == work.watermark
         or overlay.status.updated_at
@@ -581,17 +581,9 @@ def _snapshot_from_operator_state(
                     )
                 )
             ),
+            *(replace(status, event_name="LineageObserved") for status in supplemental_statuses if status.parent_links),
         )
     )
-    # Lineage does not compete with lifecycle authority. A header-only or
-    # older T3 observation may lose the mode comparison and still prove a
-    # parent, including a conflicting parent the resolver must reject.
-    lineage_by_id: dict[str, set] = {}
-    for candidate in (*projected, *supplemental_statuses):
-        lineage_by_id.setdefault(candidate.agent_id, set()).update(candidate.parent_links)
-    merged = tuple(replace(status, parent_links=tuple(sorted(lineage_by_id.get(status.agent_id, ()),
-                           key=lambda link: (link.harness, link.parent or "", link.observed_at))))
-                   for status in merged)
     merged = _reconcile_delegating_parents(merged, collected_at)
     if dismissed_asks:
         merged = tuple(
@@ -1688,7 +1680,7 @@ class LiveAgentMonitor(LiveSessionMemory):
             source_id = f"hook-lineage-{hint.source_key.provider_id}"
             with self.lock:
                 previous = self._external_statuses_by_source.get(source_id, ())
-            self.replace_external_statuses(source_id, hook_lineage_statuses(lineage, previous, now=clock.wall_epoch))
+                self.replace_external_statuses(source_id, hook_lineage_statuses(lineage, previous, now=clock.wall_epoch))
         with self.lock:
             retained_watermark = dict(self.operator_state.source_watermarks).get(
                 hint.source_key
@@ -3810,11 +3802,37 @@ def _merged_status_candidates(
 ) -> tuple[AgentStatus, ...]:
     merged: dict[str, AgentStatus] = {}
     links_by_id: dict[str, set] = {}
+    from .lineage_adapters import resolve_hermes_key, resolve_openclaw_key
+
+    statuses = tuple(statuses)
+    grok_children = {link.child for status in statuses for link in status.parent_links
+                     if link.child.startswith("grok:agent:") and link.parent}
     for status in statuses:
+        grok_agent = status.agent_id.replace("grok:session:", "grok:agent:", 1)
+        if status.provider == "grok" and grok_agent in grok_children:
+            status = replace(status, agent_id=grok_agent,
+                             parent_links=tuple(replace(link, child=grok_agent) for link in status.parent_links if link.parent))
+        resolver = {"openclaw": resolve_openclaw_key, "hermes": resolve_hermes_key}.get(status.provider)
+        if resolver:
+            status = replace(status, agent_id=resolver(status.agent_id) or status.agent_id,
+                             parent_links=tuple(replace(link, child=resolver(link.child) or link.child,
+                                                        parent=resolver(link.parent)) for link in status.parent_links))
         links_by_id.setdefault(status.agent_id, set()).update(status.parent_links)
+        if status.event_name == "LineageObserved":
+            continue
         existing = merged.get(status.agent_id)
         if existing is None or _status_merge_key(status) > _status_merge_key(existing):
             merged[status.agent_id] = status
+    for agent_id, links in links_by_id.items():
+        newest = {}
+        for link in links:
+            pair = (link.child, link.parent, link.harness)
+            if pair not in newest or newest[pair].observed_at < link.observed_at:
+                newest[pair] = link
+        links = set(newest.values())
+        links_by_id[agent_id] = links
+        if agent_id.startswith("hermes:") and any(link.parent and ":session:" in link.parent for link in links):
+            links_by_id[agent_id] = {link for link in links if link.parent and ":session:" in link.parent}
     return tuple(replace(merged[agent_id], parent_links=tuple(sorted(links_by_id[agent_id],
                          key=lambda link: (link.harness, link.parent or "", link.observed_at))))
                  for agent_id in sorted(merged))

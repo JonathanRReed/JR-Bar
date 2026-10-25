@@ -111,7 +111,7 @@ def test_hermes_nested_hook_and_agent_only_fallback():
     assert len(group.members) == 3
     data['child_session_id'] = None
     orphan, _ = replay('hermes', data)
-    assert orphan.agent_id == 'hermes:session:nested-worker'
+    assert orphan.agent_id == 'hermes:session:nested-session'
 
 
 def test_opencode_restart_backfills_parent_ids_without_content(tmp_path):
@@ -275,7 +275,8 @@ def test_grok_recovers_parent_before_a_childs_next_event(tmp_path, monkeypatch):
     data = fixture('grok-1.0.70.json')
     stamp = datetime.fromtimestamp(NOW, timezone.utc).isoformat()
     process_hook_payload('grok', log, json.dumps(data), logged_at=stamp, refresh=False)
-    restored = GrokChildLinks()
+    restored = GrokChildLinks(clock=lambda: NOW)
+    restored.recover(log, now=NOW)  # The background reader runs before the next event.
     _, _, stamped = routed_hook_payload('grok', log, json.dumps({
         'hook_event_name': 'PreToolUse', 'sessionId': 'grok-child', 'subagentType': 'general-purpose'
     }), logged_at=stamp, child_links=restored)
@@ -292,7 +293,7 @@ def test_grok_recovers_parent_before_a_childs_next_event(tmp_path, monkeypatch):
     GROK_CHILD_LINKS.clear()
 
 
-def test_grok_missing_parent_is_dim_and_stale_links_are_not_refreshed():
+def test_grok_missing_parent_is_dim_and_live_links_are_refreshed():
     from jrbar.grok_children import GrokChildLinks, stamp_child_identity
 
     unknown, _ = replay('grok', {'hook_event_name': 'PreToolUse', 'sessionId': 'unseen-child',
@@ -300,10 +301,10 @@ def test_grok_missing_parent_is_dim_and_stale_links_are_not_refreshed():
     assert resolve_agent_groups([unknown], now=NOW).unlinked_workers == {unknown.agent_id}
     links = GrokChildLinks()
     links.remember('old-child', 'old-root', observed_at=NOW - 86_401)
-    stamped = stamp_child_identity({'hook_event_name': 'PreToolUse', 'sessionId': 'old-child'}, links)
+    stamped = stamp_child_identity({'hook_event_name': 'PreToolUse', 'sessionId': 'old-child'}, links, now=NOW)
     child, _ = replay('grok', stamped)
-    assert child.parent_links[0].observed_at == NOW - 86_401
-    assert resolve_agent_groups([row('grok:session:old-root'), child], now=NOW).unlinked_workers == {child.agent_id}
+    assert child.parent_links[0].observed_at == NOW
+    assert not resolve_agent_groups([row('grok:session:old-root'), child], now=NOW).unlinked_workers
 
 
 def test_cursor_and_hermes_links_survive_later_parentless_hooks_and_restart(tmp_path):
@@ -353,7 +354,7 @@ def test_live_hint_preserves_cursor_lineage_after_a_parentless_progress_event(tm
     assert not result.unlinked_workers
 
 
-def test_live_hint_does_not_turn_stale_grok_evidence_into_a_fresh_native_link(tmp_path, monkeypatch):
+def test_live_grok_worker_keeps_its_group_after_twenty_four_hours(tmp_path, monkeypatch):
     import time
 
     from jrbar.collector import LiveAgentMonitor
@@ -374,7 +375,8 @@ def test_live_hint_does_not_turn_stale_grok_evidence_into_a_fresh_native_link(tm
                              refresh_hint_handler=lambda hint: monitor.reconcile_refresh_hint(hint, log_path=log))
     snapshot = monitor.snapshot()
     result = resolve_agent_groups((*snapshot.statuses, *snapshot.stale_statuses), now=NOW)
-    assert 'grok:agent:grok-child' in result.unlinked_workers
+    assert not result.unlinked_workers
+    assert result.groups[0].members == ('grok:agent:grok-child', 'grok:session:grok-root')
     GROK_CHILD_LINKS.clear()
 
 
@@ -435,3 +437,316 @@ def test_grok_recovers_older_normalized_logs_without_the_lineage_extension(tmp_p
     restored = GrokChildLinks()
     restored.recover(log, now=NOW)
     assert restored.root_of('legacy-child') == 'legacy-root'
+
+
+def test_raw_parent_links_cannot_forge_groups_or_drop_events():
+    for provider, identity in [('cursor', {'conversation_id': 'synthetic-root'}),
+                               ('grok', {'session_id': 'synthetic-root'}),
+                               ('hermes', {'session_id': 'synthetic-root'})]:
+        for bad in ('bad', [{'child': f'{provider}:session:forged', 'parent': f'{provider}:session:root',
+                            'harness': provider, 'observed_at': NOW}]):
+            status, encoded = replay(provider, dict(hook_event_name='PreToolUse' if provider != 'hermes' else 'pre_tool_call',
+                                                   **identity, parent_links=bad))
+            assert not status.parent_links
+            assert 'parent_links' not in encoded
+
+
+def test_hook_log_reads_only_appends_and_handles_partial_rotation_and_rewrite(tmp_path, monkeypatch):
+    from jrbar import lineage_adapters as adapters
+    reader = adapters.HookLineageReader()
+    log = tmp_path / 'grok.jsonl'
+    def encoded(child):
+        return replay('grok', {'hook_event_name': 'PreToolUse', 'session_id': 'root',
+                              'agent_id': child})[1]
+    first = json.dumps(encoded('child-a')) + '\n'
+    log.write_text(first)
+    original = adapters.json.loads
+    parsed = []
+    def capture(raw):
+        parsed.append(raw)
+        return original(raw)
+    monkeypatch.setattr(adapters.json, 'loads', capture)
+    assert len(reader.read(log, 'grok', now=NOW)) == 1
+    assert len(parsed) == 1
+    assert len(reader.read(log, 'grok', now=NOW)) == 1
+    assert len(parsed) == 1
+    second = json.dumps(encoded('child-b'))
+    parsed.clear()
+    with log.open('a') as stream:
+        stream.write(second[:100])
+    assert len(reader.read(log, 'grok', now=NOW)) == 1
+    assert not parsed
+    with log.open('a') as stream:
+        stream.write(second[100:] + '\n')
+    assert {link.child for link in reader.read(log, 'grok', now=NOW)} == {'grok:agent:child-a', 'grok:agent:child-b'}
+    assert len(parsed) == 1
+    replacement = tmp_path / 'rotated'
+    replacement.write_text(first)
+    replacement.replace(log)
+    assert [link.child for link in reader.read(log, 'grok', now=NOW)] == ['grok:agent:child-a']
+    log.write_text(first.replace('child-a', 'child-c'))
+    assert [link.child for link in reader.read(log, 'grok', now=NOW)] == ['grok:agent:child-c']
+    assert reader.read(log, 'grok', now=NOW + 86_401) == ()
+
+
+def test_grok_recovery_never_holds_hook_intake_and_unknown_child_is_searched_once(tmp_path, monkeypatch):
+    import threading
+
+    from jrbar.grok_children import GrokChildLinks
+    from jrbar.hook import routed_hook_payload
+
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    links = GrokChildLinks(clock=lambda: NOW)
+    calls = []
+    def blocked(path, *, now):
+        calls.append((path, now))
+        entered.set()
+        assert release.wait(5)
+        finished.set()
+    monkeypatch.setattr(links, 'recover', blocked)
+    payload = json.dumps({'hook_event_name': 'PreToolUse', 'sessionId': 'unknown', 'subagentType': 'worker'})
+    stamp = datetime.fromtimestamp(NOW, timezone.utc).isoformat()
+    try:
+        result = routed_hook_payload('grok', tmp_path / 'grok.jsonl', payload, logged_at=stamp,
+                                     child_links=links, clock=lambda: NOW)
+        assert entered.wait(5)
+        assert result[2]['sessionId'] == 'unknown'
+        other = routed_hook_payload('claude', tmp_path / 'claude.jsonl',
+                                    '{"hook_event_name":"PermissionRequest","session_id":"root"}', logged_at=stamp)
+        assert other[2]['hook_event_name'] == 'PermissionRequest'
+        routed_hook_payload('grok', tmp_path / 'grok.jsonl', payload, logged_at=stamp, child_links=links)
+        assert len(calls) == 1
+    finally:
+        release.set()
+        assert finished.wait(5)
+
+
+def test_openclaw_large_registry_keeps_newest_entries_and_caches_parse(tmp_path, monkeypatch):
+    from jrbar import lineage_adapters as adapters
+    path = tmp_path / '.openclaw/agents/synthetic/sessions/sessions.json'
+    path.parent.mkdir(parents=True)
+    entries = {f'agent:synthetic:subagent:w-{i}': dict(sessionId=f'worker-{i}',
+               spawnedBySessionId='root-native', updatedAt=(NOW + i / 1000) * 1000,
+               history='synthetic content' * 100) for i in range(600)}
+    entries['agent:synthetic:main'] = dict(sessionId='root-native', updatedAt=0)
+    path.write_text(json.dumps(entries))
+    assert path.stat().st_size > 512 * 1024
+    original = adapters.json.loads
+    parsed = []
+    monkeypatch.setattr(adapters.json, 'loads', lambda raw: parsed.append(len(raw)) or original(raw))
+    rows = adapters.read_openclaw_links(tmp_path)
+    assert len(rows) == 512
+    assert {link.parent for link in rows} == {'openclaw:session:agent:synthetic:main'}
+    assert all(link.child.startswith('openclaw:agent:') for link in rows)
+    assert 'openclaw:agent:agent:synthetic:subagent:w-0' not in {link.child for link in rows}
+    assert rows == adapters.read_openclaw_links(tmp_path)
+    assert len(parsed) == 1
+    assert len(adapters.read_openclaw_links(tmp_path, active_ids={'agent:synthetic:subagent:w-599'})) == 1
+    assert len(parsed) == 1
+
+
+def test_openclaw_parentless_worker_kind_can_receive_registry_evidence():
+    from jrbar.collector import _merged_status_candidates
+    from jrbar.lineage_adapters import openclaw_parent_links
+    key = 'agent:synthetic:subagent:orphan'
+    child, _ = replay('openclaw', {'hook_event_name': 'UserPromptSubmit', 'session_id': key})
+    assert child.agent_id == 'openclaw:agent:' + key
+    assert child.is_subagent
+    assert not child.parent_links
+    assert resolve_agent_groups([child], now=NOW).unlinked_workers == {child.agent_id}
+    links = openclaw_parent_links({'session_id': key, 'spawnedBySessionId': 'root-native'},
+                                  observed_at=NOW, session_keys={'root-native': 'root'})
+    evidence = AgentStatus('openclaw', child.agent_id, 'Worker', AgentMode.UNKNOWN,
+                           child.updated_at, 'LineageObserved', parent_links=links)
+    group, = resolve_agent_groups(_merged_status_candidates([row('openclaw:session:root'), child, evidence]), now=NOW).groups
+    assert len(group.members) == 2
+    raw, _ = replay('openclaw', {'hook_event_name': 'UserPromptSubmit', 'session_id': key,
+                                'spawnedBySessionId': 'only-native-root'})
+    assert raw.parent_links[0].parent == 'openclaw:session:only-native-root'
+
+
+def test_active_file_paths_do_not_discover_inactive_sessions(tmp_path, monkeypatch):
+    from jrbar.lineage_adapters import LocalLineageReader
+    path = tmp_path / '.gemini/tmp/project/chats/root/child.jsonl'
+    path.parent.mkdir(parents=True)
+    path.write_text('{"kind":"subagent","sessionId":"child"}\n')
+    import os
+    os.utime(path, (NOW, NOW))
+    reader = LocalLineageReader(tmp_path)
+    monkeypatch.setattr(reader, '_changed_paths', lambda *a, **k: (_ for _ in ()).throw(AssertionError('full scan')))
+    assert reader.read(frozenset({'gemini'}), now=NOW, active_paths=()) == ()
+    child, = reader.read(frozenset({'gemini'}), now=NOW, active_paths=(path,))
+    assert child.agent_id == 'gemini:session:child'
+    assert reader.read(frozenset({'gemini'}), now=NOW, active_paths=()) == ()
+
+
+def test_database_window_active_ids_and_finished_workers_never_create_roster_rows(tmp_path):
+    import sqlite3
+
+    from jrbar.collector import LiveAgentMonitor
+    from jrbar.lineage_adapters import LocalLineageReader, read_hermes_links, read_opencode_links
+    from jrbar.operator_state import BootIdentifier, ClockSample
+    for provider, relative, schema, insert, scale, reader in [
+        ('hermes', '.hermes/state.db', 'sessions(id TEXT, parent_session_id TEXT, started_at REAL)',
+         'sessions', 1, read_hermes_links),
+        ('opencode', '.local/share/opencode/opencode.db', 'session(id TEXT, parent_id TEXT, time_updated INTEGER)',
+         'session', 1000, read_opencode_links),
+    ]:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True)
+        with sqlite3.connect(path) as db:
+            db.execute('CREATE TABLE ' + schema)
+            db.executemany('INSERT INTO ' + insert + ' VALUES (?,?,?)', [
+                ('old', 'root', (NOW - 86_401) * scale), ('active', 'root', NOW * scale),
+                ('finished', 'root', (NOW - 100) * scale)])
+        assert {link.child.split(':', 2)[2] for link in reader(path, observed_at=NOW)} == {'active', 'finished'}
+        assert {link.child.split(':', 2)[2] for link in reader(path, observed_at=NOW, active_ids={'active'})} == {'active'}
+        assert reader(path, observed_at=NOW, active_ids=()) == ()
+        rows = LocalLineageReader(tmp_path).read(frozenset({provider}), now=NOW)
+        monitor = LiveAgentMonitor(clock_sampler=lambda: ClockSample(NOW, 100, BootIdentifier('synthetic')))
+        monitor.replace_external_statuses('lineage', rows)
+        snapshot = monitor.snapshot()
+        assert not (*snapshot.statuses, *snapshot.stale_statuses)
+
+
+def test_restart_recovery_uses_configured_hook_path(tmp_path, monkeypatch):
+    from jrbar import providers
+    from jrbar.hook import process_hook_payload
+    from jrbar.lineage_adapters import LocalLineageReader
+    path = tmp_path / 'custom-log/cursor-events.jsonl'
+    process_hook_payload('cursor', path, json.dumps(fixture('cursor-docs-2026-10-25.json')),
+                         logged_at=datetime.fromtimestamp(NOW, timezone.utc).isoformat(), refresh=False)
+    seen = []
+    monkeypatch.setattr(providers, 'detect_log_path', lambda provider, home: seen.append((provider, home)) or path)
+    child, = LocalLineageReader(tmp_path).read(frozenset({'cursor'}), now=NOW)
+    assert child.parent_links[0].parent == 'cursor:session:' + cursor_native_id('cursor-parent')
+    assert seen == [('cursor', tmp_path)]
+
+
+def test_t3_native_opencode_and_grok_workers_match_hook_agent_keys():
+    threads = [dict(thread_id='root', default_provider='codex', active_provider_thread_id='p-root')]
+    bindings = [dict(thread_id='root', provider_thread_id='p-root', driver='codex',
+                     payload_json={'nativeThreadRef': {'driver': 'codex', 'nativeId': 'root-native'}})]
+    for provider in ('opencode', 'grok'):
+        _, links = t3_parent_links(threads, bindings, observed_at=NOW, subagents=[{
+            'thread_id': 'root', 'status': 'running', 'native_task_ref': {'driver': provider, 'nativeId': 'worker'}}])
+        assert links[0].child == provider + ':agent:worker'
+
+
+def test_hermes_explicit_aliases_reconcile_hooks_database_and_restart(tmp_path):
+    from jrbar import lineage_adapters as adapters
+    from jrbar.collector import _merged_status_candidates
+    from jrbar.hook import process_hook_payload
+    adapters._HERMES_ALIASES.clear()
+    stamp = datetime.fromtimestamp(NOW, timezone.utc).isoformat()
+    log = tmp_path / 'hermes.jsonl'
+    for child, session, parent, parent_session in [('alias-parent', 'session-parent', None, 'root'),
+                                                  ('alias-child', 'session-child', 'alias-parent', 'session-parent')]:
+        process_hook_payload('hermes', log, json.dumps(dict(hook_event_name='subagent_start',
+            child_subagent_id=child, child_session_id=session, parent_subagent_id=parent,
+            parent_session_id=parent_session)), logged_at=stamp, refresh=False)
+    child, encoded = replay('hermes', dict(hook_event_name='subagent_start', child_subagent_id='alias-child',
+                                           parent_subagent_id='alias-parent'))
+    assert encoded['provider_work_id'] == 'session-child'
+    assert child.parent_links[0].parent == 'hermes:session:session-parent'
+    # A DB session relationship supplies the parent when the subagent alias is unavailable.
+    unknown, _ = replay('hermes', dict(hook_event_name='subagent_start', child_session_id='session-child',
+                                      parent_subagent_id='unseen-alias'))
+    evidence = adapters.hermes_parent_links({'child_session_id': 'session-child', 'parent_session_id': 'session-parent'}, observed_at=NOW)
+    dbrow = AgentStatus('hermes', child.agent_id, 'Worker', AgentMode.UNKNOWN, child.updated_at,
+                         'LineageObserved', parent_links=evidence)
+    merged = _merged_status_candidates([row('hermes:session:session-parent'), unknown, dbrow])
+    assert len(resolve_agent_groups(merged, now=NOW).groups[0].members) == 2
+    adapters._HERMES_ALIASES.clear()
+    recovered = adapters.HookLineageReader().read(log, 'hermes', now=NOW)
+    assert recovered
+    restored, _ = replay('hermes', dict(hook_event_name='subagent_start', child_subagent_id='alias-child',
+                                       parent_subagent_id='alias-parent'))
+    assert restored.agent_id == 'hermes:session:session-child'
+    assert restored.parent_links[0].parent == 'hermes:session:session-parent'
+
+
+def test_hook_lineage_read_modify_replace_keeps_the_monitor_lock(tmp_path, monkeypatch):
+    from jrbar.collector import LiveAgentMonitor
+    from jrbar.hook import process_hook_payload
+    from jrbar.operator_state import BootIdentifier, ClockSample
+    monitor = LiveAgentMonitor(clock_sampler=lambda: ClockSample(NOW, 100, BootIdentifier('synthetic')))
+    original = monitor.replace_external_statuses
+    checked = []
+    def replace(source, rows):
+        if source.startswith('hook-lineage-'):
+            assert monitor.lock._is_owned()
+            checked.append(source)
+        original(source, rows)
+    monkeypatch.setattr(monitor, 'replace_external_statuses', replace)
+    log = tmp_path / 'cursor.jsonl'
+    for child in ('first', 'second'):
+        process_hook_payload('cursor', log, json.dumps(dict(hook_event_name='subagentStart', subagent_id=child,
+            conversation_id='root', parent_conversation_id='root')),
+            logged_at=datetime.fromtimestamp(NOW, timezone.utc).isoformat(),
+            refresh_hint_handler=lambda hint: monitor.reconcile_refresh_hint(hint, log_path=log))
+    assert len(checked) == 2
+    assert len(monitor._external_statuses_by_source['hook-lineage-cursor']) == 2
+
+
+def test_background_grok_recovery_links_the_live_unknown_worker_without_a_new_hook(tmp_path):
+    from jrbar.collector import LiveAgentMonitor
+    from jrbar.grok_children import GROK_CHILD_LINKS
+    from jrbar.hook import process_hook_payload
+    from jrbar.lineage_adapters import grok_parent_links, hook_lineage_statuses
+    from jrbar.operator_state import BootIdentifier, ClockSample
+    GROK_CHILD_LINKS.clear()
+    monitor = LiveAgentMonitor(clock_sampler=lambda: ClockSample(NOW, 100, BootIdentifier('synthetic')))
+    log = tmp_path / 'grok.jsonl'
+    for data in [{'hook_event_name': 'UserPromptSubmit', 'sessionId': 'root'},
+                 {'hook_event_name': 'PreToolUse', 'sessionId': 'worker', 'subagentType': 'general-purpose'}]:
+        process_hook_payload('grok', log, json.dumps(data), logged_at=datetime.fromtimestamp(NOW, timezone.utc).isoformat(),
+                             refresh_hint_handler=lambda hint: monitor.reconcile_refresh_hint(hint, log_path=log))
+    links = grok_parent_links({'agent_id': 'worker', 'session_id': 'root'}, observed_at=NOW)
+    monitor.replace_external_statuses('lineage', hook_lineage_statuses(links, now=NOW))
+    snapshot = monitor.snapshot()
+    assert snapshot.agent_group_resolution.groups[0].members == ('grok:agent:worker', 'grok:session:root')
+    assert not snapshot.agent_group_resolution.unlinked_workers
+    assert len((*snapshot.statuses, *snapshot.stale_statuses)) == 2
+    GROK_CHILD_LINKS.clear()
+
+
+def test_fresh_live_link_replaces_an_older_copy_from_background_recovery():
+    from jrbar.collector import _merged_status_candidates
+    from jrbar.lineage_adapters import grok_parent_links
+    child = row('grok:agent:worker', grok_parent_links({'agent_id': 'worker', 'session_id': 'root'}, observed_at=NOW))
+    old = AgentStatus('grok', child.agent_id, 'Worker', AgentMode.UNKNOWN,
+                       datetime.fromtimestamp(NOW - 86_401, timezone.utc), 'LineageObserved',
+                       parent_links=grok_parent_links({'agent_id': 'worker', 'session_id': 'root'}, observed_at=NOW - 86_401))
+    merged = _merged_status_candidates([row('grok:session:root'), child, old])
+    assert not resolve_agent_groups(merged, now=NOW).unlinked_workers
+
+
+def test_legacy_shortened_cursor_record_keeps_the_hashed_work_id():
+    _, normal = replay('cursor', {'hook_event_name': 'postToolUse', 'conversation_id': 'legacy-conversation'})
+    _, shortened = replay('cursor', {'hook_event_name': 'postToolUse', 'session_id': 'legacy-conversation',
+                                     'payload_truncated': True})
+    assert shortened['provider_work_id'] == normal['provider_work_id']
+    assert 'legacy-conversation' not in json.dumps(shortened)
+
+
+def test_hermes_equal_subagent_and_session_ids_still_resolve_parent_aliases():
+    from jrbar.lineage_adapters import hermes_identity_aliases
+    hermes_identity_aliases({'child_subagent_id': 'same-parent-id', 'child_session_id': 'same-parent-id'})
+    child, _ = replay('hermes', {'hook_event_name': 'subagent_start', 'child_session_id': 'equal-alias-child',
+                                 'parent_subagent_id': 'same-parent-id'})
+    assert child.parent_links[0].parent == 'hermes:session:same-parent-id'
+
+
+def test_normalized_hermes_aliases_reject_malformed_or_foreign_extensions():
+    from copy import deepcopy
+    _, encoded = replay('hermes', fixture('hermes-state-db-v0-docs-2026-10-25.json'))
+    assert encoded['identity_aliases'] == [['hermes-worker', 'hermes-child-session']]
+    for bad in (None, [], ['alias', 'session'], [[None, 'session']], [['alias', '/private/path']],
+                [['alias', 'session', 'extra']], [['a', 'b']] * 3):
+        altered = deepcopy(encoded)
+        altered['identity_aliases'] = bad
+        assert normalized_provider_record_from_payload(altered) is None
+    _, cursor = replay('cursor', fixture('cursor-docs-2026-10-25.json'))
+    cursor['identity_aliases'] = [['alias', 'session']]
+    assert normalized_provider_record_from_payload(cursor) is None

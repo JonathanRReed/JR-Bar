@@ -12,9 +12,9 @@ and it never counts toward keep-awake, exactly as an OpenCode child does (the
 OpenCode plugin makes the same stamp at the source).
 
 A child whose start was never observed stays unlinked. Normalized hook logs
-preserve explicit parent links, and a fresh table recovers those links before
-stamping a child's next event. Recovery reads a bounded log tail and keeps the
-original observation time. It cannot reconstruct an event Grok never emitted.
+preserve explicit parent links. A background reader recovers them after a
+restart and consumes appended records. Saved timestamps stay unchanged;
+a live worker's next event renews its link. An absent start stays unknown.
 
 """
 
@@ -27,7 +27,6 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Final
 
-from .models import parse_datetime
 from .providers import canonical_event_name
 
 #: Links kept at once. A person runs a handful of sub-agents at a time; the
@@ -58,13 +57,15 @@ def _first_id(line: dict[str, Any], *keys: str) -> str | None:
 class GrokChildLinks:
     """Child session id -> the session that spawned it, bounded and thread-safe."""
 
-    def __init__(self, limit: int = MAX_CHILD_LINKS) -> None:
+    def __init__(self, limit: int = MAX_CHILD_LINKS, *, clock=time.time) -> None:
         if type(limit) is not int or limit < 1:
             raise ValueError("invalid link limit")
+        self._clock = clock
+        self._pending_recovery = False
+        self._searched: dict[Path, set[str]] = {}
         self._limit = limit
         self._parents: OrderedDict[str, str] = OrderedDict()
         self._observed: dict[str, float] = {}
-        self._recovered: dict[Path, tuple[int, int]] = {}
         self._lock = threading.Lock()
 
     def __len__(self) -> int:
@@ -75,7 +76,7 @@ class GrokChildLinks:
         with self._lock:
             self._parents.clear()
             self._observed.clear()
-            self._recovered.clear()
+            self._searched.clear()
 
     def parent_of(self, session_id: str) -> str | None:
         with self._lock:
@@ -88,17 +89,6 @@ class GrokChildLinks:
     def recover(self, path: Path, *, now: float) -> None:
         from .lineage_adapters import read_hook_links
 
-        try:
-            stat = path.stat()
-        except OSError:
-            return
-        signature = (stat.st_mtime_ns, stat.st_size)
-        with self._lock:
-            if self._recovered.get(path) == signature:
-                return
-            if len(self._recovered) >= 16:
-                self._recovered.clear()
-            self._recovered[path] = signature
         candidates = {}
         for link in read_hook_links(path, "grok", now=now):
             if link.child.startswith("grok:agent:") and link.parent:
@@ -109,6 +99,31 @@ class GrokChildLinks:
             if len(parents) == 1 and self.parent_of(child) is None:
                 parent = next(iter(parents))
                 self.remember(child, parent, observed_at=parents[parent])
+
+    def request_recovery(self, path: Path, child: str, *, now: float) -> None:
+        """Schedule an unknown child once; hook intake never reads the log."""
+        with self._lock:
+            searched = self._searched.setdefault(path, set())
+            if child in searched or self._pending_recovery:
+                return
+            if len(searched) >= self._limit:
+                searched.clear()
+            searched.add(child)
+            if len(self._searched) > 16:
+                self._searched.pop(next(iter(self._searched)))
+            self._pending_recovery = True
+        def scan():
+            try:
+                self.recover(path, now=now)
+            finally:
+                with self._lock:
+                    self._pending_recovery = False
+        threading.Thread(target=scan, name="jrbar-grok-lineage", daemon=True).start()
+
+    def refresh(self, child: str, *, now: float) -> None:
+        with self._lock:
+            if child in self._parents:
+                self._observed[child] = now
 
     def remember(self, child: str, parent: str, *, observed_at: float | None = None) -> bool:
         """Record that ``parent`` spawned ``child``. False when the link is
@@ -126,7 +141,7 @@ class GrokChildLinks:
             # never the one evicted.
             self._parents.pop(child, None)
             self._parents[child] = parent
-            self._observed[child] = time.time() if observed_at is None else observed_at
+            self._observed[child] = self._clock() if observed_at is None else observed_at
             while len(self._parents) > self._limit:
                 evicted, _ = self._parents.popitem(last=False)
                 self._observed.pop(evicted, None)
@@ -165,7 +180,7 @@ class GrokChildLinks:
 GROK_CHILD_LINKS: Final = GrokChildLinks()
 
 
-def stamp_child_identity(line: dict[str, Any], links: GrokChildLinks) -> dict[str, Any]:
+def stamp_child_identity(line: dict[str, Any], links: GrokChildLinks, *, now: float | None = None) -> dict[str, Any]:
     """``line`` with a Grok child session's identity stamped as a worker's.
 
     ``SubagentStart`` (the parent's session, naming the child as
@@ -174,6 +189,7 @@ def stamp_child_identity(line: dict[str, Any], links: GrokChildLinks) -> dict[st
     the root. Every other line comes back untouched. The line is copied, never
     changed in place.
     """
+    now = links._clock() if now is None else now
     session = _first_id(line, "session_id", "sessionId")
     if session is None:
         return line
@@ -181,13 +197,14 @@ def stamp_child_identity(line: dict[str, Any], links: GrokChildLinks) -> dict[st
     child = session
     if event == "SubagentStart":
         spawned = _first_id(line, "subagent_id", "subagentId")
-        stamp = parse_datetime(line.get("logged_at") or line.get("timestamp")).timestamp()
+        stamp = now
         if spawned is None or not links.remember(spawned, session, observed_at=stamp):
             return line
         child = spawned
     root = links.root_of(child)
     if root is None:
         return line
+    links.refresh(child, now=now)
     stamped = dict(line)
     stamped["agent_id"] = child
     stamped["session_id"] = root

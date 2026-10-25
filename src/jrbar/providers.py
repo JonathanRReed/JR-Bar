@@ -2229,6 +2229,9 @@ def parse_log_line(provider: str, line: str) -> HookEvent | None:
             return None
         if provider in PROVIDER_REGISTRY and normalized.source_key.provider_id != provider:
             return None
+        if getattr(normalized, "identity_aliases", ()):
+            from .lineage_adapters import remember_hermes_aliases
+            remember_hermes_aliases(normalized.identity_aliases)
 
 
     if provider == "codex" and isinstance(obj.get("event"), dict):

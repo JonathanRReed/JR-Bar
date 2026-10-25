@@ -87,6 +87,7 @@ def routed_hook_payload(
     *,
     logged_at: str | None = None,
     child_links: GrokChildLinks = GROK_CHILD_LINKS,
+    clock: Callable[[], float] | None = None,
 ) -> tuple[str, Path, dict[str, Any]]:
     line = format_hook_payload(provider, payload_text, logged_at=logged_at, include_origin=False)
     actual_provider = infer_provider_from_hook_line(provider, line)
@@ -94,12 +95,13 @@ def routed_hook_payload(
     actual_log_path = log_path if actual_provider == provider else detect_log_path(actual_provider)
     if actual_provider == "grok":
         # A Grok sub-agent's session names no parent; its SubagentStart does.
-        import time
+        from .models import parse_datetime
+        now = clock() if clock is not None else parse_datetime(line["logged_at"]).timestamp()
         session = line.get("session_id") or line.get("sessionId")
         declared_worker = line.get("subagentType") or line.get("subagent_type")
         if declared_worker and type(session) is str and child_links.parent_of(session) is None:
-            child_links.recover(actual_log_path, now=time.time())
-        line = stamp_child_identity(line, child_links)
+            child_links.request_recovery(actual_log_path, session, now=now)
+        line = stamp_child_identity(line, child_links, now=now)
     return actual_provider, actual_log_path, line
 
 

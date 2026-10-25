@@ -13,10 +13,12 @@ import re
 import sqlite3
 import threading
 import time
+from collections import OrderedDict
 from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timezone
 from functools import lru_cache
+from itertools import islice
 from pathlib import Path
 
 from .models import AgentMode, AgentStatus, ParentLink
@@ -98,11 +100,61 @@ def cursor_parent_links(payload: dict, *, observed_at: float) -> tuple[ParentLin
     return _link(member_key("cursor", child), member_key("cursor", parent), "cursor", observed_at)
 
 
+_HERMES_ALIASES: OrderedDict[str, str | None] = OrderedDict()
+_HERMES_ALIAS_LOCK = threading.Lock()
+
+
+def persisted_identity_aliases(payload: object, provider: str) -> tuple[tuple[str, str], ...]:
+    if provider != "hermes" or type(payload) is not list or not 1 <= len(payload) <= 2:
+        raise ValueError("invalid identity aliases")
+    result = []
+    for pair in payload:
+        if (type(pair) is not list or len(pair) != 2
+                or any(type(value) is not str or member_key(provider, value) is None for value in pair)):
+            raise ValueError("invalid identity alias")
+        result.append(tuple(pair))
+    return tuple(result)
+
+
+def remember_hermes_aliases(pairs) -> None:
+    with _HERMES_ALIAS_LOCK:
+        for alias, session in pairs:
+            previous = _HERMES_ALIASES.get(alias, session)
+            _HERMES_ALIASES[alias] = session if previous == session else None
+            _HERMES_ALIASES.move_to_end(alias)
+        while len(_HERMES_ALIASES) > MAX_FILES:
+            _HERMES_ALIASES.popitem(last=False)
+
+
+def hermes_identity_aliases(raw: dict) -> tuple[tuple[str, str], ...]:
+    pairs = []
+    for prefix in ("child", "parent"):
+        alias, session = raw.get(prefix + "_subagent_id"), raw.get(prefix + "_session_id")
+        if member_key("hermes", alias) and member_key("hermes", session):
+            pairs.append((alias, session))
+    remember_hermes_aliases(pairs)
+    return tuple(pairs)
+
+
+def resolve_hermes_key(key):
+    if type(key) is not str or not key.startswith(("hermes:session:", "hermes:agent:")):
+        return key
+    native = key.split(":", 2)[2]
+    with _HERMES_ALIAS_LOCK:
+        mapped = _HERMES_ALIASES.get(native, native)
+        known = native in _HERMES_ALIASES
+    # Agent keys here identify an explicitly named subagent alias.
+    kind = "session" if known or key.startswith("hermes:session:") else "agent"
+    return member_key("hermes", mapped, kind)
+
+
 def hermes_parent_links(payload: dict, *, observed_at: float) -> tuple[ParentLink, ...]:
     child = (member_key("hermes", payload.get("child_session_id"))
              or member_key("hermes", payload.get("child_subagent_id")))
+    hermes_identity_aliases(payload)
+    child = resolve_hermes_key(child) or child
     parent = (member_key("hermes", payload.get("parent_session_id"))
-              or member_key("hermes", payload.get("parent_subagent_id")))
+              or resolve_hermes_key(member_key("hermes", payload.get("parent_subagent_id"), "agent")))
     return _link(child, parent, "hermes", observed_at)
 
 
@@ -131,32 +183,37 @@ def persisted_parent_links(payload: object, provider: str) -> tuple[ParentLink, 
 
 def hook_parent_links(record) -> tuple[ParentLink, ...]:
     raw = record.raw
-    if "parent_links" in raw:
-        return persisted_parent_links(raw["parent_links"], record.provider)
+    if raw.get("record_kind") == "normalized" and "parent_links" in raw:
+        try:
+            return persisted_parent_links(raw["parent_links"], record.provider)
+        except ValueError:
+            return ()
     if record.provider == "cursor":
         return cursor_parent_links(raw, observed_at=record.logged_at.timestamp())
     if record.provider == "hermes":
         return hermes_parent_links(raw, observed_at=record.logged_at.timestamp())
     if record.provider == "openclaw":
-        # Newer native IDs need the local registry's session-key mapping.
-        if "spawnedBy" not in raw:
-            return ()
         return openclaw_parent_links(raw, observed_at=record.logged_at.timestamp())
     if record.provider == "grok":
         return grok_parent_links(raw, observed_at=record.logged_at.timestamp())
     return ()
 
 
-def read_hermes_links(database: Path, *, observed_at: float) -> tuple[ParentLink, ...]:
+def read_hermes_links(database: Path, *, observed_at: float, active_ids=None) -> tuple[ParentLink, ...]:
     """Read identities and creation times only, never session content."""
+    if active_ids is not None and not active_ids:
+        return ()
     if not database.is_file():
         return ()
     try:
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.1)) as connection:
             connection.execute("PRAGMA query_only=ON")
+            ids = tuple(sorted(active_ids))[:MAX_FILES] if active_ids is not None else ()
+            selected = " AND id IN (" + ",".join("?" for _ in ids) + ")" if ids else ""
             rows = connection.execute(
                 "SELECT id, parent_session_id, started_at FROM sessions WHERE parent_session_id IS NOT NULL "
-                "ORDER BY started_at DESC LIMIT ?", (MAX_FILES,)).fetchall()
+                "AND started_at >= ? AND started_at <= ?" + selected + " ORDER BY started_at DESC LIMIT ?",
+                (observed_at - 86_400, observed_at + 5, *ids, MAX_FILES)).fetchall()
             return tuple(link for child, parent, stamp in rows
                          for link in hermes_parent_links({"child_session_id": child, "parent_session_id": parent},
                              observed_at=float(stamp) if type(stamp) in {int, float} else 0.0))
@@ -171,15 +228,20 @@ def opencode_parent_links(info: dict, *, observed_at: float) -> tuple[ParentLink
                  "opencode", observed_at)
 
 
-def read_opencode_links(database: Path, *, observed_at: float) -> tuple[ParentLink, ...]:
+def read_opencode_links(database: Path, *, observed_at: float, active_ids=None) -> tuple[ParentLink, ...]:
+    if active_ids is not None and not active_ids:
+        return ()
     if not database.is_file():
         return ()
     try:
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.1)) as connection:
             connection.execute("PRAGMA query_only=ON")
+            ids = tuple(sorted(active_ids))[:MAX_FILES] if active_ids is not None else ()
+            selected = " AND id IN (" + ",".join("?" for _ in ids) + ")" if ids else ""
             rows = connection.execute(
                 "SELECT id, parent_id, time_updated FROM session WHERE parent_id IS NOT NULL "
-                "ORDER BY time_updated DESC LIMIT ?", (MAX_FILES,)).fetchall()
+                "AND time_updated >= ? AND time_updated <= ?" + selected + " ORDER BY time_updated DESC LIMIT ?",
+                ((observed_at - 86_400) * 1000, (observed_at + 5) * 1000, *ids, MAX_FILES)).fetchall()
             return tuple(link for child, parent, stamp in rows
                          for link in opencode_parent_links({"id": child, "parentID": parent},
                              observed_at=float(stamp) / 1000 if type(stamp) in {int, float} else 0.0))
@@ -188,19 +250,19 @@ def read_opencode_links(database: Path, *, observed_at: float) -> tuple[ParentLi
 
 
 def openclaw_parent_links(payload: dict, *, observed_at: float, session_keys=None) -> tuple[ParentLink, ...]:
-    if "spawnedBy" not in payload and "spawnedBySessionId" not in payload:
-        key = payload.get("session_id")
-        if type(key) is not str or ":subagent:" not in key:
-            return ()
     parents = []
     if payload.get("spawnedBy"):
-        parents.append(member_key("openclaw", payload["spawnedBy"]))
-    if session_keys is not None and payload.get("spawnedBySessionId"):
-        native = payload.get("spawnedBySessionId")
-        parent = session_keys.get(native) if type(native) is str else None
-        parents.append(member_key("openclaw", parent))
-    child = member_key("openclaw", payload.get("session_id"))
-    return tuple(link for parent in dict.fromkeys(parents or [None])
+        parents.append(member_key("openclaw", payload["spawnedBy"],
+                                  "agent" if ":subagent:" in str(payload["spawnedBy"]) else "session"))
+    native = payload.get("spawnedBySessionId")
+    if native and (session_keys is not None or not parents):
+        parent = session_keys.get(native) if session_keys is not None and type(native) is str else native
+        parents.append(member_key("openclaw", parent,
+                                  "agent" if type(parent) is str and ":subagent:" in parent else "session"))
+    native_child = payload.get("session_id")
+    kind = "agent" if type(native_child) is str and ":subagent:" in native_child else "session"
+    child = member_key("openclaw", native_child, kind)
+    return tuple(link for parent in dict.fromkeys(parents)
                  for link in _link(child, parent, "openclaw", observed_at))
 
 
@@ -228,49 +290,79 @@ def grok_parent_links(payload: dict, *, observed_at: float) -> tuple[ParentLink,
     return ()
 
 
-def read_hook_links(path: Path, provider: str, *, now: float) -> tuple[ParentLink, ...]:
-    """Recover bounded content-free evidence from normalized logs only."""
-    try:
-        with path.open("rb") as stream:
-            size = stream.seek(0, 2)
-            start = max(0, size - 2 * 1024 * 1024)
-            stream.seek(start)
-            if start:
-                stream.readline(MAX_HEADER_BYTES + 1)
-            raw = stream.read(2 * 1024 * 1024)
-        links = set()
-        for line in raw.splitlines()[-MAX_FILES * 8:]:
-            if len(line) > MAX_HEADER_BYTES:
-                continue
+class HookLineageReader:
+    """Keep parsed evidence and consume only complete appended records."""
+    def __init__(self):
+        self._files = {}
+        self._lock = threading.Lock()
+
+    def read(self, path: Path, provider: str, *, now: float) -> tuple[ParentLink, ...]:
+        with self._lock:
             try:
-                payload = json.loads(line)
-                if (type(payload) is not dict or payload.get("record_kind") != "normalized"
-                        or payload.get("provider_id") != provider):
-                    continue
-                if "parent_links" in payload:
-                    evidence = persisted_parent_links(payload["parent_links"], provider)
-                elif provider == "grok" and payload.get("parent_work_id"):
-                    evidence = _link(member_key("grok", payload.get("provider_work_id"), "agent"),
-                        member_key("grok", payload.get("parent_work_id")), "grok", payload.get("occurred_at_epoch", 0))
+                stat = path.stat()
+                identity = (stat.st_dev, stat.st_ino)
+                key = (path, provider)
+                cached = self._files.get(key)
+                if cached and cached[0] == identity and stat.st_size >= cached[1]:
+                    _, offset, signature, newest = cached
+                    newest = dict(newest)
+                    if signature == (stat.st_mtime_ns, stat.st_size):
+                        return tuple(link for link in newest.values() if 0 <= now - link.observed_at <= 86_400)
+                    # An equal-size rewrite is not an append.
+                    if stat.st_size == signature[1]:
+                        offset, newest = 0, {}
                 else:
-                    continue
-                for link in evidence:
-                    if type(link.observed_at) not in {int, float}:
+                    offset, newest = 0, {}
+                with path.open("rb") as stream:
+                    start = max(offset, stat.st_size - 2 * 1024 * 1024)
+                    stream.seek(start)
+                    if start > offset:
+                        stream.readline(MAX_HEADER_BYTES + 1)
+                    raw = stream.read(2 * 1024 * 1024)
+                    complete = raw.rfind(b"\n") + 1
+                    offset = stream.tell() - len(raw) + complete
+                for line in raw[:complete].splitlines():
+                    if len(line) > MAX_HEADER_BYTES:
                         continue
-                    if 0 <= now - link.observed_at <= 86_400:
-                        links.add(link)
-            except (ValueError, RecursionError):
-                continue
-        # Preserve conflicting parents for the resolver, but not every repeat
-        # of one parent from a busy stream.
-        newest = {}
-        for link in links:
-            key = (link.child, link.parent)
-            if key not in newest or newest[key].observed_at < link.observed_at:
-                newest[key] = link
-        return tuple(sorted(newest.values(), key=lambda link: (-link.observed_at, link.child, link.parent or ""))[:MAX_FILES])
-    except OSError:
-        return ()
+                    try:
+                        payload = json.loads(line)
+                        if (type(payload) is not dict or payload.get("record_kind") != "normalized"
+                                or payload.get("provider_id") != provider):
+                            continue
+                        if "identity_aliases" in payload:
+                            remember_hermes_aliases(persisted_identity_aliases(payload["identity_aliases"], provider))
+                        if "parent_links" in payload:
+                            evidence = persisted_parent_links(payload["parent_links"], provider)
+                        elif provider == "grok" and payload.get("parent_work_id"):
+                            evidence = _link(member_key("grok", payload.get("provider_work_id"), "agent"),
+                                member_key("grok", payload.get("parent_work_id")), "grok", payload.get("occurred_at_epoch", 0))
+                        else:
+                            continue
+                        for link in evidence:
+                            if type(link.observed_at) not in {int, float} or not 0 <= now - link.observed_at <= 86_400:
+                                continue
+                            pair = (link.child, link.parent)
+                            if pair not in newest or newest[pair].observed_at < link.observed_at:
+                                newest[pair] = link
+                    except (ValueError, RecursionError):
+                        continue
+                result = tuple(sorted((link for link in newest.values() if 0 <= now - link.observed_at <= 86_400),
+                    key=lambda link: (-link.observed_at, link.child, link.parent or ""))[:MAX_FILES])
+                self._files.pop(key, None)
+                self._files[key] = (identity, offset, (stat.st_mtime_ns, stat.st_size),
+                                    {(link.child, link.parent): link for link in result})
+                if len(self._files) > 16:
+                    self._files.pop(next(iter(self._files)))
+                return result
+            except OSError:
+                return ()
+
+
+_HOOK_LINEAGE_READER = HookLineageReader()
+
+
+def read_hook_links(path: Path, provider: str, *, now: float) -> tuple[ParentLink, ...]:
+    return _HOOK_LINEAGE_READER.read(path, provider, now=now)
 
 
 def hook_lineage_statuses(links, previous=(), *, now: float) -> tuple[AgentStatus, ...]:
@@ -299,34 +391,66 @@ def hook_lineage_statuses(links, previous=(), *, now: float) -> tuple[AgentStatu
     return tuple(sorted(result, key=lambda row: (-row.updated_at.timestamp(), row.agent_id))[:MAX_FILES])
 
 
-def read_openclaw_links(home: Path) -> tuple[ParentLink, ...]:
-    """The session registry maps native session IDs to hook session keys."""
+@lru_cache(maxsize=32)
+def _openclaw_entries(path: Path, identity: tuple) -> tuple:
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(16 * 1024 * 1024 + 1)
+        if len(raw) > 16 * 1024 * 1024:
+            return (), {}
+        rows = json.loads(raw)
+        if type(rows) is not dict:
+            return (), {}
+        entries = []
+        keys = {}
+        for key, entry in rows.items():
+            if type(entry) is not dict:
+                continue
+            stamp = entry.get("updatedAt")
+            stamp = float(stamp) / 1000 if type(stamp) in {int, float} and math.isfinite(stamp) else 0.0
+            metadata = {field: entry[field] for field in ("sessionId", "spawnedBy", "spawnedBySessionId") if field in entry}
+            entries.append((key, metadata, stamp))
+            native = entry.get("sessionId")
+            if type(native) is str:
+                keys[native] = key if native not in keys else None
+        entries = tuple(sorted(entries, key=lambda item: item[2], reverse=True)[:MAX_FILES])
+        needed = {entry.get("spawnedBySessionId") for _, entry, _ in entries
+                  if type(entry.get("spawnedBySessionId")) is str}
+        needed.update(entry.get("sessionId") for _, entry, _ in entries if type(entry.get("sessionId")) is str)
+        return entries, {native: keys[native] for native in needed if native in keys}
+    except (OSError, ValueError, RecursionError):
+        return (), {}
+
+
+_OPENCLAW_NATIVE_KEYS: dict[str, str | None] = {}
+
+
+def read_openclaw_links(home: Path, *, active_ids=None) -> tuple[ParentLink, ...]:
+    """Read changed registries on the background worker, keeping newest entries."""
     entries = []
+    keys = {}
     for path in islice((home / ".openclaw/agents").glob("*/sessions/sessions.json"), 32):
         try:
-            with path.open("rb") as stream:
-                raw = stream.read(512 * 1024 + 1)
-            if len(raw) > 512 * 1024:
-                continue
-            rows = json.loads(raw)
-            if type(rows) is not dict or len(rows) > MAX_FILES:
-                continue
-            for key, entry in rows.items():
-                if type(entry) is not dict:
-                    continue
-                stamp = entry.get("updatedAt")
-                stamp = float(stamp) / 1000 if type(stamp) in {int, float} and math.isfinite(stamp) else 0.0
-                entries.append((key, entry, stamp))
-        except (OSError, ValueError, RecursionError):
+            stat = path.stat()
+            found, native_keys = _openclaw_entries(path, (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size))
+            entries.extend(found)
+            for native, key in native_keys.items():
+                keys[native] = key if native not in keys else None
+        except OSError:
             continue
+    global _OPENCLAW_NATIVE_KEYS
+    _OPENCLAW_NATIVE_KEYS = keys
     entries = sorted(entries, key=lambda item: item[2], reverse=True)[:MAX_FILES]
-    keys = {}
-    for key, entry, _ in entries:
-        native = entry.get("sessionId")
-        if type(native) is str:
-            keys[native] = key if native not in keys else None
-    return tuple(link for key, entry, stamp in entries for link in openclaw_parent_links(
-        dict(entry, session_id=key), observed_at=stamp, session_keys=keys))
+    return tuple(link for key, entry, stamp in entries if active_ids is None or key in active_ids
+                 for link in openclaw_parent_links(dict(entry, session_id=key), observed_at=stamp, session_keys=keys))
+
+
+def resolve_openclaw_key(key):
+    if type(key) is not str or not key.startswith("openclaw:session:"):
+        return key
+    native = key.split(":", 2)[2]
+    mapped = _OPENCLAW_NATIVE_KEYS.get(native, native)
+    return member_key("openclaw", mapped, "agent" if type(mapped) is str and ":subagent:" in mapped else "session")
 
 
 def match_opencode_roster(rows: tuple[AgentStatus, ...], observed: frozenset[str]) -> tuple[AgentStatus, ...]:
@@ -496,7 +620,7 @@ def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: f
                     native = None
             if type(native) is dict:
                 provider = _provider(native.get("driver"), worker.get("provider_instance_id"), registry_providers)
-                kind = "session" if provider in {"codex", "factory", "cursor", "hermes", "opencode", "openclaw", "gemini", "grok"} else "agent"
+                kind = "agent" if provider in {"claude", "devin", "opencode", "grok"} else "session"
                 native_id = native.get("nativeId")
                 child = member_key(provider, cursor_native_id(native_id) if provider == "cursor" else native_id, kind)
         if child:
@@ -529,10 +653,8 @@ class LocalLineageReader:
     A fresh instance reconstructs the same links after a daemon restart.
     """
     def __init__(self, home: Path, *, state_dir: Path | None = None):
-        from .state_paths import default_state_dir
-
         self.home = home
-        self.state_dir = state_dir if state_dir is not None else default_state_dir(home)
+        self.state_dir = state_dir
         self._cache: dict[Path, tuple[tuple[int, int], tuple[ParentLink, ...]]] = {}
         self._directories: dict[Path, tuple[int, tuple[Path, ...]]] = {}
         self._lock = threading.Lock()
@@ -566,7 +688,7 @@ class LocalLineageReader:
             except OSError:
                 self._directories.pop(directory, None)
 
-    def read(self, providers: frozenset[str], *, now: float, active_paths=()) -> tuple[AgentStatus, ...]:
+    def read(self, providers: frozenset[str], *, now: float, active_paths=None, active_keys=None) -> tuple[AgentStatus, ...]:
         formats = (
             ("claude", ".claude/projects", "agent-*.meta.json", claude_parent_links),
             ("codex", ".codex/sessions", "*.jsonl", codex_parent_links),
@@ -577,8 +699,8 @@ class LocalLineageReader:
             if provider not in providers:
                 continue
             base = self.home / root
-            changed = list(self._changed_paths(base, pattern, now=now))
-            known = set(active_paths)
+            changed = list(self._changed_paths(base, pattern, now=now)) if active_paths is None else []
+            known = set(active_paths or ())
             for path in known:
                 if path.is_relative_to(base) and path.match(pattern):
                     try:
@@ -621,20 +743,30 @@ class LocalLineageReader:
             key=lambda item: item[1][0][0], reverse=True,
         )[:MAX_FILES])
         links = [link for path, (_, evidence) in self._cache.items()
-                 if any(path.is_relative_to(self.home / root) and provider in providers
+                 if (active_paths is None or path in active_paths) and any(path.is_relative_to(self.home / root) and provider in providers
                         for provider, root, _, _ in formats) for link in evidence]
         if "devin" in providers:
             links.extend(read_devin_links(self.home / ".local/share/devin/cli/sessions.db", observed_at=now))
+        def native_ids(provider):
+            return None if active_keys is None else {key.split(":", 2)[2] for key in active_keys
+                                                     if key.startswith(provider + ":") and key.count(":") >= 2}
         if "hermes" in providers:
-            links.extend(read_hermes_links(self.home / ".hermes/state.db", observed_at=now))
+            links.extend(read_hermes_links(self.home / ".hermes/state.db", observed_at=now, active_ids=native_ids("hermes")))
         if "opencode" in providers:
-            links.extend(read_opencode_links(self.home / ".local/share/opencode/opencode.db", observed_at=now))
+            links.extend(read_opencode_links(self.home / ".local/share/opencode/opencode.db", observed_at=now, active_ids=native_ids("opencode")))
         if "openclaw" in providers:
-            links.extend(read_openclaw_links(self.home))
+            links.extend(read_openclaw_links(self.home, active_ids=native_ids("openclaw")))
         for provider in sorted(providers & {"cursor", "hermes", "openclaw", "grok"}):
-            links.extend(read_hook_links(self.state_dir / f"{provider}.jsonl", provider, now=now))
+            from .providers import detect_log_path
+            path = self.state_dir / f"{provider}.jsonl" if self.state_dir is not None else detect_log_path(provider, self.home)
+            links.extend(read_hook_links(path, provider, now=now))
+            if provider == "grok":
+                from .grok_children import GROK_CHILD_LINKS
+                GROK_CHILD_LINKS.recover(path, now=now)
         by_child: dict[str, list[ParentLink]] = {}
         for link in links:
+            if active_keys is not None and link.child not in active_keys and link.child.replace(":agent:", ":session:", 1) not in active_keys:
+                continue
             by_child.setdefault(link.child, []).append(link)
         return tuple(AgentStatus(
             provider=child.split(":", 1)[0], agent_id=child,
@@ -643,7 +775,7 @@ class LocalLineageReader:
             event_name="LineageObserved", parent_links=tuple(evidence),
         ) for child, evidence in sorted(by_child.items())[:MAX_FILES])
 
-    def request(self, providers: frozenset[str], *, active_paths=()) -> tuple[AgentStatus, ...]:
+    def request(self, providers: frozenset[str], *, active_paths=(), active_keys=()) -> tuple[AgentStatus, ...]:
         if not providers:
             return ()
         with self._lock:
@@ -654,7 +786,7 @@ class LocalLineageReader:
             self._next_scan = time.monotonic() + 10.0
         def scan():
             try:
-                updated = self.read(providers, now=time.time(), active_paths=active_paths)
+                updated = self.read(providers, now=time.time(), active_paths=active_paths, active_keys=active_keys)
                 with self._lock:
                     self._rows = updated
             finally:
@@ -676,14 +808,14 @@ def update_lineage_runtime(target) -> None:
         publish("lineage", ())
         return
     if reader is None:
-        from .state_paths import default_state_dir
-        reader = LocalLineageReader(Path.home(), state_dir=default_state_dir())
+        reader = LocalLineageReader(Path.home())
         target._local_lineage_reader = reader
     paths = getattr(monitor, "lineage_paths_by_session", {})
     active_paths = tuple(Path(path) for status in getattr(snapshot, "statuses", ()) if not status.stale
                          for key in (status.agent_id, status.parent_agent_id)
                          if (path := paths.get(key)))
-    rows = tuple(row for row in reader.request(providers, active_paths=active_paths) if row.provider in providers)
+    active_keys = frozenset(s.agent_id for s in getattr(snapshot, "statuses", ()) if not s.stale)
+    rows = tuple(row for row in reader.request(providers, active_paths=active_paths, active_keys=active_keys) if row.provider in providers)
     observed = frozenset(s.agent_id for s in (*getattr(snapshot, "statuses", ()), *getattr(snapshot, "stale_statuses", ()))
                          if s.event_name != "LineageObserved")
     publish("lineage", match_opencode_roster(rows, observed))

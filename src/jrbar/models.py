@@ -95,6 +95,8 @@ class HookEvent:
 
     @property
     def status_key(self) -> str:
+        if self.provider == "openclaw" and self.session_id and ":subagent:" in self.session_id:
+            return f"{self.provider}:agent:{self.session_id}"
         if self.agent_id:
             return f"{self.provider}:agent:{self.agent_id}"
         if self.session_id:
@@ -200,6 +202,8 @@ class AgentStatus:
             parents = {link.parent for link in self.parent_links}
             return next(iter(parents)) if len(parents) == 1 else None
         if not self.is_subagent or not self.session_id:
+            return None
+        if self.agent_id == f"{self.provider}:agent:{self.session_id}":
             return None
         return f"{self.provider}:session:{self.session_id}"
 
