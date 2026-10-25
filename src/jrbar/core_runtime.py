@@ -6603,7 +6603,7 @@ def build_headless_controller_class() -> type:
             if skew is not None and getattr(dot_result.write, "changed", False) and getattr(result.write, "changed", False):
                 self._core_linked_skew_ms = round(skew * 1000.0, 1)
                 self._core_linked_skew_at = time.time()
-                legacy.log_status_bar(f"linked write: dot {self._core_linked_skew_ms} ms after pro")
+                legacy.log_status_bar_debug(f"linked write: dot {self._core_linked_skew_ms} ms after pro")
             self._core_note_hardware_write(dot_command, dot_result)
             self._core_publish_lights()
 

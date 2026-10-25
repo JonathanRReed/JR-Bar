@@ -774,8 +774,16 @@ else:
         def refreshFromEvent_(self, _sender):
             self.event_refresh_pending = False
             now = time.monotonic()
+            urgent = bool(getattr(self, "_event_refresh_urgent", False))
+            self._event_refresh_urgent = False
+            if urgent:
+                self._production_force_refresh = True
+                trailing = getattr(self, "_trailing_refresh_timer", None)
+                if trailing is not None:
+                    trailing.invalidate()
+                    self._trailing_refresh_timer = None
             last = float(getattr(self, "_last_event_refresh_at", 0.0) or 0.0)
-            if now - last < EVENT_COALESCE_SECONDS:
+            if not urgent and now - last < EVENT_COALESCE_SECONDS:
                 if getattr(self, "_trailing_refresh_timer", None) is None:
                     self._trailing_refresh_timer = (
                         _legacy.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
