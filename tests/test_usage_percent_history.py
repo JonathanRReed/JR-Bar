@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import threading
+
+import pytest
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -639,3 +641,18 @@ def test_recording_batches_expiry_but_applies_policy_changes_immediately(monkeyp
     assert writer.wait_idle(timeout_seconds=2)
     assert target.read_text() == ""
     assert writer.close(timeout_seconds=2)
+
+
+@pytest.mark.parametrize("with_retention", [False, True])
+def test_append_separates_a_torn_tail_from_the_next_record(tmp_path, with_retention):
+    target = tmp_path / "history.jsonl"
+    torn = '{"provider_id":"claude","lane_id":'
+    target.write_text(torn)
+    record = dict(provider_id="claude", source_instance_id="default", lane_id="weekly",
+                  remaining_percent=71.0, observed_at_epoch=NOW_EPOCH)
+    retention = _retention(("claude", "default", 7)) if with_retention else None
+    assert append_percent_observations(target, [record], retention_projection=retention,
+                                       prune_existing=False, now_epoch=NOW_EPOCH) == 1
+    lines = target.read_text().splitlines()
+    assert lines[0] == torn
+    assert json.loads(lines[1]) == record

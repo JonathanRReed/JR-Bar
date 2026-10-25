@@ -26,7 +26,9 @@ from .persistence_writer import (
     PersistenceOutcome,
     PersistenceReceipt,
 )
-from .private_io import append_private_text, atomic_private_write, read_private_text
+from .private_io import (
+    append_private_text, atomic_private_write, read_private_bytes_with_identity, read_private_text,
+)
 from .provider_feature_settings import ProviderInstanceRetentionProjection
 from .providers import default_state_dir
 
@@ -167,6 +169,14 @@ def _retained_history_records(
     return retained
 
 
+def _append_history_rows(path: Path, text: str) -> None:
+    try:
+        tail, _ = read_private_bytes_with_identity(path, max_bytes=1, tail=True)
+    except FileNotFoundError:
+        tail = b""
+    append_private_text(path, ("\n" if tail and tail != b"\n" else "") + text)
+
+
 def append_percent_observations(
     path: Path,
     records: list[dict],
@@ -180,7 +190,7 @@ def append_percent_observations(
         if not records:
             return 0
         text = _serialize_history(records)
-        append_private_text(path, text)
+        _append_history_rows(path, text)
         audit.compact_jsonl_file(path)
         return len(records)
 
@@ -190,7 +200,7 @@ def append_percent_observations(
             _serialize_history(records), retention_projection, now_epoch=current_epoch,
         )
         if retained_new:
-            append_private_text(path, _serialize_history(retained_new))
+            _append_history_rows(path, _serialize_history(retained_new))
             audit.compact_jsonl_file(path)
         return len(retained_new)
     try:
@@ -217,7 +227,7 @@ def append_percent_observations(
     if retained_existing != existing:
         atomic_private_write(path, retained_existing + retained_new)
     elif retained_new:
-        append_private_text(path, retained_new)
+        _append_history_rows(path, retained_new)
     else:
         return 0
     audit.compact_jsonl_file(path)
