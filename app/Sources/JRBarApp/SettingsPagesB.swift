@@ -303,6 +303,8 @@ struct FleetPreviewRow: View {
     struct Reply: Decodable {
         let program: String
         let label: String?
+        let reason: String?
+        let warnings: [String]?
     }
 
     /// What the render depends on: the blend, its speed, the palette.
@@ -327,7 +329,13 @@ struct FleetPreviewRow: View {
             guard store.isLive,
                   let reply = try? await store.core.request("preview_fleet", args: ["led_count": .number(8)], as: Reply.self),
                   !reply.program.isEmpty else { rendered = nil; return }
-            rendered = (key, reply.program, reply.label ?? "Three agents: two working, one done")
+            let label: String
+            if let warnings = reply.warnings, !warnings.isEmpty {
+                label = ([reply.reason].compactMap { $0 } + warnings).joined(separator: " ")
+            } else {
+                label = reply.label ?? "Three agents: two working, one done"
+            }
+            rendered = (key, reply.program, label)
         }
     }
 }
