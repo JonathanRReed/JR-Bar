@@ -310,7 +310,14 @@ def _merge_runtime_dispatch(
             and max(0.0, (now - float(prior_started_at)) * 1_000.0)
             < prior.expires_after_ms
         )
-        preserve_prior = prior_active and (
+        same_ember = (
+            prior is not None and candidate is not None
+            and prior.family is AmbientEffectFamily.TURN_LENGTH_EMBER
+            and candidate.family is prior.family
+            and prior.effect_identity == candidate.effect_identity
+            and type(prior_started_at) in {int, float}
+        )
+        preserve_prior = same_ember or (prior_active and (
             candidate is None
             or prior.priority > candidate.priority
             or (
@@ -318,7 +325,7 @@ def _merge_runtime_dispatch(
                 and prior.effect_identity == candidate.effect_identity
                 and prior.program == candidate.program
             )
-        )
+        ))
         selected = prior if preserve_prior else candidate
         if selected is None:
             continue

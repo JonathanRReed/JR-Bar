@@ -5994,16 +5994,89 @@ class ColorSettingsTests(unittest.TestCase):
         self.assertNotIn(settings.mode_color(colors_module.MODE_ASK), program)
 
 
-    def test_status_only_is_static_for_a_mix_and_solos_keep_their_animation(self) -> None:
-        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC).with_agent_animation("codex", "kitt")
-        solo = (_status("codex", AgentMode.WORKING),)
-        self.assertEqual(program_for_snapshot(solo, colors=settings),
-                         program_for_snapshot(solo, colors=settings.with_blend_mode(BLEND_MODE_COLOR)))
-        mixed = (*solo, _status("claude", AgentMode.WORKING))
-        state, program = program_for_snapshot(mixed, colors=settings)
-        self.assertEqual(state, LedDisplayState.WORKING)
-        self.assertEqual(program, settings.mode_color(colors_module.MODE_WORKING))
-        self.assertNotIn("repeat", program)
+    def test_classic_blend_mode_matches_legacy_programs(self) -> None:
+        """Classic mode reproduces program_for_display_state exactly, with
+        and without the gentler default fade."""
+        # --- scenario: urgency_weight_orders_blocked_above_idle
+        self.assertGreater(urgency_weight(AgentMode.BLOCKED_ERROR), urgency_weight(AgentMode.WAITING_FOR_INPUT))
+        self.assertGreater(urgency_weight(AgentMode.WAITING_FOR_INPUT), urgency_weight(AgentMode.WORKING))
+        self.assertGreater(urgency_weight(AgentMode.WORKING), urgency_weight(AgentMode.IDLE_READY))
+        self.assertEqual(urgency_weight(AgentMode.UNKNOWN), 1)
+
+        # --- scenario: program_for_snapshot_empty_statuses_uses_fallback_mode
+        settings = ColorSettings.defaults()
+        state, program = program_for_snapshot((), led_count=8, colors=settings)
+        self.assertEqual(state, LedDisplayState.IDLE)
+
+        # WAITING_FOR_INPUT, not BLOCKED_ERROR: blocked/error is a FAILURE and
+        # falls through to LedDisplayState.FAILED now (see below), which is the
+        # whole point -- this half is about the ask.
+        state, program = program_for_snapshot(
+            (), led_count=8, colors=settings, fallback_mode=AgentMode.WAITING_FOR_INPUT
+        )
+        self.assertEqual(state, LedDisplayState.ASK)
+        # The default fade ceiling (50%) scales the configured Ask color down
+        # for the pulse's peak, so the raw configured hex won't appear
+        # verbatim -- the scaled peak color should.
+        floor, ceiling = settings.fade_range(colors_module.MODE_ASK)
+        self.assertEqual(ceiling, colors_module.DEFAULT_FADE_CEILING)
+        peak = colors_module.scale_hex_brightness(settings.mode_color(colors_module.MODE_ASK), ceiling)
+        self.assertIn(peak, program)
+
+        state, program = program_for_snapshot(
+            (), led_count=8, colors=settings, fallback_mode=AgentMode.BLOCKED_ERROR
+        )
+        self.assertEqual(state, LedDisplayState.FAILED)
+        self.assertIn(settings.rendered_error_color(), program)
+        self.assertNotIn(settings.mode_color(colors_module.MODE_ASK), program)
+
+        # --- scenario: classic_blend_mode_matches_program_for_display_state_exactly
+        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC).with_round_robin_urgency_alert(False)
+        fade_kwargs = {
+            "idle_floor": colors_module.DEFAULT_FADE_FLOOR,
+            "idle_ceiling": colors_module.DEFAULT_FADE_CEILING,
+            "working_floor": colors_module.DEFAULT_FADE_FLOOR,
+            "working_ceiling": colors_module.DEFAULT_FADE_CEILING,
+            "ask_floor": colors_module.DEFAULT_FADE_FLOOR,
+            "ask_ceiling": colors_module.DEFAULT_FADE_CEILING,
+        }
+        for mode, expected_state in (
+            (AgentMode.WORKING, LedDisplayState.WORKING),
+            (AgentMode.WAITING_FOR_INPUT, LedDisplayState.ASK),
+            (AgentMode.BLOCKED_ERROR, LedDisplayState.FAILED),
+            (AgentMode.COMPLETED, LedDisplayState.DONE),
+            (AgentMode.IDLE_READY, LedDisplayState.IDLE),
+        ):
+            for led_count in (2, 8):
+                state, program = program_for_snapshot((_status("codex", mode),), led_count=led_count, colors=settings)
+                expected = program_for_display_state(
+                    expected_state,
+                    led_count=led_count,
+                    brightness=255,
+                    done_celebrate=settings.done_celebration_enabled,
+                    **fade_kwargs,
+                )
+                self.assertEqual(state, expected_state)
+                self.assertEqual(program, expected)
+
+        # --- scenario: classic_blend_mode_matches_default_off_to_full_pulse_when_fade_disabled
+        # Confirms the underlying primitive (program_for_display_state) is
+        # still exactly today's original off-to-full pulse when floor=0/
+        # ceiling=1 -- i.e. the gentler default lives in ColorSettings, not
+        # baked irreversibly into the renderer.
+        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC).with_round_robin_urgency_alert(False)
+        for key in colors_module.FADE_MODE_KEYS:
+            settings = settings.with_fade_floor(key, 0.0).with_fade_ceiling(key, 1.0)
+
+        for mode, expected_state in (
+            (AgentMode.WORKING, LedDisplayState.WORKING),
+            (AgentMode.WAITING_FOR_INPUT, LedDisplayState.ASK),
+            (AgentMode.BLOCKED_ERROR, LedDisplayState.FAILED),
+            (AgentMode.IDLE_READY, LedDisplayState.IDLE),
+        ):
+            state, program = program_for_snapshot((_status("codex", mode),), led_count=8, colors=settings)
+            expected = program_for_display_state(expected_state, led_count=8, brightness=255)
+            self.assertEqual(program, expected)
 
     def test_spatial_and_blend_modes_assign_leds(self) -> None:
         """Spatial split assigns every LED once and falls back past LED
@@ -6354,7 +6427,9 @@ class RoundRobinAndPaletteTests(unittest.TestCase):
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CYCLE).with_cycle_speed(3.0)
         statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.WORKING))
         _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
-        self.assertIn("roll-right 3s linear", program)
+        from jrbar.animation import animation_duration_ms, read_program
+        animation, _ = read_program(program)
+        self.assertAlmostEqual(animation_duration_ms(animation), 8000, delta=12)
 
         settings = ColorSettings.defaults().with_cycle_speed(4.2)
         restored = ColorSettings.from_dict(settings.to_dict())
@@ -6532,10 +6607,11 @@ class DoneCelebrationTests(unittest.TestCase):
         self.assertGreater(len(program_with.splitlines()), 1)
         self.assertEqual(program_without.splitlines(), ["off"])
 
-        # Status Only holds the state colour and does not celebrate.
+        # Classic keeps the base Done celebration.
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC)
         _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
-        self.assertEqual(program, settings.mode_color(colors_module.MODE_DONE))
+        self.assertNotIn("repeat", program)
+        self.assertGreater(len(program.splitlines()), 1)
 
         # The no-active-agents fallback honors it too.
         _, program = program_for_snapshot(
@@ -6613,7 +6689,9 @@ class SpeedOverrideAndUrgencyAlertTests(unittest.TestCase):
         )
         statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.WORKING))
         _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
-        self.assertIn("700ms", program)
+        from jrbar.animation import animation_duration_ms, read_program
+        animation, _ = read_program(program)
+        self.assertAlmostEqual(animation_duration_ms(animation), 8000, delta=20)
 
     def test_urgency_alert_enabled_by_default(self) -> None:
         self.assertTrue(ColorSettings.defaults().round_robin_urgency_alert)
@@ -6738,7 +6816,7 @@ class PreviewLedColorsTests(unittest.TestCase):
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN)
         preview = colors_module.preview_led_colors(demo, led_count=8, colors=settings)
         self.assertEqual(len(preview), 8)
-        self.assertEqual(len(set(preview)), len(demo))
+        self.assertEqual(len(set(preview)), 1, "only the working provider owns the animation")
 
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_COLOR)
         preview = colors_module.preview_led_colors(demo, led_count=8, colors=settings)

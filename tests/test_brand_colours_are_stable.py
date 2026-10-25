@@ -314,7 +314,7 @@ def test_a_hand_picked_provider_colour_is_never_touched__and_1_more() -> None:
     solo = projection(
         row("codex", LifecycleMode.ACTIVE), row("claude", LifecycleMode.IDLE)
     )
-    assert check(None, None, solo) is True
+    assert check(None, None, solo) is False
 
     # Two genuinely engaged agents: the crowd hands over.
     duo = projection(

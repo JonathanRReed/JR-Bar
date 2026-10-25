@@ -2555,16 +2555,45 @@ class StatusBarController(NSObject):
         # what the hardware itself would render.
         return None
 
-    def should_render_multi_agent(self, resolved_glance, projection) -> bool:
-        """The provider renderer owns ordinary active work, including solos."""
+    def should_render_multi_agent(
+        self,
+        resolved_glance,
+        projection: AttentionProjection | None,
+    ) -> bool:
+        """Two agents working must LOOK like two agents.
+
+        The single-color glance path renders one fleet-wide semantic as
+        one hue, which is structurally incapable of showing a crowd --
+        and it was winning unconditionally, so the multi-agent renderer
+        (and with it every blend mode) was dead code in production: a
+        Codex session and a Claude session lit the strip one color.
+
+        Only ordinary ACTIVE work hands over. Attention, failures,
+        completions, capacity and rest stay whole-strip moments -- they
+        are deliberately designed as one unmistakable signal, and a
+        crowd of colors would bury them.
+
+        And the crowd is counted from agents actually ENGAGED (working
+        or waiting), not from every row still inside the presence
+        horizon: with Codex working and a finished Claude session merely
+        lingering as an idle row, the strip painted Claude's colors
+        alongside Codex's -- "even though codex was the only one
+        running" (2026-08-20). One engaged agent is a solo, whatever
+        else is remembered.
+        """
         if projection is None:
             return False
-        engaged = sum(row.lifecycle_mode is LifecycleMode.ACTIVE for row in projection.light_rows)
-        preferences = getattr(self, "_accessibility_display_preferences", None)
-        if engaged == 1 and bool(getattr(preferences, "reduce_motion", False)):
+        engaged = sum(
+            1
+            for row in projection.light_rows
+            if row.lifecycle_mode
+            in {LifecycleMode.ACTIVE, LifecycleMode.WAITING}
+        )
+        if engaged < 2:
             return False
-        return engaged > 0 and (resolved_glance is None or
-            getattr(resolved_glance, "semantic", None) is GlanceSemantic.ACTIVE)
+        if resolved_glance is None:
+            return True
+        return getattr(resolved_glance, "semantic", None) is GlanceSemantic.ACTIVE
 
     def projection_for_device(
         self,
@@ -8153,6 +8182,7 @@ class StatusBarController(NSObject):
             presentation=None,
             *,
             force_dark: bool = False,
+            fallback_brightness_applied: bool = False,
         ) -> None:
             # Apply Screen Bar calibration here; Colors previews keep true hex.
             def transform(value: str) -> str:
@@ -8184,9 +8214,9 @@ class StatusBarController(NSObject):
                 ),
                 static_fallback_program=(
                     transform(
-                        apply_brightness(
-                            presentation.static_fallback_dsl,
-                            brightness,
+                        presentation.static_fallback_dsl
+                        if fallback_brightness_applied else apply_brightness(
+                            presentation.static_fallback_dsl, brightness,
                         )
                     )
                     if presentation is not None
@@ -8291,6 +8321,9 @@ class StatusBarController(NSObject):
                 )
             )
         else:
+            render = getattr(self, "_ambient_bar", None)
+            if render and render(_set_virtual, brightness):
+                return
             colors_for_render = self.agent_render_colors()
             override = self.screen_bar_blend_override()
             if override:
@@ -8411,15 +8444,17 @@ class StatusBarController(NSObject):
             layer_state = display_state_for_projection(projection) if projection is not None else display_state_for_mode(mode)
             layered = compose_ambient_layer(program, layer_state, ambient)
             self._ambient_screen_bar_layer_until = ambient.next_visual_change_at if layered != program else None
-            if layered != program:
+            has_layer = layered != program
+            if has_layer:
                 template = presentation or ambient.screen_bar_program
                 presentation = dataclass_replace(
                     template, dsl=layered, motion=MotionClass.CONTINUOUS,
-                    static_fallback_dsl=layered, playback_anchor=ambient.started_at,
+                    static_fallback_dsl=layered,
+                    playback_anchor=ambient.started_at,
                     next_visual_change_at=ambient.next_visual_change_at,
                 )
                 program = layered
-            _set_virtual(program, presentation)
+            _set_virtual(program, presentation, fallback_brightness_applied=has_layer)
         _vt3 = time.monotonic()
         if _vt3 - _vt0 > 0.1:
             log_status_bar(

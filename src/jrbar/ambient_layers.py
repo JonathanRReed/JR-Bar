@@ -11,6 +11,15 @@ LAYER_SECONDS = 2.0
 _COLOR = re.compile(r"#[0-9a-fA-F]{6}\b")
 
 
+def is_short_cue(output):
+    """Only the plan's cue families layer over the standing animation."""
+    return output.family.value in {
+        "turn_length_ember", "firefly_completion", "completion_meniscus",
+        "handoff_baton", "recovery_grace", "milestone_odometer",
+        "fleet_arrival_departure", "courtesy_signature",
+    } or output.short_layer
+
+
 def compose_ambient_layer(program, state, ambient):
     """Tint painted colours, retaining every position, duration and repeat.
 
@@ -19,7 +28,7 @@ def compose_ambient_layer(program, state, ambient):
     restores the untinted program at the layer deadline, even when the
     device's normal write dedupe window has not elapsed.
     """
-    if ambient is None or state in {LedDisplayState.ASK, LedDisplayState.FAILED}:
+    if ambient is None or not is_short_cue(ambient.output) or state in {LedDisplayState.ASK, LedDisplayState.FAILED}:
         return program
     match = _COLOR.search(ambient.nominal_static_fallback_program)
     if match is None:

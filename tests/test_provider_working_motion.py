@@ -3,7 +3,16 @@ from datetime import datetime, timezone
 import pytest
 
 from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
-from jrbar.colors import ColorSettings, plan_fleet_projection, program_for_projection, program_for_snapshot
+from jrbar.colors import (
+    ColorSettings,
+    _active_agents,
+    _single_agent_program,
+    plan_fleet_projection,
+    program_for_projection,
+    program_for_snapshot,
+    weighted_blend,
+)
+from jrbar.led_status import LedDisplayState
 from jrbar.models import AgentMode, AgentStatus
 
 NOW = datetime(2026, 10, 1, tzinfo=timezone.utc)
@@ -42,7 +51,14 @@ def test_a_providers_chosen_working_shape_survives_more_sessions(renderer, blend
     crowded = [status("codex", AgentMode.WORKING, i) for i in range(3)]
     crowded.append(status("devin", AgentMode.COMPLETED))
 
-    assert render(crowded, settings, renderer) == render(solo, settings, renderer)
+    working = [agent for agent in _active_agents(tuple(crowded), settings)
+               if agent.state is LedDisplayState.WORKING]
+    assert len({agent.color for agent in working}) == 3
+    blended = weighted_blend([(agent.color, float(agent.weight)) for agent in working])
+    expected = _single_agent_program(blended, LedDisplayState.WORKING, led_count=8,
+        brightness=255, settings=settings, provider="codex")
+    assert render(crowded, settings, renderer) == (LedDisplayState.WORKING, expected)
+    assert expected != render(solo, settings, renderer)[1]
 
 
 @pytest.mark.parametrize("renderer", ("snapshot", "projection", "fleet"))

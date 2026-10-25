@@ -10,7 +10,7 @@ from .ambient_effect_runtime import (
     active_ambient_surface_output,
     active_device_ambient_surface_output,
 )
-from .ambient_layers import LAYER_SECONDS
+from .ambient_layers import LAYER_SECONDS, is_short_cue
 from .hardware_write_policy import HardwareWritePolicy
 from .led_status import LedDisplayState, apply_brightness
 from .presentation_policy import (
@@ -122,9 +122,55 @@ def _presentation(
             if output.animated and not reduce_motion
             else MotionClass.STATIC
         ),
-        next_visual_change_at=started_at + min(LAYER_SECONDS, output.expires_after_ms / 1_000.0),
+        next_visual_change_at=started_at + (min(LAYER_SECONDS, output.expires_after_ms / 1_000.0)
+            if is_short_cue(output) else output.expires_after_ms / 1_000.0),
         dedupe_token=("ambient", output.effect_identity, started_at),
     )
+
+
+def _working_celebration(controller, surface, *, reduce_motion, brightness):
+    """Keep legacy completion signals visible over ongoing work."""
+    from . import signals
+    from .ambient_effect_dispatch import compile_ambient_effect_dispatch
+    from .celebrations import RESET_CELEBRATION_SECONDS
+    from .semantic_effect_router import SemanticEffectCandidate, SemanticEventKind, route_semantic_effects
+
+    projection = getattr(controller, "current_attention_projection", None)
+    if projection is None or not any(row.lifecycle_mode.value == "active" for row in projection.light_rows):
+        return None
+    allowed = getattr(controller, "may_interrupt", lambda _signal: False)
+    settings = getattr(controller, "settings", None)
+    now = time.monotonic()
+    hold = getattr(controller, "interrupt_hold_seconds", lambda _signal: None)(signals.SIGNAL_COMPLETION)
+    completion_end = getattr(controller, "completion_sweep_until", 0.0)
+    candidates = []
+    if getattr(settings, "completion_sweep_enabled", False) and allowed(signals.SIGNAL_COMPLETION):
+        if hold is not None:
+            candidates.append(("completion", completion_end - hold, completion_end,
+                getattr(controller, "completion_sweep_color", None)))
+        all_clear_end = getattr(controller, "all_clear_until", 0.0)
+        candidates.append(("all_clear", all_clear_end - 3.6, all_clear_end, "#F5EDE0"))
+    if allowed(signals.SIGNAL_QUOTA):
+        deadline = getattr(controller, "quota_reset_celebration_until", 0.0)
+        candidates.append(("reset_celebration", deadline - RESET_CELEBRATION_SECONDS,
+            deadline, getattr(controller, "_reset_celebration_color", lambda: None)()))
+    for name, started, deadline, color in candidates:
+        if started <= now < min(deadline, started + LAYER_SECONDS):
+            from dataclasses import replace
+
+            from .ambient_effect_dispatch import AmbientSemanticColors
+
+            palette = AmbientSemanticColors()
+            if color:
+                palette = replace(palette, completion=color)
+            dispatch = compile_ambient_effect_dispatch(semantic_selection=route_semantic_effects((
+                SemanticEffectCandidate("synthetic:" + name, SemanticEventKind.COMPLETION),)),
+                semantic_colors=palette)
+            output = dispatch.for_surface(surface)
+            if output is not None:
+                output = replace(output, effect_identity="celebration", short_layer=True)
+                return _presentation(output, started, reduce_motion=reduce_motion, brightness=brightness)
+    return None
 
 
 def active_ambient_presentation(
@@ -137,10 +183,15 @@ def active_ambient_presentation(
     """Adapt one unexpired staged output without writing or retaining state."""
 
     staged = active_ambient_surface_output(controller, surface)
+    if staged is None or is_short_cue(staged[0]):
+        celebration = _working_celebration(controller, surface, reduce_motion=reduce_motion, brightness=brightness)
+        if celebration is not None:
+            return celebration
     if staged is None:
         return None
     output, started_at = staged
-    if time.monotonic() >= started_at + LAYER_SECONDS or _chosen_animation_hides_ember(controller, output):
+    if ((is_short_cue(output) and time.monotonic() >= started_at + LAYER_SECONDS)
+            or _chosen_animation_hides_ember(controller, output)):
         return None
     return _presentation(
         output,
@@ -168,10 +219,15 @@ def active_hardware_ambient_presentation(
         surface,
         device_id=device_id,
     )
+    if staged is None or is_short_cue(staged[0]):
+        celebration = _working_celebration(controller, surface, reduce_motion=reduce_motion, brightness=brightness)
+        if celebration is not None:
+            return celebration
     if staged is None:
         return None
     output, started_at = staged
-    if time.monotonic() >= started_at + LAYER_SECONDS or _chosen_animation_hides_ember(controller, output):
+    if ((is_short_cue(output) and time.monotonic() >= started_at + LAYER_SECONDS)
+            or _chosen_animation_hides_ember(controller, output)):
         return None
     return _presentation(
         output,

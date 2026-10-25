@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
+from fractions import Fraction
 
 from .animation import (
     ColorList,
@@ -79,22 +80,32 @@ def mix_catalog():
     return result
 
 
-def _number(values, key, default, low, high):
+def _number(values, key, default, low, high, warnings):
     value = values.get(key, default)
-    if type(value) not in (float, int) or not math.isfinite(value):
+    if type(value) not in (float, int) or (type(value) is float and not math.isfinite(value)):
+        warnings.append(f"{key} was rejected; using {default}.")
         return default
-    return max(low, min(high, value))
+    bounded = max(low, min(high, value))
+    if bounded != value:
+        warnings.append(f"{key} was clamped to {bounded}.")
+    return bounded
 
 
-def mix_parameters(settings, mode):
+def mix_parameters(settings, mode, warnings=None):
+    warnings = [] if warnings is None else warnings
     values = settings.mix_parameters.get(mode, {})
-    return {
-        "duration_seconds": _number(
-            values, "duration_seconds", settings.effective_speed_seconds(mode), 0.3, 10.0
-        ),
-        "width": round(_number(values, "width", 1, 1, 8)),
-        "softness": _number(values, "softness", 0.2, 0, 1),
-    }
+    known = {item["key"] for row in mix_catalog() if row["id"] == mode for item in row["parameters"]}
+    for key in values.keys() - known:
+        warnings.append(f"{key} was rejected for {MIX_LABELS[mode]}.")
+    result = {"duration_seconds": settings.effective_speed_seconds(mode), "width": 1, "softness": 0.2}
+    for key, low, high in (("duration_seconds", 0.3, 10.0), ("width", 1, 8), ("softness", 0, 1)):
+        if key in known:
+            result[key] = _number(values, key, result[key], low, high, warnings)
+    width = result["width"]
+    result["width"] = round(width)
+    if width != result["width"]:
+        warnings.append(f"width was rounded to {result['width']} LEDs.")
+    return result
 
 
 def _compact_paint(step, count):
@@ -159,23 +170,40 @@ def _body(agent, settings, count, *, compact=False):
     from . import colors as c
     from .motion_shapes import render_motion
 
-    tempo_mode = settings.mix_mode if compact else c.BLEND_MODE_CYCLE
-    cycle = settings.agent_cycle_ms(agent.provider, round(settings.effective_speed_seconds(tempo_mode) * 1000))
-    motion = c.agent_motion(
-        agent.state, cycle_ms=cycle, provider=agent.provider, settings=settings
-    )
     chosen = settings.agent_animation(agent.provider)
     if chosen == c.PROVIDER_ANIMATION_AUTO:
-        motion = c._speed_safe_motion({
-            c.ANIMATION_STYLE_PULSE: c.MOTION_BREATHE,
-            c.ANIMATION_STYLE_ROLL: c.MOTION_CHASE,
-            c.ANIMATION_STYLE_BLINK: c.MOTION_BLINK,
-            c.ANIMATION_STYLE_SOLID: c.MOTION_STEADY,
-        }[settings.animation_style(c.MODE_WORKING)], cycle_ms=cycle)
+        if compact and settings.animation_style(c.MODE_WORKING) == c.ANIMATION_STYLE_ROLL:
+            from .motion_shapes import CHASE_TAIL, travelling_wave
+
+            cycle = settings.agent_cycle_ms(agent.provider,
+                round(settings.effective_speed_seconds(settings.mix_mode) * 1000))
+            return travelling_wave(c._peak_for_state(agent.color, agent.state, settings),
+                led_count=count, lap_ms=cycle, tail=CHASE_TAIL, laps=1, lead_ms=250)
+        program = c._single_agent_program(agent.color, agent.state,
+            settings=settings, led_count=count, brightness=255, provider=agent.provider)
+        lines = [line for line in program.splitlines() if not line.startswith("repeat")]
+        if compact:
+            # One lap is enough inside a share; solo keeps the classic program.
+            seen_roll = False
+            kept = []
+            for line in lines:
+                if line.startswith("roll-"):
+                    if seen_roll:
+                        continue
+                    seen_roll = True
+                kept.append(line)
+            return kept
+        return lines
+    tempo_mode = settings.mix_mode if compact else c.BLEND_MODE_CYCLE
+    cycle = settings.agent_cycle_ms(agent.provider, round(settings.effective_speed_seconds(tempo_mode) * 1000))
+    motion = c.agent_motion(agent.state, cycle_ms=cycle, provider=agent.provider, settings=settings)
     if chosen != c.PROVIDER_ANIMATION_AUTO and motion != chosen:
         raise CannotFit(f"{agent.provider}'s {chosen} is too fast to play safely")
     params = settings.agent_animation_parameters(agent.provider)
     head = c.TOOL_TINT_COLORS.get(settings.render_tool_family) if settings.tint_by_tool else None
+    if count == 1 and chosen == "kitt":
+        return [f"{c._floor_for_state(agent.color, agent.state, settings)} {cycle // 2}ms cosine",
+                f"{c._peak_for_state(agent.color, agent.state, settings)} {cycle - cycle // 2}ms cosine"]
     return render_motion(
         motion,
         c._peak_for_state(agent.color, agent.state, settings),
@@ -208,7 +236,7 @@ def _segments_at(step, slots):
     return mapped
 
 
-def _share_steps(lines, slots):
+def _share_steps(lines, slots, roll_grid=None):
     animation, problems = read_program("\n".join(lines))
     if any(problem.severity == "error" for problem in problems):
         raise CannotFit("the provider program could not be mapped to its share")
@@ -235,31 +263,56 @@ def _share_steps(lines, slots):
             # the same linear neighbour crossfades inside this share.
             if step.easing not in (None, "linear"):
                 raise CannotFit("a curved roll cannot run inside a separate share")
+            from .motion_shapes import mix
+
             count = len(slots)
-            for index in range(count):
-                duration = round((index + 1) * step.duration_ms / count) - round(index * step.duration_ms / count)
-                if step.direction == "roll-left":
-                    current = current[1:] + current[:1]
-                else:
-                    current = current[-1:] + current[:-1]
-                steps.append(PaintStep((IndexedPaint(
-                    tuple(zip(slots, current)), Timing(duration, "linear")
-                ),)))
+            grid = roll_grid or [Fraction(index, count) for index in range(1, count + 1)]
+            previous = 0
+            for point in grid:
+                position = point * count
+                turns = int(position)
+                fraction = float(position - turns)
+                sign = 1 if step.direction == "roll-left" else -1
+                def rotated(offset):
+                    return [current[(index + sign * offset) % count] for index in range(count)]
+                left, right = rotated(turns), rotated(turns + 1)
+                colors = [mix(a, b, fraction) for a, b in zip(left, right)]
+                end = round(point * step.duration_ms)
+                steps.append(PaintStep((IndexedPaint(tuple(zip(slots, colors)),
+                    Timing(end - previous, "linear")),)))
+                previous = end
     return steps
 
 
 def _shares(agents, settings, count, mode):
     if len(agents) > count:
         raise CannotFit(f"{len(agents)} providers need more than {count} LED shares")
+    # Remainders follow attention, then observed start, without moving the
+    # providers' stable display order.
+    need = {LedDisplayState.ASK: 0, LedDisplayState.FAILED: 1}
+    rank = sorted(range(len(agents)), key=lambda index: (
+        need.get(agents[index].state, 2),
+        agents[index].started_at if agents[index].started_at is not None else float("inf"), agents[index].identity, index))
+    sizes = [count // len(agents)] * len(agents)
+    for index in rank[:count % len(agents)]:
+        sizes[index] += 1
     if mode == "spatial_split":
-        slots = [tuple(range(index * count // len(agents), (index + 1) * count // len(agents)))
-                 for index in range(len(agents))]
+        slots = []
+        start = 0
+        for size in sizes:
+            slots.append(tuple(range(start, start + size)))
+            start += size
     else:
-        slots = [tuple(range(index, count, len(agents))) for index in range(len(agents))]
+        slots = [tuple(index for index in range(count) if index % len(agents) == agent)
+                 for agent in range(len(agents))]
     for agent, share in zip(agents, slots):
-        if len(share) < 2 and settings.agent_animation(agent.provider) not in {"auto", "breathe", "heartbeat", "steady", "blink"}:
+        if len(share) == 1 and settings.agent_animation(agent.provider) not in {
+            "auto", "breathe", "heartbeat", "steady", "blink", "kitt"
+        }:
             raise CannotFit(f"{agent.provider}'s animation needs more than one LED in its share")
-    tracks = [_share_steps(_body(agent, settings, len(share), compact=True), share)
+    grid = sorted({Fraction(index, len(share)) for share in slots
+                   for index in range(1, len(share) + 1)})
+    tracks = [_share_steps(_body(agent, settings, len(share), compact=True), share, grid)
               for agent, share in zip(agents, slots)]
     moving = [index for index, agent in enumerate(agents)
               if settings.agent_animation(agent.provider) != "steady"]
@@ -282,15 +335,72 @@ def _shares(agents, settings, count, mode):
     return _checked(lines, count)
 
 
-def _cycle(agents, settings, count):
-    return _checked([line for agent in agents for line in _body(agent, settings, count, compact=True)], count)
+def _cycle(agents, settings, count, warnings):
+    from . import colors as c
+    from .motion_shapes import _number, _whole, shade
+
+    turns = []
+    for agent in agents:
+        if settings.agent_animation(agent.provider) == "kitt" and count > 2:
+            # A compact pass in each direction leaves room for every colour.
+            # Solo and simultaneous shares retain the full bouncing beam.
+            peak = c._peak_for_state(agent.color, agent.state, settings)
+            params = settings.agent_animation_parameters(agent.provider)
+            beam = _whole(params, "beam_width", 3, 2, 6)
+            overlap = _number(params, "overlap", 0.5, 0.1, 1)
+            glow = _number(params, "background_glow", 0, 0, 100) / 100
+            tail = tuple(max(glow, max(0, 1 - min(index, count - index) / (beam / 2)) ** (1.3 - overlap))
+                         for index in range(count))
+            cycle = settings.agent_cycle_ms(agent.provider, c.provider_cycle_ms(agent.provider, settings))
+            lead = min(200, max(1, cycle // 10))
+            sweep = max(1, (cycle - lead) // 2)
+            body = [" ".join(shade(peak, level) for level in tail) + f" {lead}ms cosine",
+                    f"roll-right {sweep}ms linear", f"roll-left {sweep}ms linear"]
+        else:
+            body = _body(agent, settings, count, compact=True)
+        animation, _ = read_program("\n".join(body))
+        duration = sum(step_duration_ms(step) for step in animation.steps)
+        repeats = max(1, round(4000 / max(1, duration)))
+        turns.append((animation.steps, duration, repeats))
+
+    def render_turns():
+        lines = []
+        for steps, duration, repeats in turns:
+            scale = 4000 / max(1, duration * repeats)
+            for step in steps * repeats:
+                if isinstance(step, PaintStep):
+                    step = PaintStep(tuple(replace(segment, timing=replace(segment.timing,
+                        duration_ms=max(0, round(segment.timing.effective_duration_ms * scale)),
+                        delay_ms=(round(segment.timing.delay_ms * scale)
+                                  if segment.timing.delay_ms is not None else None)))
+                        for segment in step.segments))
+                elif isinstance(step, RollStep):
+                    step = replace(step, duration_ms=max(1, round(step.duration_ms * scale)))
+                lines.append(render_step(step))
+        return _checked(lines, count)
+
+    stretched = False
+    while True:
+        try:
+            program = render_turns()
+            if stretched:
+                warnings.append("One at a Time stretches fewer cycles to four seconds to fit the device.")
+            return program
+        except CannotFit:
+            candidates = [index for index, (_steps, _duration, repeats) in enumerate(turns) if repeats > 1]
+            if not candidates:
+                raise
+            index = max(candidates, key=lambda index: turns[index][2])
+            steps, duration, repeats = turns[index]
+            turns[index] = steps, duration, repeats - 1
+            stretched = True
 
 
-def _multi_color(agents, settings, count, mode):
+def _multi_color(agents, settings, count, mode, warnings):
     from .colors import _peak_for_state
     from .motion_shapes import shade
 
-    values = mix_parameters(settings, mode)
+    values = mix_parameters(settings, mode, warnings)
     duration = max(300, round(values["duration_seconds"] * 1000))
     colors = [_peak_for_state(agent.color, agent.state, settings) for agent in agents]
     width = values["width"]
@@ -317,16 +427,25 @@ def _multi_color(agents, settings, count, mode):
             lines.append(f"{direction} {format_time(duration)} linear")
         return _checked(lines, count)
     if mode == "tide":
-        lines = []
-        for turn, color in enumerate(colors):
-            other = colors[(turn + 1) % len(colors)]
-            lines.append(" ".join(color if index < count / 2 else other for index in range(count)) + " 300ms cosine")
+        if count == 2:
+            if len(colors) > 2:
+                raise CannotFit("the Dot tide has only two endpoints")
+            return _checked([f"{colors[0]} {colors[1]} {format_time(duration)} cosine",
+                             f"{colors[1]} {colors[0]} {format_time(duration)} cosine"], count)
+        step_ms = max(60, duration // max(1, count // 2))
+        def profile(phase):
+            return [colors[(min(index, count - 1 - index) + phase) % len(colors)]
+                    for index in range(count)]
+        if len(set(profile(0))) < len(colors):
+            raise CannotFit("the inward tide has too few positions for every provider colour")
+        lines = [" ".join(profile(0)) + " 300ms cosine"]
+        for phase in (1, 0):
+            targets = profile(phase)
             segments = []
-            step_ms = max(60, duration // max(1, count // 2))
-            for index in range(count):
-                distance = min(index, count - 1 - index)
-                target = other if index < count / 2 else color
-                segments.append(f"{index}:{target} {format_time(step_ms * width)} cosine {format_time(distance * step_ms)}")
+            for distance in range((count + 1) // 2):
+                indices = sorted({distance, count - 1 - distance})
+                pairs = " ".join(f"{index}:{targets[index]}" for index in indices)
+                segments.append(f"{pairs} {format_time(step_ms * width)} cosine {format_time(distance * step_ms)}")
             lines.append("; ".join(segments))
         return _checked(lines, count)
     raise ValueError(mode)
@@ -339,12 +458,26 @@ def selected_agents(agents):
         return asks
     working = [agent for agent in agents if agent.state is LedDisplayState.WORKING]
     candidates = working or agents
-    providers = {}
-    for agent in candidates:
-        prior = providers.get(agent.provider)
-        if prior is None or agent.weight > prior.weight:
-            providers[agent.provider] = agent
-    return list(providers.values())
+    return list(candidates)
+
+
+def _provider_parameter_warnings(agents, settings):
+    from .effect_registry import _PROVIDER_PARAMETER_METADATA, EffectRegistryError
+
+    warnings = []
+    for agent in agents:
+        chosen = settings.agent_animation(agent.provider)
+        specs = {spec.name: spec for spec in _PROVIDER_PARAMETER_METADATA.get(chosen, ())}
+        for key, value in settings.agent_animation_parameters(agent.provider).items():
+            spec = specs.get(key)
+            if spec is None:
+                warnings.append(f"{agent.provider}'s {key} is not used by {chosen}.")
+                continue
+            try:
+                spec.normalize(value)
+            except EffectRegistryError:
+                warnings.append(f"{agent.provider}'s {key} cannot play exactly; the renderer uses a safe default or bound.")
+    return warnings
 
 
 def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
@@ -362,38 +495,39 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
         program = c._single_agent_program(settings.mode_color("ask"), state,
             settings=settings, led_count=led_count, brightness=brightness)
         return MixPlan(state, program, mode, "ask", "An ask needs you.")
-    if not any(agent.state is LedDisplayState.WORKING for agent in selected):
-        if mode == "classic":
-            program = apply_brightness(settings.mode_color(c._STATE_TO_MODE_KEY[state]), brightness)
-            return MixPlan(state, program, mode, "classic", "Status Only shows the current state colour with no animation.")
-        if len(selected) == 1:
-            agent = selected[0]
-            program = c._single_agent_program(agent.color, state, settings=settings,
-                led_count=led_count, brightness=brightness, provider=agent.provider)
-            return MixPlan(state, program, mode, state.value, "No provider is working.")
-        segments = []
-        for index in range(led_count):
-            agent = selected[index * len(selected) // led_count]
-            color = c._floor_for_state(agent.color, agent.state, settings) if agent.state is LedDisplayState.DONE else c._peak_for_state(agent.color, agent.state, settings)
-            segments.append(f"{index}:{color}")
-        return MixPlan(state, apply_brightness(" ".join(segments), brightness), mode,
-            "status", "No provider is working. Status colours stay still.")
-    warnings = []
+    if mode == "classic":
+        state = c._representative_state(agents)
+        program = c._display_state_program(settings, state, led_count=led_count,
+            brightness=brightness, idle_color=settings.mode_color(c.MODE_IDLE),
+            working_color=settings.mode_color(c.MODE_WORKING), done_color=settings.mode_color(c.MODE_DONE),
+            ask_color=settings.mode_color(c.MODE_ASK), error_color=settings.rendered_error_color(),
+            done_celebrate=settings.done_celebration_enabled, **c._fade_kwargs_for_all_modes(settings))
+        return MixPlan(state, program, mode, "classic", "Status Only shows the current state.")
+    warnings = _provider_parameter_warnings(selected, settings)
+    if len(selected) > 1 and len({agent.provider for agent in selected}) == 1:
+        color = c.weighted_blend([(agent.color, float(agent.weight)) for agent in selected])
+        selected = [replace(selected[0], color=color, state=state)]
     if len(selected) == 1:
         agent = selected[0]
-        motion = settings.agent_animation(agent.provider)
-        if agent.state is LedDisplayState.WORKING:
-            try:
-                program = _checked(_body(agent, settings, led_count), led_count)
-                program = _safe_program(program, led_count, warnings)
-                return MixPlan(state, apply_brightness(program, brightness), mode, motion,
-                    f"{agent.provider} is the only working provider.", tuple(warnings))
-            except CannotFit as error:
-                warnings.append(f"{agent.provider}'s {motion} cannot play exactly: {error}.")
+        program = c._single_agent_program(agent.color, state, settings=settings,
+            led_count=led_count, brightness=brightness, provider=agent.provider)
+        played = settings.agent_animation(agent.provider) if state is LedDisplayState.WORKING else state.value
+        if state is LedDisplayState.WORKING and played != c.PROVIDER_ANIMATION_AUTO:
+            actual = c.agent_motion(state, cycle_ms=c.provider_cycle_ms(agent.provider, settings),
+                provider=agent.provider, settings=settings)
+            if actual != played:
+                warnings.append(f"{agent.provider}'s {played} cannot play exactly at this speed; showing {actual}.")
+                played = actual
+        return MixPlan(state, program, mode, played, f"{agent.provider} is the only working provider.", tuple(warnings))
+    if not any(agent.state is LedDisplayState.WORKING for agent in selected):
+        renderer = {
+            "cycle": c._cycle_program, "spatial_split": c._spatial_split_program,
+            "round_robin": c._round_robin_program, "relay": c._relay_program,
+        }.get(mode, c._color_blend_program)
+        program = renderer(selected, led_count=led_count, brightness=brightness, settings=settings)
+        return MixPlan(state, program, mode, "status", "No provider is working.")
     names = " and ".join(agent.provider for agent in selected)
     requested = mode
-    if len(selected) == 1:
-        mode = "color_blend"
     attempts = [mode]
     if mode in ("spatial_split", "round_robin"):
         attempts += ["cycle"]
@@ -406,19 +540,21 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
             if attempt in ("spatial_split", "round_robin"):
                 program = _shares(selected, settings, led_count, attempt)
             elif attempt == "cycle":
-                program = _cycle(selected, settings.with_blend_mode("cycle"), led_count)
+                program = _cycle(selected, settings.with_blend_mode("cycle"), led_count, warnings)
+                if any(settings.agent_animation(agent.provider) == "kitt" for agent in selected) and led_count > 2:
+                    warnings.append("One at a Time uses a circulating Knight Rider scan to fit all providers.")
             elif attempt == "classic":
                 program = settings.mode_color(c._STATE_TO_MODE_KEY[state])
             elif attempt == "color_blend":
                 program = c._color_blend_program(selected, led_count=led_count,
                     brightness=255, settings=settings)
             else:
-                program = _multi_color(selected, settings, led_count, attempt)
+                program = _multi_color(selected, settings, led_count, attempt, warnings)
             if not c._fits_with_brightness(program):
                 raise CannotFit("the program exceeds 512 bytes or 20 lines")
             program = _safe_program(program, led_count, warnings)
             reason = (f"{MIX_LABELS[attempt]} plays because {names} are working."
-                      if not warnings else f"Showing {MIX_LABELS[attempt]} because the requested program cannot fit exactly.")
+                      if attempt == requested else f"Showing {MIX_LABELS[attempt]} because the requested program cannot fit exactly.")
             if attempt == "classic":
                 reason = "Status Only shows the current state colour with no animation."
             return MixPlan(state, apply_brightness(program, brightness), requested, attempt, reason, tuple(warnings))

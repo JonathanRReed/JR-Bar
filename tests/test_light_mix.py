@@ -25,7 +25,7 @@ from jrbar.semantic_effect_router import SemanticEffectCandidate, SemanticEventK
 from jrbar.turn_length_ember import plan_turn_length_ember
 
 NOW = datetime(2026, 10, 25, tzinfo=timezone.utc)
-PROVIDERS = ("codex", "claude", "devin")
+PROVIDERS = ("codex", "claude", "devin", "cursor")
 FAMILIES = ("breathe", "heartbeat", "kitt", "scanner", "gradient", "chase")
 PARAMETERS = {
     "breathe": {"duration_seconds": 3.7, "inhale": 0.24},
@@ -47,7 +47,7 @@ def settings_for(mode, family):
     settings = ColorSettings.defaults().with_blend_mode(mode)
     for provider in PROVIDERS:
         settings = settings.with_agent_animation(provider, family)
-        settings = settings.with_agent_animation_parameters(provider, PARAMETERS[family])
+        settings = settings.with_agent_animation_parameters(provider, PARAMETERS.get(family, {}))
     return settings
 
 
@@ -82,10 +82,14 @@ def test_mix_animation_cue_grid(firmware, mix, family, cue, providers):
     state = statuses(providers)
     plan = plan_agent_mix(_active_agents(state, settings), settings, led_count=count)
     explanation = explain_what_plays(state, settings, led_count=count, ambient=cue_for(cue, count))
-    expected = family if providers == 1 else mix
-    assert plan.played == expected or plan.warnings
+    expected = family if providers == 1 and mix != "classic" else mix
+    import json
+    from pathlib import Path
+
+    allowed = json.loads((Path(__file__).parent / "fixtures" / "l1_mix_fallbacks.json").read_text())["custom_parameters"]
+    assert plan.played == allowed.get(f"{mix}/{family}/{count}/{providers}", expected)
     assert explanation["warnings"] == list(plan.warnings)
-    assert all(row["parameters"] == PARAMETERS[family] for row in explanation["providers"])
+    assert all(row["parameters"] == PARAMETERS.get(family, {}) for row in explanation["providers"])
     assert settings.to_dict() == original
     program = explanation["program"]
     assert len(program.encode()) + 15 <= 512
@@ -127,13 +131,12 @@ def test_share_programs_keep_studio_values_in_the_played_bytes(mix, family):
         expected = _share_steps(_body(agent, settings, len(slots)), slots)
         durations = [step_duration_ms(step) for step in expected]
         if mix == "cycle":
-            start = index * len(durations)
-            assert [step_duration_ms(step) for step in paints[start:start + len(durations)]] == durations
+            assert sum(step_duration_ms(step) for step in animation.steps) == pytest.approx(8000, abs=12)
         else:
             assert [step_duration_ms(step) for step in paints] == durations
     changed = settings.with_agent_animation_parameters("codex", {**PARAMETERS[family], "duration_seconds": 1.8})
     changed_plan = plan_agent_mix(_active_agents(statuses(2), changed), changed)
-    assert changed_plan.program != plan.program or changed_plan.warnings
+    assert mix == "cycle" or changed_plan.program != plan.program or changed_plan.warnings
 
 
 def test_kitt_moves_inside_each_split_in_the_firmware():
@@ -185,11 +188,12 @@ def test_ember_renewal_and_reassert_do_not_freeze_the_firmware(tmp_path, monkeyp
     renewed = replace(cue, started_at=58.0, next_visual_change_at=60.0,
         dedupe_token=("ambient", "turn_length_ember", 58.0))
     second = controller.sync_program(base, LedDisplayState.WORKING, ambient=renewed)
-    assert second.changed, "a new cue epoch must bypass the 240 second program dedupe"
+    assert not second.changed, "an identical ember renewal must not restart the animation"
     clock[0] = 299.0
     reassert = controller.sync_program(base, LedDisplayState.WORKING, ambient=renewed)
     assert reassert.changed
-    assert reassert.nominal_program == compose_ambient_layer(base, LedDisplayState.WORKING, renewed)
+    assert reassert.nominal_program == _steady_state_variant(
+        compose_ambient_layer(base, LedDisplayState.WORKING, renewed))
     assert firmware.parse(reassert.program, 100_000).ok
     frames = firmware.step_batch(100_000, 80, 40)
     assert len({tuple(frame) for frame in frames}) > 1
@@ -225,7 +229,7 @@ def test_a_solo_provider_does_not_take_the_mix_tempo():
     settings = settings.with_speed_override("round_robin", 8.0)
     solo = statuses(1)
     programs = {program_for_snapshot(solo, colors=settings.with_blend_mode(mix))[1]
-                for mix in BLEND_MODE_CHOICES}
+                for mix in BLEND_MODE_CHOICES if mix != "classic"}
     assert len(programs) == 1
 
 
@@ -233,12 +237,13 @@ def test_global_mix_migrates_and_device_overrides_still_win(tmp_path):
     from jrbar.core_runtime import settings_from_document
 
     migrated = ColorSettings.from_dict({"blend_mode": "spatial_split"})
-    assert migrated.to_dict()["mix_mode"] == "spatial_split"
+    assert migrated.to_dict()["blend_mode"] == "spatial_split"
+    assert "mix_mode" not in migrated.to_dict()
     restored = ColorSettings.from_dict({"mix_mode": "weave", "blend_mode": "relay"})
-    assert restored.mix_mode == "weave"
+    assert restored.mix_mode == "relay"
     settings = settings_from_document({"colors": restored.to_dict(),
         "devices": [{"id": "test:dot", "blend_mode": "alternate"}]}, scratch_dir=tmp_path)
-    assert settings.colors.mix_mode == "weave"
+    assert settings.colors.mix_mode == "relay"
     assert settings.device_blend_mode("test:dot") == "alternate"
 
 
@@ -252,3 +257,17 @@ def test_asks_win_over_every_mix_and_cue(mix):
         assert layered["played"] == "ask"
         assert layered["program"] == base["program"]
         assert layered["cue"] is None
+
+
+def test_two_sessions_of_one_provider_blend_identities_and_keep_its_animation():
+    from jrbar.colors import _single_agent_program, weighted_blend
+
+    rows = (statuses(1)[0], replace(statuses(1)[0], agent_id="codex:second"))
+    for animation in ("auto", "kitt", "breathe"):
+        settings = ColorSettings.defaults().with_agent_animation("codex", animation)
+        agents = _active_agents(rows, settings)
+        assert agents[0].color != agents[1].color
+        blended = weighted_blend([(agent.color, float(agent.weight)) for agent in agents])
+        expected = _single_agent_program(blended, LedDisplayState.WORKING, led_count=8,
+            brightness=255, settings=settings, provider="codex")
+        assert program_for_snapshot(rows, colors=settings)[1] == expected

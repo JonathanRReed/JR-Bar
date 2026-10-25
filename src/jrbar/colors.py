@@ -1146,6 +1146,7 @@ class ColorSettings:
     render_led_direction: str = "forward"
     render_dot_travel: str = "wipe"
     render_tool_family: str | None = None
+    render_turn_starts: dict = field(default_factory=dict, compare=False, repr=False)
     # How a finish is celebrated when ``done_celebration_enabled`` is on:
     # "bloom" (the shipped twinkle-then-bloom), "land" or "ripple"
     # (``celebrations.DONE_CELEBRATION_STYLES``).
@@ -2241,6 +2242,8 @@ class _ActiveAgent:
     color: str
     state: LedDisplayState
     weight: int
+    identity: str = ""
+    started_at: object = None
 
 
 _PROVIDER_ORDER_INDEX: dict[str, int] = {spec.provider: index for index, spec in enumerate(PROVIDER_SPECS)}
@@ -2288,6 +2291,8 @@ def _active_agents(statuses: tuple[AgentStatus, ...], colors: ColorSettings) -> 
                 color=readable_identity_hex(color),
                 state=display_state_for_mode(status.mode),
                 weight=urgency_weight(status.mode),
+                identity=status.agent_id, started_at=colors.render_turn_starts.get(
+                    status.work_key),
             )
         )
     return agents
@@ -3458,6 +3463,8 @@ def projection_mix_agents(projection, settings, led_count=8):
                 ),
                 state=state_by_lifecycle[row.lifecycle_mode],
                 weight=weight_by_lifecycle[row.lifecycle_mode],
+                identity=row.agent_id, started_at=settings.render_turn_starts.get(
+                    row.work_key),
             ),
         )
         for row in ordered
@@ -3672,68 +3679,32 @@ def preview_led_colors(
     colors: ColorSettings | None = None,
     fallback_mode: AgentMode = AgentMode.IDLE_READY,
 ) -> list[str]:
-    """Returns one hex color per LED index -- the *peak* (fade-ceiling)
-    color each LED would pulse up to. Mirrors ``program_for_snapshot``'s
-    color assignment exactly (same blend mode, same weighting, same fade
-    scaling) but returns plain colors instead of a DSL program, for use in
-    a real visual preview (e.g. the Colors window's live-preview dots)
-    rather than re-parsing generated DSL text back into colors.
-    """
-    settings = colors or ColorSettings.defaults()
-    led_count = max(1, int(led_count))
+    """Peak colours from the same program the live renderer plays."""
+    from .animation import ColorList, IndexedPaint, PaintStep, RollStep, WholeBar, read_program
 
-    if not statuses:
-        state = display_state_for_mode(fallback_mode)
-        mode_key = _STATE_TO_MODE_KEY[state]
-        base = settings.mode_color(mode_key)
-        if mode_key in FADE_MODE_KEYS:
-            _floor, ceiling = settings.fade_range(mode_key)
-            base = base if ceiling >= 1.0 else scale_hex_brightness(base, ceiling)
-        return [base] * led_count
-
-    if settings.blend_mode == BLEND_MODE_CLASSIC:
-        aggregate_mode = max(statuses, key=lambda status: -status.priority).mode
-        state = display_state_for_mode(aggregate_mode)
-        mode_key = _STATE_TO_MODE_KEY[state]
-        base = settings.mode_color(mode_key)
-        if mode_key in FADE_MODE_KEYS:
-            _floor, ceiling = settings.fade_range(mode_key)
-            base = base if ceiling >= 1.0 else scale_hex_brightness(base, ceiling)
-        return [base] * led_count
-
-    agents = _active_agents(_statuses_for_strip(statuses, led_count), settings)
-
-    if len(agents) == 1:
-        return [_peak_color_for_agent(agents[0], settings)] * led_count
-
-    spatial_needs_fallback = settings.blend_mode == BLEND_MODE_SPATIAL and len(agents) > led_count
-    if settings.blend_mode == BLEND_MODE_COLOR or spatial_needs_fallback:
-        blended = weighted_blend([(agent.color, float(agent.weight)) for agent in agents])
-        state = _representative_state(agents)
-        mode_key = _STATE_TO_MODE_KEY[state]
-        if mode_key in FADE_MODE_KEYS:
-            _floor, ceiling = settings.fade_range(mode_key)
-            blended = blended if ceiling >= 1.0 else scale_hex_brightness(blended, ceiling)
-        return [blended] * led_count
-
-    if settings.blend_mode == BLEND_MODE_CYCLE:
-        top = max(agents, key=lambda agent: agent.weight)
-        return [_peak_color_for_agent_with_alert(top, settings)] * led_count
-
-    if settings.blend_mode == BLEND_MODE_SPATIAL:
-        blocks = _spatial_split_blocks(agents, led_count)
-        colors_out: list[str] = []
-        for agent, count in blocks:
-            colors_out.extend([_peak_color_for_agent(agent, settings)] * count)
-        return colors_out
-
-    # Default / BLEND_MODE_ROUND_ROBIN and BLEND_MODE_RELAY -- both assign
-    # LEDs to agents the same way (agents[index % len(agents)]); they only
-    # differ in animation timing (synchronized wave vs. one-at-a-time
-    # chase), which a static peak-color preview can't show anyway.
-    return [
-        _peak_color_for_agent_with_alert(agents[index % len(agents)], settings) for index in range(led_count)
-    ]
+    count = max(1, int(led_count))
+    _state, program = program_for_snapshot(statuses, colors=colors, led_count=count,
+        fallback_mode=fallback_mode)
+    animation, _problems = read_program(program)
+    peaks = ["#000000"] * count
+    def level(color):
+        return max(int(color[index:index + 2], 16) for index in (1, 3, 5))
+    for step in animation.steps:
+        if isinstance(step, PaintStep):
+            for segment in step.segments:
+                if isinstance(segment, WholeBar):
+                    pairs = enumerate([segment.color] * count)
+                elif isinstance(segment, ColorList):
+                    pairs = enumerate(segment.colors)
+                elif isinstance(segment, IndexedPaint):
+                    pairs = segment.assignments
+                for index, color in pairs:
+                    color = "#000000" if color == "off" else color
+                    if index < count and level(color) >= level(peaks[index]):
+                        peaks[index] = color
+        elif isinstance(step, RollStep):
+            peaks = [max(peaks, key=level)] * count
+    return peaks
 
 
 def demo_statuses_for_preview() -> tuple[AgentStatus, ...]:

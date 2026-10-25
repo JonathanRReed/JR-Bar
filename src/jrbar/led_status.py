@@ -1496,14 +1496,24 @@ def notification_blink_program(color: str, brightness: float = 255) -> str:
 
 
 def _steady_state_variant(program: str) -> str:
-    """Drop only a paint explicitly preceded by ``// approach``."""
+    """Drop marked approaches and the classic renderer's short settle."""
     lines = program.splitlines()
     body_start = 1 if lines and lines[0].startswith("brightness ") else 0
     content = lines[body_start:]
-    if (len(content) >= 4 and content[0].strip() == "// approach"
-            and content[-1].strip().startswith("repeat")):
-        trimmed = lines[:body_start] + content[2:]
-        return "\n".join(trimmed)
+    if len(content) >= 3 and content[-1].strip().startswith("repeat"):
+        if content[0].strip() == "// approach":
+            return "\n".join(lines[:body_start] + content[2:])
+        # Classic arrival/settle producers predate the marker. A short
+        # cosine paint before a pulse or a roll is their approach frame.
+        # A breath with two cosine halves has no disposable first half.
+        first = content[0].split()
+        short_settle = (len(first) >= 3 and first[-1] == "cosine"
+                        and first[-2].endswith("ms")
+                        and first[-2][:-2].isdigit()
+                        and int(first[-2][:-2]) <= 250)
+        if short_settle and (content[1].startswith("roll-") or " pulse" in content[1]
+                or (len(content) >= 4 and "cosine" in content[1] and "cosine" in content[2])):
+            return "\n".join(lines[:body_start] + content[1:])
     return program
 
 
@@ -1887,7 +1897,10 @@ class AgentLedController:
 
             layered = compose_ambient_layer(program, state, ambient)
             if layered != program:
-                dedupe_token = (dedupe_token, ambient.dedupe_token, layered)
+                cue_identity = ambient.dedupe_token
+                if ambient.output.family.value == "turn_length_ember":
+                    cue_identity = ("ember", ambient.nominal_program)
+                dedupe_token = (dedupe_token, cue_identity, layered)
                 self.ambient_layer_until = ambient.next_visual_change_at
                 program = layered
         nominal = program

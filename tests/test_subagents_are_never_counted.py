@@ -211,7 +211,7 @@ def test_a_lone_main_agent_is_not_a_crowd__and_2_more() -> None:
         None, glance, _project(statuses)
     )
 
-    assert decided is True
+    assert decided is False
 
     # --- scenario: the_strip_is_coloured_by_main_agents_only
     """Two mains under 40 workers is a two-colour strip, in their brands.

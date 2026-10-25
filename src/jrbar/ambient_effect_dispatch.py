@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from enum import Enum
 from types import MappingProxyType
 from typing import Final
@@ -137,6 +137,7 @@ class AmbientEffectSurfaceOutput:
     duration_ms: int
     expires_after_ms: int
     max_flash_hz: float
+    short_layer: bool = False
 
     def __post_init__(self) -> None:
         if type(self.surface) is not AmbientEffectSurface:
@@ -381,6 +382,8 @@ def _semantic_candidates(
                 max_flash_hz=hz,
             )
         )
+    if semantic is SemanticEventKind.COMPLETION and program is None and identity == "notification":
+        outputs = [replace(output, short_layer=True) for output in outputs]
     return tuple(outputs)
 
 
@@ -725,7 +728,7 @@ def _ember_candidates(
         _output(
             surface=surface,
             family=AmbientEffectFamily.TURN_LENGTH_EMBER,
-            effect_identity="turn_length_ember",
+            effect_identity=f"turn_length_ember/{plan.bucket.value}",
             semantic=SemanticEventKind.WORK,
             priority=AMBIENT_EFFECT_PRIORITY[AmbientEffectFamily.TURN_LENGTH_EMBER],
             program=program,
