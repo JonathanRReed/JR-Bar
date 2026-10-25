@@ -14,6 +14,7 @@ import sqlite3
 import threading
 import time
 from contextlib import closing
+from dataclasses import replace
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -154,6 +155,54 @@ def read_hermes_links(database: Path, *, observed_at: float) -> tuple[ParentLink
                              observed_at=float(stamp) if type(stamp) in {int, float} else 0.0))
     except (OSError, sqlite3.Error):
         return ()
+
+
+def opencode_parent_links(info: dict, *, observed_at: float) -> tuple[ParentLink, ...]:
+    if "parentID" not in info:
+        return ()
+    return _link(member_key("opencode", info.get("id")), member_key("opencode", info.get("parentID")),
+                 "opencode", observed_at)
+
+
+def read_opencode_links(database: Path, *, observed_at: float) -> tuple[ParentLink, ...]:
+    if not database.is_file():
+        return ()
+    try:
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.1)) as connection:
+            connection.execute("PRAGMA query_only=ON")
+            rows = connection.execute(
+                "SELECT id, parent_id, time_updated FROM session WHERE parent_id IS NOT NULL "
+                "ORDER BY time_updated DESC LIMIT ?", (MAX_FILES,)).fetchall()
+            return tuple(link for child, parent, stamp in rows
+                         for link in opencode_parent_links({"id": child, "parentID": parent},
+                             observed_at=float(stamp) / 1000 if type(stamp) in {int, float} else 0.0))
+    except (OSError, sqlite3.Error):
+        return ()
+
+
+def match_opencode_roster(rows: tuple[AgentStatus, ...], observed: frozenset[str]) -> tuple[AgentStatus, ...]:
+    """A hook's agent key and the DB's session ID name the same native session.
+
+    Match only an observed identity. If both forms exist, retain an unlinked
+    marker instead of guessing which live row owns the database entry.
+    """
+    def match(key):
+        if key is None or not key.startswith("opencode:session:"):
+            return key
+        agent = key.replace("opencode:session:", "opencode:agent:", 1)
+        return agent if agent in observed and key not in observed else key
+    result = []
+    for row in rows:
+        key = match(row.agent_id)
+        evidence = []
+        for link in row.parent_links:
+            child, parent = match(link.child), match(link.parent)
+            for native in (link.child, link.parent):
+                if native and native in observed and native.replace(":session:", ":agent:", 1) in observed:
+                    parent = None
+            evidence.append(replace(link, child=child, parent=parent))
+        result.append(replace(row, agent_id=key, parent_links=tuple(evidence)))
+    return tuple(result)
 
 
 def claude_parent_links(payload: dict, *, observed_at: float, agent_id: str | None = None) -> tuple[ParentLink, ...]:
@@ -415,6 +464,8 @@ class LocalLineageReader:
             links.extend(read_devin_links(self.home / ".local/share/devin/cli/sessions.db", observed_at=now))
         if "hermes" in providers:
             links.extend(read_hermes_links(self.home / ".hermes/state.db", observed_at=now))
+        if "opencode" in providers:
+            links.extend(read_opencode_links(self.home / ".local/share/opencode/opencode.db", observed_at=now))
         by_child: dict[str, list[ParentLink]] = {}
         for link in links:
             by_child.setdefault(link.child, []).append(link)
@@ -464,4 +515,7 @@ def update_lineage_runtime(target) -> None:
     active_paths = tuple(Path(path) for status in getattr(snapshot, "statuses", ()) if not status.stale
                          for key in (status.agent_id, status.parent_agent_id)
                          if (path := paths.get(key)))
-    publish("lineage", tuple(row for row in reader.request(providers, active_paths=active_paths) if row.provider in providers))
+    rows = tuple(row for row in reader.request(providers, active_paths=active_paths) if row.provider in providers)
+    observed = frozenset(s.agent_id for s in (*getattr(snapshot, "statuses", ()), *getattr(snapshot, "stale_statuses", ()))
+                         if s.event_name != "LineageObserved")
+    publish("lineage", match_opencode_roster(rows, observed))

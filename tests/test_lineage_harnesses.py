@@ -112,3 +112,46 @@ def test_hermes_nested_hook_and_agent_only_fallback():
     data['child_session_id'] = None
     orphan, _ = replay('hermes', data)
     assert orphan.agent_id == 'hermes:session:nested-worker'
+
+
+def test_opencode_restart_backfills_parent_ids_without_content(tmp_path):
+    import sqlite3
+
+    from jrbar.lineage_adapters import LocalLineageReader, match_opencode_roster, opencode_parent_links
+
+    info = fixture('opencode-1.19.3.json')['properties']['info']
+    expected = opencode_parent_links(info, observed_at=NOW)
+    database = tmp_path / '.local/share/opencode/opencode.db'
+    database.parent.mkdir(parents=True)
+    with sqlite3.connect(database) as connection:
+        connection.execute('CREATE TABLE session(id TEXT, parent_id TEXT, time_updated INTEGER, title TEXT)')
+        connection.executemany('INSERT INTO session VALUES (?, ?, ?, ?)',
+                               [(info['id'], info['parentID'], int(NOW * 1000), 'synthetic content'),
+                                ('nested', info['id'], int(NOW * 1000), 'synthetic content')])
+    before = database.read_bytes()
+    providers = frozenset({'opencode'})
+    recovered = LocalLineageReader(tmp_path).read(providers, now=NOW)
+    assert recovered == LocalLineageReader(tmp_path).read(providers, now=NOW)
+    assert next(r for r in recovered if r.agent_id.endswith('opencode-child')).parent_links == expected
+    root = row('opencode:session:opencode-root')
+    child = row('opencode:agent:opencode-child')
+    nested = row('opencode:agent:nested')
+    recovered = match_opencode_roster(recovered, frozenset(r.agent_id for r in [root, child, nested]))
+    from jrbar.collector import _merged_status_candidates
+    merged = _merged_status_candidates([root, child, nested, *recovered])
+    group, = resolve_agent_groups(merged, now=NOW).groups
+    assert len(group.members) == 3
+    assert database.read_bytes() == before
+
+
+def test_opencode_missing_parent_and_ambiguous_roster_stay_unlinked():
+    from jrbar.lineage_adapters import match_opencode_roster, opencode_parent_links
+
+    info = fixture('opencode-1.19.3.json')['properties']['info']
+    info['parentID'] = ''
+    links = opencode_parent_links(info, observed_at=NOW)
+    child = row(links[0].child, links)
+    assert resolve_agent_groups([child], now=NOW).unlinked_workers == {child.agent_id}
+    observed = frozenset({child.agent_id, child.agent_id.replace(':session:', ':agent:')})
+    matched, = match_opencode_roster((child,), observed)
+    assert matched.parent_links[0].parent is None

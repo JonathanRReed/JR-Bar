@@ -718,3 +718,9 @@ and local `sessions` table columns were checked on 2026-10-25. The local CLI
 was unavailable, so the fixture identifies the schema observation date.
 The adapter reads `id`, `parent_session_id` and `started_at` only. Hermes
 Agent is MIT licensed. No source code was copied.
+
+OpenCode 1.19.3 was checked with `--version` and read-only SQLite schema
+inspection. Its `session.parent_id` and millisecond `time_updated` fields
+supply restart recovery. The existing bridge reads `info.id` and
+`info.parentID` on session events. The [plugin reference](https://opencode.ai/docs/plugins/)
+describes those events. OpenCode is MIT licensed. No source code was copied.
