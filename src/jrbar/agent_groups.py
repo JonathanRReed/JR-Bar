@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from .models import AgentMode, AgentStatus, ParentLink
 
 LINEAGE_MAX_AGE_SECONDS = 86_400.0
+LINEAGE_CLOCK_SKEW_SECONDS = 5.0
 _RUNNING = {AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS}
 
 
@@ -57,37 +58,38 @@ def resolve_agent_groups(
     rows: dict[str, AgentStatus] = {}
     ambiguous = set()
     for status in statuses:
+        if not getattr(status, "agent_id", None):
+            continue
         previous = rows.get(status.agent_id)
-        if previous and previous.work_key and status.work_key and previous.work_key != status.work_key:
+        if previous and getattr(previous, "work_key", None) and getattr(status, "work_key", None) and previous.work_key != status.work_key:
             ambiguous.add(status.agent_id)
         rows[status.agent_id] = status
     by_child: dict[str, list[ParentLink]] = defaultdict(list)
-    for link in (*tuple(links), *(link for row in rows.values() for link in row.parent_links)):
+    for link in (*tuple(links), *(link for row in rows.values() for link in getattr(row, "parent_links", ()))):
         if link.child in rows:
             by_child[link.child].append(link)
-    retained_ask_links = set()
+    own_links = set()
+    devin_roots = [row.agent_id for row in rows.values()
+                   if getattr(row, "provider", "") == "devin" and not getattr(row, "is_subagent", False)
+                   and not getattr(row, "stale", False) and getattr(row, "mode", None) in _RUNNING]
     for row in rows.values():
-        if row.agent_id in by_child or not row.is_subagent:
+        if row.agent_id in by_child or not getattr(row, "is_subagent", False):
             continue
-        parent = row.parent_agent_id
+        parent = getattr(row, "parent_agent_id", None)
         # A nested canonical worker's parent id may itself name a worker.
         if parent and parent not in rows:
             prefix, _, native_id = parent.partition(":session:")
             candidate = f"{prefix}:agent:{native_id}"
             if candidate in rows:
                 parent = candidate
-        if parent not in rows and row.provider == "devin":
-            candidates = [s.agent_id for s in rows.values() if s.provider == "devin"
-                          and not s.is_subagent and not s.stale and s.mode in _RUNNING]
-            if len(candidates) == 1:
-                parent = candidates[0]
-        # A retained unanswered native request still owns its work identity.
-        # The parent carried by that work stays valid until resolution; its
-        # original timestamp is preserved. External evidence still expires.
-        if row.is_hard_ask and not row.stale:
-            retained_ask_links.add(row.agent_id)
+        if parent is None and getattr(row, "provider", "") == "devin":
+            if len(devin_roots) == 1:
+                parent = devin_roots[0]
+        # A row owns its native relationship for as long as that row exists.
+        own_links.add(row.agent_id)
         by_child[row.agent_id].append(ParentLink(
-            row.agent_id, parent, row.provider, row.updated_at.timestamp(),
+            row.agent_id, parent, getattr(row, "provider", row.agent_id.split(":", 1)[0]),
+            row.updated_at.timestamp() if hasattr(row, "updated_at") else now,
         ))
     parents: dict[str, str] = {}
     rejected: dict[str, tuple[str, str]] = {}
@@ -98,8 +100,8 @@ def resolve_agent_groups(
         if child in ambiguous or len(targets) != 1:
             rejected[child] = (harness, "ambiguous_binding")
         elif any(not math.isfinite(link.observed_at)
-                 or now < link.observed_at
-                 or (child not in retained_ask_links and now - link.observed_at > max_age_seconds)
+                 or (child not in own_links and (link.observed_at > now + LINEAGE_CLOCK_SKEW_SECONDS
+                     or now - link.observed_at > max_age_seconds))
                  for link in evidence):
             rejected[child] = (harness, "stale_evidence")
         elif None in targets or next(iter(targets)) not in rows:
@@ -112,19 +114,21 @@ def resolve_agent_groups(
     roots: dict[str, str | None] = {}
     for member in rows:
         path = []
+        path_ids = set()
         cursor = member
         while cursor not in roots:
-            if cursor in path:
+            if cursor in path_ids:
                 for cyclic in path[path.index(cursor):]:
                     rejected[cyclic] = (by_child[cyclic][0].harness, "cycle")
                 root = None
                 break
             path.append(cursor)
+            path_ids.add(cursor)
             if cursor in rejected:
                 root = None
                 break
             if cursor not in parents:
-                root = None if rows[cursor].is_subagent else cursor
+                root = None if getattr(rows[cursor], "is_subagent", False) else cursor
                 break
             cursor = parents[cursor]
         else:
@@ -136,13 +140,13 @@ def resolve_agent_groups(
         if root is not None:
             grouped[root].append(member)
     groups = tuple(AgentGroup(
-        id=f"group:{root}", root_work_key=root, root_provider=rows[root].provider,
+        id=f"group:{root}", root_work_key=root, root_provider=getattr(rows[root], "provider", root.split(":", 1)[0]),
         members=tuple(sorted(members)),
         lineage_evidence=tuple(link for member in sorted(members) for link in accepted.get(member, ())),
     ) for root, members in sorted(grouped.items()))
     unlinked = frozenset(member for member, root in roots.items() if root is None)
     return AgentGroupResolution(groups, unlinked, tuple(
-        (child, *rejected.get(child, (rows[child].provider, "unresolved_ancestor")))
+        (child, *rejected.get(child, (getattr(rows[child], "provider", child.split(":", 1)[0]), "unresolved_ancestor")))
         for child in sorted(unlinked)
     ))
 
@@ -156,7 +160,7 @@ def active_agent_groups(state) -> tuple[AgentGroup, ...]:
     """
     if hasattr(state, "all_rows"):
         rows = tuple(state.all_rows)
-        statuses = tuple(row.source_status for row in rows)
+        statuses = tuple((getattr(row, "source_status", None) or row) for row in rows)
         active = {row.agent_id for row in rows if row.lifecycle_mode.value == "active"}
         now = max((s.updated_at.timestamp() for s in statuses), default=0)
     else:

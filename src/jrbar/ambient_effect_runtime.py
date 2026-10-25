@@ -1807,7 +1807,8 @@ def _observe_operator_events(
     quiet_requests = quiet_worker_request_keys(
         state,
         subagent_asks_alert=workers_alert,
-        statuses=getattr(getattr(controller, "last_snapshot", None), "statuses", ()),
+        statuses=(*getattr(getattr(controller, "last_snapshot", None), "statuses", ()),
+                  *getattr(getattr(controller, "last_snapshot", None), "stale_statuses", ())),
     )
     for event in canonical_events:
         if event.kind is TransitionKind.COMPLETED:

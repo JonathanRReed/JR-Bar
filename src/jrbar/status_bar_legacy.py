@@ -2284,7 +2284,8 @@ class StatusBarController(NSObject):
             now=time.time(),
         )
         projection = project_attention(
-            SimpleNamespace(statuses=visible, collected_at=snapshot.collected_at),
+            SimpleNamespace(statuses=visible, stale_statuses=getattr(snapshot, "stale_statuses", ()),
+                            collected_at=snapshot.collected_at),
             self.settings,
         )
         live_request_keys = self._live_actionable_request_keys()
@@ -5356,7 +5357,8 @@ class StatusBarController(NSObject):
                     # off: nobody was asked, so it never raises the banner.
                     quiet_requests = quiet_worker_request_keys(
                         state,
-                        statuses=getattr(getattr(self, "last_snapshot", None), "statuses", ()),
+                        statuses=(*getattr(getattr(self, "last_snapshot", None), "statuses", ()),
+                                  *getattr(getattr(self, "last_snapshot", None), "stale_statuses", ())),
                         subagent_asks_alert=bool(
                             getattr(self.settings, "subagent_asks_alert", False)
                         ),
@@ -6905,7 +6907,8 @@ class StatusBarController(NSObject):
             worker_count = len(state.works) - primary_count
             quiet_requests = quiet_worker_request_keys(
                 state,
-                statuses=getattr(getattr(self, "last_snapshot", None), "statuses", ()),
+                statuses=(*getattr(getattr(self, "last_snapshot", None), "statuses", ()),
+                                  *getattr(getattr(self, "last_snapshot", None), "stale_statuses", ())),
                 subagent_asks_alert=bool(
                     getattr(self.settings, "subagent_asks_alert", False)
                 ),

@@ -117,7 +117,7 @@ def test_roster_keeps_what_the_panel_ages_out():
     assert by_id["codex:session:live"]["visibility"] == "live"
 
 
-def test_worker_under_a_hidden_parent_is_still_rostered():
+def test_working_member_keeps_its_group_root_live():
     """The panel drops an orphan worker row; the roster keeps it, parent
     link intact — children can outlive a parent turn (spec §14.2/T14)."""
     parent = _status(
@@ -139,11 +139,10 @@ def test_worker_under_a_hidden_parent_is_still_rostered():
     assert worker.is_subagent and worker.parent_agent_id == "codex:session:parent"
 
     projected, ask_ids = _project(snapshot)
-    # The panel drops the orphan: its own verdict is live, but the filter
-    # hides a worker whose parent left the list.
+    # A group reports its most active member, even after the root turn ended.
     visible, hidden_count, _ = filter_visible_sessions(projected, now=NOW, pinned_ids=ask_ids)
-    assert visible == []
-    assert hidden_count == 1
+    assert {row["id"] for row in visible} == {worker.agent_id, parent.agent_id}
+    assert hidden_count == 0
 
     rows = _roster(snapshot)
     by_id = {row["id"]: row for row in rows}
@@ -153,7 +152,8 @@ def test_worker_under_a_hidden_parent_is_still_rostered():
     # The roster reports each row's own verdict — the orphan rule is a
     # panel behaviour, so the worker still reads ``live`` here.
     assert by_id["codex:agent:worker1"]["visibility"] == "live"
-    assert by_id["codex:session:parent"]["visibility"] == "hidden"
+    assert by_id["codex:session:parent"]["visibility"] == "live"
+    assert by_id["codex:session:parent"]["mode"] == "working"
 
 
 def test_axes_stay_separate_through_the_wire_shape():

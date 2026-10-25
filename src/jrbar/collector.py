@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
+from functools import cached_property
 from itertools import islice
 from pathlib import Path
 from types import MappingProxyType
@@ -704,6 +705,12 @@ class MonitorSnapshot:
     operator_state: CanonicalOperatorState | None = None
     operator_events: tuple[CanonicalOperatorEvent, ...] = ()
     restore_health: RestoreHealth = RestoreHealth.NOT_ATTEMPTED
+
+    @cached_property
+    def agent_group_resolution(self):
+        from .agent_groups import resolve_agent_groups
+
+        return resolve_agent_groups((*self.statuses, *self.stale_statuses), now=self.collected_at.timestamp())
 
     def to_dict(self) -> dict:
         return {
@@ -1433,6 +1440,13 @@ class LiveAgentMonitor(LiveSessionMemory):
         # A fresh process can reread thousands of rows that latest.json already
         # reduced. Filter them before the reducer rebuilds and hashes full state.
         with self.lock:
+            transcript = record.raw.get("transcript_path")
+            if isinstance(transcript, str) and Path(transcript).is_absolute() and record.session_id:
+                paths = getattr(self, "lineage_paths_by_session", {})
+                paths[f"{record.provider}:session:{record.session_id}"] = transcript
+                while len(paths) > 512:
+                    paths.pop(next(iter(paths)))
+                self.lineage_paths_by_session = paths
             metadata = metadata_for_record(
                 record,
                 self._status_metadata_by_session,
@@ -1817,9 +1831,7 @@ class LiveAgentMonitor(LiveSessionMemory):
         )
         import logging
 
-        from .agent_groups import resolve_agent_groups
-
-        resolution = resolve_agent_groups((*snapshot.statuses, *snapshot.stale_statuses), now=now.timestamp())
+        resolution = snapshot.agent_group_resolution
         failures = set(resolution.rejected)
         previous = getattr(self, "_lineage_failures", set())
         for _child, harness, reason in sorted(failures - previous):

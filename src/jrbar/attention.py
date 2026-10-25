@@ -106,19 +106,18 @@ class AttentionProjection:
 
         rows = {row.agent_id: row for row in self.all_rows}
         resolution = self.agent_group_resolution or resolve_agent_groups(
-            (row.source_status for row in rows.values()),
+            ((getattr(row, "source_status", None) or row) for row in rows.values()),
             now=max((row.updated_at.timestamp() for row in rows.values()), default=0),
         )
         # Asks keep their own identities, including unlinked workers. The
         # projection already applied subagent_asks_alert to actionable.
         asking = tuple(row for row in self.all_rows if row.actionable)
-        if asking:
-            return asking
-        grouped = []
+        asking_ids = {row.agent_id for row in asking}
+        grouped = list(asking)
         for group in resolution.groups:
             root = rows.get(group.root_work_key)
             members = [rows[key] for key in group.members if key in rows]
-            if root is None or not members:
+            if root is None or not members or asking_ids.intersection(group.members):
                 continue
             driver = min(members, key=lambda row: (_LIFECYCLE_PRIORITY[row.lifecycle_mode], row.agent_id))
             grouped.append(replace(root, lifecycle_mode=driver.lifecycle_mode, is_subagent=False))
@@ -178,21 +177,30 @@ def quiet_worker_request_keys(
     keeps it honest: the ambient light cues and the history tally ask this
     before they treat a request as something to interrupt for.
 
-    A request counts as a worker's when its work has a parent. Turning the
-    setting on empties the set, and a main session's request is never in it.
+    A request stays quiet only when its parent can be resolved. Unlinked
+    workers always reach the person. Turning the setting on empties the set.
     The requests stay in canonical state either way.
     """
     if subagent_asks_alert:
         return frozenset()
+    from .agent_groups import resolve_agent_groups
+
+    statuses = tuple(statuses)
+    resolution = resolve_agent_groups(statuses, now=max((s.updated_at.timestamp() for s in statuses), default=0))
     grouped_ids = set()
+    observed_ids = set()
     for status in statuses:
-        if status.is_subagent:
+        observed_ids.add((status.provider, status.agent_id.split(":", 2)[-1]))
+        if status.is_subagent and status.agent_id not in resolution.unlinked_workers:
             parts = status.agent_id.split(":", 2)
             if len(parts) == 3 and parts[0] == status.provider:
                 grouped_ids.add((status.provider, parts[2]))
+    known_works = {work.key for work in state.works}
     worker_works = frozenset(
-        work.key for work in state.works if work.parent_key is not None
-        or (work.key.source_key.provider_id, work.key.work_id.value) in grouped_ids
+        work.key for work in state.works
+        if (work.key.source_key.provider_id, work.key.work_id.value) in grouped_ids
+        or (work.parent_key in known_works
+            and (work.key.source_key.provider_id, work.key.work_id.value) not in observed_ids)
     )
     if not worker_works:
         return frozenset()
@@ -223,8 +231,14 @@ def quiet_waiting_worker_ids(
     longer waiting either, and ``None`` (no state yet) leaves the status's
     own word standing.
     """
+    from .agent_groups import resolve_agent_groups
+
+    statuses = tuple(statuses)
+    resolution = resolve_agent_groups(statuses, now=max((s.updated_at.timestamp() for s in statuses), default=0))
     quiet: set[str] = set()
     for status in statuses:
+        if status.agent_id in resolution.unlinked_workers:
+            continue
         if status.stale or not status.is_hard_ask or actionable_request(status, settings):
             continue
         key = status.request_key
@@ -250,7 +264,9 @@ def project_attention(
     from .agent_groups import resolve_agent_groups
 
     all_statuses = (*plausible_statuses, *getattr(snapshot, "stale_statuses", ()))
-    resolution = resolve_agent_groups(all_statuses, now=collected_at.timestamp())
+    resolution = getattr(snapshot, "agent_group_resolution", None)
+    if resolution is None:
+        resolution = resolve_agent_groups(all_statuses, now=collected_at.timestamp())
     live_ids = {status.agent_id for status in plausible_statuses}
     needed_roots = {group.root_work_key for group in resolution.groups
                     if live_ids.intersection(group.members)}
@@ -261,7 +277,11 @@ def project_attention(
         for status in plausible_statuses
     )
     rows = _promote_delegating_parents(rows, resolution)
-    rows = tuple(replace(row, unlinked_worker=row.agent_id in resolution.unlinked_workers) for row in rows)
+    rows = tuple(replace(
+        row, unlinked_worker=row.agent_id in resolution.unlinked_workers,
+        actionable=row.actionable or (row.agent_id in resolution.unlinked_workers and row.source_status.is_hard_ask),
+        lifecycle_mode=LifecycleMode.WAITING if row.agent_id in resolution.unlinked_workers and row.source_status.is_hard_ask else row.lifecycle_mode,
+    ) for row in rows)
     actionable = tuple(
         sorted(
             (row for row in rows if row.actionable),
@@ -272,7 +292,7 @@ def project_attention(
     emitted = set(consumed)
     for status in plausible_statuses:
         event_key = stable_event_key(status)
-        if status.agent_id in resolution.unlinked_workers or not _is_failure_event(status) or event_key in emitted:
+        if not _is_failure_event(status) or event_key in emitted:
             continue
         signals.append(
             TransientSignal(

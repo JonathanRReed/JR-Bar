@@ -183,11 +183,11 @@ def test_a_stale_worker_or_one_the_state_no_longer_holds_live_is_not_quiet_waiti
     stale = _worker(SECOND_WORKER_ID, waiting=True, stale=True)
 
     # No canonical state yet (None): the status's own word stands.
-    assert quiet_waiting_worker_ids((keyed, stale), settings, live_request_keys=None) == frozenset({CLAUDE_WORKER_ID})
+    assert quiet_waiting_worker_ids((_main(), keyed, stale), settings, live_request_keys=None) == frozenset({CLAUDE_WORKER_ID})
     # The state holds the request live: still quiet.
-    assert quiet_waiting_worker_ids((keyed,), settings, live_request_keys=frozenset({request})) == frozenset({CLAUDE_WORKER_ID})
+    assert quiet_waiting_worker_ids((_main(), keyed), settings, live_request_keys=frozenset({request})) == frozenset({CLAUDE_WORKER_ID})
     # The state moved the request on (resolved, stale hold): nothing is waiting.
-    assert quiet_waiting_worker_ids((keyed,), settings, live_request_keys=frozenset()) == frozenset()
+    assert quiet_waiting_worker_ids((_main(), keyed), settings, live_request_keys=frozenset()) == frozenset()
 
 
 def test_the_two_definitions_of_quiet_agree_on_a_real_canonical_snapshot() -> None:
@@ -203,7 +203,7 @@ def test_the_two_definitions_of_quiet_agree_on_a_real_canonical_snapshot() -> No
             settings = replace(AgentMonitorSettings(), subagent_asks_alert=alert)
             ids = quiet_waiting_worker_ids(snapshot.statuses, settings, live_request_keys=live)
             keys = quiet_worker_request_keys(snapshot.operator_state, subagent_asks_alert=alert)
-            expected = name == "worker" and not alert
+            expected = False  # The canonical fixture has no parent row, so its worker is unlinked.
             label = f"{name}, worker asks {'on' if alert else 'off'}"
 
             assert bool(ids) == expected, label

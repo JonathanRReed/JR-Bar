@@ -100,18 +100,27 @@ folders or process ancestry. The daemon follows links transitively and
 rejects cycles, conflicting parents, ambiguous native bindings, missing
 parents and expired evidence. Copied history, including Codex
 `forked_from_id`, does not establish delegation. Local readers recover links
-after restart. Re-reading an unchanged hook does not renew its timestamp. A retained
-unanswered native request keeps its own work-to-parent relationship until
-resolution; that does not extend external lineage evidence.
+after restart. Re-reading an unchanged hook does not renew its timestamp.
+A row keeps its own native work-to-parent relationship for its lifetime.
+External evidence expires after 24 hours and allows five seconds of clock skew.
 
 Each session also has `group_id` and `unlinked_worker`. A worker without a
 provable root has no group and sets `unlinked_worker: true`. The panel can
 dim it and name it "Unlinked worker". It gets no strip share unless it has
-an actionable ask. The existing sub-agent ask preference still applies.
+an actionable ask. An unlinked worker always shows its ask, even when
+sub-agent asks are off. That preference applies only to linked workers.
 Resolved child sessions have `kind: "worker"` and `parent` set to the root
 session ID, including children whose provider differs from their root.
 The root's `workers` counts its live workers, excluding stale members. Asks keep their own
-session IDs and remain individually answerable.
+session IDs and remain individually answerable. The group root shows the
+most urgent member state and shows Working while any member works, even
+when the root itself is stale or finished. Dismissing the root still hides
+that session. Local root headers supply link evidence
+only, never roster activity.
+
+T3 Code detection runs without a provider toggle. The daemon reads its data
+only while the desktop app runs and its database, WAL or settings change.
+Existing settings still supply custom paths, environment and statistics consent.
 
 Lights use one representative per group in `root_provider`'s colour.
 The Python entry point is `active_agent_groups(state)`, where `state` is a

@@ -56,7 +56,7 @@ def test_unproved_worker_never_gets_a_share(problem):
     elif problem == "stale":
         links = [replace(links[0], observed_at=NOW-86_401)]
     elif problem == "future":
-        links = [replace(links[0], observed_at=NOW+1)]
+        links = [replace(links[0], observed_at=NOW+6)]
     rows = [status(root, links=root_links), status(child, links=links)]
     result = resolve_agent_groups(rows, now=NOW)
     assert child in result.unlinked_workers
@@ -71,7 +71,7 @@ def test_unlinked_native_worker_has_no_share_but_asks_stay_individual():
     quiet = project_attention(snapshot([child]), AgentMonitorSettings())
     assert quiet.light_rows == ()
     asking = replace(child, mode=AgentMode.WAITING_FOR_INPUT, event_name="PermissionRequest")
-    assert project_attention(snapshot([asking]), AgentMonitorSettings()).light_rows == ()
+    assert [row.agent_id for row in project_attention(snapshot([asking]), AgentMonitorSettings()).light_rows] == [child.agent_id]
     loud = project_attention(snapshot([asking]), replace(AgentMonitorSettings(), subagent_asks_alert=True))
     assert [row.agent_id for row in loud.light_rows] == [child.agent_id]
     assert len(loud.actionable_attention) == 1
@@ -85,7 +85,7 @@ def test_grouped_asks_keep_their_provider_and_identity():
     quiet = project_attention(snapshot(rows), AgentMonitorSettings())
     assert not quiet.actionable_attention
     loud = project_attention(snapshot(rows), replace(AgentMonitorSettings(), subagent_asks_alert=True))
-    assert [(row.provider, row.agent_id) for row in loud.light_rows] == [("codex", worker)]
+    assert ("codex", worker) in [(row.provider, row.agent_id) for row in loud.light_rows]
 
 
 def test_unrelated_sessions_never_merge_by_folder_origin_or_machine():
@@ -111,7 +111,7 @@ def test_cross_provider_lineage_keeps_canonical_worker_requests_quiet():
     native = canonical.statuses[0]
     linked = replace(native, parent_links=(ParentLink(native.agent_id, "codex:session:root", "t3code", NOW),))
     assert quiet_worker_request_keys(canonical.operator_state, subagent_asks_alert=False) == frozenset()
-    assert quiet_worker_request_keys(canonical.operator_state, subagent_asks_alert=False, statuses=[linked]) == {native.request_key}
+    assert quiet_worker_request_keys(canonical.operator_state, subagent_asks_alert=False, statuses=[linked, status("codex:session:root")]) == {native.request_key}
     assert quiet_worker_request_keys(canonical.operator_state, subagent_asks_alert=True, statuses=[linked]) == frozenset()
 
 
@@ -127,7 +127,7 @@ def test_provider_pin_follows_group_root_colour_and_keeps_child_activity():
     ]
 
 
-def test_rejected_link_cannot_promote_an_idle_root_or_fire_a_failure_cue():
+def test_rejected_link_cannot_promote_an_idle_root_but_failure_stays_named():
     from jrbar.delegation import _reconcile_delegating_parents
 
     root = status("claude:session:root", mode=AgentMode.IDLE_READY)
@@ -137,7 +137,7 @@ def test_rejected_link_cannot_promote_an_idle_root_or_fire_a_failure_cue():
     projection = project_attention(snapshot([root, child]), AgentMonitorSettings())
     assert projection.light_rows[0].lifecycle_mode.value == "idle"
     failed = replace(child, mode=AgentMode.BLOCKED_ERROR, event_name="StopFailure")
-    assert project_attention(snapshot([failed]), AgentMonitorSettings()).transient_signals == ()
+    assert project_attention(snapshot([failed]), AgentMonitorSettings()).transient_signals[0].source_agent_id == failed.agent_id
 
 
 def test_header_only_metadata_never_promotes_a_parent_to_working():

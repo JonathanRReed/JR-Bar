@@ -73,7 +73,7 @@ class EscalationBannerQuietWorkerTests(unittest.TestCase):
         self.assertIs(request.next_actor, NextActor.USER)
         self.assertIs(request.source_freshness, SourceFreshness.FRESH)
 
-    def test_a_workers_request_alone_raises_no_banner(self) -> None:
+    def test_an_unlinked_workers_request_alone_raises_the_banner(self) -> None:
         worker = _canonical_permission_request_snapshot(
             session_id="session:main", agent_id="agent:worker"
         )
@@ -81,7 +81,7 @@ class EscalationBannerQuietWorkerTests(unittest.TestCase):
 
         delivered = self._banner_requests(worker, subagent_asks_alert=False)
 
-        self.assertEqual(delivered, [])
+        self.assertEqual(delivered, [worker.operator_state.requests[0].key])
         # The request is canonical truth either way.
         self.assertEqual(len(self.controller.current_operator_state.requests), 1)
 
