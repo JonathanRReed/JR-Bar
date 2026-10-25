@@ -1,5 +1,6 @@
 """A terminal Claude gate cannot spawn security on the main request path."""
 
+import subprocess
 import threading
 
 from jrbar import provider_reconnect
@@ -16,8 +17,7 @@ def test_request_reads_cached_keychain_stamp_only(tmp_path, monkeypatch):
     service._failure_gates[("claude", "default")] = FailureGate(terminal=True, terminal_fingerprint=None)
     service._state = ProviderUsageState((), 1000, 5000, False)
     monkeypatch.setattr(provider_reconnect, "_KEYCHAIN_FINGERPRINT_CACHE", {})
-    monkeypatch.setattr(provider_reconnect.subprocess if hasattr(provider_reconnect, "subprocess") else __import__("subprocess"),
-        "run", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("spawn on request path")))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("spawn on request path")))
     service.request(callback=lambda _: None)
     service.close()
 

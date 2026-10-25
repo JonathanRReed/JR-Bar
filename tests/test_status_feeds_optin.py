@@ -22,6 +22,9 @@ from tests.test_incident_lookup_scope import collector_for, service_with
 # --- the default is closed, and the setting opens it ------------------------------
 
 
+pytestmark = pytest.mark.usefixtures("fake_keychain_metadata")
+
+
 def _feed_threads() -> list[threading.Thread]:
     return [
         thread

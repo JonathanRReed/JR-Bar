@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -196,18 +197,27 @@ def block_live_keychain_access():
     """A forgotten stub must fail before it reaches the owner's Keychain."""
     import shlex
 
+    owner_thread = threading.current_thread()
+    background_attempts = []
+
+    def refuse(message):
+        if threading.current_thread() is not owner_thread:
+            background_attempts.append(True)
+        pytest.fail(message)
+
     def reject(arguments):
         command = shlex.split(arguments) if isinstance(arguments, str) else list(arguments)
         if not command:
             return
         executable = Path(os.fsdecode(command[0])).name
         if executable == "security" or any("jrbar.keychain_read" in str(arg) for arg in command):
-            pytest.fail("test attempted live Keychain access; inject a fake reader")
+            refuse("test attempted live Keychain access; inject a fake reader")
 
     with pytest.MonkeyPatch.context() as mp:
         for name in ("run", "Popen"):
             original = getattr(subprocess, name)
 
+            @_mark_guard(original, "keychain")
             def guarded(arguments, *args, _original=original, **kwargs):
                 reject(arguments)
                 return _original(arguments, *args, **kwargs)
@@ -215,10 +225,18 @@ def block_live_keychain_access():
             mp.setattr(subprocess, name, guarded)
 
         def refuse_api():
-            pytest.fail("test attempted real Keychain API; inject a fake API")
+            refuse("test attempted real Keychain API; inject a fake API")
 
         mp.setattr("jrbar.keychain_read._load_api", refuse_api)
         yield
+    if background_attempts:
+        pytest.fail("test worker attempted live Keychain access; inject a fake reader")
+
+
+@pytest.fixture
+def fake_keychain_metadata(monkeypatch):
+    """Runtime fixtures have no Claude item; metadata tests supply their own."""
+    monkeypatch.setattr("jrbar.provider_reconnect.keychain_fingerprint", lambda *a, **kw: ())
 
 
 def _reject_live_volume(path: object, operation: str) -> None:

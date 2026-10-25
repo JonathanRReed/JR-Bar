@@ -38,6 +38,9 @@ from jrbar.provider_usage_qol import (
 )
 from jrbar.usage_event_hooks import detect_usage_hook_events
 
+pytestmark = pytest.mark.usefixtures("fake_keychain_metadata")
+
+
 WEEK = 7 * 86400.0
 T0 = 1_790_000_000.0
 ACCOUNT = "claude-account-reset-fixture"
