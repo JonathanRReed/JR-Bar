@@ -228,7 +228,6 @@ class TokenHistoryIndex:
         db.execute("CREATE INDEX IF NOT EXISTS raw_own ON raw(owner,event,kind)")
         db.execute("CREATE INDEX IF NOT EXISTS raw_kind ON raw(kind)")
         db.execute("CREATE INDEX IF NOT EXISTS raw_parent ON raw(owner) WHERE parent IS NOT NULL")
-        db.execute("CREATE INDEX IF NOT EXISTS events_hour ON events(provider,session,model,day,hour,long_context)")
 
     def _reconcile(self, db, budget=None):
         self._indexes(db)
@@ -238,6 +237,7 @@ class TokenHistoryIndex:
         limit = 4096 if budget is not None else -1
         db.execute("CREATE TEMP TABLE active_dirty AS SELECT key FROM dirty LIMIT ?", (limit,))
         keys = "provider,session,model,day,hour,long_context"
+        empty = db.execute("SELECT 1 FROM events LIMIT 1").fetchone() is None
         db.execute(f"CREATE TEMP TABLE affected AS SELECT DISTINCT {keys} FROM events WHERE dedupe IN (SELECT key FROM active_dirty)")
         db.execute("DELETE FROM events WHERE dedupe IN (SELECT key FROM active_dirty)")
         db.execute("DELETE FROM conflicts WHERE dedupe IN (SELECT key FROM active_dirty)")
@@ -249,11 +249,17 @@ class TokenHistoryIndex:
                 FROM raw r JOIN files f ON f.id=r.file
                 WHERE canonical IN (SELECT key FROM active_dirty) AND canonical NOT IN (SELECT dedupe FROM conflicts)
             ) WHERE position=1""")
-        db.execute(f"INSERT INTO affected SELECT DISTINCT {keys} FROM events WHERE dedupe IN (SELECT key FROM active_dirty)")
-        db.execute(f"DELETE FROM hours WHERE ({keys}) IN (SELECT {keys} FROM affected)")
-        db.execute(f"""INSERT INTO hours SELECT {keys},SUM(inp),SUM(cached),SUM(created),SUM(out),COUNT(*),
-            SUM(CASE WHEN inp+cached+created+out>0 THEN 1 ELSE 0 END) FROM events
-            WHERE ({keys}) IN (SELECT {keys} FROM affected) GROUP BY {keys}""")
+        if empty:
+            db.execute("DELETE FROM hours")
+            db.execute(f"""INSERT INTO hours SELECT {keys},SUM(inp),SUM(cached),SUM(created),SUM(out),COUNT(*),
+                SUM(CASE WHEN inp+cached+created+out>0 THEN 1 ELSE 0 END) FROM events GROUP BY {keys}""")
+        else:
+            db.execute(f"INSERT INTO affected SELECT DISTINCT {keys} FROM events WHERE dedupe IN (SELECT key FROM active_dirty)")
+            db.execute(f"DELETE FROM hours WHERE ({keys}) IN (SELECT {keys} FROM affected)")
+            db.execute(f"""INSERT INTO hours SELECT {keys},SUM(inp),SUM(cached),SUM(created),SUM(out),COUNT(*),
+                SUM(CASE WHEN inp+cached+created+out>0 THEN 1 ELSE 0 END) FROM events
+                WHERE ({keys}) IN (SELECT {keys} FROM affected) GROUP BY {keys}""")
+        db.execute("CREATE INDEX IF NOT EXISTS events_hour ON events(provider,session,model,day,hour,long_context)")
         db.execute("DROP TABLE affected")
         db.execute("DELETE FROM dirty WHERE key IN (SELECT key FROM active_dirty)")
         db.execute("DROP TABLE active_dirty")
