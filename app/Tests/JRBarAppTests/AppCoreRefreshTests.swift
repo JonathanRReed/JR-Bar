@@ -33,6 +33,22 @@ struct AppCoreRefreshTests {
         #expect(refresh.take(core).contains(.connection))
     }
 
+    @Test("reconnection refreshes the aggregate even with an identical roster")
+    func reconnectAggregate() {
+        let core = CoreModel(socketPath: "/tmp/jrbar-refresh-unused.sock")
+        core.handle(.connected)
+        core.apply(.state(CoreState()))
+        var refresh = AppCoreRefresh()
+        _ = refresh.take(core)
+        core.handle(.disconnected(reason: "fixture"))
+        #expect(refresh.take(core).refreshesAggregate)
+        core.handle(.connected)
+        let resumed = refresh.take(core)
+        #expect(resumed.contains(.connection))
+        #expect(resumed.refreshesAggregate)
+        #expect(!AppCoreRefresh.Changes.usage.refreshesAggregate)
+    }
+
     @Test("health frames do not rearm the app observation")
     func observationStaysCalm() {
         let core = CoreModel(socketPath: "/tmp/jrbar-refresh-unused.sock")

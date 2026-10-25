@@ -1660,7 +1660,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if wasLive, !live { events?.reset() }
         if live != wasLive { syncFileFeeds(live: live, core: core) }
         wasLive = live
-        if rosterChanged { refreshAggregate() }
+        if changes.refreshesAggregate { refreshAggregate() }
         if !changes.intersection([.roster, .usage, .devices, .connection]).isEmpty {
             utilitiesStore?.menuBar.coreFactsChanged()
         }

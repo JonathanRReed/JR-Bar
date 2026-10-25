@@ -12,6 +12,7 @@ struct AppCoreRefresh {
         static let usage = Self(rawValue: 1 << 3)
         static let devices = Self(rawValue: 1 << 4)
         static let lights = Self(rawValue: 1 << 5)
+        var refreshesAggregate: Bool { !intersection([.roster, .connection]).isEmpty }
         static let all: Self = [.connection, .settings, .roster, .usage, .devices, .lights]
     }
     /// Clock inputs keep changing between daemon frames. Use one wake for
@@ -66,10 +67,11 @@ struct AppCoreRefresh {
         }
         if old.settings != next.settings { changes.insert(.settings) }
         let a = old.state, b = next.state
-        if liveChanged || a?.sessions != b?.sessions || a?.asks != b?.asks
-            || a?.aggregate != b?.aggregate || a?.escalation != b?.escalation
-            || a?.unseenCompletions != b?.unseenCompletions || a?.hiddenCount != b?.hiddenCount
-            || a?.power != b?.power || a?.focus != b?.focus || a?.presence != b?.presence {
+        let sessionsChanged = a?.sessions != b?.sessions || a?.asks != b?.asks
+        let aggregateChanged = a?.aggregate != b?.aggregate || a?.escalation != b?.escalation
+        let completionsChanged = a?.unseenCompletions != b?.unseenCompletions || a?.hiddenCount != b?.hiddenCount
+        let contextChanged = a?.power != b?.power || a?.focus != b?.focus || a?.presence != b?.presence
+        if liveChanged || sessionsChanged || aggregateChanged || completionsChanged || contextChanged {
             changes.insert(.roster)
         }
         if liveChanged || a?.usage != b?.usage { changes.insert(.usage) }
