@@ -91,7 +91,15 @@ struct UsageCenterStoreTests {
         core.apply(.event(CoreEvent(id: "small-burst", kind: "completed")))
         for task in store.windowDidOpen() { await task.value }
         #expect(ranges == [store.range])
-        #expect(resetReads == 0)
+        #expect(resetReads == 2)
+        store.windowDidClose()
+        ranges.removeAll()
+        for index in 0..<40 {
+            core.apply(.event(CoreEvent(id: "observed-closed-\(index)", kind: "completed")))
+            store.coreDidChange()
+        }
+        for task in store.windowDidOpen() { await task.value }
+        #expect(ranges == [store.range])
         store.windowDidClose()
         ranges.removeAll()
         for index in 0..<40 {
@@ -146,7 +154,9 @@ struct ResetSaveStatusTests {
                 "persistence": .object(["dirty": .bool(!retry),
                                          "error": retry ? .null : .string("refused_full")])]))
         }
-        await store.loadResetStatus().value
+        store.readProviderRows = { [] }
+        for task in store.windowDidOpen() { await task.value }
+        store.windowDidClose()
         #expect(store.resetSaveFailure == "refused_full")
         await store.loadResetStatus(retry: true).value
         #expect(retries == [false, true] && store.resetSaveFailure == nil)
