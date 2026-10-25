@@ -476,6 +476,10 @@ def test_the_cli_wires_answers_only_when_asked(monkeypatch) -> None:
     monkeypatch.setenv(SERVE_ACCESS_TOKEN_ENV, TOKEN.decode())
     assert cmd_serve(parser.parse_args(["serve"])) == 0
     assert calls[-1]["answers"] is None
+    monkeypatch.setattr(CoreSocketAnswers, "enabled", lambda self: False)
+    assert cmd_serve(parser.parse_args(["serve", "--allow-answers"])) == 2
+    assert len(calls) == 1
+    monkeypatch.setattr(CoreSocketAnswers, "enabled", lambda self: True)
     assert cmd_serve(parser.parse_args(["serve", "--allow-answers"])) == 0
     assert isinstance(calls[-1]["answers"], CoreSocketAnswers)
 

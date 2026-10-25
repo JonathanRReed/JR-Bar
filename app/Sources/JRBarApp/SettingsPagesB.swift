@@ -1491,6 +1491,7 @@ struct MachineList: View {
 /// `GET /status.json` with the bearer the Copy button fetches.
 struct StreamDeckCard: View {
     @Bindable var store: SettingsStore
+    @ViewState private var confirmingAnswers = false
 
     /// `serve_token`'s `running` flag, refetched when the switch or the
     /// connection flips; nil until the core answers (older and mock cores
@@ -1523,6 +1524,20 @@ struct StreamDeckCard: View {
                             subtitle: "Serve status, the status URL and its token.") {
                 SettingToggle(store, "Serve status", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
                               path: "serve_enabled")
+                Toggle("Answer from a key", isOn: Binding(
+                    get: { store.values.bool("serve_answer_enabled") ?? false },
+                    set: { enabled in
+                        if enabled { confirmingAnswers = true }
+                        else { store.set("serve_answer_enabled", .bool(false)) }
+                    }))
+                    .disabled(!store.isLive)
+                    .confirmationDialog("Allow Stream Deck keys to answer asks?", isPresented: $confirmingAnswers,
+                                        titleVisibility: .visible) {
+                        Button("Allow answers from a key") { store.set("serve_answer_enabled", .bool(true)) }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("A press can approve, deny or choose an answer through the local endpoint. Bind answers only to keys you press, never to rules or timers.")
+                    }
                 SettingRow("Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts.") {
                     HStack(spacing: 8) {
                         Text("http://127.0.0.1:8737/status.json")

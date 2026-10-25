@@ -1087,6 +1087,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
         from .serve_answers import CoreSocketAnswers
 
         answers = CoreSocketAnswers(default_socket_path())
+        if not answers.enabled():
+            print(
+                "jrbar serve: answering needs consent in Settings > Devices & Lighting > Stream Deck",
+                file=sys.stderr,
+            )
+            return 2
     try:
         serve(
             port=int(getattr(args, "port", 8737)),
