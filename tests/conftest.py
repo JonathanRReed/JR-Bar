@@ -191,6 +191,36 @@ def block_live_launchd_mutations():
         yield
 
 
+@pytest.fixture(autouse=True)
+def block_live_keychain_access():
+    """A forgotten stub must fail before it reaches the owner's Keychain."""
+    import shlex
+
+    def reject(arguments):
+        command = shlex.split(arguments) if isinstance(arguments, str) else list(arguments)
+        if not command:
+            return
+        executable = Path(os.fsdecode(command[0])).name
+        if executable == "security" or any("jrbar.keychain_read" in str(arg) for arg in command):
+            raise AssertionError("test attempted live Keychain access; inject a fake reader")
+
+    with pytest.MonkeyPatch.context() as mp:
+        for name in ("run", "Popen"):
+            original = getattr(subprocess, name)
+
+            def guarded(arguments, *args, _original=original, **kwargs):
+                reject(arguments)
+                return _original(arguments, *args, **kwargs)
+
+            mp.setattr(subprocess, name, guarded)
+
+        def refuse_api():
+            raise AssertionError("test attempted real Keychain API; inject a fake API")
+
+        mp.setattr("jrbar.keychain_read._load_api", refuse_api)
+        yield
+
+
 def _reject_live_volume(path: object, operation: str) -> None:
     if _is_live_volume_path(path):
         raise AssertionError(

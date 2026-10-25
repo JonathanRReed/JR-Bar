@@ -324,7 +324,7 @@ def test_background_read_is_refused_without_a_standing_grant__and_2_more(tmp_pat
 
 
 
-def test_a_background_read_cannot_park_a_worker_thread_for_half_a_minute(tmp_path):
+def test_a_background_read_cannot_park_a_worker_thread_for_half_a_minute(tmp_path, monkeypatch):
     """A dialog the user must answer legitimately takes seconds. A
     BACKGROUND read must not wait on one at all -- 30s of a stalled
     worker was the hazard (2026-08-27 mining)."""
@@ -342,6 +342,7 @@ def test_a_background_read_cannot_park_a_worker_thread_for_half_a_minute(tmp_pat
 
     ledger = KeychainConsentLedger(tmp_path / "consent.json")
     ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1_000.0)
+    monkeypatch.setattr(module, "_run_security_reader", lambda *args, **kwargs: _completed(44))
     original = module._run_keychain_reader
     module._run_keychain_reader = runner
     try:
