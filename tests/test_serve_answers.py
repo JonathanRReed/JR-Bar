@@ -485,6 +485,17 @@ def test_the_cli_wires_answers_only_when_asked(monkeypatch, capsys) -> None:
     assert cmd_serve(parser.parse_args(["serve", "--allow-answers"])) == 0
     assert isinstance(calls[-1]["answers"], CoreSocketAnswers)
 
+    def unavailable(self):
+        raise ServeAnswerRefused("unavailable", "the monitor is not running")
+
+    monkeypatch.setattr(CoreSocketAnswers, "enabled", unavailable)
+    assert cmd_serve(parser.parse_args(["serve", "--allow-answers"])) == 0
+    assert isinstance(calls[-1]["answers"], CoreSocketAnswers)
+    warning = capsys.readouterr().err
+    assert "the monitor is not running" in warning
+    assert "status is still served" in warning
+    assert "consent" not in warning
+
 
 def test_answering_from_serve_is_off_by_default_and_round_trips(tmp_path: Path) -> None:
     from jrbar.core_runtime import settings_from_document
