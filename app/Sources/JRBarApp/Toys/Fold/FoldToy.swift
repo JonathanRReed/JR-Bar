@@ -44,6 +44,7 @@ final class FoldToy: Toy {
     @ObservationIgnored private let hotkeyCenter: HotkeyCenter
     @ObservationIgnored private var dismissal = FoldDismissal()
     private(set) var dismissalKeyUnavailable = false
+    @ObservationIgnored private var shaderReadinessPending = false
     /// The owning store; weak, the store keeps the toy.
     weak var store: ToysStore?
     @ObservationIgnored private(set) var isShutdown = false
@@ -610,7 +611,24 @@ final class FoldToy: Toy {
         sensor.setPolling(true)
         // The shaders compile once, off the main thread, now — not on the
         // first gesture, where the compile would stall the first frame.
-        if settings.provider == .jrbar { FoldShaderCache.shared.prewarm(pixelFormat: .bgra8Unorm) }
+        if settings.provider == .jrbar, !rendererFailed, !shaderReadinessPending,
+           !FoldShaderCache.shared.isReady(pixelFormat: .bgra8Unorm) {
+            shaderReadinessPending = true
+            FoldShaderCache.shared.prewarm(pixelFormat: .bgra8Unorm) { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.shaderReadinessPending = false
+                    guard !self.isShutdown, self.settings.enabled,
+                          self.settings.provider == .jrbar else { return }
+                    if FoldShaderCache.shared.isReady(pixelFormat: .bgra8Unorm) {
+                        self.reconcile()
+                    } else {
+                        self.rendererFailed = true
+                        self.rendererFailedAt = CACurrentMediaTime()
+                    }
+                }
+            }
+        }
         // A failed renderer re-arms past its cooldown rather than
         // staying benched for the app's lifetime: the flag lifts here
         // and the next arm attempt retries the init — if Metal is
@@ -1231,6 +1249,8 @@ final class FoldToy: Toy {
             self.overlay = overlay
             reframedVersion = -1
             return overlay
+        } catch FoldRendererError.notReady {
+            return nil
         } catch {
             rendererFailed = true
             rendererFailedAt = CACurrentMediaTime()
