@@ -483,3 +483,15 @@ def test_legacy_delivery_without_account_scope_keeps_fact_and_stable_id_dedup():
     grown = begin_reset_delivery(legacy, second, ResetDeliverySettings(), now=1_003.0)
     assert len(grown.events) == 2
     assert [event.event_id for event in reset_events_pending_app(grown, now=1_004.0)] == [second.event_id]
+
+
+@pytest.mark.parametrize("outcomes", [("dropped", "delivered"), ("delivered", "dropped")])
+def test_delivered_wins_a_racing_reconciliation_receipt(outcomes):
+    from jrbar.provider_reset_events import apply_app_receipt, reset_events_pending_app
+
+    state = begin_reset_delivery(ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0)
+    for index, outcome in enumerate(outcomes):
+        state = apply_app_receipt(state, _event().event_id, outcome, "fixture", now=1_001.0 + index)
+    restored = decode_reset_delivery_state(encode_reset_delivery_state(state))
+    assert restored.events[0].app_receipts[-1].outcome == "delivered"
+    assert reset_events_pending_app(restored, now=1_100.0) == ()
