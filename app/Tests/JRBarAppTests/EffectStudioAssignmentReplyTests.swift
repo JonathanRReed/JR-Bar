@@ -5,7 +5,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Effect Studio assignment replies", .serialized)
+@Suite("Effect Studio assignment replies", .serialized, .timeLimit(.minutes(2)))
 struct EffectStudioAssignmentReplyTests {
     @Test("an old task cannot clear a newer submission's pending state")
     func oldCleanupLeavesNewSubmissionAlone() async throws {

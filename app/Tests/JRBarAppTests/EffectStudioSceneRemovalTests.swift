@@ -7,7 +7,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Effect Studio scene and removal ownership", .serialized)
+@Suite("Effect Studio scene and removal ownership", .serialized, .timeLimit(.minutes(2)))
 struct EffectStudioSceneRemovalTests {
     @Test("automatic scene facts change the displayed scene without changing its saved selection")
     func automaticSceneFactIsDisplayed() async throws {

@@ -47,9 +47,9 @@ struct ExternalAppProbe {
 
     /// Launch it — the card's "Open" for a picked-but-not-running
     /// counterpart.
-    func open() {
+    @MainActor func open() {
         guard let url else { return }
-        NSWorkspace.shared.open(url)
+        DesktopServices.automatic.open(url)
     }
 }
 

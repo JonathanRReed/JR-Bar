@@ -34,15 +34,19 @@ struct MenuBarOneItemTests {
         return out
     }
 
-    @Test("the app creates an NSStatusItem only in StatusItemController")
+    @Test("one guarded factory creates the status item for its controller")
     func onlyTheIconCreatesAStatusItem() throws {
         let files = try Self.sources()
         #expect(files.count > 100, "the scan found the sources")
         let makers = files.filter { Self.has($0.text, "NSStatusBar.system.statusItem(") }
-        #expect(makers.map(\.path) == ["JRBarApp/StatusItemController.swift"])
+        #expect(makers.map(\.path) == ["JRBarApp/DesktopServices.swift"])
         // Born in `init`, and again only by the recovery watchdog's `recreate`.
-        let controller = try #require(makers.first?.text)
-        #expect(controller.components(separatedBy: "NSStatusBar.system.statusItem(").count - 1 == 2)
+        let factory = try #require(makers.first?.text)
+        #expect(factory.components(separatedBy: "NSStatusBar.system.statusItem(").count - 1 == 1)
+        let callers = files.filter { Self.has($0.text, "desktop.makeStatusItem(") }
+        #expect(callers.map(\.path) == ["JRBarApp/StatusItemController.swift"])
+        let controller = try #require(callers.first?.text)
+        #expect(controller.components(separatedBy: "desktop.makeStatusItem(").count - 1 == 2)
     }
 
     @Test("nothing writes Control Center's preferences but the one-time restore")

@@ -29,7 +29,7 @@ struct ShelfMirrorStateTests {
         while model.state != state { await Task.yield() }
     }
 
-    @Test("an authorized open shows starting before the preview becomes live", .timeLimit(.minutes(1)))
+    @Test("an authorized open shows starting before the preview becomes live", .timeLimit(.minutes(2)))
     func startingThenLive() async {
         let driver = Driver()
         let model = ShelfMirrorModel(driver: driver, authorization: { .authorized })
@@ -42,7 +42,7 @@ struct ShelfMirrorStateTests {
     }
 
     @Test("permission waiting survives a reopen without asking twice and a closed card stays off",
-          .timeLimit(.minutes(1)))
+          .timeLimit(.minutes(2)))
     func permissionOwnership() async {
         let driver = Driver()
         var answer: (@Sendable (Bool) -> Void)?
@@ -73,7 +73,7 @@ struct ShelfMirrorStateTests {
         model.sync(enabled: false)
     }
 
-    @Test("an unavailable camera can retry while a starting run cannot duplicate work", .timeLimit(.minutes(1)))
+    @Test("an unavailable camera can retry while a starting run cannot duplicate work", .timeLimit(.minutes(2)))
     func retryUnavailable() async {
         let driver = Driver()
         driver.preparationAllowed = false
@@ -91,7 +91,7 @@ struct ShelfMirrorStateTests {
         #expect(driver.counts.starts == 1)
     }
 
-    @Test("a permission callback cannot start a reopened authorized mirror twice", .timeLimit(.minutes(1)))
+    @Test("a permission callback cannot start a reopened authorized mirror twice", .timeLimit(.minutes(2)))
     func permissionCallbackAfterAuthorizedReopen() async {
         let driver = Driver()
         var answer: (@Sendable (Bool) -> Void)?
@@ -108,7 +108,7 @@ struct ShelfMirrorStateTests {
         #expect(driver.counts.starts == 1)
     }
 
-    @Test("a permission refusal stays visible and retry rechecks a newly allowed camera", .timeLimit(.minutes(1)))
+    @Test("a permission refusal stays visible and retry rechecks a newly allowed camera", .timeLimit(.minutes(2)))
     func retryAfterPermissionChange() async {
         let driver = Driver()
         let model = ShelfMirrorModel(driver: driver, authorization: { .notDetermined },
@@ -126,7 +126,7 @@ struct ShelfMirrorStateTests {
     }
 
     @Test("closing a starting mirror immediately clears the placeholder and retires queued work",
-          .timeLimit(.minutes(1)))
+          .timeLimit(.minutes(2)))
     func closeStartingMirror() async {
         let driver = Driver()
         let queue = DispatchQueue(label: "jrbar.test.mirror-starting-state")

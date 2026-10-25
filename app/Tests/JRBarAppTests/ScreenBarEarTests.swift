@@ -22,7 +22,7 @@ struct ScreenBarEarTests {
         let first = store.screenBarWings
         #expect(first.right?.meter == 0.42)
         #expect(first.right?.text.contains("resets in") == true)
-        try await Task.sleep(for: .milliseconds(10))
+        store.now = store.now.addingTimeInterval(0.01)
         #expect(store.screenBarWings == first,
                 "subsecond clock changes must not invalidate an unchanged ring")
         state.usage?.providers[0].windows[0].usedPct = 50

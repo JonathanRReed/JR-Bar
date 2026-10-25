@@ -40,7 +40,7 @@ struct MenuBarSpacingRelaunchRow: View {
             SettingLabel(title: "Relaunch menu bar apps",
                          subtitle: "Items take a new spacing as their apps relaunch. This quits and reopens the apps with items on your bar, never Apple's own.")
         }
-        .confirmationDialog("Relaunch \(apps.count) menu bar apps?", isPresented: $confirming) {
+        .confirmationDialog("Relaunch \(apps.count) menu bar apps?", isPresented: WindowPresenter.presentation($confirming)) {
             Button("Relaunch") { utility.relaunchForSpacing(apps.map(\.bundleID)) }
             Button("Cancel", role: .cancel) {}
         } message: {

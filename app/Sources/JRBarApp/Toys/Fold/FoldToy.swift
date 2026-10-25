@@ -1834,13 +1834,13 @@ final class FoldToy: Toy {
         refreshTick()
         let url = provider == .bendy ? bendyURL : lidPlaneURL
         if let url {
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+            DesktopServices.automatic.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
         }
     }
 
     /// Settings deep link for the Screen Recording row.
     func openScreenRecordingSettings() {
-        NSWorkspace.shared.open(FoldCapturePermission.settingsURL)
+        DesktopServices.automatic.open(FoldCapturePermission.settingsURL)
     }
 
     /// The "Allow Screen Recording" button: the system prompt, then a

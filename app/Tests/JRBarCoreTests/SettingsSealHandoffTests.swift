@@ -5,7 +5,7 @@ import Testing
 /// The seal key rides the same private stdin pipe as the per-launch secret
 /// (docs/CORE-PROTOCOL.md, "Protected settings"): after the secret, announced
 /// by `JRBAR_AUTH_STDIN` 2 or 3, and in no environment variable or argument.
-@Suite("Settings seal hand-off", .serialized)
+@Suite("Settings seal hand-off", .serialized, .timeLimit(.minutes(2)))
 struct SettingsSealHandoffTests {
     static let key = Data((0..<32).map { UInt8($0 &+ 150) })
 

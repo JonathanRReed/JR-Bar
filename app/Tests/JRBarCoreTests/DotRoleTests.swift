@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import JRBarCore
 
-@Suite("The Dot's role")
+@Suite("The Dot's role", .timeLimit(.minutes(2)))
 struct DotRoleTests {
     @Test("cached Dot facts do not claim an active role while disconnected")
     func offlineReadout() {
@@ -366,7 +366,7 @@ struct DotRoleTests {
     }
 }
 
-@Suite("The Dot's role against the mock", .serialized)
+@Suite("The Dot's role against the mock", .serialized, .timeLimit(.minutes(2)))
 struct DotRoleMockTests {
     @Test("writing dot_role republishes lights with the role the Dot is playing")
     @MainActor

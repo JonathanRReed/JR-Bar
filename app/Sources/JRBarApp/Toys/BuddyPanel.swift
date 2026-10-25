@@ -215,7 +215,7 @@ final class BuddyDragController {
         swallowUp = true
         let menu = toy.actionMenu(panelFrame: view.window?.frame)
         menuWindow = view.window
-        menu.popUp(positioning: nil, at: point, in: view)
+        WindowPresenter.automatic.perform { _ = menu.popUp(positioning: nil, at: point, in: view) }
         menuWindow = nil
         // The press is spent on the menu either way; `swallowUp` stays
         // set so a stray release can't complete the pending tap.
@@ -349,9 +349,9 @@ final class BuddyPanel: NSPanel {
                 self.animator().alphaValue = 1
             }
             alphaValue = 1
-            orderFrontRegardless()
+            WindowPresenter.automatic.order(self)
         } else {
-            orderFrontRegardless()
+            WindowPresenter.automatic.order(self)
             animator().alphaValue = 1
         }
         armWalkabout()

@@ -38,6 +38,7 @@ final class ShelfCalendarModel {
 
     private(set) var state: State = .needsPermission
     private var refreshTimer: Timer?
+    @ObservationIgnored var scheduleRefreshOverride: (() -> Void)?
     /// The permission as it stands; the tests hand in their own.
     @ObservationIgnored var authorization: () -> EKAuthorizationStatus = {
         EKEventStore.authorizationStatus(for: .event)
@@ -96,6 +97,8 @@ final class ShelfCalendarModel {
     /// rather than hiding a stale event. A reading that lands after the
     /// card folded (`stop` bumped the epoch) is dropped.
     private func loadNext() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
         epoch += 1
         let epoch = self.epoch
         let fetch = fetchEvents
@@ -112,10 +115,10 @@ final class ShelfCalendarModel {
                     let next = ShelfCalendarModel.upcoming(events, now: self.clock(),
                                                            limit: ShelfCalendarModel.eventLimit)
                     self.state = next.isEmpty ? .idle : .events(next)
+                    self.scheduleRefresh()
                 }
             }
         }
-        scheduleRefresh()
     }
 
     /// One store for the glance's reads, made and used on a model's
@@ -148,6 +151,7 @@ final class ShelfCalendarModel {
 
     /// Re-read on a slow cadence while the card is pinned — events move.
     private func scheduleRefresh() {
+        if let scheduleRefreshOverride { scheduleRefreshOverride(); return }
         refreshTimer?.invalidate()
         let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshNow() }
@@ -193,7 +197,7 @@ final class ShelfCalendarModel {
     /// and only ever with a URL that passed the scheme check.
     func join(_ event: Event) {
         guard let url = event.url else { return }
-        NSWorkspace.shared.open(url)
+        DesktopServices.automatic.open(url)
     }
 
     /// Open shows the event in Calendar.app — no details are copied
@@ -205,7 +209,7 @@ final class ShelfCalendarModel {
         let day = Calendar.current.startOfDay(for: event.start)
         if let when = Calendar.current.date(byAdding: components, to: day),
            let url = URL(string: "ical://\(Int(when.timeIntervalSince1970))") {
-            NSWorkspace.shared.open(url)
+            DesktopServices.automatic.open(url)
         }
     }
 }

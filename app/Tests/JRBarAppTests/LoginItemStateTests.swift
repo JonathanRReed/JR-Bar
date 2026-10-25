@@ -1,43 +1,13 @@
 import Foundation
+import JRBarTestSupport
 import JRBarCore
 import ServiceManagement
 import Testing
 @testable import JRBarApp
 
-@Suite("Login item state", .serialized)
+@Suite("Login item state", .serialized, .timeLimit(.minutes(2)))
 @MainActor
 struct LoginItemStateTests {
-    private struct StartSignal: Sendable {
-        private let stream: AsyncStream<Bool>
-        private let continuation: AsyncStream<Bool>.Continuation
-
-        nonisolated init() {
-            let signal = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingOldest(1))
-            stream = signal.stream
-            continuation = signal.continuation
-        }
-
-        nonisolated func signal() {
-            continuation.yield(true)
-            continuation.finish()
-        }
-
-        nonisolated func wait() async -> Bool {
-            let deadline = Task {
-                try? await Task.sleep(for: .seconds(10))
-                guard !Task.isCancelled else { return }
-                continuation.yield(false)
-                continuation.finish()
-            }
-            defer {
-                deadline.cancel()
-                continuation.finish()
-            }
-            for await started in stream { return started }
-            return false
-        }
-    }
-
     private final class Probe: @unchecked Sendable {
         private let lock = NSLock()
         private var writes: [Bool] = []
@@ -73,13 +43,13 @@ struct LoginItemStateTests {
     }
 
     @Test func anOlderReadCannotReplaceTheLatestStatus() async {
-        let started = StartSignal()
-        let release = DispatchSemaphore(value: 0)
+        let started = TestSignal()
+        let release = TestGate()
         defer { release.signal() }
         let store = SettingsStore(core: CoreModel())
         store.loginItemStateReader = {
             started.signal()
-            _ = release.wait(timeout: .now() + 10)
+            release.wait()
             return .enabled
         }
         let old = store.refreshLaunchAtLogin()
@@ -95,15 +65,15 @@ struct LoginItemStateTests {
     }
 
     @Test func registrationStaysOffMainAndIgnoresDuplicatePendingRequests() async {
-        let started = StartSignal()
-        let release = DispatchSemaphore(value: 0)
+        let started = TestSignal()
+        let release = TestGate()
         defer { release.signal() }
         let probe = Probe()
         let store = SettingsStore(core: CoreModel())
         store.loginItemChange = { on in
             probe.changed(on)
             started.signal()
-            _ = release.wait(timeout: .now() + 10)
+            release.wait()
         }
         store.loginItemStateReader = { probe.read(); return .requiresApproval }
         let first = store.setLaunchAtLogin(true)
@@ -152,13 +122,13 @@ struct LoginItemStateTests {
     }
 
     @Test func cancelingAReadReleasesThePendingControl() async {
-        let started = StartSignal()
-        let release = DispatchSemaphore(value: 0)
+        let started = TestSignal()
+        let release = TestGate()
         defer { release.signal() }
         let store = SettingsStore(core: CoreModel())
         store.loginItemStateReader = {
             started.signal()
-            _ = release.wait(timeout: .now() + 10)
+            release.wait()
             return .enabled
         }
         let read = store.refreshLaunchAtLogin()

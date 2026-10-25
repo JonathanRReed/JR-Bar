@@ -4,7 +4,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Automatic Quiet lease acknowledgements", .serialized)
+@Suite("Automatic Quiet lease acknowledgements", .serialized, .timeLimit(.minutes(2)))
 struct MenuBarQuietLeaseTests {
     @Test("a stopped rule releases a late acquisition by its own ID")
     func lateAcquisitionIsReleased() async throws {
@@ -21,7 +21,7 @@ struct MenuBarQuietLeaseTests {
             #expect(release["lease_id"] == acquire["lease_id"])
             #expect(release["expected_revision"] == nil)
             try await fixture.release(result: receipt("released", "revision-2"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
         }
     }
 
@@ -42,7 +42,7 @@ struct MenuBarQuietLeaseTests {
             #expect(next["lease_id"] != first["lease_id"])
             #expect(next["expected_revision"]?.stringValue == "revision-2")
             try await fixture.release(result: receipt("acquired", "revision-3"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
         }
     }
 
@@ -52,14 +52,14 @@ struct MenuBarQuietLeaseTests {
             lease.setHolding(true)
             let first = try await request(fixture)
             try await fixture.release(result: receipt("acquired", "revision-1"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             #expect(fixture.core.state?.focus?.overrideRevision == "revision-0")
             lease.renew()
             let next = try await request(fixture)
             #expect(next["lease_id"] == first["lease_id"])
             #expect(next["expected_revision"]?.stringValue == "revision-1")
             try await fixture.release(result: receipt("acquired", "revision-2"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
         }
     }
 
@@ -69,7 +69,7 @@ struct MenuBarQuietLeaseTests {
             lease.setHolding(true)
             _ = try await request(fixture)
             try await fixture.release(error: error)
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             lease.renew()
             lease.resume()
             try await fixture.pending(0)
@@ -86,13 +86,13 @@ struct MenuBarQuietLeaseTests {
             lease.setHolding(true)
             _ = try await request(fixture)
             try await fixture.release(result: receipt("deferred", "revision-0"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             applyRevision("new-manual", fixture)
             lease.renew()
             let next = try await request(fixture)
             #expect(next["expected_revision"]?.stringValue == "revision-0")
             try await fixture.release(error: "conflict")
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             lease.setHolding(false)
             try await fixture.pending(0)
         }
@@ -110,7 +110,7 @@ struct MenuBarQuietLeaseTests {
             let next = try await request(fixture)
             #expect(next["expected_revision"]?.stringValue == "new-daemon")
             try await fixture.release(result: receipt("deferred", "new-daemon"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
         }
     }
 
@@ -120,7 +120,7 @@ struct MenuBarQuietLeaseTests {
             lease.setHolding(true)
             _ = try await request(fixture)
             try await fixture.release(result: ["status": .string("acquired"), "revision": .string("revision-1"), "until": until])
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             lease.renew()
             try await fixture.pending(0)
         }
@@ -132,7 +132,7 @@ struct MenuBarQuietLeaseTests {
             lease.setHolding(true)
             _ = try await request(fixture)
             fixture.core.stop()
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             lease.renew()
             #expect(!lease.isChanging)
             #expect(fixture.core.inFlightCommands == 0)
@@ -155,7 +155,7 @@ struct MenuBarQuietLeaseTests {
             let release = try await request(fixture)
             #expect(release["action"]?.stringValue == "release")
             try await fixture.release(result: receipt("released", "revision-2"))
-            try #require(await fixture.until { !runner.quietLease.isChanging })
+            try #require(await runner.quietLease.waitUntilIdle())
         }
     }
 
@@ -186,12 +186,12 @@ struct MenuBarQuietLeaseTests {
             try await body(fixture, lease)
             lease.setHolding(false)
             fixture.core.stop()
-            #expect(await fixture.until { !lease.isChanging })
+            #expect(await lease.waitUntilIdle())
             await fixture.stop()
         } catch {
             lease.setHolding(false)
             fixture.core.stop()
-            _ = await fixture.until { !lease.isChanging }
+            _ = await lease.waitUntilIdle()
             await fixture.stop()
             throw error
         }

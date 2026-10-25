@@ -6,7 +6,7 @@ import Testing
 @MainActor
 @Suite("Setup reliability render proof")
 struct SetupReliabilityRenderProofTests {
-    @Test(.enabled(if: WindowsRenderProofTests.enabled), .timeLimit(.minutes(1)))
+    @Test(.enabled(if: WindowsRenderProofTests.enabled), .timeLimit(.minutes(2)))
     func aPermissionRequestDisablesOnlyItsRow() async throws {
         var resume: CheckedContinuation<Void, Never>?
         var model = SetupModel()

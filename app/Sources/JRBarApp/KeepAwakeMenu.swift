@@ -226,7 +226,7 @@ enum KeepAwakeMenu {
     /// Pop the menu at a screen point — the ear's right-click.
     @MainActor
     static func popUp(at point: NSPoint, store: SystemTogglesStore = SystemTogglesStore()) {
-        menu(for: store).popUp(positioning: nil, at: point, in: nil)
+        WindowPresenter.automatic.perform { _ = menu(for: store).popUp(positioning: nil, at: point, in: nil) }
     }
 }
 

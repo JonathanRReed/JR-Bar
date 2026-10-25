@@ -28,7 +28,8 @@ extension MenuBarUtility {
     /// spacing — only ever from the confirm sheet's button. Each app is
     /// asked to quit (never forced), given a few seconds, and reopened in
     /// the background from where it was.
-    func relaunchForSpacing(_ apps: [String]) {
+    func relaunchForSpacing(_ apps: [String], desktop: DesktopServices = .automatic) {
+        guard !WindowPresenter.suppressesDesktop else { return }
         guard relaunchingApps.isEmpty, !apps.isEmpty else { return }
         relaunchingApps = apps
         Task { @MainActor [weak self] in
@@ -48,7 +49,7 @@ extension MenuBarUtility {
                 }
                 let configuration = NSWorkspace.OpenConfiguration()
                 configuration.activates = false
-                _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+                _ = try? await desktop.openApplication(at: url, configuration: configuration)
                 self?.relaunchingApps.removeAll { $0 == id }
             }
             self?.relaunchingApps = []

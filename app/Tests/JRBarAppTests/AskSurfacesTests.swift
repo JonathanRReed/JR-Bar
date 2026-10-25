@@ -55,12 +55,7 @@ struct AskSurfacesTests {
     /// hops queued behind the stall still get their turns before this
     /// gives up. Each hop lands in a blink when nothing is in the way.
     static func waitFor(_ done: () -> Bool) async {
-        let deadline = Date().addingTimeInterval(30)
-        var turns = 0
-        while !done(), turns < 300 || Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(10))
-            turns += 1
-        }
+        while !done(), !Task.isCancelled { await drainMainQueue() }
     }
 
     // MARK: Palette
@@ -215,7 +210,7 @@ struct AskSurfacesTests {
                               section: .history, actions: [])
         // The slow read outlasts the test; closing the palette cancels it.
         let slow = PaletteClosureSource(build: { [] }, search: { _ in
-            try? await Task.sleep(for: .seconds(60))
+            _ = try? await TestEvents<Void>().next()
             return []
         })
         let fast = PaletteClosureSource(build: { [] }, search: { _ in [hit] })
@@ -555,7 +550,7 @@ struct AskSurfacesTests {
         let asked = Log()
         let coordinator = watchedCoordinator(inFront: true, frontmostIsHost: false, elsewhere: true, asked: asked)
         coordinator.handle(CoreEvent(id: "e1", kind: "escalation_stage", session: "claude:session:w", stage: 2))
-        try await Task.sleep(for: .milliseconds(100))
+        #expect(await waitForObservedState { coordinator.isPulsing })
         #expect(asked.calls.isEmpty)
         #expect(coordinator.isPulsing, "not watching: the stage keeps its noise")
         #expect(AskingPane.frontmostElsewhere(sessionPID: Int(getpid()), frontmostPID: 4242))

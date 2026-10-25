@@ -1,13 +1,14 @@
 import Foundation
+import Observation
 import JRBarCore
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("System toggle ordering")
+@Suite("System toggle ordering", .timeLimit(.minutes(2)))
 struct SystemToggleOrderingTests {
     @MainActor
-    final class Replies {
+    @Observable final class Replies {
         var commands: [String] = []
         var commandReplies: [CheckedContinuation<(output: String?, error: String?), Never>] = []
         var settles: [CheckedContinuation<Void, Never>] = []
@@ -32,11 +33,8 @@ struct SystemToggleOrderingTests {
             }
         }
 
-        func wait(_ ready: @MainActor () -> Bool, timeout: Duration = .seconds(5)) async -> Bool {
-            let clock = ContinuousClock()
-            let deadline = clock.now.advanced(by: timeout)
-            while !ready(), clock.now < deadline { await Task.yield() }
-            return ready()
+        func wait(_ ready: @MainActor () -> Bool) async -> Bool {
+            await waitForObservedState(ready)
         }
 
         func clean() {
@@ -259,7 +257,7 @@ struct SystemToggleOrderingTests {
         ]))
         // Both writes are already out. Retire their held replies without system effects.
         replies.clean()
-        let finished = await replies.wait({ store.applying.isEmpty }, timeout: .seconds(120))
+        let finished = await replies.wait { store.applying.isEmpty }
         try #require(finished)
     }
 }

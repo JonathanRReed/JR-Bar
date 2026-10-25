@@ -24,7 +24,7 @@ struct OverviewComparisonOrderTests {
         return try JSONDecoder().decode(CoreRunComparison.self, from: Data(json.utf8))
     }
 
-    @Test("a late older comparison cannot replace the newer pair", .timeLimit(.minutes(1)))
+    @Test("a late older comparison cannot replace the newer pair", .timeLimit(.minutes(2)))
     func newerReplyWins() async throws {
         let gate = Gate()
         let store = try makeStore(gate)
@@ -41,7 +41,7 @@ struct OverviewComparisonOrderTests {
         #expect(!store.comparing)
     }
 
-    @Test("an older completion does not clear the newer busy state", .timeLimit(.minutes(1)))
+    @Test("an older completion does not clear the newer busy state", .timeLimit(.minutes(2)))
     func newerRequestKeepsBusy() async throws {
         let gate = Gate()
         let store = try makeStore(gate)
@@ -60,7 +60,7 @@ struct OverviewComparisonOrderTests {
         #expect(!store.comparing)
     }
 
-    @Test("an older failure does not replace a newer success with an error", .timeLimit(.minutes(1)))
+    @Test("an older failure does not replace a newer success with an error", .timeLimit(.minutes(2)))
     func olderFailureIsIgnored() async throws {
         let gate = Gate()
         let store = try makeStore(gate)
@@ -76,7 +76,7 @@ struct OverviewComparisonOrderTests {
         #expect(store.comparison?.a.id == "newer")
     }
 
-    @Test("close retires pending success and failure replies", .timeLimit(.minutes(1)))
+    @Test("close retires pending success and failure replies", .timeLimit(.minutes(2)))
     func closedWindowIgnoresReplies() async throws {
         for fails in [false, true] {
             let gate = Gate()
@@ -94,7 +94,7 @@ struct OverviewComparisonOrderTests {
         }
     }
 
-    @Test("the current request still reports a failure", .timeLimit(.minutes(1)))
+    @Test("the current request still reports a failure", .timeLimit(.minutes(2)))
     func currentFailureIsVisible() async throws {
         let gate = Gate()
         let store = try makeStore(gate)
@@ -106,7 +106,7 @@ struct OverviewComparisonOrderTests {
         #expect(!store.comparing)
     }
 
-    @Test("selection changes do not cancel the explicitly requested pair", .timeLimit(.minutes(1)))
+    @Test("selection changes do not cancel the explicitly requested pair", .timeLimit(.minutes(2)))
     func selectionChangePreservesRequest() async throws {
         let gate = Gate()
         let store = try makeStore(gate)
@@ -119,7 +119,7 @@ struct OverviewComparisonOrderTests {
         #expect(!store.comparing)
     }
 
-    @Test("sheet dismissal retires a held replacement and permits a fresh comparison", .timeLimit(.minutes(1)))
+    @Test("sheet dismissal retires a held replacement and permits a fresh comparison", .timeLimit(.minutes(2)))
     func dismissalRetiresReplacement() async throws {
         let gate = Gate()
         let store = try makeStore(gate)

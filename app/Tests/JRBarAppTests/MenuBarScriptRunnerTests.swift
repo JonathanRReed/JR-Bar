@@ -1,31 +1,29 @@
 import Darwin
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarApp
 import JRBarCore
 
-@Suite("Menu Bar script ownership", .serialized)
+@Suite("Menu Bar script ownership", .serialized, .timeLimit(.minutes(2)))
 struct MenuBarScriptRunnerTests {
     private final class Receipts: @unchecked Sendable {
-        private let condition = NSCondition()
+        private let lock = NSLock()
+        private let changed = TestSignal()
         private var values: [MenuBarScriptRunner.Receipt] = []
 
         func record(_ receipt: MenuBarScriptRunner.Receipt) {
-            condition.lock()
-            values.append(receipt)
-            condition.broadcast()
-            condition.unlock()
+            lock.withLock { values.append(receipt) }
+            changed.signal()
         }
 
-        func waitFor(_ count: Int) -> [MenuBarScriptRunner.Receipt] {
-            condition.lock()
-            defer { condition.unlock() }
-            let deadline = Date().addingTimeInterval(10)
-            while values.count < count {
-                if !condition.wait(until: deadline) { break }
+        func waitFor(_ count: Int) async -> [MenuBarScriptRunner.Receipt] {
+            while lock.withLock({ values.count < count }), !Task.isCancelled {
+                guard await changed.wait() else { break }
             }
-            return values
+            return lock.withLock { values }
         }
+
     }
 
     private func rule(_ id: String, command: String, enabled: Bool = true) -> MenuBarTriggerRule {
@@ -70,7 +68,7 @@ struct MenuBarScriptRunnerTests {
     }
 
     @Test("ECHILD never waits or signals again after an actual external reap")
-    func externallyReaped() {
+    func externallyReaped() async {
         let reaper = ExternalReaper()
         let receipts = Receipts()
         let driver = MenuBarScriptRunner.ProcessDriver(observe: reaper.observe,
@@ -78,7 +76,7 @@ struct MenuBarScriptRunnerTests {
         let runner = MenuBarScriptRunner(process: driver, report: receipts.record)
         runner.start()
         #expect(runner.submit(rule("reaped", command: "exit 0")) == .queued)
-        let receipt = receipts.waitFor(1).first
+        let receipt = await receipts.waitFor(1).first
         runner.shutdown()
         #expect(receipt?.outcome == .waitFailed(errno: ECHILD))
         #expect(reaper.result.reaped)
@@ -98,7 +96,7 @@ struct MenuBarScriptRunnerTests {
     }
 
     @Test("admission distinguishes same rule, capacity and stopped; stop retires queued launches")
-    func queuedAdmission() throws {
+    func queuedAdmission() async throws {
         let directory = try scratch()
         defer { try? FileManager.default.removeItem(at: directory) }
         let marker = directory.appendingPathComponent("must-not-launch")
@@ -118,14 +116,14 @@ struct MenuBarScriptRunnerTests {
         runner.stop()
         #expect(runner.submit(rule("six", command: "exit 0")) == .stopped)
         queue.resume()
-        let all = receipts.waitFor(7)
+        let all = await receipts.waitFor(7)
         #expect(all.filter { $0.outcome == .cancelled }.count == 4)
         #expect(runner.activeCount == 0)
         #expect(!FileManager.default.fileExists(atPath: marker.path))
     }
 
     @Test("a queued rule edited before launch is cancelled; a disabled manual rule remains valid")
-    func queuedEdit() {
+    func queuedEdit() async {
         let queue = DispatchQueue(label: "script fixture edited launch")
         queue.suspend()
         let receipts = Receipts()
@@ -137,37 +135,37 @@ struct MenuBarScriptRunnerTests {
         #expect(runner.submit(original) == .ruleBusy)
         runner.synchronize([rule("same", command: "printf replacement", enabled: false)])
         queue.resume()
-        let cancelled = receipts.waitFor(2)
+        let cancelled = await receipts.waitFor(2)
         #expect(cancelled.last?.outcome == .cancelled)
         let replacement = rule("same", command: "printf replacement", enabled: false)
         #expect(runner.submit(replacement) == .queued)
-        let completed = receipts.waitFor(3)
+        let completed = await receipts.waitFor(3)
         #expect(completed.last?.outcome == .completed(status: 0))
         #expect(completed.last?.output == Data("replacement".utf8))
         runner.stop()
     }
 
     @Test("stdout and stderr drain beyond pipe capacity with a bounded tail and true exit status")
-    func combinedOutput() {
+    func combinedOutput() async {
         let receipts = Receipts()
         let runner = MenuBarScriptRunner(report: receipts.record)
         runner.start()
         defer { runner.stop() }
         let command = "i=0; while [ \"$i\" -lt 3000 ]; do printf '012345678901234567890123456789\\n'; i=$((i+1)); done; printf 'stderr-tail' >&2; exit 7"
         #expect(runner.submit(rule("flood", command: command)) == .queued)
-        let receipt = receipts.waitFor(1).first
+        let receipt = await receipts.waitFor(1).first
         #expect(receipt?.outcome == .completed(status: 7))
         #expect(receipt?.output.count == MenuBarScriptRunner.outputLimit)
         #expect(receipt?.output.suffix(11) == Data("stderr-tail".utf8))
     }
 
     @Test("invalid shell text fails truthfully without running a truncated command")
-    func invalidCommand() {
+    func invalidCommand() async {
         let receipts = Receipts()
         let runner = MenuBarScriptRunner(report: receipts.record)
         runner.start()
         #expect(runner.submit(rule("invalid", command: "printf unwanted\0ignored")) == .queued)
-        let receipt = receipts.waitFor(1).first
+        let receipt = await receipts.waitFor(1).first
         #expect(receipt?.outcome == .launchFailed(errno: EINVAL))
         #expect(receipt?.output.isEmpty == true)
         #expect(runner.activeCount == 0)
@@ -175,7 +173,7 @@ struct MenuBarScriptRunnerTests {
     }
 
     @Test("stop, quit, edit, removal and disable terminate a real owned child", arguments: ["stop", "quit", "edit", "remove", "disable"])
-    func ownedChild(reason: String) throws {
+    func ownedChild(reason: String) async throws {
         let fixture = try ChildFixture()
         defer { fixture.close() }
         let receipts = Receipts()
@@ -192,7 +190,7 @@ struct MenuBarScriptRunnerTests {
         #expect(childPID > 0)
         let exit = ProcessExit(childPID)
         defer { exit.close() }
-        try #require(exit.waitUntilRegistered())
+        try #require(await exit.waitUntilRegistered())
         #expect(runner.activeCount == 1)
         switch reason {
         case "stop": runner.stop()
@@ -203,14 +201,14 @@ struct MenuBarScriptRunnerTests {
         case "disable": runner.synchronize([rule("child", command: originalCommand(original), enabled: false)])
         default: runner.synchronize([])
         }
-        #expect(exit.waitUntilExited(), "the kernel must report the owned descendant's exit before its job receipt")
-        let receipt = receipts.waitFor(1).first
+        #expect(await exit.waitUntilExited(), "the kernel must report the owned descendant's exit before its job receipt")
+        let receipt = await receipts.waitFor(1).first
         #expect(receipt?.outcome == .cancelled)
         #expect(runner.activeCount == 0)
     }
 
     @Test("a completed shell cannot leave its background child holding the output pipe")
-    func inheritedPipe() throws {
+    func inheritedPipe() async throws {
         let fixture = try ChildFixture()
         defer { fixture.close() }
         let receipts = Receipts()
@@ -222,12 +220,12 @@ struct MenuBarScriptRunnerTests {
         let childPID = try #require(fixture.waitUntilReady())
         let exit = ProcessExit(childPID)
         defer { exit.close() }
-        try #require(exit.waitUntilRegistered())
+        try #require(await exit.waitUntilRegistered())
         try fixture.releaseShell()
-        let receipt = receipts.waitFor(1).first
+        let receipt = await receipts.waitFor(1).first
         #expect(receipt?.outcome == .completed(status: 0))
         #expect(runner.activeCount == 0)
-        #expect(exit.waitUntilExited(), "shell completion must retire its pipe-holding descendant")
+        #expect(await exit.waitUntilExited(), "shell completion must retire its pipe-holding descendant")
     }
 
     @Test("matched rules retain identity when several rules have the same script")
@@ -256,38 +254,20 @@ struct MenuBarScriptRunnerTests {
     /// Register against the known live fixture PID before retirement. A kernel
     /// exit event proves death even while launchd has not reaped an orphan yet.
     private final class ProcessExit: @unchecked Sendable {
-        private let condition = NSCondition()
         private let source: DispatchSourceProcess
-        private var registered = false
-        private var exited = false
+        private let registered = TestSignal()
+        private let exited = TestSignal()
 
         init(_ pid: pid_t) {
             source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit,
                 queue: DispatchQueue(label: "script fixture child exit"))
-            source.setRegistrationHandler { [weak self] in self?.record(registration: true) }
-            source.setEventHandler { [weak self] in self?.record(registration: false) }
-            source.activate()
+            source.setRegistrationHandler { [weak self] in self?.registered.signal() }
+            source.setEventHandler { [weak self] in self?.exited.signal() }
+            source.resume()
         }
 
-        private func record(registration: Bool) {
-            condition.lock()
-            if registration { registered = true } else { exited = true }
-            condition.broadcast()
-            condition.unlock()
-        }
-
-        func waitUntilRegistered() -> Bool { wait(registration: true) }
-        func waitUntilExited() -> Bool { wait(registration: false) }
-
-        private func wait(registration: Bool) -> Bool {
-            condition.lock()
-            defer { condition.unlock() }
-            let deadline = Date().addingTimeInterval(5)
-            while !(registration ? registered : exited) {
-                if !condition.wait(until: deadline) { break }
-            }
-            return registration ? registered : exited
-        }
+        func waitUntilRegistered() async -> Bool { await registered.wait() }
+        func waitUntilExited() async -> Bool { await exited.wait() }
 
         func close() { source.cancel() }
         deinit { source.cancel() }

@@ -1,10 +1,16 @@
 import Foundation
+import Observation
 import Testing
 @testable import JRBarCore
 
 /// Every deck command through the real client against the mock, plus the
 /// `deck_input` and `deck_receipt` events it emits.
-@Suite("Mock deck round trips", .serialized)
+@MainActor @Observable
+final class MockDeckEventLog {
+    var values: [CoreEvent] = []
+}
+
+@Suite("Mock deck round trips", .serialized, .timeLimit(.minutes(2)))
 struct MockDeckRoundTripTests {
     @Test("state.deck arrives; approve, press, pin, bank, rail, plan/apply/restore, input check, settings, clear absent")
     @MainActor
@@ -17,8 +23,8 @@ struct MockDeckRoundTripTests {
         }
         let model = try await MockEffectsRoundTripTests.connectedModel(socket: socket)
         defer { model.stop() }
-        var events: [CoreEvent] = []
-        model.onEvent = { events.append($0) }
+        let events = MockDeckEventLog()
+        model.onEvent = { events.values.append($0) }
 
         // The pad is connected but not yet approved: keys are dark.
         let deck = try #require(model.deck)
@@ -122,9 +128,9 @@ struct MockDeckRoundTripTests {
         #expect((model.deck?.keymap.generation ?? 0) == generation + 1)
         #expect(model.deck?.keymap.backupAt != nil)
         #expect(await MockCoreIntegrationTests.wait { model.deck?.device?.receipt?.code == "keymap_verified" })
-        #expect(await MockCoreIntegrationTests.wait { events.contains { $0.receipt?.code == "keymap_verified" } })
-        #expect(await MockCoreIntegrationTests.wait { events.filter { $0.kind == "deck_input" }.count >= 5 })
-        let inputs = events.filter { $0.kind == "deck_input" }.compactMap(\.input)
+        #expect(await MockCoreIntegrationTests.wait { events.values.contains { $0.receipt?.code == "keymap_verified" } })
+        #expect(await MockCoreIntegrationTests.wait { events.values.filter { $0.kind == "deck_input" }.count >= 5 })
+        let inputs = events.values.filter { $0.kind == "deck_input" }.compactMap(\.input)
         #expect(inputs.prefix(5).map(\.index) == [0, 1, 2, 13, 16])
         #expect(inputs.map(\.kind).contains("dial") && inputs.map(\.kind).contains("joystick"))
         var flashes = DeckInputFlashes()

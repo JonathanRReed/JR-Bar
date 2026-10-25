@@ -753,7 +753,7 @@ struct NotchCardView: View {
             .frame(width: Self.hitSide, height: Self.hitSide)
             .contentShape(Rectangle())
             .help("Add a timer")
-            .popover(isPresented: $timerEntryShown, arrowEdge: .bottom) {
+            .popover(isPresented: WindowPresenter.presentation($timerEntryShown), arrowEdge: .bottom) {
                 timerEntry
             }
             .holdsCard(model.popoverHold, id: "timerEntry", while: timerEntryShown)
@@ -2245,7 +2245,7 @@ private struct ShelfStackChip: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Open stack")
         .accessibilityAction { open = true }
-        .popover(isPresented: $open, arrowEdge: .bottom) {
+        .popover(isPresented: WindowPresenter.presentation($open), arrowEdge: .bottom) {
             grid
         }
         .holdsCard(popoverHold, id: "stack:\(stack.id)", while: open)
@@ -2621,7 +2621,7 @@ struct ShelfRemindersRow: View {
         .buttonStyle(.plain)
         .help("Add a reminder")
         .accessibilityLabel("Add a reminder")
-        .popover(isPresented: $adding, arrowEdge: .bottom) {
+        .popover(isPresented: WindowPresenter.presentation($adding), arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("New reminder")
                     .font(.system(size: 11, weight: .semibold))
@@ -2734,7 +2734,7 @@ private struct ShelfMirrorRow: View {
                         detail: "Allow JR-Bar in Privacy & Security, then retry.") {
                 Button("Settings…") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
-                        NSWorkspace.shared.open(url)
+                        DesktopServices.automatic.open(url)
                     }
                 }
                 .controlSize(.mini)

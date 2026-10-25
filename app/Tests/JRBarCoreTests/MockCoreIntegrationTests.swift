@@ -1,11 +1,12 @@
 import Foundation
+import JRBarTestSupport
 import Observation
 import Testing
 @testable import JRBarCore
 
 /// Launches `scripts/mock-core.py --once` on a temporary socket, connects the
 /// real client, and checks the observable model fills in.
-@Suite("Mock core integration", .serialized)
+@Suite("Mock core integration", .serialized, .timeLimit(.minutes(1)))
 struct MockCoreIntegrationTests {
     static var scriptURL: URL {
         URL(fileURLWithPath: #filePath)
@@ -34,13 +35,9 @@ struct MockCoreIntegrationTests {
         return process
     }
 
-    static func waitForSocket(_ path: String, timeout: TimeInterval = 30) async -> Bool {
-        let deadline = Date(timeIntervalSinceNow: timeout)
-        while Date() < deadline {
-            if FileManager.default.fileExists(atPath: path) { return true }
-            try? await Task.sleep(for: .milliseconds(25))
-        }
-        return false
+    static func waitForSocket(_ path: String) async -> Bool {
+        while !FileManager.default.fileExists(atPath: path), !Task.isCancelled { await Task.yield() }
+        return FileManager.default.fileExists(atPath: path)
     }
 
     /// Giving up takes one more poll past the deadline: the model's
@@ -48,20 +45,14 @@ struct MockCoreIntegrationTests {
     /// the deadline wakes this poll ahead of the update that arrived
     /// meanwhile. The last sleep queues behind it.
     @MainActor
-    static func wait(timeout: TimeInterval = 10, until condition: @MainActor () -> Bool) async -> Bool {
-        let deadline = Date(timeIntervalSinceNow: timeout)
-        while Date() < deadline {
-            if condition() { return true }
-            try? await Task.sleep(for: .milliseconds(20))
-        }
-        try? await Task.sleep(for: .milliseconds(20))
-        return condition()
+    static func wait(until condition: @MainActor () -> Bool) async -> Bool {
+        await waitForObservedState(condition)
     }
 
     /// What the client handed the model, in order — the four documents
     /// outlive the socket here, where the model rightly lets them go.
     @MainActor
-    final class FrameLog {
+    @Observable final class FrameLog {
         var messages: [CoreMessage] = []
 
         var hello: CoreHello? {
@@ -268,11 +259,14 @@ struct MockCoreIntegrationTests {
         let model = CoreModel(socketPath: Self.temporarySocketPath())
         model.start()
         defer { model.stop() }
-        #expect(await Self.wait(timeout: 3) {
+        #expect(await Self.wait {
             if case .connecting = model.connection { return true }
             return false
         })
-        try await Task.sleep(for: .milliseconds(700))
+        #expect(await Self.wait {
+            if case .connecting(let attempt) = model.connection { return attempt >= 2 }
+            return false
+        })
         #expect(model.state == nil)
         #expect(model.isLive == false)
         if case .connecting(let attempt) = model.connection {

@@ -602,8 +602,8 @@ extension SetupModel {
         case .reminders: await requestReminders()
         case .camera: await requestCamera()
         case .screenRecording: requestScreenRecording()
-        case .audioCapture: NSWorkspace.shared.open(audioCaptureSettingsURL)
-        case .bluetooth: NSWorkspace.shared.open(bluetoothSettingsURL)
+        case .audioCapture: DesktopServices.automatic.open(audioCaptureSettingsURL)
+        case .bluetooth: DesktopServices.automatic.open(bluetoothSettingsURL)
         case .accessibility:
             // macOS lists an app in the Accessibility pane only once it has
             // asked: opening the pane alone can leave the person looking for
@@ -612,7 +612,7 @@ extension SetupModel {
             openSettingsPane(accessibilitySettingsURL)
         case .automation: await requestAutomation()
         case .location: requestLocation()
-        case .fullDiskAccess: NSWorkspace.shared.open(fullDiskAccessSettingsURL)
+        case .fullDiskAccess: DesktopServices.automatic.open(fullDiskAccessSettingsURL)
         case .focusStatus: await requestFocusStatus()
         case .lidHelper: copyLidHelperCommand()
         }
@@ -625,7 +625,7 @@ extension SetupModel {
     }
 
     /// How a row opens its System Settings pane.
-    nonisolated(unsafe) static var openSettingsPane: (URL) -> Void = { NSWorkspace.shared.open($0) }
+    static var openSettingsPane: @MainActor (URL) -> Void = { DesktopServices.automatic.open($0) }
 
     /// Location privacy, for a denied row (and Location Services off).
     static let locationSettingsURL = URL(
@@ -637,14 +637,14 @@ extension SetupModel {
     /// only changes in the Automation pane.
     static func requestAutomation() async {
         if AutomationPermission.systemEvents(ask: false) == .denied {
-            NSWorkspace.shared.open(AutomationPermission.settingsURL)
+            DesktopServices.automatic.open(AutomationPermission.settingsURL)
             return
         }
         let systemEvents = URL(fileURLWithPath: "/System/Library/CoreServices/System Events.app")
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
         configuration.addsToRecentItems = false
-        _ = try? await NSWorkspace.shared.openApplication(at: systemEvents, configuration: configuration)
+        _ = try? await DesktopServices.automatic.openApplication(at: systemEvents, configuration: configuration)
         let answer = await Task.detached { AutomationPermission.systemEvents(ask: true) }.value
         if let pane = automationFollowUp(afterAsking: answer) { openSettingsPane(pane) }
     }
@@ -665,7 +665,7 @@ extension SetupModel {
         if status == .needed {
             locationManager.requestWhenInUseAuthorization()
         } else if status == .denied {
-            NSWorkspace.shared.open(locationSettingsURL)
+            DesktopServices.automatic.open(locationSettingsURL)
         }
     }
 
@@ -686,7 +686,7 @@ extension SetupModel {
         case .needed:
             _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
         case .denied:
-            NSWorkspace.shared.open(notificationsSettingsURL)
+            DesktopServices.automatic.open(notificationsSettingsURL)
         default:
             break
         }
@@ -700,7 +700,7 @@ extension SetupModel {
             let store = EKEventStore()
             _ = try? await store.requestFullAccessToEvents()
         case .denied, .unavailable:
-            NSWorkspace.shared.open(calendarSettingsURL)
+            DesktopServices.automatic.open(calendarSettingsURL)
         default:
             break
         }
@@ -720,7 +720,7 @@ extension SetupModel {
                 }
             }
         case .denied, .unavailable:
-            NSWorkspace.shared.open(remindersSettingsURL)
+            DesktopServices.automatic.open(remindersSettingsURL)
         default:
             break
         }
@@ -734,7 +734,7 @@ extension SetupModel {
         case .needed:
             _ = await AVCaptureDevice.requestAccess(for: .video)
         case .denied, .unavailable:
-            NSWorkspace.shared.open(cameraSettingsURL)
+            DesktopServices.automatic.open(cameraSettingsURL)
         default:
             break
         }
@@ -752,7 +752,7 @@ extension SetupModel {
                 }
             }
         case .denied, .unavailable:
-            NSWorkspace.shared.open(focusSettingsURL)
+            DesktopServices.automatic.open(focusSettingsURL)
         default:
             break
         }
@@ -765,7 +765,7 @@ extension SetupModel {
     static func requestScreenRecording() {
         guard !FoldCapturePermission.granted else { return }
         if !FoldCapturePermission.request() {
-            NSWorkspace.shared.open(FoldCapturePermission.settingsURL)
+            DesktopServices.automatic.open(FoldCapturePermission.settingsURL)
         }
     }
 

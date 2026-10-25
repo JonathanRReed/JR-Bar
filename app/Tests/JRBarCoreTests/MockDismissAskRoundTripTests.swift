@@ -5,7 +5,7 @@ import Testing
 /// `dismiss_ask` against the mock core: an ask the daemon calls stale is
 /// dismissed and leaves `state.asks`; a session with no ask is refused.
 /// The mock stands in for the daemon's contract (docs/CORE-PROTOCOL.md).
-@Suite("Dismissing a stale ask against the mock", .serialized)
+@Suite("Dismissing a stale ask against the mock", .serialized, .timeLimit(.minutes(2)))
 struct MockDismissAskRoundTripTests {
     @Test("a stale ask says so, dismisses, and the agent is told nothing")
     @MainActor

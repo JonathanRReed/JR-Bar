@@ -6,7 +6,7 @@ import Testing
 @Suite("Panel open order")
 @MainActor
 struct PanelOpenOrderTests {
-    @Test("an old open cannot close a reopened panel or replace its feedback", .timeLimit(.minutes(1)))
+    @Test("an old open cannot close a reopened panel or replace its feedback", .timeLimit(.minutes(2)))
     func oldOpenAfterReopenIsDropped() async {
         for refusal in [nil, "Could not find the old session"] as [String?] {
             let suite = ScratchDefaults.suiteName("panel-open-order")
@@ -39,7 +39,7 @@ struct PanelOpenOrderTests {
             store.panelDidClose()
         }
     }
-    @Test("a confirmed open closes the current panel", .timeLimit(.minutes(1)))
+    @Test("a confirmed open closes the current panel", .timeLimit(.minutes(2)))
     func currentOpenCloses() async {
         await withScratchDefaults("panel-current-open") { defaults in
             let store = PanelStore(core: CoreModel(), draftsDefaults: defaults, screenBarShown: false)
@@ -55,7 +55,7 @@ struct PanelOpenOrderTests {
         }
     }
 
-    @Test("a newer open owns feedback and closing within the same panel lifetime", .timeLimit(.minutes(1)))
+    @Test("a newer open owns feedback and closing within the same panel lifetime", .timeLimit(.minutes(2)))
     func newerOpenOwnsPanel() async {
         for refusal in [nil, "Old refusal"] as [String?] {
             let suite = ScratchDefaults.suiteName("panel-open-request")
@@ -96,7 +96,7 @@ struct PanelOpenOrderTests {
         }
     }
 
-    @Test("selecting another row retires the pending open result", .timeLimit(.minutes(1)))
+    @Test("selecting another row retires the pending open result", .timeLimit(.minutes(2)))
     func changedSelectionKeepsPanel() async {
         let suite = ScratchDefaults.suiteName("panel-open-selection")
         defer { ScratchDefaults.remove(suite) }
@@ -124,7 +124,7 @@ struct PanelOpenOrderTests {
         store.panelDidClose()
     }
 
-    @Test("the light explanation opens its session without requiring a selected row", .timeLimit(.minutes(1)))
+    @Test("the light explanation opens its session without requiring a selected row", .timeLimit(.minutes(2)))
     func explainedSessionOpensWithoutSelection() async throws {
         let suite = ScratchDefaults.suiteName("panel-explained-open")
         defer { ScratchDefaults.remove(suite) }

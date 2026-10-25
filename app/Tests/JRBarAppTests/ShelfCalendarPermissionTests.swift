@@ -1,14 +1,38 @@
 import EventKit
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarApp
 
-@Suite("Shelf calendar permissions", .serialized)
+@Suite("Shelf calendar permissions", .serialized, .timeLimit(.minutes(2)))
 @MainActor
 struct ShelfCalendarPermissionTests {
+    @Test("a pending calendar read never arms another periodic fetch")
+    func oneReadOwnsRefresh() async throws {
+        let model = ShelfCalendarModel()
+        model.authorization = { .fullAccess }
+        let entered = TestSignal()
+        let release = TestGate()
+        defer { release.signal(); model.stop() }
+        var scheduled = 0
+        model.scheduleRefreshOverride = { scheduled += 1 }
+        model.fetchEvents = { _ in
+            entered.signal()
+            release.wait()
+            return []
+        }
+        model.refreshNow()
+        try #require(await entered.wait())
+        #expect(scheduled == 0)
+        release.signal()
+        #expect(await waitForObservedState { model.state == .idle })
+        #expect(scheduled == 1)
+    }
+
     @Test("a delayed calendar reply removes ended meetings before applying the row limit")
     func delayedReplyUsesCurrentTime() async {
         let model = ShelfCalendarModel()
+        model.scheduleRefreshOverride = {}
         model.authorization = { .fullAccess }
         let base = Date(timeIntervalSince1970: 1000)
         var now = base
@@ -20,10 +44,10 @@ struct ShelfCalendarPermissionTests {
         let upcoming = ShelfCalendarModel.Event(title: "Upcoming", start: base.addingTimeInterval(200),
                                                 end: base.addingTimeInterval(400), url: nil)
         let events = ended + [upcoming]
-        let gate = DispatchSemaphore(value: 0)
+        let gate = TestGate()
         defer { gate.signal(); model.stop() }
         model.fetchEvents = { _ in
-            if gate.wait(timeout: .now() + 5) == .timedOut { Issue.record("calendar read was not released") }
+            gate.wait()
             return events
         }
         model.refreshNow()
@@ -38,16 +62,17 @@ struct ShelfCalendarPermissionTests {
     @Test("events ending at or before reply time leave an authorized glance idle", arguments: [60.0, 90.0])
     func allEventsEndWhileReading(replyAge: TimeInterval) async {
         let model = ShelfCalendarModel()
+        model.scheduleRefreshOverride = {}
         model.authorization = { .fullAccess }
         let base = Date(timeIntervalSince1970: 1000)
         var now = base
         model.clock = { now }
         let event = ShelfCalendarModel.Event(title: "Ended", start: base.addingTimeInterval(10),
                                              end: base.addingTimeInterval(60), url: nil)
-        let gate = DispatchSemaphore(value: 0)
+        let gate = TestGate()
         defer { gate.signal(); model.stop() }
         model.fetchEvents = { _ in
-            if gate.wait(timeout: .now() + 5) == .timedOut { Issue.record("calendar read was not released") }
+            gate.wait()
             return [event]
         }
         model.refreshNow()
@@ -63,15 +88,15 @@ struct ShelfCalendarPermissionTests {
           arguments: [EKAuthorizationStatus.denied, .notDetermined])
     func permissionLostBeforeReply(status: EKAuthorizationStatus) async {
         let model = ShelfCalendarModel()
+        model.scheduleRefreshOverride = {}
         model.authorization = { .fullAccess }
         let start = Date().addingTimeInterval(600)
         let event = ShelfCalendarModel.Event(title: "Private meeting", start: start,
                                              end: start.addingTimeInterval(900), url: nil)
-        let gate = DispatchSemaphore(value: 0)
+        let gate = TestGate()
         defer { gate.signal(); model.stop() }
         model.fetchEvents = { _ in
-            let released = gate.wait(timeout: .now() + 5)
-            if released == .timedOut { Issue.record("calendar fetch was never released") }
+            gate.wait()
             return [event]
         }
         // Revocation happens before yielding the main actor. The reply

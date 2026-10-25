@@ -1130,7 +1130,7 @@ final class PanelStore {
     /// credentials; JR-Bar sends nothing and runs nothing there.
     func openScreenSharing(host: String) {
         guard let url = URL(string: "vnc://\(host)") else { return }
-        NSWorkspace.shared.open(url)
+        DesktopServices.automatic.open(url)
         onClose?()
     }
 
@@ -1553,7 +1553,10 @@ final class PanelStore {
     static let sparklineDelay: TimeInterval = 1.5
     /// `sparklineDelay`, shortened by the tests.
     @ObservationIgnored var sparklineWait = PanelStore.sparklineDelay
-    @ObservationIgnored private var sparklineWork: Task<Void, Never>?
+    @ObservationIgnored var sparklineSleep: @MainActor (TimeInterval) async throws -> Void = {
+        try await Task.sleep(for: .seconds($0))
+    }
+    @ObservationIgnored private(set) var sparklineWork: Task<Void, Never>?
     /// `usage_history` for one provider — the core's in production; tests
     /// stage it.
     @ObservationIgnored var fetchUsageHistory: @MainActor (_ provider: String, _ range: UsageHistoryRange) async throws -> UsageHistory
@@ -1563,8 +1566,9 @@ final class PanelStore {
     private func scheduleSparklines() {
         sparklineWork?.cancel()
         let wait = sparklineWait
+        let sleep = sparklineSleep
         sparklineWork = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(wait))
+            try? await sleep(wait)
             guard !Task.isCancelled, let self, self.isOpen else { return }
             self.sparklineWork = nil
             self.refreshSparklines()
@@ -1927,7 +1931,7 @@ final class PanelStore {
         }
         show(toast: outcome.line, actionTitle: "Open Settings") {
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                NSWorkspace.shared.open(url)
+                DesktopServices.automatic.open(url)
             }
         }
     }

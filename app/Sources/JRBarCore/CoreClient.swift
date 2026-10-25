@@ -53,6 +53,23 @@ public enum CoreBackoff {
     }
 }
 
+/// Reply deadlines use elapsed time in the app and a manual clock in tests.
+public struct CoreReplyClock: Sendable {
+    public let schedule: @Sendable (TimeInterval, @escaping @Sendable () -> Void) -> Void
+
+    public init(schedule: @escaping @Sendable (TimeInterval, @escaping @Sendable () -> Void) -> Void) {
+        self.schedule = schedule
+    }
+
+    public static let continuous = CoreReplyClock { seconds, expire in
+        _ = Task.detached {
+            do { try await Task.sleep(for: .seconds(seconds)) }
+            catch { return }
+            expire()
+        }
+    }
+}
+
 /// A Unix-socket NDJSON client for the core daemon.
 ///
 /// One background thread owns the socket: connect, read, split frames,
@@ -94,6 +111,7 @@ public final class CoreClient: @unchecked Sendable {
     /// Probe a quiet connection with the protocol's existing ping command.
     /// Busy connections already have command deadlines and are left alone.
     public let idleProbeInterval: TimeInterval
+    private let replyClock: CoreReplyClock
     private let handler: @Sendable (Event) -> Void
     /// The app's secret and the pid of the daemon it started. Nil: this client
     /// never authenticates (a client of a daemon the app did not start).
@@ -155,9 +173,11 @@ public final class CoreClient: @unchecked Sendable {
     public init(socketPath: String = CoreSocketPath.resolve(), replyTimeout: TimeInterval = 10,
                 helloTimeout: TimeInterval = 10, connectTimeout: TimeInterval = 5,
                 writeTimeout: TimeInterval = 5, idleProbeInterval: TimeInterval = 30,
+                replyClock: CoreReplyClock = .continuous,
                 auth: CoreAuthSecret? = nil,
                 handler: @escaping @Sendable (Event) -> Void) {
         self.auth = auth
+        self.replyClock = replyClock
         self.socketPath = socketPath
         self.replyTimeout = replyTimeout
         self.helloTimeout = helloTimeout
@@ -287,8 +307,7 @@ public final class CoreClient: @unchecked Sendable {
                 // wait for the reply frame.
                 let timeout = timeout ?? replyTimeout
                 let id = command.id
-                Task.detached { [weak self] in
-                    try? await Task.sleep(for: .seconds(timeout))
+                replyClock.schedule(timeout) { [weak self] in
                     guard let self, let waiting = self.takePending(id) else { return }
                     waiting.resume(throwing: CoreClientError.timeout)
                     // Frames arriving during the wait prove the daemon is
@@ -727,8 +746,7 @@ public final class CoreClient: @unchecked Sendable {
         }
         let id = command.id
         let deadline = replyTimeout
-        Task.detached { [weak self] in
-            try? await Task.sleep(for: .seconds(deadline))
+        replyClock.schedule(deadline) { [weak self] in
             guard let self, self.takeAuthReplyIfPending(id) else { return }
             self.refuseAuthentication(.noReply)
             self.dropConnection(socket, generation: generation)

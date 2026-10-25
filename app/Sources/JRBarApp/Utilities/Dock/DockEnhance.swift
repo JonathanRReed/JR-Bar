@@ -1676,7 +1676,7 @@ final class DockEnhanceController {
         panel.actions.onMediaCommand = { MediaFeed.shared.send($0) }
         panel.actions.onMediaSeek = { MediaFeed.shared.seek(to: $0) }
         panel.actions.lyrics = lyrics
-        panel.actions.onReveal = { url in NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        panel.actions.onReveal = { url in DesktopServices.automatic.reveal([url]) }
         panel.actions.onDrillFolder = { [weak self] url in self?.drillFolder(url) }
         panel.actions.onFolderBack = { [weak self] in self?.folderBack() }
         panel.actions.onRetryFolder = { [weak self] in _ = self?.retryFolderListing() }
@@ -1687,7 +1687,7 @@ final class DockEnhanceController {
         panel.actions.onCalendarAuth = { [weak self] in self?.authorizeCalendar() }
         panel.actions.onCalendarJoin = { url in
             guard let url else { return }
-            NSWorkspace.shared.open(url)
+            DesktopServices.automatic.open(url)
         }
         panel.actions.onDocumentDrop = { [weak self] url in self?.openDocumentInPreview(url) ?? false }
         panel.actions.onAnswered = { [weak self] in self?.reframe(onlyIfResized: true) }
@@ -1710,7 +1710,7 @@ final class DockEnhanceController {
               let bundleID = preview.bundleID,
               let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
         else { return false }
-        NSWorkspace.shared.open([url], withApplicationAt: appURL,
+        DesktopServices.automatic.open([url], withApplicationAt: appURL,
                                 configuration: NSWorkspace.OpenConfiguration())
         Self.log.notice("document handoff: \(url.lastPathComponent, privacy: .public) → \(bundleID, privacy: .public)")
         return true
@@ -1901,7 +1901,7 @@ final class DockEnhanceController {
         ax.lane.run({ raise(window) }, then: {
             // Plain activate: `.activateAllWindows` brought every window
             // of the app forward and buried the one that was picked.
-            pid.flatMap { NSRunningApplication(processIdentifier: $0) }?.activate()
+            WindowPresenter.automatic.perform { pid.flatMap { NSRunningApplication(processIdentifier: $0) }?.activate() }
         })
         guard keepOpen else {
             tracker.reset()
@@ -2200,7 +2200,7 @@ final class DockEnhanceController {
         // the preview lane's — up to half a second a menu item against a
         // busy app, and never ahead of or behind a ⌘⇥ commit.
         if let app = preview.processIdentifier.flatMap({ NSRunningApplication(processIdentifier: $0) }) {
-            app.activate()
+            WindowPresenter.automatic.perform { app.activate() }
             let pid = app.processIdentifier
             let press = ax.newWindow
             ax.lane.run({ press(pid) }, then: {})
@@ -2412,7 +2412,7 @@ final class DockEnhanceController {
 
     /// A folder pop click — the entry (or the folder itself) opens.
     private func openItem(_ url: URL) {
-        NSWorkspace.shared.open(url)
+        DesktopServices.automatic.open(url)
         tracker.reset()
         hidePreview()
     }
@@ -2707,7 +2707,7 @@ final class DockEnhanceController {
                 tracker.reset()
                 hidePreview()
             }
-            app.hide()
+            WindowPresenter.automatic.perform { app.hide() }
         case nil:
             break
         }

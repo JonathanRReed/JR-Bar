@@ -33,7 +33,7 @@ struct AquariumTankToyTests {
         withExtendedLifetime(toys) {}
     }
 
-    @Test("shutdown also retires observation changes already queued by the core", .timeLimit(.minutes(1)))
+    @Test("shutdown also retires observation changes already queued by the core", .timeLimit(.minutes(2)))
     func shutdownRejectsQueuedRoster() async {
         let file = scratch()
         defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }

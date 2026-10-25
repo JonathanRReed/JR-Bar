@@ -16,15 +16,7 @@ struct ShelfReminderRefreshTests {
             signal.continuation.yield((entries, Thread.isMainThread))
             signal.continuation.finish()
         }
-        let deadline = Task {
-            try? await Task.sleep(for: .seconds(10))
-            guard !Task.isCancelled else { return }
-            signal.continuation.finish()
-        }
-        defer {
-            deadline.cancel()
-            signal.continuation.finish()
-        }
+        defer { signal.continuation.finish() }
         let ranOnMain = await Task.detached {
             let store = EKEventStore()
             let titled = EKReminder(eventStore: store)

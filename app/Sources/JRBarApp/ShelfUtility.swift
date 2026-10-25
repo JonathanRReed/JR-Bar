@@ -382,7 +382,7 @@ final class ShelfUtilityModel {
         guard let bundle = media?.bundleIdentifier,
               let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first
         else { return }
-        app.activate()
+        WindowPresenter.automatic.perform { app.activate() }
     }
 
     /// The source app's display name for the card's identity line,

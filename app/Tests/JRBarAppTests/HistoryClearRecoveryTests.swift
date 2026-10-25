@@ -5,7 +5,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("History clear and Undo recovery", .serialized)
+@Suite("History clear and Undo recovery", .serialized, .timeLimit(.minutes(2)))
 struct HistoryClearRecoveryTests {
     @Test("Clear reports a refusal without refreshing it away")
     func clearRefusalIsVisible() async throws {
@@ -100,16 +100,17 @@ struct HistoryClearRecoveryTests {
     func acknowledgedClearOwnsRefresh(_ oldReadFails: Bool) async throws {
         try await withFixture { fixture in
             let store = HistoryStore(core: fixture.core, schedulingEnabled: false)
+            let started = TestEvents<Void>()
             var oldRead: CheckedContinuation<[CoreHistoryRow], Error>?
             defer { oldRead?.resume(throwing: CancellationError()) }
             var reads = 0
             store.readHistory = {
                 reads += 1
-                if reads == 1 { return try await withCheckedThrowingContinuation { oldRead = $0 } }
+                if reads == 1 { return try await withCheckedThrowingContinuation { oldRead = $0; started.send(()) } }
                 return [CoreHistoryRow(at: 20, kind: "completed")]
             }
             let previous = try #require(store.reload())
-            try #require(await fixture.until { oldRead != nil })
+            _ = try await started.next()
             let action = try #require(store.clearCompleted())
             #expect(store.pendingAction == .clear)
             #expect(store.clearCompleted() == nil)

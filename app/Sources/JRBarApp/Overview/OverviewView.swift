@@ -81,27 +81,27 @@ struct OverviewView: View {
                 .accessibilityLabel("Refresh")
             }
         }
-        .sheet(isPresented: Binding(
+        .sheet(isPresented: WindowPresenter.presentation(Binding(
             get: { store.exportPreview != nil },
             set: { if !$0 { store.exportPreview = nil } }
-        )) {
+        ))) {
             ExportPreviewSheet(store: store)
         }
-        .sheet(isPresented: Binding(
+        .sheet(isPresented: WindowPresenter.presentation(Binding(
             get: { store.runExportPreview != nil },
             set: { if !$0 { store.runExportPreview = nil } }
-        )) {
+        ))) {
             RunExportSheet(store: store)
         }
-        .sheet(isPresented: Binding(
+        .sheet(isPresented: WindowPresenter.presentation(Binding(
             get: { store.comparison != nil },
             set: { if !$0 { store.dismissComparison() } }
-        )) {
+        ))) {
             if let comparison = store.comparison {
                 CompareRunsSheet(comparison: comparison, dismiss: store.dismissComparison, usage: store.sessionUsage)
             }
         }
-        .sheet(item: $replyEntry) { entry in
+        .sheet(item: WindowPresenter.presentation($replyEntry)) { entry in
             ReplyPromptSheet(store: store, entry: entry)
         }
         .onChange(of: store.selectedID) { _, id in
@@ -916,7 +916,7 @@ private struct ExportPreviewSheet: View {
         panel.nameFieldStringValue = markdown ? "jrbar-audit.md" : "jrbar-audit.json"
         panel.allowedContentTypes = markdown ? [.plainText] : [.json]
         panel.message = "The previewed bundle is written as-is."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard WindowPresenter.automatic.runModal(panel) == .OK, let url = panel.url else { return }
         do {
             try store.saveExport(to: url, markdown: markdown)
             store.exportPreview = nil
@@ -964,7 +964,7 @@ private struct RunExportSheet: View {
         panel.nameFieldStringValue = preview.name
         panel.allowedContentTypes = [.plainText]
         panel.message = "The previewed run is written as-is."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard WindowPresenter.automatic.runModal(panel) == .OK, let url = panel.url else { return }
         do {
             try store.saveRunExport(to: url)
             store.runExportPreview = nil

@@ -555,12 +555,20 @@ final class ScreenBarController {
     /// It does not change the user's wing visibility.
     private let appMenus = AppMenuExtent()
 
+    let notificationCenter: NotificationCenter
+    let workspaceCenter: NotificationCenter
     private let nativeNoticesEnabled: Bool
 
     init(planRenderer: @escaping ScreenBarPlanQueue.Renderer = ScreenBarPlanQueue.defaultRenderer,
          reduceMotionOverride: Bool? = nil,
          videoGuardOverride: (@MainActor () -> Bool)? = nil,
-         nativeNoticesEnabled: Bool = true) {
+         nativeNoticesEnabled: Bool = true,
+         notificationCenter: NotificationCenter? = nil,
+         workspaceCenter: NotificationCenter? = nil) {
+        self.notificationCenter = notificationCenter
+            ?? (WindowPresenter.suppressesDesktop ? NotificationCenter() : .default)
+        self.workspaceCenter = workspaceCenter
+            ?? (WindowPresenter.suppressesDesktop ? NotificationCenter() : NSWorkspace.shared.notificationCenter)
         self.nativeNoticesEnabled = nativeNoticesEnabled
         planQueue = ScreenBarPlanQueue(renderer: planRenderer)
         self.reduceMotionOverride = reduceMotionOverride
@@ -585,7 +593,7 @@ final class ScreenBarController {
             self?.updateAccessibility()
             self?.onGeometryChange?()
         }
-        let center = NotificationCenter.default
+        let center = self.notificationCenter
         center.addObserver(self, selector: #selector(screensChanged(_:)), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         // The Notch card's Display pick moved the island: the band follows.
         center.addObserver(self, selector: #selector(screensChanged(_:)), name: ScreenBarGeometry.preferredScreenDidChange, object: nil)
@@ -605,7 +613,7 @@ final class ScreenBarController {
             self?.scheduleIslandRescan()
         }
         appMenus.onChange = { [weak self] in self?.reposition() }
-        let workspace = NSWorkspace.shared.notificationCenter
+        let workspace = self.workspaceCenter
         workspace.addObserver(self, selector: #selector(screensDidSleep(_:)), name: NSWorkspace.screensDidSleepNotification, object: nil)
         workspace.addObserver(self, selector: #selector(screensDidWake(_:)), name: NSWorkspace.screensDidWakeNotification, object: nil)
         workspace.addObserver(self, selector: #selector(reduceMotionChanged(_:)), name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)

@@ -289,7 +289,7 @@ struct ProviderSavedCredentialControls: View {
         .onChange(of: row.credentials) { _, credentials in
             model.updateAvailability(credentials.contains { $0.account == model.account && $0.available })
         }
-        .sheet(isPresented: $editing, onDismiss: { model.cancel() }) {
+        .sheet(isPresented: WindowPresenter.presentation($editing), onDismiss: { model.cancel() }) {
             ProviderCredentialEditor(model: model, dismiss: { editing = false })
         }
         .onDisappear { model.cancel() }

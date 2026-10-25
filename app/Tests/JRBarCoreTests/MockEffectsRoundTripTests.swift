@@ -6,7 +6,7 @@ import Testing
 /// command through the real client: usage_history, refresh_usage,
 /// list_effects, render_effect, list_assignments, set_assignment and
 /// clear_assignment, export_effect_pack and import_effect_pack.
-@Suite("Mock core round trips", .serialized)
+@Suite("Mock core round trips", .serialized, .timeLimit(.minutes(2)))
 struct MockEffectsRoundTripTests {
     @MainActor
     static func connectedModel(socket: String) async throws -> CoreModel {
@@ -24,11 +24,14 @@ struct MockEffectsRoundTripTests {
     @MainActor
     static func fullHistory(_ model: CoreModel, provider: String, range: UsageHistoryRange) async throws -> UsageHistory {
         var history = try await model.usageHistory(provider: provider, range: range)
-        var tries = 0
-        while history.partial, tries < 20 {
-            try? await Task.sleep(for: .milliseconds(120))
+        while history.partial, !Task.isCancelled {
+            let ready = await MockCoreIntegrationTests.wait {
+                model.lastEvent?.kind == CoreEvent.usageHistoryReadyKind
+                    && model.lastEvent?.provider == provider
+                    && model.lastEvent?.range == range.rawValue
+            }
+            guard ready else { break }
             history = try await model.usageHistory(provider: provider, range: range)
-            tries += 1
         }
         return history
     }

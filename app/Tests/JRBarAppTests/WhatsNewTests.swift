@@ -108,7 +108,7 @@ import Testing
             controller.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: window))
         }
         for _ in 0..<3 { await Task.yield() }
-        try? await Task.sleep(for: .milliseconds(20))
+        await drainMainQueue()
         #expect(log.stamped == [WhatsNewCatalog.releaseID], "any close counts as seen")
         #expect(window.contentViewController == nil)
         #expect(card == nil)

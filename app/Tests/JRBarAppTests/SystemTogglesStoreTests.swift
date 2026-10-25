@@ -63,27 +63,18 @@ import Testing
         final class Hold: @unchecked Sendable { var active = true }
         let hold = Hold()
         state.dockHoldActive = { hold.active }
+        var retry: (@MainActor () -> Void)?
+        state.scheduleDockRetry = { retry = $0 }
         let store = SystemTogglesStore(state: state)
         store.apply(.dockAutoHide)
         // Nothing touches the Dock under the hold — its restore would
         // undo the flip — and the chip says why it has not moved.
         #expect(dock.sets.isEmpty)
         #expect(store.lastError?.contains("preview closes") == true)
-        try await Task.sleep(nanoseconds: 300_000_000)
+        retry?()
         #expect(dock.sets.isEmpty)
         hold.active = false
-        // The wait re-checks every 250 ms on the main actor; a busy
-        // suite can hold that for a while, so give it a deadline, not a
-        // fixed nap.
-        let deadline = Date().addingTimeInterval(5)
-        while dock.sets.isEmpty, Date() < deadline {
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        // One more re-check's worth past the deadline: a main thread held
-        // longer than it wakes this loop ahead of the re-check that came
-        // due meanwhile, and the deadline alone would miss a flip that
-        // is next in line.
-        if dock.sets.isEmpty { try await Task.sleep(nanoseconds: 300_000_000) }
+        retry?()
         #expect(dock.sets == [true])
         #expect(store.isOn[.dockAutoHide] == true)
     }
@@ -151,10 +142,7 @@ import Testing
     }
 
     private func settle(_ state: SystemTogglesStore.State) async {
-        let deadline = Date().addingTimeInterval(5)
-        while state.applying.contains(.keepAwake), Date() < deadline {
-            try? await Task.sleep(nanoseconds: 10_000_000)
-        }
+        await state.leaseTask?.value
     }
 
     @Test func theAwakeChipSendsTheLeaseNotAnAssertion() async throws {
@@ -268,8 +256,7 @@ import Testing
         #expect(state.isOn[.keepAwake] == true)
         state.noteDaemonHold(try JSONDecoder().decode(CoreAwakeHold.self, from: Data(#"{"state":"off"}"#.utf8)),
                              live: true)
-        let deadline = Date().addingTimeInterval(5)
-        while state.awake.held, Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        await state.handoverTask?.value
         #expect(fake.sent == [CoreAwakeRequest(.indefinite, display: false)])
         #expect(!state.awake.held, "handed over, then let go: one hold")
     }
@@ -308,7 +295,7 @@ import Testing
         // The daemon's frames keep coming; none re-asks a daemon that said
         // it cannot take the hold.
         for _ in 0..<3 { state.noteDaemonHold(nil, live: true) }
-        try await Task.sleep(nanoseconds: 50_000_000)
+        await state.leaseTask?.value
         #expect(fake.sent.count == 1)
         #expect(state.awake.held)
         // The lit chip's tap lets the assertion go.

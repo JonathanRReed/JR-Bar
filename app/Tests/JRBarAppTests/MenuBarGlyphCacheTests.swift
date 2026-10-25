@@ -425,14 +425,13 @@ struct MenuBarGlyphCacheTests {
         let tiles = MenuBarLiveTiles()
         var captures = 0
         let image = cgImage(raster())
-        tiles.capture = { _ in captures += 1; return image }
+        let captured = TestEvents<Void>()
+        tiles.capture = { _ in captures += 1; captured.send(()); return image }
         tiles.rowRects = { [CGRect(x: 0, y: 0, width: 2000, height: 24)] }
         tiles.itemsProvider = { [self.item("a")] }
         tiles.start()
-        for _ in 0..<50 where captures == 0 {
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
-        try await Task.sleep(nanoseconds: 700_000_000)
+        _ = try await captured.next()
+        await drainMainQueue()
         #expect(captures == 1, "one pass, not a 2 Hz loop")
         #expect(tiles.imageWidths["a"] == 16)
         tiles.stop()

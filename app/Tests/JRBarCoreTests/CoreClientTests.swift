@@ -1,12 +1,13 @@
 import Darwin
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarCore
 
 /// A loopback Unix socket that accepts connections and optionally speaks
 /// the greeting, for exercising CoreClient's deadlines against a daemon
 /// that misbehaves in specific ways.
-@Suite("Core client deadlines", .serialized)
+@Suite("Core client deadlines", .serialized, .timeLimit(.minutes(1)))
 struct CoreClientTests {
     final class StubCoreSocket: @unchecked Sendable {
         let path: String
@@ -260,17 +261,17 @@ struct CoreClientTests {
 
     final class EventLog: @unchecked Sendable {
         private let lock = NSLock()
-        private let changed = NSCondition()
+        private let changed = TestSignal()
         private var _events: [CoreClient.Event] = []
         var events: [CoreClient.Event] { lock.lock(); defer { lock.unlock() }; return _events }
         func add(_ event: CoreClient.Event) {
             lock.lock(); _events.append(event); lock.unlock()
-            changed.lock(); changed.broadcast(); changed.unlock()
+            changed.signal()
         }
-        func waitForConnections(_ count: Int, timeout: TimeInterval = 2) -> Bool {
-            let deadline = Date(timeIntervalSinceNow: timeout)
-            changed.lock(); defer { changed.unlock() }
-            while connectedCount < count, changed.wait(until: deadline) {}
+        func waitForConnections(_ count: Int) async -> Bool {
+            while connectedCount < count, !Task.isCancelled {
+                guard await changed.wait() else { return false }
+            }
             return connectedCount >= count
         }
         private var connectedCount: Int {
@@ -298,12 +299,8 @@ struct CoreClientTests {
         return (NSTemporaryDirectory() as NSString).appendingPathComponent(name)
     }
 
-    static func wait(timeout: TimeInterval = 10, until condition: @escaping @Sendable () -> Bool) async -> Bool {
-        let deadline = Date(timeIntervalSinceNow: timeout)
-        while Date() < deadline {
-            if condition() { return true }
-            try? await Task.sleep(for: .milliseconds(15))
-        }
+    static func wait(until condition: @escaping @Sendable () -> Bool) async -> Bool {
+        while !condition(), !Task.isCancelled { await Task.yield() }
         return condition()
     }
 
@@ -331,7 +328,7 @@ struct CoreClientTests {
     }
 
     @Test("stop then start waits for the old socket owner to retire")
-    func stopStartHasOneRunOwner() throws {
+    func stopStartHasOneRunOwner() async throws {
         let path = Self.temporarySocketPath()
         let server = StubCoreSocket(path: path, speakHello: true)
         try server.start()
@@ -340,12 +337,12 @@ struct CoreClientTests {
         let events = EventLog()
         let client = CoreClient(socketPath: path, helloTimeout: 1, connectTimeout: 1) { events.add($0) }
         client.start()
-        #expect(events.waitForConnections(1))
+        #expect(await events.waitForConnections(1))
 
         client.stop()
         client.start()
         defer { client.stop() }
-        #expect(events.waitForConnections(2), "a start during teardown must launch after the old owner returns")
+        #expect(await events.waitForConnections(2), "a start during teardown must launch after the old owner returns")
         #expect(client.isConnected, "the retired owner must not close the replacement socket")
     }
 
@@ -412,20 +409,20 @@ struct CoreClientTests {
 
     /// One thread holds and releases the writer while the async test advances.
     final class WriteBarrier {
-        private let releaseGate: DispatchSemaphore
-        let acquired: Bool
+        private let releaseGate: TestGate
+        private let acquiredGate = TestSignal()
+        func acquired() async -> Bool { await acquiredGate.wait() }
         private var held = true
         init(_ lock: NSLock) {
-            let acquiredGate = DispatchSemaphore(value: 0)
-            let releaseGate = DispatchSemaphore(value: 0)
+            let acquiredGate = self.acquiredGate
+            let releaseGate = TestGate()
             self.releaseGate = releaseGate
             Thread.detachNewThread {
                 lock.lock()
                 acquiredGate.signal()
-                _ = releaseGate.wait(timeout: .now() + 10)
+                releaseGate.wait()
                 lock.unlock()
             }
-            acquired = acquiredGate.wait(timeout: .now() + 2) == .success
         }
         func release() {
             guard held else { return }
@@ -451,7 +448,7 @@ struct CoreClientTests {
 
         let barrier = WriteBarrier(client.writeLock)
         defer { barrier.release() }
-        try #require(barrier.acquired)
+        try #require(await barrier.acquired())
         let command = Task.detached {
             try await client.send(name: "set_setting", args: ["key": .string("test")], timeout: 1)
         }
@@ -489,7 +486,7 @@ struct CoreClientTests {
         try #require(await Self.wait { client.isConnected && !server.receivedCommands.isEmpty })
         let barrier = WriteBarrier(client.writeLock)
         defer { barrier.release() }
-        try #require(barrier.acquired)
+        try #require(await barrier.acquired())
         let command = Task.detached { try await client.send(name: "set_setting") }
         try #require(await Self.wait { client.pendingCommandCount == 1 })
         command.cancel()

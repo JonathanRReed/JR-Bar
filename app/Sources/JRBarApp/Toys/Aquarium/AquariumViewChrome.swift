@@ -57,7 +57,7 @@ extension AquariumView {
                                   help: "Shop for decor, pets, themes and hats.") {
                             showShop = true
                         }
-                        .popover(isPresented: $showShop, arrowEdge: .top) {
+                        .popover(isPresented: WindowPresenter.presentation($showShop), arrowEdge: .top) {
                             shopPanel(fish: fish)
                         }
                     }

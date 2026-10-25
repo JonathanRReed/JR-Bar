@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarApp
 @testable import JRBarCore
@@ -483,42 +484,36 @@ struct DockPreviewAsyncTests {
     @Test("through the real preview lane the show returns while the reader is blocked on the worker")
     func realLaneDoesNotBlockMain() async {
         final class Held: @unchecked Sendable {
-            let entered = DispatchSemaphore(value: 0)
-            let release = DispatchSemaphore(value: 0)
-            let finished = DispatchSemaphore(value: 0)
+            let entered = TestSignal()
+            let release = TestGate()
+            let finished = TestSignal()
             let ranOnMain = NSLock()
             var onMain = false
         }
         let held = Held()
+        defer { held.release.signal() }
         let bench = Bench()
         bench.controller.ax.lane = DockAXPreviewLane()
         bench.controller.ax.read = { _, _ in
             held.ranOnMain.withLock { held.onMain = Thread.isMainThread }
             held.entered.signal()
-            // A bound, so a failing run releases itself.
-            _ = held.release.wait(timeout: .now() + 20)
+            held.release.wait()
             held.finished.signal()
             return ([card(1, "One")], false)
         }
         bench.controller.showPreview(for: bench.tile("Alpha"))
         // This line is reached with the reader still blocked: the show did not wait for it.
-        #expect(await Self.signalled(held.entered), "the worker took the read")
+        #expect(await held.entered.wait(), "the worker took the read")
         #expect(bench.controller.preview.windows.isEmpty, "nothing has landed while it is blocked")
         #expect(bench.presented.isEmpty)
         // The answer that follows is stale by then: it is dropped when it reaches main.
         bench.controller.hidePreview()
         held.release.signal()
-        #expect(await Self.signalled(held.finished), "released, the reader finishes")
+        #expect(await held.finished.wait(), "released, the reader finishes")
         #expect(held.ranOnMain.withLock { held.onMain } == false, "the read ran on the worker, never on main")
     }
 
-    private static func signalled(_ semaphore: DispatchSemaphore, within seconds: Double = 10) async -> Bool {
-        await Task.detached { waitForSignal(semaphore, seconds: seconds) }.value
-    }
 
-    private nonisolated static func waitForSignal(_ semaphore: DispatchSemaphore, seconds: Double) -> Bool {
-        semaphore.wait(timeout: .now() + seconds) == .success
-    }
 }
 
 }

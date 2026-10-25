@@ -22,7 +22,7 @@ extension MenuBarUtility {
         bar.close()
         guard granted else {
             // No Accessibility: nothing can press the item.
-            item.owner?.activate()
+            WindowPresenter.automatic.perform { item.owner?.activate() }
             return
         }
         Task.detached { [weak self] in
@@ -36,7 +36,7 @@ extension MenuBarUtility {
     /// would move the person's pointer there — synthetic input the
     /// utility never sends on its own.
     private func clickFallback(_ item: MenuBarItem) {
-        item.owner?.activate()
+        WindowPresenter.automatic.perform { item.owner?.activate() }
     }
 
     /// A ⌘-click on a tile: pull the item up into the hidden run and

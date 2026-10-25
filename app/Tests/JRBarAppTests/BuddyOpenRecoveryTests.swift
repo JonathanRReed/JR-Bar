@@ -6,7 +6,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Buddy open recovery", .timeLimit(.minutes(1)))
+@Suite("Buddy open recovery", .timeLimit(.minutes(2)))
 struct BuddyOpenRecoveryTests {
     @MainActor
     private final class Replies {

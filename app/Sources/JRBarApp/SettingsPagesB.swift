@@ -971,7 +971,7 @@ struct NotificationsPage: View {
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Open Settings") {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!)
+                        DesktopServices.automatic.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!)
                     }
                 }
             }
@@ -1264,7 +1264,7 @@ struct EventKitAccessNote: View {
                 Button("Open Settings") {
                     let pane = entity == .event ? "Privacy_Calendars" : "Privacy_Reminders"
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
-                        NSWorkspace.shared.open(url)
+                        DesktopServices.automatic.open(url)
                     }
                 }
             }
@@ -1379,7 +1379,7 @@ struct RemotePage: View {
                         Button("Reveal") {
                             let path = (store.values.string("cloud_ingest_token_path") ?? "") as NSString
                             let url = URL(fileURLWithPath: path.expandingTildeInPath)
-                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                            DesktopServices.automatic.reveal([url])
                         }
                     }
                 }

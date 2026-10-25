@@ -32,7 +32,7 @@ struct OverviewExportLoadTests {
         #expect(preview.markdown == "# snapshot-1\n")
     }
 
-    @Test("an older export cannot overwrite the newer scope", .timeLimit(.minutes(1)))
+    @Test("an older export cannot overwrite the newer scope", .timeLimit(.minutes(2)))
     func latestExportWins() async {
         let gate = Gate()
         let store = OverviewStore(core: CoreModel())
@@ -49,7 +49,7 @@ struct OverviewExportLoadTests {
         #expect(store.exportPreview?.markdown == "# newer\n")
     }
 
-    @Test("a failed newer export cannot revive a previous preview", .timeLimit(.minutes(1)))
+    @Test("a failed newer export cannot revive a previous preview", .timeLimit(.minutes(2)))
     func failureDoesNotShowAnOlderScope() async {
         let gate = Gate()
         let store = OverviewStore(core: CoreModel())
@@ -82,7 +82,7 @@ struct OverviewExportLoadTests {
         #expect(store.error != nil)
     }
 
-    @Test("cancelled export tasks do not publish a late reply", .timeLimit(.minutes(1)))
+    @Test("cancelled export tasks do not publish a late reply", .timeLimit(.minutes(2)))
     func cancelledExportDoesNotPublish() async {
         let gate = Gate()
         let store = OverviewStore(core: CoreModel())

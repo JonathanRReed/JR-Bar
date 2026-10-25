@@ -79,7 +79,7 @@ final class DeckRailController {
             // A 0.18 s alpha ease like the band tooltip's, not a hard
             // snap; Reduce Motion gets the instant version.
             panel.alphaValue = 0
-            panel.orderFrontRegardless()
+            WindowPresenter.automatic.order(panel)
             store.railDidChange(shown: true)
         }
         if panel.alphaValue < 1 {
@@ -370,7 +370,7 @@ final class RailLabelPanel: NSPanel {
         setFrame(NSRect(x: origin.x.rounded(), y: origin.y.rounded(), width: width, height: height), display: true)
         let wasVisible = isVisible && alphaValue > 0.01
         if !wasVisible { alphaValue = 0 }
-        orderFrontRegardless()
+        WindowPresenter.automatic.order(self)
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             alphaValue = 1
         } else if !wasVisible {

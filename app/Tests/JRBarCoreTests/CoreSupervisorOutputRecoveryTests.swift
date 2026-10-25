@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarCore
 
@@ -88,12 +89,12 @@ struct CoreSupervisorOutputRecoveryTests {
     @Test("overlapping child lifetimes keep partial lines separate and flush each before its exit")
     func overlappingChildrenKeepSeparateOutput() async throws {
         let capture = Capture()
-        let release = DispatchSemaphore(value: 0)
+        let release = TestGate()
         let supervisor = CoreSupervisor(executable: "/usr/bin/python3", backoffScale: 0.001)
         supervisor.onOutput = { stream, line in
             capture.append(stream, line)
             if stream == "stdout", line == "old-ready" {
-                if release.wait(timeout: .now() + 5) != .success { capture.append("gate", "timed out") }
+                release.wait()
             }
         }
         supervisor.onExit = { _ in capture.append("event", "exit") }

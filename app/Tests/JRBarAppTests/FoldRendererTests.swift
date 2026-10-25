@@ -1,5 +1,6 @@
 import CoreVideo
 import Foundation
+import JRBarTestSupport
 import JRBarCore
 import MetalKit
 import Testing
@@ -427,7 +428,7 @@ import Testing
     private final class Record: @unchecked Sendable {
         let lock = NSLock()
         var onMain: [Bool] = []
-        let done = DispatchSemaphore(value: 0)
+        let done = TestSignal()
         func note(_ main: Bool) {
             lock.lock()
             onMain.append(main)
@@ -518,7 +519,7 @@ import Testing
         #expect(cache.compileCount == 1)
     }
 
-    @Test func prewarmCompilesOffTheMainThread() throws {
+    @Test func prewarmCompilesOffTheMainThread() async throws {
         let cache = FoldShaderCache()
         let record = Record()
         let real = cache.compile
@@ -528,8 +529,8 @@ import Testing
         }
         cache.prewarm(pixelFormat: .bgra8Unorm) { record.done.signal() }
         cache.prewarm(pixelFormat: .bgra8Unorm)
-        // Bounded: a hung compile fails the test instead of hanging it.
-        #expect(record.done.wait(timeout: .now() + 60) == .success)
+        // The compiler callback owns completion; suite cancellation ends a missing callback.
+        #expect(await record.done.wait())
         #expect(record.onMain == [false], "one compile, and not on the main thread")
         _ = try cache.compiled(pixelFormat: .bgra8Unorm)
         #expect(cache.compileCount == 1, "the renderer's own ask is free afterwards")

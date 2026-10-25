@@ -221,7 +221,7 @@ struct WindowsRenderProofTests {
             }
             store.refreshSparklines(force: true)
         }
-        try await Task.sleep(for: .milliseconds(300))
+        await drainMainQueue()
         for (name, store) in [("quiet", quiet), ("working", working), ("asking", asking),
                               ("usage", heavy), ("offline", offline)] {
             try Self.write("panel-\(name)", size: Self.panelSize(store), plate: .glass) { Self.panel(store) }
@@ -273,7 +273,7 @@ struct WindowsRenderProofTests {
         ]), asked: ["claude:menubar", "codex:inkling"])
         store.fetchUsageHistory = { provider, _ in Self.week(provider == "claude" ? 4_000_000 : 1_500_000) }
         store.refreshSparklines(force: true)
-        try await Task.sleep(for: .milliseconds(300))
+        await drainMainQueue()
         try Self.write("panel-live", size: Self.panelSize(store), plate: .glass) { Self.panel(store) }
         #expect(store.headerCounts == "2 sessions")
         #expect(store.awakeHold?.symbol == "cup.and.saucer.fill")
@@ -331,10 +331,7 @@ struct WindowsRenderProofTests {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
-        let deadline = Date(timeIntervalSinceNow: 10)
-        while !FileManager.default.fileExists(atPath: socket), Date() < deadline {
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        while !FileManager.default.fileExists(atPath: socket), !Task.isCancelled { await Task.yield() }
         let core = CoreModel(socketPath: socket)
         core.start()
         try await settle { core.isLive && core.settings != nil }
@@ -343,11 +340,7 @@ struct WindowsRenderProofTests {
 
     /// Waits for `condition`, up to ten seconds.
     static func settle(_ condition: () -> Bool) async throws {
-        let deadline = Date(timeIntervalSinceNow: 10)
-        while !condition(), Date() < deadline {
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        try await Task.sleep(for: .milliseconds(150))
+        while !condition(), !Task.isCancelled { await drainMainQueue() }
     }
 
     // MARK: History

@@ -1288,7 +1288,7 @@ struct AddAccountButton: View {
         .controlSize(.small)
         .disabled(!store.isLive)
         .help("Meter a second \(providerID) account — its credential or browser consent is what keeps it from mirroring this one")
-        .popover(isPresented: $open, arrowEdge: .bottom) {
+        .popover(isPresented: WindowPresenter.presentation($open), arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Add a \(providerID) account")
                     .font(.headline)

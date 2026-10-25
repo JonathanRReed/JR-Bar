@@ -1507,7 +1507,7 @@ final class MenuBarUtility: Toy {
     /// The card's "Open Settings" for the click-through row.
     func openAccessibilitySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
-        NSWorkspace.shared.open(url)
+        DesktopServices.automatic.open(url)
     }
 }
 

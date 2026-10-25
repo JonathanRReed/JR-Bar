@@ -14,7 +14,7 @@ private let personalLightDocumentPaths = [
 /// The light settings brought over from the legacy window: the catalogue
 /// entries, the personal documents a page reset must not wipe, and the
 /// milestone ladder's normalisation.
-@Suite("Light settings from the legacy window")
+@Suite("Light settings from the legacy window", .timeLimit(.minutes(2)))
 struct LightSettingsCatalogueTests {
     @Test func legacyLightKeysAreInTheCatalogue() {
         for key in SettingsKey.lightsKeys {
@@ -51,7 +51,7 @@ struct LightSettingsCatalogueTests {
     }
 }
 
-@Suite("Light documents against the mock", .serialized)
+@Suite("Light documents against the mock", .serialized, .timeLimit(.minutes(2)))
 struct LightDocumentsMockTests {
     @Test("the personal light documents are in the seeded mock document")
     @MainActor

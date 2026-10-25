@@ -488,7 +488,7 @@ final class NotchToy: Toy {
         if runtimeEnabled { publishRenderer() }
         parkIsland()
         if let url = externalURLFor(provider) {
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+            DesktopServices.automatic.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
         }
     }
 
@@ -508,7 +508,7 @@ final class NotchToy: Toy {
 
     func openExternal() {
         guard let url = externalURL else { return }
-        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+        DesktopServices.automatic.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
     }
 
     // MARK: Island
@@ -1681,7 +1681,7 @@ final class NotchToy: Toy {
         reframe(currentFace, measured: measuredWithWindow ? frame : nil,
                 animated: !reduceMotion())
         if island?.isVisible != true {
-            island?.orderFrontRegardless()
+            WindowPresenter.automatic.order(island)
         }
         islandVisible = true
         publishSurface()
@@ -2132,7 +2132,7 @@ final class NotchToy: Toy {
     /// The heads-up's Join: the link opens in the browser (only an
     /// http(s) one ever reaches here) and the heads-up steps down.
     func joinHeadsUpMeeting() {
-        if let url = headsUpMeeting?.url { NSWorkspace.shared.open(url) }
+        if let url = headsUpMeeting?.url { DesktopServices.automatic.open(url) }
         dismissCapsule()
     }
 

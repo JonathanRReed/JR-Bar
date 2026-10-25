@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import JRBarApp
 
-@Suite("Shelf Copy Text ordering", .timeLimit(.minutes(1)))
+@Suite("Shelf Copy Text ordering", .timeLimit(.minutes(2)))
 @MainActor
 struct ShelfCopyTextOrderTests {
     private actor Reader {

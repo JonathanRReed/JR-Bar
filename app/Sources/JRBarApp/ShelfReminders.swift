@@ -431,6 +431,6 @@ final class ShelfRemindersModel {
     /// item — `x-apple-reminderkit://` names it by identifier.
     func openInReminders(_ entry: Entry) {
         guard let url = URL(string: "x-apple-reminderkit://reminders/\(entry.id)") else { return }
-        NSWorkspace.shared.open(url)
+        DesktopServices.automatic.open(url)
     }
 }

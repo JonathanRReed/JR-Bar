@@ -399,7 +399,7 @@ final class NotchHUDPanel: NSPanel {
         let width = max(30, size.width)
         let origin = NSPoint(x: (band.midX - width / 2).rounded(), y: (band.minY - 10 - height).rounded())
         setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
-        orderFrontRegardless()
+        WindowPresenter.automatic.order(self)
         animator().alphaValue = 1
     }
 

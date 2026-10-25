@@ -76,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var instanceLockFD: Int32 = -1
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        WindowPresenter.logSuppressionAtLaunch()
         do {
             isolatedPreview = try IsolatedPreviewRuntime.readCurrent()
         } catch {
@@ -1341,7 +1342,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             key: "app-state-unreadable",
             text: "JR-Bar could not read its saved choices, so it started from the defaults. The old file is kept beside the new one.",
             actionTitle: "Show") {
-                NSWorkspace.shared.activateFileViewerSelecting([stateFile])
+                DesktopServices.automatic.reveal([stateFile])
             })
     }
 

@@ -1,16 +1,13 @@
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarCore
 
 /// Drives the supervisor with tiny shell scripts and a scaled-down backoff.
-@Suite("Core supervisor", .serialized)
+@Suite("Core supervisor", .serialized, .timeLimit(.minutes(1)))
 struct CoreSupervisorTests {
-    static func wait(timeout: TimeInterval = 10, until condition: @escaping @Sendable () -> Bool) async -> Bool {
-        let deadline = Date(timeIntervalSinceNow: timeout)
-        while Date() < deadline {
-            if condition() { return true }
-            try? await Task.sleep(for: .milliseconds(15))
-        }
+    static func wait(until condition: @escaping @Sendable () -> Bool) async -> Bool {
+        while !condition(), !Task.isCancelled { await Task.yield() }
         return condition()
     }
 
@@ -55,7 +52,15 @@ struct CoreSupervisorTests {
 
     @Test("a long-running child is terminated cleanly on stop")
     func stopsCleanly() async throws {
-        let supervisor = CoreSupervisor(executable: "/bin/sh", arguments: ["-c", "trap 'echo bye; exit 0' TERM; echo up; while :; do sleep 0.05; done"], backoffScale: 0.02)
+        let supervisor = CoreSupervisor(executable: "/usr/bin/python3", arguments: ["-u", "-c", """
+            import signal, sys
+            def finish(*_):
+                print("bye", flush=True)
+                sys.exit(0)
+            signal.signal(signal.SIGTERM, finish)
+            print("up", flush=True)
+            signal.pause()
+            """], backoffScale: 0.02)
         let log = Log()
         supervisor.onOutput = { stream, line in log.add("\(stream): \(line)") }
         supervisor.start()
@@ -66,15 +71,20 @@ struct CoreSupervisorTests {
         supervisor.stop(gracePeriod: 3.0)
         #expect(Date().timeIntervalSince(started) < 2.5, "SIGTERM should be enough")
         #expect(supervisor.state == .stopped)
-        #expect(await Self.wait(timeout: 2) { log.lines.contains("stdout: bye") })
+        #expect(await Self.wait { log.lines.contains("stdout: bye") })
         #expect(kill(pid, 0) != 0 || errno == ESRCH, "the child is gone")
-        try await Task.sleep(for: .milliseconds(150))
+        // stop() joined the owned child and its exit handler; no restart remains queued.
         #expect(supervisor.state == .stopped, "no restart after an intentional stop")
     }
 
     @Test("a child that ignores SIGTERM gets SIGKILL after the grace period")
     func killsAfterGrace() async throws {
-        let supervisor = CoreSupervisor(executable: "/bin/sh", arguments: ["-c", "trap '' TERM; echo stubborn; while :; do sleep 0.05; done"], backoffScale: 0.02)
+        let supervisor = CoreSupervisor(executable: "/usr/bin/python3", arguments: ["-u", "-c", """
+            import signal
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            print("stubborn", flush=True)
+            signal.pause()
+            """], backoffScale: 0.02)
         let log = Log()
         supervisor.onOutput = { stream, line in log.add("\(stream): \(line)") }
         supervisor.start()
@@ -113,7 +123,7 @@ struct CoreSupervisorTests {
         supervisor.onOutput = { stream, line in log.add("\(stream): \(line)") }
         supervisor.start()
         defer { supervisor.stop(gracePeriod: 0.2) }
-        _ = await Self.wait(timeout: 5) { supervisor.state == .crashed(failures: maxFailures) }
+        _ = await Self.wait { supervisor.state == .crashed(failures: maxFailures) }
         return log
     }
 
@@ -163,13 +173,13 @@ struct CoreSupervisorTests {
 
     @Test("a stop that lands mid-spawn still kills the child and never wedges the supervisor")
     func stopDuringSpawn() async throws {
-        let supervisor = CoreSupervisor(executable: "/bin/sh",
-                                        arguments: ["-c", "echo late; exec sleep 60"],
+        let supervisor = CoreSupervisor(executable: "/usr/bin/python3",
+                                        arguments: ["-u", "-c", "import signal; print('late', flush=True); signal.pause()"],
                                         backoffScale: 0.02)
-        let runEntered = Flag()
-        let releaseRun = DispatchSemaphore(value: 0)
+        let runEntered = TestSignal()
+        let releaseRun = TestGate()
         supervisor.processRunHook = { process in
-            runEntered.set()
+            runEntered.signal()
             releaseRun.wait()
             try process.run()
         }
@@ -182,20 +192,22 @@ struct CoreSupervisorTests {
 
         let spawnThread = Thread { supervisor.start() }
         spawnThread.start()
-        #expect(await Self.wait { runEntered.isSet }, "spawn never reached run()")
+        #expect(await runEntered.wait(), "spawn never reached run()")
 
         // stop() must wait out the in-flight spawn, then kill the child.
-        let stopDone = Flag()
+        let stopDone = TestSignal()
+        let stopEntered = TestSignal()
         Thread.detachNewThread {
+            stopEntered.signal()
             supervisor.stop(gracePeriod: 2.0)
-            stopDone.set()
+            stopDone.signal()
         }
         // Give stop() a moment to block on the supervisor lock, then let
         // the spawn proceed: the child becomes visible and is terminated.
-        try await Task.sleep(for: .milliseconds(100))
+        #expect(await stopEntered.wait())
         releaseRun.signal()
 
-        #expect(await Self.wait { stopDone.isSet }, "stop() wedged on a mid-flight spawn")
+        #expect(await stopDone.wait(), "stop() wedged on a mid-flight spawn")
         #expect(supervisor.state == .stopped)
         #expect(await Self.wait { log.lines.contains { $0.hasPrefix("supervisor: core exited") } },
                 "the spawned child was never supervised to exit; lines: \(log.lines)")
@@ -232,14 +244,14 @@ struct CoreSupervisorTests {
     func concurrentStartsReserveOneLaunch() async {
         let supervisor = CoreSupervisor(executable: "/synthetic/jrbar-core", maxFailures: 1,
                                         authSecret: CoreAuthSecret())
-        let generationEntered = Flag()
-        let startDone = Flag()
-        let releaseGeneration = DispatchSemaphore(value: 0)
+        let generationEntered = TestSignal()
+        let startDone = TestSignal()
+        let releaseGeneration = TestGate()
         let log = Log()
         supervisor.secretGenerator = {
             log.add("secret")
-            generationEntered.set()
-            guard releaseGeneration.wait(timeout: .now() + 5) == .success else { return nil }
+            generationEntered.signal()
+            releaseGeneration.wait()
             return Data(repeating: 7, count: CoreAuthSecret.byteCount)
         }
         supervisor.processRunHook = { _ in
@@ -252,15 +264,15 @@ struct CoreSupervisorTests {
         }
         Thread.detachNewThread {
             supervisor.start()
-            startDone.set()
+            startDone.signal()
         }
-        #expect(await Self.wait(timeout: 2) { generationEntered.isSet })
+        #expect(await generationEntered.wait())
 
         supervisor.start()
         #expect(log.lines == ["secret"], "another start must leave the reserved launch alone")
         releaseGeneration.signal()
 
-        #expect(await Self.wait(timeout: 2) { startDone.isSet })
+        #expect(await startDone.wait())
         #expect(log.lines == ["secret", "launch"])
         #expect(supervisor.state == .crashed(failures: 1))
     }
@@ -270,13 +282,13 @@ struct CoreSupervisorTests {
         let secret = CoreAuthSecret()
         let supervisor = CoreSupervisor(executable: "/synthetic/jrbar-core", maxFailures: 1,
                                         authSecret: secret)
-        let generationEntered = Flag()
-        let oldStartDone = Flag()
-        let releaseGeneration = DispatchSemaphore(value: 0)
+        let generationEntered = TestSignal()
+        let oldStartDone = TestSignal()
+        let releaseGeneration = TestGate()
         let log = Log()
         supervisor.secretGenerator = {
-            generationEntered.set()
-            guard releaseGeneration.wait(timeout: .now() + 5) == .success else { return nil }
+            generationEntered.signal()
+            releaseGeneration.wait()
             return Data(repeating: 7, count: CoreAuthSecret.byteCount)
         }
         supervisor.processRunHook = { _ in
@@ -289,9 +301,9 @@ struct CoreSupervisorTests {
         }
         Thread.detachNewThread {
             supervisor.start()
-            oldStartDone.set()
+            oldStartDone.signal()
         }
-        #expect(await Self.wait(timeout: 2) { generationEntered.isSet })
+        #expect(await generationEntered.wait())
         supervisor.stop(gracePeriod: 0)
         // A replacement launch may own this holder while the old start is
         // still preparing its pipe. The abandoned start must not touch it.
@@ -299,7 +311,7 @@ struct CoreSupervisorTests {
         secret.set(replacement, daemonPID: 123)
         releaseGeneration.signal()
 
-        #expect(await Self.wait(timeout: 2) { oldStartDone.isSet })
+        #expect(await oldStartDone.wait())
         #expect(log.lines.isEmpty)
         #expect(secret.current == replacement)
         #expect(secret.supervisedPID == 123)
@@ -310,7 +322,12 @@ struct CoreSupervisorTests {
     @Test("letting a supervisor go ends its child without waiting for it")
     func releaseDoesNotWait() async throws {
         var supervisor: CoreSupervisor? = CoreSupervisor(
-            executable: "/bin/sh", arguments: ["-c", "trap '' TERM; echo up; while :; do sleep 1; done"])
+            executable: "/usr/bin/python3", arguments: ["-u", "-c", """
+            import signal
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            print("up", flush=True)
+            signal.pause()
+            """])
         let log = Log()
         supervisor?.onOutput = { stream, line in log.add("\(stream): \(line)") }
         supervisor?.start()
@@ -320,6 +337,6 @@ struct CoreSupervisorTests {
         let started = Date()
         supervisor = nil
         #expect(Date().timeIntervalSince(started) < 0.5, "the destructor waited on the child")
-        #expect(await Self.wait(timeout: 5) { kill(pid, 0) != 0 })
+        #expect(await Self.wait { kill(pid, 0) != 0 })
     }
 }

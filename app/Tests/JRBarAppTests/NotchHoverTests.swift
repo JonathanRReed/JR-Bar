@@ -32,9 +32,11 @@ struct NotchHoverTests {
     func directArrivalUsesFastFloor() async throws {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
+        let timers = ManualTimers()
+        toy.hoverTimer = { timers.arm($0, $1) }
         toy.setHovered(true)
         #expect(toy.islandHoverPeek, "a pointer straight onto the island is answered on the same turn")
-        try await Task.sleep(for: .seconds(0.25))
+        timers.advance(by: 0.25)
         #expect(toy.islandExpanded, "the fast floor passed — the card is up")
     }
 
@@ -42,6 +44,8 @@ struct NotchHoverTests {
     func peekAnswersAtOnce() async throws {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
+        let timers = ManualTimers()
+        toy.hoverTimer = { timers.arm($0, $1) }
         store.state.notch.expandOnHover = false
         toy.setHovered(true)
         #expect(toy.islandHoverPeek, "a fresh hover is answered at once: the island leans in the first frame")
@@ -52,14 +56,16 @@ struct NotchHoverTests {
     func barArrivalUsesSlowFloor() async throws {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
-        let start = ContinuousClock.now
+        let timers = ManualTimers()
+        toy.hoverTimer = { timers.arm($0, $1) }
+        let start = timers.now
         toy.bandHover(true, fromBar: true)
         #expect(!toy.islandHoverPeek, "the breath waits out the intent delay")
         // Measured, not slept: a 0.2 s sleep that overslept the floor
         // under a busy suite saw the card already up. The grow's
         // asyncAfter can land late but never early.
-        let at = try #require(await expansionTime(toy, from: start))
-        #expect(at > .milliseconds(260), "the menu-bar floor held (grew at \(at))")
+        let at = try #require(expansionTime(toy, timers: timers, from: start))
+        #expect(at > 0.26, "the menu-bar floor held (grew at \(at))")
         // The breath only lands while the card is down, and a grow does
         // not clear it — still up now means it came first, inside the
         // bar's floor.
@@ -73,56 +79,47 @@ struct NotchHoverTests {
         init(_ value: Bool) { self.value = value }
     }
 
-    /// Poll the expansion and report when it landed — measured time, so
-    /// a slow `Task.sleep` cannot blur the floor the test is proving. The
-    /// timeout is a generous upper bound for a congested main queue: the
-    /// arm is an `asyncAfter` whose deadline can slide under a parallel
-    /// suite — what matters is it did not fire before the bar's floor.
-    /// Giving up takes one more poll past the timeout: a main thread held
-    /// longer than that by a busy machine (2026-09-22: a 4.7 s stall ran
-    /// this suite's 0.25 s tests to five seconds) wakes the poll ahead of
-    /// the grow that came due meanwhile, and the next poll sees it land.
-    private func expansionTime(_ toy: NotchToy, from start: ContinuousClock.Instant,
-                             timeout: Duration = .seconds(4)) async throws -> Duration? {
-        var timedOut = false
-        while true {
-            if toy.islandExpanded { return ContinuousClock.now - start }
-            if timedOut { return nil }
-            timedOut = ContinuousClock.now - start >= timeout
-            try await Task.sleep(for: .milliseconds(10))
+    private func expansionTime(_ toy: NotchToy, timers: ManualTimers, from start: TimeInterval) -> TimeInterval? {
+        while !toy.islandExpanded {
+            guard timers.fireNext() else { return nil }
         }
+        return timers.now - start
     }
 
     @Test("crossing from an ear onto the island keeps the arrival's deadline")
     func earToIslandKeepsDeadline() async throws {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
-        let start = ContinuousClock.now
+        let timers = ManualTimers()
+        toy.hoverTimer = { timers.arm($0, $1) }
+        let start = timers.now
         toy.bandHover(true, fromBar: true)
-        try await Task.sleep(for: .seconds(0.1))
+        timers.advance(by: 0.1)
         toy.setHovered(true)   // the island window's own hover, mid-pause
         // A crossing that restarted the clock would fire at ≈0.22 s;
         // the kept bar floor lands at ≈0.30 s from arrival.
-        let at = try #require(await expansionTime(toy, from: start))
-        #expect(at > .milliseconds(260), "the crossing must not restart the clock (grew at \(at))")
+        let at = try #require(expansionTime(toy, timers: timers, from: start))
+        #expect(at > 0.26, "the crossing must not restart the clock (grew at \(at))")
     }
 
     @Test("leaving the island window onto the tray is not a leave")
     func windowLeaveOntoBandKeepsHover() async throws {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
+        let timers = ManualTimers()
+        toy.hoverTimer = { timers.arm($0, $1) }
         let onBand = Answer(true)
         toy.pointerOnBand = { onBand.value }
         toy.setHovered(true)
         // The window's own leave while the pointer still sits on the
         // tray — the band's read outranks it, the armed grow survives.
         toy.setHovered(false)
-        try await Task.sleep(for: .seconds(0.25))
+        timers.advance(by: 0.25)
         #expect(toy.islandExpanded)
         // The band itself saying "left" is the real leave.
         onBand.value = false
         toy.setHovered(false)
-        try await Task.sleep(for: .seconds(0.3))
+        timers.advance(by: 0.3)
         #expect(!toy.islandExpanded)
     }
 
@@ -130,20 +127,22 @@ struct NotchHoverTests {
     func fullscreenSuppressesHoverOpen() async throws {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
+        let timers = ManualTimers()
+        toy.hoverTimer = { timers.arm($0, $1) }
         let hidden = Answer(true)
         toy.menuBarHidden = { hidden.value }
         toy.setHovered(true)
-        try await Task.sleep(for: .seconds(0.3))
+        timers.advance(by: 0.3)
         #expect(!toy.islandExpanded, "the floor passed but the grow stayed down")
         #expect(toy.islandHoverPeek, "the tell is only a tell — it still shows")
         // The spent arm is not deferred: a live space again grows only
         // on a new hover, not off the suppressed one's back.
         hidden.value = false
-        try await Task.sleep(for: .seconds(0.3))
+        timers.advance(by: 0.3)
         #expect(!toy.islandExpanded)
         toy.setHovered(false)
         toy.setHovered(true)
-        try await Task.sleep(for: .seconds(0.25))
+        timers.advance(by: 0.25)
         #expect(toy.islandExpanded, "a fresh hover in a live space grows")
     }
 
@@ -201,11 +200,13 @@ struct NotchHoverTests {
     func slowOpenAfterIsHonoured() async throws {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
+        let timers = ManualTimers()
+        toy.hoverTimer = { timers.arm($0, $1) }
         store.state.notch.hoverOpenDelay = 0.5
-        let start = ContinuousClock.now
+        let start = timers.now
         toy.setHovered(true)
-        let at = try #require(await expansionTime(toy, from: start))
-        #expect(at > .milliseconds(450), "grew at \(at)")
+        let at = try #require(expansionTime(toy, timers: timers, from: start))
+        #expect(at > 0.45, "grew at \(at)")
         #expect(toy.islandHoverPeek, "the breath came first, at the standard delay")
     }
 
@@ -213,10 +214,12 @@ struct NotchHoverTests {
     func instantOpenAfterIsHonoured() async throws {
         let (toy, store) = makeToy()
         defer { withExtendedLifetime(store) {} }
+        let timers = ManualTimers()
+        toy.hoverTimer = { timers.arm($0, $1) }
         store.state.notch.hoverOpenDelay = 0
-        let start = ContinuousClock.now
+        let start = timers.now
         toy.setHovered(true)
-        _ = try #require(await expansionTime(toy, from: start))
+        _ = try #require(expansionTime(toy, timers: timers, from: start))
         #expect(toy.islandExpanded)
     }
 }

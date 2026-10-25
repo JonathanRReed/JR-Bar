@@ -51,18 +51,18 @@ struct SettingsRootView: View {
         .frame(minWidth: 640, minHeight: 420)
         // A covered, minimised or far-Space window holds every preview.
         .environment(\.ledPreviewsHeld, heldAbove || store.windowCovered)
-        .sheet(isPresented: Binding(get: { store.calibrating != nil }, set: { if !$0 { store.calibrating = nil } })) {
+        .sheet(isPresented: WindowPresenter.presentation(Binding(get: { store.calibrating != nil }, set: { if !$0 { store.calibrating = nil } }))) {
             CalibrationSheet(store: store, deviceID: store.calibrating ?? "", dismiss: { store.calibrating = nil })
         }
-        .sheet(isPresented: Binding(get: { store.firmware.sheetDeviceID != nil }, set: { if !$0 { store.firmware.closeSheet() } })) {
+        .sheet(isPresented: WindowPresenter.presentation(Binding(get: { store.firmware.sheetDeviceID != nil }, set: { if !$0 { store.firmware.closeSheet() } }))) {
             FirmwareSheet(store: store)
         }
-        .sheet(isPresented: Binding(get: { store.doctorReport != nil }, set: { if !$0 { store.doctorReport = nil } })) {
+        .sheet(isPresented: WindowPresenter.presentation(Binding(get: { store.doctorReport != nil }, set: { if !$0 { store.doctorReport = nil } }))) {
             DoctorSheet(report: store.doctorReport ?? .object([:]), dismiss: { store.doctorReport = nil })
         }
         .confirmationDialog(
             "Reset \(store.resetTarget?.title ?? "") to defaults?",
-            isPresented: Binding(get: { store.resetTarget != nil }, set: { if !$0 { store.resetTarget = nil } }),
+            isPresented: WindowPresenter.presentation(Binding(get: { store.resetTarget != nil }, set: { if !$0 { store.resetTarget = nil } })),
             titleVisibility: .visible
         ) {
             Button("Reset", role: .destructive) {

@@ -1,10 +1,11 @@
 import ApplicationServices
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarApp
 
 // These suites deliberately block the shared queues, so they must not overlap.
-@Suite("Dock shared worker queues", .serialized)
+@Suite("Dock shared worker queues", .serialized, .timeLimit(.minutes(2)))
 struct DockSharedWorkerTests {}
 
 extension DockSharedWorkerTests {
@@ -13,7 +14,7 @@ extension DockSharedWorkerTests {
 /// worker. Nothing here creates a real event tap — a live session tap in
 /// a test run could swallow the keyboard — so the thread is proven with
 /// a plain run-loop source standing in for the tap's.
-@Suite("Dock off the main thread")
+@Suite("Dock off the main thread", .timeLimit(.minutes(2)))
 struct DockAXWorkerTests {
     /// What the stand-in source saw: which thread ran it, and a signal
     /// per run. Written on the tap thread, read after the signal.
@@ -21,7 +22,7 @@ struct DockAXWorkerTests {
         let lock = NSLock()
         var threads: [String] = []
         var onMain: [Bool] = []
-        let ran = DispatchSemaphore(value: 0)
+        let ran = TestSignal()
 
         func record() {
             lock.withLock {
@@ -50,7 +51,7 @@ struct DockAXWorkerTests {
     }
 
     @Test("the tap's source is serviced on its own named thread, never main")
-    func tapThreadServicesOffMain() throws {
+    func tapThreadServicesOffMain() async throws {
         let runs = Runs()
         let tapSource = try #require(source(runs))
         let thread = DockTapThread(source: tapSource, name: "JR-Bar dock keys")
@@ -58,7 +59,7 @@ struct DockAXWorkerTests {
         defer { thread.stop() }
         try fire(tapSource, on: thread)
         // A signal, not a sleep: the bound only ends a broken thread.
-        #expect(runs.ran.wait(timeout: .now() + 10) == .success)
+        #expect(await runs.ran.wait())
         runs.lock.withLock {
             #expect(runs.threads == ["JR-Bar dock keys"])
             #expect(runs.onMain == [false])
@@ -66,7 +67,7 @@ struct DockAXWorkerTests {
     }
 
     @Test("stop takes the source off and lets the thread return; start again serves anew")
-    func tapThreadStopsAndRestarts() throws {
+    func tapThreadStopsAndRestarts() async throws {
         let runs = Runs()
         let tapSource = try #require(source(runs))
         let thread = DockTapThread(source: tapSource, name: "JR-Bar dock keys")
@@ -79,7 +80,7 @@ struct DockAXWorkerTests {
         let second = try #require(thread.runLoop)
         #expect(second !== first, "a fresh thread, a fresh loop")
         try fire(tapSource, on: thread)
-        #expect(runs.ran.wait(timeout: .now() + 10) == .success)
+        #expect(await runs.ran.wait())
         thread.stop()
     }
 
@@ -147,28 +148,10 @@ struct DockAXWorkerTests {
     /// A commit-lane job held open on a semaphore, the way a hung app's
     /// half-second AX wait holds it, and the signals the test reads.
     private final class Held: @unchecked Sendable {
-        let started = DispatchSemaphore(value: 0)
-        let release = DispatchSemaphore(value: 0)
-        let finished = DispatchSemaphore(value: 0)
-        let otherRan = DispatchSemaphore(value: 0)
-    }
-
-    /// Wait for a signal off the main actor, with a bound: a lane that
-    /// never runs the job ends the wait as a failure, not a hang.
-    private func signalled(_ semaphore: DispatchSemaphore, within seconds: Double = 10) async -> Bool {
-        // A dispatch thread, not a cooperative one: a blocked wait on the
-        // concurrency pool starves the other suites running beside this one.
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(returning: Self.waitForSignal(semaphore, seconds: seconds))
-            }
-        }
-    }
-
-    /// The blocking half, in a synchronous function: an async context may
-    /// not call `wait` itself.
-    private static func waitForSignal(_ semaphore: DispatchSemaphore, seconds: Double) -> Bool {
-        semaphore.wait(timeout: .now() + seconds) == .success
+        let started = TestSignal()
+        let release = TestGate()
+        let finished = TestSignal()
+        let otherRan = TestSignal()
     }
 
     /// One lane held while a job on the other runs. Both directions live
@@ -178,34 +161,32 @@ struct DockAXWorkerTests {
     func lanesDoNotWaitOnEachOther() async {
         // A commit's AX wait, and a hover's job behind nothing.
         let commitHeld = Held()
+        defer { commitHeld.release.signal() }
         DockAXWorker.run {
             commitHeld.started.signal()
-            // A bound, so a failing run releases itself.
-            _ = commitHeld.release.wait(timeout: .now() + 20)
+            commitHeld.release.wait()
             commitHeld.finished.signal()
         }
-        #expect(await signalled(commitHeld.started), "the commit lane is now occupied")
+        #expect(await commitHeld.started.wait(), "the commit lane is now occupied")
         DockAXWorker.run(on: .preview) { commitHeld.otherRan.signal() }
-        // The held job lets go on its own at 20 s, so an answer inside 15 s
-        // still proves the lanes are independent, and a full parallel run,
-        // which failed a 5 s bound twice in six, has room to schedule it.
-        let previewRan = await signalled(commitHeld.otherRan, within: 15)
+        let previewRan = await commitHeld.otherRan.wait()
         commitHeld.release.signal()
-        #expect(await signalled(commitHeld.finished))
+        #expect(await commitHeld.finished.wait())
         #expect(previewRan, "the preview lane is its own queue: it never waits behind a commit's AX wait")
 
         // A hover's AX wait, and a commit behind nothing.
         let previewHeld = Held()
+        defer { previewHeld.release.signal() }
         DockAXWorker.run(on: .preview) {
             previewHeld.started.signal()
-            _ = previewHeld.release.wait(timeout: .now() + 20)
+            previewHeld.release.wait()
             previewHeld.finished.signal()
         }
-        #expect(await signalled(previewHeld.started), "the preview lane is now occupied")
+        #expect(await previewHeld.started.wait(), "the preview lane is now occupied")
         DockAXWorker.run { previewHeld.otherRan.signal() }
-        let commitRan = await signalled(previewHeld.otherRan, within: 15)
+        let commitRan = await previewHeld.otherRan.wait()
         previewHeld.release.signal()
-        #expect(await signalled(previewHeld.finished))
+        #expect(await previewHeld.finished.wait())
         #expect(commitRan, "a hung app's hover read never delays a commit")
     }
 

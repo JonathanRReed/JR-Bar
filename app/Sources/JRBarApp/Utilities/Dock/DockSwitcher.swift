@@ -1902,7 +1902,7 @@ final class DockSwitcherController {
         }, then: {
             // Plain activate: `.activateAllWindows` brought every window
             // of the app forward and buried the one that was picked.
-            NSRunningApplication(processIdentifier: target.pid)?.activate()
+            WindowPresenter.automatic.perform { NSRunningApplication(processIdentifier: target.pid)?.activate() }
         })
     }
 
@@ -2005,7 +2005,7 @@ final class DockSwitcherController {
         panel?.disarm()
         switch char {
         case "q": app?.terminate()
-        case "h": app?.hide()
+        case "h": WindowPresenter.automatic.perform { app?.hide() }
         case "w", "m", "f":
             // The window verbs are AX writes (and, for a row on another
             // Space, the walk that finds it): the worker's, like a commit.
@@ -2227,7 +2227,7 @@ final class DockSwitcherPanel: NSPanel {
         refit()
         if !isVisible {
             alphaValue = 0
-            orderFrontRegardless()
+            WindowPresenter.automatic.order(self)
             let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = reduced ? 0.03 : 0.14

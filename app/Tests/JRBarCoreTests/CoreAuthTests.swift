@@ -1,21 +1,18 @@
 import Darwin
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarCore
 
 /// The app's side of "Who may send what" (docs/CORE-PROTOCOL.md): the secret,
 /// its hand-off to the daemon it starts, and the client's `auth` exchange
 /// against a stand-in daemon on a temporary socket. Synthetic data only.
-@Suite("Core socket authentication", .serialized)
+@Suite("Core socket authentication", .serialized, .timeLimit(.minutes(1)))
 struct CoreAuthTests {
     static let vectorSecret = Data((0..<32).map { UInt8($0) })
 
-    static func wait(timeout: TimeInterval = 10, until condition: @escaping @Sendable () -> Bool) async -> Bool {
-        let deadline = Date(timeIntervalSinceNow: timeout)
-        while Date() < deadline {
-            if condition() { return true }
-            try? await Task.sleep(for: .milliseconds(15))
-        }
+    static func wait(until condition: @escaping @Sendable () -> Bool) async -> Bool {
+        while !condition(), !Task.isCancelled { await Task.yield() }
         return condition()
     }
 
@@ -207,7 +204,7 @@ struct CoreAuthTests {
         /// Whether hello carries a nonce.
         var offersChallenge = true
         /// Held until signalled when set: the hello waits for it.
-        var helloGate: DispatchSemaphore?
+        var helloGate: TestGate?
         private let lock = NSLock()
         private var listenFD: Int32 = -1
         private var accepted = 0
@@ -357,7 +354,7 @@ struct CoreAuthTests {
     func commandsWaitBehindTheExchange() async throws {
         let path = Self.temporarySocketPath()
         let stub = AuthStubCore(path: path, expectedSecrets: [Self.vectorSecret])
-        let gate = DispatchSemaphore(value: 0)
+        let gate = TestGate()
         stub.helloGate = gate
         try stub.start()
         defer { stub.stop() }
@@ -382,7 +379,7 @@ struct CoreAuthTests {
     @Test("cancelling a command behind authentication does not cancel the shared exchange")
     func cancelledAuthenticationWaiterIsRetired() async throws {
         let stub = AuthStubCore(path: Self.temporarySocketPath(), expectedSecrets: [Self.vectorSecret])
-        let gate = DispatchSemaphore(value: 0)
+        let gate = TestGate()
         stub.helloGate = gate
         try stub.start()
         defer { gate.signal(); stub.stop() }

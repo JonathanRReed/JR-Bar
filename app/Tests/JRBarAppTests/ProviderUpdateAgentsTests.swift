@@ -280,7 +280,7 @@ import Testing
         // A staged outcome's token page is opened for the person, as the daemon returns it.
         let store = try source("UsageCenterStore.swift")
         #expect(store.contains("if let urlString = result.signInURL, let url = URL(string: urlString)"))
-        #expect(store.contains("NSWorkspace.shared.open(url)"))
+        #expect(store.contains("DesktopServices.automatic.open(url)"))
         // And the daemon is asked for it with the provider and instance only, never the label.
         #expect(CoreModel.signInArgs(provider: "devin") == ["provider": .string("devin")])
     }
