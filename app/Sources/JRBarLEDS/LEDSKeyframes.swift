@@ -99,22 +99,25 @@ public struct LEDSKeyframePlan: Sendable, Equatable {
     public var keyframeCount: Int { (lead?.count ?? 0) + (loop?.count ?? 0) }
 
     /// Renders `sampler` into tracks, or nil when the program is too long to
-    /// keyframe (the caller keeps its frame clock).
-    public static func render(sampler: LEDSSampler, tolerance: Int = defaultTolerance, maxKeyframes: Int = defaultMaxKeyframes) -> LEDSKeyframePlan? {
+    /// keyframe (the caller keeps its frame clock). `sampleColors` compares
+    /// full-precision light with encoded endpoints before choosing keyframes.
+    public static func render(sampler: LEDSSampler, tolerance: Int = defaultTolerance, maxKeyframes: Int = defaultMaxKeyframes, sample: ((Int) -> [RGB8])? = nil,
+                              sampleColors: ((Int) -> [RGB])? = nil) -> LEDSKeyframePlan? {
+        let sample = sample ?? { t in sampleColors?(t).map(\.codes) ?? sampler.codes(atMilliseconds: t) }
         let loopSpan = sampler.cycleDuration.map { Int(($0 * 1000).rounded()) }
         if let end = sampler.motionEndsAt {
             let endMs = Int((end * 1000).rounded())
-            let final = sampler.codes(atMilliseconds: max(endMs, 0))
+            let final = sample(max(endMs, 0))
             if endMs <= 0 { return LEDSKeyframePlan(lead: nil, loop: nil, loopStartMs: 0, finalCodes: final) }
             guard endMs <= maxScanMs else { return nil }
-            let lead = track(sampler: sampler, from: 0, to: endMs, tolerance: tolerance, maxKeyframes: maxKeyframes)
+            let lead = track(sampler: sampler, from: 0, to: endMs, tolerance: tolerance, maxKeyframes: maxKeyframes, sample: sample, sampleColors: sampleColors)
             guard lead.count <= maxKeyframes else { return nil }
             return LEDSKeyframePlan(lead: lead, loop: nil, loopStartMs: 0, finalCodes: final)
         }
         guard let loopSpan, loopSpan > 0, loopSpan <= maxScanMs / 2 else { return nil }
         let budget = max(2, maxKeyframes / 2)
-        let lead = track(sampler: sampler, from: 0, to: loopSpan, tolerance: tolerance, maxKeyframes: budget)
-        let loop = track(sampler: sampler, from: loopSpan, to: 2 * loopSpan, tolerance: tolerance, maxKeyframes: budget)
+        let lead = track(sampler: sampler, from: 0, to: loopSpan, tolerance: tolerance, maxKeyframes: budget, sample: sample, sampleColors: sampleColors)
+        let loop = track(sampler: sampler, from: loopSpan, to: 2 * loopSpan, tolerance: tolerance, maxKeyframes: budget, sample: sample, sampleColors: sampleColors)
         guard lead.count + loop.count <= maxKeyframes else { return nil }
         return LEDSKeyframePlan(lead: lead, loop: loop, loopStartMs: loopSpan, finalCodes: loop.frames[0])
     }
@@ -136,21 +139,45 @@ public struct LEDSKeyframePlan: Sendable, Equatable {
     /// (Douglas-Peucker). Past `maxKeyframes` the tolerance doubles and the
     /// pass runs again, so a busy program degrades smoothly rather than
     /// exploding; the caller still checks the final count.
-    static func track(sampler: LEDSSampler, from start: Int, to end: Int, tolerance: Int, maxKeyframes: Int) -> LEDSKeyframeTrack {
+    static func track(sampler: LEDSSampler, from start: Int, to end: Int, tolerance: Int, maxKeyframes: Int, sample: ((Int) -> [RGB8])? = nil,
+                      sampleColors: ((Int) -> [RGB])? = nil) -> LEDSKeyframeTrack {
         precondition(end > start)
-        let frames = (start...end).map { sampler.codes(atMilliseconds: $0) }
+        let sample = sample ?? { sampler.codes(atMilliseconds: $0) }
+        let precise = sampleColors.map { (start...end).map($0) }
+        let frames = precise?.map { $0.map(\.codes) } ?? (start...end).map(sample)
+        func simplified(_ epsilon: Int) -> [Int] {
+            guard let precise else { return simplify(frames: frames, tolerance: epsilon) }
+            // Compare unquantised samples with the encoded endpoints the
+            // consumer will interpolate. Reserve half a code for its rounding.
+            return simplify(count: frames.count, tolerance: max(0.5, Double(epsilon) - 0.5)) { k, a, b, f in
+                var worst = 0.0
+                for i in precise[k].indices {
+                    let x = frames[a][i].rgb, y = frames[b][i].rgb, z = precise[k][i]
+                    worst = max(worst, abs(x.r + (y.r - x.r) * f - z.r) * 255)
+                    worst = max(worst, abs(x.g + (y.g - x.g) * f - z.g) * 255)
+                    worst = max(worst, abs(x.b + (y.b - x.b) * f - z.b) * 255)
+                }
+                return worst
+            }
+        }
         var epsilon = max(0, tolerance)
-        var kept = simplify(frames: frames, tolerance: epsilon)
+        var kept = simplified(epsilon)
         while kept.count > maxKeyframes, epsilon < 64 {
             epsilon = max(1, epsilon * 2)
-            kept = simplify(frames: frames, tolerance: epsilon)
+            kept = simplified(epsilon)
         }
         return LEDSKeyframeTrack(offsetsMs: kept, frames: kept.map { frames[$0] })
     }
 
     /// Indices into `frames` (one per millisecond) to keep.
     static func simplify(frames: [[RGB8]], tolerance: Int) -> [Int] {
-        let n = frames.count
+        simplify(count: frames.count, tolerance: Double(tolerance)) { k, a, b, f in
+            Double(maxDeviation(frames[k], from: frames[a], to: frames[b], f: f))
+        }
+    }
+
+    private static func simplify(count n: Int, tolerance: Double,
+                                 deviation: (Int, Int, Int, Double) -> Double) -> [Int] {
         guard n > 2 else { return Array(0..<n) }
         var keep = [Bool](repeating: false, count: n)
         keep[0] = true
@@ -158,13 +185,13 @@ public struct LEDSKeyframePlan: Sendable, Equatable {
         var stack: [(Int, Int)] = [(0, n - 1)]
         while let (a, b) = stack.popLast() {
             guard b - a > 1 else { continue }
-            var worst = 0
+            var worst = 0.0
             var worstIndex = -1
             let span = Double(b - a)
             for k in (a + 1)..<b {
                 let f = Double(k - a) / span
-                let deviation = maxDeviation(frames[k], from: frames[a], to: frames[b], f: f)
-                if deviation > worst { worst = deviation; worstIndex = k }
+                let error = deviation(k, a, b, f)
+                if error > worst { worst = error; worstIndex = k }
             }
             if worst > tolerance, worstIndex > 0 {
                 keep[worstIndex] = true

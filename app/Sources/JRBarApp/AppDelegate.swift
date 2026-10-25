@@ -1495,6 +1495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func pushScreenBarSetting(_ shown: Bool) {
         let live = core?.isLive == true
         screenBarSync.toggled(shown: shown, live: live, now: Date())
+        defer { rearmAskAgeTick() }
         guard live else { return }
         sendScreenBarSetting(shown)
     }
@@ -1531,6 +1532,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// follows; a choice made while the daemon was down is pushed to it.
     private func reconcileScreenBarSetting() {
         guard let core else { return }
+        defer { rearmAskAgeTick() }
         let document = core.settings.map { SettingsDocument($0.document) }
         let decision = screenBarSync.reconcile(live: core.isLive,
                                                daemonValue: document?.bool("virtual_status_device_enabled"),
@@ -1547,17 +1549,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: Core observation
 
-    /// Re-arms an observation of the model's facts after every change and
-    /// pushes them into the status item and the Screen Bar. Observation
-    /// coalesces bursts (the daemon caps at 20 state messages a second) into
-    /// one main-queue turn.
+    /// Facts read by the status item, Screen Bar and menu rules.
+    static func observedAppFacts(_ core: CoreModel) {
+        _ = core.isLive
+        _ = core.allSessions
+        _ = core.asks
+        _ = core.aggregate
+        _ = core.usage
+        _ = core.devices
+        _ = core.escalation
+        _ = core.unseenCompletions
+        _ = core.hiddenCount
+        _ = core.power
+        _ = core.focus
+        _ = core.presence
+    }
+
+    /// Coalesces changed facts into one main-queue turn. A clock or health
+    /// update leaves this registration in place.
     private func observeCore() {
         guard let core else { return }
         withObservationTracking {
             _ = core.connection
-            _ = core.state?.generation
-            _ = core.state?.aggregate
+            Self.observedAppFacts(core)
             _ = core.lights
+            _ = ScreenBarLiveStatus.shared.motionNote
+            _ = ScreenBarLiveStatus.shared.followingAlcove
             _ = core.hello
             _ = core.settings?.generation
             // The media ear rides the shared feed's reduce — tracked so
@@ -1601,14 +1618,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
+    private var coreRefresh = AppCoreRefresh()
+    private var lastRefreshMedia: AlcoveMedia?
+
     private func coreDidChange() {
-        screenBar?.updateAccessibility()
-        screenBar?.wings = store?.screenBarWings ?? .empty
-        screenBar?.earMarks = store?.screenBarEarMarks ?? ScreenBarEarMarks()
-        screenBar?.hardware = core?.isLive == true ? core?.devices : nil
-        screenBar?.nowPlaying = store?.media.flatMap { $0.playing ? $0.bundleIdentifier : nil }
-        rearmAskAgeTick()
         guard let core, let statusItem else { return }
+        let changes = coreRefresh.take(core)
+        let media = store?.media.flatMap { $0.playing ? $0.bundleIdentifier : nil }
+        let mediaChanged = store?.media != lastRefreshMedia
+        lastRefreshMedia = store?.media
+        let rosterChanged = !changes.intersection([.roster, .settings, .connection]).isEmpty
+        if rosterChanged || changes.contains(.usage) || mediaChanged {
+            screenBar?.updateAccessibility()
+            screenBar?.wings = store?.screenBarWings ?? .empty
+            screenBar?.earMarks = store?.screenBarEarMarks ?? ScreenBarEarMarks()
+            screenBar?.nowPlaying = media
+            rearmAskAgeTick()
+        }
+        if changes.contains(.devices) { screenBar?.hardware = core.isLive ? core.devices : nil }
         refreshPackagedHooksIfNeeded(core: core)
         switch core.connection {
         case .connected where core.state != nil:
@@ -1630,27 +1657,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
         }
         let live = core.isLive
-        if live, let asks = core.state?.asks { askAnnouncer.note(asks) }
+        if rosterChanged, live { askAnnouncer.note(core.asks) }
         if wasLive, !live { events?.reset() }
         if live != wasLive { syncFileFeeds(live: live, core: core) }
         wasLive = live
-        refreshAggregate()
-        // The menu bar's rules hear the agents, the asks, the headroom
-        // and SidePulse from the same change.
-        utilitiesStore?.menuBar.coreFactsChanged()
-        refreshIconStyle()
+        if changes.refreshesAggregate { refreshAggregate() }
+        if !changes.intersection([.roster, .usage, .devices, .connection]).isEmpty {
+            utilitiesStore?.menuBar.coreFactsChanged()
+        }
+        if rosterChanged || changes.contains(.usage) { refreshIconStyle() }
+        if !changes.intersection([.settings, .connection]).isEmpty {
+            refreshAlcoveFollowing()
+            refreshScreenBarGlow()
+            refreshScreenBarGeometry()
+            reconcileScreenBarSetting()
+            toysStore?.notch.syncSensorMonitor()
+        }
+        // This also reads local motion and Alcove state. Its own program
+        // and description guards keep identical inputs quiet.
         refreshLights()
-        refreshAlcoveFollowing()
-        refreshScreenBarGlow()
-        refreshScreenBarGeometry()
-        reconcileScreenBarSetting()
-        // The ears' wings switch rides the settings document.
-        toysStore?.notch.syncSensorMonitor()
     }
 
-    /// One sleeping task refreshes the wings and open card at the next ask-age
-    /// or provider-turn boundary. Repeated daemon frames keep the same wake
-    /// when the boundary stays put; one working provider needs no wake.
+    /// One task refreshes timed UI at its next boundary. Stable state frames
+    /// leave the wake alone, and no clock runs without a timed input.
     private var askAgeTick: Task<Void, Never>?
     private var askAgeTickAt: Double?
     private var rearmingAskAgeTick = false
@@ -1660,7 +1689,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         rearmingAskAgeTick = true
         defer { rearmingAskAgeTick = false }
         store?.compactAwakeEligible = screenBar?.canCycleCompactAwake ?? false
-        let next = store?.nextAskAgeTick()
+        let usage = core?.isLive == true ? core?.usage ?? [] : []
+        let rows = store?.rows ?? []
+        let elapsedSince = rows.compactMap { $0.since?.timeIntervalSince1970 }
+        let pendingUntil = screenBarSync.pending.map { $0.at.timeIntervalSince1970 + ScreenBarDaemonSync.pendingWindow }
+        let deadlines = rows.compactMap(\.snoozedUntil) + [pendingUntil].compactMap { $0 }
+        let next = AppCoreRefresh.nextTick(askTick: store?.nextAskAgeTick(), usage: usage,
+                                          elapsedSince: elapsedSince, deadlines: deadlines,
+                                          now: Date().timeIntervalSince1970)
         screenBar?.earMarks = store?.screenBarEarMarks ?? ScreenBarEarMarks()
         guard next != askAgeTickAt || askAgeTick == nil || next == nil else { return }
         askAgeTick?.cancel()
@@ -1673,6 +1709,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, let self else { return }
             self.askAgeTick = nil
+            self.reconcileScreenBarSetting()
+            self.refreshAggregate()
+            self.refreshIconStyle()
             self.screenBar?.wings = self.store?.screenBarWings ?? .empty
             self.screenBar?.earMarks = self.store?.screenBarEarMarks ?? ScreenBarEarMarks()
             self.interaction?.card.geometryChanged()

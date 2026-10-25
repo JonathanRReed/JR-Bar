@@ -4,14 +4,14 @@ import Testing
 @testable import JRBarApp
 
 /// The lid-angle pump's rate rule (LidAngleSensor.swift): which readings
-/// earn the 120 Hz armed class and which idle at the sensor's own 10 Hz.
+/// earn the 120 Hz armed class, stay nearby at 10 Hz or rest at 2 Hz.
 /// Pure — no HID device, no queue, no timer.
 @Suite("Fold sensor pump")
 struct FoldSensorTests {
     /// The band defaults to 82°: a 70° activation plus the toy's 12°
     /// margin.
     private func rate(_ angle: Double?, band: Double = 82, clamshell: Bool? = false) -> Int {
-        SensorPump.rateClassFor(rawAngle: angle, armingAngle: band, clamshell: clamshell)
+        SensorPump.rateClassFor(rawAngle: angle, armingAngle: band, clamshell: clamshell, stillReads: SensorMotionCadence.stillReadLimit)
     }
 
     @Test("inside the band an open lid polls armed, above it parked")
@@ -19,8 +19,57 @@ struct FoldSensorTests {
         #expect(rate(82) == 1, "the band's edge is inside")
         #expect(rate(60) == 1)
         #expect(rate(6) == 1, "just above the closed-lid floor still arms")
-        #expect(rate(82.5) == 0)
-        #expect(rate(120) == 0)
+        #expect(rate(82.5) == 2)
+        #expect(rate(120) == 2)
+    }
+
+    @Test("distant reads slow down without changing nearby or armed timing")
+    func distantCadence() {
+        #expect(SensorPump.intervals[rate(180)] == 0.5)
+        #expect(SensorPump.intervals[rate(115)] == 0.1)
+        #expect(SensorPump.intervals[rate(102)] == 0.1)
+        #expect(SensorPump.intervals[rate(102.5)] == 0.1)
+        #expect(SensorPump.intervals[rate(82)] == 1.0 / 120)
+        #expect(SensorPump.intervals[rate(nil)] == 0.1)
+    }
+
+    @Test("motion resets the still-read run before idle polling resumes")
+    func motionCadence() {
+        var cadence = SensorMotionCadence()
+        cadence.note(170)
+        for _ in 0..<SensorMotionCadence.stillReadLimit { cadence.note(170) }
+        #expect(cadence.stillReads == SensorMotionCadence.stillReadLimit)
+        cadence.note(168)
+        #expect(cadence.stillReads == 0)
+        let movingRate = SensorPump.rateClassFor(rawAngle: 168, armingAngle: 82, clamshell: false,
+                                                stillReads: cadence.stillReads)
+        #expect(movingRate == 2)
+        cadence.note(nil)
+        #expect(cadence.stillReads == 0)
+    }
+
+    @Test("fast closes arm before the closed angle from every idle sampling phase")
+    func fastCloses() {
+        for speed in [150.0, 300.0] {
+            for start in [115.0, 180.0] {
+                for phase in stride(from: 0.0, through: 0.549, by: 0.003) {
+                    var cadence = SensorMotionCadence()
+                    for _ in 0...SensorMotionCadence.stillReadLimit { cadence.note(start) }
+                    var time = 0.0
+                    var angle = start
+                    var armed = false
+                    while angle > FoldPause.closedAngle {
+                        let rate = SensorPump.rateClassFor(rawAngle: angle, armingAngle: 82,
+                                                           clamshell: false, stillReads: cadence.stillReads)
+                        if rate == 1 { armed = true; break }
+                        time += SensorPump.intervals[rate] + Double(SensorPump.leewayMilliseconds[rate]) / 1_000
+                        angle = max(0, start - speed * max(0, time - phase))
+                        cadence.note(angle)
+                    }
+                    #expect(armed, "speed=\(speed), start=\(start), phase=\(phase)")
+                }
+            }
+        }
     }
 
     @Test("a shut lid stays parked however low it reads")
@@ -36,10 +85,10 @@ struct FoldSensorTests {
         #expect(rate(60, clamshell: nil) == 1, "a desktop Mac has no clamshell to read")
     }
 
-    @Test("no reading, or no band, is the parked class")
+    @Test("unknown readings and movement mode retain the normal cadence")
     func noBand() {
-        #expect(rate(nil) == 0, "before the first good report there is nothing to arm on")
-        #expect(rate(60, band: -.infinity) == 0,
+        #expect(rate(nil) == 2, "before the first good report there is nothing to arm on")
+        #expect(rate(60, band: -.infinity) == 2,
                 "movement mode and a pause clear the band")
     }
 }

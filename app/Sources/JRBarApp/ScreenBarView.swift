@@ -97,7 +97,7 @@ final class ScreenBarView: NSView {
     private let outlineLayer = CAShapeLayer()
     private let housingLayer = CAShapeLayer()
     private let shoulderLayer = CAShapeLayer()
-    private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+    private let colorSpace = ScreenBarGradientFrames.colorSpace
     private var lastStops: [BandStop] = []
     private var lastBandWidth: CGFloat = -1
     private(set) var bandRect: NSRect = .zero
@@ -228,6 +228,15 @@ final class ScreenBarView: NSView {
     private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     /// Which mode the layers are in, so a switch resets the other's state.
     private(set) var isPlayingKeyframes = false
+    private(set) var keyframesInstalled = false
+    var onKeyframesInstalled: (() -> Void)?
+    typealias GradientRenderer = @Sendable (LEDSKeyframePlan, CGFloat, Bool) async -> ScreenBarGradientFrames
+    static let defaultGradientRenderer: GradientRenderer = { plan, width, reduced in
+        await Task.detached(priority: .userInitiated) {
+            ScreenBarGradientFrames.build(plan: plan, width: width, reduced: reduced)
+        }.value
+    }
+    var gradientRenderer: GradientRenderer = defaultGradientRenderer
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow == nil {
@@ -712,26 +721,56 @@ final class ScreenBarView: NSView {
     /// Whether a cross-fade is armed and not yet used (tests).
     var hasPendingCrossfade: Bool { pendingCrossfade.duration != nil }
 
+    private var gradientWorker: Task<Void, Never>?
+    private var gradientGeneration: UInt64 = 0
+    private var preparedGradient: (plan: LEDSKeyframePlan, width: CGFloat, reduced: Bool,
+                                   frames: ScreenBarGradientFrames)?
+
+    func waitForKeyframes() async { await gradientWorker?.value }
+
     func play(plan: LEDSKeyframePlan, anchor: CFTimeInterval) {
         let width = bandRect.width
         guard width > 0 else { return }
         if isPlayingKeyframes, let last = lastPlay,
-           last.plan == plan, last.anchor == anchor, last.width == width {
-            return
-        }
+           last.plan == plan, last.anchor == anchor, last.width == width { return }
+        stopKeyframes()
         lastPlay = (plan, anchor, width)
         isPlayingKeyframes = true
+        gradientGeneration &+= 1
+        prepareGradient()
+    }
+
+    /// One worker and one latest request. Geometry changes during planning
+    /// replace the desired width without queuing another detached render.
+    private func prepareGradient() {
+        guard gradientWorker == nil else { return }
+        gradientWorker = Task { @MainActor [weak self] in
+            while let self, self.isPlayingKeyframes, let request = self.lastPlay {
+                let generation = self.gradientGeneration
+                let reduced = Self.reduceMotion
+                let frames: ScreenBarGradientFrames
+                if let cached = self.preparedGradient, cached.plan == request.plan,
+                   cached.width == request.width, cached.reduced == reduced {
+                    frames = cached.frames
+                } else {
+                    frames = await self.gradientRenderer(request.plan, request.width, reduced)
+                }
+                guard !Task.isCancelled else { return }
+                guard generation == self.gradientGeneration else { continue }
+                self.preparedGradient = (request.plan, request.width, reduced, frames)
+                self.install(plan: request.plan, anchor: request.anchor, frames: frames)
+                self.keyframesInstalled = true
+                self.onKeyframesInstalled?()
+                self.gradientWorker = nil
+                return
+            }
+            self?.gradientWorker = nil
+        }
+    }
+
+    private func install(plan: LEDSKeyframePlan, anchor: CFTimeInterval, frames: ScreenBarGradientFrames) {
         lastStops = []
         bandIsLit = planIsLit(plan)
-        let locations = ScreenBarBlend.columnLocations(bandWidth: width).map { NSNumber(value: Double($0)) }
-        func samples(_ codes: [RGB8]) -> [ScreenBarBlend.Sample] {
-            ScreenBarBlend.columnSamples(colors: codes.map(\.rgb), bandWidth: width, alphaScale: ScreenBarBlend.coreAlpha)
-        }
-        // Reduce Motion keeps the colour and drops the motion: the layers
-        // hold the program's brightest frame and no animation goes on.
-        let reduced = Self.reduceMotion
-        let restColors = ScreenBarBlend.spatiallyFilled(samples(Self.stillCodes(for: plan, reduced: reduced)))
-            .map(cgColor(for:))
         let layerAnchor = bandLayer.convertTime(anchor, from: nil)
 
         CATransaction.begin()
@@ -740,11 +779,11 @@ final class ScreenBarView: NSView {
         for layer in [bandLayer, haloLayer] {
             layer.removeAnimation(forKey: Self.leadKey)
             layer.removeAnimation(forKey: Self.loopKey)
-            layer.locations = locations
-            layer.colors = restColors
+            layer.locations = frames.locations
+            layer.colors = frames.rest
         }
-        if !reduced, let lead = plan.lead, layerAnchor + Double(lead.durationMs) / 1000.0 > CACurrentMediaTime() {
-            let animation = keyframeAnimation(track: lead, frames: lead.frames.map(samples))
+        if let lead = plan.lead, let prepared = frames.lead, layerAnchor + Double(lead.durationMs) / 1000.0 > CACurrentMediaTime() {
+            let animation = keyframeAnimation(track: lead, prepared: prepared)
             animation.beginTime = layerAnchor
             animation.repeatCount = 1
             animation.fillMode = .removed
@@ -752,8 +791,8 @@ final class ScreenBarView: NSView {
             bandLayer.add(animation, forKey: Self.leadKey)
             if Self.haloEnabled, let copy = animation.copy() as? CAKeyframeAnimation { haloLayer.add(copy, forKey: Self.leadKey) }
         }
-        if !reduced, let loop = plan.loop {
-            let animation = keyframeAnimation(track: loop, frames: loop.frames.map(samples))
+        if let loop = plan.loop, let prepared = frames.loop {
+            let animation = keyframeAnimation(track: loop, prepared: prepared)
             animation.beginTime = layerAnchor + Double(plan.loopStartMs) / 1000.0
             animation.repeatCount = .infinity
             animation.fillMode = .forwards
@@ -762,21 +801,6 @@ final class ScreenBarView: NSView {
             if Self.haloEnabled, let copy = animation.copy() as? CAKeyframeAnimation { haloLayer.add(copy, forKey: Self.loopKey) }
         }
         CATransaction.commit()
-    }
-
-    /// The frame the layers hold. Unreduced that is the loop's first frame —
-    /// what the lead hands the loop. Under Reduce Motion it is the program's
-    /// brightest frame, so a pulse keeps its peak and a chase keeps its
-    /// gradient instead of resting on a first frame that may be dark.
-    private static func stillCodes(for plan: LEDSKeyframePlan, reduced: Bool) -> [RGB8] {
-        guard reduced else { return plan.loop?.frames.first ?? plan.finalCodes }
-        let frames = (plan.lead?.frames ?? []) + (plan.loop?.frames ?? []) + [plan.finalCodes]
-        return frames.max { lightLevel($0) < lightLevel($1) } ?? plan.finalCodes
-    }
-
-    /// Total light in a frame, for picking the brightest.
-    private static func lightLevel(_ codes: [RGB8]) -> Int {
-        codes.reduce(0) { $0 + Int(max($1.r, max($1.g, $1.b))) }
     }
 
     /// True when the program ever lights an LED: the rim only shows while
@@ -797,6 +821,8 @@ final class ScreenBarView: NSView {
     func stopKeyframes() {
         guard isPlayingKeyframes else { return }
         isPlayingKeyframes = false
+        keyframesInstalled = false
+        gradientGeneration &+= 1
         lastPlay = nil
         lastStops = []
         CATransaction.begin()
@@ -810,16 +836,15 @@ final class ScreenBarView: NSView {
 
     /// One track as a `colors` animation. The stops go through
     /// `ScreenBarBlend.keyframes` so a fade to or from black stays a
-    /// straight line of light. Capped at 60 Hz, the frame clock's own
-    /// cap (the pipeline's `MAX_SAMPLE_RATE_HZ`): on a 120 Hz ProMotion
+    /// straight line of light. Render-server playback caps at 60 Hz,
+    /// the pipeline's `MAX_SAMPLE_RATE_HZ`: on a 120 Hz ProMotion
     /// panel an uncapped animation re-renders both ~70-stop gradients
     /// (the halo's through its mask, offscreen) twice as often, for
     /// programs the presentation compiler keeps under 2 Hz of flashing.
-    private func keyframeAnimation(track: LEDSKeyframeTrack, frames: [[ScreenBarBlend.Sample]]) -> CAKeyframeAnimation {
-        let fades = ScreenBarBlend.keyframes(frames, keyTimes: track.keyTimes)
+    private func keyframeAnimation(track: LEDSKeyframeTrack, prepared: ScreenBarGradientFrames.Track) -> CAKeyframeAnimation {
         let animation = CAKeyframeAnimation(keyPath: "colors")
-        animation.values = fades.frames.map { $0.map(cgColor(for:)) }
-        animation.keyTimes = fades.keyTimes.map { NSNumber(value: $0) }
+        animation.values = prepared.colors
+        animation.keyTimes = prepared.times
         animation.duration = Double(track.durationMs) / 1000.0
         animation.calculationMode = .linear
         animation.timingFunction = CAMediaTimingFunction(name: .linear)
@@ -832,8 +857,8 @@ final class ScreenBarView: NSView {
 
     /// Paint one sample of the eight LEDs. Cheap to call every frame: the stop
     /// list is compared first and Core Animation only re-composites on change.
-    func display(colors: [RGB]) {
-        if isPlayingKeyframes { stopKeyframes() }
+    func display(colors: [RGB], preservingPendingKeyframes: Bool = false) {
+        if isPlayingKeyframes, !preservingPendingKeyframes { stopKeyframes() }
         let width = bandRect.width
         guard width > 0 else { return }
         let stops = ScreenBarBlend.stops(colors: colors, bandWidth: width, alphaScale: ScreenBarBlend.coreAlpha)

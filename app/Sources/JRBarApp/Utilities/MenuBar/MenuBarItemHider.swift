@@ -341,6 +341,26 @@ final class MenuBarItemHider {
 
     /// The AX listing's refresh cadence driver.
     private var listingTask: Task<Void, Never>?
+    private let listingWait = MenuBarListingWait()
+    private let inventoryObserver = MenuBarInventoryObserver()
+    private var displayChangeWork: DispatchWorkItem?
+    var scheduleDisplayChange: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    func displaysChanged() {
+        displayChangeWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            MenuBarItemLister.invalidateGeometry()
+            self.reloadFitEdge()
+            self.resetCaps()
+            self.noteBarReformed("the displays changed")
+            self.reconcile()
+        }
+        displayChangeWork = work
+        scheduleDisplayChange(0.35, work)
+    }
     private var settleNeedsFreshListing = false
     var settleSleep: @MainActor (TimeInterval) async -> Void = { seconds in
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
@@ -400,11 +420,7 @@ final class MenuBarItemHider {
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                MenuBarItemLister.invalidateGeometry()
-                self?.reloadFitEdge()
-                self?.resetCaps()
-                self?.noteBarReformed("the displays changed")
-                self?.reconcile()
+                self?.displaysChanged()
             }
         })
         MenuBarItemLister.resetPresence()
@@ -486,6 +502,8 @@ final class MenuBarItemHider {
         // A bar that sits still is asked about less often
         // (`MenuBarListingPace`); anything that can move it ends the
         // wait (`MenuBarItemLister.barActivity`).
+        observers.append(listingWait.observeActivity(MenuBarItemLister.activityChanged))
+        let listingWait = self.listingWait
         listingTask = Task { [weak self] in
             let loop = MenuBarListingLoop(
                 visible: { MenuBarItemLister.barIsVisible },
@@ -493,16 +511,15 @@ final class MenuBarItemHider {
                 scan: { await MenuBarItemLister.refreshAXItems() },
                 activity: { MenuBarItemLister.barActivity },
                 afterScan: { self?.inventoryDidRefresh() },
-                sleep: { seconds in
-                    _ = try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
-                },
-                complete: { MenuBarItemLister.axInventoryComplete })
+                sleep: { seconds in await listingWait.wait(seconds) },
+                complete: { MenuBarItemLister.axInventoryComplete && MenuBarItemLister.launchProbes.due.isEmpty })
             await loop.run()
         }
         reconcile()
     }
 
     func inventoryDidRefresh() {
+        inventoryObserver.watch(pids: Set(MenuBarItemLister.axItems.map(\.ownerPID)).union(MenuBarItemLister.launchProbes.due.keys))
         onInventoryUpdate?()
         reconcile()
     }
@@ -556,6 +573,10 @@ final class MenuBarItemHider {
         timer = nil
         listingTask?.cancel()
         listingTask = nil
+        listingWait.signal()
+        inventoryObserver.stop()
+        displayChangeWork?.cancel()
+        displayChangeWork = nil
         settleTask?.cancel()
         settleTask = nil
         wakeTask?.cancel()
@@ -588,6 +609,9 @@ final class MenuBarItemHider {
     isolated deinit {
         timer?.invalidate()
         listingTask?.cancel()
+        listingWait.signal()
+        inventoryObserver.stop()
+        displayChangeWork?.cancel()
         settleTask?.cancel()
         wakeTask?.cancel()
         pointerTask?.cancel()
