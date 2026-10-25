@@ -47,7 +47,8 @@ struct NotchShadowTests {
         window.drivesSpringByHand = true
         window.surroundingsOverride = .init(bounds: CGRect(x: 0, y: 0, width: 10_000, height: 10_000), floor: nil)
         window.setFrame(idle, display: false)
-        window.orderFrontRegardless()
+        window.visibility = { true }
+        #expect(!window.isVisible)
         return (window, store)
     }
 

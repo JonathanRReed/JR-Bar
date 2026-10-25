@@ -12,6 +12,12 @@ final class MenuBarQuietLease {
     var currentRevision: @MainActor () -> String? = { nil }
     var send: @MainActor (Action, String, String?) async -> Reply = { _, _, _ in .failed }
     private(set) var isChanging = false
+    private var changeTask: Task<Void, Never>?
+
+    func waitUntilIdle() async -> Bool {
+        while let task = changeTask { await task.value }
+        return !isChanging
+    }
 
     @MainActor
     private final class Cycle {
@@ -90,9 +96,10 @@ final class MenuBarQuietLease {
         // when this cycle retires; the daemon checks ownership again.
         if action == .acquire { cycle.needsRelease = true }
         let revision = cycle.revision
-        _ = Task { @MainActor in
+        changeTask = Task { @MainActor in
             let reply = await send(action, cycle.id, action == .acquire ? revision : nil)
             isChanging = false
+            changeTask = nil
             if action == .release {
                 active = nil
                 if case .released(let revision) = reply { desired?.revision = revision }

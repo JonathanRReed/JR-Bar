@@ -211,7 +211,7 @@ final class MenuBarShutter {
                                height: rowHeight)
             if panel.frame != frame { panel.setFrame(frame, display: false) }
             (panel.contentView as? MenuBarCoverView)?.apply(appearance)
-            if !panel.isVisible { panel.orderFrontRegardless() }
+            if !panel.isVisible { WindowPresenter.automatic.order(panel) }
         }
     }
 

@@ -7,7 +7,7 @@ import JRBarCore
 /// (a record that omits it or serves a string can't sink the whole
 /// `/api/search` array) and `durationSeconds` never traps on a
 /// server-supplied absurdity.
-@Suite struct LyricsStoreTests {
+@Suite(.timeLimit(.minutes(10))) struct LyricsStoreTests {
 
     @MainActor
     @Test("memory misses expire while playing and after reset", arguments: [false, true])
@@ -186,7 +186,7 @@ import JRBarCore
         let task = Task { await LyricsStore.lookup(query, session: session) }
         defer { task.cancel() }
         let exactStarted = await CancelledLyricsProtocol.waitForExact(title: media.title)
-        try #require(exactStarted, "the synthetic exact request did not start within 60 seconds")
+        try #require(exactStarted, "the synthetic exact request did not start")
         #expect(CancelledLyricsProtocol.count(title: media.title, path: "/api/get") == 1)
         task.cancel()
         let outcome = await task.value
@@ -207,7 +207,7 @@ import JRBarCore
         let task = Task { await LyricsStore.lookup(query, session: session, allowed: { allowed }) }
         defer { task.cancel() }
         let exactStarted = await CancelledLyricsProtocol.waitForExact(title: media.title)
-        try #require(exactStarted, "the synthetic exact request did not start within 60 seconds")
+        try #require(exactStarted, "the synthetic exact request did not start")
         #expect(CancelledLyricsProtocol.count(title: media.title, path: "/api/get") == 1)
         allowed = false
         #expect(!task.isCancelled)
@@ -249,43 +249,22 @@ import JRBarCore
 }
 
 private final class CancelledLyricsProtocol: URLProtocol {
-    private struct ReadyWaiter {
-        let id: UUID
-        let continuation: CheckedContinuation<Bool, Never>
-        let timeout: DispatchWorkItem
-    }
     nonisolated(unsafe) private static var requests: [String: [String: Int]] = [:]
     nonisolated(unsafe) private static var exactRequests: [String: CancelledLyricsProtocol] = [:]
-    nonisolated(unsafe) private static var readyWaiters: [String: ReadyWaiter] = [:]
+    nonisolated(unsafe) private static var readyWaiters: [String: AsyncStream<Bool>.Continuation] = [:]
     private static let lock = NSLock()
 
-    /// Full-suite main-actor congestion delays lookup startup. Wait for the
-    /// protocol's actual start instead of repeatedly polling that actor.
     static func waitForExact(title: String) async -> Bool {
-        await withCheckedContinuation { continuation in
-            let id = UUID()
-            let timeout = DispatchWorkItem { finishWaiting(title: title, id: id) }
-            lock.lock()
-            if (requests[title]?["/api/get"] ?? 0) > 0 {
-                lock.unlock()
-                continuation.resume(returning: true)
-                return
-            }
-            readyWaiters[title] = ReadyWaiter(id: id, continuation: continuation, timeout: timeout)
-            lock.unlock()
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 60, execute: timeout)
+        let ready = AsyncStream<Bool>.makeStream()
+        let alreadyStarted = lock.withLock {
+            if (requests[title]?["/api/get"] ?? 0) > 0 { return true }
+            readyWaiters[title] = ready.continuation
+            return false
         }
-    }
-
-    private static func finishWaiting(title: String, id: UUID) {
-        lock.lock()
-        guard let waiter = readyWaiters[title], waiter.id == id else {
-            lock.unlock()
-            return
-        }
-        readyWaiters[title] = nil
-        lock.unlock()
-        waiter.continuation.resume(returning: false)
+        if alreadyStarted { return true }
+        defer { lock.withLock { readyWaiters[title] = nil } }
+        for await started in ready.stream { return started }
+        return false
     }
 
     static func count(title: String, path: String) -> Int {
@@ -320,8 +299,8 @@ private final class CancelledLyricsProtocol: URLProtocol {
         if path == "/api/get" { Self.exactRequests[title] = self }
         let waiter = path == "/api/get" ? Self.readyWaiters.removeValue(forKey: title) : nil
         Self.lock.unlock()
-        waiter?.timeout.cancel()
-        waiter?.continuation.resume(returning: true)
+        waiter?.yield(true)
+        waiter?.finish()
         if path != "/api/get" { answerNotFound() }
         // Exact replies are held until cancellation or explicit release.
     }

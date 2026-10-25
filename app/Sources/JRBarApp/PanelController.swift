@@ -98,7 +98,9 @@ final class PanelController {
         let inWindow = hosting.convert(frame, to: nil)
         let onScreen = panel.convertToScreen(inWindow)
         popover.present(explanation, log: store.lightLog, anchoredTo: onScreen, panelFrame: panel.frame, reduced: store.reduceMotion)
-        if popover.parent == nil { panel.addChildWindow(popover, ordered: .above) }
+        if popover.parent == nil {
+            WindowPresenter.automatic.perform { panel.addChildWindow(popover, ordered: .above) }
+        }
     }
 
     /// Screenshot aid (`JRBAR_OPEN_PANEL=why`): shows the popover as if the row were hovered.
@@ -136,7 +138,7 @@ final class PanelController {
         panel.setFrame(frame, display: false)
         hosting.layoutSubtreeIfNeeded()
         panel.alphaValue = 0
-        panel.makeKeyAndOrderFront(nil)
+        WindowPresenter.automatic.order(panel, as: .key)
         installMonitors()
         openedAt = Date()
         logFrame("t=0 (target)", frame)
@@ -465,7 +467,7 @@ final class WhyDetailPanel: NSPanel {
         let origin = NSPoint(x: x.rounded(), y: y.rounded())
         let wasVisible = isVisible && alphaValue > 0.01
         setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
-        orderFront(nil)
+        WindowPresenter.automatic.order(self, as: .front)
         if !wasVisible, !reduced { setFrameOrigin(NSPoint(x: origin.x, y: origin.y + 4)) }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = reduced ? 0.08 : 0.16

@@ -1652,7 +1652,7 @@ final class SettingsStore {
         panel.allowedContentTypes = [.json]
         panel.canCreateDirectories = true
         panel.message = "The file holds the menu bar's curated apps, your shortcuts and your ntfy topic; keep it where only you can read it. Webhook URLs and hook programs are never written to it."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard WindowPresenter.automatic.runModal(panel) == .OK, let url = panel.url else { return }
         do {
             try bundle.write(to: url)
             let parts = bundle.categories.map { $0.title.lowercased() }
@@ -1668,7 +1668,7 @@ final class SettingsStore {
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard WindowPresenter.automatic.runModal(panel) == .OK, let url = panel.url else { return }
         do {
             pendingImport = try SettingsBundle.read(contentsOf: url)
         } catch {

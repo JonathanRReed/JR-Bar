@@ -43,6 +43,40 @@ swift test                  # every suite; the parity and keyframe tests fan out
 ./scripts/run-dev.sh        # mock + build/JR-Bar-dev.app on the mock socket (--build rebuilds, --stop ends both)
 ```
 
+Tests detect XCTest and Swift Testing automatically. `WindowPresenter.automatic`
+suppresses window ordering, activation, modal dialogs, menus and SwiftUI sheets
+and popovers. `WindowPresenter.live` refuses desktop presentation in a test
+process. Keep presentation behind this helper. Inject a presenter or visibility
+probe when a test needs to observe presentation without displaying a window.
+
+Run the safety guard before a broad test run after changing presentation code:
+
+```sh
+swift build --build-tests
+swift test --skip-build --filter WindowPresenterTests
+swift test --skip-build
+```
+
+Render proofs stay offscreen and need no desktop opt-in:
+
+```sh
+JRBAR_RENDER_PROOF=1 JRBAR_RENDER_PROOF_DIR=/tmp/jrbar-proof swift test --skip-build --filter SomeRenderProofTests
+```
+
+Open the resulting PNGs to verify them. Only a person intentionally testing
+desktop interaction should set `JRBAR_INTERACTIVE_TESTS=1`. Leave it unset for
+automated runs. The optional native confetti animation check needs both
+`JRBAR_CONFETTI_LIVE_PROOF=1` and `JRBAR_INTERACTIVE_TESTS=1`.
+
+Screen Bar fixtures use private notification centers. Send simulated screen
+events to `controller.notificationCenter` and sleep or wake events to
+`controller.workspaceCenter`. A fixture must not change another fixture's
+display state.
+
+Explicit deadlock watchdogs in app tests allow ten minutes, including time
+queued behind other AppKit work. They are not performance assertions. Use an
+injected clock for delay assertions and await owned work for completion.
+
 Sparkle: `build-app.sh` links the pinned Sparkle.framework when
 `JRBAR_SPARKLE_FRAMEWORK_DIR` names a directory holding it (the default is
 `../build/macos-pkg/sparkle-distribution`, which exists after one `make

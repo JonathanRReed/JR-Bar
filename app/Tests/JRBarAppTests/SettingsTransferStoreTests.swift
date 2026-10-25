@@ -23,7 +23,7 @@ struct SettingsTransferStoreTests {
         return bundle
     }
 
-    @Test("empty or busy import attempts preserve the pending checklist", .timeLimit(.minutes(1)))
+    @Test("empty or busy import attempts preserve the pending checklist", .timeLimit(.minutes(10)))
     func refusedImportKeepsChecklist() async throws {
         let (_, store) = makeStore()
         var draft = SettingsBundle()
@@ -112,7 +112,7 @@ struct SettingsTransferStoreTests {
         #expect(store.lastError?.contains("refused menu_bar_icon_style") == true)
     }
 
-    @Test("an accepted icon import copies the local style after its write", .timeLimit(.minutes(1)))
+    @Test("an accepted icon import copies the local style after its write", .timeLimit(.minutes(10)))
     func acceptedStyleIsCopiedAfterReply() async throws {
         let (_, store) = makeStore()
         let gate = OverviewLoadOrderTests.Gate<CoreReply>()

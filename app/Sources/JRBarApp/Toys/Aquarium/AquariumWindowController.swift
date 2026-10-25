@@ -61,7 +61,7 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
         if activate {
             bringWindow(window)
         } else {
-            window.orderFront(nil)
+            WindowPresenter.automatic.order(window, as: .front)
         }
         noteOcclusion()
     }
@@ -166,7 +166,7 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
             window.setFrame(frame, display: true)
             self.savedFrame = nil
         }
-        if restoreFocus { window.makeKeyAndOrderFront(nil) }
+        if restoreFocus { WindowPresenter.automatic.order(window, as: .key) }
         noteOcclusion()
     }
 

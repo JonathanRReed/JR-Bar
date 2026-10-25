@@ -51,7 +51,7 @@ extension ScreenBarGeometry {
     @MainActor static var islandScreenRect: NSRect? {
         // NSApp is nil in a test process — optional-chained, not unwrapped.
         for window in NSApp?.windows ?? [] {
-            guard let island = window as? NotchIslandWindow, island.isVisible else { continue }
+            guard let island = window as? NotchIslandWindow, island.isPresented else { continue }
             return island.presentedFrame
         }
         return nil
@@ -63,7 +63,7 @@ extension ScreenBarGeometry {
         guard NotchIslandWindow.stagedMotion else { return nil }
         for window in NSApp?.windows ?? [] {
             guard let island = window as? NotchIslandWindow,
-                  island.isVisible, island.isAnimating else { continue }
+                  island.isPresented, island.isAnimating else { continue }
             return island.frame
         }
         return nil

@@ -60,7 +60,7 @@ final class FoldOverlayWindow: NSPanel {
                 FoldLog.log.notice("overlay: ordered in")
                 // A window coming in has no picture on it yet.
                 renderer.invalidateDrawn()
-                orderFrontRegardless()
+                WindowPresenter.automatic.order(self)
             }
         } else if isVisible {
             FoldLog.log.notice("overlay: ordered out")

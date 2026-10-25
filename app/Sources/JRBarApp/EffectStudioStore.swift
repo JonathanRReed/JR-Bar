@@ -1145,7 +1145,7 @@ final class EffectStudioStore {
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard WindowPresenter.automatic.runModal(panel) == .OK, let url = panel.url else { return }
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -1202,7 +1202,7 @@ final class EffectStudioStore {
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard WindowPresenter.automatic.runModal(panel) == .OK, let url = panel.url else { return }
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -1226,7 +1226,7 @@ final class EffectStudioStore {
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = suggestedName + ".json"
         panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard WindowPresenter.automatic.runModal(panel) == .OK, let url = panel.url else { return }
         let name = url.deletingPathExtension().lastPathComponent
         Task { [weak self] in
             guard let self else { return }

@@ -113,7 +113,7 @@ final class AquariumAmbientController {
         }
         wallpaper?.orderOut(nil)
         let panel = AquariumAmbientPanel(screen: screen, toy: toy, mode: .wallpaper)
-        panel.orderFrontRegardless()
+        WindowPresenter.automatic.order(panel)
         wallpaper = panel
         wallpaperDisplay = chosen
     }
@@ -154,7 +154,7 @@ final class AquariumAmbientController {
             let panel = AquariumAmbientPanel(screen: $0, toy: toy, mode: .screensaver)
             panel.onTouch = { [weak self] in self?.dismissSaver() }
             panel.alphaValue = 0
-            panel.orderFrontRegardless()
+            WindowPresenter.automatic.order(panel)
             panel.animator().alphaValue = 1
             return panel
         }
@@ -164,7 +164,7 @@ final class AquariumAmbientController {
         // or 1 would answer an agent's prompt. A non-activating panel
         // takes key without bringing JR-Bar forward, and ordering it out
         // hands the keyboard back to the window that had it.
-        savers.first?.makeKey()
+        WindowPresenter.automatic.perform { savers.first?.makeKey() }
         armed = false
         idleBaseline = AquariumScreensaver.IdleBaseline(idleSeconds: idle,
                                                        uptime: ProcessInfo.processInfo.systemUptime)

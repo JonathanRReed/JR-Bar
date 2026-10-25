@@ -98,6 +98,7 @@ struct KeepAwakeHandoverTests {
         try #require(firstArrived, "handover request did not arrive")
         let handover = state.handoverTask
         state.holdAwake(seconds: 900)
+        let expectedDeadline = try #require(state.awakeUntil)
         state.setAwakeKeepsDisplay(true)
         replies.take()
         let nextArrived = await replies.waitForRequest(2)
@@ -105,7 +106,7 @@ struct KeepAwakeHandoverTests {
         let newest = replies.requests[1]
         #expect(newest?.display == true)
         if let newest, case .until(let end) = newest.shape {
-            #expect(end > Date().timeIntervalSince1970 + 850)
+            #expect(end == expectedDeadline.timeIntervalSince1970)
         } else { Issue.record("the newer timed hold was lost") }
         #expect(state.awake.held)
         replies.take()

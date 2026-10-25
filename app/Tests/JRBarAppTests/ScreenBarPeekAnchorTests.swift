@@ -59,18 +59,20 @@ struct ScreenBarPeekAnchorTests {
     @Test("only an automatic unpinned dismissal at the same anchor can resume")
     func hoverResumeAuthorization() {
         let peek = ScreenBarPeek()
+        var visible = false
+        peek.panelIsVisible = { _ in visible }
         var ear = CGRect(x: 5100, y: 5950, width: 32, height: 32)
         peek.anchor = {
             ScreenBarPeekAnchor(ear: ear,
                                band: CGRect(x: 5000, y: 5940, width: 200, height: 2),
                                screen: CGRect(x: 4000, y: 4000, width: 2000, height: 2000))
         }
-        peek.presentPanel = { panel, _ in panel.orderFrontRegardless() }
+        peek.presentPanel = { panel, _ in visible = true }
         let panel = peek.makePanel()
-        defer { peek.hide(); panel.orderOut(nil) }
+        defer { peek.hide(); panel.orderOut(nil); visible = false }
         peek.show(pinned: false)
         peek.hide(resumable: true)
-        panel.orderFrontRegardless()
+        visible = true
         #expect(peek.canResumeHover && peek.hoverFrame != nil)
         #expect(peek.frame == nil)
         ear.origin.x += 10
@@ -80,17 +82,19 @@ struct ScreenBarPeekAnchorTests {
         #expect(!peek.canResumeHover && peek.hoverFrame == nil)
         peek.show(pinned: true)
         peek.hide(resumable: true)
-        panel.orderFrontRegardless()
+        visible = true
         #expect(!peek.canResumeHover)
         peek.show(pinned: false)
         peek.hide(resumable: true)
-        panel.orderOut(nil)
+        panel.orderOut(nil); visible = false
         #expect(!peek.canResumeHover && peek.hoverFrame == nil)
     }
 
     @Test("reopening a still-visible fading menu preserves its current alpha")
     func warmShowDoesNotResetAlpha() {
         let peek = ScreenBarPeek()
+        var visible = false
+        peek.panelIsVisible = { _ in visible }
         peek.anchor = {
             ScreenBarPeekAnchor(ear: CGRect(x: 5100, y: 5950, width: 32, height: 32),
                                band: CGRect(x: 5000, y: 5940, width: 200, height: 2),
@@ -100,22 +104,22 @@ struct ScreenBarPeekAnchorTests {
         peek.presentPanel = { panel, start in
             starts.append(start)
             if let start { panel.alphaValue = start }
-            panel.orderFrontRegardless()
+            visible = true
         }
         let panel = peek.makePanel()
-        defer { peek.hide(); panel.orderOut(nil) }
+        defer { peek.hide(); panel.orderOut(nil); visible = false }
         peek.show(pinned: false)
         #expect(starts.count == 1 && starts[0] == 0)
         peek.hide()
-        panel.orderFrontRegardless()
-        #expect(panel.isVisible)
+        visible = true
+        #expect(visible && !panel.isVisible)
         panel.alphaValue = 0.45
         peek.show(pinned: false)
         #expect(starts.count == 2 && starts[1] == nil)
         #expect(panel.alphaValue == 0.45)
         #expect(!panel.ignoresMouseEvents)
         peek.hide()
-        panel.orderOut(nil)
+        panel.orderOut(nil); visible = false
         peek.show(pinned: false)
         #expect(starts.count == 3 && starts[2] == 0)
     }

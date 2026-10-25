@@ -984,7 +984,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         if secondary {
             prepareMenu()
             statusItem.menu = menu
-            statusItem.button?.performClick(nil)
+            WindowPresenter.automatic.perform { statusItem.button?.performClick(nil) }
             statusItem.menu = nil
         } else {
             onTogglePanel?()

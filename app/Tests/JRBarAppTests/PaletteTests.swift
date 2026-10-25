@@ -435,7 +435,7 @@ struct PaletteTests {
         let round = Round()
         let controller = PaletteController()
         // The build-and-reuse path, with nothing ordered onto a screen.
-        controller.orderFront = { _ in }
+        controller.presentPanel = { _ in }
         controller.sources = { [PaletteClosureSource(build: { [self.row("r\(round.n)", "Round \(round.n)")] })] }
         controller.open()
         #expect(controller.panelBuilds == 1)

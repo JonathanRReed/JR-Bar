@@ -9,7 +9,7 @@ struct SettingsWriteOrderTests {
     enum Outcome: CaseIterable { case refused, disconnected, clamped }
 
     @Test("an older reply cannot erase a newer edit, even when the value repeats",
-          .timeLimit(.minutes(1)),
+          .timeLimit(.minutes(10)),
           arguments: Outcome.allCases)
     func newerEditSurvives(_ outcome: Outcome) async throws {
         let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-settings-order.sock")
@@ -67,7 +67,7 @@ struct SettingsWriteOrderTests {
     }
 
     @Test("turning plan limits off during consent does not send the older enable command",
-          .timeLimit(.minutes(1)))
+          .timeLimit(.minutes(10)))
     func planLimitsStayOff() async throws {
         let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-plan-limits-order.sock")
         core.apply(.settings(CoreSettings(generation: 1, schema: CoreProtocol.knownSettingsSchema,

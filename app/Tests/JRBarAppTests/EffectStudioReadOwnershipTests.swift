@@ -4,7 +4,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Effect Studio read ownership", .serialized)
+@Suite("Effect Studio read ownership", .serialized, .timeLimit(.minutes(10)))
 struct EffectStudioReadOwnershipTests {
     @Test("canceling a reload without closing releases busy state without an error")
     func cancelledLoadSettles() async throws {
@@ -66,10 +66,11 @@ struct EffectStudioReadOwnershipTests {
         try await withStore { fixture, store in
             let old = try pack("old")
             let current = try pack("current")
+            let started = TestEvents<Void>()
             var finish: CheckedContinuation<[ScenePackSummary], Error>?
-            store.scenePackLoader = { try await withCheckedThrowingContinuation { finish = $0 } }
+            store.scenePackLoader = { try await withCheckedThrowingContinuation { finish = $0; started.send(()) } }
             let first = Task { await store.loadScenePacks() }
-            try #require(await fixture.until { finish != nil })
+            _ = try await started.next()
             store.scenePackLoader = { [current] }
             await store.loadScenePacks()
             finish?.resume(returning: [old])
@@ -83,10 +84,11 @@ struct EffectStudioReadOwnershipTests {
     func oldUnsupportedReplyIsIgnored() async throws {
         try await withStore { fixture, store in
             let current = try pack("current")
+            let started = TestEvents<Void>()
             var finish: CheckedContinuation<[ScenePackSummary], Error>?
-            store.scenePackLoader = { try await withCheckedThrowingContinuation { finish = $0 } }
+            store.scenePackLoader = { try await withCheckedThrowingContinuation { finish = $0; started.send(()) } }
             let first = Task { await store.loadScenePacks() }
-            try #require(await fixture.until { finish != nil })
+            _ = try await started.next()
             store.scenePackLoader = { [current] }
             await store.loadScenePacks()
             finish?.resume(throwing: CoreReplyError(code: "unknown_command"))
@@ -100,10 +102,11 @@ struct EffectStudioReadOwnershipTests {
     @Test("closing ignores a late scene-pack error")
     func closeRetiresSceneLoad() async throws {
         try await withStore { fixture, store in
+            let started = TestEvents<Void>()
             var finish: CheckedContinuation<[ScenePackSummary], Error>?
-            store.scenePackLoader = { try await withCheckedThrowingContinuation { finish = $0 } }
+            store.scenePackLoader = { try await withCheckedThrowingContinuation { finish = $0; started.send(()) } }
             let load = Task { await store.loadScenePacks() }
-            try #require(await fixture.until { finish != nil })
+            _ = try await started.next()
             store.windowDidClose()
             finish?.resume(throwing: CoreReplyError(code: "refused", message: "Obsolete failure"))
             await load.value

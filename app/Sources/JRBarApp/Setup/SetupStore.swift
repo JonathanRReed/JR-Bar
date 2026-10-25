@@ -120,6 +120,7 @@ final class SetupStore {
     @ObservationIgnored private let scheduleHookNoteClear:
         (@escaping @MainActor () -> Void) -> DispatchWorkItem
     @ObservationIgnored private var permissionTimer: Timer?
+    @ObservationIgnored private let schedulePermissionPoll: (@escaping @MainActor () -> Void) -> Timer
     /// Stopping retires poll ownership without canceling an admitted read.
     @ObservationIgnored private var permissionPollID: UUID?
 
@@ -149,6 +150,14 @@ final class SetupStore {
          persist: @escaping (SetupState) throws -> Void = { state in
              try SetupStateFile().save(state)
          },
+         schedulePermissionPoll: @escaping (@escaping @MainActor () -> Void) -> Timer = { tick in
+             let timer = Timer(timeInterval: 1.5, repeats: true) { _ in
+                 MainActor.assumeIsolated { tick() }
+             }
+             timer.tolerance = 0.3
+             RunLoop.main.add(timer, forMode: .common)
+             return timer
+         },
          scheduleHookNoteClear: @escaping
              (@escaping @MainActor () -> Void) -> DispatchWorkItem = { clear in
                  let work = DispatchWorkItem {
@@ -159,6 +168,7 @@ final class SetupStore {
              }) {
         self.model = model
         self.persist = persist
+        self.schedulePermissionPoll = schedulePermissionPoll
         self.scheduleHookNoteClear = scheduleHookNoteClear
         self.state = load()
         self.screenBarShown = model.screenBarShown()
@@ -469,12 +479,9 @@ final class SetupStore {
     @discardableResult
     func startPermissionUpdates() -> Task<Void, Never>? {
         guard permissionTimer == nil else { return nil }
-        let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { _ = self?.pollPermissions() }
+        permissionTimer = schedulePermissionPoll { [weak self] in
+            _ = self?.pollPermissions()
         }
-        timer.tolerance = 0.3
-        RunLoop.main.add(timer, forMode: .common)
-        permissionTimer = timer
         return pollPermissions()
     }
 
