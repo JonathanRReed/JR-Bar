@@ -4456,6 +4456,10 @@ class StatusBarController(NSObject):
         if getattr(self, "_runtime_termination_started", False):
             return None
         self._runtime_termination_started = True
+        for owner_name in ("_jrbar_phone_alerts", "_jrbar_usage_hook_jobs"):
+            owner = getattr(self, owner_name, None)
+            if owner is not None:
+                owner.cancel()
         # Repeating NSTimers retain their target; left running they keep
         # the controller alive and firing through launchd teardown.
         self._runtime_started = False

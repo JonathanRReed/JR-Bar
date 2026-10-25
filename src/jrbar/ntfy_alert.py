@@ -26,8 +26,10 @@ Redirects are refused.
 
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import re
+import socket
 import threading
 import time
 from collections import deque
@@ -215,6 +217,72 @@ def post_ntfy(target: NtfyTarget, body: bytes) -> int | None:
         return None
 
 
+class _CancellableConnection(http.client.HTTPSConnection):
+    def __init__(self, *args, cancelled: threading.Event, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._cancelled = cancelled
+
+    def connect(self) -> None:
+        if self._cancelled.is_set():
+            raise OSError("delivery cancelled")
+        super().connect()
+        if self._cancelled.is_set():
+            self.close()
+            raise OSError("delivery cancelled")
+
+    def send(self, data) -> None:
+        if self._cancelled.is_set():
+            raise OSError("delivery cancelled")
+        super().send(data)
+
+
+class _Delivery:
+    def __init__(self) -> None:
+        self.cancelled = threading.Event()
+        self._lock = threading.Lock()
+        self._connection: http.client.HTTPSConnection | None = None
+
+    def cancel(self) -> None:
+        self.cancelled.set()
+        with self._lock:
+            connection = self._connection
+        if connection is not None:
+            if connection.sock is not None:
+                try:
+                    connection.sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            connection.close()
+
+    def post(self, target: NtfyTarget, body: bytes) -> int | None:
+        parts = urlsplit(target.url)
+        connection = _CancellableConnection(
+            parts.hostname, parts.port or 443, timeout=REQUEST_TIMEOUT_SECONDS,
+            cancelled=self.cancelled,
+        )
+        with self._lock:
+            if self.cancelled.is_set():
+                return None
+            self._connection = connection
+        try:
+            connection.connect()
+            if self.cancelled.is_set():
+                return None
+            connection.request("POST", parts.path, body=body, headers={
+                "Content-Type": "text/plain; charset=utf-8",
+                "Title": "JR-Bar", "User-Agent": f"JR-Bar/{__version__}",
+            })
+            response = connection.getresponse()
+            response.read(4096)
+            return response.status
+        except (OSError, http.client.HTTPException, ValueError):
+            return None
+        finally:
+            connection.close()
+            with self._lock:
+                self._connection = None
+
+
 Transport = Callable[[NtfyTarget, bytes], "int | None"]
 
 
@@ -263,6 +331,19 @@ class PhoneAlerts:
         self._lock = threading.Lock()
         self._last: dict[tuple[str, str], float] = {}
         self._sent_at: deque[float] = deque()
+        self._deliveries: set[_Delivery] = set()
+
+    def cancel(self) -> None:
+        with self._lock:
+            deliveries = tuple(self._deliveries)
+            self._deliveries.clear()
+        for delivery in deliveries:
+            delivery.cancel()
+
+    @property
+    def active_deliveries(self) -> int:
+        with self._lock:
+            return len(self._deliveries)
 
     def alert(
         self,
@@ -276,6 +357,7 @@ class PhoneAlerts:
         the person turned phone alerts on with a usable topic and (by default)
         is away. Never blocks: the request goes out on its own thread."""
         if getattr(settings, "ntfy_enabled", False) is not True:
+            self.cancel()
             return Outcome(False, Reason.OFF)
         target = parse_target(getattr(settings, "ntfy_topic", ""))
         if target is None:
@@ -301,7 +383,9 @@ class PhoneAlerts:
                 return Outcome(False, Reason.BUDGET)
             self._last[key] = now
             self._sent_at.append(now)
-        self._spawn(lambda: self._deliver(target, message))
+            delivery = _Delivery()
+            self._deliveries.add(delivery)
+        self._spawn(lambda: self._deliver(target, message, delivery=delivery))
         return Outcome(True, Reason.QUEUED)
 
     def send_test(self, settings: object) -> Outcome:
@@ -316,11 +400,22 @@ class PhoneAlerts:
             return Outcome(False, Reason.INVALID_TARGET)
         return self._deliver(target, TEST_MESSAGE)
 
-    def _deliver(self, target: NtfyTarget, message: str) -> Outcome:
+    def _deliver(self, target: NtfyTarget, message: str, *, delivery: _Delivery | None = None) -> Outcome:
         try:
-            status = self._transport(target, message.encode("utf-8"))
+            if delivery is not None and delivery.cancelled.is_set():
+                return Outcome(False, Reason.OFF)
+            if delivery is not None and self._transport is post_ntfy:
+                status = delivery.post(target, message.encode("utf-8"))
+            else:
+                status = self._transport(target, message.encode("utf-8"))
         except Exception:
             status = None
+        finally:
+            if delivery is not None:
+                with self._lock:
+                    self._deliveries.discard(delivery)
+        if delivery is not None and delivery.cancelled.is_set():
+            return Outcome(False, Reason.OFF)
         if status is None:
             outcome = Outcome(False, Reason.UNREACHABLE)
         elif 200 <= status < 300:

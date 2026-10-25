@@ -260,9 +260,9 @@ def test_provider_apply_continues_after_hook_start_failure(monkeypatch, failure)
         "record_state_observations": lambda *_args, **_kwargs: True,
         "reset_delivery_state": lambda _controller: ResetDeliveryState(),
         "note_reset_candidates": lambda *_args: None,
-        "dispatch_usage_hooks": lambda config, events: hooks.dispatch_usage_hooks(
+        "dispatch_usage_hooks": lambda config, events, **kwargs: hooks.dispatch_usage_hooks(
             config, events, limiter=hooks.UsageHookLimiter(), results=results, environ={},
-            clock=lambda: 1000.0, log=lambda _line: None),
+            clock=lambda: 1000.0, log=lambda _line: None, **kwargs),
     })
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), "exec"), scope)
     previous = ProviderUsageState((snapshot((lane(60.0),)),), 900.0, 1000.0, False)

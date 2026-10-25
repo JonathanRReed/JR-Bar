@@ -11,6 +11,7 @@ from jrbar.provider_usage_runtime import ProviderUsageService
 from jrbar.provider_usage_settings import default_provider_usage_settings
 from jrbar.runtime_scheduler import AppKitTimerRegistry, RuntimeFeature
 from jrbar.settings import AgentMonitorSettings, DeviceDisplaySetting
+from jrbar.usage_event_hooks import UsageHookJobs
 from tests.test_core_runtime import headless  # noqa: F401
 from tests.test_presentation_scheduler import _FakeAppKitFactory, _inputs
 from tests.test_status_bar_lifecycle_contract import controller  # noqa: F401
@@ -113,6 +114,38 @@ def test_disabled_cue_returns_before_its_planner(monkeypatch):
     monkeypatch.setattr(ambient, "plan_ask_heartbeat_sync", lambda *_args, **_kwargs: calls.append(True))
     ambient._observe_ask_heartbeat(target, object(), object(), frozenset())
     assert calls == []
+
+
+def test_phone_off_cancels_queued_delivery_and_its_active_connection(headless):  # noqa: F811
+    queued = []
+    wire = []
+    service = PhoneAlerts(transport=lambda *_: wire.append(True), spawn=queued.append, away_probe=lambda: True)
+    headless._jrbar_phone_alerts = service
+    headless.settings = replace(headless.settings, ntfy_enabled=True, ntfy_topic="fixture")
+    assert service.alert(headless.settings, KIND_NEEDS_YOU, "codex").sent
+    assert service.active_deliveries == 1
+    delivery = next(iter(service._deliveries))
+    closed = []
+    delivery._connection = SimpleNamespace(sock=None, close=lambda: closed.append(True))
+    headless.settings = replace(headless.settings, ntfy_enabled=False)
+    queued[0]()
+    assert closed == [True]
+    assert service.active_deliveries == 0 and wire == []
+    assert service.alert(headless.settings, KIND_NEEDS_YOU, "codex").reason == Reason.OFF
+
+
+def test_hooks_off_retires_active_processes_and_rejects_late_launches(monkeypatch):
+    jobs = UsageHookJobs()
+    generation = jobs.generation
+    killed = []
+    monkeypatch.setattr("jrbar.usage_event_hooks._signal_kill", killed.append)
+    first = object()
+    assert jobs.register(first, generation)
+    jobs.cancel()
+    assert jobs.active_count == 0 and killed == [first]
+    late = object()
+    assert not jobs.register(late, generation)
+    assert killed == [first, late]
 
 
 def test_presence_off_releases_the_daemons_expiry_timer(headless):  # noqa: F811

@@ -4895,10 +4895,16 @@ def build_headless_controller_class() -> type:
                     if callable(cancel):
                         cancel(old_generation)
                     self._device_discovery_cache = None
+                hooks = getattr(self, "_jrbar_usage_hook_jobs", None)
+                if hooks is not None and not value.usage_hooks.get("enabled", False):
+                    hooks.cancel()
                 if not value.remote_peers.enabled:
                     self.stop_remote_peer_timer()
                 elif getattr(self, "_runtime_started", False):
                     self.start_remote_peer_timer()
+                alerts = getattr(self, "_jrbar_phone_alerts", None)
+                if alerts is not None and not value.ntfy_enabled:
+                    alerts.cancel()
             self._core_settings_generation = getattr(self, "_core_settings_generation", 0) + 1
             if getattr(self, "_core", None) is not None:
                 self._core_publish_settings()

@@ -331,6 +331,12 @@ else:
             # quota_reset events are the confirmed ones above.
             hook_config = config_for_settings(self.settings)
             if hook_config.enabled and hook_config.rules:
+                from .usage_event_hooks import UsageHookJobs
+
+                jobs = getattr(self, "_jrbar_usage_hook_jobs", None)
+                if jobs is None:
+                    jobs = UsageHookJobs()
+                    self._jrbar_usage_hook_jobs = jobs
                 dispatch_usage_hooks(
                     hook_config,
                     detect_usage_hook_events(
@@ -339,6 +345,7 @@ else:
                         thresholds=thresholds,
                         reset_events=reset_events,
                     ),
+                    jobs=jobs,
                 )
             # Pace as an interruption, not just a color: a lane that
             # JUST became projected-to-run-dry-before-reset earns one
