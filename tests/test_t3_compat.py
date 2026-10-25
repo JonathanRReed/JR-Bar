@@ -939,3 +939,25 @@ def test_service_checks_due_and_unchanged_activity_before_process_detection():
         assert detections == [0.0, 30.0]
     finally:
         service.close()
+
+
+def test_service_reconciles_even_after_the_changed_database_was_read():
+    clock = [0.0]
+    reads = []
+    ready = threading.Event()
+    snapshot = T3Snapshot(observed_at=datetime.now(timezone.utc), database_path=Path('/synthetic/state.sqlite'),
+                          schema_fingerprint='synthetic', sqlite_user_version=0, threads=())
+    service = T3SnapshotService(
+        enabled=True, reader=lambda **kw: (reads.append(clock[0]), snapshot)[1],
+        monotonic=lambda: clock[0], process_running=lambda: True, activity=lambda: 1,
+    )
+    try:
+        service.request(lambda _: ready.set())
+        assert ready.wait(2)
+        ready.clear()
+        clock[0] = 180.0
+        service.request(lambda _: ready.set())
+        assert ready.wait(2)
+        assert reads == [0.0, 180.0]
+    finally:
+        service.close()

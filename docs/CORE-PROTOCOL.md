@@ -120,7 +120,9 @@ only, never roster activity.
 
 T3 Code detection runs without a provider toggle. The daemon reads its data
 only while the desktop app or a CLI server holds the same database, and its
-database, WAL or settings change. Active reads coalesce for 4 seconds;
+database, WAL or settings change, with a reconciliation every 3 minutes.
+Absent databases are checked every 60 seconds without process scans. Stopped
+hosts with a database are checked at most every 30 seconds. Active reads coalesce for 4 seconds;
 idle reads coalesce for 12 seconds. Finished workers remain for 10 minutes;
 active workers remain until their run settles. Failed reads retry on the next eligible tick.
 Existing settings still supply custom paths, environment and statistics consent.

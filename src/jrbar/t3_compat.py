@@ -42,6 +42,7 @@ T3_QUERY_TIMEOUT_SECONDS = 0.5
 T3_POLL_INTERVAL_SECONDS = 2.0
 T3_ACTIVE_COALESCE_SECONDS = 4.0
 T3_IDLE_POLL_INTERVAL_SECONDS = 12.0
+T3_RECONCILE_INTERVAL_SECONDS = 180.0
 T3_RECENT_WORKER_SECONDS = 600
 T3_MAX_STATUSES = 1_024
 T3_REASON_TRUNCATED = "t3_snapshot_truncated"
@@ -875,6 +876,7 @@ _V2_UNHELD_RUN = (
 class _V2ReadCache:
     identity: tuple | None = None
     watermark: str = ""
+    reconciled_at: datetime | None = None
     rows: dict = field(default_factory=dict)
     truncated: bool = False
     views: dict = field(default_factory=dict)
@@ -1062,6 +1064,17 @@ def _read_v2_snapshot(
             f"WHERE runs.thread_id = threads.thread_id AND runs.status IN {_V2_ACTIVE_RUN}))"
         )
         rows_by_id = {key: row for key, row in cache.rows.items() if key not in selected}
+        reconcile = (cache.reconciled_at is None
+                     or (observed_at - cache.reconciled_at).total_seconds() >= T3_RECONCILE_INTERVAL_SECONDS)
+        if reconcile:
+            # Archival and deletion need not advance updated_at. Check only
+            # identities here; idle threads still avoid the projection joins.
+            retained = {row[0] for row in connection.execute(
+                "SELECT thread_id FROM orchestration_v2_projection_threads "
+                "WHERE deleted_at IS NULL AND archived_at IS NULL "
+                "AND project_id IN (SELECT project_id FROM projection_projects WHERE deleted_at IS NULL)"
+            )}
+            rows_by_id = {key: row for key, row in rows_by_id.items() if key in retained}
         truncated = cache.truncated
         if not cache.watermark:
             roots = connection.execute(query.replace("{lineage_filter}", f"NOT ({worker_filter})"), (T3_MAX_THREADS + 1,)).fetchall()
@@ -1277,6 +1290,8 @@ def _read_v2_snapshot(
             elif links or thread.thread_id in bound_thread_ids:
                 threads[index] = replace(thread, provider=key.split(":", 1)[0], provider_thread_id=native, parent_links=evidence)
         fingerprint = _actual_schema_fingerprint(connection, _V2_REQUIRED_COLUMNS)
+        if reconcile:
+            cache.reconciled_at = observed_at
         cache.projects = projects
         cache.final_views = {thread.thread_id: thread for thread in threads}
         cache.worker_ids = worker_ids & {row["thread_id"] for row in rows}
@@ -1383,6 +1398,8 @@ class T3SnapshotService:
             )
             if self._in_flight or not due:
                 return self._observation_locked()
+            reconcile = (self._attempted_at is not None
+                         and now - self._attempted_at >= T3_RECONCILE_INTERVAL_SECONDS)
             activity = None
             if self._last_activity is not None:
                 activity = self._activity()
@@ -1390,7 +1407,7 @@ class T3SnapshotService:
                 # was already read, without scanning it on every idle tick.
                 from .t3_process import T3_STOPPED_POLL_SECONDS
 
-                if (not force and self._reason is None and activity == self._last_activity
+                if (not force and not reconcile and self._reason is None and activity == self._last_activity
                         and self._process_checked_at is not None
                         and now - self._process_checked_at < T3_STOPPED_POLL_SECONDS):
                     return self._observation_locked()
@@ -1404,7 +1421,7 @@ class T3SnapshotService:
                 return self._observation_locked()
             if activity is None:
                 activity = self._activity()
-            if not force and self._reason is None and self._attempted_at is not None and activity == self._last_activity:
+            if not force and not reconcile and self._reason is None and self._attempted_at is not None and activity == self._last_activity:
                 return self._observation_locked()
             self._generation += 1
             generation = self._generation

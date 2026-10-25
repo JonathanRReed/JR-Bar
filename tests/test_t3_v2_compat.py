@@ -816,3 +816,27 @@ def test_project_edits_and_deletion_invalidate_cached_threads(tmp_path):
         assert read_t3_snapshot(base_dir=tmp_path).threads == ()
     finally:
         t3_compat._v2_read_cache.reset(token)
+
+
+@pytest.mark.parametrize('mutation', [
+    "DELETE FROM orchestration_v2_projection_threads WHERE thread_id='removed'",
+    "UPDATE orchestration_v2_projection_threads SET archived_at='2026-10-07T12:01:00Z' WHERE thread_id='removed'",
+    "UPDATE orchestration_v2_projection_threads SET deleted_at='2026-10-07T12:01:00Z' WHERE thread_id='removed'",
+])
+def test_periodic_reconciliation_drops_threads_without_timestamp_bumps(tmp_path, mutation):
+    database = _v2(tmp_path)
+    _thread(database, 'retained')
+    _thread(database, 'removed')
+    clock = [datetime.fromisoformat(NOW)]
+    cache = t3_compat._V2ReadCache()
+    token = t3_compat._v2_read_cache.set(cache)
+    try:
+        assert len(read_t3_snapshot(base_dir=tmp_path, now=lambda: clock[0]).threads) == 2
+        with sqlite3.connect(database) as connection:
+            connection.execute(mutation)
+        clock[0] = datetime.fromisoformat('2026-10-07T12:03:00Z')
+        snapshot = read_t3_snapshot(base_dir=tmp_path, now=lambda: clock[0])
+        assert [thread.thread_id for thread in snapshot.threads] == ['retained']
+        assert set(cache.rows) == set(cache.payloads) == set(cache.views) == set(cache.final_views) == {'retained'}
+    finally:
+        t3_compat._v2_read_cache.reset(token)
