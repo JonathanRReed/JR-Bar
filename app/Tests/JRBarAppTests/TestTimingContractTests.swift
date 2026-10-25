@@ -8,7 +8,7 @@ struct TestTimingContractTests {
         let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let walker = FileManager.default.enumerator(at: tests, includingPropertiesForKeys: nil)
         let forbidden = try NSRegularExpression(
-            pattern: #"\bDispatchSemaphore\b|\b(?:Task|Thread)\.sleep\s*\(|\b(?:usleep|nanosleep)\s*\(|\.wait\s*\(\s*(?:timeout|until):"#)
+            pattern: #"\bDispatchSemaphore\b|\b(?:Task|Thread)\.sleep\s*\(|\bContinuousClock\s*\(\s*\)\.sleep\s*\(|\b(?:usleep|nanosleep)\s*\(|\.wait\s*\(\s*(?:timeout|until):"#)
         var offenders: [String] = []
         while let file = walker?.nextObject() as? URL {
             guard file.pathExtension == "swift" else { continue }
