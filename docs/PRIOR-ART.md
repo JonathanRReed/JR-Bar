@@ -711,19 +711,25 @@ No upstream code was copied. The daemon makes no registry request.
 Cursor's [hooks reference](https://cursor.com/docs/hooks#subagentstart),
 checked 2026-10-25, documents `subagent_id` and `parent_conversation_id`.
 No Cursor executable or app was available to version locally. The synthetic
-fixture names the documentation date. No Cursor source code was copied.
+fixture names the documentation date. Cursor is proprietary. Its cited
+hooks documentation states no open-source licence. The reference was used
+for field names only. No Cursor source code was copied.
 
 Hermes' [subagent hook reference](https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks#subagent_start)
 and local `sessions` table columns were checked on 2026-10-25. The local CLI
 was unavailable, so the fixture identifies the schema observation date.
 The adapter reads `id`, `parent_session_id` and `started_at` only. Hermes
-Agent is MIT licensed. No source code was copied.
+Agent is MIT licensed. The source reference is commit
+[`99a161531cc7b6ce8d91869666ea19cee0610156`](https://github.com/NousResearch/hermes-agent/tree/99a161531cc7b6ce8d91869666ea19cee0610156).
+No source code was copied.
 
 OpenCode 1.19.3 was checked with `--version` and read-only SQLite schema
 inspection. Its `session.parent_id` and millisecond `time_updated` fields
 supply restart recovery. The existing bridge reads `info.id` and
 `info.parentID` on session events. The [plugin reference](https://opencode.ai/docs/plugins/)
-describes those events. OpenCode is MIT licensed. No source code was copied.
+describes those events. OpenCode is MIT licensed. Version 1.19.3 points to
+commit [`e3c4eb242585dcd77be1a867391b7c25fd47ce52`](https://github.com/anomalyco/opencode/tree/e3c4eb242585dcd77be1a867391b7c25fd47ce52).
+No source code was copied.
 
 OpenClaw 2026.3.2's installed hook and session declarations document
 `event.sessionKey`, `context` and `SessionEntry.spawnedBy`. The
@@ -731,14 +737,18 @@ OpenClaw 2026.3.2's installed hook and session declarations document
 2026-10-25, also names `spawnedBySessionId`. The local registry maps that
 native ID back to the hook's session key. The fixture for the newer field
 names the documentation date, since it is absent from the installed version.
-OpenClaw is MIT licensed. No source code was copied.
+OpenClaw is MIT licensed. Version 2026.3.2 points to commit
+[`85377a28175695c224f6589eb5c1460841ecd65c`](https://github.com/openclaw/openclaw/tree/85377a28175695c224f6589eb5c1460841ecd65c).
+No source code was copied.
 
 Gemini CLI's installed 0.46.0 bundle, `ChatRecordingService.initialize`,
 writes subagent metadata to `tmp/<project>/chats/<parentSessionId>/<child>.jsonl`.
 The reader requires `kind: subagent` and matching header and filename IDs,
 then reads the immediate parent directory. It reads no message records.
 The [upstream version](https://github.com/google-gemini/gemini-cli/tree/v0.46.0)
-is Apache-2.0 licensed. No source code was copied.
+is Apache-2.0 licensed and points to commit
+[`85b0c55c126a4992b51d140e357ae9db5f9c2d7f`](https://github.com/google-gemini/gemini-cli/tree/85b0c55c126a4992b51d140e357ae9db5f9c2d7f).
+No source code was copied.
 
 Grok 1.0.70, commit `f50904eaee6c`, was checked with `--version`. Its
 `SubagentStart` shape matches the synthetic 1.0.44 hook capture already
