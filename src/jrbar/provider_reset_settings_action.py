@@ -149,9 +149,8 @@ def apply_app_reset_receipt(controller, event_id, outcome, reason, *, now=None) 
     )
     controller._jrbar_reset_delivery_state = state
     persist = getattr(controller, "_persist_reset_delivery_state", None)
-    if callable(persist):
-        persist()
-    return {"recorded": True}
+    persistence = persist() if callable(persist) else None
+    return {"recorded": True, "persistence": persistence}
 
 
 __all__.append("apply_app_reset_receipt")

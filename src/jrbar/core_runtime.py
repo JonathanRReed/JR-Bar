@@ -2591,6 +2591,19 @@ def _cmd_refresh_usage(self, args):
     return {"requested_at": time.time(), "providers": list(providers)}
 
 
+@command("reset_status")
+def _cmd_reset_status(self, args):
+    from .provider_reset_settings_action import reset_replay_documents
+
+    if "retry" in args and type(args["retry"]) is not bool:
+        raise CommandError("invalid_args", "retry must be a boolean")
+    if args.get("retry"):
+        self._persist_reset_delivery_state(retry=True)
+    documents = reset_replay_documents(self)
+    return {"events": documents[:16], "remaining": max(0, len(documents) - 16),
+            "persistence": self._reset_persistence().document()}
+
+
 @command("reset_receipt")
 def _cmd_reset_receipt(self, args):
     """The app's report on a ``quota_reset`` it was sent: ``delivered``

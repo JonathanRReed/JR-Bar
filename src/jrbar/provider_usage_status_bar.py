@@ -435,15 +435,63 @@ else:
         def _celebrate_quota_resets(self, events) -> None:
             celebrate_quota_resets(self, events, legacy=_legacy)
 
-        def _persist_reset_delivery_state(self) -> None:
+        def _reset_persistence(self):
+            from .reset_persistence import ResetPersistence
+
+            book = getattr(self, "_jrbar_reset_persistence", None)
+            if book is None:
+                book = ResetPersistence()
+                self._jrbar_reset_persistence = book
+            return book
+
+        def _persist_reset_delivery_state(self, *, retry: bool = False):
+            from .reset_persistence import ResetPersistenceCompletion
+
+            book = self._reset_persistence()
             state = reset_delivery_state(self)
-            disposition = self._persistence_writer.submit(
-                "provider-reset-events",
-                lambda: save_reset_delivery_state(state),
-                replace_pending=True,
+            book.changed(state, retry=retry)
+            now = time.time()
+            revision = book.begin(now=now)
+            if revision is None:
+                return book.document()
+
+            def completed(receipt):
+                self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                    "applyResetPersistenceReceipt:", ResetPersistenceCompletion(revision, receipt), False)
+
+            try:
+                disposition = self._persistence_writer.submit(
+                    "provider-reset-events", lambda: save_reset_delivery_state(state),
+                    replace_pending=True, receipt_handler=completed,
+                )
+                if disposition.value.startswith("refused"):
+                    book.complete(revision, succeeded=False, reason=disposition.value, now=now)
+            except Exception:
+                book.complete(revision, succeeded=False, reason="submit_failed", now=now)
+            self._schedule_reset_delivery_retry(now)
+            if book.error:
+                publish = getattr(self, "_core_publish_event", None)
+                if callable(publish):
+                    publish("reset_save_failed")
+            return book.document()
+
+        @_legacy.objc.IBAction
+        def applyResetPersistenceReceipt_(self, completion):
+            from .reset_persistence import ResetPersistenceCompletion
+
+            if not isinstance(completion, ResetPersistenceCompletion):
+                return
+            book = self._reset_persistence()
+            current = completion.revision == book.revision and book.in_flight
+            book.complete(
+                completion.revision, succeeded=completion.receipt.succeeded,
+                reason=completion.receipt.error_code or completion.receipt.outcome.value,
+                now=time.time(),
             )
-            if disposition.value.startswith("refused"):
-                self._provider_usage_log("reset delivery state write not queued")
+            self._schedule_reset_delivery_retry(time.time())
+            publish = getattr(self, "_core_publish_event", None)
+            if current and callable(publish):
+                publish("reset_save_failed" if book.dirty else "reset_saved")
 
         def _deliver_pending_reset_events(self) -> None:
             from .provider_reset_settings_action import deliver_pending_reset_events
@@ -453,14 +501,23 @@ else:
         def _schedule_reset_delivery_retry(self, now: float) -> None:
             state = getattr(self, "_jrbar_reset_delivery_state", ResetDeliveryState())
             delay = next_reset_retry_delay(state, now=now)
+            book = self._reset_persistence()
+            if book.retry_at is not None:
+                persistence_delay = max(0.0, book.retry_at - now)
+                delay = persistence_delay if delay is None else min(delay, persistence_delay)
             timer = getattr(self, "_jrbar_reset_delivery_timer", None)
             if delay is None:
                 if timer is not None:
                     timer.invalidate()
                 self._jrbar_reset_delivery_timer = None
+                self._jrbar_reset_delivery_retry_at = None
                 return
+            deadline = now + max(0.05, delay)
             if timer is not None:
-                return
+                if getattr(self, "_jrbar_reset_delivery_retry_at", float("inf")) <= deadline:
+                    return
+                timer.invalidate()
+            self._jrbar_reset_delivery_retry_at = deadline
             self._jrbar_reset_delivery_timer = self._schedule_capacity_timer(
                 max(0.05, delay),
                 "retryPendingResetDeliveries:",
@@ -471,6 +528,8 @@ else:
             if timer is not getattr(self, "_jrbar_reset_delivery_timer", None):
                 return
             self._jrbar_reset_delivery_timer = None
+            self._jrbar_reset_delivery_retry_at = None
+            self._persist_reset_delivery_state()
             self._deliver_pending_reset_events()
 
         def _alert_connection_loss(self, previous_state, state) -> None:

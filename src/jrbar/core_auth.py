@@ -154,6 +154,7 @@ _PRIVILEGED_COMMANDS: Final = (
     "set_closed_lid_policy",
     "presence",
     "reset_receipt",
+    "reset_status",
     "audit_export",
     "quit",
     # LED, calibration, effect, scene-pack and cue writers.
