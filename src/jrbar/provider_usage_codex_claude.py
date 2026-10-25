@@ -777,6 +777,9 @@ _OAUTH_REST_SECONDS = {
 }
 _oauth_rest_until: dict[tuple[str, str], tuple[float, str | None, str | None]] = {}
 _oauth_rest_lock = threading.Lock()
+_cli_retry_at: dict[tuple[str, str], float] = {}
+_CLI_RETRY_SECONDS = 300.0
+_CLI_HELPFUL_FAILURES = frozenset({"network_unavailable", "response_timed_out", "invalid_provider_response"})
 
 
 def clear_claude_auth_rest(*, source_instance_id: str = "default") -> None:
@@ -946,7 +949,19 @@ def collect_claude(
         with _oauth_rest_lock:
             _oauth_rest_until.pop(rest_key, None)
         return snapshot
-    if cli_fallback and reading is None:
+    with _oauth_rest_lock:
+        cli_due = observed_at >= _cli_retry_at.get(rest_key, 0)
+        if (cli_fallback and reading is None and cli_due
+                and snapshot.reason_code in _CLI_HELPFUL_FAILURES):
+            _cli_retry_at[rest_key] = observed_at + _CLI_RETRY_SECONDS
+            # Keep expired entries from accumulating across account changes.
+            for key, deadline in tuple(_cli_retry_at.items()):
+                if deadline <= observed_at:
+                    _cli_retry_at.pop(key, None)
+            try_cli = True
+        else:
+            try_cli = False
+    if try_cli:
         try:
             from .claude_cli_usage import probe_usage
 

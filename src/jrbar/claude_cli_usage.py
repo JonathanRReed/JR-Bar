@@ -49,6 +49,15 @@ def parse_usage_screen(text: str) -> list[dict]:
 
 
 def probe_usage(access_token: str, *, timeout: float = 20.0) -> list[dict]:
+    """Refuse until a command-only CLI transport has been verified.
+
+    The CLI documents its positional argument as a model prompt. Passing
+    /usage there cannot guarantee local command dispatch across versions.
+    """
+    raise ValueError("claude_cli_command_transport_unverified")
+
+
+def _probe_usage(access_token: str, *, timeout: float = 20.0) -> list[dict]:
     """Run the installed CLI in a private PTY, then kill its process group.
 
     No trust, login or other interactive question is answered. Only /usage
@@ -93,8 +102,17 @@ def probe_usage(access_token: str, *, timeout: float = 20.0) -> list[dict]:
                         if not chunk:
                             break
                         output.extend(chunk)
+                        text = output.decode("utf-8", errors="replace")
+                        clean = _ANSI.sub("", text).lower()
+                        if any(marker in clean for marker in (
+                            "welcome to claude", "choose the text style", "select a theme",
+                            "trust this folder", "trust this workspace", "trust the files",
+                            "is this a project you created", "do you trust", "log in to continue",
+                            "sign in to continue", "login method",
+                        )):
+                            raise ValueError("claude_cli_interaction_required")
                         try:
-                            return parse_usage_screen(output.decode("utf-8", errors="replace"))
+                            return parse_usage_screen(text)
                         except ValueError:
                             pass
                     elif process.poll() is not None:

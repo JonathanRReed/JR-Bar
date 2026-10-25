@@ -34,7 +34,7 @@ def test_cli_fallback_is_off_by_default_and_never_probes_named_accounts(tmp_path
         return parse_usage_screen("Current session\n25% used")
 
     result = collect_claude(preference, home=tmp_path, observed_at=1000, credentials=FixtureCredentials({("claude", "oauth-token"): "synthetic-access"}),
-                            quota_fetcher=lambda _: (_ for _ in ()).throw(ValueError("unauthorized")),
+                            quota_fetcher=lambda _: (_ for _ in ()).throw(ValueError("network_unavailable")),
                             local_scanner=lambda *_: None, statusline_reader=lambda *_: None, cli_probe=probe)
     assert len(probes) == calls
     if calls:
@@ -69,7 +69,7 @@ def test_probe_uses_temporary_config_access_token_only_and_reaps_process(tmp_pat
         return process
 
     monkeypatch.setattr(claude_cli_usage.subprocess, "Popen", start)
-    windows = claude_cli_usage.probe_usage("synthetic-access", timeout=2)
+    windows = claude_cli_usage._probe_usage("synthetic-access", timeout=2)
     assert [window["utilization"] for window in windows] == [25, 40]
     assert processes[0].poll() is not None
     from pathlib import Path
@@ -112,7 +112,55 @@ def test_probe_stops_on_parsed_usage_and_reaps_before_removing_config(tmp_path, 
 
     monkeypatch.setattr(module, "_kill_group", kill)
     # Parsing succeeds without waiting for the child to exit or its timeout.
-    assert module.probe_usage("synthetic-access", timeout=2)[0]["utilization"] == 25
+    assert module._probe_usage("synthetic-access", timeout=2)[0]["utilization"] == 25
     assert killed == [True]
     assert processes[0].poll() is not None
     assert not configs[0].exists()
+
+
+@pytest.mark.parametrize("failure", ["rate_limited", "unauthorized", "forbidden"])
+def test_cli_does_not_retry_rate_limits_or_rejected_credentials(tmp_path, monkeypatch, failure):
+    monkeypatch.setattr("jrbar.provider_reconnect.sync_claude_credential_in_background", lambda *a, **kw: False)
+    preference = default_provider_usage_settings().preference("claude").with_option("cli_fallback", "true")
+    collect_claude(preference, home=tmp_path, observed_at=1000,
+        credentials=FixtureCredentials({("claude", "oauth-token"): "synthetic-access"}),
+        quota_fetcher=lambda _: (_ for _ in ()).throw(ValueError(failure)),
+        local_scanner=lambda *_: None, statusline_reader=lambda *_: None,
+        cli_probe=lambda _: pytest.fail("unhelpful CLI retry"))
+
+
+def test_failed_cli_probe_backs_off(tmp_path, monkeypatch):
+    monkeypatch.setattr("jrbar.provider_reconnect.sync_claude_credential_in_background", lambda *a, **kw: False)
+    preference = default_provider_usage_settings().preference("claude").with_option("cli_fallback", "true")
+    calls = []
+
+    def probe(_):
+        calls.append(True)
+        raise ValueError("no usage")
+
+    for now in (1000, 1001, 1299, 1300):
+        collect_claude(preference, home=tmp_path, observed_at=now,
+            credentials=FixtureCredentials({("claude", "oauth-token"): "synthetic-access"}),
+            quota_fetcher=lambda _: None, local_scanner=lambda *_: None,
+            statusline_reader=lambda *_: None, cli_probe=probe)
+    assert calls == [True, True]
+
+
+def test_unverified_production_cli_transport_cannot_launch(monkeypatch):
+    from jrbar import claude_cli_usage as module
+
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *a, **kw: pytest.fail("unsafe CLI launch"))
+    with pytest.raises(ValueError, match="command_transport_unverified"):
+        module.probe_usage("synthetic-access")
+
+
+@pytest.mark.parametrize("screen", ["Welcome to Claude Code", "Do you trust the files in this folder?"])
+def test_probe_aborts_on_onboarding_and_folder_trust(tmp_path, monkeypatch, screen):
+    from jrbar import claude_cli_usage as module
+
+    executable = tmp_path / "synthetic-claude"
+    executable.write_text(f"#!/bin/sh\nprintf '%s' '{screen}'\nread answer\n")
+    executable.chmod(0o700)
+    monkeypatch.setattr(module, "resolve_cli", lambda _: str(executable))
+    with pytest.raises(ValueError, match="interaction_required"):
+        module._probe_usage("synthetic-access", timeout=2)
