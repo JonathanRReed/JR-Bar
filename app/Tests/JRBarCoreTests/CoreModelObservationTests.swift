@@ -27,6 +27,22 @@ struct CoreModelObservationTests {
         CoreState(generation: generation, now: 1_790_000_000 + Double(generation), sessions: sessions)
     }
 
+    @Test("liveness subscriptions retain every edge and can be removed")
+    func cancellableLiveness() {
+        let core = CoreModel()
+        var edges: [Bool] = []
+        let token = core.observeLiveness { edges.append($0) }
+        core.handle(.connected)
+        core.apply(.state(Self.state(1)))
+        core.handle(.disconnected(reason: "fixture"))
+        core.handle(.connected)
+        core.apply(.state(Self.state(2)))
+        #expect(edges == [true, false, true])
+        core.removeLivenessObserver(token)
+        core.handle(.disconnected(reason: "fixture"))
+        #expect(edges == [true, false, true])
+    }
+
     @Test("isLive flips on connect, the first state and a disconnect")
     func liveFlips() {
         let core = CoreModel(socketPath: "/tmp/jrbar-test-none.sock")

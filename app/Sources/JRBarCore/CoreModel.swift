@@ -129,11 +129,28 @@ public final class CoreModel {
     /// by a connect, a first state or a disconnect.
     public private(set) var isLive = false
 
+    @ObservationIgnored private var livenessObservers: [UUID: @MainActor (Bool) -> Void] = [:]
+
+    /// Clock owners need every disconnect edge, including a disconnect and
+    /// reconnect in one actor turn. Removing the token ends the subscription.
+    public func observeLiveness(_ changed: @escaping @MainActor (Bool) -> Void) -> UUID {
+        let token = UUID()
+        livenessObservers[token] = changed
+        return token
+    }
+
+    public func removeLivenessObserver(_ token: UUID) {
+        livenessObservers[token] = nil
+    }
+
     /// Recomputes `isLive` from this connection's accepted state, assigning
     /// only a change so its readers are not woken for nothing.
     private func refreshLive() {
         let live = connection.isConnected && hasStateForConnection && state != nil && stateRejected == nil
-        if isLive != live { isLive = live }
+        if isLive != live {
+            isLive = live
+            for changed in Array(livenessObservers.values) { changed(live) }
+        }
     }
 
     /// A `state` frame older than this stops counting as "current": six
@@ -1274,6 +1291,7 @@ public final class CoreModel {
     /// The sessions the panel lists (`CoreState.mainSessions`), filtered
     /// once per frame rather than on every read.
     public private(set) var sessions: [CoreSession] = []
+    @ObservationIgnored public private(set) var sessionRevision: UInt64 = 0
     /// Every session in the frame, workers included (`state.sessions`).
     public private(set) var allSessions: [CoreSession] = []
     public private(set) var asks: [CoreAsk] = []
@@ -1304,6 +1322,7 @@ public final class CoreModel {
         // deep compare is skipped. One session walk per state frame, not two.
         let all = state?.sessions ?? []
         if all != allSessions {
+            sessionRevision &+= 1
             allSessions = all
             assign(\.sessions, state?.mainSessions ?? [])
         }
