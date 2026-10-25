@@ -107,9 +107,7 @@ src/jrbar/usage_file_index.py	240	put	self._connection.execute	SQL: 'INSERT INTO
 src/jrbar/usage_file_index.py	359	_vacuum_if_wasteful	self._connection.execute	SQL: 'VACUUM'
 src/jrbar/usage_file_index.py	291	prune	self._connection.executemany	SQL: 'DELETE FROM files WHERE file_key = ?'
 src/jrbar/usage_graph_worker.py	1208	_usage_doc_cache_write	atomic_private_write	_usage_doc_cache_path()
-src/jrbar/usage_percent_history.py	183	append_percent_observations	append_private_text	path
-src/jrbar/usage_percent_history.py	218	append_percent_observations	atomic_private_write	path
-src/jrbar/usage_percent_history.py	193	append_percent_observations	append_private_text	path
-src/jrbar/usage_percent_history.py	220	append_percent_observations	append_private_text	path
+src/jrbar/usage_percent_history.py	180	_append_history_rows	append_private_text	path
+src/jrbar/usage_percent_history.py	231	append_percent_observations	atomic_private_write	path
 src/jrbar/usage_stats.py	3523	_scan_inventory_usage_with_index	atomic_private_write	cache_path
 src/jrbar/watch_run.py	234	create_temporary_settings	stream.write	payload
