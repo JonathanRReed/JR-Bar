@@ -502,11 +502,7 @@ final class MenuBarItemHider {
         // A bar that sits still is asked about less often
         // (`MenuBarListingPace`); anything that can move it ends the
         // wait (`MenuBarItemLister.barActivity`).
-        observers.append(NotificationCenter.default.addObserver(
-            forName: MenuBarItemLister.activityChanged, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.listingWait.activityChanged() }
-        })
+        observers.append(listingWait.observeActivity(MenuBarItemLister.activityChanged))
         let listingWait = self.listingWait
         listingTask = Task { [weak self] in
             let loop = MenuBarListingLoop(

@@ -45,6 +45,12 @@ final class MenuBarListingWait {
         }
     }
 
+    func observeActivity(_ name: Notification.Name, in center: NotificationCenter = .default) -> NSObjectProtocol {
+        center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.activityChanged() }
+        }
+    }
+
     func activityChanged() {
         guard waiting else { return }
         debounce?.cancel()

@@ -28,9 +28,7 @@ struct LiveListingProbe {
         print("live_width_meter_process_present=\(meterPresent) duration_seconds=180")
         let observer = MenuBarInventoryObserver()
         let wait = MenuBarListingWait()
-        let token = NotificationCenter.default.addObserver(
-            forName: MenuBarItemLister.activityChanged, object: nil, queue: .main
-        ) { _ in MainActor.assumeIsolated { wait.activityChanged() } }
+        let token = wait.observeActivity(MenuBarItemLister.activityChanged)
         let start = ProcessInfo.processInfo.systemUptime
         var times: [TimeInterval] = []
         var failures = 0

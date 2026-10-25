@@ -165,9 +165,7 @@ struct MenuBarListingLoopTests {
     @Test("inventory notifications interrupt a calm wait after the debounce")
     func activityBringsTheQuickPaceBack() async {
         let room = VirtualListing()
-        let token = NotificationCenter.default.addObserver(
-            forName: MenuBarItemLister.activityChanged, object: nil, queue: .main
-        ) { _ in MainActor.assumeIsolated { room.wait.activityChanged() } }
+        let token = room.wait.observeActivity(MenuBarItemLister.activityChanged)
         defer { NotificationCenter.default.removeObserver(token) }
         let loop = MenuBarListingLoop(
             visible: { true }, trusted: { true },
