@@ -124,8 +124,8 @@ final class ScreenBarPlanQueue {
 /// Owns the Screen Bar panel, the program currently on it, and how it moves.
 ///
 /// A program is rendered once into keyframe tracks (`LEDSKeyframePlan`) and
-/// handed to Core Animation, phase-locked to the daemon's anchor, so the
-/// render server does every frame and this process idles. A program whose
+/// handed to Core Animation, phase-locked to the daemon's anchor. The
+/// render server interpolates without app frame ticks. A program whose
 /// cycle is too long to keyframe keeps the older frame clock: a
 /// `CADisplayLink` capped at 30 Hz that runs the sampler on ticks and pauses whenever
 /// the program has gone still or nobody can see the bar

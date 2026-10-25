@@ -27,6 +27,16 @@ struct ScreenBarKeyframePerformanceTests {
         }
     }
 
+    @Test("uniform keyframe stops share immutable colours")
+    func uniformColorsShareStorage() {
+        let codes = Array(repeating: RGB8(r: 77, g: 112, b: 191), count: 8)
+        let plan = LEDSKeyframePlan(lead: nil, loop: nil, loopStartMs: 0, finalCodes: codes)
+        let frames = ScreenBarGradientFrames.build(plan: plan, width: 220, reduced: false)
+        #expect(frames.rest.count > 50)
+        let objects = Set(frames.rest.map { ObjectIdentifier($0) })
+        #expect(objects.count == 1)
+    }
+
     @MainActor
     @Test("layer keyframes install offscreen and stop without a frame clock")
     func layerPlayback() async throws {
@@ -38,7 +48,8 @@ struct ScreenBarKeyframePerformanceTests {
         await view.waitForKeyframes()
         #expect(view.isPlayingKeyframes)
         let layers = view.layer?.sublayers ?? []
-        #expect(layers.contains { $0.animationKeys()?.isEmpty == false })
+        let hasAnimations = layers.contains { $0.animationKeys()?.isEmpty == false }
+        #expect(hasAnimations == !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         view.stopKeyframes()
         #expect(!view.isPlayingKeyframes)
         #expect(layers.allSatisfy { $0.animationKeys()?.isEmpty != false })

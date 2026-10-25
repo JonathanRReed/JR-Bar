@@ -19,8 +19,17 @@ struct ScreenBarGradientFrames: @unchecked Sendable {
             ScreenBarBlend.columnSamples(colors: codes.map(\.rgb), bandWidth: width,
                                          alphaScale: ScreenBarBlend.coreAlpha)
         }
+        var colors: [UInt64: CGColor] = [:]
         func color(_ sample: ScreenBarBlend.Sample) -> CGColor {
-            CGColor(colorSpace: colorSpace, components: [sample.r, sample.g, sample.b, sample.a])!
+            let red = UInt64(sample.r * 1024) << 33
+            let green = UInt64(sample.g * 1024) << 22
+            let blue = UInt64(sample.b * 1024) << 11
+            let alpha = UInt64(sample.a * 1024)
+            let key = red | green | blue | alpha
+            if let cached = colors[key] { return cached }
+            let value = CGColor(colorSpace: colorSpace, components: [sample.r, sample.g, sample.b, sample.a])!
+            if colors.count < 4_096 { colors[key] = value }
+            return value
         }
         func track(_ source: LEDSKeyframeTrack?) -> Track? {
             guard !reduced, let source else { return nil }
