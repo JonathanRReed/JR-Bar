@@ -72,7 +72,7 @@ def test_ten_minute_ember_write_budget_is_no_higher_than_base(tmp_path, monkeypa
 
 def test_automatic_reassert_jump_matches_base_and_breath_keeps_both_halves():
     _state, program = program_for_snapshot(statuses(1), colors=ColorSettings.defaults())
-    written = _steady_state_variant(program)
+    written = _steady_state_variant(program, single_track=True)
     assert written != program
     firmware = [RawSdLedWasmController(8), RawSdLedWasmController(8)]
     jumps = []
@@ -91,7 +91,7 @@ def test_automatic_reassert_jump_matches_base_and_breath_keeps_both_halves():
     assert _steady_state_variant(halves) == halves
     breath = ColorSettings.defaults().with_agent_animation("codex", "breathe")
     _state, program = program_for_snapshot(statuses(1), colors=breath)
-    assert len(_steady_state_variant(program).splitlines()) == 3
+    assert len(_steady_state_variant(program, single_track=True).splitlines()) == 3
 
 
 @pytest.mark.parametrize("cue", ("completion", "all_clear", "reset_celebration"))
@@ -124,3 +124,28 @@ def test_legacy_celebrations_layer_briefly_while_an_agent_works(monkeypatch, cue
     owner.may_interrupt = lambda _signal: False
     assert active_ambient_presentation(owner, AmbientEffectSurface.SCREEN_BAR,
         reduce_motion=False, brightness=255) is None
+
+
+@pytest.mark.parametrize("animation", ("auto", "kitt", "breathe", "chase"))
+def test_one_at_a_time_turns_stay_four_seconds_across_reasserts(tmp_path, monkeypatch, animation):
+    from itertools import groupby
+
+    clock = [1000.0]
+    monkeypatch.setattr("jrbar.led_status.time.monotonic", lambda: clock[0])
+    settings = ColorSettings.defaults().with_blend_mode("cycle")
+    for provider in ("codex", "claude"):
+        settings = settings.with_agent_animation(provider, animation)
+    controller = AgentLedController(device_path=tmp_path)
+    raw = RawSdLedWasmController(8)
+    for second in (0, 240, 480):
+        clock[0] = 1000.0 + second
+        write = controller.sync_snapshot(statuses(2), settings)
+        assert write.changed
+        assert raw.parse(write.nominal_program, second * 1000).ok
+        frames = raw.step_batch(second * 1000, 20, 1250)
+        owners = [sum(b for r, g, b in frame) > sum(r for r, g, b in frame) for frame in frames]
+        turns = [len(tuple(turn)) * 20 for _, turn in groupby(owners)]
+        assert len(turns) >= 6
+        assert all(abs(turn - 4000) <= 100 for turn in turns[2:-1]), turns
+        assert _steady_state_variant(write.nominal_program) == write.nominal_program
+

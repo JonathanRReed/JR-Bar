@@ -1495,8 +1495,8 @@ def notification_blink_program(color: str, brightness: float = 255) -> str:
     )
 
 
-def _steady_state_variant(program: str) -> str:
-    """Drop marked approaches and the classic renderer's short settle."""
+def _steady_state_variant(program: str, *, single_track: bool = False) -> str:
+    """Drop marked approaches, or a known single track's classic settle."""
     lines = program.splitlines()
     body_start = 1 if lines and lines[0].startswith("brightness ") else 0
     content = lines[body_start:]
@@ -1511,7 +1511,7 @@ def _steady_state_variant(program: str) -> str:
                         and first[-2].endswith("ms")
                         and first[-2][:-2].isdigit()
                         and int(first[-2][:-2]) <= 250)
-        if short_settle and (content[1].startswith("roll-") or " pulse" in content[1]
+        if single_track and short_settle and (content[1].startswith("roll-") or " pulse" in content[1]
                 or (len(content) >= 4 and "cosine" in content[1] and "cosine" in content[2])):
             return "\n".join(lines[:body_start] + content[1:])
     return program
@@ -1789,7 +1789,8 @@ class AgentLedController:
         # still produces a different string here and correctly triggers a
         # rewrite, with no separate "did gains change" tracking needed.
         if ambient is not None and state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
-            return self.sync_program(program, state, ambient=ambient)
+            return self.sync_program(program, state, ambient=ambient,
+                single_track=self._single_provider(statuses, colors))
         self.ambient_layer_until = None
         nominal = program
         program = self._for_strip(program, state)
@@ -1815,6 +1816,7 @@ class AgentLedController:
             program,
             dedupe_token=("snapshot", identity) if identity is not None else None,
             nominal=nominal,
+            single_track=self._single_provider(statuses, colors),
         )
 
     def sync_projection(
@@ -1842,7 +1844,8 @@ class AgentLedController:
             include_attention_arrival=arrival_fresh,
         )
         if ambient is not None and state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
-            return self.sync_program(program, state, ambient=ambient)
+            return self.sync_program(program, state, ambient=ambient,
+                single_track=self._single_provider(projection, colors))
         self.ambient_layer_until = None
         nominal = program
         program = self._for_strip(program, state)
@@ -1863,7 +1866,17 @@ class AgentLedController:
             program,
             dedupe_token=("projection", identity) if identity is not None else None,
             nominal=nominal,
+            single_track=self._single_provider(projection, colors),
         )
+
+    @staticmethod
+    def _single_provider(state, colors):
+        from .colors import _active_agents, projection_mix_agents
+        from .light_mix import selected_agents
+
+        agents = (projection_mix_agents(state, colors, 8) if hasattr(state, "light_rows")
+                  else _active_agents(tuple(state), colors))
+        return len({agent.provider for agent in selected_agents(agents)}) <= 1
 
     def sync_program(
         self,
@@ -1873,6 +1886,7 @@ class AgentLedController:
         dedupe_token: object | None = None,
         force: bool = False,
         trim_on_reassert: bool = True,
+        single_track: bool = False,
         timing: object | None = None,
         hold_visible: bool = True,
         ambient=None,
@@ -1912,6 +1926,7 @@ class AgentLedController:
             nominal=nominal,
             force=force,
             trim_on_reassert=trim_on_reassert,
+            single_track=single_track,
             timing=timing,
         )
 
@@ -2047,6 +2062,7 @@ class AgentLedController:
         nominal: str | None = None,
         force: bool = False,
         trim_on_reassert: bool = True,
+        single_track: bool = False,
         timing: object | None = None,
     ) -> LedStatusWrite:
         now = time.monotonic()
@@ -2110,8 +2126,8 @@ class AgentLedController:
                 return LedStatusWrite(state=state, target=self.last_target, program="", changed=False)
         self.last_attempt_monotonic = now
         trim = reassert and trim_on_reassert
-        to_write = _steady_state_variant(program) if trim else program
-        running_nominal = _steady_state_variant(nominal) if trim else nominal
+        to_write = _steady_state_variant(program, single_track=single_track) if trim else program
+        running_nominal = _steady_state_variant(nominal, single_track=single_track) if trim else nominal
         extra = {} if timing is None else {"timing": timing}
         from .device_writer import take_receipt
 
