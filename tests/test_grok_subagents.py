@@ -297,11 +297,15 @@ def test_the_claude_hook_slot_carries_the_same_events_to_the_same_rows() -> None
     assert line["agent_id"] == CHILD and line["session_id"] == PARENT
 
 
-def test_a_child_whose_start_was_never_seen_is_a_top_level_row_as_before(tmp_path: Path) -> None:
-    # --- scenario: no link means no guess; an unlinked child keeps today's behaviour
+def test_a_child_whose_start_was_never_seen_is_unlinked(tmp_path: Path) -> None:
+    # A declared worker with no parent gets no independent strip share.
     monitor = _feed(tmp_path, [start(), prompt(), child_prompt()])
 
     assert set(_rows(monitor)) == {f"grok:session:{PARENT}", f"grok:session:{CHILD}"}
+    from jrbar.agent_groups import resolve_agent_groups
+    child = _rows(monitor)[f"grok:session:{CHILD}"]
+    assert child.is_subagent
+    assert child.agent_id in resolve_agent_groups(_rows(monitor).values(), now=child.updated_at.timestamp()).unlinked_workers
 
 
 def test_a_grandchild_groups_under_the_root_session(tmp_path: Path) -> None:
@@ -320,7 +324,7 @@ def test_a_grandchild_groups_under_the_root_session(tmp_path: Path) -> None:
     rows = _rows(monitor)
 
     assert set(rows) == {f"grok:session:{PARENT}", f"grok:agent:{CHILD}", f"grok:agent:{GRANDCHILD}"}
-    assert rows[f"grok:agent:{GRANDCHILD}"].parent_agent_id == f"grok:session:{PARENT}"
+    assert rows[f"grok:agent:{GRANDCHILD}"].parent_agent_id == f"grok:agent:{CHILD}"
     assert rows[f"grok:agent:{CHILD}"].parent_agent_id == f"grok:session:{PARENT}"
 
 

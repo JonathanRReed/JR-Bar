@@ -1,0 +1,1 @@
+{"type":"message","action":"received","sessionKey":"agent:synthetic:subagent:worker","context":{"sessionEntry":{"sessionId":"openclaw-child-native","spawnedBy":"agent:synthetic:main"},"content":"synthetic content"}}

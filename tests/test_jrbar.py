@@ -10099,9 +10099,7 @@ class SubagentAskAggregateTests(unittest.TestCase):
                 lambda: status_bar.restore_led_display(self.controller, str(token)),
             )
             self.assertEqual(len(modes), 1)
-            self.assertNotEqual(modes[0], AgentMode.WAITING_FOR_INPUT)
-            if with_main:
-                self.assertEqual(modes[0], AgentMode.WORKING)
+            self.assertEqual(modes[0], AgentMode.WORKING if with_main else AgentMode.WAITING_FOR_INPUT)
 
     def test_device_resync_never_paints_a_workers_ask(self) -> None:
         def resync():
@@ -10120,7 +10118,7 @@ class SubagentAskAggregateTests(unittest.TestCase):
         # it stays quiet; on, the resync rings for it like the refresh does.
         alone = self._worker_ask_snapshot(with_main=False)
         quiet = self._repaint_modes(alone, resync)
-        self.assertNotEqual(quiet, [AgentMode.WAITING_FOR_INPUT])
+        self.assertEqual(quiet, [AgentMode.WAITING_FOR_INPUT])
         self.controller.settings = dataclass_replace(self.controller.settings, subagent_asks_alert=True)
         enabled = self._repaint_modes(alone, resync)
         self.assertEqual(enabled, [AgentMode.WAITING_FOR_INPUT])
@@ -12423,12 +12421,12 @@ class ClickToAnswerTests(unittest.TestCase):
         self.assertIsNotNone(target)
         self.assertEqual(target.agent_id, older.agent_id)
 
-    def test_subagent_asks_never_arm_the_bar(self) -> None:
+    def test_unlinked_worker_asks_arm_the_bar(self) -> None:
         worker = self._ask("claude:agent:w1")
         self.controller.current_attention_projection = self.status_bar.projection_for_statuses(
             (worker,), self.controller.settings
         )
-        self.assertIsNone(self.controller.screen_bar_click_status())
+        self.assertEqual(self.controller.screen_bar_click_status(), worker)
 
 
 class FailureSignalProjectionContractTests(unittest.TestCase):
@@ -12516,7 +12514,8 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
             LedDisplayState.FAILED,
         )
         pinned = self.controller.projected_rows_for_device(projection, device)
-        self.assertEqual(tuple(row.agent_id for row in pinned), ("claude:agent:worker",))
+        # The cue names the failure; an unlinked worker still has no fleet share.
+        self.assertEqual(tuple(row.agent_id for row in pinned), ())
         self.assertIsNone(self.controller.screen_bar_click_status())
         self.controller.track_ask_blocked(projection)
         self.assertIsNone(self.controller.ask_blocked_since)
@@ -12699,8 +12698,8 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
         )
         failed = AgentStatus(
             provider="claude",
-            agent_id="claude:agent:worker",
-            display_name="Claude worker",
+            agent_id="claude:session:failed",
+            display_name="Claude main",
             mode=AgentMode.BLOCKED_ERROR,
             updated_at=now,
             event_name="PostToolUseFailure",

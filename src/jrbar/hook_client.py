@@ -162,11 +162,11 @@ def run_decide_hook_client(
 # the two in step: tests/test_hook_client_oversize.py feeds both the same
 # payloads and compares what they make.
 
-_RECORD_PROVIDERS: Final = frozenset({"claude", "codex"})
+_RECORD_PROVIDERS: Final = frozenset({"claude", "codex", "cursor", "hermes", "grok"})
 _RECORD_VALUE_BYTES: Final = 256
 _RECORD_PATH_BYTES: Final = 1024
 _RECORD_INPUT_BYTES: Final = 64 * 1024
-_RECORD_BYTES: Final = _RECORD_INPUT_BYTES + 4096
+_RECORD_BYTES: Final = _RECORD_INPUT_BYTES + 8192
 # In the order they are written; the first two are required.
 _RECORD_KEYS: Final = (
     (b"hook_event_name", _RECORD_VALUE_BYTES),
@@ -174,6 +174,19 @@ _RECORD_KEYS: Final = (
     (b"tool_name", _RECORD_VALUE_BYTES),
     (b"turn_id", _RECORD_VALUE_BYTES),
     (b"agent_id", _RECORD_VALUE_BYTES),
+    (b"parent_agent_id", _RECORD_VALUE_BYTES),
+    (b"parentAgentId", _RECORD_VALUE_BYTES),
+    (b"parent_thread_id", _RECORD_VALUE_BYTES),
+    (b"parent_session_id", _RECORD_VALUE_BYTES),
+    (b"subagent_id", _RECORD_VALUE_BYTES),
+    (b"parent_conversation_id", _RECORD_VALUE_BYTES),
+    (b"child_session_id", _RECORD_VALUE_BYTES),
+    (b"child_subagent_id", _RECORD_VALUE_BYTES),
+    (b"parent_subagent_id", _RECORD_VALUE_BYTES),
+    (b"subagentId", _RECORD_VALUE_BYTES),
+    (b"subagentType", _RECORD_VALUE_BYTES),
+    (b"callingSessionId", _RECORD_VALUE_BYTES),
+    (b"callingToolUseId", _RECORD_VALUE_BYTES),
     (b"transcript_path", _RECORD_PATH_BYTES),
 )
 _WHITESPACE: Final = b" \t\n\r"
@@ -247,7 +260,7 @@ def _fnv1a64(data: bytes) -> int:
     return value
 
 
-def oversize_payload_record(head: bytes) -> str | None:
+def oversize_payload_record(head: bytes, provider: str = "") -> str | None:
     """The record that stands in for a payload past the cap, from its first
     MiB; ``None`` when the head does not name both the event and the session
     (the daemon could not place it) or the record is not valid text."""
@@ -295,8 +308,13 @@ def oversize_payload_record(head: bytes) -> str | None:
             break
         if not is_input:
             for slot, (name, cap) in enumerate(_RECORD_KEYS):
-                if key != name:
+                aliases = {b"hookEventName": b"hook_event_name", b"sessionId": b"session_id", b"conversation_id": b"session_id"}
+                if aliases.get(key, key) != name:
                     continue
+                if slot == 1 and provider == "cursor" and seen[slot]:
+                    value = head[i + 1 : end - 1] if head[i] == 0x22 else None
+                    if kept[slot] is None or value != kept[slot]:
+                        return None
                 if seen[slot]:
                     break
                 seen[slot] = True
@@ -309,9 +327,11 @@ def oversize_payload_record(head: bytes) -> str | None:
                     kept[slot] = value
                 break
         i = end
+    if kept[1] is None:
+        kept[1] = kept[[name for name, _ in _RECORD_KEYS].index(b"child_session_id")]
     if kept[0] is None or kept[1] is None:
         return None
-    members = [b'"%b":"%b"' % (name, value) for (name, _), value in zip(_RECORD_KEYS, kept) if value is not None]
+    members = [b'"%b":"%b"' % (b"conversation_id" if provider == "cursor" and name == b"session_id" else name, value) for (name, _), value in zip(_RECORD_KEYS, kept) if value is not None]
     record = b"{" + b",".join(members)
     if tool_input is not None:
         record += b',"tool_input":' + tool_input
@@ -339,7 +359,7 @@ def _read_bounded_payload(provider: str = "") -> tuple[str | None, bool]:
     if len(payload) > MAX_HOOK_INGRESS_PAYLOAD_BYTES:
         if provider not in _RECORD_PROVIDERS:
             return None, False
-        record = oversize_payload_record(payload)
+        record = oversize_payload_record(payload, provider)
         return record, record is not None
     try:
         return payload.decode("utf-8", errors="strict"), False

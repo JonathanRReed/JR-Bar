@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
+from functools import cached_property
 from itertools import islice
 from pathlib import Path
 from types import MappingProxyType
@@ -458,7 +459,7 @@ def agent_status_from_canonical_work(
         ),
     }[work.lifecycle]
     provider = work.key.source_key.provider_id
-    is_worker = work.parent_key is not None
+    is_worker = work.parent_key is not None or (provider == "openclaw" and ":subagent:" in work.key.work_id.value)
     matching_overlay = overlay is not None and (
         overlay.watermark == work.watermark
         or overlay.status.updated_at
@@ -513,6 +514,7 @@ def agent_status_from_canonical_work(
             and matching_overlay
         ),
         work_key=work.key,
+        parent_links=overlay.status.parent_links if overlay is not None else (),
         request_key=_status_request_key(work, requests),
         terminal_cause=(work.terminal_cause if projected_mode is AgentMode.BLOCKED_ERROR
                         else ProviderTerminalCause.NONE),
@@ -579,6 +581,7 @@ def _snapshot_from_operator_state(
                     )
                 )
             ),
+            *(replace(status, event_name="LineageObserved") for status in supplemental_statuses if status.parent_links),
         )
     )
     merged = _reconcile_delegating_parents(merged, collected_at)
@@ -694,6 +697,12 @@ class MonitorSnapshot:
     operator_state: CanonicalOperatorState | None = None
     operator_events: tuple[CanonicalOperatorEvent, ...] = ()
     restore_health: RestoreHealth = RestoreHealth.NOT_ATTEMPTED
+
+    @cached_property
+    def agent_group_resolution(self):
+        from .agent_groups import resolve_agent_groups
+
+        return resolve_agent_groups((*self.statuses, *self.stale_statuses), now=self.collected_at.timestamp())
 
     def to_dict(self) -> dict:
         return {
@@ -1423,6 +1432,13 @@ class LiveAgentMonitor(LiveSessionMemory):
         # A fresh process can reread thousands of rows that latest.json already
         # reduced. Filter them before the reducer rebuilds and hashes full state.
         with self.lock:
+            transcript = record.raw.get("transcript_path")
+            if isinstance(transcript, str) and Path(transcript).is_absolute() and record.session_id:
+                paths = getattr(self, "lineage_paths_by_session", {})
+                paths[f"{record.provider}:session:{record.session_id}"] = transcript
+                while len(paths) > 512:
+                    paths.pop(next(iter(paths)))
+                self.lineage_paths_by_session = paths
             metadata = metadata_for_record(
                 record,
                 self._status_metadata_by_session,
@@ -1619,6 +1635,7 @@ class LiveAgentMonitor(LiveSessionMemory):
     def _ingest_hint_lines(self, hint, source, lines) -> None:
         clock = self._clock_sampler()
         batches: list[ProviderFactBatch] = []
+        lineage = []
         for line in lines:
             normalized = None
             try:
@@ -1656,6 +1673,14 @@ class LiveAgentMonitor(LiveSessionMemory):
                 observed_at_epoch=clock.wall_epoch,
             )
             batches.append(batch)
+            if type(normalized) is NormalizedProviderRecord:
+                lineage.extend(normalized.parent_links)
+        if lineage:
+            from .lineage_adapters import hook_lineage_statuses
+            source_id = f"hook-lineage-{hint.source_key.provider_id}"
+            with self.lock:
+                previous = self._external_statuses_by_source.get(source_id, ())
+                self.replace_external_statuses(source_id, hook_lineage_statuses(lineage, previous, now=clock.wall_epoch))
         with self.lock:
             retained_watermark = dict(self.operator_state.source_watermarks).get(
                 hint.source_key
@@ -1773,7 +1798,7 @@ class LiveAgentMonitor(LiveSessionMemory):
             *(
                 status
                 for status in external
-                if not (status.stale and status.agent_id in protected_agent_ids)
+                if status.parent_links or not (status.stale and status.agent_id in protected_agent_ids)
             ),
         )
 
@@ -1788,7 +1813,7 @@ class LiveAgentMonitor(LiveSessionMemory):
             # copy under the lock (ingest_record mutates these)
             overlays = MappingProxyType(dict(self._status_overlays_by_work_key))
             supplemental = self._supplemental_statuses_locked(state, overlays)
-        return _snapshot_from_operator_state(
+        snapshot = _snapshot_from_operator_state(
             state,
             events=events,
             sources=self.sources,
@@ -1805,6 +1830,15 @@ class LiveAgentMonitor(LiveSessionMemory):
             session_is_live=self.session_is_live,
             dismissed_asks=self._dismissed_ask_keys(),
         )
+        import logging
+
+        resolution = snapshot.agent_group_resolution
+        failures = set(resolution.rejected)
+        previous = getattr(self, "_lineage_failures", set())
+        for _child, harness, reason in sorted(failures - previous):
+            logging.getLogger(__name__).info("unlinked worker: harness=%s reason=%s", harness, reason)
+        self._lineage_failures = failures
+        return snapshot
 
     def load_latest_state(self) -> None:
         if self.latest_state_path is None:
@@ -3474,6 +3508,7 @@ def _devin_persisted_label(record: HookEvent, work_id: str | None) -> str | None
 
 
 def status_from_event(record: HookEvent, metadata: StatusMetadata | None = None) -> AgentStatus | None:
+    from .lineage_adapters import hook_parent_links
     mode = mode_for_event(record)
     if mode is None:
         return None
@@ -3509,6 +3544,7 @@ def status_from_event(record: HookEvent, metadata: StatusMetadata | None = None)
         tool_name=record.tool_name,
         message=_capped_detail(record.message),
         origin=record.origin or metadata.origin or origin_label_from_payload(record.provider, record.raw),
+        parent_links=hook_parent_links(record),
     )
 
 
@@ -3765,11 +3801,41 @@ def _merged_status_candidates(
     statuses: Iterable[AgentStatus],
 ) -> tuple[AgentStatus, ...]:
     merged: dict[str, AgentStatus] = {}
+    links_by_id: dict[str, set] = {}
+    from .lineage_adapters import resolve_hermes_key, resolve_openclaw_key
+
+    statuses = tuple(statuses)
+    grok_children = {link.child for status in statuses for link in status.parent_links
+                     if link.child.startswith("grok:agent:") and link.parent}
     for status in statuses:
+        grok_agent = status.agent_id.replace("grok:session:", "grok:agent:", 1)
+        if status.provider == "grok" and grok_agent in grok_children:
+            status = replace(status, agent_id=grok_agent,
+                             parent_links=tuple(replace(link, child=grok_agent) for link in status.parent_links if link.parent))
+        resolver = {"openclaw": resolve_openclaw_key, "hermes": resolve_hermes_key}.get(status.provider)
+        if resolver:
+            status = replace(status, agent_id=resolver(status.agent_id) or status.agent_id,
+                             parent_links=tuple(replace(link, child=resolver(link.child) or link.child,
+                                                        parent=resolver(link.parent)) for link in status.parent_links))
+        links_by_id.setdefault(status.agent_id, set()).update(status.parent_links)
+        if status.event_name == "LineageObserved":
+            continue
         existing = merged.get(status.agent_id)
         if existing is None or _status_merge_key(status) > _status_merge_key(existing):
             merged[status.agent_id] = status
-    return tuple(merged[agent_id] for agent_id in sorted(merged))
+    for agent_id, links in links_by_id.items():
+        newest = {}
+        for link in links:
+            pair = (link.child, link.parent, link.harness)
+            if pair not in newest or newest[pair].observed_at < link.observed_at:
+                newest[pair] = link
+        links = set(newest.values())
+        links_by_id[agent_id] = links
+        if agent_id.startswith("hermes:") and any(link.parent and ":session:" in link.parent for link in links):
+            links_by_id[agent_id] = {link for link in links if link.parent and ":session:" in link.parent}
+    return tuple(replace(merged[agent_id], parent_links=tuple(sorted(links_by_id[agent_id],
+                         key=lambda link: (link.harness, link.parent or "", link.observed_at))))
+                 for agent_id in sorted(merged))
 
 
 def _status_without_dismissed_ask(

@@ -2284,7 +2284,8 @@ class StatusBarController(NSObject):
             now=time.time(),
         )
         projection = project_attention(
-            SimpleNamespace(statuses=visible, collected_at=snapshot.collected_at),
+            SimpleNamespace(statuses=visible, stale_statuses=getattr(snapshot, "stale_statuses", ()),
+                            collected_at=snapshot.collected_at),
             self.settings,
         )
         live_request_keys = self._live_actionable_request_keys()
@@ -2667,6 +2668,9 @@ class StatusBarController(NSObject):
                 update_t3_snapshot_runtime(self, integration_settings)
             except Exception as _t3_exc:
                 log_status_bar(f"t3 snapshot error: {_t3_exc}")
+            from .lineage_adapters import update_lineage_runtime
+
+            update_lineage_runtime(self)
             _t_ingest = time.monotonic()
             snapshot = self.monitor.snapshot()
             _t_snapshot = time.monotonic()
@@ -5353,6 +5357,9 @@ class StatusBarController(NSObject):
                     # off: nobody was asked, so it never raises the banner.
                     quiet_requests = quiet_worker_request_keys(
                         state,
+                        resolution=getattr(getattr(self, "last_snapshot", None), "agent_group_resolution", None),
+                        statuses=(*getattr(getattr(self, "last_snapshot", None), "statuses", ()),
+                                  *getattr(getattr(self, "last_snapshot", None), "stale_statuses", ())),
                         subagent_asks_alert=bool(
                             getattr(self.settings, "subagent_asks_alert", False)
                         ),
@@ -6911,6 +6918,9 @@ class StatusBarController(NSObject):
             worker_count = len(state.works) - primary_count
             quiet_requests = quiet_worker_request_keys(
                 state,
+                resolution=getattr(getattr(self, "last_snapshot", None), "agent_group_resolution", None),
+                statuses=(*getattr(getattr(self, "last_snapshot", None), "statuses", ()),
+                                  *getattr(getattr(self, "last_snapshot", None), "stale_statuses", ())),
                 subagent_asks_alert=bool(
                     getattr(self.settings, "subagent_asks_alert", False)
                 ),

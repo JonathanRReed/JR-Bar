@@ -21,7 +21,14 @@ from typing import Final
 
 from .capacity_types import CapacityValidationError, SourceKey
 from .hook_ingress_protocol import PAYLOAD_FINGERPRINT_FIELD, PAYLOAD_TRUNCATED_FIELD
-from .models import _CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE, HookEvent
+from .lineage_adapters import (
+    hermes_identity_aliases,
+    hook_parent_links,
+    persisted_identity_aliases,
+    persisted_parent_links,
+    resolve_hermes_key,
+)
+from .models import _CODEX_TRANSCRIPT_USAGE_LIMIT_PROVENANCE, HookEvent, ParentLink
 from .provider_contracts import (
     AdapterIdentifier,
     CapabilityIdentifier,
@@ -191,9 +198,21 @@ class NormalizedProviderRecord:
     notification_kind: NotificationKind | None
     sequence: int | None
     terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE
+    parent_links: tuple[ParentLink, ...] = ()
+    identity_aliases: tuple[tuple[str, str], ...] = ()
     _terminal_provenance: object | None = dataclass_field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
+        if type(self.parent_links) is not tuple or any(type(link) is not ParentLink for link in self.parent_links):
+            raise ProviderAdapterValidationError("invalid parent links")
+        if self.parent_links and persisted_parent_links(
+                [link.to_dict() for link in self.parent_links], self.source_key.provider_id) != self.parent_links:
+            raise ProviderAdapterValidationError("invalid parent links")
+        if type(self.identity_aliases) is not tuple:
+            raise ProviderAdapterValidationError("invalid identity aliases")
+        if self.identity_aliases and persisted_identity_aliases(
+                [list(pair) for pair in self.identity_aliases], self.source_key.provider_id) != self.identity_aliases:
+            raise ProviderAdapterValidationError("invalid identity aliases")
         sequence_valid = self.sequence is None or (
             type(self.sequence) is int and 0 <= self.sequence <= MAX_PROVIDER_SEQUENCE
         )
@@ -927,6 +946,8 @@ def _opaque_provider_identity(value: object, *, max_bytes: int) -> bool:
 
 def _cursor_work_identity(record: HookEvent) -> tuple[bool, WorkIdentifier | None]:
     raw = record.raw
+    if type(raw) is dict and "conversation_id" not in raw and raw.get("payload_truncated") is True:
+        raw = dict(raw, conversation_id=raw.get("session_id") or raw.get("sessionId"))
     if type(raw) is not dict or "conversation_id" not in raw:
         return True, _work_identifier(
             record.agent_id if record.agent_id is not None else record.session_id
@@ -963,6 +984,13 @@ def _hermes_work_identity(record: HookEvent) -> tuple[bool, WorkIdentifier | Non
     work_value = record.agent_id if record.agent_id is not None else record.session_id
     if work_value is not None and not _opaque_provider_identity(work_value, max_bytes=64):
         return False, None
+    if type(raw) is dict:
+        hermes_identity_aliases(raw)
+    if work_value is not None:
+        canonical = resolve_hermes_key("hermes:session:" + work_value)
+        if canonical is None:
+            return False, None
+        work_value = canonical.split(":", 2)[2]
     work_id = _work_identifier(work_value)
     return (work_value is None or work_id is not None), work_id
 
@@ -1475,7 +1503,9 @@ def minimize_hook_event(
         # belongs under the session that spawned it.
         agent_id = _devin_subagent_agent_id(record)
     if agent_id is not None:
-        candidate_parent = _work_identifier(record.session_id)
+        candidate_parent = _work_identifier(
+            record.raw.get("parentAgentId") or record.raw.get("parent_agent_id") or record.session_id
+        )
         if candidate_parent != work_id:
             parent_id = candidate_parent
     request_id = _request_identifier(_first_raw_value(record.raw, _REQUEST_ID_FIELDS))
@@ -1528,6 +1558,8 @@ def minimize_hook_event(
         notification_kind=notification_kind,
         sequence=sequence,
         _terminal_provenance=record._terminal_provenance,
+        parent_links=hook_parent_links(record),
+        identity_aliases=hermes_identity_aliases(record.raw) if record.provider == "hermes" else (),
         terminal_cause=(
             ProviderTerminalCause.CODEX_USAGE_LIMIT
             if (
@@ -1804,6 +1836,8 @@ def normalized_provider_record_to_payload(
                 None if record.notification_kind is None else record.notification_kind.value
             ),
             "sequence": record.sequence,
+            **({"parent_links": [link.to_dict() for link in record.parent_links]} if record.parent_links else {}),
+            **({"identity_aliases": [list(pair) for pair in record.identity_aliases]} if record.identity_aliases else {}),
             **({"terminal_cause": record.terminal_cause.value}
                if record.terminal_cause is not ProviderTerminalCause.NONE else {}),
         }
@@ -1889,6 +1923,10 @@ def normalized_provider_record_from_payload(
     )
     if kind == "normalized" and "terminal_cause" in payload:
         expected_fields = _NORMALIZED_FIELDS | {"terminal_cause"}
+    if kind == "normalized" and "parent_links" in payload:
+        expected_fields = expected_fields | {"parent_links"}
+    if kind == "normalized" and "identity_aliases" in payload:
+        expected_fields = expected_fields | {"identity_aliases"}
     if expected_fields is None or not _has_exact_fields(payload, expected_fields):
         return None
     if not _valid_version(payload["version"]):
@@ -1945,6 +1983,8 @@ def normalized_provider_record_from_payload(
             ),
             sequence=sequence,
             terminal_cause=ProviderTerminalCause(payload.get("terminal_cause", "none")),
+            parent_links=persisted_parent_links(payload["parent_links"], source_key.provider_id) if "parent_links" in payload else (),
+            identity_aliases=persisted_identity_aliases(payload["identity_aliases"], source_key.provider_id) if "identity_aliases" in payload else (),
         )
     except (
         ContractValidationError,

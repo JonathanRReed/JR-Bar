@@ -482,6 +482,8 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     public var axes: CoreSessionAxes?
 
     public var sourceIntegration: String?
+    public var groupId: String?
+    public var unlinkedWorker: Bool
 
     public init(id: String, provider: String, kind: String = "main", parent: String? = nil, label: String? = nil,
                 shortId: String? = nil, cwd: String? = nil, mode: String? = nil, lifecycle: String? = nil, nextActor: String? = nil,
@@ -489,7 +491,8 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
                 origin: CoreOrigin? = nil, ask: CoreAsk? = nil, terminal: CoreTerminal? = nil, workers: Int = 0,
                 workersWaiting: Int? = nil, snoozedUntil: Double? = nil, remote: Bool = false,
                 event: String? = nil, tool: String? = nil, message: String? = nil,
-                axes: CoreSessionAxes? = nil, sourceIntegration: String? = nil) {
+                axes: CoreSessionAxes? = nil, sourceIntegration: String? = nil,
+                groupId: String? = nil, unlinkedWorker: Bool = false) {
         self.id = id
         self.provider = provider
         self.kind = kind
@@ -515,12 +518,16 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         self.tool = tool
         self.message = message
         self.axes = axes
+        self.groupId = groupId
+        self.unlinkedWorker = unlinkedWorker
         self.sourceIntegration = sourceIntegration
     }
 
     enum CodingKeys: String, CodingKey {
         case id, provider, kind, parent, label, cwd, mode, lifecycle, since, stale, pid, origin, ask, terminal, workers, remote
         case event, tool, message, axes
+        case groupId = "group_id"
+        case unlinkedWorker = "unlinked_worker"
         case sourceIntegration = "source_integration"
         case workersWaiting = "workers_waiting"
         case shortId = "short_id"
@@ -558,6 +565,8 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         tool = try c.decodeIfPresent(String.self, forKey: .tool)
         message = try c.decodeIfPresent(String.self, forKey: .message)
         axes = try? c.decodeIfPresent(CoreSessionAxes.self, forKey: .axes)
+        groupId = try? c.decodeIfPresent(String.self, forKey: .groupId)
+        unlinkedWorker = (try? c.decodeIfPresent(Bool.self, forKey: .unlinkedWorker)) ?? false
         sourceIntegration = try? c.decodeIfPresent(String.self, forKey: .sourceIntegration)
     }
 }
@@ -1938,11 +1947,41 @@ public struct CorePeer: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
+public struct CoreLineageEvidence: Codable, Hashable, Sendable {
+    public var child: String
+    public var parent: String
+    public var harness: String
+    public var observedAt: Double
+
+    enum CodingKeys: String, CodingKey {
+        case child, parent, harness
+        case observedAt = "observed_at"
+    }
+}
+
+public struct CoreAgentGroup: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var rootWorkKey: String
+    public var rootProvider: String
+    public var members: [String]
+    public var lineageEvidence: [CoreLineageEvidence]
+
+    public var workerCount: Int { max(0, members.count - 1) }
+
+    enum CodingKeys: String, CodingKey {
+        case id, members
+        case rootWorkKey = "root_work_key"
+        case rootProvider = "root_provider"
+        case lineageEvidence = "lineage_evidence"
+    }
+}
+
 public struct CoreState: Codable, Hashable, Sendable {
     public var generation: Int
     public var now: Double?
     public var aggregate: CoreAggregate
     public var sessions: [CoreSession]
+    public var agentGroups: [CoreAgentGroup]
     public var asks: [CoreAsk]
     public var devices: [CoreDevice]
     public var usage: CoreUsage?
@@ -1982,11 +2021,12 @@ public struct CoreState: Codable, Hashable, Sendable {
                 health: JSONValue? = nil, settingsGeneration: Int? = nil, deck: DeckState? = nil, hiddenCount: Int? = nil,
                 catalogGeneration: Int? = nil, unseenCompletions: [String] = [], peers: [CorePeer]? = nil,
                 presence: CorePresence? = nil, providerUpdates: [String: ProviderUpdateStatus] = [:],
-                firmware: FirmwareJob? = nil) {
+                firmware: FirmwareJob? = nil, agentGroups: [CoreAgentGroup] = []) {
         self.generation = generation
         self.now = now
         self.aggregate = aggregate
         self.sessions = sessions
+        self.agentGroups = agentGroups
         self.asks = asks
         self.devices = devices
         self.usage = usage
@@ -2007,6 +2047,7 @@ public struct CoreState: Codable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case generation, now, aggregate, sessions, asks, devices, usage, power, focus, escalation, health, deck, firmware
+        case agentGroups = "agent_groups"
         case providerUpdates = "provider_updates"
         case settingsGeneration = "settings_generation"
         case hiddenCount = "hidden_count"
@@ -2024,6 +2065,10 @@ public struct CoreState: Codable, Hashable, Sendable {
         sessions = tolerantRows(
             CoreSession.self,
             try c.decodeIfPresent([JSONValue].self, forKey: .sessions)
+        )
+        agentGroups = tolerantRows(
+            CoreAgentGroup.self,
+            (try? c.decodeIfPresent([JSONValue].self, forKey: .agentGroups)) ?? []
         )
         asks = tolerantRows(
             CoreAsk.self,

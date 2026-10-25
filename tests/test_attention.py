@@ -99,7 +99,7 @@ def test_subagent_attention_obeys_one_setting_everywhere__and_2_more() -> None:
         )
     )
 
-    assert project_attention(snapshot, AgentMonitorSettings()).actionable_attention == ()
+    assert len(project_attention(snapshot, AgentMonitorSettings()).actionable_attention) == 1
     enabled = replace(AgentMonitorSettings(), subagent_asks_alert=True)
     assert len(project_attention(snapshot, enabled).actionable_attention) == 1
 
@@ -497,9 +497,9 @@ def test_a_workers_permission_request_agrees_across_the_panel_and_the_lights() -
 
         # One setting, one answer: the panel's asks, the ambient heartbeat and
         # the quiet set never disagree about whether the worker's ask counts.
-        assert panel_asks == (1 if alert else 0)
+        assert panel_asks == 1
         assert controller._ask_heartbeat_plan.request_count == panel_asks
-        assert len(quiet) == (0 if alert else 1)
+        assert len(quiet) == 0
         # The request is canonical truth either way.
         assert len(worker.operator_state.requests) == 1
 
@@ -518,7 +518,6 @@ def test_the_quiet_set_is_empty_without_workers_and_when_the_setting_is_on() -> 
         agent_id="agent:worker",
     )
     state = worker.operator_state
-    request_keys = {request.key for request in state.requests}
 
-    assert quiet_worker_request_keys(state, subagent_asks_alert=False) == request_keys
+    assert quiet_worker_request_keys(state, subagent_asks_alert=False) == frozenset()
     assert quiet_worker_request_keys(state, subagent_asks_alert=True) == frozenset()

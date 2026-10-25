@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -315,16 +316,17 @@ def test_only_an_active_proposed_plan_is_actionable(tmp_path: Path) -> None:
     assert by_id["thread-3"].has_actionable_plan is False
 
 
-def test_subagent_archived_and_deleted_threads_are_not_listed(tmp_path: Path) -> None:
+def test_subagents_are_retained_but_archived_and_deleted_threads_are_not_listed(tmp_path: Path) -> None:
     database = _v2(tmp_path)
     _thread(database, "thread-main")
     _thread(database, "thread-sub", relationship="subagent")
     _thread(database, "thread-archived", archived_at=NOW)
     _thread(database, "thread-deleted", deleted_at=NOW)
 
-    snapshot = read_t3_snapshot(base_dir=tmp_path)
+    snapshot = read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromisoformat(NOW))
 
-    assert [thread.thread_id for thread in snapshot.threads] == ["thread-main"]
+    assert [thread.thread_id for thread in snapshot.threads] == ["thread-main", "thread-sub"]
+    assert snapshot.threads[1].to_agent_status().is_subagent
 
 
 @pytest.mark.parametrize(
@@ -637,3 +639,233 @@ def test_rereading_old_running_row_does_not_prove_owner_liveness(tmp_path: Path,
         row.mode is AgentMode.WORKING and not row.stale
         for row in monitor.snapshot().statuses
     )
+
+
+def test_native_bindings_and_subagents_join_cross_provider_groups_read_only(tmp_path):
+    from jrbar.agent_groups import resolve_agent_groups
+    from tests.test_agent_groups import NOW as LINEAGE_NOW
+    from tests.test_agent_groups import fixture
+
+    database = _v2(tmp_path)
+    data = fixture("t3")
+    (database.parent / "settings.json").write_text(json.dumps(fixture("t3-providers")))
+    for row in data["threads"]:
+        _thread(database, row["thread_id"], provider=row["default_provider"],
+                active_provider_thread_id=row["active_provider_thread_id"])
+        _run(database, row["thread_id"], 1, "running",
+             provider=row["default_provider"], provider_thread=row["active_provider_thread_id"])
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE orchestration_v2_projection_provider_threads "
+                           "(provider_thread_id TEXT, thread_id TEXT, driver TEXT, provider_instance_id TEXT, payload_json TEXT)")
+        for binding in data["bindings"]:
+            connection.execute("INSERT INTO orchestration_v2_projection_provider_threads VALUES (?,?,?,?,?)",
+                               (binding["provider_thread_id"], binding["thread_id"], binding["driver"],
+                                binding["provider_instance_id"], json.dumps(binding["payload_json"])))
+        for row in data["threads"]:
+            payload = row["payload_json"] if row["thread_id"] != "factory-child" else {}
+            connection.execute("UPDATE orchestration_v2_projection_threads SET payload_json=? WHERE thread_id=?",
+                               (json.dumps(payload), row["thread_id"]))
+        connection.execute("CREATE TABLE orchestration_v2_projection_subagents "
+                           "(thread_id TEXT, child_thread_id TEXT, status TEXT, payload_json TEXT)")
+        connection.execute("INSERT INTO orchestration_v2_projection_subagents VALUES ('root','factory-child','running','{}')")
+    before = database.read_bytes()
+    from datetime import datetime, timezone
+    snapshot = read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromtimestamp(LINEAGE_NOW, timezone.utc))
+    assert snapshot.compatible
+    statuses = snapshot.agent_statuses()
+    assert len(statuses) == 4
+    result = resolve_agent_groups(statuses, now=LINEAGE_NOW)
+    assert len(result.groups) == 1
+    assert result.groups[0].root_work_key == "claude:session:native-root"
+    assert result.groups[0].members == tuple(sorted(s.agent_id for s in statuses))
+    assert database.read_bytes() == before
+
+
+def test_oversize_payload_keeps_thread_without_lineage(tmp_path):
+    database = _v2(tmp_path)
+    _thread(database, "good")
+    _thread(database, "large")
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE orchestration_v2_projection_threads SET payload_json=? WHERE thread_id='large'",
+                           (json.dumps({"padding": "x" * (129 * 1024)}),))
+    snapshot = read_t3_snapshot(base_dir=tmp_path)
+    assert snapshot.compatible
+    assert [row.thread_id for row in snapshot.threads] == ["good", "large"]
+    assert snapshot.threads[1].parent_links == ()
+
+
+def test_subagent_threads_do_not_consume_the_main_thread_window(tmp_path, monkeypatch):
+    monkeypatch.setattr(t3_compat, "T3_MAX_THREADS", 2)
+    database = _v2(tmp_path)
+    for key in ("worker-a", "worker-b", "worker-c"):
+        _thread(database, key, relationship="subagent")
+    _thread(database, "root-a", updated_at=EARLIER)
+    _thread(database, "root-b", updated_at=EARLIER)
+    snapshot = read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromisoformat(NOW))
+    assert {"root-a", "root-b"} <= {row.thread_id for row in snapshot.threads}
+    assert snapshot.truncated
+
+
+def test_incremental_reader_joins_only_changed_or_live_threads(tmp_path, monkeypatch):
+    database = _v2(tmp_path)
+    for key in ('idle', 'changed', 'live'):
+        _thread(database, key)
+    _run(database, 'live', 1, 'running')
+    cache = t3_compat._V2ReadCache()
+    token = t3_compat._v2_read_cache.set(cache)
+    statements = []
+    original = t3_compat._open_read_only
+
+    def connect(*args, **kwargs):
+        connection = original(*args, **kwargs)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(t3_compat, '_open_read_only', connect)
+    try:
+        first = read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromisoformat(NOW))
+        assert len(first.threads) == 3
+        with sqlite3.connect(database) as connection:
+            connection.execute("UPDATE orchestration_v2_projection_threads SET title='Changed', updated_at='2026-10-07T12:01:00Z' WHERE thread_id='changed'")
+            connection.execute("UPDATE orchestration_v2_projection_runs SET status='completed' WHERE thread_id='live'")
+        statements.clear()
+        second = read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromisoformat(NOW))
+        by_id = {row.thread_id: row for row in second.threads}
+        assert by_id['changed'].thread_title == 'Changed'
+        assert by_id['live'].to_agent_status().mode is AgentMode.COMPLETED
+        assert by_id['idle'] == next(row for row in first.threads if row.thread_id == 'idle')
+        joins = [sql for sql in statements if 'WITH candidate_threads' in sql]
+        assert len(joins) == 1
+        assert "IN ('changed','live')" in joins[0]
+        assert cache.watermark == datetime.fromisoformat('2026-10-07T12:01:00Z')
+        statements.clear()
+        read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromisoformat(NOW))
+        assert not any('WITH candidate_threads' in sql for sql in statements)
+        with sqlite3.connect(database) as connection:
+            connection.execute("UPDATE orchestration_v2_projection_threads SET archived_at=?, updated_at='2026-10-07T12:02:00Z' WHERE thread_id='changed'", (NOW,))
+        assert 'changed' not in {row.thread_id for row in read_t3_snapshot(base_dir=tmp_path).threads}
+    finally:
+        t3_compat._v2_read_cache.reset(token)
+
+
+def test_old_finished_workers_are_omitted_but_old_active_workers_stay(tmp_path):
+    database = _v2(tmp_path)
+    for key in ('old-finished', 'old-live', 'recent'):
+        _thread(database, key, relationship='subagent', updated_at='2026-10-07T11:55:00Z' if key == 'recent' else '2026-10-01T00:00:00Z')
+    _run(database, 'old-live', 1, 'running')
+    snapshot = read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromisoformat(NOW))
+    assert {row.thread_id for row in snapshot.threads} == {'recent', 'old-live'}
+    assert all('old-finished' not in link.child for row in snapshot.agent_statuses() for link in row.parent_links)
+
+
+def test_live_subagents_and_their_parents_take_priority_over_history(tmp_path, monkeypatch):
+    monkeypatch.setattr(t3_compat, 'T3_MAX_THREADS', 2)
+    database = _v2(tmp_path)
+    for key in ('recent-a', 'recent-b', 'recent-c'):
+        _thread(database, key)
+        _thread(database, 'worker-' + key, relationship='subagent')
+    old = '2026-10-01T00:00:00Z'
+    _thread(database, 'old-root', updated_at=old)
+    _thread(database, 'old-worker', updated_at=old, relationship='subagent')
+    _run(database, 'old-worker', 1, 'running')
+    with sqlite3.connect(database) as connection:
+        connection.execute('CREATE TABLE orchestration_v2_projection_subagents '
+                           '(thread_id TEXT, child_thread_id TEXT, status TEXT, payload_json TEXT)')
+        connection.execute("INSERT INTO orchestration_v2_projection_subagents VALUES ('old-root', 'old-worker', 'running', '{}')")
+    result = read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromisoformat(NOW))
+    assert {'old-root', 'old-worker'} <= {row.thread_id for row in result.threads}
+    assert result.truncated
+
+
+def test_registry_changes_refresh_cached_native_identity_without_thread_writes(tmp_path):
+    database = _v2(tmp_path)
+    _thread(database, provider='custom', active_provider_thread_id='binding')
+    with sqlite3.connect(database) as connection:
+        connection.execute('CREATE TABLE orchestration_v2_projection_provider_threads '
+                           '(provider_thread_id TEXT, thread_id TEXT, driver TEXT, provider_instance_id TEXT, payload_json TEXT)')
+        connection.execute('INSERT INTO orchestration_v2_projection_provider_threads VALUES (?,?,?,?,?)',
+                           ('binding', 'thread-1', 'acpRegistry', 'custom', json.dumps({
+                               'nativeThreadRef': {'driver': 'acpRegistry', 'nativeId': 'native-root'}})))
+    cache = t3_compat._V2ReadCache()
+    token = t3_compat._v2_read_cache.set(cache)
+    try:
+        assert read_t3_snapshot(base_dir=tmp_path).threads[0].provider == 'other'
+        (database.parent / 'settings.json').write_text(json.dumps({'providerInstances': {
+            'custom': {'driver': 'acpRegistry', 'enabled': True, 'config': {'agentId': 'factory-droid'}}}}))
+        refreshed = read_t3_snapshot(base_dir=tmp_path)
+        assert refreshed.threads[0].provider == 'factory'
+        assert refreshed.agent_statuses()[0].agent_id == 'factory:session:native-root'
+    finally:
+        t3_compat._v2_read_cache.reset(token)
+
+
+def test_project_edits_and_deletion_invalidate_cached_threads(tmp_path):
+    database = _v2(tmp_path)
+    _thread(database)
+    cache = t3_compat._V2ReadCache()
+    token = t3_compat._v2_read_cache.set(cache)
+    try:
+        assert read_t3_snapshot(base_dir=tmp_path).threads[0].project_title == 'Synthetic'
+        with sqlite3.connect(database) as connection:
+            connection.execute("UPDATE projection_projects SET title='Renamed', workspace_root='/repo/renamed', updated_at='2026-10-07T12:02:00Z'")
+        edited = read_t3_snapshot(base_dir=tmp_path).threads[0]
+        assert edited.project_title == 'Renamed'
+        assert edited.workspace_root == '/repo/renamed'
+        with sqlite3.connect(database) as connection:
+            connection.execute('UPDATE projection_projects SET deleted_at=?', (NOW,))
+        assert read_t3_snapshot(base_dir=tmp_path).threads == ()
+    finally:
+        t3_compat._v2_read_cache.reset(token)
+
+
+@pytest.mark.parametrize('mutation', [
+    "DELETE FROM orchestration_v2_projection_threads WHERE thread_id='removed'",
+    "UPDATE orchestration_v2_projection_threads SET archived_at='2026-10-07T12:01:00Z' WHERE thread_id='removed'",
+    "UPDATE orchestration_v2_projection_threads SET deleted_at='2026-10-07T12:01:00Z' WHERE thread_id='removed'",
+])
+def test_periodic_reconciliation_drops_threads_without_timestamp_bumps(tmp_path, mutation):
+    database = _v2(tmp_path)
+    _thread(database, 'retained')
+    _thread(database, 'removed')
+    clock = [datetime.fromisoformat(NOW)]
+    cache = t3_compat._V2ReadCache()
+    token = t3_compat._v2_read_cache.set(cache)
+    try:
+        assert len(read_t3_snapshot(base_dir=tmp_path, now=lambda: clock[0]).threads) == 2
+        with sqlite3.connect(database) as connection:
+            connection.execute(mutation)
+        clock[0] = datetime.fromisoformat('2026-10-07T12:03:00Z')
+        snapshot = read_t3_snapshot(base_dir=tmp_path, now=lambda: clock[0])
+        assert [thread.thread_id for thread in snapshot.threads] == ['retained']
+        assert set(cache.rows) == set(cache.payloads) == set(cache.views) == set(cache.final_views) == {'retained'}
+    finally:
+        t3_compat._v2_read_cache.reset(token)
+
+
+def test_incremental_watermark_handles_z_and_utc_offset_formats(tmp_path):
+    database = _v2(tmp_path)
+    _thread(database, 'same-second', updated_at='2026-10-07T12:00:00Z')
+    cache = t3_compat._V2ReadCache()
+    token = t3_compat._v2_read_cache.set(cache)
+    try:
+        read_t3_snapshot(base_dir=tmp_path)
+        with sqlite3.connect(database) as connection:
+            connection.execute("UPDATE orchestration_v2_projection_threads SET title='Newer fraction', "
+                               "updated_at='2026-10-07T12:00:00.500+00:00' WHERE thread_id='same-second'")
+        assert read_t3_snapshot(base_dir=tmp_path).threads[0].thread_title == 'Newer fraction'
+    finally:
+        t3_compat._v2_read_cache.reset(token)
+
+
+def test_worker_cutoff_and_order_compare_instants_not_iso_spelling(tmp_path, monkeypatch):
+    monkeypatch.setattr(t3_compat, 'T3_MAX_THREADS', 2)
+    database = _v2(tmp_path)
+    _thread(database, 'at-cutoff', relationship='subagent', updated_at='2026-10-07T11:50:00+00:00')
+    _thread(database, 'after-cutoff', relationship='subagent', updated_at='2026-10-07T11:50:00.500Z')
+    _thread(database, 'older-root', updated_at='2026-10-07T11:59:00Z')
+    _thread(database, 'fractional-root', updated_at='2026-10-07T11:59:00.500+00:00')
+    _thread(database, 'newest-root', updated_at='2026-10-07T11:59:01+00:00')
+    snapshot = read_t3_snapshot(base_dir=tmp_path, now=lambda: datetime.fromisoformat(NOW))
+    assert [row.thread_id for row in snapshot.threads] == [
+        'newest-root', 'fractional-root', 'after-cutoff', 'at-cutoff',
+    ]

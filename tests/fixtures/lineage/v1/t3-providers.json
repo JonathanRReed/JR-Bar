@@ -1,0 +1,1 @@
+{"providerInstances":{"factory-instance":{"driver":"acpRegistry","enabled":true,"config":{"agentId":"factory-droid","distribution":"npx"}},"devin-instance":{"driver":"acpRegistry","enabled":true,"config":{"agentId":"devin","distribution":"binary"}}}}

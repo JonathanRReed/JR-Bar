@@ -1,10 +1,4 @@
-"""The T3 Code switch behind Settings > Agents & Usage, as data.
-
-`jrbar-integrations enable|disable t3code` for the app: whether T3 Code's
-database is on this Mac, whether JR-Bar reads it, and one write of
-``integrations.json`` through the hardened integration-settings facade.
-Reading T3 stays read-only and local; this only flips the opt-in.
-"""
+"""T3 automatic detection status and the legacy integration setting."""
 
 from __future__ import annotations
 
@@ -48,10 +42,21 @@ def t3code_integration(
             raise T3CodeToggleRefused(str(exc) or exc.__class__.__name__) from exc
         loaded = load_integration_settings(path)
         settings = loaded.settings
+    from .t3_process import t3_code_running
+
     database = t3_database_path(settings.t3code_base_dir)
+    present = database.is_file()
+    running = t3_code_running(base_dir=settings.t3code_base_dir)
+    installed = present or running or any(
+        (directory / name).is_dir()
+        for directory in (Path("/Applications"), Path.home() / "Applications")
+        for name in ("T3 Code.app", "T3 Code Nightly.app", "T3 Code (Nightly).app")
+    )
     return (
         {
-            "present": database.is_file(),
+            "present": present,
+            "installed": installed,
+            "running": running,
             "database": str(database),
             "enabled": settings.t3code_enabled is True,
             "activity_statistics": settings.t3code_activity_statistics_enabled is True,
@@ -62,7 +67,7 @@ def t3code_integration(
 
 
 def t3code_observation(service: object) -> dict[str, Any] | None:
-    """What the running T3 reader last saw -- null while it is off."""
+    """What the automatic reader last saw; null before it is admitted."""
     observe = getattr(service, "observation", None)
     if not callable(observe):
         return None

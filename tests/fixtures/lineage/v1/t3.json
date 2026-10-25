@@ -1,0 +1,14 @@
+{
+  "threads": [
+    {"thread_id":"root","default_provider":"claude","active_provider_thread_id":"binding-root","payload_json":{"lineage":{"rootThreadId":"root"}}},
+    {"thread_id":"factory-child","default_provider":"factory","active_provider_thread_id":"binding-factory","payload_json":{"lineage":{"parentThreadId":"root","rootThreadId":"root","relationshipToParent":"subagent"}}},
+    {"thread_id":"claude-child","default_provider":"claude","active_provider_thread_id":"binding-claude","payload_json":{"lineage":{"parentThreadId":"root","rootThreadId":"root","relationshipToParent":"subagent"}}},
+    {"thread_id":"codex-child","default_provider":"codex","active_provider_thread_id":"binding-codex","payload_json":{"lineage":{"parentThreadId":"root","rootThreadId":"root","relationshipToParent":"subagent"}}}
+  ],
+  "bindings": [
+    {"provider_thread_id":"binding-root","thread_id":"root","driver":"claudeAgent","provider_instance_id":"claude-instance","payload_json":{"nativeThreadRef":{"driver":"claudeAgent","nativeId":"native-root","strength":"strong"}}},
+    {"provider_thread_id":"binding-factory","thread_id":"factory-child","driver":"acpRegistry","provider_instance_id":"factory-instance","payload_json":{"nativeThreadRef":{"driver":"acpRegistry","nativeId":"native-factory","strength":"strong"}}},
+    {"provider_thread_id":"binding-claude","thread_id":"claude-child","driver":"claudeAgent","provider_instance_id":"claude-instance","payload_json":{"nativeThreadRef":{"driver":"claudeAgent","nativeId":"native-claude","strength":"strong"}}},
+    {"provider_thread_id":"binding-codex","thread_id":"codex-child","driver":"codex","provider_instance_id":"codex-instance","payload_json":{"nativeThreadRef":{"driver":"codex","nativeId":"native-codex","strength":"strong"}}}
+  ]
+}

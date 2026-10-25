@@ -1118,8 +1118,9 @@ def _work_for_key(state: CanonicalOperatorState, key: WorkKey):
     return next((work for work in state.works if work.key == key), None)
 
 
-def _root_work_key(state: CanonicalOperatorState, key: WorkKey) -> WorkKey:
-    by_key = {work.key: work for work in state.works}
+def _root_work_key(state: CanonicalOperatorState, key: WorkKey, *, by_key=None) -> WorkKey:
+    if by_key is None:
+        by_key = {work.key: work for work in state.works}
     current = key
     visited: set[WorkKey] = set()
     while current not in visited:
@@ -1131,16 +1132,38 @@ def _root_work_key(state: CanonicalOperatorState, key: WorkKey) -> WorkKey:
     return current
 
 
+def _group_root_keys(controller: object, state: CanonicalOperatorState) -> dict[WorkKey, WorkKey | None]:
+    by_key = {work.key: work for work in state.works}
+    roots = {work.key: _root_work_key(state, work.key, by_key=by_key) for work in state.works}
+    snapshot = getattr(controller, "last_snapshot", None)
+    resolution = getattr(snapshot, "agent_group_resolution", None)
+    if resolution is None:
+        return roots
+    statuses = (*snapshot.statuses, *snapshot.stale_statuses)
+    keys = {status.agent_id: status.work_key for status in statuses if status.work_key is not None}
+    for group in resolution.groups:
+        root = keys.get(group.root_work_key)
+        if root is not None:
+            for member in group.members:
+                if keys.get(member) in roots:
+                    roots[keys[member]] = root
+    for member in resolution.unlinked_workers:
+        if keys.get(member) in roots:
+            roots[keys[member]] = None
+    return roots
+
+
 def _fleet_plan(
     controller: object,
     state: CanonicalOperatorState,
 ) -> FleetPlan:
+    roots = _group_root_keys(controller, state)
     members = tuple(
         FleetMember(
             identity=_opaque_work_identity(work.key, "fleet"),
             semantic=work.lifecycle,
-            is_worker=work.parent_key is not None,
-            is_main=work.parent_key is None,
+            is_worker=roots[work.key] != work.key,
+            is_main=roots[work.key] == work.key,
         )
         for work in state.works
     )
@@ -1201,7 +1224,9 @@ def _completion_firefly(
     completion_key = _completion_key(event)
     if type(subject) is not WorkKey or completion_key is None:
         return
-    root = _root_work_key(state, subject)
+    root = _group_root_keys(controller, state).get(subject)
+    if root != subject:
+        return
     fleet_identity = _opaque_work_identity(root, "fleet")
     active_band = _band_for_identity(fleet, fleet_identity, WorkLifecycle.COMPLETED)
     if active_band is None:
@@ -1807,6 +1832,9 @@ def _observe_operator_events(
     quiet_requests = quiet_worker_request_keys(
         state,
         subagent_asks_alert=workers_alert,
+        resolution=getattr(getattr(controller, "last_snapshot", None), "agent_group_resolution", None),
+        statuses=(*getattr(getattr(controller, "last_snapshot", None), "statuses", ()),
+                  *getattr(getattr(controller, "last_snapshot", None), "stale_statuses", ())),
     )
     for event in canonical_events:
         if event.kind is TransitionKind.COMPLETED:

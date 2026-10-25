@@ -1547,6 +1547,63 @@ def device_document(device: DeviceFacts) -> dict[str, Any]:
     return document
 
 
+def _agent_group_resolution(snapshot, *, now):
+    from .agent_groups import resolve_agent_groups
+
+    cached = getattr(snapshot, "agent_group_resolution", None)
+    if cached is not None:
+        return cached
+    collected_at = getattr(snapshot, "collected_at", None)
+    lineage_now = collected_at.timestamp() if isinstance(collected_at, datetime) else now
+    if lineage_now is None:
+        lineage_now = max((status.updated_at.timestamp() for status in getattr(snapshot, "statuses", ())), default=0)
+    return resolve_agent_groups(
+        (*getattr(snapshot, "statuses", ()), *getattr(snapshot, "stale_statuses", ())),
+        now=lineage_now,
+    )
+
+
+def _apply_agent_group_rows(rows, group_statuses, group_resolution, ask_ids, quiet_worker_ids):
+    group_by_member = {member: group for group in group_resolution.groups for member in group.members}
+    statuses_by_id = {status.agent_id: status for status in group_statuses}
+    live_workers_by_group = {}
+    working_groups = set()
+    for group in group_resolution.groups:
+        live_workers = set()
+        for member in group.members:
+            status = statuses_by_id.get(member)
+            if status is None or getattr(status, "stale", False):
+                continue
+            mode = getattr(status, "mode", AgentMode.UNKNOWN)
+            if mode in _WORKING_MODES:
+                working_groups.add(group.id)
+            if member != group.root_work_key and (
+                mode in _WORKING_MODES or mode is AgentMode.WAITING_FOR_INPUT
+            ):
+                live_workers.add(member)
+        live_workers_by_group[group.id] = live_workers
+    for row in rows:
+        group = group_by_member.get(row["id"])
+        row["group_id"] = group.id if group else None
+        row["unlinked_worker"] = row["id"] in group_resolution.unlinked_workers
+        if row["unlinked_worker"]:
+            row["parent"] = None
+        if group:
+            is_child = row["id"] != group.root_work_key
+            row["kind"] = "worker" if is_child else "main"
+            row["parent"] = group.root_work_key if is_child else None
+            live_workers = live_workers_by_group[group.id]
+            row["workers"] = 0 if is_child else len(live_workers)
+            if not is_child:
+                if quiet_worker_ids is not None:
+                    row["workers_waiting"] = len(live_workers & quiet_worker_ids)
+                if (row["id"] not in ask_ids and row["mode"] not in {mode.value for mode in _WORKING_MODES}
+                        and group.id in working_groups):
+                    row["mode"] = AgentMode.WORKING.value
+                    row["lifecycle"] = "active"
+                    row["stale"] = False
+
+
 def project_session_rows(
     snapshot: object,
     *,
@@ -1560,6 +1617,7 @@ def project_session_rows(
     quiet_worker_ids: frozenset[str] | None = None,
     now: float | None = None,
     ask_stale_after_seconds: float = ASK_MAY_BE_STALE_SECONDS,
+    group_resolution: object = None,
 ) -> tuple[list[dict[str, Any]], frozenset[str]]:
     """Every session the snapshot knows, projected — before panel visibility.
 
@@ -1632,6 +1690,7 @@ def project_session_rows(
         labels_by_id[agent_id] = document["label"]
         documents_by_id[agent_id] = document
     rows = [documents_by_id[str(getattr(status, "agent_id", ""))] for status in statuses]
+    _apply_agent_group_rows(rows, statuses, group_resolution or _agent_group_resolution(snapshot, now=now), ask_ids, quiet_worker_ids)
     return rows, ask_ids
 
 
@@ -1679,6 +1738,7 @@ def build_state_document(
     sessions, plus finished ones nobody has acknowledged yet. Everything
     older is in ``list_history``, and ``hidden_count`` says how many main
     sessions that is (see ``completion_visibility``)."""
+    group_resolution = _agent_group_resolution(snapshot, now=now)
     projected, ask_ids = project_session_rows(
         snapshot,
         ask_statuses=ask_statuses,
@@ -1691,6 +1751,7 @@ def build_state_document(
         quiet_worker_ids=quiet_worker_ids,
         now=now,
         ask_stale_after_seconds=ask_stale_after_seconds,
+        group_resolution=group_resolution,
     )
     extras_by_id = extras_by_id or {}
     # An ask is the loudest thing the panel can show, so visibility never
@@ -1752,6 +1813,8 @@ def build_state_document(
         "now": float(now),
         "aggregate": {"mode": aggregate_mode(counts), **counts},
         "sessions": sessions,
+        "agent_groups": [group.to_dict() for group in group_resolution.groups
+                         if listed_ids.intersection(group.members)],
         "hidden_count": int(hidden_count),
         "asks": asks,
         "devices": [device_document(device) for device in devices],

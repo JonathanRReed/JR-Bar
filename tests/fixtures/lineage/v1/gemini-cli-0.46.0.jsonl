@@ -1,0 +1,2 @@
+{"sessionId":"gemini-child","projectHash":"synthetic-project-hash","startTime":"2026-09-21T14:13:20Z","lastUpdated":"2026-09-21T14:13:20Z","kind":"subagent","directories":[]}
+{"type":"gemini","content":"synthetic content that lineage must not read"}

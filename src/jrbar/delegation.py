@@ -43,11 +43,17 @@ def _reconcile_delegating_parents(
     and the strip painted orphan murk). Quiet modes only: an ask keeps
     asking, a failure stays named.
     """
+    from .agent_groups import resolve_agent_groups
+
+    resolution = resolve_agent_groups(statuses, now=collected_at.timestamp())
+    root_by_member = {member: group.root_work_key for group in resolution.groups
+                      for member in group.members if member != group.root_work_key}
     freshest_child: dict[str, datetime] = {}
     for status in statuses:
-        if not status.is_subagent or not status_counts_active(status):
+        if status.mode not in {AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS,
+                               AgentMode.WAITING_FOR_INPUT}:
             continue
-        parent_id = status.parent_agent_id
+        parent_id = root_by_member.get(status.agent_id)
         if parent_id is None:
             continue
         if (

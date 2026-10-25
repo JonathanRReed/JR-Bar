@@ -1,0 +1,331 @@
+{
+  "agent_groups": [
+    {
+      "id": "group:claude:session:native-root",
+      "lineage_evidence": [
+        {
+          "child": "claude:agent:native-claude-worker",
+          "harness": "claude",
+          "observed_at": 1790000000.0,
+          "parent": "claude:session:native-claude"
+        },
+        {
+          "child": "claude:session:native-claude",
+          "harness": "t3code",
+          "observed_at": 1790000000.0,
+          "parent": "claude:session:native-root"
+        },
+        {
+          "child": "codex:session:native-codex",
+          "harness": "t3code",
+          "observed_at": 1790000000.0,
+          "parent": "claude:session:native-root"
+        },
+        {
+          "child": "codex:session:native-codex-worker",
+          "harness": "codex",
+          "observed_at": 1790000000.0,
+          "parent": "codex:session:native-codex"
+        },
+        {
+          "child": "factory:session:native-factory",
+          "harness": "t3code",
+          "observed_at": 1790000000.0,
+          "parent": "claude:session:native-root"
+        },
+        {
+          "child": "factory:session:native-factory-worker",
+          "harness": "factory",
+          "observed_at": 1790000000.0,
+          "parent": "factory:session:native-factory"
+        }
+      ],
+      "members": [
+        "claude:agent:native-claude-worker",
+        "claude:session:native-claude",
+        "claude:session:native-root",
+        "codex:session:native-codex",
+        "codex:session:native-codex-worker",
+        "factory:session:native-factory",
+        "factory:session:native-factory-worker"
+      ],
+      "root_provider": "claude",
+      "root_work_key": "claude:session:native-root"
+    }
+  ],
+  "aggregate": {
+    "active": 1,
+    "failed": 0,
+    "mode": "working",
+    "needs_you": 0,
+    "ready": 0,
+    "total": 1
+  },
+  "asks": [],
+  "devices": [],
+  "escalation": {
+    "since": null,
+    "stage": "none"
+  },
+  "focus": {
+    "audible_allowed": null,
+    "banner_allowed": null,
+    "brightness_factor": null,
+    "display": null,
+    "mode": "off",
+    "outbound": null,
+    "source": null,
+    "summary": null,
+    "until": null
+  },
+  "generation": 1,
+  "health": {
+    "detected": {},
+    "hooks": {},
+    "intake": null,
+    "managed_hooks": [],
+    "sources": {}
+  },
+  "hidden_count": 0,
+  "now": 1790000000.0,
+  "peers": [],
+  "power": {
+    "closed_lid": {
+      "helper_installed": false,
+      "holding": false,
+      "policy": "never"
+    },
+    "keep_awake": false
+  },
+  "sessions": [
+    {
+      "ask": null,
+      "axes": {
+        "freshness": "live",
+        "outcome": "none",
+        "review": "pending"
+      },
+      "cwd": null,
+      "event": "PreToolUse",
+      "group_id": "group:claude:session:native-root",
+      "id": "claude:agent:native-claude-worker",
+      "kind": "worker",
+      "label": "Claude worker native-c",
+      "lifecycle": "active",
+      "message": null,
+      "mode": "working",
+      "next_actor": "provider",
+      "origin": null,
+      "parent": "claude:session:native-root",
+      "pid": null,
+      "provider": "claude",
+      "remote": false,
+      "short_id": "native-c",
+      "since": 1790000000.0,
+      "snoozed_until": null,
+      "stale": false,
+      "terminal": null,
+      "tool": null,
+      "unlinked_worker": false,
+      "updated_at": 1790000000.0,
+      "workers": 0
+    },
+    {
+      "ask": null,
+      "axes": {
+        "freshness": "live",
+        "outcome": "none",
+        "review": "pending"
+      },
+      "cwd": null,
+      "event": "PreToolUse",
+      "group_id": "group:claude:session:native-root",
+      "id": "claude:session:native-claude",
+      "kind": "worker",
+      "label": "Synthetic agent worker native-c",
+      "lifecycle": "active",
+      "message": null,
+      "mode": "working",
+      "next_actor": "provider",
+      "origin": null,
+      "parent": "claude:session:native-root",
+      "pid": null,
+      "provider": "claude",
+      "remote": false,
+      "short_id": "native-c",
+      "since": 1790000000.0,
+      "snoozed_until": null,
+      "stale": false,
+      "terminal": null,
+      "tool": null,
+      "unlinked_worker": false,
+      "updated_at": 1790000000.0,
+      "workers": 0
+    },
+    {
+      "ask": null,
+      "axes": {
+        "freshness": "live",
+        "outcome": "none",
+        "review": "pending"
+      },
+      "cwd": null,
+      "event": "PreToolUse",
+      "group_id": "group:claude:session:native-root",
+      "id": "claude:session:native-root",
+      "kind": "main",
+      "label": "Synthetic agent",
+      "lifecycle": "active",
+      "message": null,
+      "mode": "working",
+      "next_actor": "provider",
+      "origin": null,
+      "parent": null,
+      "pid": null,
+      "provider": "claude",
+      "remote": false,
+      "short_id": "native-r",
+      "since": 1790000000.0,
+      "snoozed_until": null,
+      "stale": false,
+      "terminal": null,
+      "tool": null,
+      "unlinked_worker": false,
+      "updated_at": 1790000000.0,
+      "workers": 6
+    },
+    {
+      "ask": null,
+      "axes": {
+        "freshness": "live",
+        "outcome": "none",
+        "review": "pending"
+      },
+      "cwd": null,
+      "event": "PreToolUse",
+      "group_id": "group:claude:session:native-root",
+      "id": "codex:session:native-codex",
+      "kind": "worker",
+      "label": "Synthetic agent worker native-c",
+      "lifecycle": "active",
+      "message": null,
+      "mode": "working",
+      "next_actor": "provider",
+      "origin": null,
+      "parent": "claude:session:native-root",
+      "pid": null,
+      "provider": "codex",
+      "remote": false,
+      "short_id": "native-c",
+      "since": 1790000000.0,
+      "snoozed_until": null,
+      "stale": false,
+      "terminal": null,
+      "tool": null,
+      "unlinked_worker": false,
+      "updated_at": 1790000000.0,
+      "workers": 0
+    },
+    {
+      "ask": null,
+      "axes": {
+        "freshness": "live",
+        "outcome": "none",
+        "review": "pending"
+      },
+      "cwd": null,
+      "event": "PreToolUse",
+      "group_id": "group:claude:session:native-root",
+      "id": "codex:session:native-codex-worker",
+      "kind": "worker",
+      "label": "Synthetic agent worker native-c worker native-c",
+      "lifecycle": "active",
+      "message": null,
+      "mode": "working",
+      "next_actor": "provider",
+      "origin": null,
+      "parent": "claude:session:native-root",
+      "pid": null,
+      "provider": "codex",
+      "remote": false,
+      "short_id": "native-c",
+      "since": 1790000000.0,
+      "snoozed_until": null,
+      "stale": false,
+      "terminal": null,
+      "tool": null,
+      "unlinked_worker": false,
+      "updated_at": 1790000000.0,
+      "workers": 0
+    },
+    {
+      "ask": null,
+      "axes": {
+        "freshness": "live",
+        "outcome": "none",
+        "review": "pending"
+      },
+      "cwd": null,
+      "event": "PreToolUse",
+      "group_id": "group:claude:session:native-root",
+      "id": "factory:session:native-factory",
+      "kind": "worker",
+      "label": "Synthetic agent worker native-f",
+      "lifecycle": "active",
+      "message": null,
+      "mode": "working",
+      "next_actor": "provider",
+      "origin": null,
+      "parent": "claude:session:native-root",
+      "pid": null,
+      "provider": "factory",
+      "remote": false,
+      "short_id": "native-f",
+      "since": 1790000000.0,
+      "snoozed_until": null,
+      "stale": false,
+      "terminal": null,
+      "tool": null,
+      "unlinked_worker": false,
+      "updated_at": 1790000000.0,
+      "workers": 0
+    },
+    {
+      "ask": null,
+      "axes": {
+        "freshness": "live",
+        "outcome": "none",
+        "review": "pending"
+      },
+      "cwd": null,
+      "event": "PreToolUse",
+      "group_id": "group:claude:session:native-root",
+      "id": "factory:session:native-factory-worker",
+      "kind": "worker",
+      "label": "Synthetic agent worker native-f worker native-f",
+      "lifecycle": "active",
+      "message": null,
+      "mode": "working",
+      "next_actor": "provider",
+      "origin": null,
+      "parent": "claude:session:native-root",
+      "pid": null,
+      "provider": "factory",
+      "remote": false,
+      "short_id": "native-f",
+      "since": 1790000000.0,
+      "snoozed_until": null,
+      "stale": false,
+      "terminal": null,
+      "tool": null,
+      "unlinked_worker": false,
+      "updated_at": 1790000000.0,
+      "workers": 0
+    }
+  ],
+  "settings_generation": 0,
+  "t": "state",
+  "unseen_completions": [],
+  "usage": null,
+  "v": 1
+}

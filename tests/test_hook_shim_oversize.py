@@ -446,3 +446,58 @@ def test_the_real_ingress_takes_an_oversize_ask_as_an_ordinary_hook_and_parks_no
     assert broker.parks == 0
     assert len(seen) == 1 and seen[0].decide_ms is None
     assert json.loads(seen[0].payload_text)["payload_truncated"] is True
+
+
+def test_oversize_payload_preserves_bounded_lineage_fields(shim: Path, sock_dir: Path) -> None:
+    lineage = {
+        "agent_id": "synthetic-worker",
+        "parent_agent_id": "synthetic-parent-agent",
+        "parentAgentId": "synthetic-parent-agent",
+        "parent_thread_id": "synthetic-parent-thread",
+        "parent_session_id": "synthetic-parent-session",
+        "callingSessionId": "synthetic-calling-session",
+        "callingToolUseId": "synthetic-calling-tool",
+    }
+    # Metadata precedes the oversized response, as real hook headers do.
+    payload = {**lineage, **_post_tool_use()}
+    request = _delivered(shim, sock_dir, "claude", _compact(payload))
+    assert request is not None
+    forwarded = json.loads(request.payload_text)
+    kept = set(lineage)
+    assert all(forwarded.get(key) == lineage[key] for key in kept)
+    assert all(key not in forwarded for key in lineage.keys() - kept)
+    assert "tool_response" not in forwarded
+
+
+def test_cursor_oversize_keeps_explicit_child_and_parent(shim: Path, sock_dir: Path) -> None:
+    payload = {"hook_event_name": "subagentStart", "conversation_id": "cursor-parent",
+               "subagent_id": "cursor-worker", "parent_conversation_id": "cursor-parent",
+               "task": "A" * (MIB + 4096)}
+    result = _run(shim, sock_dir, "cursor", _compact(payload))
+    assert result.returncode == 0 and result.stdout == b"{}\n"
+    queued, = (sock_dir / "cursor.pending.jsonl").read_text().splitlines()
+    record = json.loads(json.loads(queued)["payload"])
+    assert record["subagent_id"] == "cursor-worker"
+    assert record["parent_conversation_id"] == "cursor-parent"
+    assert "task" not in record
+
+
+def test_hermes_oversize_keeps_callback_parent_fields(shim: Path, sock_dir: Path) -> None:
+    payload = {"hook_event_name": "subagent_start", "child_session_id": "hermes-session",
+               "child_subagent_id": "hermes-worker", "parent_session_id": "hermes-root",
+               "parent_subagent_id": "hermes-parent-worker", "child_goal": "A" * (MIB + 4096)}
+    record = json.loads(_delivered(shim, sock_dir, "hermes", _compact(payload)).payload_text)
+    for key in ('child_session_id', 'child_subagent_id', 'parent_session_id', 'parent_subagent_id'):
+        assert record[key] == payload[key]
+    assert 'child_goal' not in record
+
+
+def test_grok_oversize_keeps_child_identity_and_native_aliases(shim: Path, sock_dir: Path) -> None:
+    payload = {"hookEventName": "SubagentStart", "sessionId": "grok-root",
+               "subagentId": "grok-child", "subagentType": "general-purpose",
+               "description": "A" * (MIB + 4096)}
+    record = json.loads(_delivered(shim, sock_dir, "grok", _compact(payload)).payload_text)
+    assert record['session_id'] == 'grok-root'
+    assert record['subagentId'] == 'grok-child'
+    assert record['subagentType'] == 'general-purpose'
+    assert 'description' not in record

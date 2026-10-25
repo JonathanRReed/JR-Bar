@@ -95,6 +95,8 @@ class HookEvent:
 
     @property
     def status_key(self) -> str:
+        if self.provider == "openclaw" and self.session_id and ":subagent:" in self.session_id:
+            return f"{self.provider}:agent:{self.session_id}"
         if self.agent_id:
             return f"{self.provider}:agent:{self.agent_id}"
         if self.session_id:
@@ -134,6 +136,18 @@ def worker_id(provider: str | None, agent_id: str) -> str | None:
 
 
 @dataclass(frozen=True)
+class ParentLink:
+    child: str
+    parent: str | None
+    harness: str
+    observed_at: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"child": self.child, "parent": self.parent,
+                "harness": self.harness, "observed_at": self.observed_at}
+
+
+@dataclass(frozen=True)
 class AgentStatus:
     provider: str
     agent_id: str
@@ -149,6 +163,8 @@ class AgentStatus:
     stale: bool = False
     work_key: WorkKey | None = None
     request_key: RequestKey | None = None
+
+    parent_links: tuple[ParentLink, ...] = ()
 
     terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE
 
@@ -177,12 +193,17 @@ class AgentStatus:
         sub-agents -- they need grouping, not top billing.
 
         The kind is the part right after the provider (``worker_id``)."""
-        return worker_id(self.provider, self.agent_id) is not None
+        return bool(self.parent_links) or worker_id(self.provider, self.agent_id) is not None
 
     @property
     def parent_agent_id(self) -> str | None:
         """The main session this sub-agent belongs to, when known."""
+        if self.parent_links:
+            parents = {link.parent for link in self.parent_links}
+            return next(iter(parents)) if len(parents) == 1 else None
         if not self.is_subagent or not self.session_id:
+            return None
+        if self.agent_id == f"{self.provider}:agent:{self.session_id}":
             return None
         return f"{self.provider}:session:{self.session_id}"
 
