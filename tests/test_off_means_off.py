@@ -51,6 +51,24 @@ def test_provider_on_then_off_stops_collecting_and_disarms_the_refresh(tmp_path)
     service.close()
 
 
+@pytest.mark.parametrize("family", list(ambient._CUE_RESOURCES))
+def test_disabled_cue_releases_its_observer_state(family):
+    settings = replace(AgentMonitorSettings(), ambient_cues_disabled=(family.value,))
+    target = SimpleNamespace(settings=settings)
+    for attribute in ambient._CUE_RESOURCES[family]:
+        setattr(target, attribute, object())
+    ambient.stop_disabled_cues(target)
+    assert all(not hasattr(target, name) for name in ambient._CUE_RESOURCES[family])
+
+
+def test_disabled_cue_returns_before_its_planner(monkeypatch):
+    target = SimpleNamespace(settings=replace(AgentMonitorSettings(), ambient_cues_disabled=("ask_heartbeat",)))
+    calls = []
+    monkeypatch.setattr(ambient, "plan_ask_heartbeat_sync", lambda *_args, **_kwargs: calls.append(True))
+    ambient._observe_ask_heartbeat(target, object(), object(), frozenset())
+    assert calls == []
+
+
 def test_presence_off_releases_the_daemons_expiry_timer(headless):  # noqa: F811
     from jrbar.presence import PresenceFacts
 

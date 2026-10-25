@@ -4875,6 +4875,9 @@ def build_headless_controller_class() -> type:
                 scene_leases.settings_changed(self, previous, value)
             self._core_settings_value = value
             if previous is not None:
+                from .ambient_effect_runtime import stop_disabled_cues
+
+                stop_disabled_cues(self)
                 if ((previous.presence_enabled and not value.presence_enabled)
                         or (previous.focus_sync_enabled and not value.focus_sync_enabled)):
                     from . import core_power

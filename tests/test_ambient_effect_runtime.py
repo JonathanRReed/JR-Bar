@@ -431,7 +431,7 @@ def test_runtime_projects_canonical_events_through_the_shared_ambient_seam(
     assert controller._turn_length_ember_plan.age_label == "Under 2 minutes"
     assert controller._ambient_fleet_plan.accepted is True
     assert controller._dot_binary_heartbeat_plan.selected_semantic.value == "ask"
-    assert controller._rainstick_idle_plan.disposition.value == "suppress"
+    assert getattr(controller, "_rainstick_idle_plan", None) is None
     assert callable(controller._plan_finite_ambient_effect)
 
 
@@ -579,12 +579,11 @@ def test_opted_in_cues_plan_presentations_while_defaults_stay_silent__and_2_more
         "jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0
     )
 
-    # Default flags: the planners still run, but the disabled preference
-    # declines the idle cue and the odometer keeps no state.
+    # Disabled cues do not construct plans or keep observer state.
     silent = controller_type()
     silent.settings = _cue_settings()
     silent.observe_operator_history_events((), empty_operator_state())
-    assert silent._rainstick_idle_plan.disposition.value == "suppress"
+    assert getattr(silent, "_rainstick_idle_plan", None) is None
     # An unadmitted context returns before any odometer state exists.
     assert not hasattr(silent, "_milestone_odometer_state")
 
@@ -635,7 +634,7 @@ def test_opted_in_cues_plan_presentations_while_defaults_stay_silent__and_2_more
     disabled = controller_type()
     disabled.settings = _cue_settings(milestone_odometer_steps=(1,))
     disabled.observe_operator_history_events((event,), state)
-    assert disabled._milestone_odometer_state.completed_count == 0
+    assert not hasattr(disabled, "_milestone_odometer_state")
 
     # --- scenario: the_active_scene_pack_overrides_the_policy_the_runtime_resolves
     monkeypatch.undo()

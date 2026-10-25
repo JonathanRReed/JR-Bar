@@ -340,9 +340,7 @@ def _compile_runtime_dispatch(controller: object) -> None:
     semantic_program = getattr(controller, "_semantic_effect_program", None)
     if type(semantic_program) is not str or not semantic_program:
         semantic_program = None
-    # A cue the person switched off (jrbar.ambient_cues) is planned as it
-    # always was -- its observers keep their bookkeeping -- and simply never
-    # reaches a surface.
+    stop_disabled_cues(controller)
     off = disabled_cue_families(getattr(controller, "settings", None))
 
     def unless_off(family: AmbientEffectFamily, plan):
@@ -480,7 +478,7 @@ def active_ambient_surface_output(
     }:
         return None
     output = dispatch.for_surface(surface)
-    if output is None:
+    if output is None or not _cue_enabled(controller, output.family):
         return None
     now = time.monotonic() if now_monotonic is None else float(now_monotonic)
     elapsed_ms = max(0.0, (now - float(started_at)) * 1_000.0)
@@ -987,6 +985,9 @@ def _record_delivery(
         ),
     )
 
+    if not _cue_enabled(controller, AmbientEffectFamily.GLANCE_LIGHT):
+        _compile_runtime_dispatch(controller)
+        return
     notification = make_glance_notification(
         notification_id=notification_id,
         kind=_glance_kind(semantic),
@@ -1049,6 +1050,8 @@ def _record_acknowledgement(
     *,
     action_token: object,
 ) -> None:
+    if not _cue_enabled(controller, AmbientEffectFamily.GLANCE_LIGHT):
+        return
     if type(action_token) is not str:
         return
     bindings = dict(getattr(controller, "_glance_action_bindings", {}))
@@ -1189,6 +1192,40 @@ def _completion_key(event: CanonicalOperatorEvent) -> CompletionPresentationKey 
     )
 
 
+_CUE_RESOURCES = {
+    AmbientEffectFamily.FIREFLY_COMPLETION: ("_firefly_completion_decision",),
+    AmbientEffectFamily.COMPLETION_MENISCUS: ("_completion_meniscus_plans",),
+    AmbientEffectFamily.HANDOFF_BATON: ("_handoff_baton_decision", "_ambient_completion_endpoints"),
+    AmbientEffectFamily.RECOVERY_GRACE: ("_recovery_grace_plan",),
+    AmbientEffectFamily.ASK_HEARTBEAT: ("_ask_heartbeat_plan",),
+    AmbientEffectFamily.TURN_LENGTH_EMBER: ("_turn_length_ember_plan", "_ambient_turn_starts"),
+    AmbientEffectFamily.FLEET_ARRIVAL_DEPARTURE: ("_fleet_arrival_departure_decisions", "_ambient_fleet_presence_states", "_ambient_fleet_presence_episodes"),
+    AmbientEffectFamily.COURTESY_SIGNATURE: ("_courtesy_signature_plan",),
+    AmbientEffectFamily.GLANCE_LIGHT: ("_glance_light_plan", "_glance_light_state", "_glance_action_bindings", "_glance_semantics", "_glance_effect_ids"),
+    AmbientEffectFamily.RAINSTICK_IDLE: ("_rainstick_idle_plan",),
+    AmbientEffectFamily.MILESTONE_ODOMETER: ("_milestone_odometer_plan",),
+}
+
+
+def _cue_enabled(controller: object, family: AmbientEffectFamily) -> bool:
+    settings = getattr(controller, "settings", None)
+    if family in disabled_cue_families(settings):
+        return False
+    flags = {
+        AmbientEffectFamily.RAINSTICK_IDLE: "rainstick_idle_enabled",
+        AmbientEffectFamily.MILESTONE_ODOMETER: "milestone_odometer_enabled",
+    }
+    flag = flags.get(family)
+    return flag is None or bool(getattr(settings, flag, False))
+
+
+def stop_disabled_cues(controller: object) -> None:
+    for family, attributes in _CUE_RESOURCES.items():
+        if not _cue_enabled(controller, family):
+            for attribute in attributes:
+                vars(controller).pop(attribute, None)
+
+
 def _completion_firefly(
     controller: object,
     event: CanonicalOperatorEvent,
@@ -1197,6 +1234,8 @@ def _completion_firefly(
     *,
     reduce_motion: bool,
 ) -> None:
+    if not _cue_enabled(controller, AmbientEffectFamily.FIREFLY_COMPLETION):
+        return
     subject = event.subject_key
     completion_key = _completion_key(event)
     if type(subject) is not WorkKey or completion_key is None:
@@ -1223,6 +1262,8 @@ def _completion_meniscus(
     event: CanonicalOperatorEvent,
     preferences: AccessibilityDisplayPreferences,
 ) -> None:
+    if not _cue_enabled(controller, AmbientEffectFamily.COMPLETION_MENISCUS):
+        return
     completion_key = _completion_key(event)
     if completion_key is None:
         return
@@ -1259,6 +1300,8 @@ def _milestone_odometer(
     *,
     reduce_motion: bool,
 ) -> None:
+    if not _cue_enabled(controller, AmbientEffectFamily.MILESTONE_ODOMETER):
+        return
     completion_key = _completion_key(event)
     if completion_key is None:
         return
@@ -1381,6 +1424,8 @@ def _observe_handoff(
     *,
     reduce_motion: bool,
 ) -> None:
+    if not _cue_enabled(controller, AmbientEffectFamily.HANDOFF_BATON):
+        return
     endpoint = _handoff_endpoint(event, state)
     if endpoint is None:
         return
@@ -1417,6 +1462,8 @@ def _observe_recovery(
     *,
     reduce_motion: bool,
 ) -> None:
+    if not _cue_enabled(controller, AmbientEffectFamily.RECOVERY_GRACE):
+        return
     if event.kind is not TransitionKind.SOURCE_RECOVERED:
         return
     source = event.key.provider_watermark.source_key
@@ -1485,6 +1532,8 @@ def _observe_turn_starts(
     *,
     reduce_motion: bool,
 ) -> None:
+    if not _cue_enabled(controller, AmbientEffectFamily.TURN_LENGTH_EMBER):
+        return
     starts = dict(getattr(controller, "_ambient_turn_starts", {}))
     for event in events:
         subject = event.subject_key
@@ -1535,6 +1584,8 @@ def _observe_ask_heartbeat(
     preferences: AccessibilityDisplayPreferences,
     quiet_requests: frozenset[RequestKey],
 ) -> None:
+    if not _cue_enabled(controller, AmbientEffectFamily.ASK_HEARTBEAT):
+        return
     # A sub-agent's ask stays out of the heartbeat while sub-agent asks are
     # off, the same as it stays off the panel, the banner and the sound.
     presentations = tuple(
@@ -1573,6 +1624,8 @@ def _observe_courtesy_signature(
     reduce_motion: bool,
     quiet_requests: frozenset[RequestKey],
 ) -> None:
+    if not _cue_enabled(controller, AmbientEffectFamily.COURTESY_SIGNATURE):
+        return
     if is_capacity_terminal(event):
         return
     semantic = _COURTESY_BY_TRANSITION.get(event.kind)
@@ -1680,6 +1733,9 @@ def _observe_dot_and_rainstick(
         ),
     )
 
+    if not _cue_enabled(controller, AmbientEffectFamily.RAINSTICK_IDLE):
+        setattr(controller, "_rainstick_idle_plan", None)
+        return
     scene = scene_from_value(effective_scene(controller)) or DEFAULT_SCENE
     admission, _environment_plan = _scene_pack_environment(controller, settings, scene)
     thermal = (
@@ -1728,6 +1784,8 @@ def _watcher_deaf(controller: object) -> bool:
 
 
 def _observe_remote_fleet(controller: object, *, reduce_motion: bool) -> None:
+    if not _cue_enabled(controller, AmbientEffectFamily.FLEET_ARRIVAL_DEPARTURE):
+        return
     refresh = getattr(controller, "_remote_refresh", None)
     health_rows = tuple(getattr(refresh, "health", ()))
     if not health_rows:
