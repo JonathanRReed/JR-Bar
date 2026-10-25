@@ -100,21 +100,22 @@ public struct LEDSKeyframePlan: Sendable, Equatable {
 
     /// Renders `sampler` into tracks, or nil when the program is too long to
     /// keyframe (the caller keeps its frame clock).
-    public static func render(sampler: LEDSSampler, tolerance: Int = defaultTolerance, maxKeyframes: Int = defaultMaxKeyframes) -> LEDSKeyframePlan? {
+    public static func render(sampler: LEDSSampler, tolerance: Int = defaultTolerance, maxKeyframes: Int = defaultMaxKeyframes, sample: ((Int) -> [RGB8])? = nil) -> LEDSKeyframePlan? {
+        let sample = sample ?? { sampler.codes(atMilliseconds: $0) }
         let loopSpan = sampler.cycleDuration.map { Int(($0 * 1000).rounded()) }
         if let end = sampler.motionEndsAt {
             let endMs = Int((end * 1000).rounded())
-            let final = sampler.codes(atMilliseconds: max(endMs, 0))
+            let final = sample(max(endMs, 0))
             if endMs <= 0 { return LEDSKeyframePlan(lead: nil, loop: nil, loopStartMs: 0, finalCodes: final) }
             guard endMs <= maxScanMs else { return nil }
-            let lead = track(sampler: sampler, from: 0, to: endMs, tolerance: tolerance, maxKeyframes: maxKeyframes)
+            let lead = track(sampler: sampler, from: 0, to: endMs, tolerance: tolerance, maxKeyframes: maxKeyframes, sample: sample)
             guard lead.count <= maxKeyframes else { return nil }
             return LEDSKeyframePlan(lead: lead, loop: nil, loopStartMs: 0, finalCodes: final)
         }
         guard let loopSpan, loopSpan > 0, loopSpan <= maxScanMs / 2 else { return nil }
         let budget = max(2, maxKeyframes / 2)
-        let lead = track(sampler: sampler, from: 0, to: loopSpan, tolerance: tolerance, maxKeyframes: budget)
-        let loop = track(sampler: sampler, from: loopSpan, to: 2 * loopSpan, tolerance: tolerance, maxKeyframes: budget)
+        let lead = track(sampler: sampler, from: 0, to: loopSpan, tolerance: tolerance, maxKeyframes: budget, sample: sample)
+        let loop = track(sampler: sampler, from: loopSpan, to: 2 * loopSpan, tolerance: tolerance, maxKeyframes: budget, sample: sample)
         guard lead.count + loop.count <= maxKeyframes else { return nil }
         return LEDSKeyframePlan(lead: lead, loop: loop, loopStartMs: loopSpan, finalCodes: loop.frames[0])
     }
@@ -136,9 +137,10 @@ public struct LEDSKeyframePlan: Sendable, Equatable {
     /// (Douglas-Peucker). Past `maxKeyframes` the tolerance doubles and the
     /// pass runs again, so a busy program degrades smoothly rather than
     /// exploding; the caller still checks the final count.
-    static func track(sampler: LEDSSampler, from start: Int, to end: Int, tolerance: Int, maxKeyframes: Int) -> LEDSKeyframeTrack {
+    static func track(sampler: LEDSSampler, from start: Int, to end: Int, tolerance: Int, maxKeyframes: Int, sample: ((Int) -> [RGB8])? = nil) -> LEDSKeyframeTrack {
         precondition(end > start)
-        let frames = (start...end).map { sampler.codes(atMilliseconds: $0) }
+        let sample = sample ?? { sampler.codes(atMilliseconds: $0) }
+        let frames = (start...end).map(sample)
         var epsilon = max(0, tolerance)
         var kept = simplify(frames: frames, tolerance: epsilon)
         while kept.count > maxKeyframes, epsilon < 64 {

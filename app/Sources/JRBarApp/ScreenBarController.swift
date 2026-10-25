@@ -15,6 +15,7 @@ final class ScreenBarPlanQueue {
     struct Request {
         let generation: UInt64
         let sampler: LEDSSampler
+        let transfer: CoreStripTransfer?
     }
 
     static let defaultRenderer: Renderer = { sampler in
@@ -39,8 +40,8 @@ final class ScreenBarPlanQueue {
         self.renderer = renderer
     }
 
-    func submit(generation: UInt64, sampler: LEDSSampler) {
-        let request = Request(generation: generation, sampler: sampler)
+    func submit(generation: UInt64, sampler: LEDSSampler, transfer: CoreStripTransfer? = nil) {
+        let request = Request(generation: generation, sampler: sampler, transfer: transfer)
         guard active == nil else {
             pending = request
             return
@@ -81,7 +82,14 @@ final class ScreenBarPlanQueue {
         let renderer = self.renderer
         worker = Task { @MainActor [weak self] in
             guard !Task.isCancelled else { return }
-            let plan = await renderer(request.sampler)
+            let plan: LEDSKeyframePlan?
+            if let transfer = request.transfer {
+                plan = await Task.detached(priority: .userInitiated) {
+                    ScreenBarLightTransfer.plan(sampler: request.sampler, transfer: transfer)
+                }.value
+            } else {
+                plan = await renderer(request.sampler)
+            }
             guard !Task.isCancelled else { return }
             self?.finish(request, plan: plan)
         }
@@ -119,8 +127,7 @@ final class ScreenBarPlanQueue {
 /// handed to Core Animation, phase-locked to the daemon's anchor, so the
 /// render server does every frame and this process idles. A program whose
 /// cycle is too long to keyframe keeps the older frame clock: a
-/// `CADisplayLink` (capped at 60 Hz, the Python pipeline's
-/// `MAX_SAMPLE_RATE_HZ`) that runs the sampler on ticks and pauses whenever
+/// `CADisplayLink` capped at 30 Hz that runs the sampler on ticks and pauses whenever
 /// the program has gone still or nobody can see the bar
 /// (`ScreenBarVisibility`).
 @MainActor
@@ -595,6 +602,8 @@ final class ScreenBarController {
         }
         let center = self.notificationCenter
         center.addObserver(self, selector: #selector(screensChanged(_:)), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        center.addObserver(self, selector: #selector(occlusionChanged(_:)),
+                           name: NSWindow.didChangeOcclusionStateNotification, object: panel)
         // The Notch card's Display pick moved the island: the band follows.
         center.addObserver(self, selector: #selector(screensChanged(_:)), name: ScreenBarGeometry.preferredScreenDidChange, object: nil)
         // The island's frame is the band's silhouette while it is drawn:
@@ -721,6 +730,7 @@ final class ScreenBarController {
     private static let fadeSeconds: TimeInterval = 0.18
 
     func show() {
+        visibility.occluded = false
         visibility.shown = true
         reposition()
         visibility.steppedAside = wantsVideoGuard()
@@ -836,6 +846,12 @@ final class ScreenBarController {
         syncIslandWatch()
         present()
         onLiveChange?(live)
+    }
+
+    @objc private func occlusionChanged(_ note: Notification) {
+        guard isShown, panel.isVisible else { return }
+        visibility.occluded = !panel.occlusionState.contains(.visible)
+        settleVisibility()
     }
 
     @objc private func screensDidSleep(_ note: Notification) {
@@ -1467,14 +1483,14 @@ final class ScreenBarController {
     /// bars remember only the current desired sampler; a live moving edge
     /// admits it once, unless a nil result already chose the fallback.
     private func syncPlanAdmission() {
-        guard visibility.live, !holdsStill, stripTransfer == nil else {
+        guard visibility.live, !holdsStill else {
             planQueue.discardPending()
             return
         }
         guard plan == nil, let desiredPlan,
               completedPlanGeneration != desiredPlan.generation,
               !planQueue.contains(generation: desiredPlan.generation) else { return }
-        planQueue.submit(generation: desiredPlan.generation, sampler: desiredPlan.sampler)
+        planQueue.submit(generation: desiredPlan.generation, sampler: desiredPlan.sampler, transfer: stripTransfer)
     }
 
     /// A finished plan may belong to a program superseded while it rendered.
@@ -1482,7 +1498,7 @@ final class ScreenBarController {
     /// still match before it can pause the current program's frame clock.
     private func accept(plan built: LEDSKeyframePlan?, generation: UInt64,
                         sampler: LEDSSampler) {
-        guard generation == planGeneration, self.sampler === sampler, stripTransfer == nil else { return }
+        guard generation == planGeneration, self.sampler === sampler else { return }
         completedPlanGeneration = generation
         plan = built
         present()
@@ -1551,7 +1567,7 @@ final class ScreenBarController {
             renderStillFrame()
             return
         }
-        if let plan, stripTransfer == nil {
+        if let plan {
             displayLink?.isPaused = true
             if isShown { view.play(plan: plan, anchor: anchor) }
         } else {
@@ -1628,7 +1644,7 @@ final class ScreenBarController {
         if shouldRun {
             if displayLink == nil {
                 let link = view.displayLink(target: self, selector: #selector(tick(_:)))
-                link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 60, preferred: 60)
+                link.preferredFrameRateRange = CAFrameRateRange(minimum: 15, maximum: 30, preferred: 30)
                 link.add(to: .main, forMode: .common)
                 displayLink = link
             }
@@ -1639,7 +1655,7 @@ final class ScreenBarController {
     }
 
     @objc private func tick(_ link: CADisplayLink) {
-        guard plan == nil else { link.isPaused = true; return }
+        guard plan == nil, visibility.live, !holdsStill else { link.isPaused = true; return }
         renderCurrentFrame(at: link.targetTimestamp)
         if let sampler, let end = sampler.motionEndsAt, link.targetTimestamp - anchor >= end + 0.1 {
             // Final frame is on screen; stop asking for more.
@@ -1670,11 +1686,12 @@ final class ScreenBarController {
 struct ScreenBarVisibility: Equatable {
     var shown = false
     var displayAsleep = false
+    var occluded = false
     var steppedAside = false
     /// The `live` the clocks were last set to.
     private(set) var applied = false
 
-    var live: Bool { shown && !displayAsleep && !steppedAside }
+    var live: Bool { shown && !displayAsleep && !occluded && !steppedAside }
 
     /// The edge since the last settle, once: true starts the clocks,
     /// false parks them, nil leaves them as they are.
