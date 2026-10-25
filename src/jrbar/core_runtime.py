@@ -4885,6 +4885,16 @@ def build_headless_controller_class() -> type:
                     facts = core_power.presence_facts(self)
                     if facts is not None:
                         core_power._apply_presence(self, facts)
+                old_devices = {device.device_id: device.enabled for device in previous.devices}
+                new_devices = {device.device_id: device.enabled for device in value.devices}
+                writer = self._hardware_write_worker
+                if old_devices != new_devices and writer is not None:
+                    old_generation = self._hardware_write_generation
+                    self._hardware_write_generation += 1
+                    cancel = getattr(writer, "cancel_generation", None)
+                    if callable(cancel):
+                        cancel(old_generation)
+                    self._device_discovery_cache = None
                 if not value.remote_peers.enabled:
                     self.stop_remote_peer_timer()
                 elif getattr(self, "_runtime_started", False):

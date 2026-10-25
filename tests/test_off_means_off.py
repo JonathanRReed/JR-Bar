@@ -51,6 +51,18 @@ def test_provider_on_then_off_stops_collecting_and_disarms_the_refresh(tmp_path)
     service.close()
 
 
+def test_disabled_device_is_not_inspected_even_while_another_device_is_on(tmp_path, monkeypatch):
+    off = tmp_path / "SidePulse"
+    on = tmp_path / "PulseDot"
+    off.mkdir()
+    on.mkdir()
+    touched = []
+    monkeypatch.setattr(device_writer, "path_exists", lambda path: touched.append(path) or False)
+    device_writer.discover_devices(mount_root=tmp_path, excluded_roots=(str(off),))
+    assert touched
+    assert all(off not in path.parents for path in touched)
+
+
 def test_off_remote_peers_invalidates_its_timer_and_does_not_rearm(controller):  # noqa: F811
     target, _ = controller
     invalidated = []

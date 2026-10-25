@@ -5124,8 +5124,8 @@ def test_the_dot_plan_reads_both_devices_directions(headless, tmp_path: Path, mo
     controller.settings = replace(
         controller.settings,
         devices=(
-            SimpleNamespace(device_id=pro.device_id, led_direction="reversed"),
-            SimpleNamespace(device_id=dot.device_id, led_direction="sideways"),
+            SimpleNamespace(device_id=pro.device_id, led_direction="reversed", enabled=True),
+            SimpleNamespace(device_id=dot.device_id, led_direction="sideways", enabled=True),
         ),
     )
     seen: list[dict] = []
