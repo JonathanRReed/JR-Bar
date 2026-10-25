@@ -276,3 +276,176 @@ def test_a_finished_partial_build_does_not_spawn_again(tmp_path):
         assert index._cached_totals(roots, 0).history_stale is False
     finally:
         index.close()
+
+
+def test_live_sibling_blocks_cold_and_incremental_writes(tmp_path):
+    import select
+    import subprocess
+    import sys
+
+    root = tmp_path / "transcripts"
+    root.mkdir()
+    transcript = root / "one.jsonl"
+    transcript.write_text(claude("one", "2026-10-25T01:00:00Z"))
+    path = tmp_path / "state/history.sqlite3"
+    path.parent.mkdir()
+    roots = {"claude": (root,)}
+    index = history.TokenHistoryIndex(path)
+    # A separate process owns the same lock an orphaned builder holds.
+    script = """
+import fcntl, sys
+with open(sys.argv[1], "a") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    print("ready", flush=True)
+    sys.stdin.read()
+"""
+    def sibling():
+        child = subprocess.Popen([sys.executable, "-c", script, str(path) + ".lock"],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        assert select.select([child.stdout], [], [], 30)[0], "sibling did not take the lock"
+        assert child.stdout.readline() == "ready\n"
+        return child
+    holder = sibling()
+    try:
+        totals = index.scan(roots, budget=usage.ScanBudget(2))
+        assert index.child is None
+        assert not path.exists()
+        assert totals.source_coverage["claude"].pending_files == 1
+        holder.communicate(timeout=30)
+        index.scan(roots, budget=usage.ScanBudget(2))
+        assert finish(index, roots).input_tokens == 100
+        transcript.write_text(transcript.read_text() + claude("two", "2026-10-25T02:00:00Z"))
+        holder = sibling()
+        index.scan(roots, budget=usage.ScanBudget(2))
+        assert index.child is None
+        with sqlite3.connect(path) as db:
+            assert db.execute("SELECT SUM(inp) FROM hours").fetchone() == (100,)
+        assert index._start_child(roots, None) is False
+        holder.communicate(timeout=30)
+        assert index.scan(roots, budget=usage.ScanBudget(2)).input_tokens == 200
+    finally:
+        if holder.poll() is None:
+            holder.kill()
+        holder.communicate(timeout=30)
+        index.close()
+
+
+def test_orphaned_builder_stops_before_its_next_batch(tmp_path):
+    import os
+    import select
+    import signal
+    import subprocess
+    import sys
+
+    root = tmp_path / "transcripts"
+    root.mkdir()
+    (root / "one.jsonl").write_text(claude("one", "2026-10-25T01:00:00Z"))
+    path = tmp_path / "state/history.sqlite3"
+    builder_script = """
+import io, json, os, sys
+from jrbar import token_history_build, token_history_index as history, usage_stats as usage
+path, root = sys.argv[1:]
+request = {"path": path, "roots": {"claude": [root]}, "parent_pid": os.getppid()}
+sys.stdin = io.StringIO(json.dumps(request))
+scan = history.TokenHistoryIndex.scan
+calls = 0
+def gated_scan(self, roots, **kwargs):
+    global calls
+    calls += 1
+    if calls > 1:
+        raise RuntimeError("orphan started another batch")
+    result = scan(self, roots, budget=usage.ScanBudget(0), **kwargs)
+    print("batch", flush=True)
+    os.read(0, 1)
+    return result
+history.TokenHistoryIndex.scan = gated_scan
+result = token_history_build.main()
+print("exit:" + str(result), flush=True)
+"""
+    parent_script = """
+import subprocess, sys
+child = subprocess.Popen([sys.executable, "-c", sys.argv[1], *sys.argv[2:]])
+print(child.pid, flush=True)
+child.wait(timeout=60)
+"""
+    parent = subprocess.Popen([sys.executable, "-c", parent_script, builder_script, str(path), str(root)],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+    builder_pid = None
+    builder_finished = False
+    def line():
+        assert select.select([parent.stdout], [], [], 30)[0], "builder did not reach its batch gate"
+        return parent.stdout.readline().decode().strip()
+    try:
+        builder_pid = int(line())
+        assert line() == "batch"
+        parent.kill()
+        parent.wait(timeout=30)
+        stdout, stderr = parent.communicate(input=b"x", timeout=30)
+        assert stdout.strip() == b"exit:0", stderr.decode()
+        builder_finished = True
+        # Exit closes the lifetime lock, so a replacement daemon can build.
+        replacement = history.TokenHistoryIndex(path)
+        try:
+            replacement.scan({"claude": (root,)}, budget=usage.ScanBudget(2))
+            assert finish(replacement, {"claude": (root,)}).input_tokens == 100
+        finally:
+            replacement.close()
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+        if builder_pid is not None and not builder_finished:
+            try:
+                os.kill(builder_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        parent.communicate(timeout=30)
+
+
+def test_parent_death_stops_a_parse_without_a_progress_flush(tmp_path, monkeypatch):
+    import os
+    index = history.TokenHistoryIndex(tmp_path / "history.sqlite3", parent_pid=os.getppid())
+    budget = history._CancelableBudget(index, None)
+    assert budget.expired() is False
+    monkeypatch.setattr(os, "getppid", lambda: index.parent_pid + 1)
+    assert budget.expired() is True
+    assert index.stopping.is_set()
+    index.close()
+
+
+def test_child_inherits_the_lock_without_a_startup_gap(tmp_path, monkeypatch):
+    import os
+    import select
+    import subprocess
+    import sys
+
+    gate_read, gate_write = os.pipe()
+    popen = subprocess.Popen
+    def gated_child(command, **kwargs):
+        inherited = kwargs["pass_fds"]
+        kwargs["pass_fds"] = (*inherited, gate_read)
+        script = "import os, runpy; print('ready', flush=True); os.read(int(__import__('sys').argv[1]), 1); runpy.run_module('jrbar.token_history_build', run_name='__main__')"
+        return popen([sys.executable, "-c", script, str(gate_read)], **kwargs)
+    monkeypatch.setattr(subprocess, "Popen", gated_child)
+    root = tmp_path / "transcripts"
+    root.mkdir()
+    (root / "one.jsonl").write_text(claude("one", "2026-10-25T01:00:00Z"))
+    index = history.TokenHistoryIndex(tmp_path / "state/history.sqlite3")
+    roots = {"claude": (root,)}
+    try:
+        index.scan(roots, budget=usage.ScanBudget(2))
+        assert select.select([index.child.stdout], [], [], 30)[0]
+        assert os.read(index.child.stdout.fileno(), 6) == b"ready\n"
+        # _start_child already closed the daemon's copy of the descriptor.
+        competing = history._acquire_build_lock(index.path)
+        if competing is not None:
+            os.close(competing)
+        assert competing is None
+        os.write(gate_write, b"x")
+        assert finish(index, roots).input_tokens == 100
+        lease = history._acquire_build_lock(index.path)
+        assert lease is not None
+        os.close(lease)
+    finally:
+        index.close()
+        os.close(gate_read)
+        os.close(gate_write)

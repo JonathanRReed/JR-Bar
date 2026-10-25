@@ -6,6 +6,7 @@ Python retains at most one bounded parse pass and one compact range view.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -30,6 +31,34 @@ MAX_DATABASE_BYTES = 4 * 1024**3
 VIEW_BYTES = 4 * 1024 * 1024
 INCREMENTAL_CPU_SECONDS = 0.05
 PARSE_CHECK_LIMIT = 50000 // usage._BUDGET_CHECK_WEIGHT
+
+
+def _acquire_build_lock(path):
+    """One writer across daemon lifetimes. Never unlink the lock inode."""
+    from .private_io import (
+        _fchmod_if_needed,
+        _private_parent,
+        _require_leaf_identity,
+        _require_opened_leaf,
+        _require_private_leaf,
+    )
+    with _private_parent(Path(str(path) + ".lock")) as (target, parent, name):
+        expected = _require_private_leaf(target, parent, name)
+        descriptor = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent)
+        try:
+            opened = os.fstat(descriptor)
+            _require_opened_leaf(target, expected, opened)
+            _require_leaf_identity(target, parent, name, opened)
+            _fchmod_if_needed(descriptor, 0o600, opened)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                os.close(descriptor)
+                return None
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
 
 
 class BucketRecord(tuple):
@@ -74,7 +103,7 @@ class _CancelableBudget:
     def expired(self):
         self.checks += 1
         return (
-            self.index.stopping.is_set()
+            self.index._stopped()
             or self.checks >= PARSE_CHECK_LIMIT
             or not self.index.enabled
             or (self.budget is not None and self.budget.expired())
@@ -138,7 +167,8 @@ def _sidecar_stamp(path):
 
 
 class TokenHistoryIndex:
-    def __init__(self, path: Path, *, background_build=True, progress=None, builder=False):
+    def __init__(self, path: Path, *, background_build=True, progress=None, builder=False, parent_pid=None):
+        self.parent_pid = parent_pid
         self.path = path
         self.enabled = True
         self.lock = threading.RLock()
@@ -168,6 +198,11 @@ class TokenHistoryIndex:
         self.last_walk = {}
         self.checked_at = {}
         self.directory_stamps = {}
+
+    def _stopped(self):
+        if self.parent_pid is not None and os.getppid() != self.parent_pid:
+            self.stopping.set()
+        return self.stopping.is_set()
 
     def close(self):
         self.stopping.set()
@@ -245,7 +280,15 @@ class TokenHistoryIndex:
         finally:
             db.close()
 
-    def _start_child(self, roots, source_bindings):
+    def _start_child(self, roots, source_bindings, *, lock_fd=None):
+        if lock_fd is None:
+            lock_fd = _acquire_build_lock(self.path)
+            if lock_fd is None:
+                return False
+            try:
+                return self._start_child(roots, source_bindings, lock_fd=lock_fd)
+            finally:
+                os.close(lock_fd)
         # No fork of the threaded daemon, no imports of AppKit, and no shared
         # Python GIL. Only this process lowers its own scheduling class.
         if self.writer is not None:
@@ -254,9 +297,10 @@ class TokenHistoryIndex:
         environment = dict(os.environ)
         environment["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent) + os.pathsep + environment.get("PYTHONPATH", "")
         child = subprocess.Popen([sys.executable, "-m", "jrbar.token_history_build"],
-                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=environment)
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=environment,
+                                 pass_fds=(lock_fd,))
         request = {"path": str(self.path.absolute()), "roots": {p: [str(Path(r).absolute()) for r in paths] for p, paths in roots.items()},
-                   "source_bindings": source_bindings}
+                   "source_bindings": source_bindings, "lock_fd": lock_fd, "parent_pid": os.getpid()}
         self.child = child
         try:
             child.stdin.write(json.dumps(request).encode())
@@ -267,20 +311,27 @@ class TokenHistoryIndex:
             raise
         self.child_buffer = b""
         self.child_result = None
+        return True
 
     def _background_pass(self, roots, since_epoch, source_bindings):
         if not self.scan_lock.acquire(timeout=0.05):
             return self._pending_totals(roots)
         try:
-            if self.stopping.is_set() or not self.enabled:
+            if self._stopped() or not self.enabled:
                 return usage.UsageTotals()
             if self._poll_child():
                 return self._pending_totals(roots)
             if self.error and time.monotonic() < self.retry_at:
                 return self._failed_totals(roots)
-            if self._needs_build(roots, source_bindings):
-                self._start_child(roots, source_bindings)
+            lock_fd = _acquire_build_lock(self.path)
+            if lock_fd is None:
                 return self._pending_totals(roots)
+            try:
+                if self._needs_build(roots, source_bindings):
+                    self._start_child(roots, source_bindings, lock_fd=lock_fd)
+                    return self._pending_totals(roots)
+            finally:
+                os.close(lock_fd)
         finally:
             self.scan_lock.release()
         return None
@@ -316,7 +367,7 @@ class TokenHistoryIndex:
             db = sqlite3.connect(target.as_uri() + "?mode=ro", uri=True, timeout=0.05) if read_only else sqlite3.connect(target, timeout=0.05, check_same_thread=False)
             try:
                 _require_leaf_identity(target, parent, name, expected)
-                db.set_progress_handler(lambda: int(self.stopping.is_set() or not self.enabled), 1000)
+                db.set_progress_handler(lambda: int(self._stopped() or not self.enabled), 1000)
                 if read_only:
                     db.execute("PRAGMA query_only=ON")
                     db.execute("PRAGMA cache_size=-2048")
@@ -656,7 +707,7 @@ class TokenHistoryIndex:
             db.close()
 
     def scan(self, roots, *, since_epoch=0.0, budget=None, cached_only=False, source_bindings=None):
-        if self.stopping.is_set() or not self.enabled:
+        if self._stopped() or not self.enabled:
             return usage.UsageTotals()
         try:
             if cached_only:
@@ -673,15 +724,26 @@ class TokenHistoryIndex:
                     return result
             if isinstance(budget, usage.ScanBudget):
                 budget = usage.ScanBudget(min(budget._seconds, INCREMENTAL_CPU_SECONDS), time.thread_time)
-            return self._scan(roots, since_epoch=since_epoch, budget=budget, source_bindings=source_bindings)
+            return self._incremental_pass(roots, since_epoch=since_epoch, budget=budget, source_bindings=source_bindings)
         except _RebuildRequired:
             with self.scan_lock:
-                if not self.stopping.is_set() and self.enabled and self.child is None:
+                if not self._stopped() and self.enabled and self.child is None:
                     self._start_child(roots, source_bindings)
             return self._pending_totals(roots)
         except (OSError, ValueError, sqlite3.Error) as error:
             self._recover(error)
             return None if cached_only else self._failed_totals(roots)
+
+    def _incremental_pass(self, roots, **kwargs):
+        if self.builder:
+            return self._scan(roots, **kwargs)
+        lock_fd = _acquire_build_lock(self.path)
+        if lock_fd is None:
+            return self._pending_totals(roots)
+        try:
+            return self._scan(roots, **kwargs)
+        finally:
+            os.close(lock_fd)
 
     def _scan_inventory(self, provider, root):
         if self.background_build is not True:
@@ -730,7 +792,7 @@ class TokenHistoryIndex:
                 return totals
             return self._pending_totals(roots)
         try:
-            if self.stopping.is_set() or not self.enabled:
+            if self._stopped() or not self.enabled:
                 return usage.UsageTotals()
             db = self._connect()
             version = db.execute("PRAGMA data_version").fetchone()
@@ -740,7 +802,7 @@ class TokenHistoryIndex:
                 self.strings = dict(db.execute("SELECT value,id FROM strings"))
                 self.next_seq = {ident: meta.get("next_seq", 0) for meta, _, ident in self.file_metadata.values() if meta}
                 self.writer_version = version
-            db.set_progress_handler(lambda: int(self.stopping.is_set() or not self.enabled), 1000)
+            db.set_progress_handler(lambda: int(self._stopped() or not self.enabled), 1000)
             parse_budget = budget.share(2) if budget is not None else None
             self.resolved_last_pass = 0
             try:
@@ -774,7 +836,7 @@ class TokenHistoryIndex:
                         changed = True
                 for provider, paths in roots.items():
                     for root_rank, root in enumerate(paths):
-                        if self.stopping.is_set():
+                        if self._stopped():
                             break
                         inventory = self._scan_inventory(provider, Path(root))
                         source = inventory.sources[0]
@@ -815,7 +877,7 @@ class TokenHistoryIndex:
                                 state.malformed_lines += entry.get("malformed_lines", 0)
                                 continue
                             if (
-                                self.stopping.is_set()
+                                self._stopped()
                                 or not self.enabled
                                 or (parse_budget is not None and parse_budget.expired())
                             ):
@@ -904,7 +966,7 @@ class TokenHistoryIndex:
                                 usage.UsageTotals(source_coverage={provider: state.finalize()}),
                             )
                         ).source_coverage[provider]
-                if self.stopping.is_set() or not self.enabled:
+                if self._stopped() or not self.enabled:
                     db.commit()
                     return usage.UsageTotals()
                 db.commit()
@@ -919,7 +981,7 @@ class TokenHistoryIndex:
                 while pending() and (budget is None or not budget.expired()):
                     # Finish this small atomic chunk, then commit even when the CPU
                     # allowance has elapsed. Never throw away completed reconcile work.
-                    db.set_progress_handler(lambda: int(self.stopping.is_set() or not self.enabled), 1000)
+                    db.set_progress_handler(lambda: int(self._stopped() or not self.enabled), 1000)
                     try:
                         self._reconcile(db, budget)
                         db.execute("INSERT INTO meta VALUES ('generation','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1")
@@ -964,7 +1026,7 @@ class TokenHistoryIndex:
                 db.rollback()
                 self.file_metadata.clear()
                 self.writer_version = None
-                if self.stopping.is_set() or not self.enabled:
+                if self._stopped() or not self.enabled:
                     return usage.UsageTotals()
                 raise
             finally:
@@ -1079,7 +1141,7 @@ class TokenHistoryIndex:
             size += sys.getsizeof(row) + sys.getsizeof(vars(row))
             size += sum(sys.getsizeof(value) for value in row)
             size += sum(sys.getsizeof(key) + sys.getsizeof(value) for key, value in vars(row).items())
-        if self.stopping.is_set() or not self.enabled:
+        if self._stopped() or not self.enabled:
             return []
         if size <= VIEW_BYTES:
             while self.views and self.view_bytes + size > VIEW_BYTES:
