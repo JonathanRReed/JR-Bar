@@ -90,6 +90,7 @@ enum FeatureLifecycleRegistry {
         .init(id: "announcements", resources: ["Focus watcher", "Bluetooth registrations", "Caps Lock monitors", "display observer"]),
         .init(id: "screen-bar", resources: ["panel", "display link", "keyframes", "island timer", "notice monitors", "menu watcher", "plan work"]),
         .init(id: "confetti", resources: ["burst window", "burst timer", "held burst"]),
+        .init(id: "fold", resources: ["overlay", "display link", "lid sensor", "capture streams", "demo timer", "notification observers"]),
         .init(id: "shelf-media", resources: ["media subscription", "lyrics request", "power monitor", "audio output observer", "Control Center listeners"]),
         .init(id: "shelf-timers", resources: ["deadline timer", "clock and wake observers"]),
     ]

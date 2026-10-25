@@ -75,6 +75,21 @@ struct FeatureLifecycleTests {
                 #expect(localSources == 0 && bluetooth == 0)
                 #expect(!owner.started && !owner.bluetoothStarted)
             }
+        case "fold":
+            let toys = store(CoreModel())
+            defer { toys.shutdown() }
+            let pumps = PumpFactory()
+            let sensor = LidAngleSensor(makePump: { pumps.make() })
+            let fold = FoldToy(core: CoreModel(), store: toys, makeTickLink: { _ in nil }, sensor: sensor)
+            defer { fold.shutdown() }
+            for _ in 0..<2 {
+                fold.isOn = true
+                #expect(sensor.isPolling)
+                fold.isOn = false
+                await drain()
+                stopped(fold.lifecycleResources, feature: contract.id)
+                #expect(pumps.live == 0)
+            }
         case "confetti":
             let toys = store(CoreModel())
             defer { toys.shutdown() }
@@ -159,6 +174,21 @@ struct FeatureLifecycleTests {
         #expect(audioReaders == 0 && state.appearanceObserver == nil && !state.listening)
     }
 
+    @Test("a stopped lid transport cannot publish into its replacement")
+    func retiredSensor() {
+        let factory = PumpFactory()
+        let sensor = LidAngleSensor(makePump: { factory.make() })
+        #expect(factory.live == 0)
+        sensor.setPolling(true)
+        let old = factory.pumps[0]
+        sensor.setPolling(false)
+        sensor.setPolling(true)
+        old.publishAvailability?(true)
+        #expect(!sensor.available)
+        sensor.setPolling(false)
+        #expect(factory.live == 0)
+    }
+
     private func drain() async {
         await withCheckedContinuation { continuation in
             DispatchQueue.main.async { continuation.resume() }
@@ -170,4 +200,20 @@ struct FeatureLifecycleTests {
         override func stop() { markRunning(false); onChange?(nil) }
     }
 
+    private final class PumpFactory {
+        var pumps: [Pump] = []
+        var live: Int { pumps.filter { !$0.closed }.count }
+        func make() -> Pump { let pump = Pump(); pumps.append(pump); return pump }
+    }
+
+    private final class Pump: LidSensorPump, @unchecked Sendable {
+        var publish: (@MainActor @Sendable (LidAngleSensor.Sample) -> Void)?
+        var publishAvailability: (@MainActor @Sendable (Bool) -> Void)?
+        let reads = SensorReadMeter()
+        var closed = false
+        func setPolling(_ on: Bool) {}
+        func setArmingAngle(_ value: Double) {}
+        func setQuiet(_ center: Double?) {}
+        func close() { closed = true }
+    }
 }

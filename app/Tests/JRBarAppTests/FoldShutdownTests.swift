@@ -15,7 +15,7 @@ struct FoldShutdownTests {
         let store = ToysStore(core: core, settings: SettingsStore(core: core), state: state,
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         let fold = try #require(store.fold)
-        #expect(fold.notificationObserverCount > 0)
+        #expect(fold.notificationObserverCount == 0, "off owns no system observers")
         fold.tryIt()
         #expect(fold.tryingIt)
         let retiredDemo = fold.tryGeneration
