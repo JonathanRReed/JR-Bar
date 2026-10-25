@@ -113,7 +113,7 @@ private func nextPlanStart(_ gate: ScreenBarPlanGate) async throws -> LEDSSample
     return try #require(sampler)
 }
 
-@Suite("Screen Bar plan queue", .timeLimit(.minutes(1)))
+@Suite("Screen Bar plan queue", .timeLimit(.minutes(10)))
 @MainActor
 struct ScreenBarPlanQueueTests {
     private func sampler(_ color: String) throws -> LEDSSampler {
@@ -213,7 +213,7 @@ struct ScreenBarPlanQueueTests {
     }
 }
 
-@Suite("Screen Bar asynchronous planning", .timeLimit(.minutes(1)))
+@Suite("Screen Bar asynchronous planning", .timeLimit(.minutes(10)))
 @MainActor
 struct ScreenBarAsynchronousPlanningTests {
     private let moving = "#ff0000 1s linear\n#000000 1s linear\nrepeat"

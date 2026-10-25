@@ -83,7 +83,7 @@ import JRBarCore
         #expect(tray.evictionNotice == nil)
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(10)))
     func aToolWithMuchToSayStillEnds() async {
         // More than a pipe holds (64 KB) on stderr: read only after exit,
         // the tool blocks on its write and Compress waits forever.

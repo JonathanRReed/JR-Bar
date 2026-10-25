@@ -15,7 +15,7 @@ struct OverviewReplyTests {
             ask: CoreAsk(summary: "Which branch?", answerable: true, replyable: true, request: "reply-1")))
     }
 
-    @Test("a reply uses the shared pending guard and keeps its request pin", .timeLimit(.minutes(1)))
+    @Test("a reply uses the shared pending guard and keeps its request pin", .timeLimit(.minutes(10)))
     func sharedPendingReply() async {
         let gate = Gate()
         var sent: [(String, AskVerdict, String?)] = []

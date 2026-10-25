@@ -6,7 +6,7 @@ import JRBarCore
 @Suite("Calibration submission")
 @MainActor
 struct CalibrationSubmissionTests {
-    @Test("a second Apply cannot send while the first save is pending", .timeLimit(.minutes(1)))
+    @Test("a second Apply cannot send while the first save is pending", .timeLimit(.minutes(10)))
     func duplicateApply() async throws {
         let submission = CalibrationSubmission()
         var sends = 0

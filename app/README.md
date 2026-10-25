@@ -68,6 +68,15 @@ desktop interaction should set `JRBAR_INTERACTIVE_TESTS=1`. Leave it unset for
 automated runs. The optional native confetti animation check needs both
 `JRBAR_CONFETTI_LIVE_PROOF=1` and `JRBAR_INTERACTIVE_TESTS=1`.
 
+Screen Bar fixtures use private notification centers. Send simulated screen
+events to `controller.notificationCenter` and sleep or wake events to
+`controller.workspaceCenter`. A fixture must not change another fixture's
+display state.
+
+Explicit deadlock watchdogs in app tests allow ten minutes, including time
+queued behind other AppKit work. They are not performance assertions. Use an
+injected clock for delay assertions and await owned work for completion.
+
 Sparkle: `build-app.sh` links the pinned Sparkle.framework when
 `JRBAR_SPARKLE_FRAMEWORK_DIR` names a directory holding it (the default is
 `../build/macos-pkg/sparkle-distribution`, which exists after one `make
