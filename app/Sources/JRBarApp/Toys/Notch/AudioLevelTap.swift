@@ -319,9 +319,9 @@ final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private var smoother = NotchBandSmoother()
     private var lastPublish = CFAbsoluteTimeGetCurrent()
-    /// The default-output listener context — kept so `stop` can
-    /// remove exactly what `start` added.
-    private var listeningForDeviceChange = false
+    private lazy var deviceListeners = HALPropertyListeners(queue: workQueue) { [weak self] _ in
+        self?.noteDeviceChange()
+    }
 
     func start(processes: [pid_t]?,
                completion: @escaping @Sendable (Result<Void, any Error>) -> Void) {
@@ -507,43 +507,12 @@ final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
     /// changes (headphones in, AirPods out) the pipeline's clock is
     /// stale, so rebuild around the new output.
     private func armDeviceChangeListener() {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        let context = Unmanaged.passUnretained(self).toOpaque()
-        guard AudioObjectAddPropertyListener(
-            AudioObjectID(kAudioObjectSystemObject), &address,
-            Self.deviceChangeProc, context) == noErr else { return }
-        listeningForDeviceChange = true
+        deviceListeners.reconcile([.init(system: .audio, object: AudioObjectID(kAudioObjectSystemObject),
+                                         selector: kAudioHardwarePropertyDefaultOutputDevice)])
     }
 
     private func disarmDeviceChangeListener() {
-        guard listeningForDeviceChange else { return }
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        // The removal must name exactly what `add` registered — the
-        // same proc value and context — or the listener leaks and a
-        // dead engine still gets rebuild asks.
-        let context = Unmanaged.passUnretained(self).toOpaque()
-        AudioObjectRemovePropertyListener(
-            AudioObjectID(kAudioObjectSystemObject), &address,
-            Self.deviceChangeProc, context)
-        listeningForDeviceChange = false
-    }
-
-    /// The device-change callback as one shared value — CoreAudio
-    /// matches a listener for removal by its proc pointer, so add and
-    /// remove must hand over the identical function.
-    private static let deviceChangeProc: AudioObjectPropertyListenerProc = {
-        _, _, _, clientData in
-        guard let clientData else { return noErr }
-        let engine = Unmanaged<CoreAudioTapEngine>.fromOpaque(clientData)
-            .takeUnretainedValue()
-        engine.noteDeviceChange()
-        return noErr
+        deviceListeners.reconcile([])
     }
 
     /// A device change is a full rebuild on the engine's own queue —
@@ -569,13 +538,6 @@ final class CoreAudioTapEngine: AudioTapEngine, @unchecked Sendable {
                 self.onDeath?()
             }
         }
-    }
-
-    deinit {
-        // The tap stops the engine on the normal path, but an engine that
-        // outlives its owner (teardown race) still owes the HAL its
-        // listener removal — the context pointer is unretained self.
-        disarmDeviceChangeListener()
     }
 
     // MARK: Property reads

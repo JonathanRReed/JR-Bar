@@ -1101,13 +1101,10 @@ final class AudioListener: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "devin.jrbar.toggles.audio")
     private var started = false
-    private var watchedDevices: [(device: AudioObjectID, address: AudioObjectPropertyAddress)] = []
-    private lazy var deviceBlock: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-        self?.onChange?()
-    }
-    private lazy var systemBlock: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-        self?.rewatchDevices()
-        self?.onChange?()
+    private lazy var listeners = HALPropertyListeners(queue: queue) { [weak self] key in
+        guard let self else { return }
+        if Self.systemSelectors.contains(key.selector) { self.rewatchDevices() }
+        self.onChange?()
     }
 
     private static let systemSelectors: [AudioObjectPropertySelector] = [
@@ -1119,24 +1116,15 @@ final class AudioListener: @unchecked Sendable {
         queue.async { [self] in
             guard !started else { return }
             started = true
-            for selector in Self.systemSelectors {
-                var address = AudioObjectPropertyAddress(
-                    mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
-                    mElement: kAudioObjectPropertyElementMain)
-                AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject),
-                                                    &address, queue, systemBlock)
-            }
             rewatchDevices()
         }
     }
 
-    /// Runs on `queue`: drop the old device listeners, add them on the
-    /// current default output and input.
+    /// Runs on `queue`; unchanged defaults keep their existing listeners.
     private func rewatchDevices() {
-        for var watched in watchedDevices {
-            AudioObjectRemovePropertyListenerBlock(watched.device, &watched.address, queue, deviceBlock)
-        }
-        watchedDevices = []
+        var desired = Set(Self.systemSelectors.map {
+            HALPropertyListeners.Key(system: .audio, object: AudioObjectID(kAudioObjectSystemObject), selector: $0)
+        })
         let targets: [(AudioObjectPropertySelector, AudioObjectPropertyScope)] = [
             (kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal),
             (kAudioHardwarePropertyDefaultInputDevice, kAudioDevicePropertyScopeInput),
@@ -1147,11 +1135,10 @@ final class AudioListener: @unchecked Sendable {
                 var address = AudioObjectPropertyAddress(
                     mSelector: property, mScope: scope, mElement: kAudioObjectPropertyElementMain)
                 guard AudioObjectHasProperty(device, &address) else { continue }
-                if AudioObjectAddPropertyListenerBlock(device, &address, queue, deviceBlock) == noErr {
-                    watchedDevices.append((device, address))
-                }
+                desired.insert(.init(system: .audio, object: device, selector: property, scope: scope))
             }
         }
+        listeners.reconcile(desired)
     }
 
     static func defaultDevice(_ selector: AudioObjectPropertySelector) -> AudioObjectID? {
