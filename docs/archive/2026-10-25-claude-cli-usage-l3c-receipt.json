@@ -1,0 +1,21 @@
+{
+  "candidate_version": "2.1.309",
+  "parsed_result": null,
+  "probe_started": false,
+  "error": "credential_read_access_lost",
+  "evidence": {
+    "version": null,
+    "sent_hex": [],
+    "screens": [],
+    "audit": {},
+    "wall_seconds": 0
+  },
+  "base_commit": "8c07896a",
+  "installed_cli_version_observed_before_preflight": "2.1.309",
+  "credential_reader": "read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=existing_ledger)",
+  "preflight_command_wall_seconds": 0.108,
+  "interactive_cli_launches": 0,
+  "retry_count": 0,
+  "verified_versions": [],
+  "ship_recommendation": "Do not ship in 0.10.0. No live PTY proof."
+}
