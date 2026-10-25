@@ -369,7 +369,7 @@ def test_replay_documents_and_app_receipt_round_trip() -> None:
 
     assert apply_app_reset_receipt(
         controller, _event().event_id, "delivered", "presented"
-    ) == {"recorded": True}
+    ) == {"recorded": True, "persistence": None}
     assert saved[-1].events[0].app_receipts[-1].outcome == "delivered"
     assert reset_replay_documents(controller, now=2_000.0) == []
 
@@ -391,7 +391,7 @@ def test_reset_receipt_command_records_the_verdict__and_1_more() -> None:
     assert core_runtime._cmd_reset_receipt(
         controller,
         {"event_id": _event().event_id, "outcome": "held", "reason": "call"},
-    ) == {"recorded": True}
+    ) == {"recorded": True, "persistence": None}
     receipts = controller._jrbar_reset_delivery_state.events[0].app_receipts
     assert (receipts[-1].outcome, receipts[-1].reason) == ("held", "call")
 
