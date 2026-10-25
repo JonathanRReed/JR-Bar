@@ -228,6 +228,15 @@ final class ScreenBarView: NSView {
     private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     /// Which mode the layers are in, so a switch resets the other's state.
     private(set) var isPlayingKeyframes = false
+    private(set) var keyframesInstalled = false
+    var onKeyframesInstalled: (() -> Void)?
+    typealias GradientRenderer = @Sendable (LEDSKeyframePlan, CGFloat, Bool) async -> ScreenBarGradientFrames
+    static let defaultGradientRenderer: GradientRenderer = { plan, width, reduced in
+        await Task.detached(priority: .userInitiated) {
+            ScreenBarGradientFrames.build(plan: plan, width: width, reduced: reduced)
+        }.value
+    }
+    var gradientRenderer: GradientRenderer = defaultGradientRenderer
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow == nil {
@@ -724,6 +733,7 @@ final class ScreenBarView: NSView {
         guard width > 0 else { return }
         if isPlayingKeyframes, let last = lastPlay,
            last.plan == plan, last.anchor == anchor, last.width == width { return }
+        stopKeyframes()
         lastPlay = (plan, anchor, width)
         isPlayingKeyframes = true
         gradientGeneration &+= 1
@@ -743,14 +753,14 @@ final class ScreenBarView: NSView {
                    cached.width == request.width, cached.reduced == reduced {
                     frames = cached.frames
                 } else {
-                    frames = await Task.detached(priority: .userInitiated) {
-                        ScreenBarGradientFrames.build(plan: request.plan, width: request.width, reduced: reduced)
-                    }.value
+                    frames = await self.gradientRenderer(request.plan, request.width, reduced)
                 }
                 guard !Task.isCancelled else { return }
                 guard generation == self.gradientGeneration else { continue }
                 self.preparedGradient = (request.plan, request.width, reduced, frames)
                 self.install(plan: request.plan, anchor: request.anchor, frames: frames)
+                self.keyframesInstalled = true
+                self.onKeyframesInstalled?()
                 self.gradientWorker = nil
                 return
             }
@@ -811,6 +821,7 @@ final class ScreenBarView: NSView {
     func stopKeyframes() {
         guard isPlayingKeyframes else { return }
         isPlayingKeyframes = false
+        keyframesInstalled = false
         gradientGeneration &+= 1
         lastPlay = nil
         lastStops = []
@@ -846,8 +857,8 @@ final class ScreenBarView: NSView {
 
     /// Paint one sample of the eight LEDs. Cheap to call every frame: the stop
     /// list is compared first and Core Animation only re-composites on change.
-    func display(colors: [RGB]) {
-        if isPlayingKeyframes { stopKeyframes() }
+    func display(colors: [RGB], preservingPendingKeyframes: Bool = false) {
+        if isPlayingKeyframes, !preservingPendingKeyframes { stopKeyframes() }
         let width = bandRect.width
         guard width > 0 else { return }
         let stops = ScreenBarBlend.stops(colors: colors, bandWidth: width, alphaScale: ScreenBarBlend.coreAlpha)

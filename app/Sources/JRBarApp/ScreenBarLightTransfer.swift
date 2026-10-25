@@ -6,17 +6,16 @@ enum ScreenBarLightTransfer {
     /// Sample PWM before converting to display light. Simplifying encoded
     /// endpoints first would change the shape of a dim fade.
     static func plan(sampler: LEDSSampler, transfer: CoreStripTransfer) -> LEDSKeyframePlan? {
-        // Keep the transfer error fixed. A plan that exceeds the layer
-        // budget uses the capped clock instead of loosening its colours.
-        guard let plan = LEDSKeyframePlan.render(sampler: sampler, tolerance: 1,
-                                               maxKeyframes: .max, sample: { milliseconds in
-            colors(sampler.rawCodes(atMilliseconds: milliseconds), brightness: sampler.brightness,
-                   transfer: transfer).map { color in
-                RGB8(r: UInt8((color.r * 255).rounded()),
-                     g: UInt8((color.g * 255).rounded()), b: UInt8((color.b * 255).rounded()))
-            }
-        }), plan.keyframeCount <= LEDSKeyframePlan.defaultMaxKeyframes else { return nil }
-        return plan
+        // Retry within the existing two-code visual tolerance before using
+        // the 60 Hz frame clock. Simplification sees full-precision light.
+        for tolerance in 1...2 {
+            if let plan = LEDSKeyframePlan.render(sampler: sampler, tolerance: tolerance,
+                                                 maxKeyframes: .max, sampleColors: { milliseconds in
+                colors(sampler.rawCodes(atMilliseconds: milliseconds), brightness: sampler.brightness,
+                       transfer: transfer)
+            }), plan.keyframeCount <= LEDSKeyframePlan.defaultMaxKeyframes { return plan }
+        }
+        return nil
     }
 
     static func colors(_ codes: [RGB8], brightness: Int, transfer: CoreStripTransfer) -> [RGB] {

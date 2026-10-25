@@ -127,7 +127,7 @@ final class ScreenBarPlanQueue {
 /// handed to Core Animation, phase-locked to the daemon's anchor. The
 /// render server interpolates without app frame ticks. A program whose
 /// cycle is too long to keyframe keeps the older frame clock: a
-/// `CADisplayLink` capped at 30 Hz that runs the sampler on ticks and pauses whenever
+/// `CADisplayLink` preferring 60 Hz that runs the sampler on ticks and pauses whenever
 /// the program has gone still or nobody can see the bar
 /// (`ScreenBarVisibility`).
 @MainActor
@@ -522,7 +522,12 @@ final class ScreenBarController {
     var planBuildStarts: Int { planQueue.renderStarts }
     var planBuildPending: Bool { planQueue.pendingGeneration != nil }
     var programAnchorEpoch: Double? { lastAnchorEpoch }
-    func waitForPlanBuilds() async { await planQueue.waitUntilIdle() }
+    func waitForPlanBuilds() async {
+        await planQueue.waitUntilIdle()
+        await view.waitForKeyframes()
+    }
+    var keyframesInstalled: Bool { view.keyframesInstalled }
+    var fallbackFrameRate: CAFrameRateRange? { displayLink?.preferredFrameRateRange }
     /// The band's window is on screen.
     var panelOnScreen: Bool { panel.isVisible }
     private(set) var programText: String = ""
@@ -568,6 +573,7 @@ final class ScreenBarController {
 
     init(planRenderer: @escaping ScreenBarPlanQueue.Renderer = ScreenBarPlanQueue.defaultRenderer,
          reduceMotionOverride: Bool? = nil,
+         gradientRenderer: @escaping ScreenBarView.GradientRenderer = ScreenBarView.defaultGradientRenderer,
          videoGuardOverride: (@MainActor () -> Bool)? = nil,
          nativeNoticesEnabled: Bool = true,
          notificationCenter: NotificationCenter? = nil,
@@ -590,6 +596,8 @@ final class ScreenBarController {
         view = ScreenBarView(frame: NSRect(origin: .zero, size: frame.size))
         panel.contentView = view
         view.relayout()
+        view.gradientRenderer = gradientRenderer
+        view.onKeyframesInstalled = { [weak self] in self?.updateClock() }
         if let reduceMotionOverride { reduceMotion = reduceMotionOverride }
         planQueue.onResult = { [weak self] generation, sampler, plan in
             self?.accept(plan: plan, generation: generation, sampler: sampler)
@@ -1568,8 +1576,8 @@ final class ScreenBarController {
             return
         }
         if let plan {
-            displayLink?.isPaused = true
             if isShown { view.play(plan: plan, anchor: anchor) }
+            updateClock()
         } else {
             view.stopKeyframes()
             renderCurrentFrame()
@@ -1595,7 +1603,8 @@ final class ScreenBarController {
         let ms = Int((t * 1000).rounded())
         let codes = stripTransfer == nil ? sampler.codes(atMilliseconds: ms) : sampler.rawCodes(atMilliseconds: ms)
         lastCodes = codes
-        view.display(colors: displayColors(codes, brightness: sampler.brightness))
+        view.display(colors: displayColors(codes, brightness: sampler.brightness),
+                     preservingPendingKeyframes: plan != nil)
     }
 
     /// VoiceOver's name for the band: the current focus session when one is
@@ -1633,7 +1642,7 @@ final class ScreenBarController {
     // MARK: Frame clock (fallback)
 
     private func updateClock() {
-        guard let sampler, plan == nil else { displayLink?.isPaused = true; return }
+        guard let sampler, !view.keyframesInstalled else { displayLink?.isPaused = true; return }
         let stillMoving: Bool
         if let end = sampler.motionEndsAt {
             stillMoving = CACurrentMediaTime() - anchor < end + 0.1
@@ -1644,7 +1653,7 @@ final class ScreenBarController {
         if shouldRun {
             if displayLink == nil {
                 let link = view.displayLink(target: self, selector: #selector(tick(_:)))
-                link.preferredFrameRateRange = CAFrameRateRange(minimum: 15, maximum: 30, preferred: 30)
+                link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 60, preferred: 60)
                 link.add(to: .main, forMode: .common)
                 displayLink = link
             }
@@ -1655,7 +1664,7 @@ final class ScreenBarController {
     }
 
     @objc private func tick(_ link: CADisplayLink) {
-        guard plan == nil, visibility.live, !holdsStill else { link.isPaused = true; return }
+        guard !view.keyframesInstalled, visibility.live, !holdsStill else { link.isPaused = true; return }
         renderCurrentFrame(at: link.targetTimestamp)
         if let sampler, let end = sampler.motionEndsAt, link.targetTimestamp - anchor >= end + 0.1 {
             // Final frame is on screen; stop asking for more.
@@ -1669,7 +1678,8 @@ final class ScreenBarController {
         let codes = stripTransfer == nil ? sampler.codes(atMilliseconds: ms) : sampler.rawCodes(atMilliseconds: ms)
         if codes == lastCodes { return }
         lastCodes = codes
-        view.display(colors: displayColors(codes, brightness: sampler.brightness))
+        view.display(colors: displayColors(codes, brightness: sampler.brightness),
+                     preservingPendingKeyframes: plan != nil)
     }
 
     private func displayColors(_ codes: [RGB8], brightness: Int) -> [RGB] {
