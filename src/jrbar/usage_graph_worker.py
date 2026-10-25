@@ -1448,20 +1448,6 @@ def _build_key(
     )
 
 
-def _drop_to_utility_qos() -> None:
-    """The scan parses six figures of JSONL lines -- pure GIL time. At
-    default QoS that thread competes with the main thread head-on and
-    the whole app reads as laggy while the chart loads. Utility is the
-    documented QoS class for continuous, user-visible-but-not-blocking
-    work. Best effort."""
-    try:
-        import ctypes
-
-        QOS_CLASS_UTILITY = 0x11
-        ctypes.CDLL(None).pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0)
-    except Exception:
-        pass
-
 
 __all__ = [
     "scan_t3_activity_statistics",
