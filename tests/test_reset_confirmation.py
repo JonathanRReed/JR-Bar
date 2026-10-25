@@ -96,6 +96,19 @@ def step(before, after, *, candidates=(), seen=frozenset()):
     return confirm_reset_events(detected, (after,), candidates=candidates, seen_event_ids=seen)
 
 
+@pytest.mark.parametrize("before,peak,resumed", [(95, 100, 99), (80, 100, 97),
+                                                (50, 100, 97), (80, 99, 97)])
+def test_refill_survives_immediate_consumption(before, peak, resumed):
+    initial = read(T0, lane(before, T0 + 3 * 86400))
+    refill = read(T0 + 120, lane(peak, T0 + 120 + WEEK))
+    first = step(initial, refill)
+    assert len(first.candidates) == 1
+    result = step(refill, read(T0 + 240, lane(resumed, T0 + 120 + WEEK)),
+                  candidates=first.candidates)
+    assert len(result.events) == 1
+    assert result.candidates == ()
+
+
 def test_a_timing_reset_fires_at_once() -> None:
     boundary = T0 + 100
     before = read(T0, lane(12.0, boundary))
