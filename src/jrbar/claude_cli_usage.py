@@ -71,21 +71,26 @@ def _probe_usage(access_token: str, *, timeout: float = 20.0) -> list[dict]:
     master, slave = pty.openpty()
     process = None
     try:
-        with tempfile.TemporaryDirectory(prefix="jrbar-claude-usage-") as working:
+        with (tempfile.TemporaryDirectory(prefix="jrbar-claude-usage-") as working,
+              tempfile.TemporaryFile(dir=working) as token_file):
+            token_file.write(access_token.encode("utf-8"))
+            token_file.flush()
+            token_file.seek(0)
             environment = {
                 key: value for key, value in os.environ.items()
                 if not key.startswith(("CLAUDE", "ANTHROPIC"))
             }
             environment.update(
                 TERM="xterm-256color", DISABLE_AUTOUPDATER="1",
-                CLAUDE_CONFIG_DIR=working, CLAUDE_CODE_OAUTH_TOKEN=access_token,
+                CLAUDE_CONFIG_DIR=working,
+                CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR=str(token_file.fileno()),
                 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1",
             )
             try:
                 process = subprocess.Popen(
                     [executable, "/usage"], stdin=slave, stdout=slave, stderr=slave,
                     cwd=working, start_new_session=True,
-                    env=environment,
+                    env=environment, pass_fds=(token_file.fileno(),),
                 )
                 os.close(slave)
                 slave = -1

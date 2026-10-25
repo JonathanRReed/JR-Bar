@@ -58,7 +58,15 @@ def test_probe_uses_temporary_config_access_token_only_and_reaps_process(tmp_pat
     def start(args, **kwargs):
         assert args == [str(executable), "/usage"]
         environment = kwargs["env"]
-        assert environment["CLAUDE_CODE_OAUTH_TOKEN"] == "synthetic-access"
+        import os
+        import stat
+
+        assert "CLAUDE_CODE_OAUTH_TOKEN" not in environment
+        assert "synthetic-access" not in str(environment)
+        descriptor = int(environment["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"])
+        assert kwargs["pass_fds"] == (descriptor,)
+        assert stat.S_IMODE(os.fstat(descriptor).st_mode) == 0o600
+        assert os.pread(descriptor, 64, 0) == b"synthetic-access"
         assert "ANTHROPIC_AUTH_TOKEN" not in environment
         assert environment["CLAUDE_CONFIG_DIR"] == kwargs["cwd"]
         assert environment["CLAUDE_CONFIG_DIR"] != str(tmp_path / "original-config")
