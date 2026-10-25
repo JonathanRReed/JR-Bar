@@ -43,8 +43,8 @@ struct MenuBarListingLoopTests {
             },
             activity: { room.activity },
             afterScan: { room.reconciles += 1 },
-            sleep: { _ in
-                room.beats += 1
+            sleep: { seconds in
+                room.beats += Int(seconds / MenuBarListingPace.beat)
                 room.onBeat(room.beats)
             },
             complete: { room.complete },
@@ -52,25 +52,20 @@ struct MenuBarListingLoopTests {
         await loop.run()
     }
 
-    @Test("the pace is two seconds while the bar moves, four after ten calm scans, six after forty")
+    @Test("two calm scans switch recovery polling to thirty seconds")
     func paceLadder() {
         var pace = MenuBarListingPace()
         #expect(pace.interval == 2)
-        for _ in 0..<9 { pace.scanned(sameAsBefore: true) }
-        #expect(pace.beats == 1)
         pace.scanned(sameAsBefore: true)
-        #expect(pace.beats == 2 && pace.interval == 4)
-        for _ in 0..<29 { pace.scanned(sameAsBefore: true) }
-        #expect(pace.beats == 2)
+        #expect(pace.interval == 2)
         pace.scanned(sameAsBefore: true)
-        #expect(pace.beats == 3 && pace.interval == 6)
+        #expect(pace.interval == 30)
         for _ in 0..<100 { pace.scanned(sameAsBefore: true) }
-        #expect(pace.beats == 3, "six seconds is the slowest it gets")
-        pace.scanned(sameAsBefore: false)
-        #expect(pace.beats == 1, "a different bar starts it over")
-        for _ in 0..<12 { pace.scanned(sameAsBefore: true) }
+        #expect(pace.interval == 30)
         pace.restart()
-        #expect(pace.beats == 1)
+        #expect(pace.interval == 2)
+        pace.scanned(sameAsBefore: false)
+        #expect(pace.interval == 2)
     }
 
     @MainActor
@@ -103,7 +98,7 @@ struct MenuBarListingLoopTests {
     }
 
     @MainActor
-    @Test("a bar that sits still is scanned 117 times in ten minutes, not 300")
+    @Test("a calm bar needs two scans a minute after recovery")
     func stillBarIsScannedLess() async {
         let room = Room()
         room.items = [item("clock", x: 1200), item("wifi", x: 1150)]
@@ -112,11 +107,11 @@ struct MenuBarListingLoopTests {
 
         // 300 beats of two seconds is ten minutes. Always-quick would
         // scan on every beat.
-        #expect(room.scans.count == 117)
+        #expect(room.scans.count == 22)
         #expect(room.reconciles == room.scans.count, "every scan is reconciled")
-        #expect(Array(room.scans.prefix(11)) == Array(0..<11), "the first ten seconds are the quick pace")
+        #expect(Array(room.scans.prefix(3)) == [0, 1, 2], "the first scans use the recovery pace")
         let gaps = zip(room.scans.dropFirst(), room.scans).map { $0 - $1 }
-        #expect(gaps.last == 3, "settled at one scan in three beats")
+        #expect(gaps.last == 15, "settled at thirty seconds")
     }
 
     @MainActor
@@ -137,14 +132,14 @@ struct MenuBarListingLoopTests {
         let room = Room()
         room.items = [item("clock", x: 1200)]
         room.onBeat = { beat in
-            if beat == 200 { room.activity += 1 }
+            if beat >= 200, room.activity == 0 { room.activity += 1 }
         }
 
         await run(room, beats: 215)
 
         let after = room.scans.filter { $0 >= 200 }
-        #expect(after.first == 200, "the scan comes on the beat the activity landed")
-        #expect(Array(after.prefix(5)) == [200, 201, 202, 203, 204], "and the pace starts over at one beat")
+        #expect(after.first == 212, "the scan restarts recovery after timeout activity")
+        #expect(after == [212, 213], "two recovery scans run before the calm wait")
     }
 
     @MainActor
@@ -201,6 +196,38 @@ struct MenuBarListingLoopTests {
             sleep: { _ in running = false }, keepGoing: { running })
         await loop.run()
         #expect(reconciles == 0)
+    }
+
+    @MainActor
+    @Test("activity interrupts a calm wait and retires its timeout")
+    func eventInterruptsWait() async {
+        let wait = MenuBarListingWait()
+        var scheduled: DispatchWorkItem?
+        var delay: TimeInterval?
+        wait.schedule = { seconds, work in
+            delay = seconds
+            scheduled = work
+            wait.signal()
+        }
+        await wait.wait(30)
+        #expect(delay == 30)
+        #expect(scheduled?.isCancelled == true)
+        #expect(!wait.waiting)
+    }
+
+    @MainActor
+    @Test("display notification bursts schedule one remeasurement")
+    func displayChangesDebounce() {
+        let hider = MenuBarItemHider()
+        var work: [DispatchWorkItem] = []
+        hider.scheduleDisplayChange = { _, item in work.append(item) }
+        for _ in 0..<48 { hider.displaysChanged() }
+        #expect(work.count == 48)
+        let retired = work.dropLast().allSatisfy { $0.isCancelled }
+        #expect(retired)
+        #expect(work.last?.isCancelled == false)
+        hider.stop()
+        #expect(work.last?.isCancelled == true)
     }
 
     @Test("the workspace notices that park the bar are the four that carry a presence fact")

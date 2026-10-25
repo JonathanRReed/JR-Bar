@@ -288,8 +288,12 @@ enum MenuBarItemLister {
     @MainActor private(set) static var barActivity: UInt64 = 0
 
     @MainActor
+    static let activityChanged = Notification.Name("JRBarMenuBarActivityChanged")
+
+    @MainActor
     static func noteBarActivity() {
         barActivity &+= 1
+        NotificationCenter.default.post(name: activityChanged, object: nil)
     }
 
     /// Whether anybody can see the bar: false while the displays sleep,
