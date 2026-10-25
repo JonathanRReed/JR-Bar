@@ -57,12 +57,12 @@ struct LightingPage: View {
                 }
                 .pickerStyle(.menu)
             }
-            FleetPreviewRow(store: store, sketch: fleetProgram)
+            FleetPreviewRow(store: store)
             SettingSlider(store, "Cycle speed", subtitle: "One cycle, in seconds. An agent given its own motion in Effect Studio keeps its own tempo.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
             SettingToggle(store, "Celebrate completions", subtitle: "A flourish when a session settles into Done.",
                           path: "colors.done_celebration_enabled", default: true)
             SettingRow("Celebration preview", subtitle: "The finish the strip plays, once, when a session is done.") {
-                FinishLookPreview(core: store.core, sketch: LightingPreviewPrograms.celebration(colorHex: celebrationColor))
+                FinishLookPreview(core: store.core)
                     .frame(width: 168)
                     .opacity((store.values.bool("colors.done_celebration_enabled") ?? true) ? 1 : 0.35)
                     .accessibilityLabel("Done celebration preview")
@@ -128,20 +128,6 @@ struct LightingPage: View {
                 return ColorVisionNote.Entry(id: provider, name: style.name, path: path,
                                              hex: store.values.string(SettingsPath(path)) ?? style.accentHex)
             }
-    }
-
-    /// The local sketch of the fleet preview: Claude and Codex working in
-    /// their colours and a third agent done, under the chosen blend.
-    private var fleetProgram: String {
-        func accent(_ provider: String) -> String {
-            store.values.agentColorHex(provider) ?? ProviderStyle.style(for: provider).accentHex
-        }
-        return LightingPreviewPrograms.fleet(
-            blendMode: store.values.string("colors.blend_mode") ?? "color_blend",
-            working: (accent("claude"), accent("codex")),
-            doneHex: store.values.string("colors.mode_colors.done") ?? ModeSwatch.defaults["done"] ?? "#00FF66",
-            workingStateHex: store.values.string("colors.mode_colors.working") ?? ModeSwatch.defaults["working"] ?? "#00E5FF",
-            cycleSeconds: store.values.double("colors.cycle_speed_seconds") ?? 2.2)
     }
 
     private var blendDetail: String {
@@ -289,15 +275,9 @@ struct ScenePackPicker: View {
     }
 }
 
-/// Lighting › Blend › "With three agents": the chosen blend against a
-/// busy desk. The monitor's `preview_fleet` renders it exactly as a strip
-/// would play it — the person's own colours through the real renderer and
-/// the compiler — so that is what plays whenever the monitor has it; the
-/// local sketch stands in for a monitor without the command.
+/// The daemon's fleet program under the chosen mix.
 struct FleetPreviewRow: View {
     @Bindable var store: SettingsStore
-    /// `LightingPreviewPrograms.fleet` for the current document.
-    let sketch: String
     @ViewState private var rendered: (key: String, program: String, label: String)?
 
     struct Reply: Decodable {
@@ -834,7 +814,6 @@ struct ProviderSwatch: View {
     var body: some View {
         let style = ProviderStyle.style(for: provider)
         let path = "colors.agent_colors.\(provider)"
-        let hex = store.values.string(SettingsPath(path)) ?? style.accentHex
         let blend = store.values.string("colors.blend_mode") ?? "color_blend"
         let cycle = store.values.double(SettingsPath("colors.cycle_speed_seconds")) ?? 2.2
         HStack(spacing: 8) {
@@ -846,7 +825,6 @@ struct ProviderSwatch: View {
                 SwatchTitle(name: style.name,
                             hex: store.values.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : style.accentHex))
                 ProviderMotionPreview(core: store.core, provider: provider,
-                                      sketch: LightingPreviewPrograms.working(colorHex: hex, blendMode: blend, cycleSeconds: cycle),
                                       phase: Double(SettingsKey.providers.firstIndex(of: provider) ?? 0) * cycle * 0.23)
                     .frame(maxWidth: 110)
                     .accessibilityLabel("\(style.name) working animation preview")
