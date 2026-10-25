@@ -175,29 +175,26 @@ struct UsageHistoryLoadOrderTests {
         #expect(store.history(for: provider)?.totalTokens == (resetLast ? 300 : 200))
     }
 
-    @Test("reopen reloads a completed closed-window scan and keeps unchanged caches", arguments: [false, true])
-    func reopenHistory(scanCompleted: Bool) async throws {
+    @Test("reopen reloads a completed closed-window scan and keeps unchanged caches",
+          arguments: [false, true], [false, true])
+    func reopenHistory(scanCompleted: Bool, observedWhileClosed: Bool) async throws {
         let store = makeStore()
         let provider = try #require(store.providers.first)
         store.readProviderRows = { [] }
         store.readHistory = { _, _ in self.history(tokens: 100) }
         let initial = try #require(store.load(provider: provider))
         await initial.value
-        store.windowDidOpen()
+        for task in store.windowDidOpen() { await task.value }
         store.windowDidClose()
         if scanCompleted {
             store.core.apply(.event(CoreEvent(id: "closed-scan", kind: CoreEvent.usageHistoryReadyKind,
                                               provider: provider.id, range: store.range.rawValue)))
-            store.coreDidChange()
+            if observedWhileClosed { store.coreDidChange() }
         }
         var reads = 0
         store.readHistory = { _, _ in reads += 1; return self.history(tokens: 300) }
-        store.windowDidOpen()
+        for task in store.windowDidOpen() { await task.value }
         defer { store.windowDidClose() }
-        for _ in 0..<10_000 {
-            if scanCompleted && reads > 0 && !store.isLoading(provider) { break }
-            await Task.yield()
-        }
         #expect(reads == (scanCompleted ? 1 : 0))
         #expect(store.history(for: provider)?.totalTokens == (scanCompleted ? 300 : 100))
     }
@@ -291,7 +288,7 @@ struct UsageHistoryLoadOrderTests {
         await firstTask.value
         #expect(store.isScanning(provider))
         #expect(retries.count == 1)
-        store.windowDidOpen()
+        for task in store.windowDidOpen() { await task.value }
         defer { store.windowDidClose() }
         let initialResume = store.coreDidChange()
         for task in initialResume { await task.value }

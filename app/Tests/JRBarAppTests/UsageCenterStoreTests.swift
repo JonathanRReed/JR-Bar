@@ -71,7 +71,7 @@ struct UsageCenterStoreTests {
     }
 
     @MainActor
-    @Test("reopening refreshes only the current range unless events overflowed while closed")
+    @Test("reopening keeps unchanged caches and reconciles all ranges after a closed event gap")
     func reopeningReconcilesOnlyAfterGap() async {
         let core = CoreModel()
         core.handle(.connected)
@@ -90,7 +90,7 @@ struct UsageCenterStoreTests {
         ranges.removeAll()
         core.apply(.event(CoreEvent(id: "small-burst", kind: "completed")))
         for task in store.windowDidOpen() { await task.value }
-        #expect(ranges == [store.range])
+        #expect(ranges.isEmpty)
         #expect(resetReads == 2)
         store.windowDidClose()
         ranges.removeAll()
@@ -99,7 +99,7 @@ struct UsageCenterStoreTests {
             store.coreDidChange()
         }
         for task in store.windowDidOpen() { await task.value }
-        #expect(ranges == [store.range])
+        #expect(ranges.isEmpty)
         store.windowDidClose()
         ranges.removeAll()
         for index in 0..<40 {

@@ -291,6 +291,9 @@ final class UsageCenterStore {
 
     @discardableResult
     func windowDidOpen() -> [Task<Void, Never>] {
+        // Consume retained completions while closed so only changed caches reload.
+        // A lost event is remembered until all ranges can be reconciled below.
+        if !isOpen { coreDidChange() }
         isOpen = true
         rememberUsage()
         now = Date()
@@ -307,7 +310,11 @@ final class UsageCenterStore {
         if needsReconciliation {
             tasks = reconcileHistory()
         } else {
-            tasks = historyProviders.compactMap { load(provider: $0, force: true) }
+            tasks = historyProviders.compactMap {
+                let historyKey = key($0)
+                let retry = !loading.contains(historyKey) && (errors[historyKey] != nil || scanning.contains(historyKey))
+                return load(provider: $0, force: retry)
+            }
         }
         tasks.append(loadResetStatus())
         loadProviderRows()
