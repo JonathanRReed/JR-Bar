@@ -2930,6 +2930,9 @@ class StatusBarController(NSObject):
 
     @objc.IBAction
     def refreshRemotePeers_(self, _sender):
+        if not self.settings.remote_peers.enabled:
+            self.stop_remote_peer_timer()
+            return
         skip = getattr(self, "_remote_peers_ticks_to_skip", 0)
         if skip > 0:
             self._remote_peers_ticks_to_skip = skip - 1
@@ -2937,6 +2940,9 @@ class StatusBarController(NSObject):
         self.start_remote_peer_refresh()
 
     def start_remote_peer_timer(self) -> None:
+        if not self.settings.remote_peers.enabled:
+            self.stop_remote_peer_timer()
+            return
         if self.remote_peers_timer is not None:
             return
         self.remote_peers_timer = (

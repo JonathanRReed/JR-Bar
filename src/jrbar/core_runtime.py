@@ -4885,6 +4885,10 @@ def build_headless_controller_class() -> type:
                     facts = core_power.presence_facts(self)
                     if facts is not None:
                         core_power._apply_presence(self, facts)
+                if not value.remote_peers.enabled:
+                    self.stop_remote_peer_timer()
+                elif getattr(self, "_runtime_started", False):
+                    self.start_remote_peer_timer()
             self._core_settings_generation = getattr(self, "_core_settings_generation", 0) + 1
             if getattr(self, "_core", None) is not None:
                 self._core_publish_settings()

@@ -51,6 +51,17 @@ def test_provider_on_then_off_stops_collecting_and_disarms_the_refresh(tmp_path)
     service.close()
 
 
+def test_off_remote_peers_invalidates_its_timer_and_does_not_rearm(controller):  # noqa: F811
+    target, _ = controller
+    invalidated = []
+    target.remote_peers_timer = SimpleNamespace(invalidate=lambda: invalidated.append(True))
+    target.start_remote_peer_timer()
+    assert invalidated == [True]
+    assert target.remote_peers_timer is None
+    target.refreshRemotePeers_(None)
+    assert target.remote_peers_timer is None
+
+
 @pytest.mark.parametrize("family", list(ambient._CUE_RESOURCES))
 def test_disabled_cue_releases_its_observer_state(family):
     settings = replace(AgentMonitorSettings(), ambient_cues_disabled=(family.value,))
