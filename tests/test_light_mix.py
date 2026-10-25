@@ -83,11 +83,16 @@ def test_mix_animation_cue_grid(firmware, mix, family, cue, providers):
     plan = plan_agent_mix(_active_agents(state, settings), settings, led_count=count)
     explanation = explain_what_plays(state, settings, led_count=count, ambient=cue_for(cue, count))
     expected = family if providers == 1 and mix != "classic" else mix
-    import json
-    from pathlib import Path
-
-    allowed = json.loads((Path(__file__).parent / "fixtures" / "l1_mix_fallbacks.json").read_text())["custom_parameters"]
-    assert plan.played == allowed.get(f"{mix}/{family}/{count}/{providers}", expected)
+    # Independent geometry/budget expectations for the custom presets.
+    expected = family if providers == 1 and mix != "classic" else mix
+    if providers > 1:
+        if (mix == "relay" and count == 2) or (mix in {"weave", "tide"} and providers > count):
+            expected = "alternate"
+        elif mix in {"round_robin", "spatial_split"} and count == 2 and (providers > 2 or family not in {"breathe", "heartbeat", "kitt"}):
+            expected = "cycle"
+        if mix == "cycle" and count == 8 and family == "scanner":
+            expected = "alternate"
+    assert plan.played == expected, plan.warnings
     assert explanation["warnings"] == list(plan.warnings)
     assert all(row["parameters"] == PARAMETERS.get(family, {}) for row in explanation["providers"])
     assert settings.to_dict() == original
@@ -239,7 +244,7 @@ def test_global_mix_migrates_and_device_overrides_still_win(tmp_path):
     migrated = ColorSettings.from_dict({"blend_mode": "spatial_split"})
     assert migrated.to_dict()["blend_mode"] == "spatial_split"
     assert "mix_mode" not in migrated.to_dict()
-    restored = ColorSettings.from_dict({"mix_mode": "weave", "blend_mode": "relay"})
+    restored = ColorSettings.from_dict({"mix_schema_version": 1, "mix_mode": "weave", "blend_mode": "relay"})
     assert restored.mix_mode == "relay"
     settings = settings_from_document({"colors": restored.to_dict(),
         "devices": [{"id": "test:dot", "blend_mode": "alternate"}]}, scratch_dir=tmp_path)

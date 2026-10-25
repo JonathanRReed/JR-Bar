@@ -284,7 +284,88 @@ def _share_steps(lines, slots, roll_grid=None):
     return steps
 
 
-def _shares(agents, settings, count, mode):
+def _share_frame(steps, count, fraction):
+    """Evaluate a share at a cycle fraction, including its returning frame."""
+    from .motion_shapes import mix
+
+    total = sum(step_duration_ms(step) for step in steps)
+    current = ["#000000"] * count
+    # A pulse returns to its starting colour. Warm one complete cycle so
+    # the first sample has the same baseline as every later cycle.
+    for target in (total, fraction * total):
+        elapsed = 0
+        for step in steps:
+            span = step_duration_ms(step)
+            before = current[:]
+            for segment in step.segments:
+                timing = segment.timing
+                local = target - elapsed - (timing.delay_ms or 0)
+                if local < 0:
+                    continue
+                duration = timing.effective_duration_ms
+                amount = min(1.0, local / duration) if duration else 1.0
+                if timing.easing == "pulse":
+                    amount = (1 - math.cos(2 * math.pi * amount)) / 2
+                elif timing.easing == "cosine":
+                    amount = (1 - math.cos(math.pi * amount)) / 2
+                elif timing.easing == "none":
+                    amount = 1.0
+                for index, color in segment.assignments:
+                    current[index] = mix(before[index], color, amount)
+            if target < elapsed + span:
+                break
+            elapsed += span
+    return current
+
+
+def _keyframe_shares(agents, settings, slots, count):
+    """Share motions use four equal phases at their Studio cycle duration.
+
+    Geometry is evaluated locally, so a three-LED and a two-LED share have
+    the same clock. Linear keyframes let unlike motions share the union of
+    their phase boundaries without changing any chosen cycle duration.
+    Automatic follows the first chosen provider's clock.
+    """
+    from .motion_shapes import mix
+
+    default = round(settings.effective_speed_seconds(settings.mix_mode) * 1000)
+    chosen = [settings.agent_cycle_ms(agent.provider, default) for agent in agents
+              if settings.agent_animation(agent.provider) != "auto"]
+    automatic_period = chosen[0] if chosen else default
+    periods, frames = [], []
+    for agent, share in zip(agents, slots):
+        period = (automatic_period if settings.agent_animation(agent.provider) == "auto"
+                  else settings.agent_cycle_ms(agent.provider, default))
+        periods.append(period)
+        local = _share_steps(_body(agent, settings, len(share), compact=True), tuple(range(len(share))))
+        frames.append([_share_frame(local, len(share), Fraction(index, 4)) for index in range(5)])
+    duration = math.lcm(*periods)
+    # Each phase needs a physical line. Reject before constructing an
+    # unbounded union for unrelated Studio tempos.
+    if duration > 65535 or sum(duration // period * 4 for period in periods) > 72:
+        raise CannotFit("the program exceeds 512 bytes or 20 lines")
+    boundaries = sorted({Fraction(turn * period, 1) + Fraction(index * period, 4)
+                         for period in periods for turn in range(duration // period)
+                         for index in range(5)})
+    if len(boundaries) + 1 > 19:
+        raise CannotFit("the program exceeds 512 bytes or 20 lines")
+    lines = []
+    previous = 0
+    for boundary in boundaries:
+        colors = ["#000000"] * count
+        for share, period, samples in zip(slots, periods, frames):
+            phase = (boundary % period) * 4 / period
+            index = int(phase)
+            amount = float(phase - index)
+            for local, physical in enumerate(share):
+                colors[physical] = mix(samples[index][local], samples[index + 1][local], amount)
+        span = round(boundary) - previous
+        lines.append(" ".join(colors) + f" {format_time(span)} linear")
+        previous = round(boundary)
+    return _checked(lines, count)
+
+
+def _shares(agents, settings, count, mode, warnings=None):
     if len(agents) > count:
         raise CannotFit(f"{len(agents)} providers need more than {count} LED shares")
     # Remainders follow attention, then observed start, without moving the
@@ -328,7 +409,7 @@ def _shares(agents, settings, count, mode):
     spans = [[step_duration_ms(step) for step in tracks[index]]
              for index in (moving or range(len(tracks)))]
     if any(span != spans[0] for span in spans[1:]):
-        raise CannotFit("the providers' independent timelines cannot share these device lines exactly")
+        return _keyframe_shares(agents, settings, slots, count)
     lines = [render_step(PaintStep(tuple(
         segment for step in group for segment in step.segments
     ))) for group in zip(*tracks)]
@@ -538,7 +619,7 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
     for attempt in attempts:
         try:
             if attempt in ("spatial_split", "round_robin"):
-                program = _shares(selected, settings, led_count, attempt)
+                program = _shares(selected, settings, led_count, attempt, warnings)
                 if led_count < 2 * len(selected) and any(settings.agent_animation(agent.provider) == "kitt" for agent in selected):
                     warnings.append("Knight Rider shows the beam's rise and fall on a one-LED share.")
             elif attempt == "cycle":

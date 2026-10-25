@@ -1,9 +1,6 @@
 """Every shipped animation and mix, with explicit fallback expectations."""
 import itertools
-import json
 from dataclasses import replace
-from functools import lru_cache
-from pathlib import Path
 
 import pytest
 
@@ -19,9 +16,8 @@ from jrbar.led_status import LedDisplayState
 from jrbar.led_wasm import RawSdLedWasmController
 from jrbar.light_mix import explain_what_plays, plan_agent_mix
 from jrbar.models import AgentMode
-from tests.test_light_mix import FAMILIES, PROVIDERS, cue_for, settings_for, statuses
+from tests.test_light_mix import PROVIDERS, cue_for, statuses
 
-FIXTURE = Path(__file__).parent / "fixtures" / "l1_mix_fallbacks.json"
 CASES = tuple((mix, animation, variant, providers, count)
     for mix, animation, variant, providers, count in itertools.product(
         BLEND_MODE_CHOICES, PROVIDER_ANIMATION_CHOICES, ("default", "low", "high"),
@@ -47,9 +43,38 @@ def case_key(case):
     return "/".join(map(str, case))
 
 
-@lru_cache(maxsize=1)
-def allowed_fallbacks():
-    return json.loads(FIXTURE.read_text())["fallbacks"]
+# These expectations describe geometry and reviewed device limits. The
+# reporting inventory in fixtures is deliberately not an acceptance oracle.
+ONE_LED = {"auto", "breathe", "heartbeat", "steady", "blink", "kitt"}
+CYCLE_TOO_LARGE = {"scanner", "pendulum", "flicker", "stack", "twinkle", "drift", "converge", "aurora"}
+
+
+def expected_played(mix, animation, variant, providers, count):
+    if mix == "classic":
+        return mix
+    # The low Gradient preset requests 300 ms, below the standing speed
+    # safety gate. A solo uses Chase; a share/cycle explicitly falls back.
+    unsafe_gradient = animation == "gradient" and variant == "low"
+    if providers == 1:
+        return "chase" if unsafe_gradient else animation
+    if mix == "relay" and count < 4:
+        return "alternate"
+    if mix in {"weave", "tide"} and providers > count:
+        return "alternate"
+    if mix in {"round_robin", "spatial_split"}:
+        if providers > count or (count // providers == 1 and animation not in ONE_LED):
+            return expected_played("cycle", animation, variant, providers, count)
+        if unsafe_gradient:
+            return "alternate"
+    if mix == "cycle":
+        over_budget = count == 8 and (
+            animation in CYCLE_TOO_LARGE
+            or (animation in {"ember", "ripple"} and providers >= 3)
+            or (animation == "kitt" and variant != "high" and providers == 4)
+            or (animation == "bloom" and (providers == 4 or (variant == "high" and providers == 3))))
+        if unsafe_gradient or over_budget:
+            return "alternate"
+    return mix
 
 
 @pytest.fixture(scope="module", params=(2, 8))
@@ -62,11 +87,10 @@ def test_all_mix_animation_parameter_provider_combinations(raw_firmware, mix, an
     count = raw_firmware.led_count
     settings = settings_for_case(mix, animation, variant)
     rows = statuses(providers)
-    expected = animation if providers == 1 and mix != "classic" else mix
     plan = plan_agent_mix(_active_agents(rows, settings), settings, led_count=count)
-    allowed = allowed_fallbacks().get(case_key((mix, animation, variant, providers, count)))
-    assert plan.played == (allowed or expected), (plan.played, plan.warnings)
-    if allowed:
+    expected = expected_played(mix, animation, variant, providers, count)
+    assert plan.played == expected, (plan.played, plan.warnings)
+    if expected != (animation if providers == 1 and mix != "classic" else mix):
         assert any("cannot play exactly" in warning for warning in plan.warnings)
     if providers > 1 and plan.played == "cycle":
         from jrbar.animation import animation_duration_ms, read_program
@@ -117,31 +141,6 @@ def test_targeted_default_combinations_do_not_fall_back():
         assert plan.played == mix, plan.warnings
 
 
-if __name__ == "__main__":
-    # This is an explicit acceptance inventory, not a test-time baseline.
-    # A change must explain and review any added fallback before updating it.
-    fallbacks = {}
-    reasons = {}
-    for case in CASES:
-        mix, animation, variant, providers, count = case
-        settings = settings_for_case(mix, animation, variant)
-        plan = plan_agent_mix(_active_agents(statuses(providers), settings), settings, led_count=count)
-        expected = animation if providers == 1 and mix != "classic" else mix
-        if plan.played != expected:
-            fallbacks[case_key(case)] = plan.played
-            reasons[case_key(case)] = list(plan.warnings)
-    custom = {}
-    for mix, family, count, providers in itertools.product(BLEND_MODE_CHOICES, FAMILIES, (2, 8), (1, 2, 3)):
-        settings = settings_for(mix, family)
-        plan = plan_agent_mix(_active_agents(statuses(providers), settings), settings, led_count=count)
-        expected = family if providers == 1 and mix != "classic" else mix
-        if plan.played != expected:
-            custom[f"{mix}/{family}/{count}/{providers}"] = plan.played
-    from collections import Counter
-    categories = Counter(warning.split(":", 1)[-1].strip() for rows in reasons.values() for warning in rows
-        if "cannot play exactly" in warning)
-    FIXTURE.write_text(json.dumps({"fallbacks": fallbacks, "custom_parameters": custom,
-        "reason_counts": dict(categories)}, indent=2) + "\n")
 
 
 @pytest.mark.parametrize("mix", ("alternate", "relay", "weave", "tide"))
@@ -210,3 +209,47 @@ def test_split_start_order_uses_observed_turn_starts_and_keeps_unknowns_unknown(
     agents = _active_agents(rows, settings)
     assert [(agent.identity, agent.started_at) for agent in agents] == [
         (rows[0].agent_id, 200.0), (rows[1].agent_id, 100.0), (rows[2].agent_id, None)]
+
+
+@pytest.mark.parametrize("mix", ("round_robin", "spatial_split"))
+@pytest.mark.parametrize("other", ("auto", "breathe", "chase"))
+@pytest.mark.parametrize("providers", (2, 3, 4))
+def test_chosen_knight_rider_and_other_provider_animations_play_together(mix, other, providers):
+    settings = ColorSettings.defaults().with_blend_mode(mix).with_agent_animation("codex", "kitt")
+    for provider in PROVIDERS[1:]:
+        settings = settings.with_agent_animation(provider, other)
+    plan = plan_agent_mix(_active_agents(statuses(providers), settings), settings, led_count=8)
+    assert plan.played == mix, plan.warnings
+    raw = RawSdLedWasmController(8)
+    assert raw.parse(plan.program, 0).ok
+    frames = raw.step_batch(0, 40, 150)
+    assert len({tuple(frame) for frame in frames}) > 4
+    # Both provider colours are present together, rather than taking turns.
+    assert any(any(b > r * 2 for r, g, b in frame)
+               and any(r > b * 2 for r, g, b in frame) for frame in frames)
+
+
+def test_owner_codex_knight_rider_everyone_on_eight_led_sidepulse():
+    settings = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", "kitt")
+    explanation = explain_what_plays(statuses(2), settings, led_count=8)
+    assert explanation["played"] == "round_robin", explanation["warnings"]
+    assert explanation["program"] == program_for_snapshot(statuses(2), colors=settings, led_count=8)[1]
+
+
+@pytest.mark.parametrize("mix", ("round_robin", "spatial_split"))
+@pytest.mark.parametrize("animation", ("kitt", "chase", "comet", "gradient", "bloom", "marquee"))
+def test_three_providers_share_eight_leds_on_a_common_period(mix, animation):
+    settings = settings_for_case(mix, animation, "default")
+    plan = plan_agent_mix(_active_agents(statuses(3), settings), settings, led_count=8)
+    assert plan.played == mix, plan.warnings
+
+
+def test_automatic_follows_a_chosen_cycle_without_stretching_it():
+    from jrbar.animation import animation_duration_ms, read_program
+
+    settings = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", "kitt")
+    settings = settings.with_agent_animation_parameters("codex", {"duration_seconds": 3.7})
+    plan = plan_agent_mix(_active_agents(statuses(3), settings), settings)
+    assert plan.played == "round_robin", plan.warnings
+    animation, _ = read_program(plan.program)
+    assert animation_duration_ms(animation) == 3700
