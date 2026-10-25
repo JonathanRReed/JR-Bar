@@ -819,7 +819,7 @@ def test_a_dot_write_does_not_read_the_dot_on_the_write_worker(rig: Rig) -> None
 # --- foreign writes ---------------------------------------------------------------
 
 
-def test_a_foreign_write_is_answered_once_then_left_alone(tmp_path: Path) -> None:
+def test_a_foreign_write_is_answered_once_then_left_alone(tmp_path: Path, monkeypatch) -> None:
     """At the reassert cadence (never faster) a fresh read compares the
     device with what JR-Bar last wrote. The first foreign write is written
     over once and noted; a second inside ten minutes stops the rewrites so
@@ -827,6 +827,8 @@ def test_a_foreign_write_is_answered_once_then_left_alone(tmp_path: Path) -> Non
     goes out."""
     from jrbar.led_status import AgentLedController, LedDisplayState
 
+    clock = [time.monotonic()]
+    monkeypatch.setattr("jrbar.led_status.time.monotonic", lambda: clock[0])
     volume = tmp_path / "SidePulsePro"
     volume.mkdir()
     target = volume / "LEDS.LED"
@@ -846,7 +848,7 @@ def test_a_foreign_write_is_answered_once_then_left_alone(tmp_path: Path) -> Non
     assert reads == []
 
     def reassert():
-        controller.last_attempt_monotonic -= controller.reassert_after_seconds + 1
+        clock[0] += controller.reassert_after_seconds + 1
         return controller.sync_program(program, LedDisplayState.WORKING)
 
     # Nobody else wrote: the reassert reads, matches, and writes as before.
@@ -878,7 +880,7 @@ def test_the_lights_frame_carries_the_foreign_write_receipt(rig: Rig) -> None:
     assert rig.dot.device_id not in receipts
 
 
-def test_a_linked_dot_is_never_read_for_a_foreign_write(rig: Rig) -> None:
+def test_a_linked_dot_is_never_read_for_a_foreign_write(rig: Rig, monkeypatch) -> None:
     """The watch runs where a device reasserts on its own: the strip, and a
     Dot drawing its own display. A linked Dot is only ever written with a
     strip restart or by the closed loop, both forced, and checking it there
@@ -886,13 +888,15 @@ def test_a_linked_dot_is_never_read_for_a_foreign_write(rig: Rig) -> None:
     read held the strip's next command for half a second, which is why that
     worker never reads the Dot. So a strip reassert reads the strip, never
     the Dot, and the Dot's card carries no receipt."""
+    clock = [time.monotonic()]
+    monkeypatch.setattr("jrbar.led_status.time.monotonic", lambda: clock[0])
     first = rig.plan()
     assert first["dot"], "the linked Dot was never written"
     strip_reads: list[Path] = []
     dot_reads: list[Path] = []
     rig.pro_controller.foreign_status_reader = lambda path: strip_reads.append(path) or path.read_text()
     rig.dot_controller.foreign_status_reader = lambda path: dot_reads.append(path) or "#FF00FF\n"
-    rig.pro_controller.last_attempt_monotonic -= rig.pro_controller.reassert_after_seconds + 1
+    clock[0] += rig.pro_controller.reassert_after_seconds + 1
     rewritten = rig.dot_controller.last_device_bytes
     rig.plan()
     assert len(strip_reads) == 1, "the strip's reassert did not check the strip"

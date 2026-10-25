@@ -5018,7 +5018,7 @@ def test_a_continue_dots_anchor_carries_its_origin(headless, tmp_path: Path) -> 
         assert lights["surfaces"]["dot"]["anchor"] == pytest.approx(expected, abs=0.005), clean
 
 
-def test_a_strip_reassert_restarts_the_pair_on_one_loop__and_1_more(headless, tmp_path: Path) -> None:
+def test_a_strip_reassert_restarts_the_pair_on_one_loop__and_1_more(headless, tmp_path: Path, monkeypatch) -> None:
     # --- scenario: the_dot_derives_from_the_trimmed_program_the_strip_runs
     """A reassert drops the approach frame, so the strip loops a shorter
     lap; the Dot used to be re-planned from the untrimmed text and ran the
@@ -5029,11 +5029,13 @@ def test_a_strip_reassert_restarts_the_pair_on_one_loop__and_1_more(headless, tm
 
     controller = headless
     pro, dot, controllers, submitted = _tmp_pair(controller, tmp_path)
+    clock = [time.monotonic()]
+    monkeypatch.setattr("jrbar.led_status.time.monotonic", lambda: clock[0])
     program = "// approach\n#101010 160ms\n#FF0000 1s cosine\n#000000 1s cosine\nrepeat"
     strip = controllers[pro.device_id]
     first = strip.sync_program(program, LedDisplayState.WORKING)
     _coupled(controller, submitted, pro, dot, first)
-    strip.last_attempt_monotonic -= strip.reassert_after_seconds + 1
+    clock[0] += strip.reassert_after_seconds + 1
     reassert = strip.sync_program(program, LedDisplayState.WORKING)
     assert reassert.changed and reassert.program != first.program
     assert reassert.nominal_program == "#FF0000 1s cosine\n#000000 1s cosine\nrepeat"
