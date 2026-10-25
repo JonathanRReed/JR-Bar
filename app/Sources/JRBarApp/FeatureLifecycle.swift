@@ -97,5 +97,6 @@ enum FeatureLifecycleRegistry {
         .init(id: "focus", resources: ["Focus poll", "app activation observer"]),
         .init(id: "shelf-media", resources: ["media subscription", "lyrics request", "power monitor", "audio output observer", "Control Center listeners"]),
         .init(id: "shelf-timers", resources: ["deadline timer", "clock and wake observers"]),
+        .init(id: "sound", resources: ["chime timer"]),
     ]
 }

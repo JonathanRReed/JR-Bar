@@ -89,6 +89,10 @@ import Testing
         player.preferences = { preferences }
         player.microphoneLive = { false }
         player.startChime(EventPolicy.chimeSound, interval: 3600)
+        #expect(!player.isChiming, "a silent chime owns no timer")
+        preferences.choices[.chime] = nil
+        player.playbackOverride = { _, _ in {} }
+        player.startChime(EventPolicy.chimeSound, interval: 3600)
         #expect(player.isChiming)
         player.ringChime(EventPolicy.chimeSound)
         #expect(player.isChiming, "nothing holds sounds yet")

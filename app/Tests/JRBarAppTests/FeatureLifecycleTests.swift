@@ -178,6 +178,17 @@ struct FeatureLifecycleTests {
             #expect(timers.clockRunning)
             timers.setEnabled(false)
             #expect(!timers.clockRunning && timers.liveTimers == 0 && timers.notificationObserverCount == 0)
+        case "sound":
+            let sounds = SoundPlayer()
+            sounds.microphoneLive = { false }
+            sounds.playbackOverride = { _, _ in {} }
+            sounds.startChime("Glass", interval: 60)
+            #expect(sounds.isChiming)
+            sounds.preferences = { SoundPreferences(volume: 0) }
+            sounds.ringChime("Glass")
+            #expect(!sounds.isChiming && sounds.liveChimeTimers == 0)
+            sounds.startChime("Glass", interval: 60)
+            #expect(!sounds.isChiming && sounds.liveChimeTimers == 0)
         default:
             Issue.record("No lifecycle exercise for \(contract.id)")
         }

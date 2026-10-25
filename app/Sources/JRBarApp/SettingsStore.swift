@@ -465,7 +465,12 @@ final class SettingsStore {
     /// Every write persists at once; the event player reads them at each
     /// sound, so a change lands on the next one.
     var soundPreferences: SoundPreferences = SoundPreferences.load() {
-        didSet { if soundPreferences != oldValue { soundPreferences.save() } }
+        didSet {
+            if soundPreferences != oldValue {
+                soundPreferences.save()
+                NotificationCenter.default.post(name: SoundPlayer.preferencesDidChange, object: nil)
+            }
+        }
     }
 
     /// The page's preview voice — the same player, the same choices.
