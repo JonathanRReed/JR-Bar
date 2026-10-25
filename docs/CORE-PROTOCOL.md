@@ -86,6 +86,41 @@ hand-written examples.
   says so (`cursor_expired`, with the `dropped` count) instead of
   pretending.
 
+## Agent groups
+
+`state.agent_groups` is an additive array. Each entry has `id`,
+`root_work_key`, `root_provider`, `members` and `lineage_evidence`.
+Work keys here are provider-qualified session or worker IDs, the same IDs
+as `state.sessions[].id`. `members` includes the root. The stable group ID
+is `group:<root_work_key>`. A root with no children is a one-member group.
+
+Each evidence entry has `child`, `parent`, `harness` and `observed_at`, a
+Unix timestamp. Links come from explicit delegation fields, never project
+folders or process ancestry. The daemon follows links transitively and
+rejects cycles, conflicting parents, ambiguous native bindings, missing
+parents and expired evidence. Copied history, including Codex
+`forked_from_id`, does not establish delegation. Local readers recover links
+after restart. Re-reading an unchanged hook does not renew its timestamp. A retained
+unanswered native request keeps its own work-to-parent relationship until
+resolution; that does not extend external lineage evidence.
+
+Each session also has `group_id` and `unlinked_worker`. A worker without a
+provable root has no group and sets `unlinked_worker: true`. The panel can
+dim it and name it "Unlinked worker". It gets no strip share unless it has
+an actionable ask. The existing sub-agent ask preference still applies.
+Resolved child sessions have `kind: "worker"` and `parent` set to the root
+session ID, including children whose provider differs from their root.
+The root's `workers` counts its live workers, excluding stale members. Asks keep their own
+session IDs and remain individually answerable.
+
+Lights use one representative per group in `root_provider`'s colour.
+The Python entry point is `active_agent_groups(state)`, where `state` is a
+monitor snapshot or attention projection. It returns immutable groups.
+Adapters emit `ParentLink(child, parent, harness, observed_at)` values to
+`resolve_agent_groups(statuses, links, now=...)`. A new adapter needs no
+resolver changes. It must preserve ambiguous evidence rather than choose
+one binding, bound its reads, and emit only provider-qualified IDs.
+
 ## Who may send what
 
 Any process running as you can open `core.sock`: the daemon checks the peer's
