@@ -27,7 +27,10 @@ from .persistence_writer import (
     PersistenceReceipt,
 )
 from .private_io import (
-    append_private_text, atomic_private_write, read_private_bytes_with_identity, read_private_text,
+    append_private_text,
+    atomic_private_write,
+    read_private_bytes_with_identity,
+    read_private_text,
 )
 from .provider_feature_settings import ProviderInstanceRetentionProjection
 from .providers import default_state_dir

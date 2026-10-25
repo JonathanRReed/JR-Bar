@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import threading
-
-import pytest
 from datetime import datetime
 from types import SimpleNamespace
+
+import pytest
 
 from jrbar.persistence_writer import (
     PersistenceDisposition,
