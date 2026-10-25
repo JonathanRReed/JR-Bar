@@ -10206,7 +10206,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             return_value=("Max", self.CLAUDE_ACCOUNT),
         ):
             isolate_controller(self)
-        self.controller.claude_access_token = lambda: "synthetic-access"
+        self.controller.claude_access_token = lambda: None
         from jrbar.capacity_refresh import (
             CapacityRefreshCoordinator,
             RefreshFailureKind,
