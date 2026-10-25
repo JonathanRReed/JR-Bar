@@ -400,7 +400,7 @@ def test_termination_drains_a_dirty_capacity_history_tail(controller) -> None:
 
 
 def test_termination_reserves_one_tail_slot_when_normal_queue_is_full(
-    controller,
+    controller, monkeypatch,
 ) -> None:
     target, status_bar, history_path = controller
     _enable_history(target)
@@ -414,7 +414,7 @@ def test_termination_reserves_one_tail_slot_when_normal_queue_is_full(
 
     def block_writer() -> None:
         running.set()
-        release.wait(2.0)
+        assert release.wait(10.0)
 
     target._persistence_writer.submit("test-block", block_writer)
     assert running.wait(1.0)
@@ -423,13 +423,21 @@ def test_termination_reserves_one_tail_slot_when_normal_queue_is_full(
     assert target._persistence_writer.snapshot().refused_full >= 1
     assert not history_path.exists()
 
-    timer = threading.Timer(0.05, release.set)
-    timer.start()
+    submit = target._persistence_writer.submit
+
+    def submit_tail_then_release(key, operation, **kwargs):
+        result = submit(key, operation, **kwargs)
+        if kwargs.get("use_reserved_drain_tail"):
+            assert target._persistence_writer.snapshot().reserved_drain_tail == 1
+            release.set()
+        return result
+
+    monkeypatch.setattr(target._persistence_writer, "submit", submit_tail_then_release)
     try:
         _terminate(target)
     finally:
         release.set()
-        timer.join(1.0)
+        target._persistence_writer.close(timeout_seconds=1.0)
 
     snapshot = target._persistence_writer.snapshot()
     assert snapshot.reserved_drain_tail == 1
