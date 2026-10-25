@@ -204,15 +204,6 @@ import Testing
 /// the knobs themselves).
 @MainActor
 @Suite struct EffectStudioRenderTests {
-    /// Waits, bounded, for the store's debounced render to land.
-    static func settle(_ condition: @MainActor () -> Bool) async -> Bool {
-        for _ in 0..<200 {
-            if condition() { return true }
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-        return condition()
-    }
-
     static func comet() -> EffectDefinition {
         let head = EffectParameter(name: "head_width", type: .integer, defaultValue: .number(1), minimum: 1, maximum: 4)
         return EffectStudioLibraryTests.makeEffect("comet", parameters: [head],
@@ -231,8 +222,7 @@ import Testing
         let before = store.previewProgram(for: effect)
         let head = effect.parameters[0]
         store.setValue(.number(3), for: head, of: effect)
-        let rendered = await Self.settle { store.previewProgram(for: effect) != before }
-        #expect(rendered, "the preview never took the new render")
+        await store.renderTask?.value
         #expect(store.previewProgram(for: effect) == "head 3 on 8\nrepeat")
         #expect(asked.last?.0 == "comet")
         #expect(asked.last?.1["head_width"] == .number(3))
@@ -240,7 +230,7 @@ import Testing
         // Back to the default: the catalog's own program, no new request.
         let count = asked.count
         store.setValue(.number(1), for: head, of: effect)
-        try? await Task.sleep(for: .milliseconds(250))
+        await store.renderTask?.value
         #expect(store.previewProgram(for: effect) == before)
         #expect(asked.count == count)
     }
@@ -254,8 +244,8 @@ import Testing
         }
         let effect = Self.comet()
         store.beginAssigning(effect, scope: .provider, target: "opencode")
-        let purple = await Self.settle { store.draftPreviewProgram(for: effect).hasPrefix("#AF52DE") }
-        #expect(purple, "OpenCode's draft should preview in its own purple, not the working cyan")
+        await store.renderTask?.value
+        #expect(store.draftPreviewProgram(for: effect).hasPrefix("#AF52DE"))
         #expect(store.draftColor == "#AF52DE")
         #expect(colors.contains("#AF52DE"))
         store.draftScope = .semantic

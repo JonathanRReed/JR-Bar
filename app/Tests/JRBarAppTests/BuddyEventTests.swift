@@ -53,11 +53,11 @@ struct BuddyEventTests {
         ]))
         // Drive the old permanent observer's path too, not only the new event API.
         fixture.core.apply(.state(CoreState(generation: 2, sessions: [])))
-        try await Task.sleep(for: .milliseconds(30))
+        await drainMainQueue()
         fixture.core.apply(.state(CoreState(generation: 3, sessions: [
             session(mode: nil, lifecycle: "completed"),
         ])))
-        try await Task.sleep(for: .milliseconds(30))
+        await drainMainQueue()
 
         #expect(fixture.store.state.notchBuddy == before)
         #expect(fixture.buddy.hopUntil == nil)

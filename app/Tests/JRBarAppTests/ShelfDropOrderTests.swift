@@ -5,7 +5,7 @@ import Testing
 import UniformTypeIdentifiers
 @testable import JRBarApp
 
-@Suite("Shelf drop order", .timeLimit(.minutes(10)))
+@Suite("Shelf drop order", .timeLimit(.minutes(2)))
 @MainActor
 struct ShelfDropOrderTests {
     private final class HeldProvider: NSItemProvider, @unchecked Sendable {

@@ -26,7 +26,7 @@ struct SetupRequestOrderTests {
         func answer(_ call: Int, _ value: Value) { pending[call - 1].resume(returning: value) }
     }
 
-    @Test(.timeLimit(.minutes(10)))
+    @Test(.timeLimit(.minutes(2)))
     func anOlderPermissionReadCannotReplaceANewerGrant() async {
         let gate = Gate<[SetupPermission: SetupPermissionStatus]>()
         var model = SetupModel()
@@ -43,7 +43,7 @@ struct SetupRequestOrderTests {
         #expect(store.status(of: .camera) == .granted)
     }
 
-    @Test(.timeLimit(.minutes(10)))
+    @Test(.timeLimit(.minutes(2)))
     func aPermissionActionRunsOnceAndCanRetryAfterItFinishes() async {
         let gate = Gate<Void>()
         var calls = 0
@@ -108,7 +108,7 @@ struct SetupRequestOrderTests {
         #expect(row.statusColor != Color.green)
     }
 
-    @Test(.timeLimit(.minutes(10)))
+    @Test(.timeLimit(.minutes(2)))
     func aUsageReadStartedBeforeTurningOffCannotTurnTheRowBackOn() async {
         let gate = Gate<[SetupUsageOffer]>()
         var model = SetupModel()
@@ -137,7 +137,7 @@ struct SetupRequestOrderTests {
         #expect(store.turnOffUsage(for: "claude") == nil)
     }
 
-    @Test(.timeLimit(.minutes(10)))
+    @Test(.timeLimit(.minutes(2)))
     func aDoctorRefreshRequestedDuringAReadRunsAfterward() async throws {
         let gate = Gate<CoreReply>()
         let doctor = HooksDoctorModel()
@@ -201,7 +201,7 @@ struct SetupRequestOrderTests {
         #expect(!doctor.loading)
     }
 
-    @Test(.timeLimit(.minutes(10)))
+    @Test(.timeLimit(.minutes(2)))
     func recheckSendsOnlyTheDoctorCommandAndRefusesBusyOrOfflineReads() async throws {
         let doctor = HooksDoctorModel()
         let gate = Gate<CoreReply>()

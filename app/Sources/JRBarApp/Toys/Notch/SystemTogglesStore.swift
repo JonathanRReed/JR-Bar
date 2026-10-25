@@ -163,6 +163,9 @@ final class SystemTogglesStore {
         @ObservationIgnored let dockDriver: (any DockAutohideDriver)?
         /// Is the Dock utility holding the Dock out for a preview right
         /// now? Wired by the delegate; a chip flip during a hold waits.
+        @ObservationIgnored var scheduleDockRetry: (@escaping @MainActor () -> Void) -> Void = { retry in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { retry() }
+        }
         @ObservationIgnored var dockHoldActive: @MainActor () -> Bool = { false }
 
         /// Where the strip's chip choice persists — app-local defaults;
@@ -952,15 +955,14 @@ final class SystemTogglesStore {
     }
 
     private func waitForDockHold(attempt: Int = 0) {
-        Task {
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard let pending = state.pendingDockAutohide else { return }
-            if dockHoldActive(), attempt < 480 {
-                waitForDockHold(attempt: attempt + 1)
+        state.scheduleDockRetry { [self] in
+            guard let pending = self.state.pendingDockAutohide else { return }
+            if self.dockHoldActive(), attempt < 480 {
+                self.waitForDockHold(attempt: attempt + 1)
                 return
             }
-            state.pendingDockAutohide = nil
-            setDockAutohide(pending)
+            self.state.pendingDockAutohide = nil
+            self.setDockAutohide(pending)
         }
     }
 

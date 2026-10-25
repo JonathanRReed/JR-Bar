@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import JRBarCore
 
-@Suite("Core client idle probes", .serialized)
+@Suite("Core client idle probes", .serialized, .timeLimit(.minutes(2)))
 struct CoreClientIdleProbeTests {
     @Test("idle probes require a settled, current connection with no other command")
     func admission() {

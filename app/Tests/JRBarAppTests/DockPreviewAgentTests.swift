@@ -318,16 +318,19 @@ struct DockPreviewAgentTests {
     func liveStillRetries() async throws {
         let live = DockLiveStill()
         var asked = 0
+        let lookedUp = TestEvents<Void>()
         live.lookup = { _, _ in
             asked += 1
+            lookedUp.send(())
             return nil
         }
         live.start(windowID: 42, pid: 1)
         #expect(live.windowID == 42, "the window is claimed while the start resolves")
-        for _ in 0..<200 where live.windowID != nil { try await Task.sleep(for: .milliseconds(10)) }
+        _ = try await lookedUp.next()
+        #expect(await waitForObservedState { live.windowID == nil })
         #expect(live.windowID == nil, "no such window: nothing is streaming")
         live.start(windowID: 42, pid: 1)
-        for _ in 0..<200 where asked < 2 { try await Task.sleep(for: .milliseconds(10)) }
+        _ = try await lookedUp.next()
         #expect(asked == 2, "the same card hovered again asks again")
         live.stop()
     }

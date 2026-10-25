@@ -93,7 +93,7 @@ import Testing
         #expect(center.register("shelf", title: "Open the shelf", chord: Self.chordD) { fired.append("shelf") } == .registered)
         let shelfID = try #require(recorder.registered.first { $0.chord == Self.chordD }?.id)
         recorder.onHotKey?(shelfID)
-        try await Task.sleep(nanoseconds: 20_000_000)
+        await drainMainQueue()
         #expect(fired == ["shelf"])
         #expect(center.status(of: "panel") == .active(Self.chordJ))
     }
@@ -170,7 +170,7 @@ import Testing
         #expect(recorder.registered.count == 3)
         let panelID = try #require(recorder.registered.last { $0.chord == Self.chordJ }?.id)
         recorder.onHotKey?(panelID)
-        try await Task.sleep(nanoseconds: 20_000_000)
+        await drainMainQueue()
         #expect(fired == 1)
     }
 

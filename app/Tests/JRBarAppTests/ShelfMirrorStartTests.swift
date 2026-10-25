@@ -1,27 +1,24 @@
 import AppKit
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Mirror queued start ownership")
+@Suite("Mirror queued start ownership", .timeLimit(.minutes(2)))
 struct ShelfMirrorStartTests {
     private final class Driver: ShelfMirrorSessionDriver, @unchecked Sendable {
-        let entered = DispatchSemaphore(value: 0)
-        let release = DispatchSemaphore(value: 0)
-        let startEntered = DispatchSemaphore(value: 0)
-        let startRelease = DispatchSemaphore(value: 0)
+        let entered = TestSignal()
+        let release = TestGate()
+        let startEntered = TestSignal()
+        let startRelease = TestGate()
         private let lock = NSLock()
         private var prepares = 0
         private var starts = 0
         private var stops = 0
         private var attachments = 0
-        private var failures: [String] = []
         let holdFirstPrepare: Bool
         let holdStart: Bool
-        // The full suite can queue main-actor continuations for over 30
-        // seconds. Keep fixture holds bounded while allowing that queue to drain.
-        private let holdTimeout: TimeInterval = 120
 
         init(holdFirstPrepare: Bool = true, holdStart: Bool = false) {
             self.holdFirstPrepare = holdFirstPrepare
@@ -35,10 +32,7 @@ struct ShelfMirrorStartTests {
             lock.unlock()
             if first, holdFirstPrepare {
                 entered.signal()
-                if release.wait(timeout: .now() + holdTimeout) == .timedOut {
-                    recordFailure("fixture preparation was not released")
-                    return false
-                }
+                release.wait()
             }
             return true
         }
@@ -49,9 +43,7 @@ struct ShelfMirrorStartTests {
             lock.unlock()
             if holdStart {
                 startEntered.signal()
-                if startRelease.wait(timeout: .now() + holdTimeout) == .timedOut {
-                    recordFailure("fixture start was not released")
-                }
+                startRelease.wait()
             }
         }
 
@@ -70,24 +62,8 @@ struct ShelfMirrorStartTests {
             return (prepares, starts, stops, attachments)
         }
 
-        func recordFailure(_ message: String) {
-            lock.withLock { failures.append(message) }
-        }
-
-        var recordedFailures: [String] { lock.withLock { failures } }
-
-        func waitForPreparation() async -> Bool { await signalled(entered) }
-        func waitForStart() async -> Bool { await signalled(startEntered) }
-
-        private func signalled(_ semaphore: DispatchSemaphore) async -> Bool {
-            // A blocked fixture wait belongs on Dispatch, not Swift's
-            // cooperative pool alongside the queued camera callbacks.
-            await withCheckedContinuation { continuation in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    continuation.resume(returning: semaphore.wait(timeout: .now() + 5) == .success)
-                }
-            }
-        }
+        func waitForPreparation() async -> Bool { await entered.wait() }
+        func waitForStart() async -> Bool { await startEntered.wait() }
     }
 
     private func drain(_ model: ShelfMirrorModel) async {
@@ -100,18 +76,15 @@ struct ShelfMirrorStartTests {
     func foldBeforePrepare() async {
         let driver = Driver(holdFirstPrepare: false)
         let queue = DispatchQueue(label: "jrbar.test.mirror-before-prepare")
-        let release = DispatchSemaphore(value: 0)
+        let release = TestGate()
         queue.async {
-            if release.wait(timeout: .now() + 5) == .timedOut {
-                driver.recordFailure("fixture queue was not released")
-            }
+            release.wait()
         }
         let model = ShelfMirrorModel(driver: driver, queue: queue, authorization: { .authorized })
         model.sync(enabled: true)
         model.sync(enabled: false)
         release.signal()
         await drain(model)
-        #expect(driver.recordedFailures.isEmpty)
         #expect(driver.counts.prepares == 0)
         #expect(driver.counts.starts == 0)
         #expect(driver.counts.attachments == 0)
@@ -129,7 +102,6 @@ struct ShelfMirrorStartTests {
         model.sync(enabled: false)
         driver.release.signal()
         await drain(model)
-        #expect(driver.recordedFailures.isEmpty)
         #expect(driver.counts.prepares == 1)
         #expect(driver.counts.starts == 0)
         #expect(driver.counts.attachments == 0)
@@ -148,10 +120,7 @@ struct ShelfMirrorStartTests {
         model.sync(enabled: true)
         driver.release.signal()
         await drain(model)
-        #expect(driver.recordedFailures.isEmpty)
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(5))
-        while model.state != .live, clock.now < deadline { await Task.yield() }
+        #expect(await waitForObservedState { model.state == .live })
         #expect(driver.counts.prepares == 2)
         #expect(driver.counts.starts == 1)
         #expect(driver.counts.stops == 1)
@@ -170,7 +139,6 @@ struct ShelfMirrorStartTests {
         model.sync(enabled: false)
         driver.startRelease.signal()
         await drain(model)
-        #expect(driver.recordedFailures.isEmpty)
         #expect(driver.counts.starts == 1)
         #expect(driver.counts.stops == 1)
         #expect(driver.counts.attachments == 0)

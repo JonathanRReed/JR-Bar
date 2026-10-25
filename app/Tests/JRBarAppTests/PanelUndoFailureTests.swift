@@ -46,7 +46,7 @@ struct PanelUndoFailureTests {
     }
 
     @Test("a failed older Undo cannot restore over a newer offer or its retirement",
-          .timeLimit(.minutes(10)), arguments: [false, true])
+          .timeLimit(.minutes(2)), arguments: [false, true])
     func newerOfferOwnsSlot(_ retireNewOffer: Bool) async {
         let suite = ScratchDefaults.suiteName("panel-undo-newer")
         defer { ScratchDefaults.remove(suite) }
@@ -80,7 +80,7 @@ struct PanelUndoFailureTests {
     }
 
     @Test("starting another Clear retires the older pending Undo even before a new offer lands",
-          .timeLimit(.minutes(10)))
+          .timeLimit(.minutes(2)))
     func newerClearRetiresUndo() async {
         let suite = ScratchDefaults.suiteName("panel-undo-new-clear")
         defer { ScratchDefaults.remove(suite) }
@@ -100,7 +100,7 @@ struct PanelUndoFailureTests {
         #expect(store.toast?.hasPrefix("Undo failed:") != true)
     }
 
-    @Test("an older Clear reply cannot replace the newest Undo batch", .timeLimit(.minutes(10)))
+    @Test("an older Clear reply cannot replace the newest Undo batch", .timeLimit(.minutes(2)))
     func newestClearOwnsUndoBatch() async {
         let suite = ScratchDefaults.suiteName("panel-clear-order")
         defer { ScratchDefaults.remove(suite) }

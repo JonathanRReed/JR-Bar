@@ -5,7 +5,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("History clear and Undo recovery", .serialized, .timeLimit(.minutes(10)))
+@Suite("History clear and Undo recovery", .serialized, .timeLimit(.minutes(2)))
 struct HistoryClearRecoveryTests {
     @Test("Clear reports a refusal without refreshing it away")
     func clearRefusalIsVisible() async throws {

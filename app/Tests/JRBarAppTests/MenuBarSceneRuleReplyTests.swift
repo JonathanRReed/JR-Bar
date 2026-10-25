@@ -4,7 +4,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Automatic scene reply ownership", .serialized, .timeLimit(.minutes(10)))
+@Suite("Automatic scene reply ownership", .serialized, .timeLimit(.minutes(2)))
 struct MenuBarSceneRuleReplyTests {
     @Test("a stopped rule releases a late acquisition without writing the selected scene")
     func lateAcquisitionCannotOutliveRule() async throws {

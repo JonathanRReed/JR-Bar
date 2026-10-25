@@ -5,7 +5,7 @@ import Testing
 /// Fix sign-in, Update and the update check, end to end through the real client
 /// against the mock daemon. Nothing here touches a provider tool or the network:
 /// the mock answers from a table, as the daemon's own tests do with fake tools.
-@Suite("Mock core provider round trips", .serialized)
+@Suite("Mock core provider round trips", .serialized, .timeLimit(.minutes(2)))
 struct MockProviderRoundTripTests {
     @Test("Fix sign-in answers with the daemon's own sentence")
     @MainActor

@@ -1,9 +1,10 @@
 import Darwin
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarCore
 
-@Suite("Core supervisor overlapping stops", .serialized)
+@Suite("Core supervisor overlapping stops", .serialized, .timeLimit(.minutes(1)))
 struct CoreSupervisorStopTests {
     final class Launches: @unchecked Sendable {
         private let lock = NSLock()
@@ -22,36 +23,36 @@ struct CoreSupervisorStopTests {
     }
 
     @Test("overlapping waiting stops both wait for the child to exit")
-    func overlappingStops() throws {
+    func overlappingStops() async throws {
         let core = supervisor()
-        let ready = DispatchSemaphore(value: 0)
-        let terminated = DispatchSemaphore(value: 0)
-        let firstDone = DispatchSemaphore(value: 0)
+        let ready = TestSignal()
+        let terminated = TestSignal()
+        let firstDone = TestSignal()
         core.onOutput = { _, line in
             if line == "ready" { ready.signal() }
             if line == "term" { terminated.signal() }
         }
         core.start()
         defer { core.stop(gracePeriod: 0) }
-        try #require(ready.wait(timeout: .now() + 5) == .success)
+        try #require(await ready.wait())
         guard case .running(let pid) = core.state else { Issue.record("child did not start"); return }
         DispatchQueue.global().async {
             core.stop(gracePeriod: 2)
             firstDone.signal()
         }
-        try #require(terminated.wait(timeout: .now() + 5) == .success)
+        try #require(await terminated.wait())
         core.stop(gracePeriod: 0)
         #expect(kill(pid, 0) != 0, "a waiting stop returned with its child alive")
         #expect(core.state == .stopped)
-        #expect(firstDone.wait(timeout: .now() + 5) == .success)
+        #expect(await firstDone.wait())
         #expect(core.state == .stopped)
     }
 
     @Test("a nonwaiting stop permits a replacement and a waiting stop joins both children")
-    func nonwaitingStopThenWait() throws {
+    func nonwaitingStopThenWait() async throws {
         let core = supervisor()
-        let ready = DispatchSemaphore(value: 0)
-        let releaseOutput = DispatchSemaphore(value: 0)
+        let ready = TestSignal()
+        let releaseOutput = TestGate()
         let launches = Launches()
         core.processRunHook = { child in
             launches.add()
@@ -60,7 +61,7 @@ struct CoreSupervisorStopTests {
         core.onOutput = { _, line in
             if line == "ready" {
                 ready.signal()
-                _ = releaseOutput.wait(timeout: .now() + 10)
+                releaseOutput.wait()
             }
         }
         core.start()
@@ -68,7 +69,7 @@ struct CoreSupervisorStopTests {
             releaseOutput.signal()
             core.stop(gracePeriod: 0)
         }
-        try #require(ready.wait(timeout: .now() + 5) == .success)
+        try #require(await ready.wait())
         guard case .running(let pid) = core.state else { Issue.record("child did not start"); return }
         core.stop(gracePeriod: 0, waitForExit: false)
         core.start()

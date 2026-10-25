@@ -5,7 +5,7 @@ import Testing
 /// The `auto_dim` setting: the document mapping (paths, defaults, the
 /// daemon's lenient reading), `lights.auto_dim` decoding, the readout line
 /// under the Lighting controls, and the words the why popover uses.
-@Suite("Auto-dim")
+@Suite("Auto-dim", .timeLimit(.minutes(2)))
 struct AutoDimTests {
     @Test("the daemon's defaults read back from an empty document and round-trip through to_dict")
     func defaults() {
@@ -182,7 +182,7 @@ struct AutoDimTests {
 
 /// `set_setting auto_dim.*` against the mock: the document echoes the
 /// write and `lights.auto_dim` follows it.
-@Suite("Auto-dim against the mock", .serialized)
+@Suite("Auto-dim against the mock", .serialized, .timeLimit(.minutes(2)))
 struct AutoDimMockTests {
     @Test("auto_dim keys round-trip and lights.auto_dim follows the mode")
     @MainActor

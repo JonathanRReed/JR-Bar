@@ -4,7 +4,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Automatic Quiet lease acknowledgements", .serialized, .timeLimit(.minutes(10)))
+@Suite("Automatic Quiet lease acknowledgements", .serialized, .timeLimit(.minutes(2)))
 struct MenuBarQuietLeaseTests {
     @Test("a stopped rule releases a late acquisition by its own ID")
     func lateAcquisitionIsReleased() async throws {

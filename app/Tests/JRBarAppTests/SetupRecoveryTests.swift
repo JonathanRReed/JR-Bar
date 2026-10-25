@@ -6,7 +6,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Setup recovery", .serialized, .timeLimit(.minutes(10)))
+@Suite("Setup recovery", .serialized, .timeLimit(.minutes(2)))
 struct SetupRecoveryTests {
     @MainActor
     private final class PermissionGate {

@@ -41,7 +41,7 @@ struct WindowContentLifecycleTests {
 
         autoreleasepool { WindowContentLifecycle.detach(from: window) }
         for _ in 0..<3 { await Task.yield() }
-        try? await Task.sleep(for: .milliseconds(20))
+        await drainMainQueue()
         #expect(window.contentViewController == nil)
         #expect(firstHost == nil, "a closed window must not keep its SwiftUI graph")
         #expect(firstView == nil, "the NSHostingView goes too, not only its controller")
@@ -192,7 +192,7 @@ struct WindowContentLifecycleTests {
             delegate.windowWillClose?(Notification(name: NSWindow.willCloseNotification, object: window))
         }
         for _ in 0..<3 { await Task.yield() }
-        try? await Task.sleep(for: .milliseconds(20))
+        await drainMainQueue()
         #expect(window.contentViewController == nil, sourceLocation: sourceLocation)
         #expect(host == nil, "a closed window must not keep its SwiftUI graph", sourceLocation: sourceLocation)
         #expect(view == nil, "the hosting view goes with its controller", sourceLocation: sourceLocation)

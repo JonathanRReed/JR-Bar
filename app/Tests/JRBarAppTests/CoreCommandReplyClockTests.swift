@@ -2,7 +2,7 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Command fixture reply clock", .timeLimit(.minutes(10)))
+@Suite("Command fixture reply clock", .timeLimit(.minutes(2)))
 struct CoreCommandReplyClockTests {
     @Test("a held reply expires only when the injected clock reaches its deadline")
     func manualReplyDeadline() async throws {

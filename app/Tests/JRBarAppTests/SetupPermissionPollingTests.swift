@@ -3,7 +3,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Setup permission poll ownership", .serialized, .timeLimit(.minutes(10)))
+@Suite("Setup permission poll ownership", .serialized, .timeLimit(.minutes(2)))
 struct SetupPermissionPollingTests {
     @MainActor
     private final class Gate {

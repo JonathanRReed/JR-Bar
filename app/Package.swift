@@ -85,6 +85,7 @@ let package = Package(
         .executable(name: "JRBarApp", targets: ["JRBarApp"]),
     ],
     targets: [
+        .target(name: "JRBarTestSupport", path: "Tests/JRBarTestSupport"),
         // Pure Swift LEDS DSL model, parser and sampler. No AppKit.
         .target(name: "JRBarLEDS"),
         // The core daemon protocol: NDJSON over a Unix socket, Codable
@@ -113,7 +114,7 @@ let package = Package(
         .testTarget(
             name: "JRBarCoreTests",
             // JRBarLEDS parses the effect previews the mock renders.
-            dependencies: ["JRBarCore", "JRBarLEDS"],
+            dependencies: ["JRBarCore", "JRBarLEDS", "JRBarTestSupport"],
             resources: [.copy("Fixtures")],
             swiftSettings: testSwiftSettings,
             linkerSettings: testLinkerSettings
@@ -128,7 +129,7 @@ let package = Package(
         // runner's entry point wins the link, so `main.swift` never runs.
         .testTarget(
             name: "JRBarAppTests",
-            dependencies: ["JRBarApp", "JRBarCore", "JRBarUI"],
+            dependencies: ["JRBarApp", "JRBarCore", "JRBarUI", "JRBarTestSupport"],
             swiftSettings: testSwiftSettings + appSwiftSettings,
             linkerSettings: appTestLinkerSettings
         ),

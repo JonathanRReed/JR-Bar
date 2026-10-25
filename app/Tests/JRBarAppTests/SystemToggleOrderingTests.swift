@@ -5,7 +5,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("System toggle ordering", .timeLimit(.minutes(10)))
+@Suite("System toggle ordering", .timeLimit(.minutes(2)))
 struct SystemToggleOrderingTests {
     @MainActor
     @Observable final class Replies {

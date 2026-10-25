@@ -281,7 +281,8 @@ struct DockSwitcherKeysTests {
         let tap = SwitcherKeyTap()
         tap.keyboard = DockKeyboardLayout()
         var fired = 0
-        tap.onFrontPreview = { fired += 1 }
+        let delivered = TestEvents<Void>()
+        tap.onFrontPreview = { fired += 1; delivered.send(()) }
         #expect(try !eaten(tap, 50, flags: .maskAlternate), "off: ⌥` stays the accent key")
         tap.setFrontEnabled(true)
         #expect(try eaten(tap, 50, flags: .maskAlternate))
@@ -290,7 +291,7 @@ struct DockSwitcherKeysTests {
         #expect(try !eaten(tap, 50), "a bare ` types")
         // The eaten chord hops to the main queue; wait for the hop (as
         // long as a loaded machine needs), not a fixed beat.
-        for _ in 0..<500 where fired == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        _ = try await delivered.next()
         #expect(fired == 1, "the one eaten chord reached the watcher")
     }
 

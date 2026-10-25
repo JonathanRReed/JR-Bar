@@ -71,11 +71,15 @@ final class PresenceReporter {
     /// The sleeping renewal or retry, and when it wakes — a state frame
     /// that owes nothing new leaves it sleeping.
     private var check: Task<Void, Never>?
+    private(set) var sendTask: Task<Void, Never>?
     private var checkAt: Date?
     /// The Mirror had the camera as last seen, and the beat after it
     /// closed while the camera is still counted as its own.
     private var ownCamera = false
-    private var ownCameraSettling: Task<Void, Never>?
+    private(set) var ownCameraSettling: Task<Void, Never>?
+    var ownCameraDelay: (TimeInterval) async throws -> Void = { seconds in
+        try await Task.sleep(for: .seconds(seconds))
+    }
     /// The Focus re-read while connected, and the app-switch observer.
     private var focusPoll: Task<Void, Never>?
     private var activationObserver: (any NSObjectProtocol)?
@@ -267,8 +271,9 @@ final class PresenceReporter {
         ownCameraSettling = nil
         guard !live else { return }
         let grace = ownCameraGrace
+        let delay = ownCameraDelay
         ownCameraSettling = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(grace))
+            try? await delay(grace)
             guard !Task.isCancelled, let self else { return }
             self.ownCameraSettling = nil
             self.refresh()
@@ -297,7 +302,7 @@ final class PresenceReporter {
         schedule(at: nil)
         sending = true
         let sentFor = generation
-        Task { @MainActor [weak self] in
+        sendTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let taken = await self.send(report)
             self.sending = false

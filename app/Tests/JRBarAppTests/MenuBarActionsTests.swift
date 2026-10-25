@@ -261,7 +261,7 @@ struct MenuBarActionsTests {
         // The conflicting pair loses both; the off binding never asks.
         #expect(registrar.registered.map(\.id) == [1])
         registrar.onHotKey?(1)
-        try await Task.sleep(nanoseconds: 20_000_000)
+        await drainMainQueue()
         #expect(fired == [.commandBar])
         hotkeys.stop()
         #expect(registrar.unregistered == 1)
@@ -310,7 +310,7 @@ struct MenuBarActionsTests {
         shelf.setEnabled(true)
         let shelfHotKeyID = try #require(fake.registered.first { $0.key == UInt32(kVK_ANSI_D) }?.id)
         fake.onHotKey?(shelfHotKeyID)
-        try await Task.sleep(nanoseconds: 20_000_000)
+        await drainMainQueue()
         #expect(pressed == ["shelf"])
 
         // A fabricated Carbon event reads back the pair it was stamped

@@ -30,15 +30,8 @@ struct KeepAwakeHandoverTests {
             // Request arrival wakes the waiter directly instead of adding
             // polling tasks to the same actor that sends the next request.
             let id = UUID()
-            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
             return await withCheckedContinuation { continuation in
                 waits[id] = (count, continuation)
-                Task { [weak self] in
-                    try? await Task.sleep(until: deadline, clock: .continuous)
-                    guard let self else { return }
-                    self.waits.removeValue(forKey: id)?.continuation.resume(
-                        returning: self.requests.count >= count)
-                }
             }
         }
 

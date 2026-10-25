@@ -1,4 +1,5 @@
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarApp
 
@@ -43,11 +44,11 @@ struct KeepAwakeHoldersTests {
         let old = [KeepAwakeHolders.Holder(name: "Old", bundleID: "test.old", display: false)]
         let fresh = [KeepAwakeHolders.Holder(name: "Fresh", bundleID: "test.fresh", display: true)]
         let started = AsyncStream<Void>.makeStream()
-        let release = DispatchSemaphore(value: 0)
+        let release = TestGate()
         let first = Task {
             await KeepAwakeHolders.readInBackground {
                 started.continuation.yield(())
-                _ = release.wait(timeout: .now() + 5)
+                release.wait()
                 return old
             }
         }
@@ -65,11 +66,11 @@ struct KeepAwakeHoldersTests {
         defer { KeepAwakeHolders.lastRead = prior }
         let fixture = [KeepAwakeHolders.Holder(name: "Canceled", bundleID: "test.canceled", display: true)]
         let started = AsyncStream<Void>.makeStream()
-        let release = DispatchSemaphore(value: 0)
+        let release = TestGate()
         let reading = Task {
             await KeepAwakeHolders.readInBackground {
                 started.continuation.yield(())
-                _ = release.wait(timeout: .now() + 5)
+                release.wait()
                 return fixture
             }
         }

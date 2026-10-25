@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarApp
 @testable import JRBarCore
@@ -606,20 +607,25 @@ struct DockSwitcherTests {
     // MARK: The side-by-side reads
 
     @Test("each app's windows are read side by side — the open waits for the slowest, not the sum")
-    func readsSideBySide() {
+    func readsSideBySide() async {
         // Every reader waits for the other before it answers: read one
         // after the other, the first would sit out its whole timeout.
-        let met = DispatchGroup()
-        for _ in 0..<2 { met.enter() }
+        let met = TestSignal()
+        let release = TestGate()
+        defer { release.signal() }
         let reads = [DockSwitcherList.WindowRead(pid: 11, stamp: 1 << 20),
                      DockSwitcherList.WindowRead(pid: 12, stamp: 2 << 20)]
-        let readings = DockSwitcherList.readWindows(reads) { pid, stamp in
-            met.leave()
-            let together = met.wait(timeout: .now() + 5) == .success
-            let window = DockPreviewWindow(id: stamp | (together ? 1 : 0), title: "\(pid)", minimized: false,
+        let read = Task.detached { DockSwitcherList.readWindows(reads) { pid, stamp in
+            met.signal()
+            release.wait()
+            let window = DockPreviewWindow(id: stamp | 1, title: "\(pid)", minimized: false,
                                            fullScreen: nil, frame: nil, thumbnail: nil, element: nil)
             return ([window], pid == 12)
-        }
+        } }
+        #expect(await met.wait())
+        #expect(await met.wait())
+        release.signal()
+        let readings = await read.value
         #expect(readings.windows[11]?.map(\.id) == [(1 << 20) | 1], "both reads were in flight at once")
         #expect(readings.windows[12]?.map(\.id) == [(2 << 20) | 1], "each app keeps the stamp it was given")
         #expect(readings.unresponsive == [12], "a timed-out app is named so it can rest")

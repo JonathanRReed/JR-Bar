@@ -154,7 +154,7 @@ struct WaitEffectsRenderProofTests {
             usage: WindowsRenderProofTests.usage(heavy: false)))
         store.askDesk.clock = { now.addingTimeInterval(-seconds) }
         store.askDesk.send = { _, _, _ in
-            try await Task.sleep(for: .seconds(60))
+            _ = try await TestEvents<Void>().next()
             return CoreReply(id: "1", ok: true)
         }
         let permission = try #require(ask.asks.first)

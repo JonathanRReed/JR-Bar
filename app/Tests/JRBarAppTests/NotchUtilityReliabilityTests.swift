@@ -1,4 +1,5 @@
 import Foundation
+import JRBarTestSupport
 import SwiftUI
 import Testing
 @testable import JRBarApp
@@ -129,17 +130,18 @@ struct NotchUtilityReliabilityTests {
     @Test("a newer calendar refresh discards the earlier result while its own read is pending")
     func latestCalendarRefresh() async {
         let calendar = ShelfCalendarModel()
+        calendar.scheduleRefreshOverride = {}
         calendar.authorization = { .fullAccess }
         let start = Date().addingTimeInterval(600)
         let old = ShelfCalendarModel.Event(title: "Old meeting", start: start,
                                           end: start.addingTimeInterval(600), url: nil)
-        let gate = DispatchSemaphore(value: 0)
+        let gate = TestGate()
         await withCheckedContinuation { (entered: CheckedContinuation<Void, Never>) in
             calendar.fetchEvents = { _ in [old] }
             calendar.refreshNow()
             calendar.fetchEvents = { _ in
                 DispatchQueue.main.async { entered.resume() }
-                _ = gate.wait(timeout: .now() + 5)
+                gate.wait()
                 return []
             }
             calendar.refreshNow()

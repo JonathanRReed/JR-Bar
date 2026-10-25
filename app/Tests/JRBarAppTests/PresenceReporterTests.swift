@@ -6,7 +6,7 @@ import Testing
 /// The reporter between the notch's sensor monitor and the daemon: what
 /// it sends and when, whether it asks the monitor to run, and the call
 /// fact it hands the toys. The daemon is a closure that records.
-@Suite("Presence reporter")
+@Suite("Presence reporter", .timeLimit(.minutes(2)))
 @MainActor
 struct PresenceReporterTests {
     /// The daemon side: connected or not, its presence document, and
@@ -27,16 +27,6 @@ struct PresenceReporterTests {
                              daemon.sent.append(report)
                              return daemon.takes
                          })
-    }
-
-    /// Lets the send tasks run. The deadline is generous because a full
-    /// parallel run can keep the main actor busy for seconds at a time;
-    /// a passing wait returns as soon as the condition does.
-    private func settle(within seconds: TimeInterval = 90, _ until: @escaping () -> Bool) async {
-        let deadline = Date().addingTimeInterval(seconds)
-        while !until(), Date() < deadline {
-            try? await Task.sleep(nanoseconds: 10_000_000)
-        }
     }
 
     @Test("the monitor runs for the report exactly while the daemon is there")
@@ -66,16 +56,16 @@ struct PresenceReporterTests {
         #expect(daemon.sent.isEmpty, "nothing goes while the daemon is away")
         daemon.connected = true
         presence.coreChanged()
-        await settle { daemon.sent.count == 1 }
+        await presence.sendTask?.value
         #expect(daemon.sent == [CorePresenceReport(mic: true, camera: false)])
         presence.noteSensors(NotchSensorState(microphoneInUse: true, cameraInUse: true))
-        await settle { daemon.sent.count == 2 }
+        await presence.sendTask?.value
         presence.noteSensors(NotchSensorState())
-        await settle { daemon.sent.count == 3 }
+        await presence.sendTask?.value
         #expect(daemon.sent.map(\.camera) == [false, true, false])
         #expect(daemon.sent.last?.sensingCall == false, "the call's end is said, not left to go stale")
         // Nothing more is owed for a quiet reading.
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await presence.sendTask?.value
         #expect(daemon.sent.count == 3)
     }
 
@@ -89,18 +79,18 @@ struct PresenceReporterTests {
                                         send: { daemon.sent.append($0); return true },
                                         clock: { clock.now })
         presence.noteSensors(NotchSensorState(microphoneInUse: true))
-        await settle { daemon.sent.count == 1 }
+        await presence.sendTask?.value
         // The daemon's frames keep coming; none of them is a reason to
         // repeat the report inside the minute.
         for _ in 0..<5 {
             clock.now += 10
             presence.coreChanged()
         }
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await presence.sendTask?.value
         #expect(daemon.sent.count == 1)
         clock.now += 11
         presence.coreChanged()
-        await settle { daemon.sent.count == 2 }
+        await presence.sendTask?.value
         #expect(daemon.sent.count == 2)
         #expect(daemon.sent.filter { !$0.mic }.isEmpty)
     }
@@ -115,18 +105,18 @@ struct PresenceReporterTests {
                                         readFocus: { focus.on })
         daemon.connected = true
         presence.coreChanged()
-        await settle { daemon.sent.count == 1 }
+        await presence.sendTask?.value
         #expect(daemon.sent == [CorePresenceReport(focus: true)])
         presence.focusMayHaveChanged()
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await presence.sendTask?.value
         #expect(daemon.sent.count == 1, "an unchanged Focus owes nothing inside the minute")
         focus.on = false
         presence.focusMayHaveChanged()
-        await settle { daemon.sent.count == 2 }
+        await presence.sendTask?.value
         #expect(daemon.sent.last == CorePresenceReport(focus: false))
         focus.on = nil
         presence.focusMayHaveChanged()
-        await settle { daemon.sent.count == 3 }
+        await presence.sendTask?.value
         #expect(daemon.sent.last?.arguments["focus"] == nil, "access withdrawn: the key goes, the daemon reads its own")
     }
 
@@ -136,12 +126,12 @@ struct PresenceReporterTests {
         let presence = reporter(daemon)
         daemon.connected = true
         presence.coreChanged()
-        await settle { daemon.sent.count == 1 }
+        await presence.sendTask?.value
         daemon.connected = false
         presence.coreChanged()
         daemon.connected = true
         presence.coreChanged()
-        await settle { daemon.sent.count == 2 }
+        await presence.sendTask?.value
         #expect(daemon.sent.count == 2)
         #expect(daemon.sent.allSatisfy { !$0.sensingCall })
     }
@@ -181,8 +171,9 @@ struct PresenceReporterTests {
         daemon.connected = true
         daemon.mirror = true
         let presence = mirrored(daemon, grace: 0.05)
+        presence.ownCameraDelay = { _ in }
         presence.noteSensors(NotchSensorState(cameraInUse: true))
-        await settle { !daemon.sent.isEmpty }
+        await presence.sendTask?.value
         // A slow runner may renew the report before the next step; every
         // report so far still leaves the person's own look out.
         #expect(!daemon.sent.isEmpty)
@@ -194,7 +185,8 @@ struct PresenceReporterTests {
         daemon.mirror = false
         presence.ownCameraChanged()
         let held = CorePresenceReport(mic: false, camera: true)
-        await settle(within: 90) { daemon.sent.last == held }
+        await presence.ownCameraSettling?.value
+        await presence.sendTask?.value
         #expect(daemon.sent.last == held)
         #expect(presence.onCall)
     }
@@ -208,19 +200,19 @@ struct PresenceReporterTests {
         var heard: [Bool] = []
         presence.onCallChanged = { heard.append($0) }
         presence.noteSensors(NotchSensorState(cameraInUse: true))
-        await settle { daemon.sent.count == 1 }
+        await presence.sendTask?.value
         // Closed: the flag still reads the Mirror's session for a beat,
         // then drops.
         daemon.mirror = false
         presence.ownCameraChanged()
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await presence.sendTask?.value
         presence.noteSensors(NotchSensorState())
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await presence.sendTask?.value
         #expect(daemon.sent.allSatisfy { !$0.camera }, "no call the length of a stopRunning")
         #expect(heard.isEmpty)
         // A camera another app starts after the beat is a call at once.
         presence.noteSensors(NotchSensorState(cameraInUse: true))
-        await settle { daemon.sent.count == 2 }
+        await presence.sendTask?.value
         #expect(daemon.sent.last?.camera == true)
         #expect(heard == [true])
     }
@@ -238,6 +230,8 @@ struct PresenceReporterTests {
                                  utility: ShelfUtilityModel(power: noBattery), mirror: mirror, runtimeEnabled: false)
         card.mirrorEnabled = { true }
         let presence = PresenceReporter(core: CoreModel(), cards: { [card] })
+        let callChanges = TestEvents<Bool>()
+        presence.onCallChanged = { callChanges.send($0) }
         presence.noteSensors(NotchSensorState(cameraInUse: true))
         #expect(presence.onCall, "no Mirror: a live camera is someone's call")
         #expect(!PresenceReporter.mirrorHasCamera(card))
@@ -246,7 +240,7 @@ struct PresenceReporterTests {
         mirror.sync(enabled: true)
         // Summoned before its session is up: the lens can light first.
         #expect(PresenceReporter.mirrorHasCamera(card))
-        await settle { !presence.onCall }
+        _ = try? await callChanges.next(where: { !$0 })
         #expect(!presence.onCall, "the Mirror's own lens, seen without a sensor edge")
         card.pinned = false
         mirror.sync(enabled: false)

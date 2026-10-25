@@ -1,4 +1,5 @@
 import Foundation
+import JRBarTestSupport
 import JRBarCore
 import Testing
 @testable import JRBarApp
@@ -55,12 +56,12 @@ struct AlcoveFollowerReadTests {
     }
 
     private final class Gate: @unchecked Sendable {
-        private let semaphore = DispatchSemaphore(value: 0)
+        private let semaphore = TestGate()
         private let lock = NSLock()
         private var entered = 0
         func wait() {
             lock.lock(); entered += 1; lock.unlock()
-            _ = semaphore.wait(timeout: .now() + 10)
+            semaphore.wait()
         }
         func open() { semaphore.signal() }
         var readers: Int { lock.lock(); defer { lock.unlock() }; return entered }

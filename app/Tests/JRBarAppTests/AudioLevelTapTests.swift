@@ -32,7 +32,7 @@ import JRBarCore
     /// The engine start is async now — `live` flips on a main hop after
     /// the completion lands. One tick is enough for the fake.
     private func settle() async {
-        try? await Task.sleep(for: .milliseconds(50))
+        await drainMainQueue()
     }
 
     private func makeTap() -> (AudioLevelTap, () -> FakeEngine) {
@@ -201,7 +201,7 @@ import JRBarCore
         await settle()
         #expect(tap.live)
         engine().onDeath?()
-        try await Task.sleep(for: .milliseconds(50))
+        await drainMainQueue()
         #expect(!tap.live, "the IOProc dying must release the row")
     }
 
@@ -212,7 +212,7 @@ import JRBarCore
         tap.sync(visible: true, playing: true, enabled: true)
         await settle()
         engine().onLevels?([1, 0.5, 0, 0.5, 1, 0])
-        try await Task.sleep(for: .milliseconds(50))
+        await drainMainQueue()
         #expect(tap.levels == [1, 0.5, 0, 0.5, 1, 0])
         tap.stop()
         #expect(tap.levels == [Float](repeating: 0, count: 6))
@@ -228,7 +228,7 @@ import JRBarCore
         #expect(edges.isEmpty, "the start is async: nothing is live yet")
         await settle()
         engine().onDeath?()
-        try await Task.sleep(for: .milliseconds(50))
+        await drainMainQueue()
         tap.sync(visible: true, playing: true, enabled: true)
         await settle()
         tap.stop()
@@ -251,11 +251,11 @@ import JRBarCore
         await settle()
         #expect(utility.audioTapLive, "the async start lands on the card by itself")
         latest.onLevels?([0.2, 0.4, 0.6, 0.8, 1, 0.5])
-        try await Task.sleep(for: .milliseconds(50))
+        await drainMainQueue()
         #expect(utility.audioLevels == [0.2, 0.4, 0.6, 0.8, 1, 0.5])
 
         latest.onDeath?()
-        try await Task.sleep(for: .milliseconds(50))
+        await drainMainQueue()
         #expect(!utility.audioTapLive, "a dead tap gives the row back its decorative bars")
         #expect(utility.audioLevels == [Float](repeating: 0, count: 6), "no frozen frame")
     }

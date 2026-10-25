@@ -4,7 +4,7 @@ import Testing
 
 /// The settings document: path access over a partial document, the key
 /// catalogue against the seeded mock, and `set_setting` round-trips.
-@Suite("Settings document")
+@Suite("Settings document", .timeLimit(.minutes(2)))
 struct SettingsDocumentTests {
     @Test("paths parse keys and array indexes")
     func paths() {
@@ -101,7 +101,7 @@ struct SettingsDocumentTests {
     }
 }
 
-@Suite("Settings against the mock", .serialized)
+@Suite("Settings against the mock", .serialized, .timeLimit(.minutes(2)))
 struct SettingsMockTests {
     @Test("every catalogue key is in the seeded mock document")
     @MainActor

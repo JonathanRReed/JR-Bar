@@ -948,6 +948,9 @@ final class NotchBuddyToy: Toy {
     private(set) var livelyUntil: Date?
     @ObservationIgnored private var livelyWork: DispatchWorkItem?
     static let livelyWindow: TimeInterval = 1.4
+    @ObservationIgnored var livelyTimer: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
 
     private func stayLively(from now: Date = Date()) {
         guard !isShutdown else { return }
@@ -963,8 +966,7 @@ final class NotchBuddyToy: Toy {
             }
         }
         livelyWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.05, end.timeIntervalSinceNow),
-                                      execute: work)
+        livelyTimer(max(0.05, end.timeIntervalSinceNow), work)
     }
 
     /// The frame budget: 30 a second while anything moves, a slow

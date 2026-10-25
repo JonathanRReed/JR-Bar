@@ -117,11 +117,12 @@ struct SessionOpenerTests {
         let core = CoreModel()
         let coordinator = EventCoordinator(core: core, hudAnchor: { nil })
         let said = Log()
-        coordinator.onOpenRefused = { said.calls.append($0) }
+        let delivered = TestEvents<Void>()
+        coordinator.onOpenRefused = { said.calls.append($0); delivered.send(()) }
         // A peer's session is refused before anything is sent, so no
         // wiring is needed to hear the refusal come back.
         coordinator.notifications.onOpenSession?("remote:studio:claude:x")
-        for _ in 0..<200 where said.calls.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
+        _ = try? await delivered.next()
         #expect(said.calls == ["Running on studio — open it there"])
         #expect(core.logTail.contains { $0.message == "open_session refused: Running on studio — open it there" })
     }

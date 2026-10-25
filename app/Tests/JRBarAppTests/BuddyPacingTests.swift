@@ -115,7 +115,7 @@ struct BuddyPacingTests {
         _ = toy.sessionDigest()
         let before = toy.digestVersion
         core.apply(.state(CoreState(generation: 1, sessions: [working("a")])))
-        try await Task.sleep(for: .milliseconds(30))
+        #expect(await waitForObservedState { toy.digestVersion > before })
         #expect(toy.digestVersion > before)
         #expect(toy.sessionDigest().working == 1)
         _ = store
@@ -126,10 +126,12 @@ struct BuddyPacingTests {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
         let (toy, store, _) = makeToy()
         #expect(toy.livelyUntil == nil)
+        let timers = ManualTimers()
+        toy.livelyTimer = { timers.arm($0, $1) }
         toy.tapped(at: Date())
         #expect(toy.livelyUntil != nil)
         #expect(toy.frameInterval(scale: 1) == NotchBuddyToy.activeInterval)
-        try await Task.sleep(for: .seconds(NotchBuddyToy.livelyWindow + 0.3))
+        timers.advance(by: NotchBuddyToy.livelyWindow + 0.3)
         #expect(toy.livelyUntil == nil)
         #expect(toy.frameInterval(scale: 1) == 0.25)
         _ = store

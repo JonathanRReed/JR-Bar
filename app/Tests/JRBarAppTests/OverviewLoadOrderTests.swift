@@ -64,7 +64,7 @@ struct OverviewLoadOrderTests {
     // MARK: The roster
 
     @Test("background polling coalesces a slow roster read and retries after failure",
-          .timeLimit(.minutes(10)))
+          .timeLimit(.minutes(2)))
     func backgroundPollingDoesNotStarveSlowReads() async throws {
         let gate = Gate<CoreRoster>()
         let store = makeStore(gate)
@@ -93,7 +93,7 @@ struct OverviewLoadOrderTests {
     }
 
     @Test("explicit refresh replaces a pending background read",
-          .timeLimit(.minutes(10)))
+          .timeLimit(.minutes(2)))
     func explicitRefreshSupersedesBackgroundRead() async throws {
         let gate = Gate<CoreRoster>()
         let store = makeStore(gate)
@@ -113,7 +113,7 @@ struct OverviewLoadOrderTests {
     }
 
     @Test("events during a roster read earn one follow-up without replacing the pending read",
-          .timeLimit(.minutes(10)))
+          .timeLimit(.minutes(2)))
     func eventsDuringReadAreNotLost() async throws {
         let gate = Gate<CoreRoster>()
         let store = makeStore(gate)
@@ -137,7 +137,7 @@ struct OverviewLoadOrderTests {
     }
 
     @Test("closing the window drops the pending event follow-up",
-          .timeLimit(.minutes(10)))
+          .timeLimit(.minutes(2)))
     func closeDropsEventFollowUp() async throws {
         let gate = Gate<CoreRoster>()
         let store = makeStore(gate)
@@ -151,7 +151,7 @@ struct OverviewLoadOrderTests {
     }
 
     @Test("an older roster load that finishes last does not overwrite the newer one",
-          .timeLimit(.minutes(10)))
+          .timeLimit(.minutes(2)))
     func olderRosterLoadLandingLateIsDropped() async throws {
         let gate = Gate<CoreRoster>()
         let store = makeStore(gate)
@@ -172,7 +172,7 @@ struct OverviewLoadOrderTests {
         #expect(store.error == nil)
     }
 
-    @Test("loads that finish in order show the last one, as they always did", .timeLimit(.minutes(10)))
+    @Test("loads that finish in order show the last one, as they always did", .timeLimit(.minutes(2)))
     func inOrderLoadsShowTheLast() async throws {
         let gate = Gate<CoreRoster>()
         let store = makeStore(gate)
@@ -187,7 +187,7 @@ struct OverviewLoadOrderTests {
         #expect(store.roster.map(\.id) == ["claude:second"])
     }
 
-    @Test("a single load shows its reply", .timeLimit(.minutes(10)))
+    @Test("a single load shows its reply", .timeLimit(.minutes(2)))
     func singleLoadIsUnchanged() async throws {
         let gate = Gate<CoreRoster>()
         let store = makeStore(gate)
@@ -201,7 +201,7 @@ struct OverviewLoadOrderTests {
     }
 
     @Test("an older load that fails late does not put an error over a newer success",
-          .timeLimit(.minutes(10)))
+          .timeLimit(.minutes(2)))
     func olderFailureLandingLateIsDropped() async throws {
         let gate = Gate<CoreRoster>()
         let store = makeStore(gate)
@@ -218,7 +218,7 @@ struct OverviewLoadOrderTests {
     }
 
     @Test("the newest load failing is the error shown, whatever the older one read",
-          .timeLimit(.minutes(10)))
+          .timeLimit(.minutes(2)))
     func newestFailureIsShown() async throws {
         let gate = Gate<CoreRoster>()
         let store = makeStore(gate)
@@ -235,7 +235,7 @@ struct OverviewLoadOrderTests {
         #expect(store.error != nil)
     }
 
-    @Test("an older roster load cannot clear the spinner of a newer refresh", .timeLimit(.minutes(10)))
+    @Test("an older roster load cannot clear the spinner of a newer refresh", .timeLimit(.minutes(2)))
     func olderRosterCannotClearSpinner() async throws {
         let gate = Gate<CoreRoster>()
         let store = makeStore(gate)
@@ -251,7 +251,7 @@ struct OverviewLoadOrderTests {
         #expect(!store.loading)
     }
 
-    @Test("a background load that replaces a manual refresh releases its spinner", .timeLimit(.minutes(10)))
+    @Test("a background load that replaces a manual refresh releases its spinner", .timeLimit(.minutes(2)))
     func backgroundLoadReleasesReplacedSpinner() async throws {
         let gate = Gate<CoreRoster>()
         let store = makeStore(gate)
@@ -309,7 +309,7 @@ struct OverviewLoadOrderTests {
     }
 
     @Test("an older transcript read that finishes last does not overwrite the newer one",
-          .timeLimit(.minutes(10)))
+          .timeLimit(.minutes(2)))
     func olderTimelineLandingLateIsDropped() async throws {
         let gate = Gate<CoreTimelinePage>()
         let store = OverviewStore(core: CoreModel())
@@ -332,7 +332,7 @@ struct OverviewLoadOrderTests {
     }
 
     @Test("a transcript read for a row that is no longer selected is still dropped",
-          .timeLimit(.minutes(10)))
+          .timeLimit(.minutes(2)))
     func timelineForAnotherSelectionIsDropped() async throws {
         let gate = Gate<CoreTimelinePage>()
         let store = OverviewStore(core: CoreModel())
@@ -348,7 +348,7 @@ struct OverviewLoadOrderTests {
         #expect(store.timelineSessionID == "claude:session:b")
         #expect(store.timeline.first?.text == "for b")
     }
-    @Test("an older transcript read cannot clear a newer selection's spinner", .timeLimit(.minutes(10)))
+    @Test("an older transcript read cannot clear a newer selection's spinner", .timeLimit(.minutes(2)))
     func olderTimelineCannotClearSpinner() async throws {
         let gate = Gate<CoreTimelinePage>()
         let store = OverviewStore(core: CoreModel())
@@ -366,7 +366,7 @@ struct OverviewLoadOrderTests {
         #expect(store.timeline.first?.text == "for b")
     }
 
-    @Test("a failed older-page read cannot put an error over a newer selection", .timeLimit(.minutes(10)))
+    @Test("a failed older-page read cannot put an error over a newer selection", .timeLimit(.minutes(2)))
     func earlierTimelineFailureAfterSelectionIsDropped() async throws {
         let gate = Gate<CoreTimelinePage>()
         let store = OverviewStore(core: CoreModel())

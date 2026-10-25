@@ -37,7 +37,7 @@ struct SettingsWindowLifecycleTests {
             controller.detachSettingsContent(from: window)
         }
         for _ in 0..<3 { await Task.yield() }
-        try? await Task.sleep(for: .milliseconds(20))
+        await drainMainQueue()
         #expect(window.contentViewController == nil)
         #expect(firstHost == nil,
                 "closing Settings must release the hidden SwiftUI graph and its timelines")

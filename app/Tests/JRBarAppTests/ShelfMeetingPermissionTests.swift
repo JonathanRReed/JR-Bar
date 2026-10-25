@@ -1,5 +1,6 @@
 import EventKit
 import Foundation
+import JRBarTestSupport
 import Testing
 @testable import JRBarApp
 
@@ -62,12 +63,10 @@ struct ShelfMeetingPermissionTests {
         var cleared = 0
         watch.onSoon = { _ in headsUps += 1 }
         watch.onLiveChange = { if $0 == nil { cleared += 1 } }
-        let gate = DispatchSemaphore(value: 0)
+        let gate = TestGate()
         let upcoming = event(start: now.addingTimeInterval(60))
         watch.fetchEvents = { _ in
-            if gate.wait(timeout: .now() + 5) == .timedOut {
-                Issue.record("meeting fetch was not released")
-            }
+            gate.wait()
             return [upcoming]
         }
         watch.sync(enabled: true)

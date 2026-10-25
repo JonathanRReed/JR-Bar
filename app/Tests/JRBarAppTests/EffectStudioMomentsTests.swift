@@ -33,10 +33,10 @@ import Testing
     static func host<V: View>(_ view: V, until done: @MainActor (NSHostingView<V>) -> Bool) async -> NSHostingView<V> {
         let hosting = NSHostingView(rootView: view)
         hosting.frame = NSRect(x: 0, y: 0, width: 780, height: 900)
-        for _ in 0..<150 {
+        while !Task.isCancelled {
             hosting.layoutSubtreeIfNeeded()
             if done(hosting) { break }
-            try? await Task.sleep(for: .milliseconds(20))
+            await drainMainQueue()
         }
         return hosting
     }

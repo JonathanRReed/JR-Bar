@@ -7,7 +7,7 @@ import JRBarCore
 /// (a record that omits it or serves a string can't sink the whole
 /// `/api/search` array) and `durationSeconds` never traps on a
 /// server-supplied absurdity.
-@Suite(.timeLimit(.minutes(10))) struct LyricsStoreTests {
+@Suite(.timeLimit(.minutes(2))) struct LyricsStoreTests {
 
     @MainActor
     @Test("memory misses expire while playing and after reset", arguments: [false, true])

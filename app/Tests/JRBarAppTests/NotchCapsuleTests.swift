@@ -294,9 +294,11 @@ struct NotchCapsuleTests {
         // folds it while the cursor still sits on the island — the
         // remembered hover used to survive, so the next capsule's
         // settle re-grew a card the user had just let go.
+        let hover = ManualTimers()
+        toy.hoverTimer = { hover.arm($0, $1) }
         toy.setHovered(true)
         #expect(!toy.islandExpanded, "hover alone never grows the card")
-        try await Task.sleep(for: .seconds(0.55))
+        hover.advance(by: 0.55)
         #expect(toy.islandExpanded, "a hover that stayed earned the card")
         toy.islandSwipe(.down)
         #expect(!toy.islandExpanded)

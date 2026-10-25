@@ -47,10 +47,7 @@ import Testing
     /// full parallel run can hold the main actor for seconds; a pass
     /// returns as soon as the send lands.
     private func settle(_ state: SystemTogglesStore.State) async {
-        let deadline = Date().addingTimeInterval(30)
-        while state.applying.contains(.keepAwake), Date() < deadline {
-            try? await Task.sleep(nanoseconds: 10_000_000)
-        }
+        await state.leaseTask?.value
     }
 
     /// Today at `hour:minute` on this Mac's clock.
