@@ -1494,6 +1494,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func pushScreenBarSetting(_ shown: Bool) {
         let live = core?.isLive == true
         screenBarSync.toggled(shown: shown, live: live, now: Date())
+        defer { rearmAskAgeTick() }
         guard live else { return }
         sendScreenBarSetting(shown)
     }
@@ -1530,6 +1531,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// follows; a choice made while the daemon was down is pushed to it.
     private func reconcileScreenBarSetting() {
         guard let core else { return }
+        defer { rearmAskAgeTick() }
         let document = core.settings.map { SettingsDocument($0.document) }
         let decision = screenBarSync.reconcile(live: core.isLive,
                                                daemonValue: document?.bool("virtual_status_device_enabled"),
@@ -1570,6 +1572,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             _ = core.connection
             Self.observedAppFacts(core)
             _ = core.lights
+            _ = ScreenBarLiveStatus.shared.motionNote
+            _ = ScreenBarLiveStatus.shared.followingAlcove
             _ = core.hello
             _ = core.settings?.generation
             // The media ear rides the shared feed's reduce — tracked so
@@ -1631,7 +1635,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             rearmAskAgeTick()
         }
         if changes.contains(.devices) { screenBar?.hardware = core.isLive ? core.devices : nil }
-        if changes.contains(.connection) { refreshPackagedHooksIfNeeded(core: core) }
+        refreshPackagedHooksIfNeeded(core: core)
         switch core.connection {
         case .connected where core.state != nil:
             statusItem.setCore(description: "connected (\(core.hello?.coreVersion ?? "?"))")
@@ -1661,7 +1665,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             utilitiesStore?.menuBar.coreFactsChanged()
         }
         if rosterChanged || changes.contains(.usage) { refreshIconStyle() }
-        if changes.contains(.lights) { refreshLights() }
         if !changes.intersection([.settings, .connection]).isEmpty {
             refreshAlcoveFollowing()
             refreshScreenBarGlow()
@@ -1669,10 +1672,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             reconcileScreenBarSetting()
             toysStore?.notch.syncSensorMonitor()
         }
+        // This also reads local motion and Alcove state. Its own program
+        // and description guards keep identical inputs quiet.
+        refreshLights()
     }
 
-    /// One sleeping task refreshes the icon, wings and open card at the next
-    /// ask-age, provider turn or quota reset. Unchanged facts keep the wake.
+    /// One task refreshes timed UI at its next boundary. Stable state frames
+    /// leave the wake alone, and no clock runs without a timed input.
     private var askAgeTick: Task<Void, Never>?
     private var askAgeTickAt: Double?
     private var rearmingAskAgeTick = false
@@ -1683,7 +1689,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         defer { rearmingAskAgeTick = false }
         store?.compactAwakeEligible = screenBar?.canCycleCompactAwake ?? false
         let usage = core?.isLive == true ? core?.usage ?? [] : []
+        let rows = store?.rows ?? []
+        let elapsedSince = rows.compactMap { $0.since?.timeIntervalSince1970 }
+        let pendingUntil = screenBarSync.pending.map { $0.at.timeIntervalSince1970 + ScreenBarDaemonSync.pendingWindow }
+        let deadlines = rows.compactMap(\.snoozedUntil) + [pendingUntil].compactMap { $0 }
         let next = AppCoreRefresh.nextTick(askTick: store?.nextAskAgeTick(), usage: usage,
+                                          elapsedSince: elapsedSince, deadlines: deadlines,
                                           now: Date().timeIntervalSince1970)
         screenBar?.earMarks = store?.screenBarEarMarks ?? ScreenBarEarMarks()
         guard next != askAgeTickAt || askAgeTick == nil || next == nil else { return }
@@ -1697,6 +1708,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, let self else { return }
             self.askAgeTick = nil
+            self.reconcileScreenBarSetting()
+            self.refreshAggregate()
             self.refreshIconStyle()
             self.screenBar?.wings = self.store?.screenBarWings ?? .empty
             self.screenBar?.earMarks = self.store?.screenBarEarMarks ?? ScreenBarEarMarks()

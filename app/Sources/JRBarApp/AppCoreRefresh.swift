@@ -1,7 +1,8 @@
+import Foundation
 import JRBarCore
 
-/// Which app refreshers need the newly decoded facts. The previous frame
-/// is retained once, rather than retaining a closure for each message.
+/// Which app refreshers need the newly decoded facts. Retains one prior
+/// frame so each refresher can compare the inputs it reads.
 struct AppCoreRefresh {
     struct Changes: OptionSet {
         let rawValue: Int
@@ -13,10 +14,24 @@ struct AppCoreRefresh {
         static let lights = Self(rawValue: 1 << 5)
         static let all: Self = [.connection, .settings, .roster, .usage, .devices, .lights]
     }
-    /// Expiry is a clock input even when the daemon publishes no new facts.
-    static func nextTick(askTick: Double?, usage: [CoreProviderUsage], now: Double) -> Double? {
+    /// Clock inputs keep changing between daemon frames. Use one wake for
+    /// countdowns, elapsed labels and pending writes, at their next boundary.
+    static func nextTick(askTick: Double?, usage: [CoreProviderUsage], elapsedSince: [Double] = [],
+                         deadlines: [Double] = [], now: Double) -> Double? {
         let resets = usage.flatMap(\.windows).compactMap(\.resetsAt)
-        return (resets + [askTick].compactMap { $0 }).filter { $0.isFinite && $0 > now }.min()
+            .filter { $0.isFinite && $0 > now }
+        var candidates = resets + deadlines + [askTick].compactMap { $0 }
+        if !resets.isEmpty { candidates.append((floor(now / 60) + 1) * 60) }
+        for since in elapsedSince where since.isFinite {
+            let age = max(0, now - since)
+            let step: Double
+            if age < 60 { step = 1 }
+            else if age < 86_400 { step = 60 }
+            else { step = 3_600 }
+            let boundary = floor(age / step) + 1
+            candidates.append(since + boundary * step)
+        }
+        return candidates.filter { $0.isFinite && $0 > now }.min()
     }
 
     private var previous: Snapshot?
