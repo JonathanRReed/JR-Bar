@@ -100,8 +100,9 @@ struct AlcoveEventsTests {
         #expect(queue.finish(at: t0 + AlcoveCapsuleQueue.pendingStaleAfter) == .idle)
     }
 
-    @Test("an interrupted notice reports eviction when newer equal priority news waits")
-    func interruptedNoticeFallsBack() {
+    @Test("only a briefly shown fresh notice falls back when interrupted",
+          arguments: [0.5, 1.499, 1.5, 2.0, 30.0, 31.0])
+    func interruptedNoticeFallsBack(shownFor: TimeInterval) {
         final class Evictions: @unchecked Sendable {
             let lock = NSLock()
             var ids: [String] = []
@@ -112,10 +113,10 @@ struct AlcoveEventsTests {
         queue.onEvict = { evicted.append($0) }
         _ = queue.offer(notice(.device, key: "device", id: "device"), at: t0)
         let waiting = notice(.completed, key: "news", id: "news")
-        _ = queue.offer(waiting, at: t0 + 1)
-        _ = queue.offer(notice(.ask), at: t0 + 2)
-        #expect(evicted.ids == ["device"])
-        #expect(queue.finish(at: t0 + 4) == .now(waiting))
+        _ = queue.offer(waiting, at: t0 + shownFor)
+        _ = queue.offer(notice(.ask), at: t0 + shownFor)
+        #expect(evicted.ids == (shownFor < 1.5 ? ["device"] : []))
+        #expect(queue.finish(at: t0 + shownFor + 2) == .now(waiting))
     }
 
     @Test("a lone notice shows now; a second queues; a third replaces it — newest wins")

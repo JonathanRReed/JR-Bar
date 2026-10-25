@@ -419,6 +419,9 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
         }
     }
 
+    /// A notice shown for this long needs no second announcement elsewhere.
+    private static let interruptedFallbackThreshold: TimeInterval = 1.5
+
     private mutating func parkInterrupted(at now: Date) {
         guard let shown = current else { return }
         let shownAt = currentShownAt ?? now
@@ -429,7 +432,7 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
         if fresh && (!pendingFresh || outranks) {
             wait(shown, at: now)
             pendingAt = shownAt
-        } else {
+        } else if fresh && now.timeIntervalSince(shownAt) < Self.interruptedFallbackThreshold {
             onEvict?(shown)
         }
     }
