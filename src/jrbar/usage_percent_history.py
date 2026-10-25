@@ -173,6 +173,7 @@ def append_percent_observations(
     *,
     retention_projection: ProviderInstanceRetentionProjection | None = None,
     now_epoch: float | None = None,
+    prune_existing: bool = True,
 ) -> int:
     """Persist pre-filtered records and enforce exact-instance retention."""
     if retention_projection is None:
@@ -184,6 +185,14 @@ def append_percent_observations(
         return len(records)
 
     current_epoch = time.time() if now_epoch is None else float(now_epoch)
+    if not prune_existing:
+        retained_new = _retained_history_records(
+            _serialize_history(records), retention_projection, now_epoch=current_epoch,
+        )
+        if retained_new:
+            append_private_text(path, _serialize_history(retained_new))
+            audit.compact_jsonl_file(path)
+        return len(retained_new)
     try:
         existing = read_private_text(path, errors="replace")
         existed = True
@@ -511,10 +520,11 @@ def record_state_observations(
                         and value[1]
                         >= observed_epoch - retention_now[key[:2]] * 86_400.0
                     }
-                    controller._jrbar_percent_history_retention_signature = (
-                        completed.retention_signature
-                    )
-                    controller._jrbar_percent_history_retention_epoch = observed_epoch
+                    if needs_retention:
+                        controller._jrbar_percent_history_retention_signature = (
+                            completed.retention_signature
+                        )
+                        controller._jrbar_percent_history_retention_epoch = observed_epoch
                 for record in completed.records:
                     committed_now[
                         (
@@ -537,6 +547,7 @@ def record_state_observations(
             list(records),
             retention_projection=retention,
             now_epoch=observed_epoch,
+            prune_existing=needs_retention,
         )
 
     try:

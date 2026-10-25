@@ -609,3 +609,33 @@ def test_a_stale_reading_is_not_recorded_as_a_new_observation(monkeypatch, tmp_p
     assert writer.close(timeout_seconds=1.0) is True
     stored = [json.loads(line) for line in target.read_text().splitlines()]
     assert [row["provider_id"] for row in stored] == ["codex"]
+
+
+def test_recording_batches_expiry_but_applies_policy_changes_immediately(monkeypatch, tmp_path):
+    target = tmp_path / "history.jsonl"
+    controller = SimpleNamespace()
+    clock = [NOW_EPOCH]
+    monkeypatch.setattr("jrbar.usage_percent_history.time.time", lambda: clock[0])
+    monkeypatch.setattr("jrbar.usage_percent_history.default_percent_history_path", lambda: target)
+    retention = _retention(("claude", "default", 7))
+    old = dict(provider_id="claude", source_instance_id="default", lane_id="weekly",
+               remaining_percent=50.0, observed_at_epoch=NOW_EPOCH - 7 * 86400 + 1)
+    append_percent_observations(target, [old], retention_projection=retention, now_epoch=clock[0])
+    writer = SerialPersistenceWriter()
+    assert record_state_observations(controller, (), writer=writer, retention_projection=retention)
+    assert writer.wait_idle(timeout_seconds=2)
+    clock[0] += 15
+    snapshot = SimpleNamespace(provider_id="claude", lanes=(SimpleNamespace(lane_id="weekly", remaining_percent=49),))
+    inode = target.stat().st_ino
+    assert record_state_observations(controller, (snapshot,), writer=writer, retention_projection=retention)
+    assert writer.wait_idle(timeout_seconds=2)
+    assert target.stat().st_ino == inode
+    clock[0] = NOW_EPOCH + 1800
+    assert record_state_observations(controller, (), writer=writer, retention_projection=retention)
+    assert writer.wait_idle(timeout_seconds=2)
+    assert len(target.read_text().splitlines()) == 1
+    assert record_state_observations(controller, (), writer=writer,
+                                      retention_projection=_retention(("claude", "default", 0)))
+    assert writer.wait_idle(timeout_seconds=2)
+    assert target.read_text() == ""
+    assert writer.close(timeout_seconds=2)
