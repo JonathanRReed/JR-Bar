@@ -49,6 +49,10 @@ def main():
             category = "Weave stripes"
         elif "two endpoints" in warning:
             category = "Tide endpoints on Dot"
+        elif "losing their motion" in warning:
+            category = "keyframes lose motion"
+        elif "different durations" in warning:
+            category = "different Studio periods"
         elif "512 bytes or 20 lines" in warning:
             category = ">512 bytes / 20 lines"
         else:

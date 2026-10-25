@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 from fractions import Fraction
+from functools import lru_cache
 
 from .animation import (
     ColorList,
@@ -284,7 +285,7 @@ def _share_steps(lines, slots, roll_grid=None):
     return steps
 
 
-def _share_frame(steps, count, fraction):
+def _share_frame(steps, count, fraction, *, firmware_curves=False, warm=True):
     """Evaluate a share at a cycle fraction, including its returning frame."""
     from .motion_shapes import mix
 
@@ -292,7 +293,7 @@ def _share_frame(steps, count, fraction):
     current = ["#000000"] * count
     # A pulse returns to its starting colour. Warm one complete cycle so
     # the first sample has the same baseline as every later cycle.
-    for target in (total, fraction * total):
+    for target in ((total, fraction * total) if warm else (fraction * total,)):
         elapsed = 0
         for step in steps:
             span = step_duration_ms(step)
@@ -304,7 +305,11 @@ def _share_frame(steps, count, fraction):
                     continue
                 duration = timing.effective_duration_ms
                 amount = min(1.0, local / duration) if duration else 1.0
-                if timing.easing == "pulse":
+                if firmware_curves:
+                    from .linked_sync import curve_weight
+
+                    amount = curve_weight(timing.easing, amount)
+                elif timing.easing == "pulse":
                     amount = (1 - math.cos(2 * math.pi * amount)) / 2
                 elif timing.easing == "cosine":
                     amount = (1 - math.cos(math.pi * amount)) / 2
@@ -318,51 +323,92 @@ def _share_frame(steps, count, fraction):
     return current
 
 
-def _keyframe_shares(agents, settings, slots, count):
-    """Share motions use four equal phases at their Studio cycle duration.
+KEYFRAME_MAX_ERROR = 24
 
-    Geometry is evaluated locally, so a three-LED and a two-LED share have
-    the same clock. Linear keyframes let unlike motions share the union of
-    their phase boundaries without changing any chosen cycle duration.
-    Automatic follows the first chosen provider's clock.
+
+@lru_cache(maxsize=256)
+def _keyframe_fidelity(lines, count, period):
+    """Measure 8-bit error against the native clock, never a retimed reference.
+
+    Check every 20 ms over a native or Studio cycle, whichever is longer,
+    plus both sides of every native boundary. Cache by rendered bytes so a
+    daemon refresh does not repeat the measurement for unchanged settings.
     """
-    from .motion_shapes import mix
+    from .motion_shapes import _channels
+
+    local = _share_steps(lines, tuple(range(count)))
+    native_period = sum(step_duration_ms(step) for step in local)
+    frames = [_share_frame(local, count, Fraction(index, 4)) for index in range(5)]
+    keyframes = []
+    previous = 0
+    for index in range(5):
+        colors = frames[index % 4]
+        end = round(index * period / 4)
+        keyframes.append(PaintStep((IndexedPaint(tuple(enumerate(colors)), Timing(end - previous, "linear")),)))
+        previous = end
+    horizon = max(period, native_period)
+    times = set(range(0, horizon + 1, 20)) | {horizon}
+    elapsed = 0
+    for step in local:
+        for segment in step.segments:
+            start = elapsed + (segment.timing.delay_ms or 0)
+            end = start + segment.timing.effective_duration_ms
+            times.update(max(0, min(horizon, value + offset))
+                         for value in (start, end) for offset in (-1, 0, 1))
+        elapsed += step_duration_ms(step)
+    error = 0
+    for time in times:
+        for warm in (False, True):
+            native = _share_frame(local, count, Fraction(time % native_period, native_period),
+                firmware_curves=True, warm=warm or time >= native_period)
+            simplified = _share_frame(keyframes, count, Fraction(time % period, period), warm=warm or time >= period)
+            error = max(error, *(abs(a - b) for left, right in zip(native, simplified)
+                                for a, b in zip(_channels(left), _channels(right))))
+    return frames, native_period, error
+
+
+def _keyframe_shares(agents, settings, slots, count, warnings):
+    """Use four linear phases only for equal Studio periods that pass fidelity."""
+    from .colors import PROVIDER_ANIMATION_LABELS
 
     default = round(settings.effective_speed_seconds(settings.mix_mode) * 1000)
     chosen = [settings.agent_cycle_ms(agent.provider, default) for agent in agents
               if settings.agent_animation(agent.provider) != "auto"]
-    automatic_period = chosen[0] if chosen else default
-    periods, frames = [], []
+    if len(set(chosen)) > 1:
+        raise CannotFit("the chosen Studio cycles have different durations")
+    period = chosen[0] if chosen else default
+    frames, measurements = [], []
     for agent, share in zip(agents, slots):
-        period = (automatic_period if settings.agent_animation(agent.provider) == "auto"
-                  else settings.agent_cycle_ms(agent.provider, default))
-        periods.append(period)
-        local = _share_steps(_body(agent, settings, len(share), compact=True), tuple(range(len(share))))
-        frames.append([_share_frame(local, len(share), Fraction(index, 4)) for index in range(5)])
-    duration = math.lcm(*periods)
-    # Each phase needs a physical line. Reject before constructing an
-    # unbounded union for unrelated Studio tempos.
-    if duration > 65535 or sum(duration // period * 4 for period in periods) > 72:
-        raise CannotFit("the program exceeds 512 bytes or 20 lines")
-    boundaries = sorted({Fraction(turn * period, 1) + Fraction(index * period, 4)
-                         for period in periods for turn in range(duration // period)
-                         for index in range(5)})
-    if len(boundaries) + 1 > 19:
-        raise CannotFit("the program exceeds 512 bytes or 20 lines")
+        samples, native_period, error = _keyframe_fidelity(
+            tuple(_body(agent, settings, len(share), compact=True)), len(share), period)
+        frames.append(samples)
+        measurements.append((native_period, error))
+    labels = list(dict.fromkeys(PROVIDER_ANIMATION_LABELS.get(settings.agent_animation(agent.provider),
+        settings.agent_animation(agent.provider)) for agent in agents))
+    if any(error > KEYFRAME_MAX_ERROR for _native_period, error in measurements):
+        names = " and ".join(labels) if len(labels) > 1 else labels[0] + " animations"
+        raise CannotFit(names + " take turns because they can't share the strip without losing their motion")
     lines = []
     previous = 0
-    for boundary in boundaries:
+    for index in range(5):
         colors = ["#000000"] * count
-        for share, period, samples in zip(slots, periods, frames):
-            phase = (boundary % period) * 4 / period
-            index = int(phase)
-            amount = float(phase - index)
+        for share, samples in zip(slots, frames):
             for local, physical in enumerate(share):
-                colors[physical] = mix(samples[index][local], samples[index + 1][local], amount)
-        span = round(boundary) - previous
+                colors[physical] = samples[index % 4][local]
+        boundary = round(index * period / 4)
+        span = boundary - previous
         lines.append(" ".join(colors) + f" {format_time(span)} linear")
-        previous = round(boundary)
-    return _checked(lines, count)
+        previous = boundary
+    program = _checked(lines, count)
+    for agent, (native_period, error) in zip(agents, measurements):
+        label = PROVIDER_ANIMATION_LABELS.get(settings.agent_animation(agent.provider), settings.agent_animation(agent.provider))
+        others = " and ".join(name for name in labels if name != label)
+        warning = f"{label} is simplified slightly to share the strip" + (f" with {others}" if others else "")
+        if native_period != period:
+            warning += f"; its native {native_period} ms cycle plays in {period} ms"
+        if (error or native_period != period) and warning + "." not in warnings:
+            warnings.append(warning + ".")
+    return program
 
 
 def _shares(agents, settings, count, mode, warnings=None):
@@ -400,14 +446,13 @@ def _shares(agents, settings, count, mode, warnings=None):
     if explicit:
         chosen_spans = [step_duration_ms(step) for step in tracks[explicit[0]]]
         period = sum(chosen_spans)
-        default = round(settings.effective_speed_seconds(settings.mix_mode) * 1000)
         common = all(
             [step_duration_ms(step) for step in tracks[index]] == chosen_spans
-            and settings.agent_cycle_ms(agents[index].provider, default) == period
             for index in explicit)
         if common:
             # Automatic has no chosen clock. Follow the chosen steps so
-            # their cosine sweeps, pulses and pauses remain untouched.
+            # their curves and native period remain untouched, including
+            # renderer rounding and the slower two-LED scanner cadence.
             for index, (agent, share) in enumerate(zip(agents, slots)):
                 if settings.agent_animation(agent.provider) != "auto":
                     continue
@@ -435,7 +480,7 @@ def _shares(agents, settings, count, mode, warnings=None):
     spans = [[step_duration_ms(step) for step in tracks[index]]
              for index in (moving or range(len(tracks)))]
     if any(span != spans[0] for span in spans[1:]):
-        return _keyframe_shares(agents, settings, slots, count)
+        return _keyframe_shares(agents, settings, slots, count, warnings if warnings is not None else [])
     lines = [render_step(PaintStep(tuple(
         segment for step in group for segment in step.segments
     ))) for group in zip(*tracks)]

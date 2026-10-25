@@ -2667,13 +2667,18 @@ its Settings thumbnail and its Effect Studio preview
 | `devices.N.dot_travel_style` | `wipe` \| `crossfade` | `wipe` | How a travelling motion plays on a two-LED device: LED 0 rises, LED 1 rises, LED 0 falls, LED 1 falls; or the older soft crossfade. A Dot plays it while it draws its own display: unlinked, or linked with the `status` role. |
 | `lid_*_animation.shape` | a lid shape or null | null | A lid look drawn per device (the Iris looks); `program` then holds its eight-LED form. |
 
-Automatic follows a chosen provider's existing step grid when it fits
-one Studio cycle, keeping that provider's curves and pauses intact.
-Simultaneous shares with incompatible step boundaries use four linear
-keyframes per Studio cycle. Automatic follows the first chosen provider's
-cycle in that case. Chosen cycles keep their duration; the tracks use the union of their
-keyframe boundaries. Programs that exceed 512 bytes or 20 lines still use
-the reported fallback. Solo programs keep their original timing and shape.
+Automatic follows the chosen providers' existing step grid when their step
+durations match, keeping their native periods, curves and pauses intact.
+Simultaneous shares with incompatible step boundaries can use four linear
+keyframes only when their chosen Studio periods are equal. Automatic follows
+the chosen period. Each share is checked against its native timeline every
+20 ms over one native or Studio cycle, whichever is longer, and at native
+boundaries, both at startup and while looping. A maximum error of 24/255 per
+channel is allowed. `what_plays` names each simplified animation and any
+change from its native cycle to the Studio period. Above that limit, or with
+different Studio periods, the animations take turns through the reported
+fallback. Programs that exceed 512 bytes or 20 lines also use the reported
+fallback. Solo programs keep their original timing and shape.
 
 `colors.provider_animation` also takes `ripple` and `pendulum`. OpenCode
 plays `pendulum` at 2.2 s (Effect Studio's Pendulum default) when it has no motion of its own; choosing

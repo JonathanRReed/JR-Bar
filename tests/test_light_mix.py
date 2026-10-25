@@ -90,6 +90,8 @@ def test_mix_animation_cue_grid(firmware, mix, family, cue, providers):
             expected = "alternate"
         elif mix in {"round_robin", "spatial_split"} and count == 2 and (providers > 2 or family not in {"breathe", "heartbeat", "kitt"}):
             expected = "cycle"
+        if mix in {"round_robin", "spatial_split"} and count == 8 and providers == 3 and family in {"kitt", "chase", "gradient", "scanner"}:
+            expected = "alternate" if family == "scanner" else "cycle"
         if mix == "cycle" and count == 8 and family == "scanner":
             expected = "alternate"
     assert plan.played == expected, plan.warnings
