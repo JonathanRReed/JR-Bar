@@ -44,3 +44,12 @@ def test_protocol_alias_reads_and_writes_the_canonical_key():
     assert get_path(document, "colors.mix_mode") == ("alternate", True)
     assert get_path(document, "colors.blend_mode") == ("alternate", True)
     assert "mix_mode" not in document["colors"]
+
+
+def test_protocol_publishes_the_alias_without_mutating_the_saved_document():
+    from jrbar.core_projection import build_settings_document
+
+    stored = {"colors": ColorSettings.defaults().with_blend_mode("tide").to_dict()}
+    published = build_settings_document(stored, generation=1)["document"]["colors"]
+    assert published["mix_mode"] == published["blend_mode"] == "tide"
+    assert "mix_mode" not in stored["colors"]
