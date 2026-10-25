@@ -9,8 +9,9 @@ So the set of unwired modules is pinned. Adding to it requires editing this
 list, which is the moment to ask "why is this not reachable yet?". Removing
 from it -- by wiring a module up -- is always allowed.
 
-The list is empty now, and it stayed empty by deciding each entry rather
-than re-describing it. `capacity_view` and `capacity_history_store` were
+The list was emptied by deciding each entry rather than re-describing it.
+The disabled Claude CLI probe is retained by explicit release decision.
+`capacity_view` and `capacity_history_store` were
 wired -- the "Why Is It Doing That?" panel says which capacity window was
 refused and why, and remembers how the numbers moved. `provider_runtime`,
 `delivery_ledger_store` and `reply_classifier` were deleted: the first two
@@ -47,7 +48,12 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "jrbar"
 # accident: an entry here is a decision deferred, and the deferral is what
 # cost this project its blend modes, its log janitors and a 1,139-line
 # presentation layer.
-KNOWN_UNWIRED: dict[str, str] = {}
+KNOWN_UNWIRED: dict[str, str] = {
+    "claude_cli_usage": (
+        "Reserved for a later release; 0.10.0 must not call it. "
+        "See docs/archive/2026-10-25-claude-cli-usage-pty.md."
+    ),
+}
 
 # Legitimate separate entry points -- not imported by the app by design.
 # Fixture ownership is a build/test provenance gate, not shipped runtime work.

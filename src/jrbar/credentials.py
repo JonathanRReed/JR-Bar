@@ -146,7 +146,7 @@ class KeychainConsentLedger:
         Direct reads prohibit interaction at the operating-system API.
         For the system tool, True records a quick foreground success,
         False revokes its grant, and None preserves an existing grant.
-        A denial or lost access clears both grants.
+        A denial or timed-out system-tool read clears both grants.
         """
         payload = self._read()
         old = payload.get(service, {})
@@ -184,10 +184,14 @@ class KeychainConsentLedger:
         entry = self._read().get(service)
         return isinstance(entry, dict) and "access_lost_at" in entry
 
-    def record_access_lost(self, service: str, now: float) -> float:
+    def record_access_lost(self, service: str, now: float, *, revoke_security: bool = False) -> float:
         payload = self._read()
+        old = payload.get(service, {})
         deadline = now + _ACCESS_LOST_RETRY_SECONDS
         entry = {"access_lost_at": float(now), "retry_at": deadline}
+        # Losing the direct reader's ACL does not revoke the system tool.
+        if not revoke_security and isinstance(old, dict) and old.get("security_granted_at"):
+            entry["security_granted_at"] = old["security_granted_at"]
         payload[service] = entry
         try:
             atomic_private_write(self.path, json.dumps(payload, separators=(",", ":")))
@@ -271,8 +275,10 @@ def read_keychain_secret(
         deadline = ledger.record_denial(item.service, reference) if ledger is not None else None
         return CredentialResult(CredentialOutcome.DENIED, retry_at=deadline)
 
-    def access_lost():
-        deadline = ledger.record_access_lost(item.service, reference) if ledger is not None else None
+    def access_lost(*, revoke_security: bool = False):
+        deadline = ledger.record_access_lost(
+            item.service, reference, revoke_security=revoke_security,
+        ) if ledger is not None else None
         return CredentialResult(CredentialOutcome.ACCESS_LOST, retry_at=deadline)
 
     timeout = _SECURITY_PROMPT_TIMEOUT_SECONDS if allow_prompt else _SECURITY_BACKGROUND_TIMEOUT_SECONDS
@@ -287,9 +293,9 @@ def read_keychain_secret(
             completed = (security_runner or _run_security_reader)(item, timeout=timeout)
         except subprocess.TimeoutExpired:
             # A killed consent dialog is never followed by another reader.
-            return denial() if allow_prompt else access_lost()
+            return denial() if allow_prompt else access_lost(revoke_security=True)
         except (OSError, subprocess.SubprocessError):
-            return CredentialResult(CredentialOutcome.UNAVAILABLE) if allow_prompt else access_lost()
+            return CredentialResult(CredentialOutcome.UNAVAILABLE) if allow_prompt else access_lost(revoke_security=True)
         if completed is not None:
             secret = (completed.stdout or "").strip()
             if completed.returncode == 0 and 0 < len(secret.encode("utf-8")) <= CODEX_AUTH_MAX_BYTES:
@@ -305,7 +311,7 @@ def read_keychain_secret(
             ):
                 return denial()
         # The tool may already have shown a dialog. Never try another reader.
-        return CredentialResult(CredentialOutcome.NOT_FOUND) if allow_prompt else access_lost()
+        return CredentialResult(CredentialOutcome.NOT_FOUND) if allow_prompt else access_lost(revoke_security=True)
     try:
         completed = runner(item) if runner is not None else _run_keychain_reader(
             item, allow_prompt=allow_prompt, timeout=timeout,
