@@ -321,8 +321,8 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         drawnGeneration = textureGeneration
     }
 
-    init(pixelFormat: MTLPixelFormat) throws {
-        let compiled = try FoldShaderCache.shared.compiled(pixelFormat: pixelFormat)
+    init(pixelFormat: MTLPixelFormat, cache: FoldShaderCache = .shared) throws {
+        let compiled = try cache.compiled(pixelFormat: pixelFormat)
         let device = compiled.device
         self.device = device
         pipeline = compiled.pipeline

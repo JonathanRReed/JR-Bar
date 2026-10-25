@@ -459,7 +459,7 @@ import Testing
         #expect(cache.compileCount == 1)
     }
 
-    @Test func aSecondAskCompilesNothing() throws {
+    @Test func aSecondAskCompilesNothing() async throws {
         let cache = FoldShaderCache()
         let record = Record()
         let real = cache.compile
@@ -467,9 +467,11 @@ import Testing
             record.note(Thread.isMainThread)
             return try real(format)
         }
+        await withCheckedContinuation { continuation in
+            cache.prewarm(pixelFormat: .bgra8Unorm) { continuation.resume() }
+        }
         _ = try cache.compiled(pixelFormat: .bgra8Unorm)
-        _ = try cache.compiled(pixelFormat: .bgra8Unorm)
-        _ = try FoldRenderer(pixelFormat: .bgra8Unorm)
+        _ = try FoldRenderer(pixelFormat: .bgra8Unorm, cache: cache)
         #expect(record.onMain.count == 1)
         #expect(cache.compileCount == 1)
     }
