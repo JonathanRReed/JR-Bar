@@ -9380,7 +9380,10 @@ class StatusBarController(NSObject):
             return True
         if bool(getattr(self.keep_awake, "holding_requested", False)):
             return True
-        if not self.leds_enabled:
+        lights_wanted = self.settings.virtual_status_device_enabled or any(
+            device.enabled for device in self.settings.devices if device.device_id != VIRTUAL_DEVICE_ID
+        )
+        if not self.leds_enabled or not lights_wanted:
             return False
         return any(
             bool(self.settings.lid_animation(kind).program.strip())

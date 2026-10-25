@@ -63,6 +63,29 @@ def test_disabled_device_is_not_inspected_even_while_another_device_is_on(tmp_pa
     assert all(off not in path.parents for path in touched)
 
 
+def test_disabled_daemon_consumers_schedule_no_jobs(controller):  # noqa: F811
+    target, _ = controller
+    off_device = DeviceDisplaySetting("fixture", "Fixture", "/tmp/jrbar-device-fixture", enabled=False)
+    target.settings = replace(AgentMonitorSettings(), devices=(off_device,), focus_dim_rules={"work": 0.5},
+                              focus_profile_rules={"work": "fixture"})
+    target._runtime_started = True
+    target.leds_enabled = True
+    inputs = _inputs(screen_bar_enabled=False, visible=False)
+    assert not target._device_inventory_should_run(inputs)
+    assert not target._hardware_write_should_run(inputs)
+    assert not target._lid_observation_should_run(inputs)
+    assert not target._display_environment_should_run(inputs)
+    assert not target._calendar_observation_should_run(inputs)
+    assert not target._reminders_observation_should_run(inputs)
+    factory = _FakeAppKitFactory()
+    target._runtime_timer_registry = AppKitTimerRegistry({feature: (lambda: None) for feature in RuntimeFeature}, timer_factory=factory, monotonic=lambda: 100)
+    target.reconcile_presentation_timers(inputs)
+    live = target._runtime_timer_registry.snapshot().active_features
+    assert RuntimeFeature.DEVICE_INVENTORY not in live
+    assert RuntimeFeature.LID_OBSERVATION not in live
+    assert RuntimeFeature.DISPLAY_ENVIRONMENT not in live
+
+
 def test_off_remote_peers_invalidates_its_timer_and_does_not_rearm(controller):  # noqa: F811
     target, _ = controller
     invalidated = []
