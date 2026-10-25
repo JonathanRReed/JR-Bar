@@ -16,6 +16,7 @@ def test_steady_state_variant_drops_only_the_approach_frame__and_1_more() -> Non
     # --- scenario: steady_state_variant_drops_only_the_approach_frame
     program = (
         "brightness 18\n"
+        "// approach\n"
         "0:#F87C5F 160ms none; 1:#260C06 160ms none\n"
         "0:#010101 1600ms pulse 0ms; 1:#020305 1600ms pulse 200ms\n"
         "repeat"
@@ -39,6 +40,7 @@ def test_reassert_write_omits_the_approach_frame(tmp_path: Path) -> None:
     controller.reassert_after_seconds = 0.0
 
     program = (
+        "// approach\n"
         "0:#F87C5F 160ms none; 1:#260C06 160ms none\n"
         "0:#010101 1600ms pulse 0ms; 1:#020305 1600ms pulse 200ms\n"
         "repeat"
@@ -47,7 +49,7 @@ def test_reassert_write_omits_the_approach_frame(tmp_path: Path) -> None:
         return [
             line
             for line in (device / "LEDS.LED").read_text().splitlines()
-            if line and not line.startswith("brightness ")
+            if line and not line.startswith(("brightness ", "//"))
         ]
 
     first = controller.sync_program(
@@ -70,7 +72,7 @@ def test_reassert_write_omits_the_approach_frame(tmp_path: Path) -> None:
     # full text would loop a span the strip is not running and drift off
     # phase every lap.
     assert [
-        line for line in controller.last_program.splitlines() if line and not line.startswith("brightness ")
+        line for line in controller.last_program.splitlines() if line and not line.startswith(("brightness ", "//"))
     ] == lines
     assert controller.last_nominal_program == _steady_state_variant(program)
 

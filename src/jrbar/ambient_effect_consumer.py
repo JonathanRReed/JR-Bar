@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from .ambient_effect_dispatch import AmbientEffectSurface, AmbientEffectSurfaceOutput
@@ -9,6 +10,7 @@ from .ambient_effect_runtime import (
     active_ambient_surface_output,
     active_device_ambient_surface_output,
 )
+from .ambient_layers import LAYER_SECONDS
 from .hardware_write_policy import HardwareWritePolicy
 from .led_status import LedDisplayState, apply_brightness
 from .presentation_policy import (
@@ -120,7 +122,7 @@ def _presentation(
             if output.animated and not reduce_motion
             else MotionClass.STATIC
         ),
-        next_visual_change_at=started_at + output.expires_after_ms / 1_000.0,
+        next_visual_change_at=started_at + min(LAYER_SECONDS, output.expires_after_ms / 1_000.0),
         dedupe_token=("ambient", output.effect_identity, started_at),
     )
 
@@ -138,6 +140,8 @@ def active_ambient_presentation(
     if staged is None:
         return None
     output, started_at = staged
+    if time.monotonic() >= started_at + LAYER_SECONDS or _chosen_animation_hides_ember(controller, output):
+        return None
     return _presentation(
         output,
         started_at,
@@ -167,12 +171,30 @@ def active_hardware_ambient_presentation(
     if staged is None:
         return None
     output, started_at = staged
+    if time.monotonic() >= started_at + LAYER_SECONDS or _chosen_animation_hides_ember(controller, output):
+        return None
     return _presentation(
         output,
         started_at,
         reduce_motion=reduce_motion,
         brightness=brightness,
     )
+
+
+def _chosen_animation_hides_ember(controller, output):
+    if output.family.value != "turn_length_ember":
+        return False
+    colors = getattr(getattr(controller, "settings", None), "colors", None)
+    if colors is None:
+        return False
+    providers = {key.source_key.provider_id for key in getattr(controller, "_ambient_turn_starts", {})}
+    projection = getattr(controller, "current_attention_projection", None)
+    if projection is not None:
+        providers.update(row.provider for row in projection.light_rows if row.lifecycle_mode.value == "active")
+    else:
+        providers.update(status.provider for status in getattr(getattr(controller, "last_snapshot", None), "statuses", ())
+                         if status.mode.value == "working")
+    return any(colors.agent_animation(provider) != "auto" for provider in providers)
 
 
 def active_screen_bar_ambient_presentation(

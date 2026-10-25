@@ -65,9 +65,9 @@ def test_two_active_agents_render_as_a_crowd__and_2_more() -> None:
     projection = _projection(_row("codex:session:a", "codex"), _row("claude:session:b", "claude"))
     assert _decide(_glance(GlanceSemantic.ACTIVE), projection) is True
 
-    # --- scenario: a_single_agent_keeps_the_single_color_path
+    # --- scenario: a_single_agent_uses_the_provider_renderer
     projection = _projection(_row("codex:session:a", "codex"))
-    assert _decide(_glance(GlanceSemantic.ACTIVE), projection) is False
+    assert _decide(_glance(GlanceSemantic.ACTIVE), projection) is True
 
     # --- scenario: whole_strip_moments_are_never_buried_under_a_crowd
     """Attention, failures, completions, capacity and rest are designed

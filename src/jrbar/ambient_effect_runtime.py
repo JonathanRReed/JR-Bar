@@ -1510,6 +1510,10 @@ def _observe_turn_starts(
         setattr(controller, "_turn_length_ember_plan", None)
         return
     _work_key, started = min(starts.items(), key=lambda item: item[1])
+    colors = getattr(getattr(controller, "settings", None), "colors", None)
+    if colors is not None and colors.agent_animation(_work_key.source_key.provider_id) != "auto":
+        setattr(controller, "_turn_length_ember_plan", None)
+        return
     thermal = (
         ThermalState.SERIOUS
         if bool(getattr(controller, "_ambient_serious_thermal", False))

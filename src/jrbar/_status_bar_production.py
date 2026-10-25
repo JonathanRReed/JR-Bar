@@ -14,10 +14,6 @@ import threading
 import time
 
 from . import status_bar_legacy as _legacy
-from .ambient_effect_consumer import (
-    active_hardware_ambient_presentation,
-    active_screen_bar_ambient_presentation,
-)
 from .battery_runtime import BatteryObservation, BatteryObservationService
 from .core_state import CoreDomain, CoreStateStore, StateDelta
 from .device_projection import light_rows_for_provider, projection_for_provider
@@ -496,23 +492,6 @@ else:
                 self.settings.colors,
             )
 
-        def _ambient_bar(self, setter, brightness) -> bool:
-            preferences = self._accessibility_display_preferences
-            ambient = active_screen_bar_ambient_presentation(
-                self,
-                reduce_motion=bool(getattr(preferences, "reduce_motion", False)),
-                brightness=brightness,
-            )
-            if ambient is None:
-                return False
-            presentation = ambient.screen_bar_program
-            setter(
-                _legacy.apply_brightness(presentation.dsl, brightness),
-                presentation,
-            )
-            self._ambient_accessibility_text = ambient.accessibility_text
-            return True
-
         def sync_leds(self, *args, **kwargs):
             self._capture_hardware_render_colors()
             return _LegacyStatusBarController.sync_leds(self, *args, **kwargs)
@@ -521,30 +500,6 @@ else:
             started = time.perf_counter()
             outcome = "ok"
             try:
-                if request.display_kind == _legacy.LED_DISPLAY_AGENT:
-                    controller = self.agent_controller_for_device(request.device)
-                    preferences = request.accessibility_preferences
-                    ambient = active_hardware_ambient_presentation(
-                        self,
-                        device_id=request.device.device_id,
-                        led_count=_legacy.led_count_for_target(request.device.target),
-                        reduce_motion=bool(
-                            getattr(preferences, "reduce_motion", False)
-                        ),
-                        brightness=controller.brightness,
-                    )
-                    if ambient is not None:
-                        write = controller.sync_program(
-                            ambient.program,
-                            ambient.led_state,
-                        )
-                        return _legacy.HardwareWriteResult(
-                            request=request,
-                            write=write,
-                            label=f"{request.device.name} Ambient effect",
-                            agent_display_rendered=False,
-                            completed_at=self._runtime_worker_monotonic(),
-                        )
                 return _LegacyStatusBarController._sync_hardware_device(
                     self,
                     request,

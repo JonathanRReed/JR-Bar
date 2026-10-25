@@ -1496,19 +1496,13 @@ def notification_blink_program(color: str, brightness: float = 255) -> str:
 
 
 def _steady_state_variant(program: str) -> str:
-    """The program without its one-shot approach frame, for reasserts.
-
-    A reassert refreshes device state without any visual change intended,
-    but the firmware restarts a program from its first line -- and the
-    first paint line is a bright transition snapshot, so every reassert
-    flashed one LED like an ask. The repeating body carries its own phase
-    delays and is the steady state the device is already showing.
-    """
+    """Drop only a paint explicitly preceded by ``// approach``."""
     lines = program.splitlines()
     body_start = 1 if lines and lines[0].startswith("brightness ") else 0
     content = lines[body_start:]
-    if len(content) >= 3 and content[-1].strip().startswith("repeat"):
-        trimmed = lines[:body_start] + content[1:]
+    if (len(content) >= 4 and content[0].strip() == "// approach"
+            and content[-1].strip().startswith("repeat")):
+        trimmed = lines[:body_start] + content[2:]
         return "\n".join(trimmed)
     return program
 
@@ -1748,6 +1742,7 @@ class AgentLedController:
         *,
         fallback_mode: AgentMode = AgentMode.IDLE_READY,
         relay_elapsed_seconds: float = 0.0,
+        ambient=None,
     ) -> LedStatusWrite:
         """Multi-agent-aware sibling of ``sync_mode``.
 
@@ -1783,6 +1778,9 @@ class AgentLedController:
         # written -- a gain change alone (with statuses/colors unchanged)
         # still produces a different string here and correctly triggers a
         # rewrite, with no separate "did gains change" tracking needed.
+        if ambient is not None and state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
+            return self.sync_program(program, state, ambient=ambient)
+        self.ambient_layer_until = None
         nominal = program
         program = self._for_strip(program, state)
         # Dedupe on the INPUTS, never the rendered text. Relay bakes a
@@ -1816,6 +1814,7 @@ class AgentLedController:
         *,
         active_signal=None,
         relay_elapsed_seconds: float = 0.0,
+        ambient=None,
     ) -> LedStatusWrite:
         """Projection-aware renderer used by every live controller surface."""
         from .colors import program_for_projection
@@ -1832,6 +1831,9 @@ class AgentLedController:
             relay_elapsed_seconds=relay_elapsed_seconds,
             include_attention_arrival=arrival_fresh,
         )
+        if ambient is not None and state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
+            return self.sync_program(program, state, ambient=ambient)
+        self.ambient_layer_until = None
         nominal = program
         program = self._for_strip(program, state)
         identity = self._phase_free_identity(
@@ -1863,6 +1865,7 @@ class AgentLedController:
         trim_on_reassert: bool = True,
         timing: object | None = None,
         hold_visible: bool = True,
+        ambient=None,
     ) -> LedStatusWrite:
         """Writes a pre-rendered program through the same gain/dedup/retry
         path sync_snapshot uses -- for displays that aren't derived from
@@ -1878,6 +1881,15 @@ class AgentLedController:
         ``trim_on_reassert=False`` because its program is already derived
         from the strip's running one, and ``timing`` for the write boundary
         to rotate and retime it (``linked_sync.DeviceTiming``)."""
+        self.ambient_layer_until = None
+        if ambient is not None and state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
+            from .ambient_layers import compose_ambient_layer
+
+            layered = compose_ambient_layer(program, state, ambient)
+            if layered != program:
+                dedupe_token = (dedupe_token, ambient.dedupe_token, layered)
+                self.ambient_layer_until = ambient.next_visual_change_at
+                program = layered
         nominal = program
         program = self._for_strip(program, state if hold_visible else None)
         return self._write_deduped_program(

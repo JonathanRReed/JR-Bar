@@ -5377,6 +5377,10 @@ def build_headless_controller_class() -> type:
                 for device_id, deadline in self._core_finite_cue_end.items()
                 if deadline <= now
             ]
+            screen_layer_end = getattr(self, "_ambient_screen_bar_layer_until", None)
+            if screen_layer_end is not None and screen_layer_end <= now:
+                self._ambient_screen_bar_layer_until = None
+                done.append(legacy.VIRTUAL_DEVICE_ID)
             for device_id in done:
                 self._core_finite_cue_end.pop(device_id, None)
                 controller = self.agent_led_controllers_by_device.get(device_id)
@@ -5683,6 +5687,11 @@ def build_headless_controller_class() -> type:
                             )
                         else:
                             self._core_finite_cue_end.pop(request.device.device_id, None)
+
+                    controller = self.agent_led_controllers_by_device.get(request.device.device_id)
+                    layer_end = getattr(controller, "ambient_layer_until", None)
+                    if layer_end is not None:
+                        self._core_finite_cue_end[request.device.device_id] = layer_end
 
                     if led_count_for_target(request.device.target) != 2 and write.program:
                         # The strip's latest program is what a linked Dot

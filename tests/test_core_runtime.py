@@ -5029,7 +5029,7 @@ def test_a_strip_reassert_restarts_the_pair_on_one_loop__and_1_more(headless, tm
 
     controller = headless
     pro, dot, controllers, submitted = _tmp_pair(controller, tmp_path)
-    program = "#101010 160ms\n#FF0000 1s cosine\n#000000 1s cosine\nrepeat"
+    program = "// approach\n#101010 160ms\n#FF0000 1s cosine\n#000000 1s cosine\nrepeat"
     strip = controllers[pro.device_id]
     first = strip.sync_program(program, LedDisplayState.WORKING)
     _coupled(controller, submitted, pro, dot, first)

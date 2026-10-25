@@ -40,7 +40,7 @@ _IMMUTABLE: Final = (type(None), bool, int, float, str, tuple, frozenset)
 DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
     {
         # Read before, or without, anything setting them.
-        "_ambient_bar": None,
+        "_ambient_screen_bar_layer_until": None,
         "_ambient_low_power": False,
         "_ambient_serious_thermal": False,
         "_auto_dim_cache": None,

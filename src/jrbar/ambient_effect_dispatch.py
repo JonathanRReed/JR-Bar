@@ -714,7 +714,7 @@ def _ember_candidates(
     if animated:
         half_period = max(250, round(plan.breathe_period_seconds * 500))
         cycles = max(1, min(8, MAX_AMBIENT_OUTPUT_DURATION_MS // (half_period * 2)))
-        program = f"{floor} {half_period}ms cosine\n{peak} {half_period}ms cosine\nrepeat {cycles}"
+        program = f"{floor} {half_period}ms cosine\n{peak} {half_period}ms cosine\nrepeat"
         duration = half_period * 2 * cycles
         hz = 1_000.0 / (half_period * 2)
     else:
@@ -735,7 +735,7 @@ def _ember_candidates(
             duration_ms=duration,
             max_flash_hz=hz,
         )
-        for surface in (AmbientEffectSurface.SCREEN_BAR, AmbientEffectSurface.SIDEPULSE_PRO)
+        for surface in (AmbientEffectSurface.SCREEN_BAR, AmbientEffectSurface.SIDEPULSE_PRO, AmbientEffectSurface.SIDEPULSE_DOT)
     )
 
 

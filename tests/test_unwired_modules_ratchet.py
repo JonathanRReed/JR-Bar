@@ -182,142 +182,19 @@ def test_cmd_effects_dispatches_through_the_runtime_owner__and_2_more(monkeypatc
     assert result == 37
     assert calls == [("install", Path("/tmp/calm-pack.json"), True)]
 
-    # --- scenario: status_bar_ambient_bar_uses_the_screen_consumer_runtime
+    # --- scenario: production_keeps_the_agent_render_before_layering_a_cue
     monkeypatch.undo()
     pytest.importorskip("AppKit", reason="native AppKit behavior is exercised by the full Mac gate")
     from jrbar import _status_bar_production as production
 
-    calls: dict[str, object] = {}
-
-    def ambient(controller, *, reduce_motion, brightness):
-        calls["controller"] = controller
-        calls["reduce_motion"] = reduce_motion
-        calls["brightness"] = brightness
-        return SimpleNamespace(
-            screen_bar_program=SimpleNamespace(dsl="ambient dsl"),
-            accessibility_text="ambient text",
-        )
-
-    monkeypatch.setattr(production, "active_screen_bar_ambient_presentation", ambient)
-    monkeypatch.setattr(
-        production._legacy,
-        "apply_brightness",
-        lambda dsl, brightness: f"{dsl}@{brightness}",
-    )
-
-    controller = SimpleNamespace(
-        _accessibility_display_preferences=SimpleNamespace(reduce_motion=True),
-    )
-    setter_calls: list[tuple[str, object]] = []
-
-    def setter(program, presentation):
-        setter_calls.append((program, presentation))
-
-    result = production.JRStatusBarController._ambient_bar(controller, setter, 0.75)
-
-    assert result is True
-    assert calls == {
-        "controller": controller,
-        "reduce_motion": True,
-        "brightness": 0.75,
-    }
-    assert setter_calls[0][0] == "ambient dsl@0.75"
-    assert setter_calls[0][1].dsl == "ambient dsl"
-    assert controller._ambient_accessibility_text == "ambient text"
-
-    # --- scenario: status_bar_hardware_sync_uses_the_hardware_consumer_runtime
-    monkeypatch.undo()
-    pytest.importorskip("AppKit", reason="native AppKit behavior is exercised by the full Mac gate")
-    from jrbar import _status_bar_production as production
-    from jrbar import status_bar_legacy as legacy
-
-    calls: dict[str, object] = {}
-
-    def ambient(controller, *, device_id, led_count, reduce_motion, brightness):
-        calls["controller"] = controller
-        calls["device_id"] = device_id
-        calls["led_count"] = led_count
-        calls["reduce_motion"] = reduce_motion
-        calls["brightness"] = brightness
-        return SimpleNamespace(
-            program="ambient hardware program",
-            led_state=legacy.LedDisplayState.WORKING,
-        )
-
-    monkeypatch.setattr(
-        production,
-        "active_hardware_ambient_presentation",
-        ambient,
-    )
-
-    records: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
-
-    class Performance:
-        def record(self, *args, **kwargs):
-            records.append((self, args, kwargs))
-
-    device = legacy.StatusBarDevice(
-        device_id="device-1",
-        name="Device One",
-        root=Path("/tmp"),
-        target=Path("/tmp/LEDS.LED"),
-        connected=True,
-        display=legacy.LED_DISPLAY_AGENT,
-    )
-    request = legacy.HardwareWriteRequest(
-        device=device,
-        mode=legacy.AgentMode.IDLE_READY,
-        battery_snapshot=None,
-        statuses=(),
-        projection=None,
-        relay_elapsed_seconds=0.0,
-        accessibility_preferences=None,
-        display_kind=legacy.LED_DISPLAY_AGENT,
-        write_priority=legacy.RuntimeWorkPriority.COALESCIBLE,
-        coalesce_identity="ambient-test",
-    )
-
-    class DeviceController:
-        brightness = 0.42
-
-        def __init__(self) -> None:
-            self.calls: list[tuple[str, object]] = []
-
-        def sync_program(self, program, led_state):
-            self.calls.append((program, led_state))
-            return legacy.LedStatusWrite(
-                state=legacy.LedDisplayState.WORKING,
-                target=device.target,
-                program=program,
-                changed=True,
-                error=None,
-            )
-
-    device_controller = DeviceController()
-    controller = SimpleNamespace(
-        last_led_display_kind_by_device={},
-        settings=SimpleNamespace(),
-        agent_controller_for_device=lambda _device: device_controller,
-        effective_signal_brightness_for_device=lambda _device: 1.0,
-        _runtime_worker_monotonic=lambda: 123.0,
-        _performance=lambda: Performance(),
-        reset_led_controllers_for_device=lambda _device_id: None,
-    )
-
-    result = production.JRStatusBarController._sync_hardware_device(controller, request)
-
-    assert calls == {
-        "controller": controller,
-        "device_id": "device-1",
-        "led_count": legacy.led_count_for_target(device.target),
-        "reduce_motion": False,
-        "brightness": 0.42,
-    }
-    assert device_controller.calls == [
-        ("ambient hardware program", legacy.LedDisplayState.WORKING)
-    ]
-    assert result.label == "Device One Ambient effect"
-    assert result.agent_display_rendered is False
-    assert result.completed_at == 123.0
-    assert records and records[0][1][0] == "hardware_render"
-
+    calls = []
+    records = []
+    sentinel = object()
+    monkeypatch.setattr(production._LegacyStatusBarController, "_sync_hardware_device",
+        lambda controller, request: calls.append((controller, request)) or sentinel)
+    controller = SimpleNamespace(_performance=lambda: SimpleNamespace(
+        record=lambda *args, **kwargs: records.append((args, kwargs))))
+    request = object()
+    assert production.JRStatusBarController._sync_hardware_device(controller, request) is sentinel
+    assert calls == [(controller, request)]
+    assert records[0][0][0] == "hardware_render"

@@ -155,8 +155,8 @@ _CUE_SURFACE_NAMES = {
 def augment_lights_cues(controller: Any, document: dict[str, Any]) -> None:
     """Name the cue staged on each surface -- "Handoff baton" instead of an
     unexplained sweep -- as ``lights.surfaces.<name>.cue``."""
+    from .ambient_effect_consumer import active_ambient_presentation
     from .ambient_effect_dispatch import AmbientEffectSurface
-    from .ambient_effect_runtime import active_ambient_surface_output
 
     surfaces = document.get("surfaces")
     if not isinstance(surfaces, dict):
@@ -166,10 +166,10 @@ def augment_lights_cues(controller: Any, document: dict[str, Any]) -> None:
         entry = surfaces.get(name) if name else None
         if not isinstance(entry, dict):
             continue
-        active = active_ambient_surface_output(controller, surface)
+        active = active_ambient_presentation(controller, surface, reduce_motion=False, brightness=255)
         if active is None:
             continue
-        family = getattr(getattr(active[0], "family", None), "value", None)
+        family = getattr(getattr(active.output, "family", None), "value", None)
         cue = cue_for_id(family)
         if cue is not None:
             entry["cue"] = {"id": cue.id, "name": cue.name}
