@@ -177,8 +177,8 @@ enum FoldSensorSilence {
 /// queue. Not actor-isolated, not observed — just a pump that publishes
 /// immutable `Sample`s back to the main runloop.
 ///
-/// A distant open lid polls at 2 Hz. Within 20 degrees of the arming
-/// band it returns to the sensor's 10 Hz cadence. Inside the band the
+/// A still, distant lid polls at 2 Hz only with enough travel left to
+/// catch a 300 degree/second close. Motion returns it to 10 Hz. Inside the band the
 /// existing 120 Hz edge timing stays intact. A shut lid also rests at 2 Hz.
 final class SensorPump: @unchecked Sendable {
     /// Publishes a sample on the main runloop; set by the shell.
@@ -220,6 +220,7 @@ final class SensorPump: @unchecked Sendable {
     }
     /// The last angle read; the arming-band rate decision rides on it.
     private var lastRaw: Double?
+    private var motionCadence = SensorMotionCadence()
     /// Clamshell reads follow elapsed time across sensor-rate changes.
     private var clamshellCadence = SensorClamshellCadence()
     private var clamshell: Bool?
@@ -271,6 +272,7 @@ final class SensorPump: @unchecked Sendable {
                 self.cancelProbe()
                 self.probe = SensorProbePolicy()
                 self.clamshellCadence = SensorClamshellCadence()
+                self.motionCadence = SensorMotionCadence()
                 self.refreshDevices()
                 self.rateClass = self.wantedRateClass
                 // No direct beat() here: the fresh timer's deadline is
@@ -287,7 +289,7 @@ final class SensorPump: @unchecked Sendable {
 
     /// Slow only while safely outside the arming margin. Unknown readings
     /// retain the normal cadence so failure detection still takes five seconds.
-    static func rateClassFor(rawAngle: Double?, armingAngle: Double, clamshell: Bool?) -> Int {
+    static func rateClassFor(rawAngle: Double?, armingAngle: Double, clamshell: Bool?, stillReads: Int = 0) -> Int {
         guard clamshell != true else { return 0 }
         guard let angle = rawAngle else { return 2 }
         guard angle > FoldPause.closedAngle else { return 0 }
@@ -295,14 +297,20 @@ final class SensorPump: @unchecked Sendable {
         // sensor cadence to follow its moving rest angle.
         guard armingAngle.isFinite else { return 2 }
         if angle <= armingAngle { return 1 }
-        return angle <= armingAngle + 20 ? 2 : 0
+        guard stillReads >= SensorMotionCadence.stillReadLimit else { return 2 }
+        // A first movement sample can arrive half a second after closing
+        // starts. Preserve an open sample even at 300 degrees/second.
+        let travelMargin = 300 * intervals[0] + quietBand
+        let slowFloor = max(armingAngle + 20, FoldPause.closedAngle + travelMargin)
+        return angle > slowFloor ? 0 : 2
     }
 
     // MARK: Queue side
 
     /// The class the queue-side facts ask for right now.
     private var wantedRateClass: Int {
-        Self.rateClassFor(rawAngle: lastRaw, armingAngle: armingAngle, clamshell: clamshell)
+        Self.rateClassFor(rawAngle: lastRaw, armingAngle: armingAngle, clamshell: clamshell,
+                          stillReads: motionCadence.stillReads)
     }
 
     private func scheduleTimer() {
@@ -329,6 +337,7 @@ final class SensorPump: @unchecked Sendable {
         let now = CACurrentMediaTime()
         let raw = readAngle()
         reads.tick(at: ProcessInfo.processInfo.systemUptime)
+        motionCadence.note(raw)
         if raw != nil { lastRaw = raw }
         if probe.note(read: raw != nil) == .rest {
             restPolling()
@@ -460,5 +469,21 @@ struct SensorClamshellCadence {
         if let lastReadAt, now >= lastReadAt, now - lastReadAt < 1 { return false }
         lastReadAt = now
         return true
+    }
+}
+
+/// Motion must settle before a distant open lid earns the idle interval.
+struct SensorMotionCadence {
+    static let stillReadLimit = 10
+    private(set) var stillReads = 0
+    private var previous: Double?
+
+    mutating func note(_ angle: Double?) {
+        defer { previous = angle }
+        guard let angle, let previous, abs(angle - previous) <= SensorPump.quietBand else {
+            stillReads = 0
+            return
+        }
+        stillReads = min(Self.stillReadLimit, stillReads + 1)
     }
 }
