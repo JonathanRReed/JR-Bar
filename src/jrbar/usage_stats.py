@@ -828,10 +828,12 @@ def _record_model_key(model: str) -> str:
 def _token_counts(mapping: dict, keys: tuple[str, ...]) -> tuple[int, ...] | None:
     values: list[int] = []
     for key in keys:
-        if key not in mapping:
-            values.append(0)
+        value = mapping.get(key, 0)
+        # JSON token counts are normally small integers. They need neither a
+        # float allocation nor the general numeric conversion below.
+        if type(value) is int and 0 <= value <= 2**63 - 1:
+            values.append(value)
             continue
-        value = mapping.get(key)
         if (
             isinstance(value, bool)
             or not isinstance(value, (int, float))
@@ -869,7 +871,9 @@ def _records_from_line(line: str, session_id: str, dedupe_secret: bytes) -> list
     return _claude_line(line, session_id, dedupe_secret)[0]
 
 
-def _claude_line(line: str, session_id: str, dedupe_secret: bytes) -> tuple[list[tuple], bool]:
+def _claude_line(
+    line: str, session_id: str, dedupe_secret: bytes, model_keys: dict[str, str] | None = None,
+) -> tuple[list[tuple], bool]:
     """``(records, damaged)`` for one Claude line that carries the usage marker.
 
     ``damaged`` is True when the line should have counted and could not: it is
@@ -909,14 +913,7 @@ def _claude_line(line: str, session_id: str, dedupe_secret: bytes) -> tuple[list
     if not raw_dedupe:
         # No message id means no safe dedupe; skip rather than overcount.
         return [], True
-    dedupe = (
-        "message:"
-        + hmac.new(
-        dedupe_secret,
-        raw_dedupe.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()[:DEDUPE_DIGEST_HEX_CHARS]
-    )
+    dedupe = "message:" + hmac.digest(dedupe_secret, raw_dedupe.encode("utf-8"), "sha256").hex()[:DEDUPE_DIGEST_HEX_CHARS]
     counts = _token_counts(
         usage,
         (
@@ -928,7 +925,16 @@ def _claude_line(line: str, session_id: str, dedupe_secret: bytes) -> tuple[list
     )
     if counts is None:
         return [], True
-    model_key = _record_model_key(str(message.get("model") or ""))
+    model = str(message.get("model") or "")
+    if model_keys is None or len(model) > 256:
+        model_key = _record_model_key(model)
+    else:
+        model_key = model_keys.get(model)
+        if model_key is None:
+            model_key = _record_model_key(model)
+            if len(model_keys) >= 64:
+                model_keys.clear()
+            model_keys[model] = model_key
     one_hour = one_hour_cache_writes(usage, counts[2])
     records = [
         (
@@ -1322,7 +1328,7 @@ def _open_snapshot(
 
 
 def _codex_private_id(prefix: str, value: str, dedupe_secret: bytes) -> str:
-    digest = hmac.new(dedupe_secret, value.encode("utf-8"), hashlib.sha256).hexdigest()
+    digest = hmac.digest(dedupe_secret, value.encode("utf-8"), "sha256").hex()
     return prefix + digest[:DEDUPE_DIGEST_HEX_CHARS]
 
 
@@ -2322,12 +2328,13 @@ def _scan_claude_lines(
 ) -> _ParseResult:
     records: list[tuple] = []
     malformed_lines = 0
+    model_keys = {}
     # T3's mightCarryUsage: the reader skips a line without the marker
     # before it is decoded, let alone parsed.
     for line in snapshot.lines(_CLAUDE_MARKERS):
         found, damaged = (
             ([], True) if line is _OVERSIZED_LINE
-            else _claude_line(line, session_id, dedupe_secret)
+            else _claude_line(line, session_id, dedupe_secret, model_keys)
         )
         records.extend(found)
         if damaged:
@@ -2633,6 +2640,7 @@ def _discover_usage_files(
     *,
     max_files: int,
     max_file_bytes: int,
+    suffix: str = ".jsonl",
 ) -> tuple[_CoverageState, list[_DiscoveredUsageFile], Path | None]:
     coverage = _CoverageState(provider_id=provider_id)
     try:
@@ -2679,7 +2687,7 @@ def _discover_usage_files(
             directory_names[:] = safe_directories
 
             for name in file_names:
-                if not name.endswith(".jsonl"):
+                if not name.endswith(suffix):
                     continue
                 path = base / name
                 try:
@@ -3748,12 +3756,14 @@ def _provider_inventory(
     *,
     max_files: int = USAGE_INVENTORY_MAX_FILES,
     max_file_bytes: int = USAGE_FILE_SANITY_BYTES,
+    suffix: str = ".jsonl",
 ) -> LocalUsageInventory:
     coverage, candidates, scanned_root = _discover_usage_files(
         root,
         provider_id,
         max_files=max_files,
         max_file_bytes=max_file_bytes,
+        suffix=suffix,
     )
     return LocalUsageInventory(
         (
@@ -3919,7 +3929,7 @@ def _card_days_document(
                 return None
             models.add(model)
             row = days[day][model] = [0, 0, 0, 0, 0]
-        row[0] += 1
+        row[0] += getattr(record, "record_count", 1)
         row[1] += record[4]
         row[2] += record[5]
         row[3] += record[6]
@@ -4328,7 +4338,8 @@ def daily_buckets(
                              token_categories={"input": 0, "cached_input": 0, "cache_creation": 0, "output": 0})
     # One pricing read per (provider, model), not per record.
     priced_as: dict[tuple[str, str], tuple[RecordRates, float, float] | None] = {}
-    for provider, session, model, epoch, inp, cached_in, cache_create, out, dedupe in records:
+    for record in records:
+        provider, session, model, epoch, inp, cached_in, cache_create, out, dedupe = record
         if provider_ids is not None and provider not in provider_ids:
             continue
         if dedupe in seen:
@@ -4366,8 +4377,8 @@ def daily_buckets(
             if pricing_evidence is not None and record_tokens > 0:
                 pricing_evidence.setdefault((provider, day), False)
             if cost_coverage is not None and record_tokens > 0:
-                cost_coverage["observed_records"] += 1
-                cost_coverage["unpriced_records"] += 1
+                cost_coverage["observed_records"] += getattr(record, "positive_count", 1)
+                cost_coverage["unpriced_records"] += getattr(record, "positive_count", 1)
                 unpriced_sessions.add((provider, session))
                 categories = cost_coverage["token_categories"]
                 for category, amount in zip(("input", "cached_input", "cache_creation", "output"),
@@ -4378,8 +4389,8 @@ def daily_buckets(
                 unpriced[name] = unpriced.get(name, 0) + record_tokens
             continue
         if cost_coverage is not None and record_tokens > 0:
-            cost_coverage["observed_records"] += 1
-            cost_coverage["priced_records"] += 1
+            cost_coverage["observed_records"] += getattr(record, "positive_count", 1)
+            cost_coverage["priced_records"] += getattr(record, "positive_count", 1)
         if pricing_evidence is not None and record_tokens > 0:
             pricing_evidence[(provider, day)] = True
         # Codex cost was skipped by code choice while the records carried
@@ -4387,7 +4398,9 @@ def daily_buckets(
         # price it). OpenAI and Google bill cache writes at the plain input
         # rate, Anthropic at a premium; the person's own override still wins.
         rates, cache_read_rate, cache_write_rate = priced
-        long_request = is_long_context_request(provider, model, inp + cached_in + cache_create)
+        long_request = getattr(record, "long_context", None)
+        if long_request is None:
+            long_request = is_long_context_request(provider, model, inp + cached_in + cache_create)
         cost = (
             (
                 inp * rates.input_rate

@@ -24,6 +24,7 @@ import pytest
 import jrbar.provider_usage_codex_claude as subject
 from jrbar import provider_homes, usage_stats
 from jrbar.state_paths import default_state_dir
+from tests import legacy_usage_cards as legacy_cards
 from tests.test_codex_usage_lineage import _meta, _tokens, _write
 from tests.test_usage_cache_bounds import _claude_line, _write_transcript
 
@@ -35,7 +36,7 @@ def _default_homes_only(monkeypatch: pytest.MonkeyPatch) -> None:
     """The reader's default homes come from the environment; pin them."""
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("CODEX_HOME", raising=False)
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
     subject._noted_once.clear()
 
 
@@ -102,7 +103,7 @@ def test_cached_codex_scan_counts_a_forked_rollout_once(tmp_path: Path) -> None:
     scanned = _scan_codex(tmp_path, root, since_epoch=OBSERVED - 30 * DAY)
     assert scanned.codex_tokens == 140
 
-    assert _card_tokens(subject._cached_codex_local_scan(tmp_path, OBSERVED)) == 140
+    assert _card_tokens(legacy_cards._cached_codex_local_scan(tmp_path, OBSERVED)) == 140
 
 
 def test_cached_codex_scan_counts_a_copied_rollout_once(tmp_path: Path) -> None:
@@ -116,7 +117,7 @@ def test_cached_codex_scan_counts_a_copied_rollout_once(tmp_path: Path) -> None:
     scanned = _scan_codex(tmp_path, root, since_epoch=OBSERVED - 30 * DAY)
     assert scanned.codex_tokens == 160
 
-    assert _card_tokens(subject._cached_codex_local_scan(tmp_path, OBSERVED)) == 160
+    assert _card_tokens(legacy_cards._cached_codex_local_scan(tmp_path, OBSERVED)) == 160
 
 
 def test_cached_scan_ignores_records_older_than_thirty_days(tmp_path: Path) -> None:
@@ -137,7 +138,7 @@ def test_cached_scan_ignores_records_older_than_thirty_days(tmp_path: Path) -> N
     # A cache with no floor at all: it holds both records.
     _scan_codex(tmp_path, root, since_epoch=0.0)
 
-    document = subject._cached_codex_local_scan(tmp_path, OBSERVED)
+    document = legacy_cards._cached_codex_local_scan(tmp_path, OBSERVED)
 
     assert _card_tokens(document) == 50
     assert document is not None
@@ -167,11 +168,11 @@ def test_a_graph_scan_of_any_range_leaves_the_codex_card_whole(
 
     # The default graph range is 7 days; the card is the last 30 whatever
     # range the scan that wrote the cache was asked for.
-    assert _card_tokens(subject._cached_codex_local_scan(tmp_path, OBSERVED)) == 230
+    assert _card_tokens(legacy_cards._cached_codex_local_scan(tmp_path, OBSERVED)) == 230
     # And scanning again must not have changed what the cache covers.
     _scan_codex(tmp_path, root, since_epoch=OBSERVED - graph_days * DAY)
 
-    assert _card_tokens(subject._cached_codex_local_scan(tmp_path, OBSERVED)) == 230
+    assert _card_tokens(legacy_cards._cached_codex_local_scan(tmp_path, OBSERVED)) == 230
 
 
 def test_cached_and_cold_provider_scans_agree(tmp_path: Path) -> None:
@@ -200,7 +201,12 @@ def test_cached_and_cold_provider_scans_agree(tmp_path: Path) -> None:
     # Build the cache the way the daemon's 30-day warm-up does.
     _scan_codex(tmp_path, root, since_epoch=OBSERVED - 30 * DAY)
 
-    cached = subject._cached_codex_local_scan(tmp_path, OBSERVED)
+    cached = legacy_cards._cached_codex_local_scan(tmp_path, OBSERVED)
+    cold = subject._default_provider_local_scan("codex", tmp_path, OBSERVED)
+    assert cold["history_state"] == "building"
+    from jrbar.token_history_index import shared_index
+    index = shared_index(default_state_dir(tmp_path) / "token-history.sqlite3")
+    index.child.wait(timeout=30)
     cold = subject._default_provider_local_scan("codex", tmp_path, OBSERVED)
 
     assert cached is not None and cold is not None
@@ -264,7 +270,7 @@ def _scan_claude(
 
 
 def _claude_card(home: Path, extras: tuple[str, ...] = ()) -> dict | None:
-    return subject._cached_claude_local_scan(home, OBSERVED, extra_homes=extras)
+    return legacy_cards._cached_claude_local_scan(home, OBSERVED, extra_homes=extras)
 
 
 def test_claude_cached_scan_reads_what_scan_usage_wrote(tmp_path: Path) -> None:
@@ -495,6 +501,11 @@ def test_claude_quota_path_never_walks_the_transcripts(
     def refuse(*_args, **_kwargs):
         raise AssertionError("the quota path walked the transcripts")
 
+    from jrbar.token_history_index import shared_index
+    index = shared_index(default_state_dir(tmp_path) / "token-history.sqlite3")
+    index.background_build = False
+    index.scan({"claude": (_claude_projects(tmp_path),)})
+
     monkeypatch.setattr(usage_stats, "_provider_inventory", refuse)
     monkeypatch.setattr(subject, "_default_provider_local_scan", refuse)
 
@@ -520,7 +531,7 @@ def test_cached_codex_scan_keeps_its_quota_windows_and_their_age(tmp_path: Path)
     os.utime(rollout, (OBSERVED - 3600, OBSERVED - 3600))
     _scan_codex(tmp_path, root, since_epoch=OBSERVED - 30 * DAY)
 
-    document = subject._cached_codex_local_scan(tmp_path, OBSERVED)
+    document = legacy_cards._cached_codex_local_scan(tmp_path, OBSERVED)
 
     assert document is not None
     assert document["windows_observed_at"] == OBSERVED - 3600
@@ -564,10 +575,10 @@ def test_cached_codex_scan_adds_an_extra_home_but_keeps_the_primary_quota(
         scan=functools.partial(usage_stats.scan_usage, now=OBSERVED),
     )
 
-    alone = subject._cached_provider_local_scan(
+    alone = legacy_cards._cached_provider_local_scan(
         "codex", tmp_path, OBSERVED, extra_homes=()
     )
-    both = subject._cached_provider_local_scan(
+    both = legacy_cards._cached_provider_local_scan(
         "codex", tmp_path, OBSERVED, extra_homes=(str(extra_home),)
     )
 
@@ -675,8 +686,8 @@ def test_codex_cached_scan_keeps_the_primary_home_when_extra_homes_cannot_be_lis
     _scan_codex(tmp_path, root, since_epoch=OBSERVED - 30 * DAY)
     _extra_homes_cannot_be_listed(monkeypatch)
 
-    first = subject._cached_provider_local_scan("codex", tmp_path, OBSERVED)
-    second = subject._cached_provider_local_scan("codex", tmp_path, OBSERVED)
+    first = legacy_cards._cached_provider_local_scan("codex", tmp_path, OBSERVED)
+    second = legacy_cards._cached_provider_local_scan("codex", tmp_path, OBSERVED)
 
     # Codex documents "the primary home plus whatever the cache covers".
     assert _card_tokens(first) == 100
@@ -764,7 +775,7 @@ def test_cached_codex_scan_counts_from_the_latest_start_across_homes(
     wide, narrow = sorted((primary_start, extra_start))
     assert wide <= far < narrow < near, "the homes must disagree about 30 days"
 
-    card = subject._cached_provider_local_scan(
+    card = legacy_cards._cached_provider_local_scan(
         "codex", tmp_path, OBSERVED, extra_homes=(str(extra_home),)
     )
 

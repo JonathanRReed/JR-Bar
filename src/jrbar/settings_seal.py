@@ -98,6 +98,7 @@ UNSEALED_PRIVILEGED: Final[Mapping[str, str]] = {
     **dict.fromkeys(
         (
             "transcript_monitoring",
+            "token_history_enabled",
             "capacity_history_enabled",
             "capacity_history_retention_days",
             "operator_history_retention_days",

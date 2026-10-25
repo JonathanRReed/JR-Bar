@@ -27,6 +27,7 @@ def test_history_command_does_not_attribute_totals_to_first_named_account(revers
             )
 
     controller = SimpleNamespace(
+        settings=SimpleNamespace(token_history_enabled=True),
         _core_lock=threading.RLock(),
         _core_documents={"state": {"usage": {"providers": list(reversed(accounts)) if reverse else accounts}}},
         _core_usage_history_service=History(),

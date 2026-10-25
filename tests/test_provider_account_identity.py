@@ -92,7 +92,12 @@ def test_privacy_mode_strings_do_not_depend_on_private_account_label() -> None:
 
 
 def test_concurrent_salt_creators_reread_one_exclusive_winner(tmp_path, monkeypatch) -> None:
+    from jrbar import provider_account_identity as identity
+
     barrier = threading.Barrier(2)
+    published = threading.Barrier(2)
+    outcomes = []
+    publish = identity.atomic_private_write
     lock = threading.Lock()
     issued = 0
 
@@ -106,6 +111,19 @@ def test_concurrent_salt_creators_reread_one_exclusive_winner(tmp_path, monkeypa
         barrier.wait(timeout=30.0)
         return bytes([value]) * 32
 
+    def publish_before_read(*args, **kwargs):
+        try:
+            result = publish(*args, **kwargs)
+            outcomes.append("created")
+            return result
+        except FileExistsError:
+            outcomes.append("exists")
+            raise
+        finally:
+            # Reads start after publication; peer-read refusals have their own test.
+            published.wait(timeout=30.0)
+
+    monkeypatch.setattr(identity, "atomic_private_write", publish_before_read)
     monkeypatch.setattr("jrbar.provider_account_identity.secrets.token_bytes", token_bytes)
     results = []
     threads = [threading.Thread(target=lambda: results.append(_identity_salt(tmp_path))) for _ in range(2)]
@@ -114,6 +132,7 @@ def test_concurrent_salt_creators_reread_one_exclusive_winner(tmp_path, monkeypa
     for thread in threads:
         thread.join(timeout=30.0)
 
+    assert sorted(outcomes) == ["created", "exists"]
     assert len(results) == 2
     assert results[0] == results[1]
     assert results[0] in {bytes([1]) * 32, bytes([2]) * 32}

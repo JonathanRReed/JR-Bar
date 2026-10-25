@@ -2457,7 +2457,6 @@ USAGE_WARM_DELAY_SECONDS = 8.0
 def _usage_history_service(self):
     """The daemon's one ``UsageHistoryService`` (scans off the socket thread)."""
     from . import core_usage_history
-    from .usage_graph_worker import _drop_to_utility_qos
 
     service = getattr(self, "_core_usage_history_service", None)
     if service is None:
@@ -2465,10 +2464,26 @@ def _usage_history_service(self):
             lambda provider, days: core_usage_history.scan_provider_pass(provider, days=days),
             self._core_publish_event,
             log=self._core_log,
-            thread_setup=_drop_to_utility_qos,
+            enabled=lambda: self.settings.token_history_enabled,
         )
         self._core_usage_history_service = service
     return service
+
+
+def _sync_token_history(self):
+    from .token_history_index import set_enabled
+
+    set_enabled(self.settings.token_history_enabled)
+    service = getattr(self, "_core_usage_history_service", None)
+    if service is not None:
+        service.close()
+        self._core_usage_history_service = None
+    reuse = getattr(self, "_core_native_graph_reuse", None)
+    if reuse is not None:
+        reuse.close()
+        self._core_native_graph_reuse = None
+    if self.settings.token_history_enabled and getattr(self, "_core_ready_at", None) is not None:
+        _usage_history_warm_later(self)
 
 
 def _process_age_seconds() -> float | None:
@@ -2489,6 +2504,11 @@ def _usage_history_warm_later(self) -> None:
     """Warm the transcript caches shortly after start so the first
     ``usage_history`` answers inside its budget instead of a cold scan."""
 
+    from .token_history_index import set_enabled
+
+    set_enabled(self.settings.token_history_enabled)
+    if not self.settings.token_history_enabled:
+        return
     service = _usage_history_service(self)
 
     def warm() -> None:
@@ -2498,7 +2518,11 @@ def _usage_history_warm_later(self) -> None:
         if service.stopping.wait(USAGE_WARM_DELAY_SECONDS):
             return
         try:
-            service.warm()
+            while self.settings.token_history_enabled and not service.stopping.is_set():
+                from .core_usage_history import HISTORY_PROVIDERS
+                service.warm(HISTORY_PROVIDERS)
+                if service.stopping.wait(60.0):
+                    return
         except Exception as error:
             self._core_log(f"core: usage history warm-up failed: {error.__class__.__name__}")
 
@@ -2509,6 +2533,8 @@ def _usage_history_warm_later(self) -> None:
 def _cmd_usage_history(self, args):
     from . import core_usage_history
 
+    if not self.settings.token_history_enabled:
+        raise CommandError("disabled", "Token history is off.")
     observe = args.get("observe", False)
     if type(observe) is not bool:
         raise CommandError("invalid_args", "observe must be a boolean")
@@ -2555,22 +2581,17 @@ def _cmd_usage_history(self, args):
 def _cmd_usage_graph(self, args):
     """The shared-axis usage chart -- the Overview's Usage pane.
 
-    Same local-transcript scan the old Settings graph ran. days,
-    metric and providers are per-request overrides: nothing the pane
-    picks rewrites the stored settings. Heavy (~9s warm, ~30s cold),
-    so it rides the server's slow-lane worker, which runs at utility QoS
-    (``_core_start_server``), and never touches the menu.
+    Days, metric and providers are per-request overrides. Cold transcript
+    work runs in a Utility child; this worker reads the shared index.
     """
     from .t3_compat import T3ReadOnlyPolicy
-    from .usage_graph_worker import NativeGraphReuse, usage_graph_document
+    from .usage_graph_worker import usage_graph_document
 
+    if not self.settings.token_history_enabled:
+        raise CommandError("disabled", "Token history is off.")
     t3_policy = getattr(self, "_t3_read_only_policy", None)
     if type(t3_policy) is not T3ReadOnlyPolicy:
         t3_policy = None
-    native_reuse = getattr(self, "_core_native_graph_reuse", None)
-    if native_reuse is None:
-        native_reuse = NativeGraphReuse()
-        self._core_native_graph_reuse = native_reuse
     try:
         return usage_graph_document(
             self.settings,
@@ -2578,7 +2599,7 @@ def _cmd_usage_graph(self, args):
             metric=args.get("metric"),
             provider_ids=args.get("providers"),
             t3_policy=t3_policy,
-            native_reuse=native_reuse,
+            indexed_only=True,
         )
     except ValueError as error:
         raise CommandError("invalid_args", str(error)) from error
@@ -4114,7 +4135,6 @@ def _cmd_session_usage(self, args):
     provider's primary usage window opened (the Agent Overview's share).
     """
     from .session_usage import SESSION_USAGE_MAX_IDS, session_usage_document, window_openings
-
     raw_ids = args.get("ids")
     if isinstance(raw_ids, str):
         raw_ids = [raw_ids]
@@ -4942,6 +4962,11 @@ def build_headless_controller_class() -> type:
             if previous is not None:
                 scene_leases.settings_changed(self, previous, value)
             self._core_settings_value = value
+            from .token_history_index import set_enabled
+
+            set_enabled(value.token_history_enabled)
+            if previous is not None and previous.token_history_enabled != value.token_history_enabled:
+                _sync_token_history(self)
             self._core_settings_generation = getattr(self, "_core_settings_generation", 0) + 1
             if getattr(self, "_core", None) is not None:
                 self._core_publish_settings()
@@ -5304,6 +5329,9 @@ def build_headless_controller_class() -> type:
                 if self._core_settings_dirty:
                     # A deleted or unreadable file is written out from memory.
                     self._core_flush_settings()
+            from .token_history_index import set_enabled
+
+            set_enabled(False)
             service = getattr(self, "_core_usage_history_service", None)
             if service is not None:
                 service.close()
@@ -7288,8 +7316,6 @@ def build_headless_controller_class() -> type:
             legacy.log_status_bar(message)
 
         def _core_start_server(self) -> None:
-            from .usage_graph_worker import _drop_to_utility_qos
-
             server = CoreServer(
                 dispatch=self._core_dispatch,
                 initial_documents=self._core_initial_documents,
@@ -7297,10 +7323,6 @@ def build_headless_controller_class() -> type:
                 core_version=CORE_VERSION,
                 on_client_change=self._core_client_change,
                 log=legacy.log_status_bar,
-                # The scans on the slow lane parse six figures of JSONL
-                # lines; at default QoS they compete with the main thread
-                # that answers every Approve.
-                slow_lane_setup=_drop_to_utility_qos,
                 reset_replay_source=self._core_reset_replay_documents,
                 # Who may send a privileged command: set from the app's secret
                 # at startup (``run_core``). A controller built any other way

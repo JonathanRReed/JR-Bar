@@ -20,9 +20,9 @@ from pathlib import Path
 
 import pytest
 
-import jrbar.provider_usage_codex_claude as subject
 from jrbar import usage_graph_worker, usage_stats
 from jrbar.state_paths import default_state_dir
+from tests import legacy_usage_cards as legacy_cards
 from tests import synthetic_usage_month as month
 from tests.test_usage_cache_bounds import _claude_line, _write_transcript
 
@@ -42,7 +42,7 @@ def _chicago_calendar():
     patch = pytest.MonkeyPatch()
     patch.setenv("TZ", "America/Chicago")
     time.tzset()
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
     try:
         yield
     finally:
@@ -69,7 +69,7 @@ def _scan(home: Path, *, since: float, now: float = NOW, cache: bool = True):
 
 
 def _card(home: Path, observed_at: float = NOW) -> dict | None:
-    return subject._cached_provider_local_scan("claude", home, observed_at, extra_homes=())
+    return legacy_cards._cached_provider_local_scan("claude", home, observed_at, extra_homes=())
 
 
 def _transcript(home: Path, name: str, lines: list[str], *, mtime: float | None = None) -> Path:
@@ -218,7 +218,7 @@ def test_the_cache_version_changed_so_an_older_cache_is_not_read(tmp_path: Path)
     assert document["version"] == usage_stats.CACHE_VERSION == 8
     document["version"] = 7
     _cache(tmp_path).write_text(json.dumps(document), encoding="utf-8")
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
 
     assert _card(tmp_path) is None
     assert usage_stats._load_cache(_cache(tmp_path)) == {}
@@ -300,9 +300,9 @@ def test_a_codex_card_with_no_per_day_totals_keeps_its_windows_and_counts_nothin
     document = json.loads(path.read_text(encoding="utf-8"))
     del document["daily"]
     path.write_text(json.dumps(document), encoding="utf-8")
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
 
-    card = subject._cached_provider_local_scan("codex", tmp_path, NOW, extra_homes=())
+    card = legacy_cards._cached_provider_local_scan("codex", tmp_path, NOW, extra_homes=())
 
     assert card is not None
     assert card["input_tokens"] == 0 and card["model_count"] == 0

@@ -315,7 +315,10 @@ def test_claude_cached_local_scan_reuses_bounded_aggregate__and_1_more(
         since_epoch=OBSERVED - 30 * DAY,
         now=OBSERVED,
     )
-    subject._local_tokens_memo.clear()
+    from jrbar.token_history_index import shared_index
+    index = shared_index(default_state_dir(tmp_path) / "token-history.sqlite3")
+    index.background_build = False
+    index.scan({"claude": (_claude_projects(tmp_path),)})
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
     result = subject._cached_claude_local_scan(tmp_path, OBSERVED, extra_homes=())
@@ -327,6 +330,8 @@ def test_claude_cached_local_scan_reuses_bounded_aggregate__and_1_more(
         "model_count": 1,
         "estimated_cost_usd": None,
         "cache_savings_usd": None,
+        "history_stale": False,
+        "history_state": "ready",
     }
 
     # --- scenario: claude_without_explicit_usage_connection_is_actionable

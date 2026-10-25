@@ -185,6 +185,7 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.usage, "claude_plan_limits_consent_version", .number),
             SettingsKey(.usage, "quota_alerts_enabled", .bool),
             SettingsKey(.usage, "quota_alert_thresholds", .numberList),
+            SettingsKey(.usage, "token_history_enabled", .bool),
             SettingsKey(.usage, "capacity_history_enabled", .bool),
             SettingsKey(.usage, "capacity_history_retention_days", .number),
             // Usage hooks' master switch; the rules are the person's own

@@ -1625,6 +1625,26 @@ final class OverviewStore {
     var graph: CoreUsageGraphDocument?
     var graphLoading = false
     var graphError: String?
+    private(set) var graphHistoryDisabled = false
+    var tokenHistoryOff: Bool {
+        graphHistoryDisabled || core.settings.map { SettingsDocument($0.document).bool("token_history_enabled") == false } == true
+    }
+
+    func enableTokenHistory() {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.core.setSetting("token_history_enabled", value: .bool(true))
+                guard reply.ok else {
+                    self.graphError = reply.error?.message ?? "Could not turn on token history"
+                    return
+                }
+                self.graphHistoryDisabled = false
+                await self.loadGraph()
+            } catch { self.graphError = Self.describe(error) }
+        }
+    }
+
     /// When the current document was fetched — the usage pane re-asks
     /// once it's stale rather than showing yesterday's chart as fresh.
     var graphLoadedAt: Date?
@@ -1745,6 +1765,7 @@ final class OverviewStore {
             if graphFollowUp { continue }
             switch outcome {
             case .success(let document):
+                graphHistoryDisabled = false
                 graph = document
                 graphLoadedAt = document.graph.readingFiles > 0 ? nil : graphClock()
                 if document.graph.readingFiles > 0,
@@ -1754,6 +1775,10 @@ final class OverviewStore {
                 graphError = nil
                 refreshGraphProviderOptions()
             case .failure(let error):
+                if (error as? CoreReplyError)?.isTokenHistoryDisabled == true {
+                    graphHistoryDisabled = true
+                    graph = nil
+                }
                 graphNextScanAt = nil
                 graphError = Self.describe(error)
             }

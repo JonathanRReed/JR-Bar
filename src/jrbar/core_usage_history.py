@@ -173,6 +173,15 @@ def _empty_row() -> dict[str, Any]:
     return {"tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cost_usd": 0.0}
 
 
+def _published_bucket(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **row,
+        "cost_usd": round(row["cost_usd"], 4),
+        "estimated_cost_usd": round(row["cost_usd"], 4),
+        "processed_tokens": row["tokens_in"] + row["tokens_out"] + row["cache_read"],
+    }
+
+
 def usage_history_document(
     records: Iterable[tuple],
     *,
@@ -228,7 +237,7 @@ def usage_history_document(
         display_name = usage_stats.base_model_key(model_name)
         companion = display_name != model_name
         if not companion:
-            counted += 1
+            counted += getattr(record, "record_count", 1)
         for priced_name in {model_name, display_name}:
             if priced_name not in quotes:
                 quotes[priced_name] = price_quote(provider, priced_name, codex_default_model=codex_default_model)
@@ -241,17 +250,20 @@ def usage_history_document(
             # price. Unpriced coverage stays its own number (T24) --
             # never blended into "estimated" and never hidden.
             if not companion:
-                unpriced_records += 1
+                unpriced_records += getattr(record, "record_count", 1)
             if display_name not in unpriced_models:
                 unpriced_models.append(display_name)
         elif quote.estimated and not companion:
-            estimated_records += 1
+            estimated_records += getattr(record, "record_count", 1)
+        long_context = getattr(record, "long_context", None)
+        if long_context is None:
+            long_context = usage_stats.is_long_context_request(
+                provider, model_name, int(inp) + int(cached_in) + int(cache_create)
+            )
         cost = quote_cost(
             provider, quote, int(inp), int(cached_in), int(cache_create), int(out),
             write_rate=write_rates.get(model_name),
-            long_context=usage_stats.is_long_context_request(
-                provider, model_name, int(inp) + int(cached_in) + int(cache_create)
-            ),
+            long_context=long_context,
         )
         total = int(inp) + int(cached_in) + int(cache_create) + int(out)
         model_tokens[display_name] = model_tokens.get(display_name, 0) + total
@@ -260,7 +272,7 @@ def usage_history_document(
         model_split["tokens"] += total
         model_split["cost_usd"] += cost
         if not companion:
-            model_split["records"] += 1
+            model_split["records"] += getattr(record, "record_count", 1)
         for bucket in (day_bucket, hours.get(stamp.strftime("%Y-%m-%dT%H:00"))):
             if bucket is None:
                 continue
@@ -283,8 +295,8 @@ def usage_history_document(
     return {
         "provider": provider,
         "range": range_name,
-        "days": [{"date": key, **{k: (round(v, 4) if k == "cost_usd" else v) for k, v in row.items()}} for key, row in days.items()],
-        "hours": [{"hour": key, **{k: (round(v, 4) if k == "cost_usd" else v) for k, v in row.items()}} for key, row in hours.items()],
+        "days": [{"date": key, **_published_bucket(row)} for key, row in days.items()],
+        "hours": [{"hour": key, **_published_bucket(row)} for key, row in hours.items()],
         "pricing": quote.to_dict() if quote is not None else None,
         "account": account,
         "state": state,
@@ -310,6 +322,8 @@ def usage_history_document(
             {
                 "model": name,
                 "tokens": row["tokens"],
+                "processed_tokens": row["tokens"],
+                "estimated_cost_usd": round(row["cost_usd"], 4),
                 "cost_usd": round(row["cost_usd"], 4),
                 "records": row["records"],
                 "priced": quotes.get(name) is not None,
@@ -350,15 +364,9 @@ def scan_provider_pass(
     time stops on a line boundary, saves where each file got to and reports
     the files it left, so the caller asks again and the next pass carries on.
     """
-    from .local_token_history import scan_local_records
-
     start = (datetime.now() - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    if provider in LOCAL_HISTORY_PROVIDERS:
-        # Pi, Grok, Gemini CLI and OpenClaw: their own session files.
-        return ScanPass(scan_local_records((provider,), start.timestamp(), home=home))
-    if provider not in SCANNED_PROVIDERS:
+    if provider not in HISTORY_PROVIDERS:
         return ScanPass([])
-    base = Path(home) if home is not None else Path.home()
     from .provider_homes import scan_usage_all_homes
 
     # Every home of this provider (CLAUDE_CONFIG_DIR, CODEX_HOME and
@@ -366,12 +374,15 @@ def scan_provider_pass(
     options = {} if seconds is None else {"budget": usage_stats.ScanBudget(seconds)}
     totals = scan_usage_all_homes(
         default_state_dir() / "usage-scan-cache.json",
+        aggregate=True,
         since_epoch=start.timestamp(),
         provider_ids=(provider,),
-        home=base,
+        home=home,
         **options,
     )
     coverage = totals.source_coverage.get(provider)
+    if coverage is not None and coverage.status == usage_stats.UsageSourceStatus.FAILED:
+        raise UsageHistoryScanError()
     return ScanPass(
         [record for record in totals.records if record and record[0] == provider],
         coverage.pending_files if coverage is not None else 0,
@@ -444,8 +455,10 @@ class UsageHistoryService:
         thread_setup: Callable[[], None] | None = None,
         pass_pause: float = PASS_PAUSE_SECONDS,
         wall_clock: Callable[[], float] | None = None,
+        enabled: Callable[[], bool] = lambda: True,
     ) -> None:
         self._scan = scan
+        self._enabled = enabled
         #: "Today" for the day and hour buckets; ``clock`` only dates scans.
         self._wall_clock = wall_clock if wall_clock is not None else (lambda: time.time())
         self._pass_pause = float(pass_pause)
@@ -498,6 +511,7 @@ class UsageHistoryService:
                 and entry.inflight is None
                 and entry.error is None
                 and now - entry.scanned_at < self._fresh
+                and entry.document["hours"][-1]["hour"] == datetime.fromtimestamp(self._wall_clock()).strftime("%Y-%m-%dT%H:00")
             ):
                 return self._finish(entry.document, account, state, pending=False, stale=False, scanned_at=entry.scanned_at)
             event = self._start_locked(key, entry, now)
@@ -568,7 +582,7 @@ class UsageHistoryService:
         if entry.inflight is not None:
             return entry.inflight
         event = threading.Event()
-        if self.stopping.is_set():
+        if self.stopping.is_set() or not self._enabled():
             event.set()
             return event
         entry.inflight = event
@@ -602,7 +616,17 @@ class UsageHistoryService:
             started = self._clock()
             try:
                 with self._scan_lock:
+                    if self.stopping.is_set() or not self._enabled():
+                        with self._state_lock:
+                            self._entries[key].inflight = None
+                        event.set()
+                        return
                     outcome = self._scan(provider, days)
+                if self.stopping.is_set() or not self._enabled():
+                    with self._state_lock:
+                        self._entries[key].inflight = None
+                    event.set()
+                    return
                 records = outcome.records if isinstance(outcome, ScanPass) else outcome
                 reading = outcome.reading_files if isinstance(outcome, ScanPass) else 0
                 document = usage_history_document(
@@ -613,7 +637,7 @@ class UsageHistoryService:
             except Exception as exc:  # the scan must never take the daemon down
                 error = exc.__class__.__name__
             finished = self._clock()
-            more = reading > 0 and error is None and not self.stopping.is_set()
+            more = reading > 0 and error is None and not self.stopping.is_set() and self._enabled()
             following = threading.Event() if more else None
             with self._state_lock:
                 entry = self._entries.setdefault(key, _Entry())

@@ -1,0 +1,73 @@
+{"records": 200000, "tokens": 29000000, "cost": 179.35, "cpu_seconds": 2.851613, "peak_rss_mib": 140.015625}
+PROFILE before warm
+{"records": 200000, "tokens": 29000000, "cost": 179.35, "cpu_seconds": 3.529235, "peak_rss_mib": 179.421875}
+         17136872 function calls (17136854 primitive calls) in 3.578 seconds
+
+   Ordered by: cumulative time
+   List reduced from 301 to 14 due to restriction <14>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.005    0.005    3.579    3.579 benchmark-token-history.py:78(worker)
+        1    0.003    0.003    3.573    3.573 benchmark-token-history.py:91(scan)
+        1    0.000    0.000    2.177    2.177 usage_stats.py:4121(scan_usage)
+        2    0.000    0.000    2.171    1.086 usage_stats.py:3829(_scan_provider_usage_with_totals)
+        2    0.006    0.003    2.094    1.047 usage_stats.py:2887(_scan_inventory_usage)
+        2    0.006    0.003    2.088    1.044 usage_stats.py:2937(_scan_inventory_usage_locked)
+        2    0.073    0.036    2.002    1.001 usage_stats.py:3001(_scan_inventory_usage_with_index)
+        2    0.745    0.372    1.394    0.697 core_usage_history.py:185(usage_history_document)
+      200    0.001    0.000    0.857    0.004 usage_stats.py:2562(_decode_cached_records)
+      200    0.214    0.001    0.856    0.004 usage_stats.py:2506(_decode_records)
+   400006    0.133    0.000    0.542    0.000 {built-in method builtins.any}
+        2    0.130    0.065    0.291    0.145 usage_stats.py:3893(_card_days_document)
+   200336    0.257    0.000    0.257    0.000 {method 'strftime' of 'datetime.date' objects}
+        2    0.057    0.028    0.253    0.126 usage_stats.py:3573(_resolved_lineage)
+
+
+PROFILE after cold
+{"records": 200000, "tokens": 29000000, "cost": 179.35, "cpu_seconds": 10.864417, "peak_rss_mib": 179.421875}
+         21010095 function calls (21009682 primitive calls) in 11.300 seconds
+
+   Ordered by: cumulative time
+   List reduced from 284 to 14 due to restriction <14>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000   11.302   11.302 benchmark-token-history.py:78(worker)
+        1    0.000    0.000   11.299   11.299 benchmark-token-history.py:91(scan)
+        1    0.189    0.189   11.295   11.295 token_history_index.py:282(scan)
+   801429    3.879    0.000    3.898    0.000 {method 'execute' of 'sqlite3.Connection' objects}
+      100    0.001    0.000    2.849    0.028 usage_stats.py:1823(_parse_codex_file)
+      100    0.556    0.006    2.834    0.028 usage_stats.py:1565(_scan_codex_lines)
+      200    0.001    0.000    2.810    0.014 token_history_index.py:218(_append)
+      201    1.526    0.008    2.328    0.012 {method 'executemany' of 'sqlite3.Connection' objects}
+      100    0.000    0.000    1.805    0.018 usage_stats.py:2307(_parse_file)
+      100    0.050    0.001    1.790    0.018 usage_stats.py:2320(_scan_claude_lines)
+   100000    0.335    0.000    1.548    0.000 usage_stats.py:872(_claude_line)
+   300000    0.573    0.000    0.888    0.000 usage_stats.py:828(_token_counts)
+   100000    0.143    0.000    0.876    0.000 usage_stats.py:1329(_codex_event_dedupe)
+   200200    0.224    0.000    0.796    0.000 token_history_index.py:221(rows)
+
+
+PROFILE after warm
+{"records": 200000, "tokens": 29000000, "cost": 179.35, "cpu_seconds": 0.017708999999999975, "peak_rss_mib": 179.421875}
+         41595 function calls (41182 primitive calls) in 0.024 seconds
+
+   Ordered by: cumulative time
+   List reduced from 219 to 14 due to restriction <14>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    0.024    0.024 benchmark-token-history.py:78(worker)
+        1    0.000    0.000    0.024    0.024 benchmark-token-history.py:91(scan)
+        1    0.001    0.001    0.020    0.020 token_history_index.py:282(scan)
+      231    0.000    0.000    0.009    0.000 pathlib.py:835(stat)
+      233    0.007    0.000    0.009    0.000 {built-in method posix.stat}
+        1    0.000    0.000    0.007    0.007 token_history_index.py:137(_connect)
+        3    0.000    0.000    0.006    0.002 pathlib.py:852(exists)
+        2    0.000    0.000    0.005    0.002 token_history_index.py:65(_inventory)
+        2    0.000    0.000    0.005    0.002 usage_stats.py:3746(_provider_inventory)
+        2    0.000    0.000    0.005    0.002 usage_stats.py:2630(_discover_usage_files)
+        2    0.002    0.001    0.004    0.002 core_usage_history.py:185(usage_history_document)
+        1    0.000    0.000    0.003    0.003 token_history_index.py:488(_totals)
+      224    0.000    0.000    0.003    0.000 pathlib.py:842(lstat)
+      218    0.002    0.000    0.002    0.000 {method 'execute' of 'sqlite3.Connection' objects}
+
+

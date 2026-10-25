@@ -25,8 +25,8 @@ from pathlib import Path
 
 import pytest
 
-import jrbar.provider_usage_codex_claude as subject
 from jrbar import provider_homes, usage_stats
+from tests import legacy_usage_cards as legacy_cards
 from tests.test_codex_usage_lineage import _meta, _tokens, _write
 from tests.test_provider_usage_cached_scan import (
     DAY,
@@ -51,7 +51,7 @@ TIGHT_RECORD_COST = 700_000
 def _default_homes_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("CODEX_HOME", raising=False)
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
 
 
 def _claude_cache_document(home: Path) -> dict:
@@ -113,7 +113,7 @@ def test_a_size_drop_leaves_the_codex_card_whole(
     monkeypatch.setattr(usage_stats, "_CACHE_BYTES_PER_RECORD", TIGHT_RECORD_COST)
 
     _scan_codex(tmp_path, root, since_epoch=OBSERVED - 30 * DAY)
-    card = subject._cached_provider_local_scan("codex", tmp_path, OBSERVED, extra_homes=())
+    card = legacy_cards._cached_provider_local_scan("codex", tmp_path, OBSERVED, extra_homes=())
 
     # Eight turns in the entry that was kept and eight in the one that was not.
     assert _card_tokens(card) == 160
@@ -202,7 +202,7 @@ def test_a_card_section_that_cannot_be_trusted_is_never_summed(
     else:
         daily["days"]["yesterday"] = daily["days"].pop(first_day)
     path.write_text(json.dumps(document), encoding="utf-8")
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
 
     assert _claude_card(tmp_path) is None
     assert usage_stats.cache_card_days(usage_stats._load_cache(path), "claude") is None

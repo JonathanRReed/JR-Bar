@@ -1349,6 +1349,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     /// Unused limit-reset credits the provider reports (a Codex reset
     /// credit): a count to show, never something the app redeems. Nil
     /// when no source stated one.
+    public var tokenHistoryState: String? = nil
     public var resetCredits: Int? = nil
     public var availability: String? = nil
     public var statusText: String? = nil
@@ -1408,6 +1409,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         readAt = try? c.decodeIfPresent(Double.self, forKey: .readAt)
         constrained = try? c.decodeIfPresent(CoreConstrainedLane.self, forKey: .constrained)
         incident = try? c.decodeIfPresent(String.self, forKey: .incident)
+        tokenHistoryState = try? c.decodeIfPresent(String.self, forKey: .tokenHistoryState)
         let credits = try? c.decodeIfPresent(Int.self, forKey: .resetCredits)
         resetCredits = credits.map { max(0, $0) }
         availability = try? c.decodeIfPresent(String.self, forKey: .availability)
@@ -1447,6 +1449,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         case lastGoodAgeSeconds = "last_good_age_seconds"
         case panelVisible = "panel_visible"
         case actionKind = "action_kind"
+        case tokenHistoryState = "token_history_state"
     }
 
     /// When these numbers were read: `readAt`, else `observedAt` (a daemon
@@ -2672,6 +2675,9 @@ public struct CoreSettings: Codable, Hashable, Sendable {
 // MARK: - reply
 
 public struct CoreReplyError: Codable, Hashable, Sendable, Error {
+    public static let tokenHistoryOffMessage = "Token history is off"
+    public var isTokenHistoryDisabled: Bool { code == "disabled" }
+
     public var code: String
     public var message: String?
 

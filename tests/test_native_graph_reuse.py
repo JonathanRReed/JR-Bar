@@ -26,6 +26,13 @@ def write_rows(path, rows, *, touched=True):
 
 @pytest.fixture
 def corpus(tmp_path, monkeypatch):
+    # This suite tests the retired in-memory reuse component against its
+    # original scanner. Production uses the persistent index instead.
+    original_scan = worker.scan_usage_all_homes
+    def legacy_scan(*args, **kwargs):
+        kwargs["aggregate"] = False
+        return original_scan(*args, **kwargs)
+    monkeypatch.setattr(worker, "scan_usage_all_homes", legacy_scan)
     root = tmp_path / "claude" / "projects"
     write_rows(root / "old.jsonl", [(40, "shared", "claude-opus-4", 10)])
     write_rows(root / "recent.jsonl", [(0, "shared", "claude-opus-4", 10), (0, "new", "unknown-model", 20)])

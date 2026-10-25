@@ -46,7 +46,12 @@ struct UsageGraphView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if !store.isLive {
+            if store.tokenHistoryOff {
+                HStack {
+                    Text(CoreReplyError.tokenHistoryOffMessage)
+                    Button("Turn on") { store.enableTokenHistory() }.disabled(!store.isLive)
+                }.padding()
+            } else if !store.isLive {
                 OverviewEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
                                    text: "The chart comes from the monitor's local transcript scan.")
             } else if let error = store.graphError, graph == nil {

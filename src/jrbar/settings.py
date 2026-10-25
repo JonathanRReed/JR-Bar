@@ -708,6 +708,7 @@ class AgentMonitorSettings:
     ambient_cues_disabled: tuple[str, ...] = ()
     # Capacity retention is a separate, explicit consent boundary. Existing
     # transcript and broad usage settings never enable either history stream.
+    token_history_enabled: bool = True
     capacity_history_enabled: bool = False
     capacity_history_retention_days: int = 7
     # The second Mac. Off by default in every direction: nothing is
@@ -1949,6 +1950,7 @@ class AgentMonitorSettings:
                 and self.claude_plan_limits_enabled
                 else 0
             ),
+            "token_history_enabled": self.token_history_enabled,
             "capacity_history_enabled": self.capacity_history_enabled,
             "capacity_history_retention_days": (
                 self.capacity_history_retention_days
@@ -2448,6 +2450,7 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
             data.get("milestone_odometer_steps")
         ),
         ambient_cues_disabled=_ambient_cues_disabled_setting(data.get("ambient_cues_disabled")),
+        token_history_enabled=_bool_setting(data.get("token_history_enabled"), True),
         capacity_history_enabled=_bool_setting(
             data.get("capacity_history_enabled"), False
         ),

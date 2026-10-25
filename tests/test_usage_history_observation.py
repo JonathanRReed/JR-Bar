@@ -38,7 +38,7 @@ def fixture_service():
     service = UsageHistoryService(scan, lambda kind, **fields: events.append((kind, fields)),
                                   clock=lambda: stamp[0], wall_clock=lambda: stamp[0],
                                   codex_default_model=lambda: None, thread_factory=threads)
-    owner = SimpleNamespace(_core_lock=threading.RLock(), _core_documents={}, _core_usage_history_service=service)
+    owner = SimpleNamespace(settings=SimpleNamespace(token_history_enabled=True), _core_lock=threading.RLock(), _core_documents={}, _core_usage_history_service=service)
     return service, owner, threads, events, calls, fail, stamp
 
 

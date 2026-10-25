@@ -142,6 +142,12 @@ final class SessionUsageStore {
                     let document = try await self.core.sessionUsage(ids: batch)
                     self.apply(document, asked: batch)
                 } catch {
+                    if (error as? CoreReplyError)?.isTokenHistoryDisabled == true {
+                        for id in batch {
+                            self.usage[id] = nil
+                            self.gaps[id] = CoreReplyError.tokenHistoryOffMessage
+                        }
+                    }
                     // The send's stamp stands: asked again after `freshFor`,
                     // not on the next clock tick while the daemon may still
                     // be working on this one.

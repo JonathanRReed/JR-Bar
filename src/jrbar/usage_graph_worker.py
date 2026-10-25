@@ -748,8 +748,8 @@ def _build_payload(
     # provider_extra_homes), each real folder once (provider_homes).
     totals = native_reuse.collect(settings, period_start.timestamp(), native_binding) if native_reuse is not None and native_binding is not None else scan_usage_all_homes(
         default_state_dir() / "usage-scan-cache.json",
-        since_epoch=period_start.timestamp(),
-        provider_ids=provider_ids,
+        aggregate=True,
+        since_epoch=period_start.timestamp(), provider_ids=provider_ids,
         budget=usage_stats.ScanBudget(GRAPH_PASS_SECONDS),
     )
     opencode_records = (
@@ -775,12 +775,11 @@ def _build_payload(
     # record is that agent's own and never adds to Claude or Codex.
     from .local_token_history import LOCAL_HISTORY_PROVIDERS, scan_local_records
 
-    totals.records.extend(
-        scan_local_records(
+    if native_reuse is not None:
+        totals.records.extend(scan_local_records(
             [provider for provider in provider_ids if provider in LOCAL_HISTORY_PROVIDERS],
             period_start.timestamp(),
-        )
-    )
+        ))
 
     source_statistics = []
     t3_included = []
@@ -1234,6 +1233,7 @@ def usage_graph_document(
     provider_ids=None,
     t3_policy: T3ReadOnlyPolicy | None = None,
     native_reuse: NativeGraphReuse | None = None,
+    indexed_only: bool = False,
 ) -> dict:
     """The ``usage_graph`` command's reply: ``{"graph": model, "summary": "..."}``.
 
@@ -1245,6 +1245,10 @@ def usage_graph_document(
     that to invalid_args rather than silently substituting a range the
     caller did not ask for.
     """
+    if not getattr(settings, "token_history_enabled", True):
+        raise ValueError("Token history is off.")
+    if indexed_only:
+        native_reuse = None
     snapshot = _settings_snapshot(settings)
     # Wrong-TYPED overrides are invalid too: a string "30" or a
     # non-list providers must not silently substitute the stored
