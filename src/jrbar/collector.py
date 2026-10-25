@@ -11,6 +11,7 @@ import atexit
 import hashlib
 import json
 import re
+import sys
 import threading
 import time
 import weakref
@@ -144,6 +145,7 @@ TRANSCRIPT_RECORDS_CACHE_MAX_ENTRIES = (
     CODEX_TRANSCRIPT_MAX_FILES + CLAUDE_TRANSCRIPT_MAX_FILES
 ) * 4
 TRANSCRIPT_FILE_LIST_CACHE_MAX_ENTRIES = 16
+TRANSCRIPT_RECORDS_CACHE_MAX_BYTES = 8 * 1024 * 1024
 # latest.json is the restore snapshot and a slow feed: socket clients get
 # every change as it lands, but serve.py's /status.json, doctor and the
 # app's offline fallback read the file. At 5 s the daemon still rewrote
@@ -236,11 +238,24 @@ class StatusMetadata:
     origin: str | None = None
 
 
+def _transcript_retained_bytes(records: tuple[HookEvent, ...]) -> int:
+    def size(value):
+        if isinstance(value, dict):
+            return sys.getsizeof(value) + sum(size(key) + size(item) for key, item in value.items())
+        if isinstance(value, (tuple, list)):
+            return sys.getsizeof(value) + sum(size(item) for item in value)
+        if isinstance(value, HookEvent):
+            return sys.getsizeof(value) + size(vars(value))
+        return sys.getsizeof(value)
+    return size(records)
+
+
 @dataclass(frozen=True)
 class CachedTranscriptRecords:
     mtime: float
     size: int
     records: tuple[HookEvent, ...]
+    retained_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -842,9 +857,11 @@ class AgentMonitor(LiveSessionMemory):
         max_lines_per_source: int = 5000,
         transcript_records_cache_max_entries: int = TRANSCRIPT_RECORDS_CACHE_MAX_ENTRIES,
         transcript_file_list_cache_max_entries: int = TRANSCRIPT_FILE_LIST_CACHE_MAX_ENTRIES,
+        transcript_records_cache_max_bytes: int = TRANSCRIPT_RECORDS_CACHE_MAX_BYTES,
         clock_sampler: Callable[[], ClockSample] = _default_clock_sample,
         acknowledged_requests_supplier: Callable[[], frozenset[RequestKey]] | None = None,
     ) -> None:
+        self.transcript_records_cache_max_bytes = max(0, transcript_records_cache_max_bytes)
         self.sources = tuple(sources) if sources is not None else default_sources()
         self.stale_after_seconds = stale_after_seconds
         self.tool_running_timeout_seconds = tool_running_timeout_seconds
@@ -1226,7 +1243,9 @@ class AgentMonitor(LiveSessionMemory):
             mtime=stat.st_mtime,
             size=stat.st_size,
             records=cached_records,
+            retained_bytes=_transcript_retained_bytes(cached_records),
         )
+        self._bound_record_caches()
         return cached_records
 
     def _iter_codex_transcript_records(self, root: Path) -> Iterable[HookEvent]:
@@ -1307,16 +1326,29 @@ class AgentMonitor(LiveSessionMemory):
         if cached is not None and cached.mtime == stat.st_mtime and cached.size == stat.st_size:
             return cached.records
 
-        records = tuple(parser(path))
+        # Tool results have already determined the event's success/failure.
+        # Status reduction needs their metadata, not their message bodies.
+        records = tuple(replace(record, raw={key: value for key, value in record.raw.items()
+                                            if key != "tool_response"}) for record in parser(path))
         self._transcript_records_cache[key] = CachedTranscriptRecords(
             mtime=stat.st_mtime,
             size=stat.st_size,
             records=records,
+            retained_bytes=_transcript_retained_bytes(records),
         )
+        self._bound_record_caches()
         while len(self._transcript_records_cache) > self.transcript_records_cache_max_entries:
             oldest_key = next(iter(self._transcript_records_cache))
             del self._transcript_records_cache[oldest_key]
         return records
+
+    def _bound_record_caches(self) -> None:
+        caches = (self._log_records_cache, self._transcript_records_cache)
+        retained = sum(entry.retained_bytes for cache in caches for entry in cache.values())
+        for cache in caches:
+            while cache and retained > self.transcript_records_cache_max_bytes:
+                key = next(iter(cache))
+                retained -= cache.pop(key).retained_bytes
 
     def is_stale_status(self, status: AgentStatus, now: datetime) -> bool:
         if status.stale:  # facade rule: self-marked stays stale
