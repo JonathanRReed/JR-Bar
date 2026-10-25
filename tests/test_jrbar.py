@@ -15834,6 +15834,7 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
             dataclass_replace(
                 self.controller.settings,
                 focus_profile_rules={"com.apple.focus.work": "Day"},
+                focus_sync_enabled=True,
             ),
         )
 

@@ -115,6 +115,21 @@ struct FeatureLifecycleTests {
             core.apply(.state(CoreState(sessions: [], asks: [])))
             await drain()
             stopped(buddy.lifecycleResources, feature: contract.id)
+        case "presence", "focus":
+            var enabled = true
+            var reads = 0
+            let reporter = PresenceReporter(isConnected: { true }, presence: { nil }, send: { _ in true },
+                                            readFocus: { reads += 1; return false }, focusCheckInterval: 60,
+                                            enabled: { enabled }, focusEnabled: { enabled })
+            reporter.coreChanged()
+            #expect(reporter.wantsSensors && reporter.focusPolling && reporter.watchingActivation)
+            enabled = false
+            reporter.coreChanged()
+            #expect(!reporter.wantsSensors && !reporter.focusPolling && !reporter.watchingActivation)
+            #expect(!reporter.renewalRunning)
+            let stoppedReads = reads
+            reporter.focusMayHaveChanged()
+            #expect(reads == stoppedReads)
         case "shelf-media":
             let monitor = Monitor()
             let feed = MediaFeed(monitor: monitor)

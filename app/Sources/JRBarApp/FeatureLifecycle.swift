@@ -92,6 +92,8 @@ enum FeatureLifecycleRegistry {
         .init(id: "confetti", resources: ["burst window", "burst timer", "held burst"]),
         .init(id: "fold", resources: ["overlay", "display link", "lid sensor", "capture streams", "demo timer", "notification observers"]),
         .init(id: "buddy", resources: ["panels", "session observation", "display observers", "lively work", "open task"]),
+        .init(id: "presence", resources: ["sensor demand", "renewal task", "camera settling task", "send task"]),
+        .init(id: "focus", resources: ["Focus poll", "app activation observer"]),
         .init(id: "shelf-media", resources: ["media subscription", "lyrics request", "power monitor", "audio output observer", "Control Center listeners"]),
         .init(id: "shelf-timers", resources: ["deadline timer", "clock and wake observers"]),
     ]

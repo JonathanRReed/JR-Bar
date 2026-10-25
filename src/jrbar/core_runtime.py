@@ -4874,6 +4874,14 @@ def build_headless_controller_class() -> type:
             if previous is not None:
                 scene_leases.settings_changed(self, previous, value)
             self._core_settings_value = value
+            if previous is not None:
+                if ((previous.presence_enabled and not value.presence_enabled)
+                        or (previous.focus_sync_enabled and not value.focus_sync_enabled)):
+                    from . import core_power
+
+                    facts = core_power.presence_facts(self)
+                    if facts is not None:
+                        core_power._apply_presence(self, facts)
             self._core_settings_generation = getattr(self, "_core_settings_generation", 0) + 1
             if getattr(self, "_core", None) is not None:
                 self._core_publish_settings()

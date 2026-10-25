@@ -9422,7 +9422,6 @@ class StatusBarController(NSObject):
         setting_relevant = bool(
             any(device.auto_brightness_enabled for device in self.settings.devices)
             or self.settings.focus_sync_enabled
-            or self.settings.focus_profile_rules
         )
         presentation_relevant = inputs.screen_bar_enabled and inputs.visible
         return bool(
@@ -9960,10 +9959,7 @@ class StatusBarController(NSObject):
                         device.auto_brightness_enabled
                         for device in self.settings.devices
                     ),
-                    read_focus=bool(
-                        self.settings.focus_sync_enabled
-                        or self.settings.focus_profile_rules
-                    ),
+                    read_focus=bool(self.settings.focus_sync_enabled),
                     read_accessibility=read_accessibility,
                     previous_accessibility_preferences=(
                         self._accessibility_display_preferences
