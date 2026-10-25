@@ -620,7 +620,7 @@ struct ProviderMotionPreview: View {
 
     var body: some View {
         let live = rendered.flatMap { $0.key == key ? $0.program : nil }
-        LEDStripPreview(program: live ?? sketch, style: .band, dotSize: 6, showsBackground: true,
+        LEDStripPreview(program: live ?? "off", style: .band, dotSize: 6, showsBackground: true,
                         cornerRadius: 6, phase: phase)
             .task(id: key) {
                 let key = self.key

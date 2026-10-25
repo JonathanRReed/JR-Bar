@@ -15,7 +15,10 @@ struct LightingPage: View {
         ("color_blend", "Smooth", "One seamless light. Everyone's colours blend across the strip."),
         ("round_robin", "Everyone", "Every agent is lit at once, each in its own colour."),
         ("spatial_split", "Split", "Each agent gets its own section, sized by how much it needs you."),
-        ("relay", "Spotlight", "One agent flares bright at a time; the rest stay dim."),
+        ("alternate", "Alternate", "Provider colours crossfade across the strip."),
+        ("relay", "Relay", "A scanner passes in each provider colour."),
+        ("weave", "Weave", "Provider colours interleave and travel."),
+        ("tide", "Tide", "Provider colours meet from both ends."),
         ("cycle", "One at a Time", "The whole strip shows one agent, then the next."),
         ("classic", "Status Only", "One colour for whatever needs you most. Agents are not shown."),
     ]
@@ -309,9 +312,8 @@ struct FleetPreviewRow: View {
 
     var body: some View {
         let live = rendered.flatMap { $0.key == key ? $0 : nil }
-        let program = live?.program ?? sketch
-        SettingRow("With three agents", subtitle: live.map { "\($0.label) — as the monitor renders it." }
-                   ?? "Two working and one done: how a busy desk reads in this mode. An ask takes the whole strip under every blend, so it has no part here.") {
+        let program = live?.program ?? "off"
+        SettingRow("With three agents", subtitle: live?.label ?? "Preview unavailable") {
             VStack(alignment: .trailing, spacing: 6) {
                 LEDStripPreview(program: program, style: .dots, dotSize: 9, spacing: 6)
                     .frame(width: 168)
