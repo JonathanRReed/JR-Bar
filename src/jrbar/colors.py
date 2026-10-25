@@ -522,6 +522,9 @@ BLEND_MODE_CYCLE = "cycle"
 BLEND_MODE_CLASSIC = "classic"
 BLEND_MODE_ROUND_ROBIN = "round_robin"
 BLEND_MODE_RELAY = "relay"
+BLEND_MODE_ALTERNATE = "alternate"
+BLEND_MODE_WEAVE = "weave"
+BLEND_MODE_TIDE = "tide"
 BLEND_MODE_CHOICES: tuple[str, ...] = (
     # Smooth first: it is the default, and the calmest reading of "more
     # than one agent is live".
@@ -531,6 +534,9 @@ BLEND_MODE_CHOICES: tuple[str, ...] = (
     BLEND_MODE_RELAY,
     BLEND_MODE_CYCLE,
     BLEND_MODE_CLASSIC,
+    BLEND_MODE_ALTERNATE,
+    BLEND_MODE_WEAVE,
+    BLEND_MODE_TIDE,
 )
 # Smooth is the default: on a wide blended surface (the Screen Bar mixes
 # every LED with its neighbours) per-agent alternating LEDs average into a
@@ -546,6 +552,9 @@ BLEND_MODE_DESCRIPTIONS: dict[str, str] = {
     BLEND_MODE_COLOR: "One seamless light. Everyone's colours blend across the strip.",
     BLEND_MODE_CYCLE: "The whole strip shows one agent, then the next.",
     BLEND_MODE_CLASSIC: "One colour for whatever needs you most. Agents are not shown.",
+    BLEND_MODE_ALTERNATE: "Provider colours crossfade across the whole strip on a beat.",
+    BLEND_MODE_WEAVE: "Provider colours interleave and drift along the strip.",
+    BLEND_MODE_TIDE: "Provider colours flow in from both ends and meet.",
 }
 
 # NOTE on layout crossfades: every program swap already eases instead of
@@ -1089,6 +1098,7 @@ class ColorSettings:
     # auto-assigned IDENTITY_PALETTE. Empty by default.
     session_colors: dict[str, str] = field(default_factory=dict)
     blend_mode: str = DEFAULT_BLEND_MODE
+    mix_parameters: dict[str, dict[str, Any]] = field(default_factory=dict)
     fade_floor: dict[str, float] = field(default_factory=_default_fade_floor)
     fade_ceiling: dict[str, float] = field(default_factory=_default_fade_ceiling)
     mode_animation: dict[str, str] = field(default_factory=_default_mode_animation)
@@ -1353,6 +1363,10 @@ class ColorSettings:
             raise ValueError(f"Unknown blend mode: {mode}")
         return replace(self, blend_mode=mode)
 
+    @property
+    def mix_mode(self) -> str:
+        return self.blend_mode
+
     def with_fade_floor(self, key: str, value: float) -> ColorSettings:
         if key not in FADE_MODE_KEYS:
             raise ValueError(f"Unknown fade mode key: {key}")
@@ -1427,7 +1441,9 @@ class ColorSettings:
             "mode_colors": dict(self.mode_colors),
             "agent_colors": dict(self.agent_colors),
             "session_colors": dict(sorted(self.session_colors.items())),
-            "blend_mode": self.blend_mode,
+            "blend_mode": self.mix_mode,
+            "mix_mode": self.mix_mode,
+            "mix_parameters": {key: dict(value) for key, value in self.mix_parameters.items()},
             "fade_floor": dict(self.fade_floor),
             "fade_ceiling": dict(self.fade_ceiling),
             "mode_animation": dict(self.mode_animation),
@@ -1476,7 +1492,7 @@ class ColorSettings:
                 if isinstance(agent_id, str) and agent_id:
                     session_colors[agent_id] = normalize_hex(value, IDENTITY_PALETTE[0])
 
-        blend_mode = data.get("blend_mode")
+        blend_mode = data.get("mix_mode", data.get("blend_mode"))
         if blend_mode not in BLEND_MODE_CHOICES:
             blend_mode = DEFAULT_BLEND_MODE
 
@@ -1580,6 +1596,11 @@ class ColorSettings:
             agent_colors=agent_colors,
             session_colors=session_colors,
             blend_mode=blend_mode,
+            mix_parameters={
+                key: clean_animation_parameters(value)
+                for key, value in data.get("mix_parameters", {}).items()
+                if key in BLEND_MODE_CHOICES and isinstance(value, dict)
+            } if isinstance(data.get("mix_parameters"), dict) else {},
             fade_floor=fade_floor,
             fade_ceiling=fade_ceiling,
             mode_animation=mode_animation,
@@ -2240,7 +2261,9 @@ def _stable_agent_sort_key(status: AgentStatus) -> tuple[int, str]:
 
 
 def _active_agents(statuses: tuple[AgentStatus, ...], colors: ColorSettings) -> list[_ActiveAgent]:
-    ordered = sorted(statuses, key=_stable_agent_sort_key)
+    from .light_mix import active_agent_groups
+
+    ordered = sorted((group.root for group in active_agent_groups(statuses)), key=_stable_agent_sort_key)
     # Identity colors ("color = agent") apply only when there's a crowd
     # to tell apart; a lone session keeps its provider's brand color.
     identity: dict[str, str] = {}
@@ -3258,87 +3281,14 @@ def program_for_snapshot(
 
     agents = _active_agents(_statuses_for_strip(statuses, led_count), settings)
 
-    if settings.blend_mode == BLEND_MODE_CLASSIC:
-        aggregate_mode = max(statuses, key=lambda status: -status.priority).mode
-        state = display_state_for_mode(aggregate_mode)
-        program = _display_state_program(settings,
-            state,
-            led_count=led_count,
-            brightness=brightness,
-            idle_color=settings.mode_color(MODE_IDLE),
-            working_color=settings.mode_color(MODE_WORKING),
-            done_color=settings.mode_color(MODE_DONE),
-            ask_color=settings.mode_color(MODE_ASK),
-            error_color=settings.rendered_error_color(),
-            done_celebrate=settings.done_celebration_enabled,
-            **_fade_kwargs_for_all_modes(settings),
-        )
-        attention = _attention_motion_programs(
-            program,
-            agents,
-            led_count=led_count,
-            settings=settings,
-            brightness=brightness,
-        )
-        return state, _selected_attention_program(
-            attention,
-            include_arrival=include_attention_arrival,
-        )
+    from .light_mix import plan_agent_mix
 
-    if owner := _working_motion_owner(agents, settings):
-        agents = [owner]
-    if settings.blend_mode == BLEND_MODE_RELAY and led_count <= 0:
-        return _representative_state(agents), ""
-
-    if len(agents) == 1:
-        agent = agents[0]
-        program = _single_agent_program(
-            agent.color,
-            agent.state,
-            led_count=led_count,
-            brightness=brightness,
-            settings=settings,
-            provider=agent.provider,
-        )
-        attention = _attention_motion_programs(
-            program,
-            agents,
-            led_count=led_count,
-            settings=settings,
-            brightness=brightness,
-        )
-        return agent.state, _selected_attention_program(
-            attention,
-            include_arrival=include_attention_arrival,
-        )
-
-    state = _representative_state(agents)
-    if settings.blend_mode == BLEND_MODE_COLOR:
-        program = _color_blend_program(agents, led_count=led_count, brightness=brightness, settings=settings)
-    elif settings.blend_mode == BLEND_MODE_CYCLE:
-        program = _cycle_program(agents, led_count=led_count, brightness=brightness, settings=settings)
-    elif settings.blend_mode == BLEND_MODE_SPATIAL:
-        program = _spatial_split_program(agents, led_count=led_count, brightness=brightness, settings=settings)
-    elif settings.blend_mode == BLEND_MODE_RELAY:
-        program = _relay_program(
-            agents,
-            led_count=led_count,
-            brightness=brightness,
-            settings=settings,
-            relay_elapsed_seconds=relay_elapsed_seconds,
-        )
-    else:  # Default / BLEND_MODE_ROUND_ROBIN
-        program = _round_robin_program(agents, led_count=led_count, brightness=brightness, settings=settings)
+    plan = plan_agent_mix(agents, settings, led_count=led_count, brightness=brightness)
     attention = _attention_motion_programs(
-        program,
-        agents,
-        led_count=led_count,
-        settings=settings,
-        brightness=brightness,
+        plan.program, agents, led_count=led_count, settings=settings, brightness=brightness,
     )
-    return state, _selected_attention_program(
-        attention,
-        include_arrival=include_attention_arrival,
+    return plan.state, _selected_attention_program(
+        attention, include_arrival=include_attention_arrival,
     )
 
 
@@ -3453,56 +3403,11 @@ def _only_stale_asks_are_lit(projection) -> bool:
     )
 
 
-@_honours_strip_direction
-@_calms_stale_asks
-def program_for_projection(
-    projection,
-    *,
-    active_signal=None,
-    led_count: int = 8,
-    colors: ColorSettings | None = None,
-    brightness: float = 255,
-    relay_elapsed_seconds: float = 0.0,
-    include_attention_arrival: bool = False,
-    fleet_plan: FleetPlan | None = None,
-) -> tuple[LedDisplayState, str]:
-    """Render only semantics already decided by ``AttentionProjection``."""
+def projection_mix_agents(projection, settings, led_count=8):
     from .attention import LifecycleMode
+    from .light_mix import active_agent_groups
 
-    settings = colors or ColorSettings.defaults()
-    brightness = normalize_brightness(brightness)
-    state = display_state_for_projection(projection, active_signal)
-    if active_signal is not None:
-        # The active signal that reaches here is a SignalKind.FAILURE (see
-        # display_state_for_projection), so the finite double-blink is the
-        # failure cue -- it plays in the Error colour, not the Ask one.
-        return state, failure_signal_program(
-            settings.rendered_error_color(),
-            active_signal,
-            brightness=brightness,
-            led_count=led_count,
-        )
-
-    # light_rows: main agents only, or one stand-in for an orphaned
-    # background crowd. Colouring visible_rows here fed 114 rows -- 87 of
-    # them Task workers -- into identity assignment, which is why the
-    # multi-agent renderer never switched off and Claude's brand hue
-    # never reached the strip.
-    rows = tuple(projection.light_rows)
-    if not rows:
-        return state, _display_state_program(settings,
-            state,
-            led_count=led_count,
-            brightness=brightness,
-            idle_color=settings.mode_color(MODE_IDLE),
-            working_color=settings.mode_color(MODE_WORKING),
-            done_color=settings.mode_color(MODE_DONE),
-            ask_color=settings.mode_color(MODE_ASK),
-            error_color=settings.rendered_error_color(),
-            done_celebrate=settings.done_celebration_enabled,
-            **_fade_kwargs_for_all_modes(settings),
-        )
-
+    rows = tuple(group.root for group in active_agent_groups(projection))
     ordered = sorted(rows, key=lambda row: _stable_agent_sort_key(row.source_status))
     ordered = _under_pressure_keep_engaged(
         ordered,
@@ -3558,75 +3463,45 @@ def program_for_projection(
         )
         for row in ordered
     ]
-    agents = [agent for _row, agent in row_agents]
-    motion_owner = _working_motion_owner(agents, settings)
-    if (
-        type(fleet_plan) is FleetPlan
-        and motion_owner is None
-        and fleet_plan.accepted
-        and fleet_plan.led_count == led_count
-        and len(fleet_plan.member_slots) > 1
-    ):
-        representatives = _fleet_representative_rows(projection)
-        if fleet_plan.mode == "shared":
-            shared_lifecycle = fleet_plan.shared_semantic
-            shared_state = state_by_lifecycle.get(shared_lifecycle, state)
-            program = _display_state_program(settings,
-                shared_state,
-                led_count=led_count,
-                brightness=brightness,
-                idle_color=settings.mode_color(MODE_IDLE),
-                working_color=settings.mode_color(MODE_WORKING),
-                done_color=settings.mode_color(MODE_DONE),
-                ask_color=settings.mode_color(MODE_ASK),
-                error_color=settings.rendered_error_color(),
-                done_celebrate=settings.done_celebration_enabled,
-                **_fade_kwargs_for_all_modes(settings),
-            )
-            attention = _attention_motion_programs(
-                program,
-                agents,
-                led_count=led_count,
-                settings=settings,
-                brightness=brightness,
-            )
-            return shared_state, _selected_attention_program(
-                attention,
-                include_arrival=include_attention_arrival,
-            )
-        if fleet_plan.mode == "segmented":
-            agent_by_id = {row.agent_id: agent for row, agent in row_agents}
-            fleet_agents: list[_ActiveAgent] = []
-            for identity, _start, _end in fleet_plan.member_slots:
-                row = representatives.get(identity)
-                if row is None:
-                    fleet_agents = []
-                    break
-                agent = agent_by_id.get(row.agent_id)
-                if agent is None:
-                    fleet_agents = []
-                    break
-                fleet_agents.append(replace(agent, weight=1))
-            if len(fleet_agents) == len(fleet_plan.member_slots):
-                program = _spatial_split_program(
-                    fleet_agents,
-                    led_count=led_count,
-                    brightness=brightness,
-                    settings=settings,
-                )
-                attention = _attention_motion_programs(
-                    program,
-                    fleet_agents,
-                    led_count=led_count,
-                    settings=settings,
-                    brightness=brightness,
-                )
-                return _representative_state(fleet_agents), _selected_attention_program(
-                    attention,
-                    include_arrival=include_attention_arrival,
-                )
-    if settings.blend_mode == BLEND_MODE_CLASSIC:
-        program = _display_state_program(settings,
+    return [agent for _row, agent in row_agents]
+
+
+@_honours_strip_direction
+@_calms_stale_asks
+def program_for_projection(
+    projection,
+    *,
+    active_signal=None,
+    led_count: int = 8,
+    colors: ColorSettings | None = None,
+    brightness: float = 255,
+    relay_elapsed_seconds: float = 0.0,
+    include_attention_arrival: bool = False,
+    fleet_plan: FleetPlan | None = None,
+) -> tuple[LedDisplayState, str]:
+    """Render only semantics already decided by ``AttentionProjection``."""
+    settings = colors or ColorSettings.defaults()
+    brightness = normalize_brightness(brightness)
+    state = display_state_for_projection(projection, active_signal)
+    if active_signal is not None:
+        # The active signal that reaches here is a SignalKind.FAILURE (see
+        # display_state_for_projection), so the finite double-blink is the
+        # failure cue -- it plays in the Error colour, not the Ask one.
+        return state, failure_signal_program(
+            settings.rendered_error_color(),
+            active_signal,
+            brightness=brightness,
+            led_count=led_count,
+        )
+
+    # light_rows: main agents only, or one stand-in for an orphaned
+    # background crowd. Colouring visible_rows here fed 114 rows -- 87 of
+    # them Task workers -- into identity assignment, which is why the
+    # multi-agent renderer never switched off and Claude's brand hue
+    # never reached the strip.
+    rows = tuple(projection.light_rows)
+    if not rows:
+        return state, _display_state_program(settings,
             state,
             led_count=led_count,
             brightness=brightness,
@@ -3638,76 +3513,16 @@ def program_for_projection(
             done_celebrate=settings.done_celebration_enabled,
             **_fade_kwargs_for_all_modes(settings),
         )
-        attention = _attention_motion_programs(
-            program,
-            agents,
-            led_count=led_count,
-            settings=settings,
-            brightness=brightness,
-        )
-        return state, _selected_attention_program(
-            attention,
-            include_arrival=include_attention_arrival,
-        )
-    if motion_owner is not None:
-        agents = [motion_owner]
-    if settings.blend_mode == BLEND_MODE_RELAY and led_count <= 0:
-        return _representative_state(agents), ""
-    if len(agents) == 1:
-        agent = agents[0]
-        program = _single_agent_program(
-            agent.color,
-            agent.state,
-            led_count=led_count,
-            brightness=brightness,
-            settings=settings,
-            provider=agent.provider,
-        )
-        attention = _attention_motion_programs(
-            program,
-            agents,
-            led_count=led_count,
-            settings=settings,
-            brightness=brightness,
-        )
-        return agent.state, _selected_attention_program(
-            attention,
-            include_arrival=include_attention_arrival,
-        )
-    if settings.blend_mode == BLEND_MODE_COLOR:
-        program = _color_blend_program(
-            agents, led_count=led_count, brightness=brightness, settings=settings
-        )
-    elif settings.blend_mode == BLEND_MODE_CYCLE:
-        program = _cycle_program(
-            agents, led_count=led_count, brightness=brightness, settings=settings
-        )
-    elif settings.blend_mode == BLEND_MODE_SPATIAL:
-        program = _spatial_split_program(
-            agents, led_count=led_count, brightness=brightness, settings=settings
-        )
-    elif settings.blend_mode == BLEND_MODE_RELAY:
-        program = _relay_program(
-            agents,
-            led_count=led_count,
-            brightness=brightness,
-            settings=settings,
-            relay_elapsed_seconds=relay_elapsed_seconds,
-        )
-    else:
-        program = _round_robin_program(
-            agents, led_count=led_count, brightness=brightness, settings=settings
-        )
+
+    agents = projection_mix_agents(projection, settings, led_count)
+    from .light_mix import plan_agent_mix
+
+    plan = plan_agent_mix(agents, settings, led_count=led_count, brightness=brightness)
     attention = _attention_motion_programs(
-        program,
-        agents,
-        led_count=led_count,
-        settings=settings,
-        brightness=brightness,
+        plan.program, agents, led_count=led_count, settings=settings, brightness=brightness,
     )
-    return _representative_state(agents), _selected_attention_program(
-        attention,
-        include_arrival=include_attention_arrival,
+    return plan.state, _selected_attention_program(
+        attention, include_arrival=include_attention_arrival,
     )
 
 

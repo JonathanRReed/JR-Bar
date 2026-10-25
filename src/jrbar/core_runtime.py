@@ -1335,6 +1335,10 @@ def _cmd_set_setting(self, args):
         raise CommandError("invalid_path", f"cannot write {path!r}")
     if not set_path(document, path, args.get("value")):
         raise CommandError("invalid_path", f"cannot write {path!r}")
+    if path == "colors.blend_mode":
+        document["colors"]["mix_mode"] = args.get("value")
+    elif path == "colors.mix_mode":
+        document["colors"]["blend_mode"] = args.get("value")
     generation = _apply_settings_document(self, document, touched=[path])
     value, _ = get_path(self.settings.to_dict(), path)
     return {"generation": generation, "path": path, "value": value}
@@ -3505,6 +3509,13 @@ def _cmd_preview_fleet(self, args):
     from . import core_lights
 
     return core_lights.preview_fleet(self, args)
+
+
+@command("what_plays", main_thread=False)
+def _cmd_what_plays(self, args):
+    from . import core_lights
+
+    return core_lights.what_plays(self, args)
 
 
 @command("list_light_log")

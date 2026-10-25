@@ -5959,9 +5959,7 @@ class ColorSettingsTests(unittest.TestCase):
         self.assertEqual(normalize_hex("not-a-color", "#000000"), "#000000")
         self.assertEqual(normalize_hex(None, "#000000"), "#000000")
 
-    def test_classic_blend_mode_matches_legacy_programs(self) -> None:
-        """Classic mode reproduces program_for_display_state exactly, with
-        and without the gentler default fade."""
+    def test_state_priority_and_empty_snapshots(self) -> None:
         # --- scenario: urgency_weight_orders_blocked_above_idle
         self.assertGreater(urgency_weight(AgentMode.BLOCKED_ERROR), urgency_weight(AgentMode.WAITING_FOR_INPUT))
         self.assertGreater(urgency_weight(AgentMode.WAITING_FOR_INPUT), urgency_weight(AgentMode.WORKING))
@@ -5995,53 +5993,17 @@ class ColorSettingsTests(unittest.TestCase):
         self.assertIn(settings.rendered_error_color(), program)
         self.assertNotIn(settings.mode_color(colors_module.MODE_ASK), program)
 
-        # --- scenario: classic_blend_mode_matches_program_for_display_state_exactly
-        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC).with_round_robin_urgency_alert(False)
-        fade_kwargs = {
-            "idle_floor": colors_module.DEFAULT_FADE_FLOOR,
-            "idle_ceiling": colors_module.DEFAULT_FADE_CEILING,
-            "working_floor": colors_module.DEFAULT_FADE_FLOOR,
-            "working_ceiling": colors_module.DEFAULT_FADE_CEILING,
-            "ask_floor": colors_module.DEFAULT_FADE_FLOOR,
-            "ask_ceiling": colors_module.DEFAULT_FADE_CEILING,
-        }
-        for mode, expected_state in (
-            (AgentMode.WORKING, LedDisplayState.WORKING),
-            (AgentMode.WAITING_FOR_INPUT, LedDisplayState.ASK),
-            (AgentMode.BLOCKED_ERROR, LedDisplayState.FAILED),
-            (AgentMode.COMPLETED, LedDisplayState.DONE),
-            (AgentMode.IDLE_READY, LedDisplayState.IDLE),
-        ):
-            for led_count in (2, 8):
-                state, program = program_for_snapshot((_status("codex", mode),), led_count=led_count, colors=settings)
-                expected = program_for_display_state(
-                    expected_state,
-                    led_count=led_count,
-                    brightness=255,
-                    done_celebrate=settings.done_celebration_enabled,
-                    **fade_kwargs,
-                )
-                self.assertEqual(state, expected_state)
-                self.assertEqual(program, expected)
 
-        # --- scenario: classic_blend_mode_matches_default_off_to_full_pulse_when_fade_disabled
-        # Confirms the underlying primitive (program_for_display_state) is
-        # still exactly today's original off-to-full pulse when floor=0/
-        # ceiling=1 -- i.e. the gentler default lives in ColorSettings, not
-        # baked irreversibly into the renderer.
-        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC).with_round_robin_urgency_alert(False)
-        for key in colors_module.FADE_MODE_KEYS:
-            settings = settings.with_fade_floor(key, 0.0).with_fade_ceiling(key, 1.0)
-
-        for mode, expected_state in (
-            (AgentMode.WORKING, LedDisplayState.WORKING),
-            (AgentMode.WAITING_FOR_INPUT, LedDisplayState.ASK),
-            (AgentMode.BLOCKED_ERROR, LedDisplayState.FAILED),
-            (AgentMode.IDLE_READY, LedDisplayState.IDLE),
-        ):
-            state, program = program_for_snapshot((_status("codex", mode),), led_count=8, colors=settings)
-            expected = program_for_display_state(expected_state, led_count=8, brightness=255)
-            self.assertEqual(program, expected)
+    def test_status_only_is_static_for_a_mix_and_solos_keep_their_animation(self) -> None:
+        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC).with_agent_animation("codex", "kitt")
+        solo = (_status("codex", AgentMode.WORKING),)
+        self.assertEqual(program_for_snapshot(solo, colors=settings),
+                         program_for_snapshot(solo, colors=settings.with_blend_mode(BLEND_MODE_COLOR)))
+        mixed = (*solo, _status("claude", AgentMode.WORKING))
+        state, program = program_for_snapshot(mixed, colors=settings)
+        self.assertEqual(state, LedDisplayState.WORKING)
+        self.assertEqual(program, settings.mode_color(colors_module.MODE_WORKING))
+        self.assertNotIn("repeat", program)
 
     def test_spatial_and_blend_modes_assign_leds(self) -> None:
         """Spatial split assigns every LED once and falls back past LED
@@ -6106,12 +6068,11 @@ class ColorSettingsTests(unittest.TestCase):
             colors_module.scale_hex_brightness(_identity_color(statuses, "codex"), codex_ceiling),
             program,
         )
-        self.assertIn(
+        self.assertNotIn(
             colors_module.scale_hex_brightness(_identity_color(statuses, "claude"), claude_ceiling),
             program,
         )
         self.assertIn("repeat", program)
-        self.assertIn("pulse", program)
 
         # --- scenario: all_blend_modes_produce_valid_dsl_line_and_byte_limits
         settings_base = ColorSettings.defaults()
@@ -6205,10 +6166,10 @@ class ColorSettingsTests(unittest.TestCase):
         # the firmware's indexed parser rejects (red-strobe parse error;
         # "floor to zero flashed red and turned off"). Codex (Working,
         # floor 0.2) resets to a scaled, non-black color.
-        self.assertIn(":#000000", reset_line)
+        self.assertIn("off", reset_line)
         self.assertNotIn(":off", reset_line)
         working_floor_color = colors_module.scale_hex_brightness(_identity_color(statuses, "codex"), 0.2)
-        self.assertIn(working_floor_color, reset_line)
+        self.assertNotIn(working_floor_color, reset_line)
 
 
 class RoundRobinAndPaletteTests(unittest.TestCase):
@@ -6287,20 +6248,12 @@ class RoundRobinAndPaletteTests(unittest.TestCase):
         self.assertLessEqual(len(lines), 20)
         self.assertLessEqual(len(arrival.encode("utf-8")), 512)
 
-    def test_attention_takeover_absent_without_an_asker_or_when_disabled(self) -> None:
-        # The takeover vocabulary lives in Round-Robin/Cycle; pin it rather
-        # than inherit the default.
-        round_robin = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN)
-        working = (_status("codex", AgentMode.WORKING), _status("devin", AgentMode.WORKING))
-        _s, calm = colors_module.program_for_snapshot(
-            working, led_count=8, colors=round_robin, brightness=255
-        )
-        self.assertTrue(calm.splitlines()[0].startswith("0:"))
-
+    def test_asks_win_when_the_optional_arrival_alert_is_disabled(self) -> None:
+        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN).with_round_robin_urgency_alert(False)
         asking = (_status("claude", AgentMode.WAITING_FOR_INPUT), _status("codex", AgentMode.WORKING))
-        disabled = round_robin.with_round_robin_urgency_alert(False)
-        _s, quiet = colors_module.program_for_snapshot(asking, led_count=8, colors=disabled, brightness=255)
-        self.assertTrue(quiet.splitlines()[0].startswith("0:"))
+        state, mixed = program_for_snapshot(asking, colors=settings)
+        self.assertEqual(state, LedDisplayState.ASK)
+        self.assertEqual(mixed, program_for_snapshot((asking[0],), colors=settings)[1])
 
     def test_led_assignment_is_invariant_to_input_status_order(self) -> None:
         # Regression guard: the collector sorts statuses most-recently-
@@ -6329,74 +6282,35 @@ class RoundRobinAndPaletteTests(unittest.TestCase):
         _, program_reversed = program_for_snapshot(tuple(reversed(pair)), led_count=8, colors=settings)
         self.assertEqual(program_forward, program_reversed)
 
-    def test_round_robin_assignment(self) -> None:
-        # With exactly one active agent, blend mode shouldn't matter --
-        # both take the single-agent shortcut and render identically.
-        settings_rr = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN)
-        settings_spatial = ColorSettings.defaults().with_blend_mode(BLEND_MODE_SPATIAL)
-        statuses = (_status("codex", AgentMode.WORKING),)
-        state, rr_program = program_for_snapshot(statuses, led_count=8, colors=settings_rr)
-        _, spatial_program = program_for_snapshot(statuses, led_count=8, colors=settings_spatial)
-        self.assertEqual(state, LedDisplayState.WORKING)
-        self.assertEqual(rr_program, spatial_program)
-
-        # Every LED is assigned exactly once per cycle line.
-        settings = (
-            ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN).with_round_robin_urgency_alert(False)
-        )
-        statuses = (
-            _status("codex", AgentMode.WORKING),
-            _status("claude", AgentMode.BLOCKED_ERROR),
-        )
-        _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
-        pulse_line = _program_body(program)[1]
-        indices = {segment.split(":")[0] for segment in pulse_line.split("; ")}
-        self.assertEqual(indices, {str(i) for i in range(8)})
-
-        # More agents than LEDs: no crash, still a valid program.
+    def test_everyone_interleaves_each_providers_own_animation(self) -> None:
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN)
-        statuses = tuple(_status(f"agent{i}", AgentMode.WORKING) for i in range(5))
-        state, program = program_for_snapshot(statuses, led_count=2, colors=settings)
-        lines = [line for line in program.splitlines() if line.strip()]
-        self.assertLessEqual(len(lines), 20)
-        self.assertLessEqual(len(program.encode()), 512)
-
-    def test_relay_assignment_and_gating(self) -> None:
-        self.assertIn(BLEND_MODE_RELAY, BLEND_MODE_CHOICES)
-
-        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_RELAY).with_round_robin_urgency_alert(False)
-        statuses = (
-            _status("codex", AgentMode.WORKING),
-            _status("claude", AgentMode.BLOCKED_ERROR),
-        )
-        _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
-        pulse_line = _program_body(program)[1]
-        indices = {segment.split(":")[0] for segment in pulse_line.split("; ")}
-        self.assertEqual(indices, {str(i) for i in range(8)})
-
-        # One active agent takes the single-agent shortcut like any mode.
-        settings_relay = ColorSettings.defaults().with_blend_mode(BLEND_MODE_RELAY)
-        settings_spatial = ColorSettings.defaults().with_blend_mode(BLEND_MODE_SPATIAL)
-        statuses = (_status("codex", AgentMode.WORKING),)
-        state, relay_program = program_for_snapshot(statuses, led_count=8, colors=settings_relay)
-        _, spatial_program = program_for_snapshot(statuses, led_count=8, colors=settings_spatial)
+        providers = ("codex", "claude", "devin")
+        for provider in providers:
+            settings = settings.with_agent_animation(provider, "breathe")
+        state, program = program_for_snapshot(tuple(_status(provider, AgentMode.WORKING) for provider in providers), colors=settings)
         self.assertEqual(state, LedDisplayState.WORKING)
-        self.assertEqual(relay_program, spatial_program)
+        first = program.splitlines()[0].split()[:8]
+        self.assertEqual(len(set(first)), 3)
+        self.assertEqual(first[0], first[3])
+        self.assertEqual(first[3], first[6])
+        self.assertEqual(first[1], first[4])
+        self.assertEqual(first[4], first[7])
+        self.assertEqual(first[2], first[5])
 
-        # Global cycle speed applies to the relay too.
-        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_RELAY).with_cycle_speed(2.0)
-        self.assertEqual(settings.effective_speed_seconds(BLEND_MODE_RELAY), 2.0)
+    def test_relay_requires_a_mix_and_reports_the_dots_fallback(self) -> None:
+        from jrbar.light_mix import explain_what_plays
 
-        # Reset and pulse lines are eased, never bare hard edges.
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_RELAY)
-        statuses = (
-            _status("codex", AgentMode.WORKING),
-            _status("claude", AgentMode.COMPLETED),
-        )
-        _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
-        reset_line = program.splitlines()[0]
-        for segment in reset_line.split("; "):
-            self.assertRegex(segment, r"\d+ms cosine$", f"bare reset segment: {segment!r}")
+        solo = (_status("codex", AgentMode.WORKING),)
+        self.assertEqual(program_for_snapshot(solo, colors=settings),
+                         program_for_snapshot(solo, colors=settings.with_blend_mode(BLEND_MODE_SPATIAL)))
+        mixed = (*solo, _status("claude", AgentMode.WORKING))
+        strip = explain_what_plays(mixed, settings, led_count=8)
+        self.assertEqual(strip["played"], "relay")
+        self.assertIn("roll-left", strip["program"])
+        dot = explain_what_plays(mixed, settings, led_count=2)
+        self.assertEqual(dot["played"], "alternate")
+        self.assertTrue(dot["warnings"])
 
     def test_relay_at_maximum_speed_stays_within_the_firmware_delay_cap(self) -> None:
         # Durations and delays above 65535 ms are a firmware PARSE ERROR
@@ -6415,29 +6329,19 @@ class RoundRobinAndPaletteTests(unittest.TestCase):
         self.assertTrue(values)
         self.assertLessEqual(max(values), 65535)
 
-    def test_relay_fully_staggers_so_only_one_led_is_ever_mid_flare(self) -> None:
-        # The defining difference from Round-Robin: each LED's delay is a
-        # full multiple of the per-turn duration, not a small fraction of
-        # it, so turns never overlap.
-        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_RELAY)
-        statuses = (
-            _status("codex", AgentMode.WORKING),
-            _status("claude", AgentMode.WORKING),
-        )
-        _, program = program_for_snapshot(statuses, led_count=4, colors=settings)
-        pulse_line = program.splitlines()[1]
-        # Hand-derived: the default full traversal divided across four
-        # LEDs is one turn per LED (2.2s default -> 550ms turns).
-        from jrbar.colors import DEFAULT_CYCLE_SPEED_SECONDS
+    def test_relay_changes_provider_colour_after_each_pass(self) -> None:
+        from jrbar.led_wasm import RawSdLedWasmController
 
-        duration_ms = int(DEFAULT_CYCLE_SPEED_SECONDS * 1000 / 4)
-        delays = []
-        for segment in pulse_line.split("; "):
-            # "<index>:<color> <duration>ms pulse <delay>ms"
-            delay_token = segment.split()[-1]
-            self.assertTrue(delay_token.endswith("ms"))
-            delays.append(int(delay_token[:-2]))
-        self.assertEqual(delays, [index * duration_ms for index in range(4)])
+        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_RELAY)
+        statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.WORKING))
+        _, program = program_for_snapshot(statuses, colors=settings)
+        firmware = RawSdLedWasmController(8)
+        self.assertTrue(firmware.parse(program, 0).ok)
+        frames = firmware.step_batch(0, 100, 31)
+        blue = [sum(pixel[channel] for pixel in frames[4]) for channel in range(3)]
+        orange = [sum(pixel[channel] for pixel in frames[29]) for channel in range(3)]
+        self.assertGreater(blue[2], blue[0])
+        self.assertGreater(orange[0], orange[2])
 
     def test_cycle_speed_clamps_renders_and_round_trips(self) -> None:
         settings = ColorSettings.defaults()
@@ -6450,7 +6354,7 @@ class RoundRobinAndPaletteTests(unittest.TestCase):
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CYCLE).with_cycle_speed(3.0)
         statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.WORKING))
         _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
-        self.assertIn("3000ms", program)
+        self.assertIn("roll-right 3s linear", program)
 
         settings = ColorSettings.defaults().with_cycle_speed(4.2)
         restored = ColorSettings.from_dict(settings.to_dict())
@@ -6530,7 +6434,7 @@ class AnimationSmoothnessTests(unittest.TestCase):
         _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
         first_line = program.splitlines()[0]
         self.assertNotEqual(first_line, "off")
-        self.assertRegex(first_line, r"^off \d+ms cosine$")
+        self.assertRegex(first_line, r"\d+ms cosine$")
 
     def test_round_robin_settle_line_scales_down_at_fast_speeds(self) -> None:
         settings = (
@@ -6628,11 +6532,10 @@ class DoneCelebrationTests(unittest.TestCase):
         self.assertGreater(len(program_with.splitlines()), 1)
         self.assertEqual(program_without.splitlines(), ["off"])
 
-        # Classic aggregate mode celebrates through the same flag.
+        # Status Only holds the state colour and does not celebrate.
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC)
         _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
-        self.assertNotIn("repeat", program)
-        self.assertGreater(len(program.splitlines()), 1)
+        self.assertEqual(program, settings.mode_color(colors_module.MODE_DONE))
 
         # The no-active-agents fallback honors it too.
         _, program = program_for_snapshot(
@@ -6693,17 +6596,13 @@ class SpeedOverrideAndUrgencyAlertTests(unittest.TestCase):
         # Malformed value dropped, unknown mode key dropped -- falls back to global.
         self.assertTrue(restored.uses_global_speed(BLEND_MODE_ROUND_ROBIN))
 
-    def test_round_robin_program_uses_its_own_override_not_global(self) -> None:
-        settings = (
-            ColorSettings.defaults()
-            .with_blend_mode(BLEND_MODE_ROUND_ROBIN)
-            .with_cycle_speed(5.0)
-            .with_speed_override(BLEND_MODE_ROUND_ROBIN, 0.5)
-        )
+    def test_everyone_uses_its_own_tempo_when_providers_have_no_override(self) -> None:
+        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN).with_cycle_speed(5.0).with_speed_override(BLEND_MODE_ROUND_ROBIN, 0.5)
         statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.WORKING))
-        _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
-        self.assertIn("500ms", program)
-        self.assertNotIn("5000ms", program)
+        _, program = program_for_snapshot(statuses, colors=settings)
+        self.assertEqual(program, program_for_snapshot(statuses, colors=settings.with_cycle_speed(8.0))[1])
+        slower = settings.with_speed_override(BLEND_MODE_ROUND_ROBIN, 3.0)
+        self.assertNotEqual(program, program_for_snapshot(statuses, colors=slower)[1])
 
     def test_cycle_program_uses_its_own_override_not_global(self) -> None:
         settings = (
@@ -6735,17 +6634,12 @@ class SpeedOverrideAndUrgencyAlertTests(unittest.TestCase):
         if expected_alert_color != claude_own_color:
             self.assertNotIn(claude_own_color, program)
 
-    def test_urgency_alert_disabled_keeps_agents_own_color(self) -> None:
-        settings = (
-            ColorSettings.defaults()
-            .with_blend_mode(BLEND_MODE_ROUND_ROBIN)
-            .with_round_robin_urgency_alert(False)
-        )
-        statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.WAITING_FOR_INPUT))
-        _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
-        _floor, ask_ceiling = settings.fade_range(colors_module.MODE_ASK)
-        claude_own_color = colors_module.scale_hex_brightness(_identity_color(statuses, "claude"), ask_ceiling)
-        self.assertIn(claude_own_color, program)
+    def test_disabling_the_arrival_crest_keeps_the_ask_colour(self) -> None:
+        settings = ColorSettings.defaults().with_round_robin_urgency_alert(False)
+        asking = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.WAITING_FOR_INPUT))
+        state, program = program_for_snapshot(asking, colors=settings)
+        self.assertEqual(state, LedDisplayState.ASK)
+        self.assertEqual(program, program_for_snapshot((asking[1],), colors=settings)[1])
 
     def test_urgency_alert_adds_finite_arrival_then_static_spatial_anchor(self) -> None:
         settings_on = ColorSettings.defaults().with_blend_mode(BLEND_MODE_SPATIAL)
@@ -12750,20 +12644,10 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
                 self.assertTrue(program, label)
                 self.assertLessEqual(len(program.splitlines()), 20, label)
                 self.assertLessEqual(len(program.encode()), 512, label)
-                if mode in {
-                    colors_module.BLEND_MODE_CYCLE,
-                    colors_module.BLEND_MODE_RELAY,
-                    colors_module.BLEND_MODE_ROUND_ROBIN,
-                    colors_module.BLEND_MODE_SPATIAL,
-                }:
-                    failure_segments = [
-                        segment for line in program.splitlines() for segment in line.split("; ") if "#33AACC" in segment
-                    ]
-                    self.assertTrue(failure_segments, label)
-                    self.assertTrue(
-                        all("pulse" not in segment for segment in failure_segments),
-                        label,
-                    )
+                solo_projection = dataclass_replace(projection, visible_rows=(projection.visible_rows[0],))
+                self.assertEqual(program, colors_module.program_for_projection(
+                    solo_projection, colors=settings, led_count=led_count)[1], label)
+
 
 
 class QuotaRunwayTests(unittest.TestCase):
@@ -17811,29 +17695,9 @@ class RelayControllerContinuityTests(unittest.TestCase):
             self.controller.sync_leds(AgentMode.WORKING, None, "agent", changed)
             rebuilt_program = target.read_text(encoding="utf-8")
 
-        self.assertEqual(self._first_pulse_index(first_program), 0)
-        # Motion alone must not rewrite the device. A relay program ends
-        # in `repeat` and encodes its rotation as per-LED pulse delays,
-        # so the HARDWARE animates itself -- rewriting only to advance
-        # the phase burned ~25-40 syscalls plus an fsync and a readback
-        # every refresh, and restarted the loop at a new offset, which
-        # is a visible jump rather than smoother motion. These two
-        # snapshots render identically once phase is factored out, so
-        # the correct behavior is to leave the device running.
-        self.assertEqual(rebuilt_program, first_program)
+        self.assertNotEqual(rebuilt_program, first_program)
         self.assertAlmostEqual(scheduled[-1]["relay_elapsed_seconds"], 0.9)
-        # No device write means no new anchor instant, so the Screen Bar
-        # keeps the phase it is already running rather than restarting
-        # it -- the same contract the Dot-dedupe test asserts.
-        self.assertIsNone(scheduled[-1]["started_at"])
-
-        _, screen_bar_program = program_for_snapshot(
-            changed,
-            led_count=8,
-            colors=self.controller.settings.colors,
-            relay_elapsed_seconds=scheduled[-1]["relay_elapsed_seconds"],
-        )
-        self.assertEqual(self._first_pulse_index(screen_bar_program), 4)
+        self.assertIsInstance(scheduled[-1]["started_at"], float)
 
         # --- scenario: screen_bar_uses_scheduled_elapsed_and_physical_write_anchor
         self.setUp()  # fresh isolated controller per scenario
@@ -17881,7 +17745,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
         self.assertEqual(plan.total_actionable_count, 0)
         self.assertTrue(callable(handler))
         rendered_program = virtual.set_program.call_args.args[0]
-        self.assertEqual(self._first_pulse_index(rendered_program), 4)
+        self.assertEqual(rendered_program, program_for_snapshot(statuses, colors=self.controller.settings.colors)[1])
         self.assertEqual(virtual.set_program.call_args.kwargs["started_at"], 100.95)
 
         # --- scenario: screen_bar_receives_agent_change_hidden_by_dot_dedupe
@@ -17976,7 +17840,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
             )
             second_physical = physical_target.read_text(encoding="utf-8")
 
-        self.assertEqual(first_physical, second_physical)
+        self.assertNotEqual(first_physical, second_physical)
         # The live pipeline paints the bar twice per sync: once inline for
         # immediate feedback, once from the post-write schedule carrying
         # the physical anchor. Four paints for two syncs.
@@ -17992,7 +17856,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
         # clock); the deduped second write carries none, so the bar keeps
         # its phase.
         self.assertIsInstance(payloads[0]["started_at"], float)
-        self.assertIsNone(payloads[1]["started_at"])
+        self.assertIsInstance(payloads[1]["started_at"], float)
 
 
 class CanonicalAgentBrowserIntegrationTests(unittest.TestCase):

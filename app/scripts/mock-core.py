@@ -98,7 +98,7 @@ SECRET_BYTES = 32
 MOCK_OPEN_COMMANDS = frozenset({
     "ping", "list_commands", "replay_events", "doctor", "hooks_doctor", "list_history", "list_roster",
     "list_providers", "list_effects", "list_assignments", "list_lid_presets", "list_finish_looks",
-    "list_scene_packs", "list_cues", "list_focuses", "list_light_log", "usage_history", "usage_graph",
+    "list_scene_packs", "list_cues", "what_plays", "list_focuses", "list_light_log", "usage_history", "usage_graph",
     "usage_hooks_status", "session_energy", "session_timeline", "compare_sessions", "session_usage", "firmware_status",
     "quiet", "quiet_lease", "scene_lease", "snooze", "confetti", "hold_awake", "release_awake", "refresh_usage", "set_brightness",
 })

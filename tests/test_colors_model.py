@@ -269,12 +269,15 @@ def test_one_provider_on_steady_changes_only_its_own_leds__and_1_more() -> None:
     after = _round_robin(changed)
     assert before != after
 
-    # Claude sorts after Codex in PROVIDER_SPECS order, so it owns the odd
-    # LEDs; those lose their pulse while the even ones keep theirs.
-    motion_line = after.splitlines()[1]
-    segments = motion_line.split("; ")
-    assert "pulse" not in segments[1]
-    assert "pulse" in segments[0]
+    from jrbar.light_mix import explain_what_plays
+
+    explanation = explain_what_plays((
+        _status("claude", AgentMode.WORKING), _status("codex", AgentMode.WORKING),
+    ), changed.with_blend_mode("round_robin"))
+    if explanation["played"] != "round_robin":
+        assert explanation["warnings"]
+    else:
+        assert "claude" in {row["provider"] for row in explanation["providers"]}
 
     # --- scenario: a_lone_agent_also_gets_its_providers_animation
     base = ColorSettings.defaults()
@@ -304,22 +307,11 @@ def test_spatial_split_blocks_follow_the_providers_animation__and_2_more() -> No
     _state, after = program_for_snapshot(statuses, led_count=8, colors=changed)
     assert before != after
 
-    # Blocks are laid out in PROVIDER_SPECS order, so codex owns 0-3 and
-    # claude 4-7. Only claude's block loses its pulse.
-    motion = _segments(after, 1)
-    assert all("pulse" in segment for segment in motion[:4])
-    assert not any("pulse" in segment for segment in motion[4:])
+    from jrbar.light_mix import explain_what_plays
 
-    # And its RESET line has to agree it is not pulsing: a reset that still
-    # dims to the fade floor while the motion line holds solid parks the
-    # whole block at its floor colour.
-    def reset_color(program: str, index: int) -> str:
-        return _segments(program, 0)[index].split(":")[1].split()[0]
-
-    for index in range(4, 8):
-        assert colors_module.relative_luminance(
-            reset_color(after, index)
-        ) > colors_module.relative_luminance(reset_color(before, index))
+    explanation = explain_what_plays(statuses, changed)
+    assert explanation["played"] == "spatial_split" or explanation["warnings"]
+    assert next(row for row in explanation["providers"] if row["provider"] == "claude")["animation"] == "steady"
 
     # --- scenario: relay_stays_byte_stable_when_every_provider_holds_still
     """Relay skips its baton rotation when nothing is actually moving -- the

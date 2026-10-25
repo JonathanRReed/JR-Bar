@@ -27,6 +27,55 @@ from .scene_leases import effective_scene
 MAX_BURN_PROGRAM_CHARACTERS = 4096
 
 
+def what_plays(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
+    from .ambient_effect_consumer import (
+        active_hardware_ambient_presentation,
+        active_screen_bar_ambient_presentation,
+    )
+    from .headless_screen_bar import VIRTUAL_DEVICE_ID
+    from .led_status import led_count_for_target
+    from .light_mix import explain_what_plays, mix_catalog
+
+    requested = args.get("device")
+    if requested is not None and (type(requested) is not str or not requested):
+        raise _command_error("invalid_args", "device must be a nonempty id")
+    on_main = getattr(controller, "_core_on_main", None) or (lambda fn: fn())
+    settings, devices, projection, statuses = on_main(lambda: (
+        controller.settings, tuple(controller.status_bar_devices(remember=False)),
+        getattr(controller, "current_attention_projection", None),
+        tuple(getattr(getattr(controller, "last_snapshot", None), "statuses", ())),
+    ))
+    result = []
+    for device in devices:
+        if requested is not None and requested != device.device_id:
+            continue
+        count = 8 if device.device_id == VIRTUAL_DEVICE_ID else led_count_for_target(device.target)
+        palette = settings.colors
+        override = settings.device_blend_mode(device.device_id)
+        if override:
+            palette = palette.with_blend_mode(override)
+        palette = palette.for_device(
+            led_direction=settings.device_led_direction(device.device_id),
+            dot_travel_style=settings.device_dot_travel_style(device.device_id),
+        )
+        if projection is not None:
+            state = controller.projection_for_device(projection, device)
+        else:
+            pin = settings.device_provider_pin(device.device_id)
+            state = tuple(status for status in statuses if not pin or status.provider == pin)
+        if device.device_id == VIRTUAL_DEVICE_ID:
+            ambient = active_screen_bar_ambient_presentation(controller, reduce_motion=False, brightness=255)
+        else:
+            ambient = active_hardware_ambient_presentation(controller, device_id=device.device_id,
+                led_count=count, reduce_motion=False, brightness=255)
+        result.append({"device": device.device_id, **explain_what_plays(
+            state, palette, led_count=count, ambient=ambient,
+        )})
+    if requested is not None and not result:
+        raise _command_error("not_found", "unknown device")
+    return {"mixes": mix_catalog(), "devices": result}
+
+
 def _command_error(code: str, message: str):
     from .core_server import CommandError
 
@@ -417,6 +466,9 @@ def preview_fleet(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
     statuses = colors_module.preview_statuses_for_scenario(scenario)
     _state, source = colors_module.program_for_snapshot(statuses, led_count=led_count, colors=palette)
     compiled = compile_presentation_program(source, led_count=led_count)
+    from .light_mix import explain_what_plays
+
+    explanation = explain_what_plays(statuses, palette, led_count=led_count)
     return {
         "scenario": scenario,
         "label": colors_module.PREVIEW_SCENARIO_LABELS[scenario],
@@ -425,6 +477,9 @@ def preview_fleet(controller: Any, args: dict[str, Any]) -> dict[str, Any]:
         "led_count": led_count,
         "program": compiled.program,
         "transformed": bool(compiled.transformed),
+        "played": explanation["played"],
+        "reason": explanation["reason"],
+        "warnings": explanation["warnings"],
         "agents": [{"provider": status.provider, "mode": status.mode.value} for status in statuses],
     }
 

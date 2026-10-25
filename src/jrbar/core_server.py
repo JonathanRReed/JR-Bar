@@ -124,6 +124,7 @@ SCAN_LANE_COMMANDS: Final = frozenset({"usage_graph", "usage_history"})
 # the dispatch still hops it to the main thread from the worker.
 READ_LANE_COMMANDS: Final = frozenset(
     {
+        "what_plays",
         "session_timeline",
         "list_history",
         "mark_history_seen",

@@ -468,18 +468,10 @@ def test_a_waiting_agent_beats_while_a_working_one_chases__and_1_more() -> None:
     settings = ColorSettings.defaults().with_blend_mode("round_robin").with_round_robin_urgency_alert(False)
     statuses = (status("codex", AgentMode.WORKING), status("claude", AgentMode.WAITING_FOR_INPUT))
     _state, program = program_for_snapshot(statuses, led_count=4, colors=settings)
-    motion_line = [line for line in program.splitlines() if line.startswith("0:")][-1]
-    segments = motion_line.split("; ")
-
-    working_segments = [segments[0], segments[2]]
-    blocked_segments = [segments[1], segments[3]]
-    # The working pair travels (a per-LED delay), the blocked pair does not.
-    assert any(segment.endswith("ms") and "pulse " in segment for segment in working_segments)
-    assert all(segment.rstrip().endswith("pulse") for segment in blocked_segments)
-    # ...and the blocked pair beats over a fraction of the working cycle.
-    blocked_ms = int(blocked_segments[0].split()[1].removesuffix("ms"))
-    working_ms = int(working_segments[0].split()[1].removesuffix("ms"))
-    assert blocked_ms < working_ms
+    # An ask takes the whole strip even when the optional arrival crest is off.
+    solo_ask = program_for_snapshot((statuses[1],), led_count=4, colors=settings)[1]
+    assert program == solo_ask
+    assert "pulse" in program
 
     # --- scenario: completion_green_is_a_sweep_not_a_resting_state
     """2026-08-20 evening: 'a normal animation will happen but it is
