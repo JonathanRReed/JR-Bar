@@ -143,6 +143,30 @@ final class ProviderUsageSwitchesModel {
         }
     }
 
+    func setOption(_ row: ProviderRow, key: String, on: Bool, core: CoreModel) {
+        guard !busy.contains(row.id) else { return }
+        busy.insert(row.id)
+        mutationRevision += 1
+        Task { [weak self] in
+            do {
+                let updated = try await core.setProviderOptions(
+                    row.id, options: [key: on ? "true" : "false"], instance: row.instance)
+                guard let self else { return }
+                self.busy.remove(row.id)
+                self.failure = nil
+                self.accept(updated)
+                self.resumePendingRefresh(core: core)
+            } catch {
+                guard let self else { return }
+                self.busy.remove(row.id)
+                self.mutationRevision += 1
+                self.failure = "\(row.label): \(Self.words(for: error))"
+                if self.loading { self.refreshAgain = true }
+                self.resumePendingRefresh(core: core)
+            }
+        }
+    }
+
     func accept(_ row: ProviderRow) {
         mutationRevision += 1
         if let index = rows.firstIndex(where: { $0.identity == row.identity }) {
@@ -223,6 +247,13 @@ struct ProviderUsageSwitchRow: View {
                 }
                 .disabled(model.busy.contains(row.id) || !core.isLive)
                 .accessibilityHint(consent.summary)
+                if core.usage.first(where: { $0.identity == row.identity })?.canSetPanelVisibility != false {
+                    Toggle("Show in panel", isOn: Binding(
+                        get: { row.options["panel_hidden"] != "true" },
+                        set: { model.setOption(row, key: "panel_hidden", on: !$0, core: core) }
+                    ))
+                    .disabled(model.busy.contains(row.id) || !core.isLive)
+                }
                 if ["factory", "kimi", "kilo"].contains(row.id) {
                     ProviderCredentialControls(row: row, core: core, onOptionsSaved: { model.accept($0) }) { model.refresh(core: core) }
                         .id(row.identity)

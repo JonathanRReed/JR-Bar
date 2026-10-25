@@ -97,11 +97,13 @@ def test_usage_cli_store_reader_does_not_call_a_lapsed_window_constrained(
     [claude] = document["providers"]
     assert claude["constrained"]["id"] == "weekly"
     assert claude["constrained"]["candidates"] == 1
-    # The lapsed window is still listed, unchanged.
+    # The reset window keeps its previous reading separate from current usage.
     assert [(window["id"], window["used_pct"]) for window in claude["windows"]] == [
-        ("five_hour", 95.0),
+        ("five_hour", None),
         ("weekly", 40.0),
     ]
+    assert claude["windows"][0]["last_used_pct"] == 95.0
+    assert usage_cli._left(claude["windows"][0]) == "no reading"
 
 
 def test_usage_cli_main_judges_the_saved_file_by_its_own_clock(

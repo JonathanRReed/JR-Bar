@@ -49,7 +49,8 @@ def test_a_lost_background_grant_is_not_a_sign_out_or_a_new_prompt(tmp_path):
     assert ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service)
 
 
-def test_foreground_and_background_use_the_same_isolated_reader(tmp_path, monkeypatch):
+def test_claude_foreground_and_background_prefer_bounded_system_tool(tmp_path, monkeypatch):
+    monkeypatch.setattr("jrbar.credentials._keychain_is_unlocked", lambda: True)
     from jrbar import credentials as module
 
     calls = []
@@ -64,10 +65,29 @@ def test_foreground_and_background_use_the_same_isolated_reader(tmp_path, monkey
     assert read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger).ok
     foreground, background = calls
     assert foreground[0][:3] == background[0][:3]
-    assert foreground[0][1:3] == ["-m", "jrbar.keychain_read"]
-    assert "--allow-prompt" in foreground[0]
+    assert foreground[0] == ["/usr/bin/security", "find-generic-password", "-s", "Claude Code-credentials", "-w"]
+    assert "--allow-prompt" not in foreground[0]
     assert "--allow-prompt" not in background[0]
     assert background[1]["timeout"] <= 5
+
+
+def test_direct_reader_still_works_when_system_tool_is_unavailable(tmp_path, monkeypatch):
+    from jrbar import credentials as module
+
+    calls = []
+    def run(arguments, **kwargs):
+        calls.append(arguments)
+        assert kwargs["timeout"] <= 2
+        assert "--allow-prompt" not in arguments
+        return _completed(44) if arguments[0] == "/usr/bin/security" else _completed(0, "synthetic-direct-secret")
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    ledger = KeychainConsentLedger(tmp_path / "consent.json")
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000)
+    result = read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger)
+    assert result.ok
+    assert result.secret == "synthetic-direct-secret"
+    assert calls[0][1:3] == ["-m", "jrbar.keychain_read"]
 
 
 @pytest.mark.parametrize("code, outcome", [(3, CredentialOutcome.ACCESS_LOST), (2, CredentialOutcome.UNAVAILABLE)])
@@ -87,9 +107,9 @@ def test_background_reader_refusal_has_no_prompt_fallback(tmp_path, monkeypatch,
     assert result.outcome is outcome
     assert result.secret is None
     assert len(calls) == 1
-    assert "--allow-prompt" not in calls[0]
+    assert all("--allow-prompt" not in call for call in calls)
     assert ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service) == (code != 3)
-    assert ledger.retry_at(CLAUDE_CODE_KEYCHAIN.service, 1_001) is None
+    assert (ledger.retry_at(CLAUDE_CODE_KEYCHAIN.service, 1_001) is not None) == (code == 3)
 
 
 def test_background_reads_never_reach_the_keychain__and_2_more(tmp_path: Path) -> None:
@@ -305,7 +325,7 @@ def test_background_read_is_refused_without_a_standing_grant__and_2_more(tmp_pat
 
 
 
-def test_a_background_read_cannot_park_a_worker_thread_for_half_a_minute(tmp_path):
+def test_a_background_read_cannot_park_a_worker_thread_for_half_a_minute(tmp_path, monkeypatch):
     """A dialog the user must answer legitimately takes seconds. A
     BACKGROUND read must not wait on one at all -- 30s of a stalled
     worker was the hazard (2026-08-27 mining)."""
@@ -323,6 +343,7 @@ def test_a_background_read_cannot_park_a_worker_thread_for_half_a_minute(tmp_pat
 
     ledger = KeychainConsentLedger(tmp_path / "consent.json")
     ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1_000.0)
+    monkeypatch.setattr(module, "_run_security_reader", lambda *args, **kwargs: _completed(44))
     original = module._run_keychain_reader
     module._run_keychain_reader = runner
     try:
@@ -339,3 +360,128 @@ def test_a_background_read_cannot_park_a_worker_thread_for_half_a_minute(tmp_pat
     assert foreground >= background, "a real prompt gets room to be answered"
     source = inspect.getsource(module)
     assert "_SECURITY_BACKGROUND_TIMEOUT_SECONDS" in source
+
+
+@pytest.mark.parametrize("code, error", [(128, ""), (3, ""), (1, "User interaction is not allowed"), (1, "User canceled")])
+def test_security_denial_revokes_both_grants_and_cools_down(tmp_path, monkeypatch, code, error):
+    monkeypatch.setattr("jrbar.credentials._keychain_is_unlocked", lambda: True)
+    ledger = KeychainConsentLedger(tmp_path / "consent.json")
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000, security=True)
+    calls = []
+
+    def tool(item, **kwargs):
+        calls.append(kwargs)
+        return subprocess.CompletedProcess([], code, stdout="", stderr=error)
+
+    result = read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger,
+        security_runner=tool, runner=lambda _: pytest.fail("second dialog"), now=1001)
+    assert result.outcome is CredentialOutcome.DENIED
+    assert result.retry_at == 4601
+    assert not ledger.security_grant(CLAUDE_CODE_KEYCHAIN.service)
+    assert not ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service)
+    again = read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=True, ledger=ledger,
+        security_runner=tool, now=1002)
+    assert again.outcome is CredentialOutcome.COOLING_DOWN
+    assert len(calls) == 1
+
+
+def test_direct_grant_cannot_authorize_security_tool(tmp_path):
+    ledger = KeychainConsentLedger(tmp_path / "consent.json")
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000)
+    result = read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger,
+        runner=lambda _: _completed(0, "synthetic"),
+        security_runner=lambda *a, **kw: pytest.fail("security has no foreground grant"), now=1001)
+    assert result.ok
+    assert not ledger.security_grant(CLAUDE_CODE_KEYCHAIN.service)
+
+
+def test_locked_keychain_skips_tool_and_backs_off(tmp_path, monkeypatch):
+    ledger = KeychainConsentLedger(tmp_path / "consent.json")
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000, security=True)
+    checks = []
+    monkeypatch.setattr("jrbar.credentials._keychain_is_unlocked", lambda: checks.append(True) or False)
+    for now in (1001, 1002):
+        result = read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=False, ledger=ledger,
+            security_runner=lambda *a, **kw: pytest.fail("locked Keychain read"), now=now)
+        assert result.outcome is CredentialOutcome.ACCESS_LOST
+        assert result.retry_at == 1301
+    assert checks == [True]
+
+
+def test_prompt_tool_gets_thirty_seconds_and_timeout_never_opens_second_dialog(tmp_path):
+    ledger = KeychainConsentLedger(tmp_path / "consent.json")
+
+    def tool(item, *, timeout):
+        assert timeout == 30
+        raise subprocess.TimeoutExpired("synthetic", timeout)
+
+    result = read_keychain_secret(CLAUDE_CODE_KEYCHAIN, allow_prompt=True, ledger=ledger,
+        security_runner=tool, runner=lambda _: pytest.fail("second dialog"), now=1000)
+    assert result.outcome is CredentialOutcome.DENIED
+    assert result.retry_at == 4600
+
+
+def test_background_security_timeout_revokes_grant_until_another_click(tmp_path, monkeypatch):
+    monkeypatch.setattr("jrbar.credentials._keychain_is_unlocked", lambda: True)
+    ledger_path = tmp_path / "consent.json"
+    ledger = KeychainConsentLedger(ledger_path)
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000, security=True)
+    attempts = []
+
+    def tool(item, *, timeout):
+        attempts.append(True)
+        raise subprocess.TimeoutExpired("synthetic", timeout)
+
+    for now in (2000, 2301, 2700, 3002):
+        result = read_keychain_secret(
+            CLAUDE_CODE_KEYCHAIN, allow_prompt=False,
+            ledger=KeychainConsentLedger(ledger_path), now=now,
+            security_runner=tool, runner=lambda _: pytest.fail("second reader"),
+        )
+        assert result.outcome is CredentialOutcome.ACCESS_LOST
+    assert attempts == [True]
+    assert not ledger.security_grant(CLAUDE_CODE_KEYCHAIN.service)
+    assert not ledger.standing_grant(CLAUDE_CODE_KEYCHAIN.service)
+    assert read_keychain_secret(
+        CLAUDE_CODE_KEYCHAIN, allow_prompt=True, ledger=ledger, now=3003,
+        security_runner=lambda *a, **kw: _completed(0, "synthetic"),
+    ).ok
+    assert ledger.security_grant(CLAUDE_CODE_KEYCHAIN.service)
+
+
+@pytest.mark.parametrize("elapsed,granted", [(0.99, True), (1.0, False), (5.0, False)])
+def test_only_a_quick_foreground_security_read_can_arm_background_tool(tmp_path, monkeypatch, elapsed, granted):
+    ledger = KeychainConsentLedger(tmp_path / "consent.json")
+    # A slow foreground read must clear even an older security grant.
+    ledger.record_success(CLAUDE_CODE_KEYCHAIN.service, 1000, security=True)
+    ticks = iter((10.0, 10.0 + elapsed))
+    monkeypatch.setattr("jrbar.credentials.time.monotonic", lambda: next(ticks))
+    result = read_keychain_secret(
+        CLAUDE_CODE_KEYCHAIN, allow_prompt=True, ledger=ledger, now=2000,
+        security_runner=lambda *a, **kw: _completed(0, "synthetic"),
+    )
+    assert result.ok
+    assert ledger.security_grant(CLAUDE_CODE_KEYCHAIN.service) is granted
+
+
+@pytest.mark.parametrize("code,size", [(1, 0), (44, 0), (0, 256 * 1024 + 1)])
+def test_foreground_security_failure_never_falls_through_to_another_prompt(tmp_path, code, size):
+    result = read_keychain_secret(
+        CLAUDE_CODE_KEYCHAIN, allow_prompt=True,
+        ledger=KeychainConsentLedger(tmp_path / "consent.json"), now=1000,
+        security_runner=lambda *a, **kw: _completed(code, "x" * size),
+        runner=lambda _: pytest.fail("second dialog"),
+    )
+    assert result.outcome is CredentialOutcome.NOT_FOUND
+
+
+def test_foreground_security_process_error_never_falls_through(tmp_path):
+    def tool(*args, **kwargs):
+        raise OSError("synthetic process error")
+
+    result = read_keychain_secret(
+        CLAUDE_CODE_KEYCHAIN, allow_prompt=True,
+        ledger=KeychainConsentLedger(tmp_path / "consent.json"),
+        security_runner=tool, runner=lambda _: pytest.fail("second dialog"),
+    )
+    assert result.outcome is CredentialOutcome.UNAVAILABLE

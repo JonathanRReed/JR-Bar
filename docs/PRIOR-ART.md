@@ -52,8 +52,9 @@ refreshed directly and wrote the rotated tokens back. The current build
 does neither: it reads the access token Claude Code already holds, never
 consumes the refresh token or changes Claude's Keychain item, and asks
 the person to sign in through Claude Code when the token is not usable
-(`claude_quota.credential_needs_sign_in`). That needs no PTY subprocess
-and owns no write-back. CodexBar's delegated path is reported unreliable
+(`claude_quota.credential_needs_sign_in`). The ordinary read needs no PTY
+subprocess and owns no write-back. The optional usage probe below also
+does not renew credentials. CodexBar's delegated path is reported unreliable
 in steipete/CodexBar#1287.
 
 ### The 2026-09-24 pass (hooks v2, reset confirmation, fixture contract)
@@ -116,6 +117,24 @@ Studied and left alone (reasons in
 `cedar_ember` saved-reset query, Cursor's Grok Bot lane, Priority / Fast
 pricing, and the request ledger, which JR-Bar's `last_token_usage` deltas make
 unnecessary.
+
+### The 2026-10-25 pass, Claude usage recovery
+
+Snapshot studied: MIT, commit `d34fbb47afe73f81dd591bae28a60f72c39a9fe4`.
+Read `ClaudeStatusProbe.swift` for its PTY `/usage` probe, bounded lifetime,
+and labelled quota sections. JR-Bar reimplements its parsing and process
+lifetime in Python. No code was copied. The fallback does not ship in
+0.10.0. Its reserved setting has no effect and Settings hides it.
+The probe never answers a trust or sign-in question or delegates token refresh.
+The probe uses a temporary config directory and a stored access token;
+it cannot recover a missing token. We did not run it with a real account.
+We also studied the Grok and Kimi credential-location readers for their
+`GROK_HOME` and `KIMI_CODE_HOME` overrides.
+
+The production probe stays disabled until command-only dispatch is verified.
+The [CLI reference](https://code.claude.com/docs/en/cli-reference) documents
+positional text as an initial prompt. Tests use synthetic executables and an
+unlinked token descriptor. They do not prove installed-CLI compatibility.
 
 ## T3 Code
 

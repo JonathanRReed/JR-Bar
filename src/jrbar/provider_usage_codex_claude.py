@@ -877,7 +877,6 @@ def collect_claude(
     # so it can only stand in for the default instance.
     default_instance = getattr(preference, "source_instance_id", "default") == "default"
     instance = getattr(preference, "source_instance_id", "default")
-    del preference
     try:
         from .claude_quota import account_facts_from_claude_config
 
@@ -1026,13 +1025,22 @@ def _collect_claude_oauth(
         pass
     access_token = _credential(credentials, "claude", "oauth-token")
     if access_token is None:
+        reason = "usage_connection_required"
+        action = "Connect Claude usage"
+        if source_instance_id == "default":
+            from .credentials import CLAUDE_CODE_KEYCHAIN, KeychainConsentLedger
+            from .providers import default_state_dir
+
+            if KeychainConsentLedger(default_state_dir() / "keychain-consent.json").access_lost(CLAUDE_CODE_KEYCHAIN.service):
+                reason = "claude_keychain_access_lost"
+                action = "Allow Claude Keychain access"
         return _with_local_usage(
             _failure(
                 "claude",
                 observed_at=observed_at,
                 state=ProviderSourceState.NEEDS_CONSENT,
-                reason="usage_connection_required",
-                action="Connect Claude usage",
+                reason=reason,
+                action=action,
             ),
             local,
         )

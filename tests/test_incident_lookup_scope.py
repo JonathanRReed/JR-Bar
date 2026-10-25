@@ -19,6 +19,8 @@ from jrbar.provider_usage_platform import (
 from jrbar.provider_usage_runtime import ProviderUsageService
 from jrbar.provider_usage_settings import default_provider_usage_settings
 
+pytestmark = pytest.mark.usefixtures("fake_keychain_metadata")
+
 
 def snapshot_for(
     provider_id: str,

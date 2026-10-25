@@ -1740,9 +1740,11 @@ def test_constrained_skips_a_window_whose_reset_has_passed__and_2_more() -> None
         "id": "seven_day", "name": "7d", "used_pct": 40.0,
         "resets_at": NOW + 86400.0, "reason": "only_measured", "candidates": 1,
     }
-    # The lapsed window stays in `windows`, exactly as it was read.
+    # The elapsed window keeps its history without presenting it as current.
     assert [window["id"] for window in provider["windows"]] == ["five_hour", "seven_day"]
-    assert provider["windows"][0]["used_pct"] == 97.0
+    assert provider["windows"][0]["used_pct"] is None
+    assert provider["windows"][0]["last_used_pct"] == 97.0
+    assert provider["windows"][0]["elapsed"] is True
     assert provider["windows"][0]["resets_at"] == NOW - 10800.0
     json.dumps(provider)
 
@@ -1751,7 +1753,8 @@ def test_constrained_skips_a_window_whose_reset_has_passed__and_2_more() -> None
         _usage_state_with(lapsed), usage_samples=None, now=NOW
     )["providers"][0]
     assert only_lapsed["constrained"] is None
-    assert only_lapsed["windows"][0]["used_pct"] == 97.0
+    assert only_lapsed["windows"][0]["used_pct"] is None
+    assert only_lapsed["windows"][0]["last_used_pct"] == 97.0
 
     # --- scenario: without_a_clock_the_old_pick_is_unchanged
     untimed = usage_document(_usage_state_with(lapsed, live))["providers"][0]

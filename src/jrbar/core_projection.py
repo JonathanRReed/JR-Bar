@@ -1277,6 +1277,8 @@ def usage_document(
     usage_samples: object = None,
     now: float | None = None,
     privacy_mode: bool | None = None,
+    detected_agents: Mapping[str, bool] | None = None,
+    hidden_usage_instances: frozenset[tuple[str, str]] = frozenset(),
 ) -> dict[str, Any] | None:
     """``state.usage``. With a ``UsageSampleBuffer`` the primary window of
     each provider gets a ``forecast``; without one it stays null."""
@@ -1309,6 +1311,10 @@ def usage_document(
             used_pct = (
                 round(100.0 - float(remaining), 1) if remaining is not None else None
             )
+            elapsed = now is not None and reset is not None and reset <= now
+            last_used_pct = used_pct if elapsed else None
+            if elapsed:
+                used_pct = None
             # Every measured window gets its own forecast, keyed on the
             # lane id the samples were recorded under (not the sibling's
             # display name), so a 7d graph does not have to wait for the
@@ -1332,6 +1338,8 @@ def usage_document(
                     "name": usage_window_name(lane_id, getattr(lane, "label", None), model),
                     "id": getattr(lane, "lane_id", None),
                     "used_pct": used_pct,
+                    "elapsed": elapsed,
+                    "last_used_pct": last_used_pct,
                     "resets_at": epoch(getattr(lane, "reset_at", None)),
                     "scope": getattr(lane, "scope", None),
                     "model": getattr(lane, "model", None),
@@ -1448,6 +1456,14 @@ def usage_document(
                 "forecast": forecast,
             }
         )
+        from .provider_availability import availability_document
+
+        if hasattr(snapshot, "effective_read_at"):
+            providers[-1].update(availability_document(
+                snapshot, now=now if now is not None else snapshot.observed_at,
+                installed=(detected_agents or {}).get(provider_id),
+                hidden=snapshot.identity in hidden_usage_instances,
+            ))
     return {
         **({"privacy_mode": privacy_mode} if privacy_mode is not None else {}),
         "refreshed_at": epoch(getattr(usage_state, "refreshed_at", None)),
@@ -1646,6 +1662,7 @@ def build_state_document(
     answer_contracts: object = None,
     has_answer_handler: object = None,
     detected_agents: Mapping[str, bool] | None = None,
+    hidden_usage_instances: frozenset[tuple[str, str]] = frozenset(),
     catalog_generation: int | None = None,
     provider_updates: Mapping[str, Mapping[str, Any]] | None = None,
     quiet_worker_ids: frozenset[str] | None = None,
@@ -1739,7 +1756,8 @@ def build_state_document(
         "asks": asks,
         "devices": [device_document(device) for device in devices],
         "usage": usage_document(usage_state, usage_samples=usage_samples, now=now,
-                                privacy_mode=usage_privacy_mode),
+                                privacy_mode=usage_privacy_mode, detected_agents=detected_agents,
+                                hidden_usage_instances=hidden_usage_instances),
         "power": {
             "keep_awake": bool(power.keep_awake),
             "closed_lid": {

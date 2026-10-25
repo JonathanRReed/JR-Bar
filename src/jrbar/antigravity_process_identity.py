@@ -158,10 +158,15 @@ def _running_process_is_trusted(pid: int) -> bool:
 
 
 def _canonical_language_server(path: str) -> bool:
-    expected = ANTIGRAVITY_LANGUAGE_SERVER
     candidate = Path(path)
+    reviewed = (
+        ANTIGRAVITY_LANGUAGE_SERVER,
+        Path.home() / "Applications/Antigravity.app/Contents/Resources/bin/language_server",
+    )
+    if candidate not in reviewed:
+        return False
     try:
-        if candidate != expected or candidate.resolve(strict=True) != expected:
+        if candidate.resolve(strict=True) != candidate:
             return False
         info = candidate.lstat()
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):

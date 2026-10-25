@@ -942,7 +942,7 @@ class ProviderUsageService:
     def _changed_auth_providers_locked(self) -> tuple[tuple[str, str], ...]:
         return tuple(
             identity for identity in self._watched_auth_providers_locked()
-            if credential_fingerprint(self._home, identity[0])
+            if credential_fingerprint(self._home, identity[0], cached_only=True)
             != self._failure_gates[identity].terminal_fingerprint
         )
 
@@ -998,6 +998,14 @@ class ProviderUsageService:
         revision = self._due_timer_revision
 
         def due() -> None:
+            # Timer callbacks run off-main. Never hold the service lock across
+            # a Keychain subprocess; request() reads its cached stamps only.
+            with self._lock:
+                if self._closed or revision != self._due_timer_revision:
+                    return
+                watched = self._watched_auth_providers_locked()
+            for identity in watched:
+                credential_fingerprint(self._home, identity[0])
             with self._lock:
                 if self._closed or revision != self._due_timer_revision:
                     return
@@ -1561,7 +1569,8 @@ class ProviderUsageService:
                 terminal=True,
                 fingerprint=job.fingerprint,
             )
-        elif candidate.state in _TRANSIENT_FAILURE_STATES:
+        elif (candidate.state in _TRANSIENT_FAILURE_STATES
+              and candidate.reason_code != "quota_service_not_running"):
             books.failure_gates[identity] = note_failure(
                 job.gate,
                 now=observed_at,

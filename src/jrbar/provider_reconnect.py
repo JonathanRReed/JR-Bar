@@ -101,11 +101,20 @@ _KEYCHAIN_FINGERPRINT_TTL_SECONDS = 60.0
 _KEYCHAIN_FINGERPRINT_CACHE: dict[str, tuple[float, tuple]] = {}
 
 
-def keychain_fingerprint(service: str, *, now: float | None = None, fresh: bool = False) -> tuple:
+def _keychain_metadata_allowed(service: str) -> bool:
+    from .credentials import KeychainConsentLedger, _keychain_is_unlocked
+    from .providers import default_state_dir
+
+    ledger = KeychainConsentLedger(default_state_dir() / "keychain-consent.json")
+    return ledger.security_grant(service) and _keychain_is_unlocked()
+
+
+def keychain_fingerprint(service: str, *, now: float | None = None, fresh: bool = False, cached_only: bool = False) -> tuple:
     """Modification/creation stamps of a Keychain item, no secret read.
 
     `security find-generic-password` WITHOUT -w returns attributes only,
-    so this raises no consent dialog and costs no password access.
+    so it requests no password access. A prior user-granted security read
+    and a noninteractive unlocked check are still required before spawning.
     ``fresh`` skips the 60 s cache for one look (the sign-in fix asks "did
     Claude Code just renew its item?") and stores the answer, so the
     terminal gate sees the same change on its next look.
@@ -115,8 +124,14 @@ def keychain_fingerprint(service: str, *, now: float | None = None, fresh: bool 
 
     stamp = _time.monotonic() if now is None else float(now)
     cached = _KEYCHAIN_FINGERPRINT_CACHE.get(service)
+    if cached_only:
+        return cached[1] if cached is not None else ()
     if not fresh and cached is not None and stamp - cached[0] < _KEYCHAIN_FINGERPRINT_TTL_SECONDS:
         return cached[1]
+    if not _keychain_metadata_allowed(service):
+        parts = cached[1] if cached is not None else ()
+        _KEYCHAIN_FINGERPRINT_CACHE[service] = (stamp, parts)
+        return parts
     parts: tuple = ()
     try:
         completed = subprocess.run(
@@ -141,7 +156,7 @@ def keychain_fingerprint(service: str, *, now: float | None = None, fresh: bool 
     return parts
 
 
-def credential_fingerprint(home: Path, provider_id: str, *, fresh: bool = False) -> tuple | None:
+def credential_fingerprint(home: Path, provider_id: str, *, fresh: bool = False, cached_only: bool = False) -> tuple | None:
     """A cheap identity for the provider's credential source.
 
     None means "no source exists at all". Any change in the tuple -- a
@@ -150,8 +165,12 @@ def credential_fingerprint(home: Path, provider_id: str, *, fresh: bool = False)
     terminally-failed provider is worth it again.
     """
     parts: list[tuple] = []
+    from .provider_auth_paths import gemini_auth_path, grok_auth_path
+
     for relative in CREDENTIAL_SOURCE_FILES.get(provider_id, ()):
-        path = Path(home) / relative
+        path = {"grok": grok_auth_path, "gemini": gemini_auth_path}.get(
+            provider_id, lambda root: root / relative
+        )(Path(home))
         try:
             info = path.stat()
         except OSError:
@@ -159,7 +178,7 @@ def credential_fingerprint(home: Path, provider_id: str, *, fresh: bool = False)
         parts.append((relative, int(info.st_mtime_ns), int(info.st_size), int(info.st_ino)))
     service = KEYCHAIN_SOURCE_SERVICES.get(provider_id)
     if service:
-        parts.extend(keychain_fingerprint(service, fresh=fresh))
+        parts.extend(keychain_fingerprint(service, fresh=fresh, cached_only=cached_only))
     return tuple(parts) or None
 
 
@@ -175,9 +194,10 @@ def grok_auth_status(home: Path, now: float) -> tuple[str, str | None]:
     advice. 'missing' covers absent AND unreadable, because both have
     the same remedy.
     """
+    from .provider_auth_paths import grok_auth_path
     from .provider_usage_collectors import _read_grok_auth
 
-    path = Path(home) / ".grok" / "auth.json"
+    path = grok_auth_path(Path(home))
     read = _read_grok_auth(Path(home), now)
     if read.credential is not None:
         return "ok", read.credential[1]
@@ -1121,6 +1141,7 @@ def reconnect_provider(
                 result = read_keychain_secret(
                     CLAUDE_CODE_KEYCHAIN,
                     allow_prompt=True,
+                    now=stamp,
                     ledger=KeychainConsentLedger(
                         default_state_dir() / "keychain-consent.json"
                     ),
@@ -1132,23 +1153,24 @@ def reconnect_provider(
                     outcome=RepairOutcome.UNAVAILABLE,
                 )
             if not result.ok:
-                message = {
-                    CredentialOutcome.DENIED: (
-                        "Keychain access was declined — click Fix sign-in "
-                        "again and choose Allow."
-                    ),
-                    CredentialOutcome.COOLING_DOWN: (
-                        "Keychain access was declined recently — try "
-                        "again in a few minutes."
-                    ),
-                }.get(
-                    result.outcome,
-                    "Claude Code's sign-in was not found in the Keychain.",
-                )
                 declined = result.outcome in (
                     CredentialOutcome.DENIED,
                     CredentialOutcome.COOLING_DOWN,
                 )
+                message = "Claude Code's sign-in was not found in the Keychain."
+                if declined:
+                    minutes = max(1, math.ceil(((result.retry_at or stamp) - stamp) / 60))
+                    hours, minutes = divmod(minutes, 60)
+                    parts = []
+                    if hours:
+                        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+                    if minutes:
+                        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+                    wait = " and ".join(parts)
+                    message = (
+                        f"Keychain access was declined or timed out. Wait {wait}, "
+                        "then click Fix sign-in and choose Always Allow."
+                    )
                 return ResignInResult(
                     provider_id,
                     message,

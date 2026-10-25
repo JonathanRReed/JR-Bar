@@ -28,6 +28,11 @@ from jrbar.provider_usage_runtime import (
 from jrbar.provider_usage_settings import default_provider_usage_settings
 
 
+@pytest.fixture(autouse=True)
+def fake_keychain_fingerprint(monkeypatch):
+    monkeypatch.setattr("jrbar.provider_reconnect.keychain_fingerprint", lambda *a, **kw: ())
+
+
 def snapshot(
     provider,
     *,
@@ -2334,4 +2339,26 @@ def test_claude_last_good_survives_a_collector_that_raised_or_timed_out(tmp_path
     )
     switched = service.refresh_now(providers=("claude",), force=True).by_provider("claude")
     assert switched.lanes == ()
+    service.close()
+
+
+def test_idle_antigravity_retries_at_normal_refresh(tmp_path):
+    clock = [1000]
+    calls = []
+
+    def collect(_pref, _home, observed, _credentials):
+        calls.append(observed)
+        if len(calls) == 1:
+            return dataclass_replace(snapshot("antigravity", state=ProviderSourceState.UNAVAILABLE, observed=observed),
+                                     reason_code="quota_service_not_running", action_label="Run agy in a terminal")
+        return snapshot("antigravity", observed=observed)
+
+    service = ProviderUsageService(settings_loader=default_provider_usage_settings,
+        collectors={"antigravity": collect}, credentials=object(), home=tmp_path, clock=lambda: clock[0])
+    first = service.refresh_now(providers=("antigravity",))
+    assert ("antigravity", "default") not in service._failure_gates
+    clock[0] = first.next_refresh_at
+    second = service.refresh_now(providers=("antigravity",))
+    assert len(calls) == 2
+    assert second.by_provider("antigravity").state is ProviderSourceState.READY
     service.close()

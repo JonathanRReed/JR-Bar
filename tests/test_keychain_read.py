@@ -158,3 +158,34 @@ def test_cli_argument_failure_does_not_echo_values_or_load_api(monkeypatch, caps
     monkeypatch.setattr(reader, "_load_api", lambda: pytest.fail("loaded Security"))
     assert reader.main(["--unexpected", "synthetic-secret"]) == 2
     assert capsys.readouterr() == ("", "keychain read unavailable\n")
+
+
+@pytest.mark.parametrize("lock_bits,copy_status,status_status,expected", [
+    (1, 0, 0, True), (0, 0, 0, False), (1, -1, 0, False), (1, 0, -1, False),
+])
+def test_lock_check_disables_interaction_and_never_reads_a_secret(lock_bits, copy_status, status_status, expected):
+    from types import SimpleNamespace
+
+    api = API()
+
+    def copy_default(output):
+        api.events.append(("default",))
+        ctypes.cast(output, ctypes.POINTER(ctypes.c_void_p))[0] = ctypes.c_void_p(400)
+        return copy_status
+
+    def get_status(keychain, output):
+        api.events.append(("status",))
+        ctypes.cast(output, ctypes.POINTER(ctypes.c_uint32))[0] = lock_bits
+        return status_status
+
+    api._sec = SimpleNamespace(SecKeychainCopyDefault=copy_default, SecKeychainGetStatus=get_status)
+    assert reader._is_unlocked(api=api) is expected
+    assert api.events[0] == ("interaction", False)
+    assert not any(event[0] in {"copy", "query", "bytes"} for event in api.events)
+    assert api.released == [400]
+
+
+def test_lock_check_cli_has_no_secret_output(monkeypatch, capsys):
+    monkeypatch.setattr(reader, "_is_unlocked", lambda: False)
+    assert reader.main(["--check-unlocked"]) == reader.EXIT_INTERACTION_REQUIRED
+    assert capsys.readouterr() == ("", "")

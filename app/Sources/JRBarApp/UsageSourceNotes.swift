@@ -51,6 +51,7 @@ enum UsageSourceNotes {
     static func sourceCaption(_ provider: CoreProviderUsage, badgeShown: Bool = false) -> String? {
         let sources = Set(provider.windows.compactMap(\.source))
         if sources.contains("claude-statusline") { return "via Claude Code" }
+        if sources.contains("claude-cli") { return "via Claude Code /usage" }
         let hub = isHubInstance(provider.instance)
         if badgeShown && hub { return nil }
         if sources.contains("cliproxy") || hub { return "via CLIProxyAPI" }

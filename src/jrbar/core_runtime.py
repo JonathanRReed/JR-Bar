@@ -2948,8 +2948,9 @@ def _require_usage_on(self, provider, instance):
             )
 
 
-@command("provider_action")
+@command("provider_action", main_thread=False)
 def _cmd_provider_action(self, args):
+    on_main = getattr(self, "_core_on_main", None) or (lambda fn: fn())
     provider = args.get("provider")
     instance = args.get("instance") or "default"
     action = args.get("action")
@@ -2957,8 +2958,10 @@ def _cmd_provider_action(self, args):
         raise CommandError("invalid_args", "provider is required")
     if not isinstance(instance, str) or not instance:
         raise CommandError("invalid_args", "instance must be a nonempty string")
-    if action is not None and action != "resign_in":
-        raise CommandError("invalid_args", "action must be resign_in")
+    if action is not None and (
+        not isinstance(action, str) or action not in {"resign_in", "hide", "open_app"}
+    ):
+        raise CommandError("invalid_args", "action must be resign_in, hide or open_app")
     from .provider_browser_access import perform_provider_usage_action
     from .provider_usage_platform import provider_descriptor
 
@@ -2966,14 +2969,65 @@ def _cmd_provider_action(self, args):
         descriptor = provider_descriptor(provider)
     except ValueError as exc:
         raise CommandError("unknown_provider", f"unknown provider {provider!r}") from exc
-    _require_usage_on(self, provider, instance)
+    on_main(lambda: _require_usage_on(self, provider, instance))
+    if action in {None, "hide", "open_app"}:
+        from .provider_availability import availability_document
+
+        snapshot = next((item for item in getattr(getattr(self, "provider_usage_state", None), "snapshots", ())
+                         if item.identity == (provider, instance)), None)
+        detect = getattr(self, "_core_detected_agents", lambda: {})
+        if snapshot is not None:
+            availability = availability_document(snapshot, now=time.time(), installed=on_main(detect).get(provider))
+            if action in {"hide", "open_app"} and availability["action_kind"] != action:
+                raise CommandError("unavailable", "This provider action is no longer available")
+            if action == "hide":
+                from .provider_usage_settings import (
+                    ProviderUsageSettingsWriteRefusedError,
+                    load_provider_usage_settings,
+                    save_provider_usage_settings,
+                )
+
+                def hide():
+                    loaded = load_provider_usage_settings()
+                    updated = loaded.settings.with_option(provider, "panel_hidden", "true", source_instance_id=instance)
+                    try:
+                        save_provider_usage_settings(updated, loaded=loaded)
+                    except ProviderUsageSettingsWriteRefusedError as exc:
+                        raise CommandError("settings_changed", str(exc)) from exc
+                    self._request_provider_usage(force=True, providers=((provider, instance),))
+
+                on_main(hide)
+                return {"provider": provider, "instance": instance, "message": "Provider hidden from the panel."}
+            if action == "open_app" or (action is None and availability["action_kind"] == "open_app"):
+                try:
+                    completed = subprocess.run(["/usr/bin/open", "-a", descriptor.label],
+                                               capture_output=True, timeout=5, check=False)
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    raise CommandError("unavailable", f"Could not open {descriptor.label}") from exc
+                if completed.returncode != 0:
+                    raise CommandError("not_found", f"Could not open {descriptor.label} on this Mac")
+                on_main(lambda: self._request_provider_usage(force=True, providers=((provider, instance),)))
+                return {"provider": provider, "instance": instance, "message": f"Opening {descriptor.label}."}
+            if availability["action_kind"] == "hide":
+                raise CommandError("invalid_args", "Choose the explicit hide action")
+            staged_action = availability.get("action", snapshot.action_label)
+            if staged_action in {"Retry", "Retry later"}:
+                on_main(lambda: self._request_provider_usage(force=True, providers=((provider, instance),)))
+                return {"provider": provider, "instance": instance,
+                        "message": f"{descriptor.label} usage refresh requested."}
+            if provider == "claude" and staged_action in {
+                "Connect Claude usage", "Reconnect Claude", "Allow Claude Keychain access",
+            }:
+                action = "resign_in"
+    if action in {"hide", "open_app"}:
+        raise CommandError("unavailable", "No current provider row for this action")
     if provider == "factory" or (provider in {"kimi", "kilo", "kiro"} and action is None):
         snapshots = getattr(getattr(self, "provider_usage_state", None), "snapshots", ())
         if any(item.identity == (provider, instance) and getattr(item.state, "value", item.state) == "disabled"
                for item in snapshots):
             raise CommandError("usage_off", f"Turn on {descriptor.label} usage before refreshing it")
         scope = ((provider, instance),)
-        self._request_provider_usage(force=True, providers=scope)
+        on_main(lambda: self._request_provider_usage(force=True, providers=scope))
         return {"provider": provider, "instance": instance,
                 "message": f"{descriptor.label} usage refresh requested."}
     if action == "resign_in":
@@ -2998,25 +3052,28 @@ def _cmd_provider_action(self, args):
             reason_code=getattr(snapshot, "reason_code", None),
         )
         message = result.message
-        feedback = getattr(self, "_show_provider_usage_feedback", None)
-        if callable(feedback):
+        def after_click():
+            feedback = getattr(self, "_show_provider_usage_feedback", None)
+            if callable(feedback):
+                try:
+                    feedback(message)
+                except Exception:
+                    pass
             try:
-                feedback(message)
+                self._jrbar_reconnect_watch = (provider, instance, time.time())
             except Exception:
                 pass
-        try:
-            self._jrbar_reconnect_watch = (provider, instance, time.time())
-        except Exception:
-            pass
-        try:
-            scope = (
-                (provider,)
-                if instance == "default"
-                else ((provider, instance),)
-            )
-            self._request_provider_usage(force=True, providers=scope)
-        except Exception:
-            pass
+            try:
+                scope = (
+                    (provider,)
+                    if instance == "default"
+                    else ((provider, instance),)
+                )
+                self._request_provider_usage(force=True, providers=scope)
+            except Exception:
+                pass
+
+        on_main(after_click)
         return {
             "provider": provider,
             "instance": instance,
@@ -8375,6 +8432,11 @@ def build_headless_controller_class() -> type:
                 if snapshot is not None
                 else []
             )
+            usage_settings = getattr(self, "_jrbar_provider_usage_settings_snapshot", None)
+            hidden_usage_instances = frozenset(
+                preference.identity for preference in getattr(usage_settings, "providers", ())
+                if preference.option("panel_hidden") == "true"
+            )
             document = build_state_document(
                 now=wall_now,
                 generation=self._core_state_generation,
@@ -8412,6 +8474,7 @@ def build_headless_controller_class() -> type:
                     getattr(self, "answer_handler_registry", None), "has_handler", None
                 ),
                 detected_agents=detected_agents,
+                hidden_usage_instances=hidden_usage_instances,
                 catalog_generation=catalog_generation,
                 provider_updates=provider_updates,
                 quiet_worker_ids=_quiet_worker_ids(self, all_statuses),

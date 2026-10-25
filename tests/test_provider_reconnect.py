@@ -542,6 +542,7 @@ def test_repair_grok_defers_to_a_server_rejection(tmp_path):
 
 
 def test_the_claude_gate_can_lift_when_the_keychain_item_changes__and_1_more(monkeypatch) -> None:
+    monkeypatch.setattr("jrbar.provider_reconnect._keychain_metadata_allowed", lambda _: True)
     # --- scenario: the_claude_gate_can_lift_when_the_keychain_item_changes
     """The gate fingerprinted ~/.claude/.credentials.json, which does not
     exist on a Keychain-only machine -- so None == None forever and a

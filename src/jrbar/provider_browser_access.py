@@ -414,6 +414,8 @@ def handle_provider_usage_action(
     if provider_id == "antigravity" and (
         "Antigravity" in label or "agy" in label
     ):
+        if label == "Run agy in a terminal":
+            return "Run `agy` in a terminal. JR-Bar reads its quota service on the next refresh."
         # Antigravity's quota comes from its own loopback service; the
         # only "reconnect" is making sure that service is up. This
         # label used to match nothing -- a dead button (audit).
@@ -493,40 +495,44 @@ def perform_provider_usage_action(
     )
     if message is None:
         return None
-    # The message MUST land somewhere a person can find it. A controller
-    # that has a feedback sink uses it (the daemon logs the provider
-    # action); the plain settings message is only the fallback, which is
-    # how "Reconnect Grok" once spent months answering into the void.
-    feedback = getattr(controller, "_show_provider_usage_feedback", None)
-    if callable(feedback):
+    def after_click():
+        # The message MUST land somewhere a person can find it. A controller
+        # that has a feedback sink uses it (the daemon logs the provider
+        # action); the plain settings message is only the fallback, which is
+        # how "Reconnect Grok" once spent months answering into the void.
+        feedback = getattr(controller, "_show_provider_usage_feedback", None)
+        if callable(feedback):
+            try:
+                feedback(message)
+            except Exception:
+                pass
+        else:
+            try:
+                controller.set_settings_message(message)
+            except Exception:
+                pass
+        # Arm the outcome watcher before starting the asynchronous refresh so a
+        # fast collector cannot publish before the click has an identity.
         try:
-            feedback(message)
+            controller._jrbar_reconnect_watch = (
+                provider_id,
+                source_instance_id,
+                time.time(),
+            )
         except Exception:
             pass
-    else:
         try:
-            controller.set_settings_message(message)
+            scope = (
+                (provider_id,)
+                if source_instance_id == "default"
+                else ((provider_id, source_instance_id),)
+            )
+            controller._request_provider_usage(force=True, providers=scope)
         except Exception:
             pass
-    # Arm the outcome watcher before starting the asynchronous refresh so a
-    # fast collector cannot publish before the click has an identity.
-    try:
-        controller._jrbar_reconnect_watch = (
-            provider_id,
-            source_instance_id,
-            time.time(),
-        )
-    except Exception:
-        pass
-    try:
-        scope = (
-            (provider_id,)
-            if source_instance_id == "default"
-            else ((provider_id, source_instance_id),)
-        )
-        controller._request_provider_usage(force=True, providers=scope)
-    except Exception:
-        pass
+
+    on_main = getattr(controller, "_core_on_main", None) or (lambda fn: fn())
+    on_main(after_click)
     # The click's REAL outcome arrives with the refresh it just forced;
     # arm the one-shot reporter so the banner tells the truth about what
     # actually happened instead of only what was attempted.

@@ -14,7 +14,7 @@ def fixture(home, monkeypatch, *, consent=True, terminal=True, instance="default
     clock, timers, starts = [1000.0], [], []
     fingerprints = {"claude": ("old",), "grok": ("old",)}
     monkeypatch.setattr("jrbar.provider_usage_runtime.credential_fingerprint",
-                        lambda _home, provider: fingerprints[provider])
+                        lambda _home, provider, **_kw: fingerprints[provider])
     settings = default_provider_usage_settings().with_usage_consent("claude", consent, source="settings", at=1000)
 
     def timer_factory(delay, callback):
