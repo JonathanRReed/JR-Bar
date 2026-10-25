@@ -31,22 +31,22 @@ enum LayoutDiagnostics {
 struct CheckedContent<Content: View>: View {
     let content: Content
     var body: some View {
-        CheckedLayout(viewType: String(reflecting: Content.self)) { content }
+        CheckedLayout(viewType: Content.self) { content }
     }
 }
 
 /// Checks both sides of the hosting boundary once per view type.
 struct CheckedLayout: Layout {
-    let viewType: String
+    let viewType: Any.Type
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let proposed = CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
         // An unspecified dimension and infinity are legitimate proposals.
         if proposed.width < 0 || proposed.height < 0 || proposed.width.isNaN || proposed.height.isNaN {
-            LayoutDiagnostics.check(proposed, viewType: viewType, phase: "SwiftUI proposal")
+            LayoutDiagnostics.check(proposed, viewType: String(reflecting: viewType), phase: "SwiftUI proposal")
         }
         let size = subviews.first?.sizeThatFits(proposal) ?? .zero
-        LayoutDiagnostics.check(size, viewType: viewType, phase: "SwiftUI result")
+        LayoutDiagnostics.check(size, viewType: String(reflecting: viewType), phase: "SwiftUI result")
         return CGSize(width: LayoutDiagnostics.nonnegative(size.width), height: LayoutDiagnostics.nonnegative(size.height))
     }
 
