@@ -150,8 +150,12 @@ def credential_fingerprint(home: Path, provider_id: str, *, fresh: bool = False)
     terminally-failed provider is worth it again.
     """
     parts: list[tuple] = []
+    from .provider_auth_paths import gemini_auth_path, grok_auth_path
+
     for relative in CREDENTIAL_SOURCE_FILES.get(provider_id, ()):
-        path = Path(home) / relative
+        path = {"grok": grok_auth_path, "gemini": gemini_auth_path}.get(
+            provider_id, lambda root: root / relative
+        )(Path(home))
         try:
             info = path.stat()
         except OSError:
@@ -175,9 +179,10 @@ def grok_auth_status(home: Path, now: float) -> tuple[str, str | None]:
     advice. 'missing' covers absent AND unreadable, because both have
     the same remedy.
     """
+    from .provider_auth_paths import grok_auth_path
     from .provider_usage_collectors import _read_grok_auth
 
-    path = Path(home) / ".grok" / "auth.json"
+    path = grok_auth_path(Path(home))
     read = _read_grok_auth(Path(home), now)
     if read.credential is not None:
         return "ok", read.credential[1]

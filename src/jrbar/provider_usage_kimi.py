@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
+from .provider_auth_paths import kimi_code_home
 from .provider_usage_collectors import ProviderHttpError, _credential, _default_http_json
 from .provider_usage_parsers import _snapshot
 from .provider_usage_platform import ProviderSourceState, UsageLane, failure_snapshot
@@ -135,7 +136,7 @@ def _read_local(path, maximum):
 
 
 def _cli(home, now):
-    root = Path(home) / ".kimi-code"
+    root = kimi_code_home(Path(home))
     if root.is_symlink() or (root / "credentials").is_symlink():
         return None
     try:

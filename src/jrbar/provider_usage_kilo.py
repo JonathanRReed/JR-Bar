@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode
 
+from .provider_auth_paths import kilo_auth_path
 from .provider_usage_collectors import ProviderHttpError, _credential, _default_http_json
 from .provider_usage_parsers import _snapshot
 from .provider_usage_platform import ProviderSourceState, UsageLane, failure_snapshot
@@ -238,7 +239,7 @@ def parse_kilo_usage(payload, *, observed_at):
 
 
 def _cli_token(home):
-    path = home / ".local/share/kilo/auth.json"
+    path = kilo_auth_path(home)
     try:
         if path.is_symlink() or not path.is_file() or path.stat().st_size > 65536:
             return None

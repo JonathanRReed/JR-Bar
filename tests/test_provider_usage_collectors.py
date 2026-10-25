@@ -384,7 +384,8 @@ def test_antigravity_endpoint_cache_reuses_only_the_same_verified_process__and_2
         home=Path("/nonexistent-antigravity-test-home"),
     )
 
-    assert result.state.value == "source_not_found"
+    assert result.state.value == "unavailable"
+    assert result.reason_code == "quota_service_not_running"
     assert http_calls == []
 
     # --- scenario: antigravity_cache_is_dropped_when_pid_identity_changes
@@ -416,7 +417,8 @@ def test_antigravity_endpoint_cache_reuses_only_the_same_verified_process__and_2
         home=Path("/nonexistent-antigravity-test-home"),
     )
 
-    assert result.state.value == "source_not_found"
+    assert result.state.value == "unavailable"
+    assert result.reason_code == "quota_service_not_running"
     assert http_calls == []
     assert puc._cached_antigravity_connection == {}
 
@@ -671,9 +673,8 @@ def test_antigravity_without_a_running_server_invents_no_lane__and_1_more(tmp_pa
     )
     # A Gemini CLI sign-in is not an Antigravity quota: nothing was measured,
     # so there is no lane, no token figure, and the row says what to do.
-    assert result.state.value == "source_not_found"
-    assert result.state.value != "ready"
-    assert result.reason_code == "antigravity_not_detected"
+    assert result.state.value == "unavailable"
+    assert result.reason_code == "quota_service_not_running"
     assert result.action_label
     assert result.action_label.startswith("Open Antigravity")
     assert result.lanes == ()

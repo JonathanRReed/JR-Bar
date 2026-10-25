@@ -25,6 +25,7 @@ from urllib.parse import quote, urlencode, urlparse
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 
 from .provider_account_identity import grok_account_metadata
+from .provider_auth_paths import gemini_auth_path, grok_auth_path
 from .provider_usage_parsers import (
     parse_antigravity_usage,
     parse_cursor_usage,
@@ -549,7 +550,7 @@ class _GrokAuthRead:
 
 
 def _read_grok_auth(home: Path, observed_at: float) -> _GrokAuthRead:
-    path = Path(home) / ".grok" / "auth.json"
+    path = grok_auth_path(Path(home))
     try:
         if path.is_symlink() or path.stat().st_size > GROK_AUTH_MAX_BYTES:
             return _GrokAuthRead()
@@ -606,7 +607,7 @@ def _read_grok_auth(home: Path, observed_at: float) -> _GrokAuthRead:
 
 def _grok_cli_auth_present(home: Path) -> bool:
     try:
-        (Path(home) / ".grok" / "auth.json").lstat()
+        (grok_auth_path(Path(home))).lstat()
     except FileNotFoundError:
         return False
     except OSError:
@@ -722,7 +723,7 @@ GEMINI_AUTH_MAX_BYTES = 256 * 1024
 
 
 def _read_gemini_oauth(home: Path) -> tuple[dict | None, str | None]:
-    path = Path(home) / ".gemini" / "oauth_creds.json"
+    path = gemini_auth_path(Path(home))
     try:
         if path.is_symlink() or path.stat().st_size > GEMINI_AUTH_MAX_BYTES:
             return None, None
@@ -934,7 +935,7 @@ def _validated_loopback_endpoint(value: str | None) -> str | None:
 
 
 _cached_antigravity_connection: dict[str, Any] = {}
-_cached_antigravity_creds: tuple[float, str | None] | None = None
+_cached_antigravity_creds: tuple[tuple[str, float], str | None] | None = None
 _cached_opencode_mtime: tuple[str, float] | None = None
 _cached_opencode_totals: tuple[int, int, int] | None = None
 
@@ -974,8 +975,9 @@ def _discover_antigravity_endpoints(
         if "python" in cmd.lower() or "pytest" in cmd.lower():
             continue
         if any(marker in cmd for marker in ("language_server_macos", "language_server")):
-            if "agy_acp_server" in cmd or "localharness_external" in cmd:
-                continue
+            # CLI mode may use the same quota RPC. Arguments do not confer
+            # trust: the running language server must pass the same signed
+            # executable, owner and process-start checks as the app's server.
             csrf = None
             csrf_match = re.search(r"--csrf[-_]token[=\s]+([^\s]+)", cmd)
             if csrf_match:
@@ -1013,12 +1015,11 @@ def collect_antigravity(
 ) -> ProviderUsageSnapshot:
     global _cached_antigravity_creds
 
-    gemini_dir = (home or Path.home()) / ".gemini"
-    creds_path = gemini_dir / "oauth_creds.json"
+    creds_path = gemini_auth_path(home or Path.home())
     account_label = None
     if creds_path.is_file():
         try:
-            mtime = creds_path.stat().st_mtime
+            mtime = (str(creds_path), creds_path.stat().st_mtime)
             if _cached_antigravity_creds is not None and _cached_antigravity_creds[0] == mtime:
                 account_label = _cached_antigravity_creds[1]
             else:
@@ -1176,8 +1177,8 @@ def collect_antigravity(
     return _failure(
         "antigravity",
         observed_at=observed_at,
-        state=ProviderSourceState.SOURCE_NOT_FOUND,
-        reason="antigravity_not_detected",
+        state=ProviderSourceState.UNAVAILABLE,
+        reason="quota_service_not_running",
         action="Open Antigravity",
     )
 
