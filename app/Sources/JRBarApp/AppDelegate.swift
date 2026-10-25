@@ -1546,16 +1546,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: Core observation
 
-    /// Re-arms an observation of the model's facts after every change and
-    /// pushes them into the status item and the Screen Bar. Observation
-    /// coalesces bursts (the daemon caps at 20 state messages a second) into
-    /// one main-queue turn.
+    /// Facts read by the status item, Screen Bar and menu rules.
+    static func observedAppFacts(_ core: CoreModel) {
+        _ = core.isLive
+        _ = core.allSessions
+        _ = core.asks
+        _ = core.aggregate
+        _ = core.usage
+        _ = core.devices
+        _ = core.escalation
+        _ = core.unseenCompletions
+        _ = core.hiddenCount
+        _ = core.power
+        _ = core.focus
+        _ = core.presence
+    }
+
+    /// Coalesces changed facts into one main-queue turn. A clock or health
+    /// update leaves this registration in place.
     private func observeCore() {
         guard let core else { return }
         withObservationTracking {
             _ = core.connection
-            _ = core.state?.generation
-            _ = core.state?.aggregate
+            Self.observedAppFacts(core)
             _ = core.lights
             _ = core.hello
             _ = core.settings?.generation
@@ -1600,15 +1613,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
+    private var coreRefresh = AppCoreRefresh()
+    private var lastRefreshMedia: AlcoveMedia?
+
     private func coreDidChange() {
-        screenBar?.updateAccessibility()
-        screenBar?.wings = store?.screenBarWings ?? .empty
-        screenBar?.earMarks = store?.screenBarEarMarks ?? ScreenBarEarMarks()
-        screenBar?.hardware = core?.isLive == true ? core?.devices : nil
-        screenBar?.nowPlaying = store?.media.flatMap { $0.playing ? $0.bundleIdentifier : nil }
-        rearmAskAgeTick()
         guard let core, let statusItem else { return }
-        refreshPackagedHooksIfNeeded(core: core)
+        let changes = coreRefresh.take(core)
+        let media = store?.media.flatMap { $0.playing ? $0.bundleIdentifier : nil }
+        let mediaChanged = store?.media != lastRefreshMedia
+        lastRefreshMedia = store?.media
+        let rosterChanged = !changes.intersection([.roster, .settings, .connection]).isEmpty
+        if rosterChanged || changes.contains(.usage) || mediaChanged {
+            screenBar?.updateAccessibility()
+            screenBar?.wings = store?.screenBarWings ?? .empty
+            screenBar?.earMarks = store?.screenBarEarMarks ?? ScreenBarEarMarks()
+            screenBar?.nowPlaying = media
+            rearmAskAgeTick()
+        }
+        if changes.contains(.devices) { screenBar?.hardware = core.isLive ? core.devices : nil }
+        if changes.contains(.connection) { refreshPackagedHooksIfNeeded(core: core) }
         switch core.connection {
         case .connected where core.state != nil:
             statusItem.setCore(description: "connected (\(core.hello?.coreVersion ?? "?"))")
@@ -1629,22 +1652,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
         }
         let live = core.isLive
-        if live, let asks = core.state?.asks { askAnnouncer.note(asks) }
+        if rosterChanged, live { askAnnouncer.note(core.asks) }
         if wasLive, !live { events?.reset() }
         if live != wasLive { syncFileFeeds(live: live, core: core) }
         wasLive = live
-        refreshAggregate()
-        // The menu bar's rules hear the agents, the asks, the headroom
-        // and SidePulse from the same change.
-        utilitiesStore?.menuBar.coreFactsChanged()
-        refreshIconStyle()
-        refreshLights()
-        refreshAlcoveFollowing()
-        refreshScreenBarGlow()
-        refreshScreenBarGeometry()
-        reconcileScreenBarSetting()
-        // The ears' wings switch rides the settings document.
-        toysStore?.notch.syncSensorMonitor()
+        if rosterChanged { refreshAggregate() }
+        if !changes.intersection([.roster, .usage, .devices, .connection]).isEmpty {
+            utilitiesStore?.menuBar.coreFactsChanged()
+        }
+        if rosterChanged || changes.contains(.usage) { refreshIconStyle() }
+        if changes.contains(.lights) { refreshLights() }
+        if !changes.intersection([.settings, .connection]).isEmpty {
+            refreshAlcoveFollowing()
+            refreshScreenBarGlow()
+            refreshScreenBarGeometry()
+            reconcileScreenBarSetting()
+            toysStore?.notch.syncSensorMonitor()
+        }
     }
 
     /// One sleeping task refreshes the wings and open card at the next ask-age

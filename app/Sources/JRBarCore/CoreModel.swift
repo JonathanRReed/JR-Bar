@@ -1280,6 +1280,9 @@ public final class CoreModel {
     public private(set) var devices: [CoreDevice] = []
     /// `state.usage.providers`.
     public private(set) var usage: [CoreProviderUsage] = []
+    public private(set) var escalation: CoreEscalation?
+    public private(set) var unseenCompletions: [String] = []
+    public private(set) var hiddenCount: Int?
     public private(set) var aggregate: CoreAggregate?
     public private(set) var power: CorePower?
     public private(set) var focus: CoreFocus?
@@ -1310,6 +1313,9 @@ public final class CoreModel {
         assign(\.asks, state?.asks ?? [])
         assign(\.devices, state?.devices ?? [])
         assign(\.usage, state?.usage?.providers ?? [])
+        assign(\.escalation, state?.escalation)
+        assign(\.unseenCompletions, state?.unseenCompletions ?? [])
+        assign(\.hiddenCount, state?.hiddenCount)
         assign(\.aggregate, state?.aggregate)
         assign(\.power, state?.power)
         assign(\.focus, state?.focus)
