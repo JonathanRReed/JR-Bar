@@ -2457,7 +2457,6 @@ USAGE_WARM_DELAY_SECONDS = 8.0
 def _usage_history_service(self):
     """The daemon's one ``UsageHistoryService`` (scans off the socket thread)."""
     from . import core_usage_history
-    from .usage_graph_worker import _drop_to_utility_qos
 
     service = getattr(self, "_core_usage_history_service", None)
     if service is None:
@@ -2465,7 +2464,6 @@ def _usage_history_service(self):
             lambda provider, days: core_usage_history.scan_provider_pass(provider, days=days),
             self._core_publish_event,
             log=self._core_log,
-            thread_setup=_drop_to_utility_qos,
             enabled=lambda: self.settings.token_history_enabled,
         )
         self._core_usage_history_service = service
@@ -2583,11 +2581,8 @@ def _cmd_usage_history(self, args):
 def _cmd_usage_graph(self, args):
     """The shared-axis usage chart -- the Overview's Usage pane.
 
-    Same local-transcript scan the old Settings graph ran. days,
-    metric and providers are per-request overrides: nothing the pane
-    picks rewrites the stored settings. Heavy (~9s warm, ~30s cold),
-    so it rides the server's slow-lane worker, which runs at utility QoS
-    (``_core_start_server``), and never touches the menu.
+    Days, metric and providers are per-request overrides. Cold transcript
+    work runs in a Utility child; this worker reads the shared index.
     """
     from .t3_compat import T3ReadOnlyPolicy
     from .usage_graph_worker import usage_graph_document
@@ -2604,6 +2599,7 @@ def _cmd_usage_graph(self, args):
             metric=args.get("metric"),
             provider_ids=args.get("providers"),
             t3_policy=t3_policy,
+            indexed_only=True,
         )
     except ValueError as error:
         raise CommandError("invalid_args", str(error)) from error
@@ -7252,8 +7248,6 @@ def build_headless_controller_class() -> type:
             legacy.log_status_bar(message)
 
         def _core_start_server(self) -> None:
-            from .usage_graph_worker import _drop_to_utility_qos
-
             server = CoreServer(
                 dispatch=self._core_dispatch,
                 initial_documents=self._core_initial_documents,
@@ -7261,10 +7255,6 @@ def build_headless_controller_class() -> type:
                 core_version=CORE_VERSION,
                 on_client_change=self._core_client_change,
                 log=legacy.log_status_bar,
-                # The scans on the slow lane parse six figures of JSONL
-                # lines; at default QoS they compete with the main thread
-                # that answers every Approve.
-                slow_lane_setup=_drop_to_utility_qos,
                 reset_replay_source=self._core_reset_replay_documents,
                 # Who may send a privileged command: set from the app's secret
                 # at startup (``run_core``). A controller built any other way

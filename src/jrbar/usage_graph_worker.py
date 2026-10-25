@@ -1233,6 +1233,7 @@ def usage_graph_document(
     provider_ids=None,
     t3_policy: T3ReadOnlyPolicy | None = None,
     native_reuse: NativeGraphReuse | None = None,
+    indexed_only: bool = False,
 ) -> dict:
     """The ``usage_graph`` command's reply: ``{"graph": model, "summary": "..."}``.
 
@@ -1246,6 +1247,8 @@ def usage_graph_document(
     """
     if not getattr(settings, "token_history_enabled", True):
         raise ValueError("Token history is off.")
+    if indexed_only:
+        native_reuse = None
     snapshot = _settings_snapshot(settings)
     # Wrong-TYPED overrides are invalid too: a string "30" or a
     # non-list providers must not silently substitute the stored

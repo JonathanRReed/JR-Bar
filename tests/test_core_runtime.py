@@ -4698,7 +4698,8 @@ def test_usage_graph_command_routes_and_validates(headless, monkeypatch) -> None
 
     seen = {}
 
-    def document(settings, *, days=None, metric=None, provider_ids=None, t3_policy=None, native_reuse=None):
+    def document(settings, *, days=None, metric=None, provider_ids=None, t3_policy=None, native_reuse=None, indexed_only=False):
+        assert indexed_only is True
         assert native_reuse is controller._core_native_graph_reuse
         seen.update(days=days, metric=metric, provider_ids=provider_ids)
         return {"graph": {"days": 30, "metric": "tokens", "series": []},
@@ -4741,6 +4742,7 @@ def test_graph_uses_the_shared_token_index_and_stops_it_at_quit(headless, monkey
     owners = []
     def document(_settings, **kwargs):
         assert "native_reuse" not in kwargs
+        assert kwargs["indexed_only"] is True
         owners.append(token_history_index.shared_index(tmp_path / "token-history.sqlite3"))
         return {"graph": {}, "summary": ""}
     monkeypatch.setattr(usage_graph_worker, "usage_graph_document", document)

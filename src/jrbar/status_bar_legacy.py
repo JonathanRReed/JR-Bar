@@ -3639,7 +3639,7 @@ class StatusBarController(NSObject):
             for source_key in requests
             if source_key.capability_id == "transcript_usage"
         )
-        if local_sources:
+        if local_sources and not getattr(self, "headless", False):
             try:
                 graph_days = self.settings.usage_graph_days
                 period_start = (
