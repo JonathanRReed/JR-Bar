@@ -121,9 +121,9 @@ unnecessary.
 ### The 2026-10-25 pass, Claude usage recovery
 
 Snapshot studied: MIT, commit `d34fbb47afe73f81dd591bae28a60f72c39a9fe4`.
-Read `ClaudeStatusProbe.swift` for its PTY `/usage` probe, bounded lifetime,
-and labelled quota sections. JR-Bar reimplements its parsing and process
-lifetime in Python. No code was copied. The fallback does not ship in
+Read `ClaudeStatusProbe.swift` and `ClaudeCLISession.swift` for the PTY
+`/usage` probe, bounded lifetime, launch settings and labelled quota sections.
+JR-Bar reimplements its parsing and process lifetime in Python. No code was copied. The fallback does not ship in
 0.10.0. Its reserved setting has no effect and Settings hides it.
 The probe never answers a trust or sign-in question or delegates token refresh.
 The probe uses a temporary config directory and a stored access token;
@@ -133,8 +133,11 @@ We also studied the Grok and Kimi credential-location readers for their
 
 The production probe stays disabled until command-only dispatch is verified.
 The [CLI reference](https://code.claude.com/docs/en/cli-reference) documents
-positional text as an initial prompt. Tests use synthetic executables and an
-unlinked token descriptor. They do not prove installed-CLI compatibility.
+positional text as an initial prompt. Tests drive a synthetic TUI through an
+inherited token descriptor.
+The L3c live check stopped at credential preflight with `access_lost`;
+no interactive CLI started. It does not prove installed-CLI compatibility.
+See the [L3c handoff](archive/2026-10-25-claude-cli-usage-l3c.md).
 
 ## T3 Code
 
