@@ -8,13 +8,28 @@ import Testing
 @Suite("Reliability and latency")
 @MainActor
 struct ReliabilityLatencyTests {
-    @Test func stateColorDoesNotWaitForTheEntranceFade() throws {
+    @Test func pendingPlanFollowsHardwarePhaseWithoutJumpingBack() throws {
+        let controller = ScreenBarController(reduceMotionOverride: false, nativeNoticesEnabled: false)
+        controller.apply(programText: "#00ff00 0ms")
+        controller.apply(programText: "#ff0000 2s linear\nrepeat")
+        let initial = Array(repeating: RGB8(r: 0, g: 255, b: 0), count: 8)
         let program = try LEDSProgram.parse("#ff0000 2s linear\nrepeat", ledCount: 8)
-        let previous = Array(repeating: RGB8(r: 0, g: 255, b: 0), count: 8)
-        let sampler = LEDSSampler(program: program, initialCodes: previous)
-        #expect(sampler.codes(atMilliseconds: 0) == previous)
-        let immediate = ScreenBarController.immediateStateCodes(program: program, initial: previous)
-        #expect(immediate == Array(repeating: RGB8(r: 255, g: 0, b: 0), count: 8))
+        let hardware = LEDSSampler(program: program, initialCodes: initial)
+        let plan = try #require(LEDSKeyframePlan.render(sampler: hardware))
+        var previousRed: UInt8 = 0
+        for ms in [0, 50, 150, 299, 300, 301, 600, 2_000] {
+            let fallback = controller.frameCodes(atMilliseconds: ms)
+            #expect(fallback == hardware.codes(atMilliseconds: ms))
+            let keyframed = plan.codes(atMilliseconds: ms)
+            for (live, planned) in zip(fallback, keyframed) {
+                #expect(abs(Int(live.r) - Int(planned.r)) <= LEDSKeyframePlan.defaultTolerance)
+                #expect(abs(Int(live.g) - Int(planned.g)) <= LEDSKeyframePlan.defaultTolerance)
+                #expect(abs(Int(live.b) - Int(planned.b)) <= LEDSKeyframePlan.defaultTolerance)
+            }
+            #expect(fallback[0].r >= previousRed)
+            previousRed = fallback[0].r
+        }
+        #expect(!controller.panelOnScreen && !controller.clockRunning)
     }
 
     @Test func layoutDiagnosticsNameTheTypeAndProposedSizeOnce() {
