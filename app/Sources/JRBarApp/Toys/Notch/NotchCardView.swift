@@ -1926,7 +1926,7 @@ struct ShelfTrayRow: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: CGFloat(rows) * Self.tileHeight + CGFloat(rows - 1) * Self.tileSpacing)
+                .frame(height: CGFloat(max(0, rows)) * Self.tileHeight + CGFloat(max(0, rows - 1)) * Self.tileSpacing)
             }
             if tray.canUndoClear {
                 Button { tray.undoClear() } label: {

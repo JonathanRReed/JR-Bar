@@ -2504,7 +2504,7 @@ struct DockSwitcherView: View {
                         }
                 }
             }
-            .frame(maxWidth: metrics.zoomWidth - 20, maxHeight: Self.zoomSlot(hasStills: hasStills))
+            .frame(maxWidth: max(0, metrics.zoomWidth - 20), maxHeight: Self.zoomSlot(hasStills: hasStills))
             .frame(height: Self.zoomSlot(hasStills: hasStills))
             VStack(spacing: 3) {
                 Text(zoomTitle(item))

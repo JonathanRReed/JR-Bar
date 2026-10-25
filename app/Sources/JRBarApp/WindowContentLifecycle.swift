@@ -55,8 +55,9 @@ enum WindowContentLifecycle {
     /// the SwiftUI root each time content is attached, and re-measure the
     /// whole scroll content for them on every animation frame; the
     /// window's explicit `minSize` is the limit instead.
-    static func hosting<Content: View>(_ rootView: Content) -> NSHostingController<Content> {
-        let hosting = NSHostingController(rootView: rootView)
+    static func hosting<Content: View>(_ rootView: Content) -> NSHostingController<CheckedContent<Content>> {
+        let checked = CheckedContent(content: rootView)
+        let hosting = NSHostingController(rootView: checked)
         hosting.sizingOptions = []
         return hosting
     }

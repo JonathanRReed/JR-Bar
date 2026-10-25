@@ -38,6 +38,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     private func present() {
+        let interval = AppLatency.begin("Settings open")
+        defer { AppLatency.end("Settings open", interval) }
         let window = self.window ?? makeWindow()
         self.window = window
         attachSettingsContent(to: window)
