@@ -94,7 +94,7 @@ struct SoundsAdvanced: View {
                 Button("Show in Finder") {
                     let folder = URL(fileURLWithPath: SoundPlayer.userSoundsFolder)
                     try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                    NSWorkspace.shared.activateFileViewerSelecting([folder])
+                    DesktopServices.automatic.reveal([folder])
                 }
             }
         }

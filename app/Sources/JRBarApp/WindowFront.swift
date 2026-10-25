@@ -78,7 +78,7 @@ enum WindowFront {
                 let configuration = NSWorkspace.OpenConfiguration()
                 configuration.activates = true
                 configuration.createsNewApplicationInstance = false
-                NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in }
+                DesktopServices.automatic.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in }
             })
         }
     }

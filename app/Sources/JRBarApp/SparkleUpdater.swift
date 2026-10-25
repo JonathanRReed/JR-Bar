@@ -329,7 +329,7 @@ enum InstalledCopies {
     static func notice(for copy: URL, home: URL, defaults: UserDefaults) -> LaunchNotices.Notice {
         .init(key: "stale-copy", text: noticeText(for: copy, home: home), actionTitle: "Show",
               onShown: { defaults.set(true, forKey: noticedKey(copy)) }) {
-            NSWorkspace.shared.activateFileViewerSelecting([copy])
+            DesktopServices.automatic.reveal([copy])
         }
     }
 }

@@ -193,7 +193,7 @@ final class ShelfCalendarModel {
     /// and only ever with a URL that passed the scheme check.
     func join(_ event: Event) {
         guard let url = event.url else { return }
-        NSWorkspace.shared.open(url)
+        DesktopServices.automatic.open(url)
     }
 
     /// Open shows the event in Calendar.app — no details are copied
@@ -205,7 +205,7 @@ final class ShelfCalendarModel {
         let day = Calendar.current.startOfDay(for: event.start)
         if let when = Calendar.current.date(byAdding: components, to: day),
            let url = URL(string: "ical://\(Int(when.timeIntervalSince1970))") {
-            NSWorkspace.shared.open(url)
+            DesktopServices.automatic.open(url)
         }
     }
 }

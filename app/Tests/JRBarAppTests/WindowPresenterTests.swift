@@ -5,7 +5,7 @@ import Testing
 @testable import JRBarApp
 
 @MainActor
-@Suite("Test window safety")
+@Suite("Test window safety", .timeLimit(.minutes(1)))
 struct WindowPresenterTests {
     @Test("Swift Testing is detected without an environment flag")
     func detectsRunner() {
@@ -70,34 +70,79 @@ struct WindowPresenterTests {
         #expect(WindowPresenter.presentation(item).wrappedValue == nil)
     }
 
+    @Test("the source guard rejects projected and dotted presentation bindings", arguments: [
+        ".sheet(isPresented: $x) {}",
+        ".popover(isPresented: $open, arrowEdge: .top) {}",
+        ".sheet(item: $store.sheet) { _ in }",
+        ".inspector(isPresented: $open) {}",
+        ".alert(\"" + String(repeating: "Long title ", count: 60) + "\", isPresented: $open) {}",
+        ".sheet(isPresented: WindowPresenter.other($x)) {}",
+    ])
+    func rejectsPresentationBypasses(source: String) throws {
+        #expect(try !presentationViolations(in: source).isEmpty)
+    }
+
+    @Test("the source guard accepts only wrapped presentation bindings", arguments: [
+        ".sheet(isPresented: WindowPresenter.presentation($x)) {}",
+        ".sheet(item: WindowPresenter.presentation($store.sheet)) { _ in }",
+        ".inspector(isPresented: WindowPresenter.presentation($open)) {}",
+        ".alert(\"" + String(repeating: "Long title ", count: 60) + "\", isPresented: WindowPresenter.presentation($open)) {}",
+    ])
+    func acceptsWrappedPresentation(source: String) throws {
+        #expect(try presentationViolations(in: source).isEmpty)
+    }
+
+    @Test("the source guard rejects desktop effects", arguments: [
+        "NSApp.activate()", "NSRunningApplication.current.activate()", "window.makeKey()",
+        "menu.popUp(positioning: nil, at: .zero, in: nil)", "panel.addChildWindow(child, ordered: .above)",
+        "button.performClick(nil)", "window.deminiaturize(nil)", "NSApp.hide(nil)", "NSApp.unhide(nil)",
+        "NSStatusBar.system.statusItem(withLength: 24)", "NSWorkspace.shared.open(url)",
+        "NSWorkspace.shared.openApplication(at: url, configuration: config)",
+    ])
+    func rejectsDesktopBypasses(source: String) throws {
+        #expect(try !presentationViolations(in: source).isEmpty)
+        #expect(try presentationViolations(in: "WindowPresenter.automatic.perform { " + source + " }").isEmpty)
+    }
+
+    @Test("desktop service defaults are inert in tests")
+    func desktopServicesStaySuppressed() async throws {
+        #expect(WindowPresenter.suppressesDesktop)
+        let desktop = DesktopServices.automatic
+        #expect(!desktop.open(URL(string: "https://example.test")!))
+        #expect(try await desktop.openApplication(at: URL(fileURLWithPath: "/synthetic.app"),
+                                                 configuration: NSWorkspace.OpenConfiguration()) == nil)
+        let item = desktop.makeStatusItem(24)
+        #expect(item.button == nil)
+        desktop.removeStatusItem(item)
+        var opened: [URL] = []
+        let injected = DesktopServices(openURL: { opened.append($0); return true })
+        let url = URL(string: "https://example.test")!
+        #expect(injected.open(url))
+        #expect(opened == [url])
+    }
+
+    @Test("unexpected suppression is logged only for a process without runner arguments")
+    func suppressionDiagnostic() {
+        #expect(WindowPresenter.shouldLogSuppression(suppressed: true, arguments: ["JR-Bar"]))
+        #expect(!WindowPresenter.shouldLogSuppression(suppressed: false, arguments: ["JR-Bar"]))
+        #expect(!WindowPresenter.shouldLogSuppression(suppressed: true, arguments: ["Tests.xctest"]))
+        WindowPresenter.logSuppressionAtLaunch()
+        WindowPresenter.logSuppressionAtLaunch()
+    }
+
     @Test("native window presentation stays inside the guarded presenter")
     func noBypasses() throws {
         let app = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let forbidden = #"\b(orderFrontRegardless|makeKeyAndOrderFront|orderFront|orderBack|orderWindow|setIsVisible|runModal|beginSheet|beginSheetModal|beginModalSession|showWindow)\s*\("#
-        let pattern = try NSRegularExpression(pattern: forbidden)
-        let swiftUIPresentation = try NSRegularExpression(
-            pattern: #"\.(sheet|alert|confirmationDialog|popover|fileImporter|fileExporter)\([\s\S]{0,400}?\b(?:isPresented|item):\s*(\w+)"#)
         var offenders: [String] = []
         for directory in ["Sources", "Tests"] {
             let walker = FileManager.default.enumerator(at: app.appending(path: directory), includingPropertiesForKeys: nil)
             while let file = walker?.nextObject() as? URL {
                 guard file.pathExtension == "swift", file.lastPathComponent != "WindowPresenter.swift",
-                      file.lastPathComponent != "WindowPresenterTests.swift" else { continue }
+                      file.lastPathComponent != "WindowPresenterTests.swift",
+                      file.lastPathComponent != "DesktopServices.swift" else { continue }
                 let source = try String(contentsOf: file, encoding: .utf8)
-                for match in swiftUIPresentation.matches(in: source, range: NSRange(source.startIndex..., in: source)) {
-                    let binding = (source as NSString).substring(with: match.range(at: 2))
-                    if binding != "WindowPresenter" { offenders.append("\(file.lastPathComponent): unguarded SwiftUI presentation") }
-                }
-                for (offset, line) in source.components(separatedBy: "\n").enumerated() {
-                    let code = line.components(separatedBy: "//")[0]
-                        .replacingOccurrences(of: "override func orderFrontRegardless()", with: "")
-                        .replacingOccurrences(of: "WindowPresenter.automatic.runModal(", with: "guardedModal(")
-                        .replacingOccurrences(of: "WindowPresenter.automatic.perform { super.orderFrontRegardless() }", with: "")
-                    if pattern.firstMatch(in: code, range: NSRange(code.startIndex..., in: code)) != nil {
-                        offenders.append("\(file.lastPathComponent):\(offset + 1)")
-                    }
-                }
+                offenders += try presentationViolations(in: source).map { "\(file.lastPathComponent): \($0)" }
             }
         }
         #expect(offenders.isEmpty, "Route presentation through WindowPresenter: \(offenders)")

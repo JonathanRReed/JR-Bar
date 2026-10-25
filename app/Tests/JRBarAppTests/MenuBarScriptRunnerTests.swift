@@ -266,7 +266,7 @@ struct MenuBarScriptRunnerTests {
                 queue: DispatchQueue(label: "script fixture child exit"))
             source.setRegistrationHandler { [weak self] in self?.record(registration: true) }
             source.setEventHandler { [weak self] in self?.record(registration: false) }
-            source.activate()
+            source.resume()
         }
 
         private func record(registration: Bool) {

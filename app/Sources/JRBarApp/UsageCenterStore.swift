@@ -953,7 +953,7 @@ final class UsageCenterStore {
                 )
                 self.actionSucceeded(.resignIn(provider.identity), message: result.message.isEmpty ? "Re-checking \(provider.id)'s sign-in…" : result.message)
                 if let urlString = result.signInURL, let url = URL(string: urlString) {
-                    NSWorkspace.shared.open(url)
+                    DesktopServices.automatic.open(url)
                 }
                 self.loadProviderRows()
             } catch {
@@ -1019,7 +1019,7 @@ final class UsageCenterStore {
                 )
                 self.note(signIn: Self.signInNote(for: result), for: provider.identity)
                 if let urlString = result.signInURL, let url = URL(string: urlString) {
-                    NSWorkspace.shared.open(url)
+                    DesktopServices.automatic.open(url)
                 }
                 self.loadProviderRows()
             } catch {

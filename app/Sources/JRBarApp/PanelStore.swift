@@ -1125,7 +1125,7 @@ final class PanelStore {
     /// credentials; JR-Bar sends nothing and runs nothing there.
     func openScreenSharing(host: String) {
         guard let url = URL(string: "vnc://\(host)") else { return }
-        NSWorkspace.shared.open(url)
+        DesktopServices.automatic.open(url)
         onClose?()
     }
 
@@ -1916,7 +1916,7 @@ final class PanelStore {
         }
         show(toast: outcome.line, actionTitle: "Open Settings") {
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                NSWorkspace.shared.open(url)
+                DesktopServices.automatic.open(url)
             }
         }
     }

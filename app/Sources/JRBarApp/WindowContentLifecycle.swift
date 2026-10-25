@@ -97,12 +97,14 @@ enum WindowContentLifecycle {
     /// Back to a pure menu-bar process once the last titled window goes
     /// away. Runs after the close has finished, and only in the accessory
     /// app itself.
-    static func retractWhenLastWindowCloses() {
+    static func retractWhenLastWindowCloses(presenter: WindowPresenter = .automatic) {
         DispatchQueue.main.async {
             guard let app = NSApp, app.activationPolicy() == .accessory else { return }
             if app.windows.allSatisfy({ !$0.isVisible || $0 is NSPanel }) {
-                app.hide(nil)
-                app.unhide(nil)
+                presenter.perform {
+                    app.hide(nil)
+                    app.unhide(nil)
+                }
             }
         }
     }

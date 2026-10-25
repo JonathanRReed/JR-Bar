@@ -398,13 +398,13 @@ final class DockUtility {
     /// The card's "Open Settings" for the Accessibility row.
     func openAccessibilitySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
-        NSWorkspace.shared.open(url)
+        DesktopServices.automatic.open(url)
     }
 
     /// The card's "Open Settings" for the Screen Recording row.
     func openScreenCaptureSettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else { return }
-        NSWorkspace.shared.open(url)
+        DesktopServices.automatic.open(url)
     }
 
     // MARK: Card writes

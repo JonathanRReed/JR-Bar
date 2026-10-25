@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import OSLog
 
 /// Tests lay out and render views without ordering windows or taking focus.
 @MainActor
@@ -26,12 +27,14 @@ struct WindowPresenter {
         }
     }
 
-    nonisolated static var isTestProcess: Bool {
+    nonisolated static let isTestProcess: Bool = {
         let process = ProcessInfo.processInfo
         return detectsTests(environment: process.environment, arguments: process.arguments)
             || NSClassFromString("XCTestCase") != nil
             || Bundle.allBundles.contains { $0.bundleURL.pathExtension == "xctest" }
-    }
+    }()
+
+    nonisolated static let interactiveTests = ProcessInfo.processInfo.environment["JRBAR_INTERACTIVE_TESTS"] == "1"
 
     nonisolated static func detectsTests(environment: [String: String], arguments: [String]) -> Bool {
         environment["XCTestConfigurationFilePath"] != nil
@@ -41,9 +44,20 @@ struct WindowPresenter {
                 || $0 == "--testing-library" }
     }
 
-    nonisolated static var suppressesDesktop: Bool {
-        isTestProcess && ProcessInfo.processInfo.environment["JRBAR_INTERACTIVE_TESTS"] != "1"
+    nonisolated static let suppressesDesktop = isTestProcess && !interactiveTests
+
+    nonisolated static func shouldLogSuppression(suppressed: Bool, arguments: [String]) -> Bool {
+        suppressed && !detectsTests(environment: [:], arguments: arguments)
     }
+
+    private static let launchDiagnostic: Void = {
+        guard shouldLogSuppression(suppressed: suppressesDesktop,
+                                   arguments: ProcessInfo.processInfo.arguments) else { return }
+        os_log(.error, log: OSLog(subsystem: "devin.jrbar", category: "window-presentation"),
+               "Desktop presentation suppressed in a process without a test runner argument")
+    }()
+
+    static func logSuppressionAtLaunch() { _ = launchDiagnostic }
 
     static var automatic: Self { suppressesDesktop ? .suppressed : .live }
     static var suppressed: Self { Self(present: { _, _ in }) }

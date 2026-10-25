@@ -41,6 +41,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     nonisolated static let autosaveName = "com.jonathanreed.jrbar.status-item"
     private static let log = Logger(subsystem: "devin.jrbar", category: "status-item")
 
+    private let desktop: DesktopServices
     private var statusItem: NSStatusItem
     private let menu = NSMenu()
     private let headerItem = NSMenuItem()
@@ -155,10 +156,13 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// it changes, so a same-width redraw never churns the bar's layout.
     private var currentWidth: CGFloat = 0
 
-    override init() {
+    override convenience init() { self.init(desktop: .automatic) }
+
+    init(desktop: DesktopServices) {
+        self.desktop = desktop
         Self.healPersistedPlacement()
         Self.seedPreferredPosition()
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = desktop.makeStatusItem(NSStatusItem.squareLength)
         showBarItem = NSMenuItem(title: "Show Screen Bar", action: #selector(toggleScreenBar(_:)), keyEquivalent: "")
         super.init()
         wireStatusItem()
@@ -416,7 +420,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         Self.log.error("status item: recreating (\(reason, privacy: .public)), placement reset \(resetPlacement, privacy: .public)")
         statusItem.button?.target = nil
         statusItem.button?.action = nil
-        NSStatusBar.system.removeStatusItem(statusItem)
+        desktop.removeStatusItem(statusItem)
         if resetPlacement {
             let defaults = UserDefaults.standard
             for key in defaults.dictionaryRepresentation().keys
@@ -428,7 +432,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
         }
         Self.healPersistedPlacement()
         Self.seedPreferredPosition()
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = desktop.makeStatusItem(NSStatusItem.squareLength)
         wireStatusItem()
         statusItem.isVisible = true
         // Everything the old button wore, on the new one.
@@ -452,7 +456,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             NSWorkspace.shared.notificationCenter.removeObserver(accessibilityWatch)
         }
         accessibilityWatch = nil
-        NSStatusBar.system.removeStatusItem(statusItem)
+        desktop.removeStatusItem(statusItem)
     }
 
     /// Where the icon is on screen, for anchoring the panel. The panel's

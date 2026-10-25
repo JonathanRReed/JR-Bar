@@ -424,7 +424,7 @@ final class ShelfTrayModel {
     }
     /// Where a ⇧-click range starts: the last chip ⌘-clicked or ⇧-clicked.
     @ObservationIgnored private var selectionAnchor: String?
-    @ObservationIgnored var openURL: @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
+    @ObservationIgnored var openURL: @MainActor (URL) -> Bool = { DesktopServices.automatic.open($0) }
 
     private func remapSelection(from oldIDs: Set<String>, to newIDs: [String]) {
         let wasSelected = !selectedIDs.isDisjoint(with: oldIDs)
@@ -579,7 +579,7 @@ final class ShelfTrayModel {
     func reveal(_ picked: [ShelfEntry]) {
         let live = presentURLs(of: picked)
         guard !live.isEmpty else { return }
-        NSWorkspace.shared.activateFileViewerSelecting(live)
+        DesktopServices.automatic.reveal(live)
     }
 
     /// The dedicated one-click path: straight to AirDrop, no picker —

@@ -2734,7 +2734,7 @@ private struct ShelfMirrorRow: View {
                         detail: "Allow JR-Bar in Privacy & Security, then retry.") {
                 Button("Settings…") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
-                        NSWorkspace.shared.open(url)
+                        DesktopServices.automatic.open(url)
                     }
                 }
                 .controlSize(.mini)

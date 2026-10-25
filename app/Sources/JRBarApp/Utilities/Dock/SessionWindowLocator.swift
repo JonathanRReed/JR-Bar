@@ -114,6 +114,6 @@ enum SessionWindowLocator {
     /// bury the window just picked under the app's others.
     private static func activate(_ pid: pid_t?) {
         guard let pid else { return }
-        NSRunningApplication(processIdentifier: pid)?.activate()
+        WindowPresenter.automatic.perform { NSRunningApplication(processIdentifier: pid)?.activate() }
     }
 }

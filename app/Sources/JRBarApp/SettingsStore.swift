@@ -1910,9 +1910,9 @@ final class SettingsStore {
         let directory = (core.socketPath as NSString).deletingLastPathComponent
         let url = URL(fileURLWithPath: directory)
         if FileManager.default.fileExists(atPath: directory) {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            DesktopServices.automatic.reveal([url])
         } else {
-            NSWorkspace.shared.activateFileViewerSelecting([url.deletingLastPathComponent()])
+            DesktopServices.automatic.reveal([url.deletingLastPathComponent()])
         }
     }
 
