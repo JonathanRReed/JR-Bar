@@ -14,8 +14,10 @@ struct BuddyPacingTests {
 
     private func makeToy() -> (NotchBuddyToy, ToysStore, CoreModel) {
         let core = CoreModel()
+        var state = ToysState()
+        state.notchBuddy.enabled = true
         let store = ToysStore(core: core, settings: SettingsStore(core: core),
-                              state: ToysState(), cardModel: makeTestCardModel(),
+                              state: state, cardModel: makeTestCardModel(),
                               notchRuntimeEnabled: false)
         return (store.notchBuddy, store, core)
     }

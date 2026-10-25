@@ -542,9 +542,13 @@ class ProviderUpdates:
     def _check_worker(self) -> None:
         found: dict[str, tuple[str, str | None, UpdateRecord | None]] = {}
         try:
+            if self._checks_enabled() is not True:
+                return
             home = self._home()
             env = search_environment(self._environ() if self._environ is not None else None)
             for provider, cli in PROVIDER_CLIS.items():
+                if self._checks_enabled() is not True:
+                    break
                 if cli.npm_package is None:
                     continue
                 executable = self._locate(cli.binary)

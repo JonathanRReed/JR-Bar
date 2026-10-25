@@ -83,6 +83,7 @@ DEFAULTS: Final[Mapping[str, object]] = MappingProxyType(
         "_jrbar_firmware": None,
         "_jrbar_optional_integration_runtime": None,
         "_jrbar_phone_alerts": None,
+        "_jrbar_usage_hook_jobs": None,
         "_jrbar_provider_credential_store": None,
         "_jrbar_provider_presentation_settings": None,
         "_jrbar_provider_sign_in": None,

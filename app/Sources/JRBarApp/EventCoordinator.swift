@@ -127,6 +127,9 @@ final class EventCoordinator {
         hud.announcements.onFocus = { [weak self] name, on in
             self?.toys?.notch.noteMacFocus(name: name, on: on)
         }
+        hud.announcements.onFocusStopped = { [weak self] in
+            self?.toys?.notch.stopObservingMacFocus()
+        }
         // The coordinator lives for the app's lifetime; the observer's
         // weak self is cleanup enough (a nonisolated deinit could not
         // touch the isolated token anyway).

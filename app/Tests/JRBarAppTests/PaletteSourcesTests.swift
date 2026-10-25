@@ -472,7 +472,7 @@ struct PaletteSourcesTests {
         #expect(log.calls == ["feed", "open:true"])
         let empty = AquariumPaletteRows.items(fishCount: 0, isOn: true, verbs: verbs)
         #expect(empty.map(\.id) == ["aquarium.window"])
-        #expect(empty.first?.primary?.title == "Close the Tank")
+        #expect(empty.first?.primary?.title == "Turn Aquarium off")
     }
 
     // MARK: Confetti

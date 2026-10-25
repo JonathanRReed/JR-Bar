@@ -4967,6 +4967,37 @@ def build_headless_controller_class() -> type:
             set_enabled(value.token_history_enabled)
             if previous is not None and previous.token_history_enabled != value.token_history_enabled:
                 _sync_token_history(self)
+            if previous is not None:
+                from .ambient_effect_runtime import stop_disabled_cues
+
+                stop_disabled_cues(self)
+                if ((previous.presence_enabled and not value.presence_enabled)
+                        or (previous.focus_sync_enabled and not value.focus_sync_enabled)):
+                    from . import core_power
+
+                    facts = core_power.presence_facts(self)
+                    if facts is not None:
+                        core_power._apply_presence(self, facts)
+                old_devices = {device.device_id: device.enabled for device in previous.devices}
+                new_devices = {device.device_id: device.enabled for device in value.devices}
+                writer = self._hardware_write_worker
+                if old_devices != new_devices and writer is not None:
+                    old_generation = self._hardware_write_generation
+                    self._hardware_write_generation += 1
+                    cancel = getattr(writer, "cancel_generation", None)
+                    if callable(cancel):
+                        cancel(old_generation)
+                    self._device_discovery_cache = None
+                hooks = getattr(self, "_jrbar_usage_hook_jobs", None)
+                if hooks is not None and not value.usage_hooks.get("enabled", False):
+                    hooks.cancel()
+                if not value.remote_peers.enabled:
+                    self.stop_remote_peer_timer()
+                elif getattr(self, "_runtime_started", False):
+                    self.start_remote_peer_timer()
+                alerts = getattr(self, "_jrbar_phone_alerts", None)
+                if alerts is not None and not value.ntfy_enabled:
+                    alerts.cancel()
             self._core_settings_generation = getattr(self, "_core_settings_generation", 0) + 1
             if getattr(self, "_core", None) is not None:
                 self._core_publish_settings()

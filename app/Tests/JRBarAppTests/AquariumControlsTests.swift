@@ -19,7 +19,9 @@ struct AquariumControlsTests {
 
     private func makeToy(_ game: AquariumGame? = nil) throws -> (AquariumToy, ToysStore, AquariumSaveFile) {
         let core = CoreModel()
-        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+        var enabledState = ToysState()
+        enabledState.aquarium.enabled = true
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: enabledState,
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         let file = scratch()
         if let game { try file.save(AquariumSave(game: game)) }
@@ -38,7 +40,7 @@ struct AquariumControlsTests {
     @Test("the card renders with Fine-tune folded and open, and open is taller")
     func rendersBothWays() throws {
         let (toy, store, file) = try makeToy()
-        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        defer { toy.shutdown(); try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
         let folded = try height(of: AquariumControlsView(toy: toy))
         let open = try height(of: AquariumControlsView(toy: toy, fineTune: true))
         #expect(folded > 200)
@@ -55,7 +57,7 @@ struct AquariumControlsTests {
         game.themeID = "midnight"
         game.substrateID = "black"
         let (toy, store, file) = try makeToy(game)
-        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        defer { toy.shutdown(); try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
         #expect(AquariumLookMenu(toy: toy).summary == "Midnight · Black gravel")
         toy.useSurface(.wall, id: "rocky")
         #expect(AquariumLookMenu(toy: toy).summary == "Midnight · Black gravel · Rocky backdrop")

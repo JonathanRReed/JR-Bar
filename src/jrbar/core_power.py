@@ -16,6 +16,7 @@ import math
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from . import keep_awake as keep_awake_module
@@ -491,6 +492,14 @@ def escalation_stage(controller: Any, stage: int, *, now: float | None = None) -
 def _apply_presence(controller: Any, facts: PresenceFacts | None) -> None:
     """Hand the facts to the quiet policy, re-judge the escalation stage,
     arm the expiry and publish -- every consumer reads the new fact at once."""
+    settings = getattr(controller, "settings", None)
+    if facts is not None and getattr(settings, "presence_enabled", True) is False:
+        facts = replace(facts, mic=False, camera=False, screen_shared=False, call_since=None)
+        if not getattr(settings, "focus_sync_enabled", False):
+            facts = replace(facts, focus=None)
+        if (facts.focus is None and facts.meeting_until is None
+                and not facts.locked and facts.idle_seconds is None):
+            facts = None
     controller._core_presence = facts
     dnd = getattr(controller, "dnd_controller", None)
     set_presence = getattr(dnd, "set_presence", None)

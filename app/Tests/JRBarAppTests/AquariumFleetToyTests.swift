@@ -20,13 +20,16 @@ struct AquariumFleetToyTests {
         }
         core.apply(.state(CoreState(sessions: sessions)))
         let quiet = CoreModel()
-        let store = ToysStore(core: quiet, settings: SettingsStore(core: quiet), state: ToysState(),
+        var enabledState = ToysState()
+        enabledState.aquarium.enabled = true
+        let store = ToysStore(core: quiet, settings: SettingsStore(core: quiet), state: enabledState,
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         let file = AquariumSaveFile(url: FileManager.default.temporaryDirectory
             .appending(path: "jrbar-fleet-\(UUID().uuidString)")
             .appending(path: "aquarium-save.json"))
         defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
         let tank = AquariumToy(core: core, store: store, saveFile: file)
+        defer { tank.shutdown() }
         #expect(tank.game.unlocked[AquariumAchievement.school.rawValue] != nil)
         #expect(tank.notice?.title == AquariumAchievement.school.title
                 || tank.notice?.title == AquariumAchievement.firstPearl.title)

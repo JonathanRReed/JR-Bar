@@ -21,7 +21,9 @@ struct AquariumHushTests {
         core.apply(.state(CoreState(sessions: (0..<fish).map {
             CoreSession(id: "s\($0)", provider: "claude", mode: "idle_ready", lifecycle: "active")
         })))
-        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+        var enabledState = ToysState()
+        enabledState.aquarium.enabled = true
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: enabledState,
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         let file = scratch()
         return (AquariumToy(core: core, store: store, saveFile: file), store, file)
@@ -30,7 +32,7 @@ struct AquariumHushTests {
     @Test("a queued visitor's toast is dropped while on a call; the visitor still waits")
     func toastDropped() {
         let (tank, store, file) = fixture()
-        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        defer { tank.shutdown(); try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
         store.noteCallPresence(true)
         #expect(tank.hushed)
         tank.noteEvent(CoreEvent(id: "r1", kind: "quota_reset"))
@@ -40,8 +42,9 @@ struct AquariumHushTests {
 
     @Test("the same visitor in a clear room gets its toast")
     func toastInAClearRoom() {
-        let (tank, _, file) = fixture()
-        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        let (tank, store, file) = fixture()
+        defer { withExtendedLifetime(store) {} }
+        defer { tank.shutdown(); try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
         #expect(!tank.hushed)
         tank.noteEvent(CoreEvent(id: "r1", kind: "quota_reset"))
         #expect(tank.toast != nil)
@@ -50,7 +53,7 @@ struct AquariumHushTests {
     @Test("a reward card waits out the call and comes out when it ends")
     func cardHeld() {
         let (tank, store, file) = fixture(fish: 10)
-        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        defer { tank.shutdown(); try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
         store.noteCallPresence(true)
         let now = Date()
         // Ten rounds to ten fish: a hundred pellets, an achievement.
@@ -68,7 +71,7 @@ struct AquariumHushTests {
     @Test("with the page's switch off the room is ignored")
     func switchOff() {
         let (tank, store, file) = fixture()
-        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        defer { tank.shutdown(); try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
         store.state.hushDuringQuiet = false
         store.noteCallPresence(true)
         #expect(!tank.hushed)

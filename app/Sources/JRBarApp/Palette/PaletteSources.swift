@@ -868,7 +868,7 @@ enum AquariumPaletteRows {
             icon: .symbol("water.waves", .blue),
             tags: [PaletteTag(text: isOn ? "On" : "Off", tone: isOn ? .positive : .neutral)],
             kind: "Toy", section: .toys,
-            actions: [PaletteAction(id: "toggle", title: isOn ? "Close the Tank" : "Open the Tank",
+            actions: [PaletteAction(id: "toggle", title: isOn ? "Turn Aquarium off" : "Open the Tank",
                                     symbol: isOn ? "xmark.circle" : "macwindow") {
                 verbs.setOpen(!isOn)
                 return nil

@@ -72,6 +72,7 @@ final class AquariumAmbientController {
 
     /// Makes the panels and the idle poll match the settings.
     func sync() {
+        guard toy?.isOn == true else { tearDown(); return }
         syncWallpaper()
         if settings.idleFillMinutes > 0 {
             if idleTimer == nil {
@@ -189,7 +190,7 @@ final class AquariumAmbientController {
         watchTimer?.invalidate()
         watchTimer = nil
         idleBaseline = nil
-        for panel in savers { panel.orderOut(nil) }
+        for panel in savers { panel.close() }
         savers = []
     }
 
@@ -198,9 +199,15 @@ final class AquariumAmbientController {
         dismissSaver()
         idleTimer?.invalidate()
         idleTimer = nil
-        wallpaper?.orderOut(nil)
+        wallpaper?.close()
         wallpaper = nil
         wallpaperDisplay = nil
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+        for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        for observer in distributedObservers { DistributedNotificationCenter.default().removeObserver(observer) }
+        observers.removeAll()
+        workspaceObservers.removeAll()
+        distributedObservers.removeAll()
     }
 }
 

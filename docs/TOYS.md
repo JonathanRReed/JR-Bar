@@ -595,9 +595,8 @@ piece sits on the dune line under a soft pooled shadow. A jellyfish
 pulses through the mid-water every ~40 s (and stays on as the
 resident drifter while the tank is empty, under a small quiet caption
 low on the left) and a snail works the sand — it fetches pearls while
-you watch and keeps its rounds while the window is closed, so dropped
-pearls it has picked up land in the "while you were away" card on
-reopen. Behind it all: a
+you watch. Turning Aquarium off stops its game clock, session reads,
+saves and ambient panels. Turning it on rebuilds them from the saved game. Behind it all: a
 multi-stop gradient from a bright green surface band to a deep
 blue-green floor, seven soft god rays (fewer in some themes) breathing a couple of degrees
 and pooling as wandering caustic light on the dune crest, a slow

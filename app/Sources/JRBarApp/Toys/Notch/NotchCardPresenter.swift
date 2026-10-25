@@ -11,15 +11,26 @@ import JRBarCore
 @MainActor
 final class NotchCardPresenter {
     /// The card's window. Internal so a test can name it as the card's own.
-    let panel: NotchCardPanel
-    var model: NotchCardModel { panel.model }
+    let model: NotchCardModel
+    private var ownedPanel: NotchCardPanel?
+    var ownsPanel: Bool { ownedPanel != nil }
+    var panel: NotchCardPanel {
+        if let ownedPanel { return ownedPanel }
+        let panel = NotchCardPanel(model: model)
+        panel.onKeyboardKey = { [weak self] code, shift in
+            self?.shelfKey(ShelfKeyboardInput.key(code: code, shift: shift))
+        }
+        panel.onKeyboardLost = { [weak self] in self?.releaseShelfKeyboard() }
+        ownedPanel = panel
+        return panel
+    }
 
     private(set) var isShown = false
     private var presentationGeneration = 0
     private var openRequestGeneration = 0
     var presentationEnabled = true
     private(set) var shelfKeyboardEngaged = false
-    var isPinned: Bool { panel.isPinned }
+    var isPinned: Bool { model.pinned }
     /// Whether Esc is listened for — only while the card is pinned.
     var listensForEscape: Bool { pinnedEscape?.isListening == true }
     /// Where the Esc presses come from — AppKit's monitors; a test hands
@@ -75,11 +86,7 @@ final class NotchCardPresenter {
     private var pinnedEscape: CardEscapeWatch?
 
     init(model: NotchCardModel) {
-        panel = NotchCardPanel(model: model)
-        panel.onKeyboardKey = { [weak self] code, shift in
-            self?.shelfKey(ShelfKeyboardInput.key(code: code, shift: shift))
-        }
-        panel.onKeyboardLost = { [weak self] in self?.releaseShelfKeyboard() }
+        self.model = model
         model.onPageChanged = { [weak self] page in
             if page != .shelf { self?.releaseShelfKeyboard() }
         }
@@ -92,6 +99,12 @@ final class NotchCardPresenter {
         model.onOpenRow = { [weak self] session in self?.open(session) }
         model.onClose = { [weak self] in self?.hide() }
         model.onOpenOverview = { [weak self] in self?.onOpenOverview() }
+    }
+
+    isolated deinit {
+        pinnedEscape?.stop()
+        model.pinned = false
+        ownedPanel?.close()
     }
 
     /// Open a session from the card through the one opener. The card
@@ -137,9 +150,10 @@ final class NotchCardPresenter {
         presentationGeneration &+= 1
         releaseShelfKeyboard()
         setPinned(false)
-        guard isShown else { return }
         isShown = false
-        panel.dismiss()
+        ownedPanel?.returnKeyboard()
+        ownedPanel?.close()
+        ownedPanel = nil
     }
 
     /// The anchor moved (a wing slot came or went, the island reframed):
@@ -150,7 +164,8 @@ final class NotchCardPresenter {
 
     private func setPinned(_ pinned: Bool) {
         if !pinned { releaseShelfKeyboard() }
-        panel.setPinned(pinned)
+        if pinned { panel.setPinned(true) }
+        else { ownedPanel?.setPinned(false); model.pinned = false }
         pinnedEscape?.stop()
         pinnedEscape = nil
         guard pinned else { return }
@@ -208,7 +223,7 @@ final class NotchCardPresenter {
         guard shelfKeyboardEngaged else { return }
         shelfKeyboardEngaged = false
         model.tray.endKeyboardSelection()
-        panel.returnKeyboard()
+        ownedPanel?.returnKeyboard()
     }
 
     func shelfKey(_ key: NotchAskFocus.Key) {

@@ -5,6 +5,16 @@ import JRBarCore
 import Observation
 import QuartzCore
 
+protocol LidSensorPump: AnyObject, Sendable {
+    var publish: (@MainActor @Sendable (LidAngleSensor.Sample) -> Void)? { get set }
+    var publishAvailability: (@MainActor @Sendable (Bool) -> Void)? { get set }
+    var reads: SensorReadMeter { get }
+    func setPolling(_ on: Bool)
+    func setArmingAngle(_ value: Double)
+    func setQuiet(_ center: Double?)
+    func close()
+}
+
 /// The MacBook lid-angle sensor: an Apple HID device on usage page 0x20
 /// (Sensor), usage 0x8A (Orientation), vendor 0x05AC, product 0x8104.
 /// Feature report 1 carries the angle in bytes 1–2, little-endian
@@ -43,7 +53,7 @@ final class LidAngleSensor {
     /// happens on a real change, not 120 times a second.
     var armingAngle: Double = -.infinity {
         didSet {
-            if armingAngle != oldValue { pump.setArmingAngle(armingAngle) }
+            if armingAngle != oldValue { pump?.setArmingAngle(armingAngle) }
         }
     }
 
@@ -53,25 +63,42 @@ final class LidAngleSensor {
     /// The last quiet spot handed to the pump — same dedup reason.
     @ObservationIgnored private var quietPushed: Double?
 
-    @ObservationIgnored private let pump = SensorPump()
+    @ObservationIgnored private var pump: (any LidSensorPump)?
+    @ObservationIgnored private let makePump: @MainActor () -> any LidSensorPump
+    @ObservationIgnored private var generation = 0
+    var isPolling: Bool { pump != nil }
 
-    init() {
-        pump.publish = { [weak self] sample in
-            self?.onSample?(sample)
-        }
-        pump.publishAvailability = { [weak self] value in
-            self?.available = value
-        }
+    init(makePump: @escaping @MainActor () -> any LidSensorPump = { SensorPump() }) {
+        self.makePump = makePump
     }
 
-    /// Starts or stops the poll. A no-op when nothing changed, so the
-    /// toy can call it on every reconcile.
     func setPolling(_ on: Bool) {
         guard on != pollingPushed else { return }
         pollingPushed = on
-        pump.setPolling(on)
-        if !on { quietPushed = nil }
+        generation += 1
+        guard on else {
+            pump?.close()
+            pump = nil
+            available = false
+            quietPushed = nil
+            return
+        }
+        let generation = self.generation
+        let pump = makePump()
+        pump.publish = { [weak self] sample in
+            guard let self, self.pollingPushed, self.generation == generation else { return }
+            self.onSample?(sample)
+        }
+        pump.publishAvailability = { [weak self] value in
+            guard let self, self.pollingPushed, self.generation == generation else { return }
+            self.available = value
+        }
+        self.pump = pump
+        pump.setArmingAngle(armingAngle)
+        pump.setPolling(true)
     }
+
+    isolated deinit { pump?.close() }
 
     /// The lid is resting at `center` and nothing in the fold is moving:
     /// the pump keeps readings within `SensorPump.quietBand` of it on its
@@ -83,14 +110,14 @@ final class LidAngleSensor {
     func quiet(around center: Double?) {
         guard center != quietPushed else { return }
         quietPushed = center
-        pump.setQuiet(center)
+        pump?.setQuiet(center)
     }
 
     /// Readings a second over the last few, counted on the pump's queue —
     /// every read, including the ones a quiet rest keeps off the main
     /// thread.
     func readRate(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Double {
-        pump.reads.rate(at: now)
+        pump?.reads.rate(at: now) ?? 0
     }
 }
 
@@ -180,7 +207,7 @@ enum FoldSensorSilence {
 /// A still, distant lid polls at 2 Hz only with enough travel left to
 /// catch a 300 degree/second close. Motion returns it to 10 Hz. Inside
 /// the band the existing 120 Hz timing stays intact. A shut lid rests at 2 Hz.
-final class SensorPump: @unchecked Sendable {
+final class SensorPump: LidSensorPump, @unchecked Sendable {
     /// Publishes a sample on the main runloop; set by the shell.
     var publish: (@MainActor @Sendable (LidAngleSensor.Sample) -> Void)?
     /// Publishes the availability fact on the main runloop.
@@ -284,6 +311,18 @@ final class SensorPump: @unchecked Sendable {
                 self.cancelProbe()
                 self.quietCenter = nil
             }
+        }
+    }
+
+    func close() {
+        io.async {
+            self.wantsPolling = false
+            self.timer?.cancel()
+            self.timer = nil
+            self.cancelProbe()
+            for device in self.devices { IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone)) }
+            self.devices.removeAll()
+            IOHIDManagerClose(self.manager, IOOptionBits(kIOHIDOptionsTypeNone))
         }
     }
 

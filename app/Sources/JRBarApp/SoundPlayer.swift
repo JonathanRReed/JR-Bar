@@ -131,7 +131,10 @@ final class SoundPlayer {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: $0)
     }
     var playbackOverride: ((String, SoundPreferences) -> (() -> Void)?)?
+    private let lifecycleHandles = FeatureLifecycleHandles()
     private var chimeTimer: Timer?
+    private var chimePreferencesObserver: NSObjectProtocol?
+    static let preferencesDidChange = Notification.Name("JRBarSoundPreferencesDidChange")
     /// Set to route the daemon's log a line when a sound is missing.
     var onMissing: ((String) -> Void)?
     /// Read at every play, so a Settings change lands on the next sound.
@@ -247,13 +250,26 @@ final class SoundPlayer {
     /// `stopChime`. Each ring re-reads the choice, so a change in
     /// Settings lands on the next ring.
     func startChime(_ name: String, interval: TimeInterval) {
+        let current = preferences()
+        guard !isHeld(), current.volume > 0,
+              current.resolve(name, micLive: microphoneLive) != nil else { stopChime(); return }
         guard chimeTimer == nil else { return }
         play(name)
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.ringChime(name) }
         }
+        lifecycleHandles.track(timer: timer)
         RunLoop.main.add(timer, forMode: .common)
         chimeTimer = timer
+        chimePreferencesObserver = NotificationCenter.default.addObserver(
+            forName: Self.preferencesDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let current = self.preferences()
+                if self.isHeld() || current.volume <= 0 || current.resolve(name) == nil { self.stopChime() }
+            }
+        }
     }
 
     /// Whether quiet holds every sound right now. The chime keeps ringing
@@ -263,19 +279,26 @@ final class SoundPlayer {
 
     /// One repeat of the chime: nothing, and no more, once quiet holds sounds.
     func ringChime(_ name: String) {
-        if isHeld() {
-            stopChime()
-        } else {
-            play(name)
-        }
+        let current = preferences()
+        guard !isHeld(), current.volume > 0,
+              current.resolve(name, micLive: microphoneLive) != nil else { stopChime(); return }
+        play(name)
     }
 
     func stopChime() {
+        if let chimePreferencesObserver { NotificationCenter.default.removeObserver(chimePreferencesObserver) }
+        chimePreferencesObserver = nil
         chimeTimer?.invalidate()
         chimeTimer = nil
     }
 
     var isChiming: Bool { chimeTimer != nil }
+    var liveChimeTimers: Int { lifecycleHandles.liveTimers }
+
+    isolated deinit {
+        stopChime()
+        burst?.cancel()
+    }
 
     /// One ring of `name`: on the alert device when that is asked for
     /// and reachable, else the cached AVAudioPlayer on the current output.

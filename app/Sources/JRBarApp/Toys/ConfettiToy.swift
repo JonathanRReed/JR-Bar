@@ -32,6 +32,7 @@ final class ConfettiToy: Toy {
     /// The burst in flight: one overlay window per attached screen,
     /// each living & dying on its own timer. A new burst replaces all
     /// of them — the single-burst policy holds per screen.
+    @ObservationIgnored private let lifecycleHandles = FeatureLifecycleHandles()
     @ObservationIgnored private var windows: [ConfettiWindow] = []
     @ObservationIgnored private var isShutdown = false
 
@@ -184,6 +185,10 @@ final class ConfettiToy: Toy {
         stopBurst()
     }
 
+    var lifecycleResources: [String: Int] {
+        ["windows": lifecycleHandles.liveWindows, "timers": lifecycleHandles.liveTimers, "held burst": held == nil ? 0 : 1]
+    }
+
     let id = "confetti"
     let name = "Confetti"
     let blurb = "Confetti for quota resets and agent events."
@@ -194,7 +199,10 @@ final class ConfettiToy: Toy {
         set {
             guard !isShutdown else { return }
             store?.state.confetti.enabled = newValue
-            if !newValue { dropHeld(.dropped, "toy_off") }
+            if !newValue {
+                dropHeld(.dropped, "toy_off")
+                stopBurst()
+            }
         }
     }
 
@@ -460,11 +468,12 @@ final class ConfettiToy: Toy {
     /// (smaller) once the room is clear, and is let go once it is old.
     func roomChanged(at now: Date = Date()) {
         guard !isShutdown else { return }
-        guard held != nil else { reconcileResets(); return }
         guard isOn else {
             dropHeld(.dropped, "toy_off")
+            stopBurst()
             return
         }
+        guard held != nil else { reconcileResets(); return }
         guard settings.whenHeld == .later else {
             dropHeld(.dropped, "hold_disabled")
             return
@@ -544,6 +553,7 @@ final class ConfettiToy: Toy {
         let timer = Timer(timeInterval: ConfettiRoom.recheckInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.roomChanged() }
         }
+        lifecycleHandles.track(timer: timer)
         RunLoop.main.add(timer, forMode: .common)
         recheck = timer
     }
@@ -689,6 +699,7 @@ final class ConfettiToy: Toy {
             let burst = ConfettiBurst(stage: stage, recipe: plan.recipe, seed: UInt64.random(in: 0...UInt64.max))
             let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: stage.width, height: stage.height)
             let overlay = ConfettiWindow(burst: burst, look: plan.look, frame: frame, meter: meter)
+            lifecycleHandles.track(window: overlay)
             overlays.append(overlay)
             overlay.burst { [weak self, weak overlay] in
                 MainActor.assumeIsolated {

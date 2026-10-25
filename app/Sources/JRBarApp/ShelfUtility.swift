@@ -45,6 +45,11 @@ final class ShelfUtilityModel {
     private let feed: MediaFeed
     private var feedToken: UUID?
     private let powerMonitor = AlcovePowerMonitor()
+    var startPower: (() -> Void)?
+    var stopPower: (() -> Void)?
+    var refreshToggles: (() -> Void)?
+    var observeToggles: (() -> Void)?
+    var stopToggles: (() -> Void)?
 
     /// The current now-playing media, or nil when no certified source
     /// reports one (stopped, exited, or the read path is gated and no
@@ -82,9 +87,21 @@ final class ShelfUtilityModel {
         }
     }
 
-    func start() {
-        guard !running else { return }
-        running = true
+    isolated deinit {
+        stop()
+        stopWatchingOutputs()
+    }
+
+    func syncMedia(enabled: Bool) {
+        guard running, enabled else {
+            if let feedToken { feed.unsubscribe(feedToken) }
+            feedToken = nil
+            media = nil
+            lyrics.reset()
+            noteArtwork(nil)
+            return
+        }
+        guard feedToken == nil else { return }
         feedToken = feed.subscribe { [weak self] media in
             // Every helper line re-sends the whole track — a play, a
             // pause, a seek — and a row redraws for each assignment.
@@ -94,7 +111,16 @@ final class ShelfUtilityModel {
             self.lyrics.note(media: media)
             self.noteArtwork(media?.artworkData)
         }
-        powerMonitor.start()
+    }
+
+    var readingMedia: Bool { feedToken != nil }
+
+    func start(mediaEnabled: Bool = true) {
+        if running { syncMedia(enabled: mediaEnabled); return }
+        running = true
+        if let observeToggles { observeToggles() } else { toggles.startObserving() }
+        syncMedia(enabled: mediaEnabled)
+        if let startPower { startPower() } else { powerMonitor.start() }
         // The shared feed kept polling for the island and the ear while
         // the card was folded: take its reading now, or the row would
         // wait for the next transition showing the charge it left with.
@@ -110,7 +136,7 @@ final class ShelfUtilityModel {
         guard !inlineReads, outputVolume != nil else {
             refreshOutputs()
             startWatchingOutputs()
-            toggles.refresh()
+            if let refreshToggles { refreshToggles() } else { toggles.refresh() }
             return
         }
         DispatchQueue.main.async { [weak self] in
@@ -118,7 +144,8 @@ final class ShelfUtilityModel {
                 guard let self, self.running else { return }
                 self.refreshOutputs()
                 self.startWatchingOutputs()
-                self.toggles.refresh()
+                if let refreshToggles = self.refreshToggles { refreshToggles() }
+                else { self.toggles.refresh() }
             }
         }
     }
@@ -220,9 +247,10 @@ final class ShelfUtilityModel {
         cancelScrub()
         guard running else { return }
         running = false
+        if let stopToggles { stopToggles() } else { toggles.stopObserving() }
         if let feedToken { feed.unsubscribe(feedToken) }
         feedToken = nil
-        powerMonitor.stop()
+        if let stopPower { stopPower() } else { powerMonitor.stop() }
         stopWatchingOutputs()
         lyrics.reset()
         // Keep-awake deliberately survives the fold: the user's

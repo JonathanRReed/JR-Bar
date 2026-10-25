@@ -58,13 +58,14 @@ def test_default_is_only_local_counter_owner(tmp_path, monkeypatch, provider, co
                        usage_consent_version=USAGE_CONSENT_VERSION if consented else 0)
         snapshots.append(gate(pref, tmp_path, 1000, credentials))
     default, *named = snapshots
-    assert (default.input_tokens, default.cached_input_tokens, default.output_tokens) == (100, 20, 30)
-    assert default.estimated_cost_usd == 1.5
+    expected = (100, 20, 30) if consented else (0, 0, 0)
+    assert (default.input_tokens, default.cached_input_tokens, default.output_tokens) == expected
+    assert default.estimated_cost_usd == (1.5 if consented else None)
     for snapshot in named:
         assert (snapshot.input_tokens, snapshot.cached_input_tokens, snapshot.output_tokens) == (0, 0, 0)
         assert snapshot.model_count == 0
         assert snapshot.estimated_cost_usd is None and snapshot.cache_savings_usd is None
         if consented:
             assert snapshot.lanes and snapshot.lanes[0].remaining_percent == 60
-    assert sum(s.input_tokens + s.cached_input_tokens + s.output_tokens for s in snapshots) == 150
-    assert sum(s.estimated_cost_usd or 0 for s in snapshots) == 1.5
+    assert sum(s.input_tokens + s.cached_input_tokens + s.output_tokens for s in snapshots) == (150 if consented else 0)
+    assert sum(s.estimated_cost_usd or 0 for s in snapshots) == (1.5 if consented else 0)
