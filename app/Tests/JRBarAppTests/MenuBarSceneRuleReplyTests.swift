@@ -4,12 +4,13 @@ import Testing
 @testable import JRBarCore
 
 @MainActor
-@Suite("Automatic scene reply ownership", .serialized)
+@Suite("Automatic scene reply ownership", .serialized, .timeLimit(.minutes(10)))
 struct MenuBarSceneRuleReplyTests {
     @Test("a stopped rule releases a late acquisition without writing the selected scene")
     func lateAcquisitionCannotOutliveRule() async throws {
         try await withLease { fixture, lease in
             let runner = MenuBarStateRunner()
+            runner.sceneLease.waitForRenewal = { _ = try await TestEvents<Void>().next() }
             runner.sceneLease.connect(to: fixture.core)
             runner.rules = { [MenuBarStateRule(condition: .microphoneLive, effects: [.ledScene(scene: "focus")])] }
             runner.absorb(.micInUse(true))
@@ -20,7 +21,7 @@ struct MenuBarSceneRuleReplyTests {
             #expect(release["action"]?.stringValue == "release")
             #expect(release["lease_id"] == first["lease_id"])
             try await fixture.release(result: receipt("released", scene: "calm", until: nil))
-            try #require(await fixture.until { !runner.sceneLease.isChanging })
+            try #require(await runner.sceneLease.waitUntilIdle())
             #expect(fixture.core.settings?.document["active_scene"]?.stringValue == "calm")
             #expect(!lease.isChanging)
         }
@@ -32,13 +33,13 @@ struct MenuBarSceneRuleReplyTests {
             lease.setDesiredScene("focus")
             _ = try await request(fixture)
             try await fixture.release(result: receipt("acquired"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             apply(fixture, revision: "manual-1", selected: "focus")
             lease.renew()
             let release = try await request(fixture)
             #expect(release["action"]?.stringValue == "release")
             try await fixture.release(result: receipt("released", revision: "manual-1", scene: "focus", until: nil))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             lease.setDesiredScene(nil)
             try await fixture.pending(0)
             #expect(fixture.core.settings?.document["active_scene"]?.stringValue == "focus")
@@ -51,14 +52,14 @@ struct MenuBarSceneRuleReplyTests {
             lease.setDesiredScene("focus")
             let first = try await request(fixture)
             try await fixture.release(result: receipt("acquired"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             apply(fixture, revision: "bounded-eviction", effective: "focus", ownerID: first["lease_id"]?.stringValue)
             lease.resume()
             let release = try await request(fixture)
             #expect(release["action"]?.stringValue == "release" && release["lease_id"] == first["lease_id"])
             lease.setDesiredScene(nil)
             try await fixture.release(result: receipt("released", revision: "bounded-eviction", scene: "calm", until: nil))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             try await fixture.pending(0)
         }
     }
@@ -78,7 +79,7 @@ struct MenuBarSceneRuleReplyTests {
             #expect(next["lease_id"] != first["lease_id"])
             #expect(next["expected_revision"]?.stringValue == "manual-0")
             try await fixture.release(result: receipt("acquired", scene: "night"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
         }
     }
 
@@ -88,17 +89,17 @@ struct MenuBarSceneRuleReplyTests {
             lease.setDesiredScene("focus")
             let first = try await request(fixture)
             try await fixture.release(result: receipt("acquired"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             lease.setDesiredScene(nil)
             _ = try await request(fixture)
             try await fixture.release(error: "refused")
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             try await fixture.pending(0)
             lease.resume()
             let retry = try await request(fixture)
             #expect(retry["action"]?.stringValue == "release" && retry["lease_id"] == first["lease_id"])
             try await fixture.release(result: receipt("released", scene: "calm", until: nil))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
         }
     }
 
@@ -108,13 +109,13 @@ struct MenuBarSceneRuleReplyTests {
             lease.setDesiredScene("focus")
             let first = try await request(fixture)
             try await fixture.release(error: "refused")
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             try await fixture.pending(0)
             lease.renew()
             let retry = try await request(fixture)
             #expect(retry == first)
             try await fixture.release(result: receipt("acquired"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
         }
     }
 
@@ -124,13 +125,13 @@ struct MenuBarSceneRuleReplyTests {
             lease.setDesiredScene("focus")
             let first = try await request(fixture)
             try await fixture.release(result: receipt("acquired"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             apply(fixture)
             lease.renew()
             let retry = try await request(fixture)
             #expect(retry == first)
             try await fixture.release(error: "conflict")
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             lease.renew()
             try await fixture.pending(0)
         }
@@ -147,7 +148,7 @@ struct MenuBarSceneRuleReplyTests {
             let acquire = try await request(fixture)
             #expect(acquire["expected_revision"]?.stringValue == "new-manual")
             try await fixture.release(result: receipt("acquired", revision: "new-manual"))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
         }
     }
 
@@ -161,7 +162,7 @@ struct MenuBarSceneRuleReplyTests {
             _ = try await request(fixture)
             apply(fixture, revision: "manual-1", selected: "travel")
             try await fixture.release(result: receipt("released", revision: "manual-1", scene: "travel", until: nil))
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             try await fixture.pending(0)
         }
     }
@@ -174,7 +175,7 @@ struct MenuBarSceneRuleReplyTests {
             var result = receipt("acquired")
             result["until"] = until
             try await fixture.release(result: result)
-            try #require(await fixture.until { !lease.isChanging })
+            try #require(await lease.waitUntilIdle())
             try await fixture.pending(0)
         }
     }
@@ -205,6 +206,7 @@ struct MenuBarSceneRuleReplyTests {
     private func withLease(_ body: (CoreCommandReplyFixture, MenuBarSceneLease) async throws -> Void) async throws {
         let fixture = try CoreCommandReplyFixture()
         let lease = MenuBarSceneLease()
+        lease.waitForRenewal = { _ = try await TestEvents<Void>().next() }
         do {
             try await fixture.start()
             fixture.core.apply(.hello(CoreHello(stream: "scene-peer")))

@@ -107,6 +107,7 @@ public final class CoreModel {
     public var onResetReplay: (@MainActor (CoreEvent) -> Void)?
 
     @ObservationIgnored private var client: CoreClient?
+    @ObservationIgnored private let replyClock: CoreReplyClock
     /// Queued events from retired clients cannot change the current model.
     @ObservationIgnored private var clientGeneration: UInt64 = 0
     var eventGeneration: UInt64 { clientGeneration }
@@ -115,8 +116,9 @@ public final class CoreModel {
     /// connection has delivered its own state.
     @ObservationIgnored private var hasStateForConnection = false
 
-    public init(socketPath: String = CoreSocketPath.resolve()) {
+    public init(socketPath: String = CoreSocketPath.resolve(), replyClock: CoreReplyClock = .continuous) {
         self.socketPath = socketPath
+        self.replyClock = replyClock
     }
 
     /// Facts and lights are only trusted once this connection has sent an
@@ -163,7 +165,7 @@ public final class CoreModel {
         guard client == nil else { return }
         clientGeneration &+= 1
         let generation = clientGeneration
-        let client = CoreClient(socketPath: socketPath, auth: authSecret) { [weak self] event in
+        let client = CoreClient(socketPath: socketPath, replyClock: replyClock, auth: authSecret) { [weak self] event in
             Task { @MainActor [weak self] in
                 self?.handle(event, generation: generation)
             }

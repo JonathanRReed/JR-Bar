@@ -1,10 +1,11 @@
 import Foundation
+import Observation
 import Testing
 @testable import JRBarApp
 @testable import JRBarCore
 
 @MainActor
-@Suite("Effect Studio shelf mutations", .serialized)
+@Suite("Effect Studio shelf mutations", .serialized, .timeLimit(.minutes(10)))
 struct EffectStudioShelfMutationTests {
     @Test("rapid saves retain both programs before settings echoes")
     func rapidSaves() async throws {
@@ -173,24 +174,17 @@ struct EffectStudioShelfMutationTests {
             document: .object(["studio_library": .array(rows.map { .array($0.map(JSONValue.string)) })]))))
     }
 
-    private final class Outcomes { var count = 0 }
+    @Observable final class Outcomes { var count = 0 }
 
     private func names(_ request: [String: JSONValue]) -> [String] {
         LEDSStudioModel.shelf(from: request["args"]?["value"]?.arrayValue).map(\.name)
     }
 
     private func request(_ fixture: CoreCommandReplyFixture) async throws -> [String: JSONValue] {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while ContinuousClock.now < deadline {
-            let reply = try await fixture.core.send("fixture_pending")
-            if let first = reply.result?["requests"]?.arrayValue?.first?.objectValue {
-                #expect(first["name"]?.stringValue == "set_setting")
-                #expect(first["args"]?["path"]?.stringValue == "studio_library")
-                return first
-            }
-            await Task.yield()
-        }
-        throw CoreClientError.timeout
+        let pending = try await fixture.request()
+        #expect(pending["name"]?.stringValue == "set_setting")
+        #expect(pending["args"]?["path"]?.stringValue == "studio_library")
+        return pending
     }
 
     private func acknowledge(_ fixture: CoreCommandReplyFixture, _ request: [String: JSONValue], generation: Int) async throws {
