@@ -41,25 +41,16 @@ final class NotchSensorMonitor {
     private var timer: Timer?
     private(set) var running = false
 
-    /// A registered CoreAudio listener — removal needs the identical
-    /// object, address and block.
-    private struct AudioListener {
-        var object: AudioObjectID
-        var address: AudioObjectPropertyAddress
-        var block: AudioObjectPropertyListenerBlock
+    private lazy var listeners = HALPropertyListeners { [weak self] key in
+        MainActor.assumeIsolated {
+            guard let self, self.running else { return }
+            if key.selector == kAudioHardwarePropertyProcessObjectList
+                || key.selector == kCMIOHardwarePropertyDevices {
+                self.reconcileListeners()
+            }
+            self.queuePoll()
+        }
     }
-    private struct CameraListener {
-        var object: CMIOObjectID
-        var address: CMIOObjectPropertyAddress
-        var block: CMIOObjectPropertyListenerBlock
-    }
-    /// The system-level ones (audio processes came or went, camera list
-    /// changed) live for the run; the per-object ones are re-armed on
-    /// those.
-    private var systemProcesses: AudioListener?
-    private var systemCameras: CameraListener?
-    private var processListeners: [AudioListener] = []
-    private var cameraListeners: [CameraListener] = []
     /// A poll already queued for this turn — a burst of edges (a call
     /// app starting its IO touches several processes at once) reads once.
     private var pollQueued = false
@@ -75,15 +66,14 @@ final class NotchSensorMonitor {
     /// How many listeners are armed — the tests' window on the
     /// re-arming.
     var armedListenerCount: Int {
-        (systemProcesses == nil ? 0 : 1) + (systemCameras == nil ? 0 : 1)
-            + processListeners.count + cameraListeners.count
+        listeners.count
     }
 
     func start() {
         guard !running else { return }
         running = true
         poll()
-        armListeners()
+        reconcileListeners()
         let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
@@ -96,7 +86,7 @@ final class NotchSensorMonitor {
         running = false
         timer?.invalidate()
         timer = nil
-        disarmListeners()
+        listeners.reconcile([])
         // An edge queued during the in-flight read is dropped too —
         // otherwise the next start would run one redundant poll.
         readAgain = false
@@ -107,103 +97,23 @@ final class NotchSensorMonitor {
 
     // MARK: Listeners
 
-    private func armListeners() {
-        var processesAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyProcessObjectList,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        let processesChanged: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            MainActor.assumeIsolated {
-                self?.armProcessListeners()
-                self?.queuePoll()
-            }
-        }
-        if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &processesAddress,
-                                               DispatchQueue.main, processesChanged) == noErr {
-            systemProcesses = AudioListener(object: AudioObjectID(kAudioObjectSystemObject),
-                                            address: processesAddress, block: processesChanged)
-        }
-        var devicesAddress = CMIOObjectPropertyAddress(
-            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
-            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
-            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
-        let camerasChanged: CMIOObjectPropertyListenerBlock = { [weak self] _, _ in
-            MainActor.assumeIsolated {
-                self?.armCameraListeners()
-                self?.queuePoll()
-            }
-        }
-        if CMIOObjectAddPropertyListenerBlock(CMIOObjectID(kCMIOObjectSystemObject), &devicesAddress,
-                                              DispatchQueue.main, camerasChanged) == noErr {
-            systemCameras = CameraListener(object: CMIOObjectID(kCMIOObjectSystemObject),
-                                           address: devicesAddress, block: camerasChanged)
-        }
-        armProcessListeners()
-        armCameraListeners()
-    }
-
-    /// Watch every audio process's `IsRunningInput` — the edge a call,
-    /// a recording or dictation makes the moment it opens the mic. JR-Bar
-    /// itself is left out: its own tap never counts, so its edges would
-    /// only wake a read that changes nothing.
-    private func armProcessListeners() {
-        for old in processListeners {
-            var address = old.address
-            AudioObjectRemovePropertyListenerBlock(old.object, &address, DispatchQueue.main, old.block)
-        }
-        processListeners = []
+    private func reconcileListeners() {
         guard running else { return }
+        var desired: Set<HALPropertyListeners.Key> = [
+            .init(system: .audio, object: AudioObjectID(kAudioObjectSystemObject),
+                  selector: kAudioHardwarePropertyProcessObjectList),
+            .init(system: .camera, object: CMIOObjectID(kCMIOObjectSystemObject),
+                  selector: UInt32(kCMIOHardwarePropertyDevices)),
+        ]
         let me = getpid()
         for process in MicrophoneCapture.processObjects() where MicrophoneCapture.pid(of: process) != me {
-            var address = AudioObjectPropertyAddress(
-                mSelector: kAudioProcessPropertyIsRunningInput,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain)
-            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.queuePoll() }
-            }
-            if AudioObjectAddPropertyListenerBlock(process, &address, DispatchQueue.main, block) == noErr {
-                processListeners.append(AudioListener(object: process, address: address, block: block))
-            }
+            desired.insert(.init(system: .audio, object: process, selector: kAudioProcessPropertyIsRunningInput))
         }
-    }
-
-    /// Watch every camera's running state — re-armed whenever the list
-    /// changes, so a Continuity camera arriving is watched too.
-    private func armCameraListeners() {
-        for old in cameraListeners {
-            var address = old.address
-            CMIOObjectRemovePropertyListenerBlock(old.object, &address, DispatchQueue.main, old.block)
-        }
-        cameraListeners = []
-        guard running else { return }
         for device in Self.cameraDevices() {
-            var address = CMIOObjectPropertyAddress(
-                mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere),
-                mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
-                mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
-            let block: CMIOObjectPropertyListenerBlock = { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.queuePoll() }
-            }
-            if CMIOObjectAddPropertyListenerBlock(device, &address, DispatchQueue.main, block) == noErr {
-                cameraListeners.append(CameraListener(object: device, address: address, block: block))
-            }
+            desired.insert(.init(system: .camera, object: device,
+                                 selector: UInt32(kCMIODevicePropertyDeviceIsRunningSomewhere)))
         }
-    }
-
-    private func disarmListeners() {
-        if let listener = systemProcesses {
-            var address = listener.address
-            AudioObjectRemovePropertyListenerBlock(listener.object, &address, DispatchQueue.main, listener.block)
-            systemProcesses = nil
-        }
-        if let listener = systemCameras {
-            var address = listener.address
-            CMIOObjectRemovePropertyListenerBlock(listener.object, &address, DispatchQueue.main, listener.block)
-            systemCameras = nil
-        }
-        armProcessListeners()
-        armCameraListeners()
+        listeners.reconcile(desired)
     }
 
     /// One read on the next main-queue turn, however many edges asked.

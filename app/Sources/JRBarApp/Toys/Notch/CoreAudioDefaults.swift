@@ -204,32 +204,15 @@ nonisolated enum CoreAudioOutputs {
 /// once. Nothing is polled; the two listeners go when `stop` runs.
 @MainActor
 final class CoreAudioOutputsWatch {
-    private var listeners: [(selector: AudioObjectPropertySelector, block: AudioObjectPropertyListenerBlock)] = []
+    private let listeners: HALPropertyListeners
 
     init(_ changed: @escaping @MainActor () -> Void) {
-        for selector in [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultOutputDevice] {
-            var address = Self.address(selector)
-            let block: AudioObjectPropertyListenerBlock = { _, _ in
-                MainActor.assumeIsolated { changed() }
-            }
-            if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address,
-                                                   DispatchQueue.main, block) == noErr {
-                listeners.append((selector, block))
-            }
+        listeners = HALPropertyListeners { _ in MainActor.assumeIsolated { changed() } }
+        let keys = [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultOutputDevice].map {
+            HALPropertyListeners.Key(system: .audio, object: AudioObjectID(kAudioObjectSystemObject), selector: $0)
         }
+        listeners.reconcile(Set(keys))
     }
 
-    func stop() {
-        for listener in listeners {
-            var address = Self.address(listener.selector)
-            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address,
-                                                   DispatchQueue.main, listener.block)
-        }
-        listeners.removeAll()
-    }
-
-    private static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
-                                   mElement: kAudioObjectPropertyElementMain)
-    }
+    func stop() { listeners.reconcile([]) }
 }

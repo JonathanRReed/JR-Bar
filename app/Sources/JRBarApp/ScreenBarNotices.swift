@@ -127,33 +127,22 @@ final class ScreenBarAudioMonitor {
     var onChange: (@MainActor (String, UInt32) -> Void)?
 
     private var last: AudioDeviceID = 0
-    /// The registered block — removal requires the identical listener.
-    private var listener: AudioObjectPropertyListenerBlock?
+    private lazy var listeners = HALPropertyListeners { [weak self] _ in
+        MainActor.assumeIsolated { self?.deviceChanged() }
+    }
+    private var running = false
 
     func start() {
-        guard listener == nil else { return }
+        guard !running else { return }
+        running = true
         last = Self.outputDevice()
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.deviceChanged() }
-        }
-        AudioObjectAddPropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main, block)
-        listener = block
+        listeners.reconcile([.init(system: .audio, object: AudioObjectID(kAudioObjectSystemObject),
+                                   selector: kAudioHardwarePropertyDefaultOutputDevice)])
     }
 
     func stop() {
-        guard let listener else { return }
-        self.listener = nil
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        AudioObjectRemovePropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main, listener)
+        running = false
+        listeners.reconcile([])
         last = 0
     }
 
