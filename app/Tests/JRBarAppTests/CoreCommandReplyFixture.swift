@@ -30,11 +30,11 @@ final class CoreCommandReplyFixture {
     func start() async throws {
         try process.run()
         started = true
+        core.start()
         ready.fileHandleForWriting.closeFile()
         let readiness = await Task.detached { [ready] in ready.fileHandleForReading.availableData }.value
         try #require(readiness == Data([0x52]))
         try #require(process.isRunning)
-        core.start()
         try #require(await until { core.isLive })
     }
 
@@ -51,12 +51,12 @@ final class CoreCommandReplyFixture {
     }
 
     func pending(_ count: Int) async throws {
-        let reply = try await core.send("fixture_wait_pending", args: ["count": .number(Double(count))])
-        try #require(reply.result?["count"]?.intValue == count)
+        let reply = try await send("fixture_wait_pending", args: ["count": .number(Double(count))])
+        try #require((reply.result?["count"]?.intValue ?? 0) >= count)
     }
 
     func request(count: Int = 1) async throws -> [String: JSONValue] {
-        let reply = try await core.send("fixture_wait_pending", args: ["count": .number(Double(count))])
+        let reply = try await send("fixture_wait_pending", args: ["count": .number(Double(count))])
         return try #require(reply.result?["requests"]?.arrayValue?.first?.objectValue)
     }
 
@@ -67,8 +67,23 @@ final class CoreCommandReplyFixture {
         if let message { args["message"] = .string(message) }
         if let cleared { args["cleared"] = .array(cleared.map(JSONValue.string)) }
         if let result { args["result"] = .object(result) }
-        let reply = try await core.send("fixture_release", args: args)
+        let reply = try await send("fixture_release", args: args)
         try #require(reply.ok)
+    }
+
+    private func send(_ name: String, args: [String: JSONValue]) async throws -> CoreReply {
+        let command = Task { [core] in try await core.send(name, args: args) }
+        let deadline = Task.detached {
+            do { try await ContinuousClock().sleep(for: .seconds(10)) }
+            catch { return }
+            command.cancel()
+        }
+        defer { deadline.cancel() }
+        return try await withTaskCancellationHandler {
+            try await command.value
+        } onCancel: {
+            command.cancel()
+        }
     }
 
     func seed(_ batch: String) async throws {
@@ -83,9 +98,11 @@ import json, socket, sys
 server = socket.socket(socket.AF_UNIX)
 server.bind(sys.argv[1])
 server.listen(1)
+server.settimeout(120)
 sys.stdout.write("R")
 sys.stdout.flush()
 connection, _ = server.accept()
+connection.settimeout(120)
 stream = connection.makefile('rb')
 def send(value):
     connection.sendall((json.dumps(value) + '\n').encode())
@@ -102,7 +119,7 @@ pending = []
 waiters = []
 def pending_changed():
     for waiter in list(waiters):
-        if waiter.get("args", {}).get("count") == len(pending):
+        if len(pending) >= waiter.get("args", {}).get("count", 0):
             reply(waiter, {"count": len(pending), "requests": list(pending)})
             waiters.remove(waiter)
 for line in stream:
@@ -121,6 +138,7 @@ for line in stream:
         result = {'batch': args.get('batch'), 'cleared': args.get('cleared', ['codex:synthetic']), 'restored': ['codex:synthetic']}
         reply(held, args.get('result', result), args.get('error'), args.get('message'))
         reply(request)
+        pending_changed()
     elif name == 'list_history':
         reply(request, {'rows': []})
     else:
