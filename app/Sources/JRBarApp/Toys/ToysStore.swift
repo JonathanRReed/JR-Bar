@@ -26,6 +26,7 @@ final class ToysStore {
         didSet {
             scheduleSave()
             if state.aquarium != oldValue.aquarium { aquarium?.stateReplaced() }
+            if state.notchBuddy.enabled != oldValue.notchBuddy.enabled { notchBuddy.syncRuntime() }
             if state.confetti.enabled != oldValue.confetti.enabled { confetti.roomChanged() }
         }
     }
@@ -91,6 +92,7 @@ final class ToysStore {
         cards.append(AquariumToy(core: core, store: self,
                                  saveFile: aquariumSave ?? AquariumToy.scratchSave()))
         notchBuddy.store = self
+        notchBuddy.syncRuntime()
         cards.append(notchBuddy)
         confetti.store = self
         cards.append(confetti)
@@ -137,7 +139,7 @@ final class ToysStore {
     func replaceState(_ imported: ToysState) {
         state = imported
         aquarium?.stateReplaced()
-        if !notchBuddy.isOn { notchBuddy.dismissPanels() }
+        notchBuddy.syncRuntime()
         notchBuddy.onVisibilityChange?()
         // An imported "off" lets a held burst go and stops its recheck
         // timer now, not at the next state document.

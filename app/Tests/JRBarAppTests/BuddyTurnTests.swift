@@ -252,6 +252,7 @@ struct BuddyTurnTests {
         let store = ToysStore(core: core, settings: SettingsStore(core: core),
                               state: ToysState(), cardModel: makeTestCardModel(),
                               notchRuntimeEnabled: false)
+        store.state.notchBuddy.enabled = true
         let toy = store.notchBuddy
         let t0 = Date(timeIntervalSince1970: 1_000)
         toy.dragStarted()
@@ -283,6 +284,7 @@ struct BuddyTurnTests {
                               state: ToysState(), cardModel: makeTestCardModel(),
                               notchRuntimeEnabled: false)
         defer { withExtendedLifetime(store) {} }
+        store.state.notchBuddy.enabled = true
         let toy = store.notchBuddy
         let t0 = Date(timeIntervalSince1970: 1_000)
         // At the floating buddy's 3× a frame may move it at most 2 pt;
@@ -329,6 +331,7 @@ struct BuddyTurnTests {
                               state: ToysState(), cardModel: makeTestCardModel(),
                               notchRuntimeEnabled: false)
         defer { withExtendedLifetime(store) {} }
+        store.state.notchBuddy.enabled = true
         let toy = store.notchBuddy
         let t0 = Date(timeIntervalSince1970: 1_000)
         toy.giveTreat(at: t0)
@@ -383,6 +386,7 @@ struct BuddyTurnTests {
                               state: ToysState(), cardModel: makeTestCardModel(),
                               notchRuntimeEnabled: false)
         defer { withExtendedLifetime(store) {} }
+        store.state.notchBuddy.enabled = true
         let toy = store.notchBuddy
         let t0 = Date(timeIntervalSince1970: 1_000)
         func working(_ count: Int) -> CoreState {
@@ -417,6 +421,7 @@ struct BuddyTurnTests {
                               state: ToysState(), cardModel: makeTestCardModel(),
                               notchRuntimeEnabled: false)
         defer { withExtendedLifetime(store) {} }
+        store.state.notchBuddy.enabled = true
         let toy = store.notchBuddy
         let t0 = Date(timeIntervalSince1970: 100_000)
         var wall = t0
@@ -455,6 +460,7 @@ struct BuddyTurnTests {
                               state: ToysState(), cardModel: makeTestCardModel(),
                               notchRuntimeEnabled: false)
         defer { withExtendedLifetime(store) {} }
+        store.state.notchBuddy.enabled = true
         let toy = store.notchBuddy
         store.state.notchBuddy.enabled = true
         let t0 = Date(timeIntervalSince1970: 100_000)
@@ -485,6 +491,7 @@ struct BuddyTurnTests {
                               state: ToysState(), cardModel: makeTestCardModel(),
                               notchRuntimeEnabled: false)
         defer { withExtendedLifetime(store) {} }
+        store.state.notchBuddy.enabled = true
         let toy = store.notchBuddy
         store.state.notchBuddy.enabled = true
         let t0 = Date(timeIntervalSince1970: 100_000)
@@ -548,6 +555,7 @@ struct BuddyTurnTests {
                               state: ToysState(), cardModel: makeTestCardModel(),
                               notchRuntimeEnabled: false)
         defer { withExtendedLifetime(store) {} }
+        store.state.notchBuddy.enabled = true
         let toy = store.notchBuddy
         toy.isOn = true
         // Tucked 0.22 s ago: 85 % through the 0.26 s duck-out, at under
@@ -585,6 +593,7 @@ struct BuddyTurnTests {
         screens.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
         #expect(layouts == 0, "off: nothing to lay out")
         store.state.notchBuddy.enabled = true
+        buddy.syncRuntime()
         screens.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
         workspace.post(name: NSWorkspace.screensDidWakeNotification, object: nil)
         #expect(layouts == 2)
@@ -617,7 +626,12 @@ struct BuddyTurnTests {
     @Test("VoiceOver hears what the fleet is doing, not only the buddy's name")
     func voiceOverHearsTheFleet() {
         let core = CoreModel()
-        let buddy = NotchBuddyToy(core: core)
+        var state = ToysState()
+        state.notchBuddy.enabled = true
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: state,
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        defer { store.shutdown() }
+        let buddy = store.notchBuddy
         #expect(buddy.accessibilityStatus == "Nothing running")
         core.apply(.state(CoreState(sessions: [
             CoreSession(id: "a", provider: "claude", mode: "working", lifecycle: "active"),

@@ -19,14 +19,21 @@ struct BuddyShutdownTests {
     @Test("normal off remains reopenable; terminal shutdown retires observers exactly once")
     func terminalIsDistinctFromOff() {
         let screens = Center(), workspace = Center()
-        let buddy = NotchBuddyToy(core: CoreModel(), notificationCenter: screens, workspaceCenter: workspace)
+        let core = CoreModel()
+        var state = ToysState()
+        state.notchBuddy.enabled = true
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: state,
+                              cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
+        defer { store.shutdown() }
+        let buddy = NotchBuddyToy(core: core, notificationCenter: screens, workspaceCenter: workspace)
+        buddy.store = store
         var layouts = 0
         buddy.onVisibilityChange = { layouts += 1 }
         buddy.isOn = false
         buddy.isOn = true
         #expect(!buddy.isShutdown)
         #expect(layouts == 2)
-        #expect(screens.removals == 0 && workspace.removals == 0)
+        #expect(screens.removals == 1 && workspace.removals == 1)
         buddy.shutdown()
         let dismissals = buddy.panelDismissals
         buddy.shutdown()
@@ -36,7 +43,7 @@ struct BuddyShutdownTests {
         buddy.presentCard(near: nil)
         #expect(buddy.isShutdown && !buddy.isOn)
         #expect(buddy.panelDismissals == dismissals)
-        #expect(screens.removals == 1 && workspace.removals == 1)
+        #expect(screens.removals == 2 && workspace.removals == 2)
         #expect(layouts == 2)
         #expect(buddy.livelyUntil == nil)
     }

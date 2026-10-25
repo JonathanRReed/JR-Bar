@@ -101,6 +101,20 @@ struct FeatureLifecycleTests {
             toys.confetti.isOn = false
             await drain()
             stopped(toys.confetti.lifecycleResources, feature: contract.id)
+        case "buddy":
+            let core = CoreModel()
+            let toys = store(core)
+            defer { toys.shutdown() }
+            let buddy = toys.notchBuddy
+            buddy.isOn = true
+            _ = buddy.sessionDigest()
+            #expect(buddy.sessionObservationRunning && buddy.notificationObserverCount > 0)
+            buddy.isOn = false
+            await drain()
+            stopped(buddy.lifecycleResources, feature: contract.id)
+            core.apply(.state(CoreState(sessions: [], asks: [])))
+            await drain()
+            stopped(buddy.lifecycleResources, feature: contract.id)
         case "shelf-media":
             let monitor = Monitor()
             let feed = MediaFeed(monitor: monitor)
