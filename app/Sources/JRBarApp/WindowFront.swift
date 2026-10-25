@@ -19,16 +19,17 @@ enum WindowFront {
     /// Activates the app and puts `window` in front and key on the
     /// Space you're on, out of the Dock if it was minimised. A nil
     /// `fallback` only asks: no Launch Services step follows.
-    static func bring(_ window: NSWindow, fallback: Fallback? = .live) {
+    static func bring(_ window: NSWindow, fallback: Fallback? = .live,
+                      presenter: WindowPresenter = .automatic) {
         // Both calls: the pairing that reliably forces it on macOS 26/27.
-        NSRunningApplication.current.activate()
-        NSApp.activate()
-        if window.isMiniaturized { window.deminiaturize(nil) }
+        presenter.perform { NSRunningApplication.current.activate() }
+        presenter.perform { NSApp.activate() }
+        presenter.perform { if window.isMiniaturized { window.deminiaturize(nil) } }
         orderIn(window, isOnActiveSpace: window.isOnActiveSpace) { front in
-            front.makeKeyAndOrderFront(nil)
-            front.makeKey()
+            presenter.order(front, as: .key)
+            presenter.perform { front.makeKey() }
         }
-        guard let fallback else { return }
+        guard !WindowPresenter.suppressesDesktop, let fallback else { return }
         armFallback(fallback, isShowing: { [weak window] in window?.isVisible ?? false })
     }
 

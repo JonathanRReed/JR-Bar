@@ -143,8 +143,8 @@ final class AppCommandRouter {
         allow.keyEquivalent = ""
         alert.showsSuppressionButton = true
         alert.suppressionButton?.title = "Don't ask again for links like this"
-        NSApp.activate()
-        guard alert.runModal() == .alertSecondButtonReturn else { return .cancel }
+        WindowPresenter.automatic.perform { NSApp.activate() }
+        guard WindowPresenter.automatic.runModal(alert) == .alertSecondButtonReturn else { return .cancel }
         return alert.suppressionButton?.state == .on ? .allowAlways : .allow
     }
 

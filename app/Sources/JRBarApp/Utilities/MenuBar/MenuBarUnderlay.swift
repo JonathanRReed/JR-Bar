@@ -42,7 +42,7 @@ final class MenuBarUnderlay {
                                        tintHex: appearance.tintHex,
                                        tintOpacity: appearance.tintOpacity,
                                        roundness: 0, separator: false))
-            if !panel.isVisible { panel.orderFrontRegardless() }
+            if !panel.isVisible { WindowPresenter.automatic.order(panel) }
         }
         for (id, panel) in panels where !live.contains(id) {
             panel.orderOut(nil)

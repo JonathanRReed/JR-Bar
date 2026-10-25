@@ -188,7 +188,7 @@ final class NotchCardPanel: NSPanel {
         keyboardWanted = true
         if presentationEnabled {
             makeFirstResponder(self)
-            makeKey()
+            WindowPresenter.automatic.perform { makeKey() }
         }
     }
 
@@ -197,7 +197,7 @@ final class NotchCardPanel: NSPanel {
         keyboardWanted = false
         guard presentationEnabled, isKeyWindow else { return }
         super.orderOut(nil)
-        super.orderFrontRegardless()
+        WindowPresenter.automatic.perform { super.orderFrontRegardless() }
     }
 
     override func keyDown(with event: NSEvent) {

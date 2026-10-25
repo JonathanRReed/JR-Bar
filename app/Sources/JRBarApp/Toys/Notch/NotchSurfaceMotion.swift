@@ -57,12 +57,13 @@ enum NotchSurfaceMotion {
     static func present(_ panel: NSWindow, to alpha: CGFloat = 1, from start: CGFloat? = nil,
                         settle: CGFloat = 0, duration: TimeInterval, reducedDuration: TimeInterval?,
                         curve: CAMediaTimingFunction? = panelCurve,
+                        presenter: WindowPresenter = .automatic,
                         alongside: (NSWindow) -> Void = { _ in }) {
         let rest = panel.frame.origin
         let travels = settle != 0 && !reduceMotion
         if travels { panel.setFrameOrigin(NSPoint(x: rest.x, y: rest.y + settle)) }
         if let start { panel.alphaValue = start }
-        panel.orderFrontRegardless()
+        presenter.order(panel)
         fade(panel, to: alpha, duration: duration, reducedDuration: reducedDuration, curve: curve) { target in
             if travels { target.setFrameOrigin(rest) }
             alongside(target)

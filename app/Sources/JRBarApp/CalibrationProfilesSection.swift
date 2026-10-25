@@ -31,8 +31,8 @@ struct CalibrationProfilesSection: View {
                 }
             }
         }
-        .confirmationDialog("Replace the \(replacing ?? "") profile?", isPresented: Binding(
-            get: { replacing != nil }, set: { if !$0 { replacing = nil } })
+        .confirmationDialog("Replace the \(replacing ?? "") profile?", isPresented: WindowPresenter.presentation(Binding(
+            get: { replacing != nil }, set: { if !$0 { replacing = nil } }))
         ) {
             Button("Replace with the current look") {
                 if let slot = replacing { save(slot) }

@@ -470,7 +470,7 @@ final class ScreenBarPeek {
     /// The panel's frame while it hangs.
     var frame: NSRect? { isShown ? panel?.frame : nil }
     var canResumeHover: Bool {
-        guard let hoverDismissAnchor, panel?.isVisible == true else { return false }
+        guard let hoverDismissAnchor, let panel, panelIsVisible(panel) else { return false }
         return !isShown && anchor() == hoverDismissAnchor
     }
     var hoverFrame: NSRect? { isShown || canResumeHover ? panel?.frame : nil }
@@ -478,6 +478,7 @@ final class ScreenBarPeek {
     /// Entry remains a soft fade; dismissal leaves faster. Reduce Motion swaps immediately.
     private static let revealSeconds: TimeInterval = 0.18
     private static let dismissSeconds: TimeInterval = 0.10
+    var panelIsVisible: @MainActor (ScreenBarPeekPanel) -> Bool = { $0.isVisible }
     var presentPanel: @MainActor (ScreenBarPeekPanel, CGFloat?) -> Void = { panel, start in
         NotchSurfaceMotion.present(panel, from: start, duration: ScreenBarPeek.revealSeconds,
                                    reducedDuration: nil, curve: nil)
@@ -494,7 +495,7 @@ final class ScreenBarPeek {
         panel.ignoresMouseEvents = false
         relayout()
         guard isShown else { return }
-        presentPanel(panel, panel.isVisible ? nil : 0)
+        presentPanel(panel, panelIsVisible(panel) ? nil : 0)
     }
 
     func hide(resumable: Bool = false) {

@@ -390,8 +390,8 @@ struct LEDSStudioView: View {
                 .frame(minWidth: 300, idealWidth: 360, maxWidth: 440)
         }
         .onAppear { model.seedIfEmpty() }
-        .alert("Burn the startup program?", isPresented: Binding(
-            get: { model.burnTarget != nil }, set: { if !$0 { model.burnTarget = nil } })
+        .alert("Burn the startup program?", isPresented: WindowPresenter.presentation(Binding(
+            get: { model.burnTarget != nil }, set: { if !$0 { model.burnTarget = nil } }))
         ) {
             Button("Burn to INIT.LED") {
                 if let device = model.burnTarget { model.burn(on: device) }
@@ -401,10 +401,10 @@ struct LEDSStudioView: View {
         } message: {
             Text("\(model.burnTarget?.name ?? "The device") will play this at every power-up, even with JR-Bar closed, until another startup program replaces it. It also plays once now. The compiler's safe version is what gets written.")
         }
-        .sheet(isPresented: Binding(get: { model.shelving != nil }, set: { if !$0 { model.shelving = nil } })) {
+        .sheet(isPresented: WindowPresenter.presentation(Binding(get: { model.shelving != nil }, set: { if !$0 { model.shelving = nil } }))) {
             ShelveSheet(model: model)
         }
-        .sheet(isPresented: $model.composing) {
+        .sheet(isPresented: WindowPresenter.presentation($model.composing)) {
             ComposeSheet(model: model)
         }
     }

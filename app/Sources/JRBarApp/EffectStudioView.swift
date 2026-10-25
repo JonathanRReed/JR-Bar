@@ -41,10 +41,10 @@ struct EffectStudioView: View {
             }
         }
         .animation(.easeInOut(duration: 0.15), value: (store.lastError ?? store.status) == nil)
-        .sheet(isPresented: $store.assigning) {
+        .sheet(isPresented: WindowPresenter.presentation($store.assigning)) {
             AssignSheet(store: store)
         }
-        .alert("Preview on hardware?", isPresented: $store.askingConsent) {
+        .alert("Preview on hardware?", isPresented: WindowPresenter.presentation($store.askingConsent)) {
             Button("Preview") { store.grantConsent(and: store.selected) }
             Button("Cancel", role: .cancel) {
                 store.askingConsent = false
@@ -53,10 +53,10 @@ struct EffectStudioView: View {
         } message: {
             Text("The monitor will play this on the connected SidePulse hardware for a few seconds, then put the current light back. Attention and critical effects blink; they are clamped to 2 Hz. You will not be asked again.")
         }
-        .alert("Save as Effect", isPresented: Binding(
+        .alert("Save as Effect", isPresented: WindowPresenter.presentation(Binding(
             get: { store.savingEffect != nil },
             set: { if !$0 { store.savingEffect = nil } }
-        )) {
+        ))) {
             TextField("Name", text: $store.saveName)
             Button("Save") {
                 if let effect = store.savingEffect { store.saveAsEffect(effect, name: store.saveName) }
@@ -67,10 +67,10 @@ struct EffectStudioView: View {
         } message: {
             Text("Keeps \(store.savingEffect?.label ?? "this effect") with the parameters you set as a new effect in Yours. Assign it like any other; the original stays as it was.")
         }
-        .alert("Pack already installed", isPresented: Binding(
+        .alert("Pack already installed", isPresented: WindowPresenter.presentation(Binding(
             get: { store.packConflict != nil },
             set: { if !$0 { store.packConflict = nil } }
-        )) {
+        ))) {
             Button("Update pack") { store.updatePack() }
             Button("Keep installed copy", role: .cancel) { store.packConflict = nil }
         } message: {

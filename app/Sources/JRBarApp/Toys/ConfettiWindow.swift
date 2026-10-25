@@ -52,7 +52,7 @@ final class ConfettiWindow: NSPanel {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
     func burst(then done: @escaping @MainActor () -> Void) {
-        orderFrontRegardless()
+        WindowPresenter.automatic.order(self)
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 self?.stopWatching()

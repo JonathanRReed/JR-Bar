@@ -176,7 +176,8 @@ struct NotchContentClockStageTests {
         window.surroundingsOverride = .init(bounds: CGRect(x: 0, y: 0, width: 10_000, height: 10_000), floor: nil)
         let rest = CGRect(x: 5663, y: 5950, width: 185, height: 32)
         window.setFrame(rest, display: false)
-        window.orderFrontRegardless()
+        window.visibility = { true }
+        #expect(!window.isVisible)
         defer { window.orderOut(nil) }
         var seen: [(CGFloat, TimeInterval)] = []
         window.onOpenness = { openness, dt in seen.append((openness, dt)) }

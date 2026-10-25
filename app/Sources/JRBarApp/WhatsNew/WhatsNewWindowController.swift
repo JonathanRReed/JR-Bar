@@ -44,7 +44,7 @@ final class WhatsNewWindowController: NSObject, NSWindowDelegate {
         self.window = window
         attachContent(to: window)
         window.center()
-        window.orderFrontRegardless()
+        WindowPresenter.automatic.order(window)
     }
 
     /// Internal for the tests: a Try it's refusal, or nil once it ran.
