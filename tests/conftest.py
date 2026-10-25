@@ -202,7 +202,7 @@ def block_live_keychain_access():
             return
         executable = Path(os.fsdecode(command[0])).name
         if executable == "security" or any("jrbar.keychain_read" in str(arg) for arg in command):
-            raise AssertionError("test attempted live Keychain access; inject a fake reader")
+            pytest.fail("test attempted live Keychain access; inject a fake reader")
 
     with pytest.MonkeyPatch.context() as mp:
         for name in ("run", "Popen"):
@@ -215,7 +215,7 @@ def block_live_keychain_access():
             mp.setattr(subprocess, name, guarded)
 
         def refuse_api():
-            raise AssertionError("test attempted real Keychain API; inject a fake API")
+            pytest.fail("test attempted real Keychain API; inject a fake API")
 
         mp.setattr("jrbar.keychain_read._load_api", refuse_api)
         yield
