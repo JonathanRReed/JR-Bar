@@ -171,7 +171,7 @@ _SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~:-]{0,255}\Z")
 
 @dataclass(frozen=True, slots=True)
 class T3ReadOnlyPolicy:
-    """Pure admission decision for optional T3 reads."""
+    """Automatic local detection, with a separate opt-in for statistics."""
 
     enabled: bool
     activity_statistics_enabled: bool
@@ -180,11 +180,11 @@ class T3ReadOnlyPolicy:
 
     @property
     def should_instantiate(self) -> bool:
-        return self.enabled
+        return True
 
     @property
     def should_poll(self) -> bool:
-        return self.enabled
+        return True
 
     @property
     def may_scan_activity_statistics(self) -> bool:
@@ -832,9 +832,17 @@ _V2_ACTIVE_RUN = "('preparing', 'starting', 'running', 'waiting')"
 # It is a note to itself, not work, and it never stands in for the latest run.
 _V2_UNHELD_RUN = (
     "NOT (runs.status = 'queued' "
-    "AND COALESCE(json_extract(runs.payload_json, '$.queueHeld'), 0) = 1)"
+    "AND COALESCE(json_extract(CASE WHEN octet_length(runs.payload_json) <= 65536 THEN runs.payload_json ELSE '{}' END, '$.queueHeld'), 0) = 1)"
 )
 _V2_THREADS_SQL = f"""
+WITH candidate_threads AS (
+  SELECT * FROM orchestration_v2_projection_threads AS threads
+  WHERE threads.deleted_at IS NULL AND threads.archived_at IS NULL
+    AND octet_length(threads.payload_json) <= 65536
+    AND {{lineage_filter}}
+  ORDER BY threads.updated_at DESC, threads.thread_id ASC
+  LIMIT ?
+)
 SELECT
   threads.thread_id,
   threads.payload_json,
@@ -870,7 +878,7 @@ SELECT
   {{active_provider_column}} AS active_run_provider,
   {{active_instance_column}} AS active_run_instance,
   {{active_thread_column}} AS active_run_thread,
-  json_extract(active_run.payload_json, '$.modelSelection') AS active_run_model_selection,
+  json_extract(CASE WHEN octet_length(active_run.payload_json) <= 65536 THEN active_run.payload_json ELSE '{{}}' END, '$.modelSelection') AS active_run_model_selection,
   (SELECT runs.run_id FROM orchestration_v2_projection_runs AS runs
      WHERE runs.thread_id = threads.thread_id AND {_V2_UNHELD_RUN}
      ORDER BY runs.ordinal DESC LIMIT 1) AS latest_run_id,
@@ -880,7 +888,7 @@ SELECT
   (SELECT MAX(COALESCE(runs.completed_at, runs.requested_at))
      FROM orchestration_v2_projection_runs AS runs
      WHERE runs.thread_id = threads.thread_id) AS latest_run_time
-FROM orchestration_v2_projection_threads AS threads
+FROM candidate_threads AS threads
 INNER JOIN projection_projects AS projects
   ON projects.project_id = threads.project_id
 LEFT JOIN orchestration_v2_projection_runs AS active_run
@@ -899,7 +907,6 @@ ORDER BY
     COALESCE(json_extract(threads.payload_json, '$.settledAt'), '')
   ) DESC,
   threads.thread_id ASC
-LIMIT ?
 """
 
 #: How a v2 run reads to the state mapper. The run, not a transport session,
@@ -960,12 +967,36 @@ def _read_v2_snapshot(
         ):
             expression = f"active_run.{column}" if column in run_columns else "NULL"
             query = query.replace("{" + placeholder + "}", expression)
-        rows = connection.execute(query, (T3_MAX_THREADS + 1,)).fetchall()
+        subagent_columns = _table_columns(connection, "orchestration_v2_projection_subagents")
+        worker_filter = "COALESCE(json_extract(threads.payload_json, '$.lineage.relationshipToParent'), '') = 'subagent'"
+        if "child_thread_id" in subagent_columns:
+            worker_filter = f"({worker_filter} OR threads.thread_id IN (SELECT child_thread_id FROM orchestration_v2_projection_subagents WHERE child_thread_id IS NOT NULL))"
+        roots = connection.execute(query.replace("{lineage_filter}", f"NOT ({worker_filter})"), (T3_MAX_THREADS + 1,)).fetchall()
+        workers = connection.execute(query.replace("{lineage_filter}", worker_filter), (T3_MAX_THREADS + 1,)).fetchall()
+        truncated = len(roots) > T3_MAX_THREADS or len(workers) > T3_MAX_THREADS
+        rows = [*roots[:T3_MAX_THREADS], *workers[:T3_MAX_THREADS]]
         binding_columns = _table_columns(connection, "orchestration_v2_projection_provider_threads")
         has_driver_bindings = {"provider_thread_id", "driver"}.issubset(binding_columns)
-        truncated = len(rows) > T3_MAX_THREADS
+        selected_provider_threads = {row["active_run_thread"] or row["active_provider_thread_id"] for row in rows}
+        selected_provider_threads.discard(None)
+        bindings = []
+        if has_driver_bindings and selected_provider_threads:
+            placeholders = ",".join("?" for _ in selected_provider_threads)
+            bindings = [dict(binding) for binding in connection.execute(
+                "SELECT provider_thread_id, driver, "
+                + ("thread_id" if "thread_id" in binding_columns else "NULL AS thread_id") + ", "
+                + ("provider_instance_id" if "provider_instance_id" in binding_columns else "NULL AS provider_instance_id")
+                + (", status" if "status" in binding_columns else ", NULL AS status")
+                + (", CASE WHEN octet_length(payload_json) <= 65536 THEN payload_json ELSE '{}' END AS payload_json" if "payload_json" in binding_columns else ", '{}' AS payload_json")
+                + " FROM orchestration_v2_projection_provider_threads "
+                f"WHERE provider_thread_id IN ({placeholders}) LIMIT ?",
+                (*selected_provider_threads, T3_MAX_THREADS * 4),
+            )]
+        bindings_by_thread = {}
+        for binding in bindings:
+            bindings_by_thread.setdefault(binding["provider_thread_id"], []).append(binding)
         threads = []
-        for row in rows[:T3_MAX_THREADS]:
+        for row in rows:
             instance_from_model, model, reasoning = _parse_model_selection(
                 row["model_selection_json"]
             )
@@ -986,12 +1017,7 @@ def _read_v2_snapshot(
             if has_driver_bindings:
                 # Current v2 provider columns contain user-defined instance IDs.
                 # The bound provider thread owns the actual driver identity.
-                bound_instance = "provider_instance_id" if "provider_instance_id" in binding_columns else "NULL"
-                binding = connection.execute(
-                    f"SELECT driver, {bound_instance} AS provider_instance_id "
-                    "FROM orchestration_v2_projection_provider_threads "
-                    "WHERE provider_thread_id = ? LIMIT 2", (provider_thread,),
-                ).fetchall() if provider_thread else []
+                binding = bindings_by_thread.get(provider_thread, ())
                 provider = binding[0]["driver"] if len(binding) == 1 else "other"
                 if len(binding) == 1 and binding[0]["provider_instance_id"]:
                     bound_instance_id = binding[0]["provider_instance_id"]
@@ -1049,44 +1075,46 @@ def _read_v2_snapshot(
         # Bind only the selected provider thread. Native IDs, not T3's own
         # provider-thread handles, join the hook/transcript roster.
         lineage_rows = []
-        bindings = []
-        for row, thread in zip(rows[:T3_MAX_THREADS], threads, strict=True):
+        for row, thread in zip(rows, threads, strict=True):
             lineage_rows.append({
                 "thread_id": thread.thread_id,
                 "default_provider": thread.provider,
                 "active_provider_thread_id": thread.provider_thread_id,
                 "payload_json": row["payload_json"],
             })
-            if {"provider_thread_id", "thread_id", "driver", "payload_json"}.issubset(binding_columns):
-                bindings.extend(dict(binding) for binding in connection.execute(
-                    "SELECT * FROM orchestration_v2_projection_provider_threads "
-                    "WHERE provider_thread_id = ? LIMIT 2", (thread.provider_thread_id,),
-                ))
-        subagent_columns = _table_columns(connection, "orchestration_v2_projection_subagents")
         subagents = []
         if {"thread_id", "child_thread_id", "payload_json"}.issubset(subagent_columns):
             status_column = "status" if "status" in subagent_columns else "NULL"
             instance_column = "provider_instance_id" if "provider_instance_id" in subagent_columns else "NULL"
-            ordering = " ORDER BY updated_at DESC" if "updated_at" in subagent_columns else ""
             placeholders = ",".join("?" for _ in lineage_rows)
             if lineage_rows:
+                native_ref = (
+                    "CASE WHEN child_thread_id IS NULL AND " + status_column
+                    + " IN ('running', 'starting', 'active', 'pending') THEN "
+                    "json_extract(CASE WHEN octet_length(payload_json) <= 65536 "
+                    "THEN payload_json ELSE '{}' END, '$.nativeTaskRef') ELSE NULL END"
+                )
                 subagents = [dict(row) for row in connection.execute(
                     f"SELECT thread_id, child_thread_id, {status_column} AS status, {instance_column} AS provider_instance_id, "
-                    "json_extract(payload_json, '$.nativeTaskRef') AS native_task_ref "
-                    f"FROM orchestration_v2_projection_subagents WHERE thread_id IN ({placeholders})"
-                    f"{ordering} LIMIT ?", (*[row["thread_id"] for row in lineage_rows], T3_MAX_THREADS),
+                    f"{native_ref} AS native_task_ref "
+                    f"FROM orchestration_v2_projection_subagents WHERE thread_id IN ({placeholders}) LIMIT ?",
+                    (*[row["thread_id"] for row in lineage_rows], T3_MAX_THREADS * 2),
                 )]
         observed_at = now()
         registry_providers = read_t3_registry_providers(database.parent / "settings.json")
         keys, links = t3_parent_links(lineage_rows, bindings, observed_at=observed_at.timestamp(),
                                       subagents=subagents, registry_providers=registry_providers)
+        links_by_child = {}
+        for link in links:
+            links_by_child.setdefault(link.child, []).append(link)
+        bound_thread_ids = {binding["thread_id"] for binding in bindings}
         for index, thread in enumerate(threads):
             key = keys[thread.thread_id]
-            evidence = tuple(link for link in links if link.child == key)
+            evidence = tuple(links_by_child.get(key, ()))
             # Older projections have no native binding table. Keep their
             # observation identity, but do not claim cross-provider lineage.
             native = key.split(":session:", 1)[1]
-            if bindings or links:
+            if links or thread.thread_id in bound_thread_ids:
                 threads[index] = replace(thread, provider=key.split(":", 1)[0], provider_thread_id=native, parent_links=evidence)
         return T3Snapshot(
             observed_at=now(),
@@ -1098,12 +1126,25 @@ def _read_v2_snapshot(
                 provider=child.split(":", 1)[0], agent_id=child,
                 display_name="Worker", mode=AgentMode.UNKNOWN,
                 updated_at=observed_at, event_name="LineageObserved",
-                parent_links=tuple(link for link in links if link.child == child),
+                parent_links=tuple(links_by_child[child]),
             ) for child in sorted({link.child for link in links} - set(keys.values()))),
             truncated=truncated,
         )
     finally:
         connection.close()
+
+
+def _t3_activity_signature(base_dir):
+    root = _t3_root(base_dir)
+    files = (root / T3_DATABASE_RELATIVE_PATH, root / T3_V2_DATABASE_RELATIVE_PATH)
+    signature = []
+    for path in (*files, *(path.with_name(path.name + "-wal") for path in files), root / "userdata/settings.json"):
+        try:
+            stat = path.stat()
+            signature.append((stat.st_mtime_ns, stat.st_size, stat.st_ino))
+        except OSError:
+            signature.append(None)
+    return tuple(signature)
 
 
 class T3SnapshotService:
@@ -1118,7 +1159,14 @@ class T3SnapshotService:
         reader: Callable[..., T3Snapshot] = read_t3_snapshot,
         monotonic: Callable[[], float] = time.monotonic,
         minimum_interval: float = T3_POLL_INTERVAL_SECONDS,
+        process_running: Callable[[], bool] | None = None,
+        activity: Callable[[], object] | None = None,
     ) -> None:
+        from .t3_process import t3_code_running
+
+        self._process_running = process_running or t3_code_running
+        self._activity = activity or (lambda: _t3_activity_signature(self._base_dir))
+        self._last_activity = None
         self._enabled = bool(enabled)
         self._base_dir = base_dir
         self._environment_id = environment_id
@@ -1154,6 +1202,15 @@ class T3SnapshotService:
             )
             if not due or self._in_flight:
                 return self._observation_locked()
+            if not self._process_running():
+                self._snapshot = None
+                self._last_activity = None
+                self._reason = None
+                return self._observation_locked()
+            activity = self._activity()
+            if not force and self._attempted_at is not None and activity == self._last_activity:
+                return self._observation_locked()
+            self._last_activity = activity
             self._generation += 1
             generation = self._generation
             self._in_flight = True
@@ -1231,7 +1288,7 @@ def reconcile_t3_snapshot_service(
     policy: T3ReadOnlyPolicy,
     factory: Callable[..., object] | None = None,
 ) -> object | None:
-    """Admit one configured service without touching a disabled T3 path."""
+    """Admit one detector; the service gates disk reads on process and file changes."""
     if type(policy) is not T3ReadOnlyPolicy:
         raise TypeError("policy must be T3ReadOnlyPolicy")
     if not policy.should_instantiate:
@@ -1258,7 +1315,7 @@ def update_t3_snapshot_runtime(
     *,
     factory: Callable[..., object] | None = None,
 ) -> T3ReadOnlyPolicy:
-    """Reconcile one status-bar poll from explicit integration settings."""
+    """Reconcile automatic detection, preserving configured paths and statistics consent."""
     policy = project_t3_read_only_policy(settings)
     previous_policy = getattr(target, "_t3_read_only_policy", None)
     current = getattr(target, "_t3_snapshot_service", None)

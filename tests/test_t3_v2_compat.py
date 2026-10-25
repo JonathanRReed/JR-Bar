@@ -678,3 +678,27 @@ def test_native_bindings_and_subagents_join_cross_provider_groups_read_only(tmp_
     assert result.groups[0].root_work_key == "claude:session:native-root"
     assert result.groups[0].members == tuple(sorted(s.agent_id for s in statuses))
     assert database.read_bytes() == before
+
+
+def test_oversize_payload_skips_one_thread_without_losing_the_snapshot(tmp_path):
+    database = _v2(tmp_path)
+    _thread(database, "good")
+    _thread(database, "large")
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE orchestration_v2_projection_threads SET payload_json=? WHERE thread_id='large'",
+                           (json.dumps({"padding": "x" * (129 * 1024)}),))
+    snapshot = read_t3_snapshot(base_dir=tmp_path)
+    assert snapshot.compatible
+    assert [row.thread_id for row in snapshot.threads] == ["good"]
+
+
+def test_subagent_threads_do_not_consume_the_main_thread_window(tmp_path, monkeypatch):
+    monkeypatch.setattr(t3_compat, "T3_MAX_THREADS", 2)
+    database = _v2(tmp_path)
+    for key in ("worker-a", "worker-b", "worker-c"):
+        _thread(database, key, relationship="subagent")
+    _thread(database, "root-a", updated_at=EARLIER)
+    _thread(database, "root-b", updated_at=EARLIER)
+    snapshot = read_t3_snapshot(base_dir=tmp_path)
+    assert {"root-a", "root-b"} <= {row.thread_id for row in snapshot.threads}
+    assert snapshot.truncated

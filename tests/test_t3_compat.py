@@ -332,6 +332,8 @@ def test_t3_service_retains_last_known_good_on_failure(tmp_path: Path) -> None:
         reader=reader,
         monotonic=lambda: clock["now"],
         minimum_interval=0.25,
+        process_running=lambda: True,
+        activity=lambda: clock["now"],
     )
     first_ready = threading.Event()
     second_ready = threading.Event()
@@ -416,8 +418,8 @@ def test_failed_observation_marks_last_known_good_statuses_stale__and_2_more() -
     assert observability_only.base_dir == "/configured/t3"
     assert observability_only.environment_id == "mac-studio"
     assert with_statistics.may_scan_activity_statistics is True
-    assert disabled.should_instantiate is False
-    assert disabled.should_poll is False
+    assert disabled.should_instantiate is True
+    assert disabled.should_poll is True
     assert disabled.may_scan_activity_statistics is False
 
     # --- scenario: t3_policy_reads_the_separate_persisted_activity_opt_in
@@ -433,24 +435,7 @@ def test_failed_observation_marks_last_known_good_statuses_stale__and_2_more() -
 
 
 
-def test_disabled_runtime_admission_closes_service_without_constructing_one__and_2_more() -> None:
-    # --- scenario: disabled_runtime_admission_closes_service_without_constructing_one
-    closed = []
-    service = SimpleNamespace(close=lambda: closed.append(True))
-    policy = t3_compat.project_t3_read_only_policy(
-        SimpleNamespace(t3code_enabled=False)
-    )
-
-    admitted = t3_compat.reconcile_t3_snapshot_service(
-        service,
-        previous_policy=None,
-        policy=policy,
-        factory=lambda **_kwargs: pytest.fail("disabled mode constructed T3 service"),
-    )
-
-    assert admitted is None
-    assert closed == [True]
-
+def test_runtime_self_detects_without_the_legacy_toggle():
     # --- scenario: enabled_runtime_admission_constructs_the_configured_service_once
     policy = t3_compat.project_t3_read_only_policy(
         SimpleNamespace(
@@ -485,26 +470,23 @@ def test_disabled_runtime_admission_closes_service_without_constructing_one__and
         }
     ]
 
-    # --- scenario: disabled_runtime_update_clears_statuses_without_constructing_or_polling
+    # Automatic detection is admitted even with the legacy setting off.
+    requests = []
+    automatic = SimpleNamespace(
+        observation=lambda: SimpleNamespace(snapshot=None, in_flight=False),
+        request=lambda: requests.append(True), close=lambda: None,
+    )
     replacements = []
-    target = SimpleNamespace(
-        monitor=SimpleNamespace(
-            replace_external_statuses=lambda source, rows: replacements.append(
-                (source, rows)
-            )
-        )
-    )
-
+    target = SimpleNamespace(monitor=SimpleNamespace(
+        replace_external_statuses=lambda source, rows: replacements.append((source, rows)),
+    ))
     policy = t3_compat.update_t3_snapshot_runtime(
-        target,
-        SimpleNamespace(t3code_enabled=False),
-        factory=lambda **_kwargs: pytest.fail("disabled mode constructed T3 service"),
+        target, SimpleNamespace(t3code_enabled=False), factory=lambda **kwargs: automatic,
     )
-
-    assert policy.should_instantiate is False
-    assert target._t3_snapshot_service is None
+    assert policy.should_instantiate
+    assert target._t3_snapshot_service is automatic
+    assert requests == [True]
     assert replacements == [("t3code", ())]
-
 
 
 def test_enabled_runtime_update_polls_the_admitted_service() -> None:
@@ -772,3 +754,72 @@ def test_t3_snapshot_cap_is_deterministic_for_equal_timestamps(
     first_ids = [thread.thread_id for thread in first.threads]
     assert first_ids == [thread.thread_id for thread in second.threads]
     assert set(first_ids) == {f"thread-{index:04d}" for index in range(512)}
+
+
+def test_service_reads_only_while_t3_runs_and_its_files_change():
+    clock = [0.0]
+    running = [False]
+    signature = [1]
+    reads = []
+    probes = []
+    ready = threading.Event()
+    snapshot = t3_compat.T3Snapshot(
+        observed_at=datetime.now(timezone.utc), database_path=Path("/synthetic/state.sqlite"),
+        schema_fingerprint="synthetic", sqlite_user_version=0, threads=(),
+    )
+    service = T3SnapshotService(
+        enabled=True, reader=lambda **kwargs: (reads.append(True), snapshot)[1],
+        process_running=lambda: running[0], monotonic=lambda: clock[0],
+        activity=lambda: (probes.append(True), signature[0])[1],
+    )
+    for tick in range(60):
+        clock[0] = tick
+        service.request(force=True)
+    assert reads == probes == []
+    running[0] = True
+    service.request(lambda observation: ready.set())
+    assert ready.wait(2)
+    ready.clear()
+    clock[0] += 3
+    service.request()
+    assert len(reads) == 1
+    signature[0] += 1
+    service.request(lambda observation: ready.set())
+    assert ready.wait(2)
+    assert len(reads) == 2
+    running[0] = False
+    clock[0] += 3
+    assert service.request().snapshot is None
+    running[0] = True
+    ready.clear()
+    service.request(lambda observation: ready.set())
+    assert ready.wait(2)
+    assert len(reads) == 3
+    service.close()
+
+
+def test_each_database_wal_and_settings_change_invalidates_the_signature(tmp_path):
+    from jrbar.t3_compat import _t3_activity_signature
+
+    previous = _t3_activity_signature(tmp_path)
+    root = tmp_path / "userdata"
+    root.mkdir()
+    for name in ("state.sqlite", "state.sqlite-wal", "statev2.sqlite", "statev2.sqlite-wal", "settings.json"):
+        (root / name).write_text("synthetic")
+        current = _t3_activity_signature(tmp_path)
+        assert current != previous
+        previous = current
+
+
+def test_registry_settings_are_parsed_only_after_a_file_change(tmp_path, monkeypatch):
+    from jrbar.lineage_adapters import read_t3_registry_providers
+
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"providerInstances": {}}))
+    assert read_t3_registry_providers(path) == {}
+    original = Path.open
+    monkeypatch.setattr(Path, "open", lambda *args, **kwargs: pytest.fail("unchanged settings were parsed"))
+    assert read_t3_registry_providers(path) == {}
+    monkeypatch.setattr(Path, "open", original)
+    path.write_text(json.dumps({"providerInstances": {"worker": {"driver": "acpRegistry", "enabled": True, "config": {"agentId": "devin"}}}}))
+    assert read_t3_registry_providers(path) == {"worker": "devin"}
