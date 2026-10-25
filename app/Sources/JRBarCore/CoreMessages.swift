@@ -1347,6 +1347,10 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     public var panelVisible: Bool = true
     public var actionKind: String? = nil
 
+    /// An absent provider has no panel row to show. Explicitly hidden rows
+    /// keep their control so the person can restore them.
+    public var canSetPanelVisibility: Bool { availability != "absent" }
+
     public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil,
                 account: UsageAccount? = nil, action: String? = nil, reason: String? = nil,
                 instance: String? = nil, instanceLabel: String? = nil, quotaSource: Bool = true, tokens: CoreUsageTokens? = nil,

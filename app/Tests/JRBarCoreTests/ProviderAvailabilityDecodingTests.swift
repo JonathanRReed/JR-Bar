@@ -24,6 +24,13 @@ struct ProviderAvailabilityDecodingTests {
         #expect(!hidden.panelVisible)
         #expect(hidden.actionKind == "hide")
         #expect(!hidden.foldsIntoQuietPanelRow)
+        #expect(hidden.canSetPanelVisibility)
+    }
+
+    @Test func absentProviderHasNoPanelVisibilityControl() throws {
+        let absent = try decode(#"{"id":"grok","panel_visible":false,"availability":"absent"}"#)
+        #expect(!absent.panelVisible)
+        #expect(!absent.canSetPanelVisibility)
     }
 
     @Test func resetWindowCannotShowItsHistoricalPercentAsCurrent() throws {
@@ -43,6 +50,7 @@ struct ProviderAvailabilityDecodingTests {
         #expect(row.lastGoodAgeSeconds == nil)
         #expect(row.actionKind == nil)
         #expect(row.panelVisible)
+        #expect(row.canSetPanelVisibility)
         let window = try #require(row.windows.first)
         #expect(!window.elapsed)
         #expect(window.lastUsedPct == nil)

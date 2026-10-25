@@ -247,15 +247,10 @@ struct ProviderUsageSwitchRow: View {
                 }
                 .disabled(model.busy.contains(row.id) || !core.isLive)
                 .accessibilityHint(consent.summary)
-                Toggle("Show in panel", isOn: Binding(
-                    get: { row.options["panel_hidden"] != "true" },
-                    set: { model.setOption(row, key: "panel_hidden", on: !$0, core: core) }
-                ))
-                .disabled(model.busy.contains(row.id) || !core.isLive)
-                if row.id == "claude" {
-                    Toggle("Claude CLI usage fallback", isOn: Binding(
-                        get: { row.options["cli_fallback"] == "true" },
-                        set: { model.setOption(row, key: "cli_fallback", on: $0, core: core) }
+                if core.usage.first(where: { $0.identity == row.identity })?.canSetPanelVisibility != false {
+                    Toggle("Show in panel", isOn: Binding(
+                        get: { row.options["panel_hidden"] != "true" },
+                        set: { model.setOption(row, key: "panel_hidden", on: !$0, core: core) }
                     ))
                     .disabled(model.busy.contains(row.id) || !core.isLive)
                 }
