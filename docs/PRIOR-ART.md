@@ -122,13 +122,19 @@ unnecessary.
 
 Snapshot studied: MIT, commit `d34fbb47afe73f81dd591bae28a60f72c39a9fe4`.
 Read `ClaudeStatusProbe.swift` for its PTY `/usage` probe, bounded lifetime,
-and labelled quota sections. JR-Bar reimplements that fallback in Python,
-o code copied. It requires a separate opt-in, defaults off, and never
+and labelled quota sections. JR-Bar reimplements its parsing and process
+lifetime in Python,
+no code copied. It requires a separate opt-in, defaults off, and never
 answers a trust or sign-in question. It does not delegate token refresh.
 The probe uses a temporary config directory and a stored access token;
 it cannot recover a missing token. We did not run it with a real account.
 We also studied the Grok and Kimi credential-location readers for their
 `GROK_HOME` and `KIMI_CODE_HOME` overrides.
+
+The production probe stays disabled until command-only dispatch is verified.
+The [CLI reference](https://code.claude.com/docs/en/cli-reference) documents
+positional text as an initial prompt. Tests use synthetic executables and an
+unlinked token descriptor. They do not prove installed-CLI compatibility.
 
 ## T3 Code
 
