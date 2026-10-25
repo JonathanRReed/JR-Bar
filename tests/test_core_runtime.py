@@ -376,7 +376,10 @@ class _FakeDrainer:
 
 
 @pytest.fixture
-def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def headless(request: pytest.FixtureRequest, tmp_path: Path):
+    # Scenario resets must not remove the fixture's inert workers and timers.
+    monkeypatch = pytest.MonkeyPatch()
+    request.addfinalizer(monkeypatch.undo)
     monkeypatch.setattr(status_bar, "default_settings_path", lambda: tmp_path / "settings.json")
     monkeypatch.setattr(status_bar, "default_latest_state_path", lambda: tmp_path / "latest.json")
     monkeypatch.setattr(status_bar, "default_activity_ledger_path", lambda: tmp_path / "activity-ledger.json")
@@ -432,6 +435,15 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     # No real threads exist in this harness — deliver deck input inline.
     controller._deck_deliver_inline = True
     return controller
+
+
+def test_headless_fixture_keeps_workers_inert_after_scenario_reset(headless, monkeypatch) -> None:
+    monkeypatch.undo()
+    ran = threading.Event()
+    worker = threading.Thread(target=ran.set, daemon=True)
+    worker.start()
+    worker.join(timeout=5.0)
+    assert not ran.is_set(), "a scenario reset must not start real daemon workers"
 
 
 def test_the_daemons_screen_bar_is_the_headless_one_that_draws_nothing(headless) -> None:
