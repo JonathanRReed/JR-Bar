@@ -216,3 +216,24 @@ def test_named_claude_sign_in_does_not_import_the_default_account(monkeypatch) -
     assert result.outcome == "unavailable"
     assert "Update this profile's credential" in result.message
     assert secrets == {"oauth-token": "profile-access", "oauth-expires-at": "2000"}
+
+
+@pytest.mark.parametrize(
+    "outcome,remaining,wait",
+    [("denied", 3600, "1 hour"), ("denied", 86400, "24 hours"),
+     ("cooling_down", 61, "2 minutes"), ("cooling_down", 86400, "24 hours")],
+)
+def test_keychain_refusal_names_actual_wait_and_retry_action(monkeypatch, outcome, remaining, wait):
+    from jrbar.credentials import CredentialOutcome, CredentialResult
+
+    def read(*args, **kwargs):
+        assert kwargs["allow_prompt"] is True
+        assert kwargs["now"] == 1000
+        return CredentialResult(CredentialOutcome(outcome), retry_at=1000 + remaining)
+
+    monkeypatch.setattr("jrbar.credentials.read_keychain_secret", read)
+    result = reconnect_provider("claude", credential_store=Store(), now=1000)
+    assert result.outcome is RepairOutcome.BLOCKED
+    assert f"Wait {wait}" in result.message
+    assert "click Fix sign-in and choose Always Allow" in result.message
+    assert "few minutes" not in result.message

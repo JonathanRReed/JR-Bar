@@ -1141,6 +1141,7 @@ def reconnect_provider(
                 result = read_keychain_secret(
                     CLAUDE_CODE_KEYCHAIN,
                     allow_prompt=True,
+                    now=stamp,
                     ledger=KeychainConsentLedger(
                         default_state_dir() / "keychain-consent.json"
                     ),
@@ -1152,23 +1153,24 @@ def reconnect_provider(
                     outcome=RepairOutcome.UNAVAILABLE,
                 )
             if not result.ok:
-                message = {
-                    CredentialOutcome.DENIED: (
-                        "Keychain access was declined — click Fix sign-in "
-                        "again and choose Allow."
-                    ),
-                    CredentialOutcome.COOLING_DOWN: (
-                        "Keychain access was declined recently — try "
-                        "again in a few minutes."
-                    ),
-                }.get(
-                    result.outcome,
-                    "Claude Code's sign-in was not found in the Keychain.",
-                )
                 declined = result.outcome in (
                     CredentialOutcome.DENIED,
                     CredentialOutcome.COOLING_DOWN,
                 )
+                message = "Claude Code's sign-in was not found in the Keychain."
+                if declined:
+                    minutes = max(1, math.ceil(((result.retry_at or stamp) - stamp) / 60))
+                    hours, minutes = divmod(minutes, 60)
+                    parts = []
+                    if hours:
+                        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+                    if minutes:
+                        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+                    wait = " and ".join(parts)
+                    message = (
+                        f"Keychain access was declined or timed out. Wait {wait}, "
+                        "then click Fix sign-in and choose Always Allow."
+                    )
                 return ResignInResult(
                     provider_id,
                     message,
