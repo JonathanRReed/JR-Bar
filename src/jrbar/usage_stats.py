@@ -2633,6 +2633,7 @@ def _discover_usage_files(
     *,
     max_files: int,
     max_file_bytes: int,
+    suffix: str = ".jsonl",
 ) -> tuple[_CoverageState, list[_DiscoveredUsageFile], Path | None]:
     coverage = _CoverageState(provider_id=provider_id)
     try:
@@ -2679,7 +2680,7 @@ def _discover_usage_files(
             directory_names[:] = safe_directories
 
             for name in file_names:
-                if not name.endswith(".jsonl"):
+                if not name.endswith(suffix):
                     continue
                 path = base / name
                 try:
@@ -3748,12 +3749,14 @@ def _provider_inventory(
     *,
     max_files: int = USAGE_INVENTORY_MAX_FILES,
     max_file_bytes: int = USAGE_FILE_SANITY_BYTES,
+    suffix: str = ".jsonl",
 ) -> LocalUsageInventory:
     coverage, candidates, scanned_root = _discover_usage_files(
         root,
         provider_id,
         max_files=max_files,
         max_file_bytes=max_file_bytes,
+        suffix=suffix,
     )
     return LocalUsageInventory(
         (
@@ -3919,7 +3922,7 @@ def _card_days_document(
                 return None
             models.add(model)
             row = days[day][model] = [0, 0, 0, 0, 0]
-        row[0] += 1
+        row[0] += getattr(record, "record_count", 1)
         row[1] += record[4]
         row[2] += record[5]
         row[3] += record[6]
@@ -4328,7 +4331,8 @@ def daily_buckets(
                              token_categories={"input": 0, "cached_input": 0, "cache_creation": 0, "output": 0})
     # One pricing read per (provider, model), not per record.
     priced_as: dict[tuple[str, str], tuple[RecordRates, float, float] | None] = {}
-    for provider, session, model, epoch, inp, cached_in, cache_create, out, dedupe in records:
+    for record in records:
+        provider, session, model, epoch, inp, cached_in, cache_create, out, dedupe = record
         if provider_ids is not None and provider not in provider_ids:
             continue
         if dedupe in seen:
@@ -4366,8 +4370,8 @@ def daily_buckets(
             if pricing_evidence is not None and record_tokens > 0:
                 pricing_evidence.setdefault((provider, day), False)
             if cost_coverage is not None and record_tokens > 0:
-                cost_coverage["observed_records"] += 1
-                cost_coverage["unpriced_records"] += 1
+                cost_coverage["observed_records"] += getattr(record, "positive_count", 1)
+                cost_coverage["unpriced_records"] += getattr(record, "positive_count", 1)
                 unpriced_sessions.add((provider, session))
                 categories = cost_coverage["token_categories"]
                 for category, amount in zip(("input", "cached_input", "cache_creation", "output"),
@@ -4378,8 +4382,8 @@ def daily_buckets(
                 unpriced[name] = unpriced.get(name, 0) + record_tokens
             continue
         if cost_coverage is not None and record_tokens > 0:
-            cost_coverage["observed_records"] += 1
-            cost_coverage["priced_records"] += 1
+            cost_coverage["observed_records"] += getattr(record, "positive_count", 1)
+            cost_coverage["priced_records"] += getattr(record, "positive_count", 1)
         if pricing_evidence is not None and record_tokens > 0:
             pricing_evidence[(provider, day)] = True
         # Codex cost was skipped by code choice while the records carried
@@ -4387,7 +4391,9 @@ def daily_buckets(
         # price it). OpenAI and Google bill cache writes at the plain input
         # rate, Anthropic at a premium; the person's own override still wins.
         rates, cache_read_rate, cache_write_rate = priced
-        long_request = is_long_context_request(provider, model, inp + cached_in + cache_create)
+        long_request = getattr(record, "long_context", None)
+        if long_request is None:
+            long_request = is_long_context_request(provider, model, inp + cached_in + cache_create)
         cost = (
             (
                 inp * rates.input_rate

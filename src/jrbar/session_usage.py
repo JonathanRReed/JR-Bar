@@ -606,6 +606,7 @@ def usage_document(
             "cache_creation": written,
             "output": out,
         },
+        "processed_tokens": inp + cached + written + out,
         "turns": len(state.turns),
         "estimated_cost_usd": cost,
         "cost_estimated": estimated,

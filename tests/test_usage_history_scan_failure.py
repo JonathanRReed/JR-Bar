@@ -31,7 +31,7 @@ def test_failed_history_scan_is_unavailable_and_retries_without_losing_cache(cac
 
     service = UsageHistoryService(scan, budget=2.0, clock=lambda: now[0], wall_clock=lambda: now[0],
                                  codex_default_model=lambda: None, thread_factory=threads)
-    controller = SimpleNamespace(_core_lock=threading.RLock(), _core_documents={},
+    controller = SimpleNamespace(settings=SimpleNamespace(token_history_enabled=True), _core_lock=threading.RLock(), _core_documents={},
                                  _core_usage_history_service=service)
     previous = None
     if cached:

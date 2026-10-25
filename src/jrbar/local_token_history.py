@@ -40,6 +40,8 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
+PARSER_VERSION = 1
+
 LOCAL_HISTORY_PROVIDERS = ("pi", "grok", "gemini", "openclaw")
 MAX_FILES = 4000
 #: A file read whole into one JSON document (Gemini CLI's chats).
@@ -243,9 +245,9 @@ def _split_one_hour(record: tuple, line: dict) -> list[tuple]:
     ]
 
 
-def scan_pi_records(root: Path, since_epoch: float) -> list[tuple]:
+def scan_pi_records(root: Path, since_epoch: float, *, files=None) -> list[tuple]:
     records = []
-    for path in _files(root, "*.jsonl", since_epoch, MAX_STREAMED_FILE_BYTES):
+    for path in (_files(root, "*.jsonl", since_epoch, MAX_STREAMED_FILE_BYTES) if files is None else files):
         if "subagent-artifacts" in path.parts:
             continue
         session = f"pi:{path.stem}"
@@ -257,9 +259,11 @@ def scan_pi_records(root: Path, since_epoch: float) -> list[tuple]:
     return records
 
 
-def scan_grok_records(root: Path, since_epoch: float) -> list[tuple]:
+def scan_grok_records(root: Path, since_epoch: float, *, files=None) -> list[tuple]:
     records = []
-    for path in _files(root, "updates.jsonl", since_epoch, MAX_STREAMED_FILE_BYTES):
+    for path in (_files(root, "updates.jsonl", since_epoch, MAX_STREAMED_FILE_BYTES) if files is None else files):
+        if path.name != "updates.jsonl":
+            continue
         session = f"grok:{path.parent.name}"
         for index, line in enumerate(_json_lines(path)):
             params = line.get("params") if isinstance(line.get("params"), dict) else {}
@@ -313,11 +317,11 @@ def _gemini_tokens(tokens: dict) -> tuple[int, int, int]:
     return input_tokens, cached, output + thoughts
 
 
-def scan_gemini_records(root: Path, since_epoch: float) -> list[tuple]:
+def scan_gemini_records(root: Path, since_epoch: float, *, files=None) -> list[tuple]:
     records = []
     if not root.is_dir():
         return records
-    for path in _files(root, "*.json", since_epoch):
+    for path in (_files(root, "*.json", since_epoch) if files is None else files):
         if path.parent.name != "chats":
             continue
         try:
@@ -371,21 +375,22 @@ def _sqlite_events(path: Path) -> Iterator[tuple[str, int, dict]]:
             yield str(session_id), int(seq or 0), event
 
 
-def scan_openclaw_records(root: Path, since_epoch: float) -> list[tuple]:
+def scan_openclaw_records(root: Path, since_epoch: float, *, files=None) -> list[tuple]:
     records: list[tuple] = []
     if not root.is_dir():
         return records
     database_keys: set[str] = set()
     agents = root / "agents"
     if agents.is_dir():
-        for database in sorted(agents.glob("*/agent/openclaw-agent.sqlite"))[:64]:
+        databases = sorted(agents.glob("*/agent/openclaw-agent.sqlite"))[:64] if files is None else [p for p in files if p.name == "openclaw-agent.sqlite"]
+        for database in databases:
             for session_id, seq, event in _sqlite_events(database):
                 key = f"openclaw:{event.get('id') or f'{session_id}:{seq}'}"
                 record = _message_record("openclaw", f"openclaw:{session_id}", event, since_epoch, key)
                 if record is not None:
                     database_keys.add(key)
                     records.append(record)
-    for path in _files(root, "*.jsonl", since_epoch, MAX_STREAMED_FILE_BYTES):
+    for path in (_files(root, "*.jsonl", since_epoch, MAX_STREAMED_FILE_BYTES) if files is None else [p for p in files if p.suffix == ".jsonl"]):
         session = f"openclaw:{path.stem}"
         for index, line in enumerate(_json_lines(path)):
             key = f"openclaw:{line.get('id') or f'{path.name}:{index}'}"

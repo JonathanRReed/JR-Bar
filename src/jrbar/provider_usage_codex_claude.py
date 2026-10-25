@@ -53,6 +53,10 @@ def _default_provider_local_scan(
     ``read_account`` false skips Codex's ``auth.json``, the only sign-in this
     scan would otherwise read for the account label.
     """
+    from .token_history_index import history_enabled
+
+    if not history_enabled():
+        return None
     try:
         from . import usage_stats
         from .providers import negotiated_provider_sources
@@ -70,58 +74,13 @@ def _default_provider_local_scan(
     )
     if source is None:
         return None
-    from .provider_homes import (
-        _home_cache_path,
-        configured_extra_homes,
-        extra_scan_roots,
-        primary_claude_projects,
-        primary_codex_sessions,
-    )
+    from .token_history_index import scan_history
 
-    # CODEX_HOME / CLAUDE_CONFIG_DIR first, then ~/.codex or ~/.claude.
-    root = (
-        primary_codex_sessions(home=home)
-        if provider_id == "codex"
-        else primary_claude_projects(home=home)
-    )
-    cache = Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json"
-    # The period the Usage Center's token figures cover: today and the 29
-    # local days before it. Both card paths (this scan and the cache reader)
-    # take it from the same place, so they cannot drift apart.
     since = usage_stats.card_window_start(observed_at)
     try:
-        result, totals = usage_stats._scan_provider_usage_with_totals(
-            source,
-            root,
-            cache,
-            since_epoch=since,
-            now=observed_at,
-            budget=usage_stats.ScanBudget(LOCAL_SCAN_PASS_SECONDS),
-        )
-        # Token totals count every home of this provider (provider_extra_homes),
-        # each real folder once; the quota evidence stays the primary account's.
-        extras = extra_scan_roots(
-            provider_id,
-            home=home,
-            extras=configured_extra_homes().get(provider_id, ()),
-        )
-        if extras:
-            parts = [totals]
-            for extra in extras:
-                _extra_result, extra_totals = usage_stats._scan_provider_usage_with_totals(
-                    source,
-                    extra,
-                    _home_cache_path(cache, extra),
-                    since_epoch=since,
-                    now=observed_at,
-                    budget=usage_stats.ScanBudget(LOCAL_SCAN_PASS_SECONDS),
-                )
-                parts.append(extra_totals)
-            merged = usage_stats._merge_usage_totals(tuple(parts))
-            merged.codex_rate_limit_evidence = totals.codex_rate_limit_evidence
-            merged.codex_rate_limit_observed_at = totals.codex_rate_limit_observed_at
-            totals = merged
-            result = usage_stats._provider_result(source.source_key, totals)
+        totals = scan_history(home=home, provider_ids=(provider_id,), since_epoch=since,
+                              now=observed_at, budget=usage_stats.ScanBudget(LOCAL_SCAN_PASS_SECONDS))
+        result = usage_stats._provider_result(source.source_key, totals)
     except Exception:
         return None
     records = tuple(
@@ -363,6 +322,10 @@ def _cached_provider_local_scan(
     ``extra_homes`` names the extra account homes to add; left out, it is the
     saved ``provider_extra_homes`` setting.
     """
+    from .token_history_index import history_enabled
+
+    if not history_enabled():
+        return None
     try:
         from . import usage_stats
         from .provider_homes import _home_cache_path
@@ -382,6 +345,19 @@ def _cached_provider_local_scan(
     )
     if source is None:
         return None
+    from .token_history_index import cached_card
+
+    indexed = cached_card(provider_id, home, observed_at, extra_homes=extra_homes)
+    if indexed is not None:
+        if provider_id == "codex" and read_account:
+            try:
+                from .credentials import read_codex_tokens
+                tokens = read_codex_tokens(Path(home) / ".codex" / "auth.json")
+                if tokens is not None and getattr(tokens, "account_id", None):
+                    indexed["account_label"] = str(tokens.account_id)
+            except Exception:
+                pass
+        return indexed
     source_key = source.source_key
     graph_cache = default_state_dir(home) / "usage-scan-cache.json"
     cold_cache = Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json"

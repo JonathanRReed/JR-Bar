@@ -628,6 +628,7 @@ struct UsagePage: View {
         }
 
         SettingGroup("Display", note: "The Usage Center (⌘U) opens on this range. The panel's sparklines cover a week, or a month when the range is longer.") {
+            SettingToggle(store, "Token history", path: "token_history_enabled", default: true)
             SettingPicker(store, "Lead with", path: "usage_display_mode", options: [
                 ("tokens", "Tokens"), ("cost", "Cost"),
             ], default: "tokens", segmented: true)

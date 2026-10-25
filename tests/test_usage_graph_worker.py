@@ -576,7 +576,7 @@ def test_activity_selection_applies_to_chart_heatmap_and_summary(monkeypatch, tm
         ("codex", "x1", "gpt-5", now.timestamp(), 900, 0, 0, 100, "x1"),
     ]
     monkeypatch.setattr(
-        usage_graph_worker.usage_stats, "scan_usage",
+        usage_graph_worker, "scan_usage_all_homes",
         lambda *_args, **_kwargs: usage_graph_worker.usage_stats.UsageTotals(records=list(records)),
     )
     monkeypatch.setattr(

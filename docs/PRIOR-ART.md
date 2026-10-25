@@ -696,3 +696,15 @@ closed-lid hold's user-activity assertion. It keeps display and computer
 sleep separate, releases the hold when agents finish, and retains its
 renewal watchdog. The policy, display-sleep and release tests were rerun.
 A physical closed-lid run remains separate from those tests.
+
+### Incremental token history, 2026-10-25
+
+Reviewed T3 Code at
+[`5b354026`](https://github.com/pingdotgg/t3code/tree/5b354026),
+[MIT](https://github.com/pingdotgg/t3code/blob/5b354026/LICENSE), especially
+`apps/server/src/usage/UsageService.ts` and `usageAggregation.ts`.
+Its shared usage service and provider/model/source buckets informed JR-Bar's
+persistent hour/day/model index and shared range views. JR-Bar retains its
+own transcript parsers, guarded resume offsets, Codex lineage rules and
+pricing. SQLite transactions update deduplicated records and buckets together.
+No upstream code or assets were copied.

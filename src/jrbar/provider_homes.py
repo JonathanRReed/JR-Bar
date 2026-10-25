@@ -263,6 +263,7 @@ def scan_usage_all_homes(
     scan=None,
     budget=None,
     resolved_capture=None,
+    aggregate=False,
 ):
     """``usage_stats.scan_usage`` over every Claude and Codex home.
 
@@ -278,6 +279,11 @@ def scan_usage_all_homes(
     """
     from . import usage_stats
 
+    if aggregate and scan is None:
+        from .token_history_index import scan_history
+
+        return scan_history(home=home, provider_ids=provider_ids or ("claude", "codex"),
+                            since_epoch=since_epoch, budget=budget, env=env, extras=extras)
     run = usage_stats.scan_usage if scan is None else scan
     # A fake ``scan`` that predates budgets is only given one when it is used.
     options = {} if budget is None else {"budget": budget}
