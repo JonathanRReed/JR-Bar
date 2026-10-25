@@ -75,6 +75,17 @@ struct FeatureLifecycleTests {
                 #expect(localSources == 0 && bluetooth == 0)
                 #expect(!owner.started && !owner.bluetoothStarted)
             }
+        case "confetti":
+            let toys = store(CoreModel())
+            defer { toys.shutdown() }
+            toys.state.confetti.landing = .fall
+            toys.state.confetti.sound = false
+            toys.confetti.isOn = true
+            toys.confetti.testBurst(provider: "claude")
+            #expect((toys.confetti.lifecycleResources["windows"] ?? 0) > 0)
+            toys.confetti.isOn = false
+            await drain()
+            stopped(toys.confetti.lifecycleResources, feature: contract.id)
         case "shelf-media":
             let monitor = Monitor()
             let feed = MediaFeed(monitor: monitor)

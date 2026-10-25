@@ -26,6 +26,7 @@ final class ToysStore {
         didSet {
             scheduleSave()
             if state.aquarium != oldValue.aquarium { aquarium?.stateReplaced() }
+            if state.confetti.enabled != oldValue.confetti.enabled { confetti.roomChanged() }
         }
     }
 
