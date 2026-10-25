@@ -24,6 +24,9 @@ def _libproc():
         return None
 
 
+T3_MISSING_POLL_SECONDS = 60.0
+T3_STOPPED_POLL_SECONDS = 30.0
+
 _cached = (0.0, False)
 _cached_base = None
 
@@ -33,6 +36,13 @@ def t3_code_running(*, base_dir=None) -> bool:
     now = time.monotonic()
     if now < _cached[0] and base_dir == _cached_base:
         return _cached[1]
+    from .t3_compat import T3_DATABASE_RELATIVE_PATH, T3_V2_DATABASE_RELATIVE_PATH, _t3_root
+
+    root = _t3_root(base_dir)
+    _cached_base = base_dir
+    if not any((root / relative).is_file() for relative in (T3_DATABASE_RELATIVE_PATH, T3_V2_DATABASE_RELATIVE_PATH)):
+        _cached = (now + T3_MISSING_POLL_SECONDS, False)
+        return False
     lib = _libproc()
     running = False
     if lib is not None:
@@ -64,7 +74,7 @@ def t3_code_running(*, base_dir=None) -> bool:
                     running = True
                     break
     _cached_base = base_dir
-    _cached = (now + 2.0, running)
+    _cached = (now + (2.0 if running else T3_STOPPED_POLL_SECONDS), running)
     return running
 
 

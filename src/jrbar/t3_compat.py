@@ -1341,6 +1341,7 @@ class T3SnapshotService:
         self._process_running = process_running or (lambda: t3_code_running(base_dir=self._base_dir))
         self._activity = activity or (lambda: _t3_activity_signature(self._base_dir))
         self._last_activity = None
+        self._process_checked_at: float | None = None
         self._read_cache = _V2ReadCache()
         self._enabled = bool(enabled)
         self._base_dir = base_dir
@@ -1380,8 +1381,20 @@ class T3SnapshotService:
                 or self._attempted_at is None
                 or now - self._attempted_at >= interval
             )
-            if self._in_flight:
+            if self._in_flight or not due:
                 return self._observation_locked()
+            activity = None
+            if self._last_activity is not None:
+                activity = self._activity()
+                # Still notice a stopped host when its final database write
+                # was already read, without scanning it on every idle tick.
+                from .t3_process import T3_STOPPED_POLL_SECONDS
+
+                if (not force and self._reason is None and activity == self._last_activity
+                        and self._process_checked_at is not None
+                        and now - self._process_checked_at < T3_STOPPED_POLL_SECONDS):
+                    return self._observation_locked()
+            self._process_checked_at = now
             if not self._process_running():
                 if self._snapshot is not None:
                     self._read_cache = _V2ReadCache()
@@ -1389,9 +1402,8 @@ class T3SnapshotService:
                 self._last_activity = None
                 self._reason = None
                 return self._observation_locked()
-            if not due:
-                return self._observation_locked()
-            activity = self._activity()
+            if activity is None:
+                activity = self._activity()
             if not force and self._reason is None and self._attempted_at is not None and activity == self._last_activity:
                 return self._observation_locked()
             self._generation += 1

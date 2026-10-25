@@ -788,7 +788,7 @@ def test_service_reads_only_while_t3_runs_and_its_files_change():
     assert ready.wait(2)
     assert len(reads) == 2
     running[0] = False
-    clock[0] += 3
+    clock[0] += 30
     assert service.request().snapshot is None
     running[0] = True
     ready.clear()
@@ -915,3 +915,27 @@ def test_overflow_publication_does_not_stop_following_reads():
     retained = monitor.current_statuses_by_key()
     assert len(retained) == 1024
     assert all(row.stale for row in retained.values())
+
+
+def test_service_checks_due_and_unchanged_activity_before_process_detection():
+    clock = [0.0]
+    detections = []
+    ready = threading.Event()
+    snapshot = T3Snapshot(observed_at=datetime.now(timezone.utc), database_path=Path('/synthetic/state.sqlite'),
+                          schema_fingerprint='synthetic', sqlite_user_version=0, threads=())
+    service = T3SnapshotService(
+        enabled=True, reader=lambda **kw: snapshot, monotonic=lambda: clock[0],
+        process_running=lambda: (detections.append(clock[0]), True)[1], activity=lambda: 1,
+    )
+    try:
+        service.request(lambda _: ready.set())
+        assert ready.wait(2)
+        for tick in range(1, 30):
+            clock[0] = float(tick)
+            service.request()
+        assert detections == [0.0]
+        clock[0] = 30.0
+        service.request()
+        assert detections == [0.0, 30.0]
+    finally:
+        service.close()
