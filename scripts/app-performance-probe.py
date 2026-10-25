@@ -42,6 +42,7 @@ def main():
         process = subprocess.Popen(command, cwd=app, env=env, stdout=stream,
                                    stderr=subprocess.STDOUT)
         target_pid = None
+        sampler = None
         try:
             for stage in ("warm", "fed"):
                 deadline = time.monotonic() + (600 if args.render else 180)
@@ -67,10 +68,13 @@ def main():
                 with (output / "continue").open("w") as release:
                     release.write("x")
                 if sampler is not None:
-                    sampler.wait(timeout=15)
+                    sampler.wait(timeout=120)
             if process.wait(timeout=180) != 0:
                 raise RuntimeError("state probe failed; read profile-feed.log")
         finally:
+            if sampler is not None and sampler.poll() is None:
+                sampler.terminate()
+                sampler.wait(timeout=10)
             if process.poll() is None:
                 if target_pid is not None:
                     try:
