@@ -2097,7 +2097,6 @@ class AgentLedController:
             not force
             and identity == self.last_program_identity
             and self.last_error is None
-            and not cadence_changed
             and now - cadence_at < self.reassert_after_seconds
         ):
             return LedStatusWrite(state=state, target=self.last_target, program="", changed=False)
