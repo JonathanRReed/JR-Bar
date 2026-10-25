@@ -203,6 +203,11 @@ def test_cached_and_cold_provider_scans_agree(tmp_path: Path) -> None:
 
     cached = legacy_cards._cached_codex_local_scan(tmp_path, OBSERVED)
     cold = subject._default_provider_local_scan("codex", tmp_path, OBSERVED)
+    assert cold["history_state"] == "building"
+    from jrbar.token_history_index import shared_index
+    index = shared_index(default_state_dir(tmp_path) / "token-history.sqlite3")
+    index.child.wait(timeout=30)
+    cold = subject._default_provider_local_scan("codex", tmp_path, OBSERVED)
 
     assert cached is not None and cold is not None
     for key in ("input_tokens", "cached_input_tokens", "output_tokens", "model_count"):
@@ -497,7 +502,9 @@ def test_claude_quota_path_never_walks_the_transcripts(
         raise AssertionError("the quota path walked the transcripts")
 
     from jrbar.token_history_index import shared_index
-    shared_index(default_state_dir(tmp_path) / "token-history.sqlite3").scan({"claude": (_claude_projects(tmp_path),)})
+    index = shared_index(default_state_dir(tmp_path) / "token-history.sqlite3")
+    index.background_build = False
+    index.scan({"claude": (_claude_projects(tmp_path),)})
 
     monkeypatch.setattr(usage_stats, "_provider_inventory", refuse)
     monkeypatch.setattr(subject, "_default_provider_local_scan", refuse)

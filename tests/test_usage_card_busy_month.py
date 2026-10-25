@@ -267,26 +267,6 @@ def test_a_busy_claude_month_is_totalled_whole_and_stays_whole(
     assert warm.source_coverage["claude"].files_read == 0
     assert _claude_card(tmp_path) == duplicated
 
-    # --- (7) the card's own read never scans, and is quick
-    def refuse(*_args, **_kwargs):
-        raise AssertionError("the card read scanned the transcripts")
-
-    from jrbar.token_history_index import shared_index
-    shared_index(default_state_dir(tmp_path) / "token-history.sqlite3").scan({"claude": (tmp_path / ".claude/projects",)})
-
-    monkeypatch.setattr(usage_stats, "_provider_inventory", refuse)
-    monkeypatch.setattr(usage_stats, "_scan_inventory_usage", refuse)
-    monkeypatch.setattr(usage_stats, "_read_verified_prefix", refuse)
-    legacy_cards._local_tokens_memo.clear()
-    started = time.perf_counter()
-    quick = subject._default_claude_local_scan(tmp_path, NOW)
-    card_read = time.perf_counter() - started
-    report.append(f"claude card read (cache load + sum) {card_read * 1000:.0f} ms")
-    for key, value in duplicated.items():
-        assert quick[key] == pytest.approx(value) if isinstance(value, float) else quick[key] == value
-    assert card_read < 2.0, "the card read is no longer quick"
-    monkeypatch.undo()
-
     # --- (6) an old-version cache and a corrupt one are rebuilt, never trusted
     document = json.loads(cache.read_text(encoding="utf-8"))
     document["version"] = usage_stats.CACHE_VERSION - 1
@@ -323,6 +303,28 @@ def test_a_busy_claude_month_is_totalled_whole_and_stays_whole(
     assert no_index.source_coverage["claude"].files_read > 0
     assert _claude_card(tmp_path) == duplicated
     _assert_inside_the_bound(cache)
+
+    # --- (7) the card's own read never scans, and is quick
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("the card read scanned the transcripts")
+
+    from jrbar.token_history_index import shared_index
+    index = shared_index(default_state_dir(tmp_path) / "token-history.sqlite3")
+    index.background_build = False
+    index.scan({"claude": (tmp_path / ".claude/projects",)})
+
+    monkeypatch.setattr(usage_stats, "_provider_inventory", refuse)
+    monkeypatch.setattr(usage_stats, "_scan_inventory_usage", refuse)
+    monkeypatch.setattr(usage_stats, "_read_verified_prefix", refuse)
+    legacy_cards._local_tokens_memo.clear()
+    started = time.perf_counter()
+    quick = subject._default_claude_local_scan(tmp_path, NOW)
+    card_read = time.perf_counter() - started
+    report.append(f"claude card read (cache load + sum) {card_read * 1000:.0f} ms")
+    for key, value in duplicated.items():
+        assert quick[key] == pytest.approx(value) if isinstance(value, float) else quick[key] == value
+    assert card_read < 2.0, "the card read is no longer quick"
+    monkeypatch.undo()
 
     with capsys.disabled():
         print(
@@ -442,26 +444,6 @@ def test_a_busy_codex_month_is_totalled_whole_and_stays_whole(
     assert warm.source_coverage["codex"].files_read == 0
     assert _codex_card(tmp_path) == forked
 
-    def refuse(*_args, **_kwargs):
-        raise AssertionError("the card read scanned the transcripts")
-
-    from jrbar.token_history_index import shared_index
-    shared_index(default_state_dir(tmp_path) / "token-history.sqlite3").scan({"codex": (tmp_path / ".codex/sessions",)})
-
-    monkeypatch.setattr(usage_stats, "_provider_inventory", refuse)
-    monkeypatch.setattr(usage_stats, "_scan_inventory_usage", refuse)
-    monkeypatch.setattr(usage_stats, "_read_verified_prefix", refuse)
-    legacy_cards._local_tokens_memo.clear()
-    started = time.perf_counter()
-    quick = subject._default_codex_local_scan(tmp_path, NOW)
-    card_read = time.perf_counter() - started
-    report.append(f"codex card read (cache load + sum) {card_read * 1000:.0f} ms")
-    assert quick is not None
-    for name in ("input_tokens", "cached_input_tokens", "output_tokens", "model_count"):
-        assert quick[name] == forked[name]
-    assert card_read < 2.0
-    monkeypatch.undo()
-
     # --- (6)
     document = json.loads(codex_cache.read_text(encoding="utf-8"))
     document["version"] = usage_stats.CACHE_VERSION - 1
@@ -485,6 +467,28 @@ def test_a_busy_codex_month_is_totalled_whole_and_stays_whole(
     assert rebuilt.source_coverage["codex"].files_read > 0
     assert _codex_card(tmp_path) == forked
     _assert_inside_the_bound(codex_cache)
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("the card read scanned the transcripts")
+
+    from jrbar.token_history_index import shared_index
+    index = shared_index(default_state_dir(tmp_path) / "token-history.sqlite3")
+    index.background_build = False
+    index.scan({"codex": (tmp_path / ".codex/sessions",)})
+
+    monkeypatch.setattr(usage_stats, "_provider_inventory", refuse)
+    monkeypatch.setattr(usage_stats, "_scan_inventory_usage", refuse)
+    monkeypatch.setattr(usage_stats, "_read_verified_prefix", refuse)
+    legacy_cards._local_tokens_memo.clear()
+    started = time.perf_counter()
+    quick = subject._default_codex_local_scan(tmp_path, NOW)
+    card_read = time.perf_counter() - started
+    report.append(f"codex card read (cache load + sum) {card_read * 1000:.0f} ms")
+    assert quick is not None
+    for name in ("input_tokens", "cached_input_tokens", "output_tokens", "model_count"):
+        assert quick[name] == forked[name]
+    assert card_read < 2.0
+    monkeypatch.undo()
 
     with capsys.disabled():
         print(

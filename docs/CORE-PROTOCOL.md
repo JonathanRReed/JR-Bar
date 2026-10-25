@@ -2884,19 +2884,32 @@ History reads use a private SQLite index, shared across ranges and clients.
 Unchanged transcripts require only a stat check. Appends resume a guarded
 byte offset for Claude and Codex. Other adapters replace changed files.
 Rewrites replace that file's contributions. Parser version,
-source identity changes rebuild the index. Local timezone changes rebuild
-buckets from UTC timestamps without parsing transcripts. Removed and
+source identity changes rebuild the index. Schema v7 interns provider,
+session and model IDs, stores each fact once, and maintains additive UTC
+quarter-hour totals. Local timezone changes affect reads and write nothing. Removed and
 rotated files retract their contributions after a complete inventory walk.
 Global deduplication includes copied Claude messages and admitted Codex fork
 lineage. Files and rows older than 368 days are skipped or pruned. Newest
 files are read first. Reconciliation checkpoints survive a pass budget.
 
-Provider rows may include `token_history_state`: `ready`, `stale` or `building`.
-This describes local token totals independently of quota-window freshness.
-Cards retain the last index reading when busy. Retired JSON scan caches are
-never a fallback and are removed after Claude and Codex indexing completes.
-A damaged index is preserved and rebuilt after a delay. Disk-full failures
-back off for an hour and publish an unavailable history state.
+Provider rows may include `token_history_state`: `ready`, `stale`, `building`,
+`failed`, `disk_full`, `damaged` or `over_cap`. This describes local token
+totals independently of quota-window freshness. A short scan does not mark
+current data stale. Cards retain the last index reading when busy. Retired
+JSON scan caches are never a fallback. Each provider's caches are removed
+when that provider finishes indexing. The daemon cannot use legacy graph
+capture or the legacy controller's transcript writer.
+
+Cold and full rebuilds run in a separate Utility process. It commits source
+offsets about every 50,000 records, reports committed progress, and exits.
+Disabling history or quitting stops the child. The daemon retains a 6 MiB
+SQLite writer cache and runs small incremental passes at its default QoS,
+with a 50 ms CPU allowance. SQLite temporary tables use disk. Reconciliation
+commits completed chunks when the allowance expires.
+
+One damaged database and its sidecars are retained until the next damage
+replaces them. Recovery waits a minute. A file over the configured size cap
+is not quarantined as damage. Disk-full failures back off for an hour.
 
 Token-history rows and `session_usage` publish `processed_tokens` separately from
 `estimated_cost_usd`. `processed_tokens` includes input, cache reads, cache

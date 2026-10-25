@@ -290,7 +290,7 @@ class ProviderUsageSnapshot:
 
     def __post_init__(self) -> None:
         provider_descriptor(self.provider_id)
-        if self.token_history_state not in (None, "ready", "stale", "building"):
+        if self.token_history_state not in (None, "ready", "stale", "building", "failed", "disk_full", "damaged", "over_cap"):
             raise ValueError("invalid token history state")
         if self.reset_credits is not None and (
             type(self.reset_credits) is not int or not 0 <= self.reset_credits <= 10_000

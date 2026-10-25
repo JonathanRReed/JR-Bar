@@ -59,6 +59,7 @@ ENTRY_POINTS = {
     "hook",
     "hook_entry",
     "provider_fixture_ownership",
+    "token_history_build",  # Utility child launched with -m by token_history_index.
 }
 
 

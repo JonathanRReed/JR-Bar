@@ -437,8 +437,8 @@ def test_usage_graph_does_not_scan_t3_for_observability_only(
     )
     calls = []
     monkeypatch.setattr(
-        usage_graph_worker.usage_stats,
-        "scan_usage",
+        usage_graph_worker,
+        "scan_usage_all_homes",
         lambda *_args, **_kwargs: usage_graph_worker.usage_stats.UsageTotals(),
     )
     monkeypatch.setattr(usage_graph_worker, "_scan_opencode_records", lambda *_args: [])
@@ -550,8 +550,8 @@ def test_usage_graph_document_uses_one_settings_snapshot_for_key_and_payload(
 def test_cost_graph_discloses_api_equivalent_semantics(monkeypatch) -> None:
     settings = make_target(mode="cost").settings
     monkeypatch.setattr(
-        usage_graph_worker.usage_stats,
-        "scan_usage",
+        usage_graph_worker,
+        "scan_usage_all_homes",
         lambda *_args, **_kwargs: usage_graph_worker.usage_stats.UsageTotals(),
     )
     monkeypatch.setattr(usage_graph_worker, "_scan_opencode_records", lambda *_args: [])
@@ -611,7 +611,7 @@ def test_antigravity_steps_contribute_sessions_but_not_measured_token_heatmap(mo
     from jrbar import session_history
 
     now = datetime.now().timestamp()
-    monkeypatch.setattr(usage_graph_worker.usage_stats, "scan_usage", lambda *_args, **_kwargs:
+    monkeypatch.setattr(usage_graph_worker, "scan_usage_all_homes", lambda *_args, **_kwargs:
                         usage_graph_worker.usage_stats.UsageTotals())
     monkeypatch.setattr(usage_graph_worker, "_scan_opencode_records", lambda *_args: [])
     monkeypatch.setattr(usage_graph_worker, "_scan_antigravity_records", lambda *_args: [
@@ -639,7 +639,7 @@ def test_activity_discloses_partial_selected_history(monkeypatch, selected, part
         files_read=1, cache_hits=0, malformed_lines=0, unreadable_files=0,
         skipped_symlinks=0, duplicate_physical_files=0, truncated_files=1,
     )
-    monkeypatch.setattr(stats, "scan_usage", lambda *_args, **_kwargs:
+    monkeypatch.setattr(usage_graph_worker, "scan_usage_all_homes", lambda *_args, **_kwargs:
                         stats.UsageTotals(source_coverage={"codex": coverage}))
     monkeypatch.setattr(usage_graph_worker, "_scan_opencode_records", lambda *_args: [])
 
@@ -649,7 +649,7 @@ def test_activity_discloses_partial_selected_history(monkeypatch, selected, part
 
 
 def test_explicit_t3_statistics_choice_is_shared_by_chart_and_heatmap(monkeypatch):
-    monkeypatch.setattr(usage_graph_worker.usage_stats, "scan_usage", lambda *_args, **_kwargs:
+    monkeypatch.setattr(usage_graph_worker, "scan_usage_all_homes", lambda *_args, **_kwargs:
                         usage_graph_worker.usage_stats.UsageTotals())
     monkeypatch.setattr(usage_graph_worker, "_scan_opencode_records", lambda *_args: [])
     def scan_t3(*_args, coverage_reporter=None, **_kwargs):
@@ -678,8 +678,8 @@ def test_t3_incomplete_coverage_is_exposed_in_model_and_summary(
     coverage_status,
 ):
     monkeypatch.setattr(
-        usage_graph_worker.usage_stats,
-        "scan_usage",
+        usage_graph_worker,
+        "scan_usage_all_homes",
         lambda *_args, **_kwargs: usage_graph_worker.usage_stats.UsageTotals(),
     )
     monkeypatch.setattr(usage_graph_worker, "_scan_opencode_records", lambda *_args: [])
@@ -1039,7 +1039,7 @@ def test_tree_fingerprint_tracks_append_delete_and_replacement(tmp_path):
 
 def _stub_scans(monkeypatch):
     stats = usage_graph_worker.usage_stats
-    monkeypatch.setattr(stats, "scan_usage", lambda *_args, **_kwargs: stats.UsageTotals())
+    monkeypatch.setattr(usage_graph_worker, "scan_usage_all_homes", lambda *_args, **_kwargs: stats.UsageTotals())
     monkeypatch.setattr(usage_graph_worker, "_scan_opencode_records", lambda *_args: [])
     monkeypatch.setattr(usage_graph_worker, "_scan_antigravity_records", lambda *_args: [])
     monkeypatch.setattr(

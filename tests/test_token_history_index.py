@@ -2,10 +2,26 @@
 
 import json
 from datetime import datetime
+from functools import partial
+
+import pytest
 
 from jrbar import usage_stats as usage
 from jrbar.core_usage_history import usage_history_document
-from jrbar.token_history_index import TokenHistoryIndex
+from jrbar.token_history_index import TokenHistoryIndex as Index
+
+TokenHistoryIndex = partial(Index, background_build=False)
+
+
+@pytest.fixture(autouse=True)
+def synchronous_unit_index(monkeypatch):
+    from jrbar import token_history_index as module
+    shared = module.shared_index
+    def in_process(path):
+        index = shared(path)
+        index.background_build = False
+        return index
+    monkeypatch.setattr(module, "shared_index", in_process)
 
 
 def claude(ident, stamp, *, inp=100, model="claude-sonnet-4-5"):
@@ -473,7 +489,7 @@ def test_corrupt_history_cache_does_not_interrupt_quota_card_reads(tmp_path, mon
     path.write_bytes(b"synthetic damaged cache")
     monkeypatch.setattr(token_history_index, "_ENABLED", True)
     assert token_history_index.cached_card("claude", tmp_path, 1_792_929_600) is None
-    assert provider_usage_codex_claude._cached_provider_local_scan("claude", tmp_path, 1_792_929_600)["history_state"] == "building"
+    assert provider_usage_codex_claude._cached_provider_local_scan("claude", tmp_path, 1_792_929_600)["history_state"] == "damaged"
 
 
 def test_a_view_over_its_byte_limit_is_served_without_retaining_it(tmp_path, monkeypatch):
@@ -565,7 +581,9 @@ def test_compact_schema_idle_scan_makes_no_database_writes(tmp_path, monkeypatch
         assert db.execute("PRAGMA data_version").fetchone() == before
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert db.execute("PRAGMA max_page_count").fetchone()[0] > 65536
-        assert db.execute("SELECT length(dedupe),kind,owner,event FROM raw").fetchone() == (16, None, None, None)
+        assert db.execute("SELECT length(dedupe),typeof(provider),typeof(session),typeof(model),typeof(bucket) FROM raw").fetchone() == (16, "integer", "integer", "integer", "integer")
+        assert db.execute("SELECT COUNT(*) FROM lineage").fetchone() == (0,)
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name IN ('events','events_hour','raw_kind')").fetchall()
         assert not db.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' OR name='days'").fetchall()
     finally:
         db.close()
@@ -649,7 +667,7 @@ def test_sqlite_full_stops_parsing_for_an_hour(tmp_path, monkeypatch):
     for _ in range(60):
         index.scan({"claude": (root,)})
     assert calls == [1]
-    assert index.error == "history_disk_full"
+    assert index.error == "disk_full"
     assert index.retry_at == 3700
     assert not list(index.path.parent.glob("*.damaged-*"))
 
@@ -736,7 +754,7 @@ def test_retired_cache_is_never_a_card_fallback_and_is_removed_only_when_complet
     (root / "one.jsonl").write_text(claude("one", "2026-10-25T01:00:00Z"))
     index = module.shared_index(state / "token-history.sqlite3")
     index.scan({"claude": (root,)})
-    assert dead.exists()
+    assert not dead.exists()
     index.scan({"codex": (tmp_path / ".codex/sessions",)})
     assert not dead.exists()
 
@@ -779,7 +797,7 @@ def test_partial_file_resumes_even_when_physical_stat_is_unchanged(tmp_path):
     assert sum(r.record_count for r in final.records) == 1000
 
 
-def test_busy_view_lock_returns_last_card_marked_stale(tmp_path, monkeypatch):
+def test_busy_view_lock_keeps_a_recent_card_fresh(tmp_path, monkeypatch):
     import threading
 
     from jrbar import token_history_index as module
@@ -809,7 +827,7 @@ def test_busy_view_lock_returns_last_card_marked_stale(tmp_path, monkeypatch):
     try:
         assert finished.wait(2)
         assert results[0]["input_tokens"] == 100
-        assert results[0]["history_stale"] is True
+        assert results[0]["history_stale"] is False
     finally:
         release.set()
         holder.join(5)
@@ -833,7 +851,7 @@ def test_history_off_keeps_session_context_command(tmp_path, monkeypatch):
     assert calls == [("one", "codex", "synthetic", None)]
 
 
-def test_scan_restores_the_callers_qos(tmp_path):
+def test_scan_does_not_lower_the_callers_qos(tmp_path):
     import ctypes
     import sys
 
@@ -853,7 +871,7 @@ def test_scan_restores_the_callers_qos(tmp_path):
             return scan(*args, **kwargs)
         index._scan = during
         index.scan({})
-        assert observed == [0x11]
+        assert observed == [0x15]
         assert library.qos_class_self() == 0x15
     finally:
         library.pthread_set_qos_class_self_np(previous, 0)

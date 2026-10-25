@@ -74,7 +74,7 @@ def _default_provider_local_scan(
     )
     if source is None:
         return None
-    from .token_history_index import scan_history
+    from .token_history_index import history_state, scan_history
 
     since = usage_stats.card_window_start(observed_at)
     try:
@@ -100,6 +100,12 @@ def _default_provider_local_scan(
             None,
         ),
     }
+    coverage = totals.source_coverage.get(provider_id)
+    if coverage is not None and coverage.status == usage_stats.UsageSourceStatus.FAILED:
+        evidence = (_codex_windows_only(home) or {}) if provider_id == "codex" else {}
+        return {**evidence, "history_state": history_state(home)}
+    if coverage is not None and coverage.pending_files:
+        document["history_state"] = history_state(home)
     if provider_id == "codex":
         document["windows_observed_at"] = getattr(
             totals, "codex_rate_limit_observed_at", None
@@ -171,7 +177,7 @@ def _cached_provider_local_scan(
     extra_homes: Iterable[str] | None = None, read_account: bool = True,
 ) -> dict[str, object] | None:
     """Read indexed totals only. Retired JSON caches cannot replace them."""
-    from .token_history_index import cached_card, history_enabled
+    from .token_history_index import cached_card, history_enabled, history_state
     if not history_enabled():
         return _codex_windows_only(home) if provider_id == "codex" else None
     try:
@@ -188,9 +194,13 @@ def _cached_provider_local_scan(
             pass
     if indexed is None:
         indexed = _codex_windows_only(home) if provider_id == "codex" else {}
-        indexed = {**(indexed or {}), "history_state": "building"}
+        indexed = {**(indexed or {}), "history_state": history_state(home)}
     else:
-        indexed["history_state"] = "stale" if indexed.get("history_stale") else "ready"
+        failure = history_state(home)
+        if failure != "building":
+            indexed["history_state"] = failure
+        else:
+            indexed["history_state"] = "stale" if indexed.get("history_stale") else "ready"
     return indexed
 
 
@@ -217,7 +227,12 @@ def _codex_windows_only(home: Path) -> dict[str, object] | None:
                 for line in reversed(lines):
                     if b'"rate_limits"' not in line:
                         continue
-                    row = json.loads(line)
+                    try:
+                        row = json.loads(line)
+                    except (ValueError, RecursionError):
+                        continue
+                    if not isinstance(row, dict):
+                        continue
                     payload = row.get("payload")
                     limits = payload.get("rate_limits") if isinstance(payload, dict) else None
                     windows = usage_stats.codex_windows_from_limits(limits)

@@ -26,4 +26,12 @@ struct TokenHistoryDisabledTests {
         #expect(provider.tokenHistoryState == "stale")
     }
 
+    @Test(arguments: ["building", "failed", "disk_full", "damaged", "over_cap"])
+    func historyStatesDecodeSeparatelyFromQuota(state: String) throws {
+        let data = Data("{\"id\":\"codex\",\"state\":\"ready\",\"token_history_state\":\"\(state)\",\"windows\":[]}".utf8)
+        let provider = try JSONDecoder().decode(CoreProviderUsage.self, from: data)
+        #expect(provider.state == "ready")
+        #expect(provider.tokenHistoryState == state)
+    }
+
 }
