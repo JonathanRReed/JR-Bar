@@ -198,6 +198,13 @@ def openclaw_parent_links(payload: dict, *, observed_at: float, session_keys=Non
                  "openclaw", observed_at)
 
 
+def gemini_parent_links(header: dict, *, observed_at: float, parent_session_id=None) -> tuple[ParentLink, ...]:
+    if header.get("kind") != "subagent":
+        return ()
+    return _link(member_key("gemini", header.get("sessionId")), member_key("gemini", parent_session_id),
+                 "gemini", observed_at)
+
+
 def read_openclaw_links(home: Path) -> tuple[ParentLink, ...]:
     """The session registry maps native session IDs to hook session keys."""
     entries = []
@@ -460,6 +467,7 @@ class LocalLineageReader:
             ("claude", ".claude/projects", "agent-*.meta.json", claude_parent_links),
             ("codex", ".codex/sessions", "*.jsonl", codex_parent_links),
             ("factory", ".factory/sessions", "*.jsonl", factory_parent_links),
+            ("gemini", ".gemini/tmp", "*.jsonl", gemini_parent_links),
         )
         for provider, root, pattern, parser in formats:
             if provider not in providers:
@@ -495,6 +503,9 @@ class LocalLineageReader:
                     kwargs = {"observed_at": stat.st_mtime}
                     if provider == "claude":
                         kwargs["agent_id"] = path.name[len("agent-"):-len(".meta.json")]
+                    if provider == "gemini":
+                        kwargs["parent_session_id"] = (path.parent.name if path.parent.parent.name == "chats"
+                            and path.stem == payload.get("sessionId") else None)
                     parsed = parser(payload, **kwargs)
                     # Roots supply identity only. A header proves no live work.
                     self._cache[path] = (signature, parsed)

@@ -732,3 +732,10 @@ OpenClaw 2026.3.2's installed hook and session declarations document
 native ID back to the hook's session key. The fixture for the newer field
 names the documentation date, since it is absent from the installed version.
 OpenClaw is MIT licensed. No source code was copied.
+
+Gemini CLI's installed 0.46.0 bundle, `ChatRecordingService.initialize`,
+writes subagent metadata to `tmp/<project>/chats/<parentSessionId>/<child>.jsonl`.
+The reader requires `kind: subagent` and matching header and filename IDs,
+then reads the immediate parent directory. It reads no message records.
+The [upstream version](https://github.com/google-gemini/gemini-cli/tree/v0.46.0)
+is Apache-2.0 licensed. No source code was copied.

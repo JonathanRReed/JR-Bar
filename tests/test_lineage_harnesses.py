@@ -221,3 +221,40 @@ def test_openclaw_bridge_forwards_only_bounded_parent_fields(tmp_path):
     group, = resolve_agent_groups([row('openclaw:session:agent:synthetic:main'), child], now=NOW).groups
     assert len(group.members) == 2
     assert 'synthetic content' not in json.dumps(encoded)
+
+
+def test_gemini_recording_layout_recovers_after_restart(tmp_path):
+    import os
+
+    from jrbar.lineage_adapters import LocalLineageReader
+
+    path = tmp_path / '.gemini/tmp/synthetic-project/chats/gemini-root/gemini-child.jsonl'
+    path.parent.mkdir(parents=True)
+    path.write_bytes((FIXTURES / 'gemini-cli-0.46.0.jsonl').read_bytes())
+    os.utime(path, (NOW, NOW))
+    providers = frozenset({'gemini'})
+    recovered = LocalLineageReader(tmp_path).read(providers, now=NOW)
+    assert recovered == LocalLineageReader(tmp_path).read(providers, now=NOW)
+    group, = resolve_agent_groups([row('gemini:session:gemini-root'), *recovered], now=NOW).groups
+    assert group.members == ('gemini:session:gemini-child', 'gemini:session:gemini-root')
+    assert all('synthetic content' not in str(r) for r in recovered)
+    assert LocalLineageReader(tmp_path).read(providers, now=NOW + 86_401) == ()
+
+
+def test_gemini_child_recording_without_parent_directory_is_unlinked(tmp_path):
+    import os
+
+    from jrbar.lineage_adapters import LocalLineageReader
+
+    path = tmp_path / '.gemini/tmp/synthetic-project/chats/gemini-child.jsonl'
+    path.parent.mkdir(parents=True)
+    path.write_bytes((FIXTURES / 'gemini-cli-0.46.0.jsonl').read_bytes())
+    os.utime(path, (NOW, NOW))
+    child, = LocalLineageReader(tmp_path).read(frozenset({'gemini'}), now=NOW)
+    assert resolve_agent_groups([child], now=NOW).unlinked_workers == {child.agent_id}
+
+
+def test_gemini_layout_never_groups_ordinary_sessions_by_project():
+    from jrbar.lineage_adapters import gemini_parent_links
+    assert gemini_parent_links({'kind': 'main', 'sessionId': 'ordinary'},
+                               observed_at=NOW, parent_session_id='shared-folder') == ()
