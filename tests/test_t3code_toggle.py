@@ -134,3 +134,16 @@ def test_the_command_validates_writes_and_reconciles_at_once(t3_home, monkeypatc
         handler(controller, {"enabled": True})
     assert refused.value.code == "refused"
     assert reconciled == [True]
+
+
+def test_legacy_disabled_key_does_not_hide_automatic_observation(t3_home, monkeypatch):
+    from jrbar import t3_process
+
+    monkeypatch.setattr(t3_process, 't3_code_running', lambda **kw: True)
+    handler = core_runtime._MAIN_THREAD_COMMANDS['t3code_integration'].handler
+    service = SimpleNamespace(observation=lambda: SimpleNamespace(snapshot=None, reason=None, in_flight=True))
+    controller = SimpleNamespace(_t3_snapshot_service=service)
+    reply = handler(controller, {})
+    assert reply['enabled'] is False
+    assert reply['running'] is True
+    assert reply['observation']['in_flight'] is True

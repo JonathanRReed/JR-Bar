@@ -4358,10 +4358,7 @@ def _cmd_hooks_doctor(self, args):
 
 @command("t3code_integration")
 def _cmd_t3code_integration(self, args):
-    """Settings > Agents & Usage' T3 Code row: whether T3 Code's database is on
-    this Mac, whether JR-Bar reads it, and the reader's last look. With
-    ``enabled`` it flips the opt-in in integrations.json first and
-    reconciles the T3 reader at once rather than on the next refresh."""
+    """Automatic integration status, with the legacy setting for older clients."""
     from .t3code_toggle import T3CodeToggleRefused, t3code_integration, t3code_observation
 
     enabled = args.get("enabled")
@@ -4379,7 +4376,7 @@ def _cmd_t3code_integration(self, args):
         except Exception as exc:
             self._core_log(f"core: t3 reconcile failed: {exc.__class__.__name__}")
     document["observation"] = (
-        t3code_observation(getattr(self, "_t3_snapshot_service", None)) if document["enabled"] else None
+        t3code_observation(getattr(self, "_t3_snapshot_service", None))
     )
     return document
 
