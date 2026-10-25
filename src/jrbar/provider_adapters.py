@@ -196,8 +196,10 @@ class NormalizedProviderRecord:
     _terminal_provenance: object | None = dataclass_field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        if type(self.parent_links) is not tuple or (self.parent_links and persisted_parent_links(
-                [link.to_dict() for link in self.parent_links], self.source_key.provider_id) != self.parent_links):
+        if type(self.parent_links) is not tuple or any(type(link) is not ParentLink for link in self.parent_links):
+            raise ProviderAdapterValidationError("invalid parent links")
+        if self.parent_links and persisted_parent_links(
+                [link.to_dict() for link in self.parent_links], self.source_key.provider_id) != self.parent_links:
             raise ProviderAdapterValidationError("invalid parent links")
         sequence_valid = self.sequence is None or (
             type(self.sequence) is int and 0 <= self.sequence <= MAX_PROVIDER_SEQUENCE

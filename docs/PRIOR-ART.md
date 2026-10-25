@@ -739,3 +739,10 @@ The reader requires `kind: subagent` and matching header and filename IDs,
 then reads the immediate parent directory. It reads no message records.
 The [upstream version](https://github.com/google-gemini/gemini-cli/tree/v0.46.0)
 is Apache-2.0 licensed. No source code was copied.
+
+Grok 1.0.70, commit `f50904eaee6c`, was checked with `--version`. Its
+`SubagentStart` shape matches the synthetic 1.0.44 hook capture already
+recorded in `tests/test_grok_subagents.py`. Recovery uses JR-Bar's own
+content-free normalized logs, including older `parent_work_id` records.
+No Grok source code was copied. A start absent from every source remains
+unlinked.

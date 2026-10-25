@@ -139,9 +139,11 @@ def hook_parent_links(record) -> tuple[ParentLink, ...]:
         return hermes_parent_links(raw, observed_at=record.logged_at.timestamp())
     if record.provider == "openclaw":
         # Newer native IDs need the local registry's session-key mapping.
-        if "spawnedBySessionId" in raw and "spawnedBy" not in raw:
+        if "spawnedBy" not in raw:
             return ()
         return openclaw_parent_links(raw, observed_at=record.logged_at.timestamp())
+    if record.provider == "grok":
+        return grok_parent_links(raw, observed_at=record.logged_at.timestamp())
     return ()
 
 
@@ -190,12 +192,16 @@ def openclaw_parent_links(payload: dict, *, observed_at: float, session_keys=Non
         key = payload.get("session_id")
         if type(key) is not str or ":subagent:" not in key:
             return ()
-    parent = payload.get("spawnedBy")
-    if not parent:
+    parents = []
+    if payload.get("spawnedBy"):
+        parents.append(member_key("openclaw", payload["spawnedBy"]))
+    if session_keys is not None and payload.get("spawnedBySessionId"):
         native = payload.get("spawnedBySessionId")
-        parent = (session_keys or {}).get(native) if type(native) is str else None
-    return _link(member_key("openclaw", payload.get("session_id")), member_key("openclaw", parent),
-                 "openclaw", observed_at)
+        parent = session_keys.get(native) if type(native) is str else None
+        parents.append(member_key("openclaw", parent))
+    child = member_key("openclaw", payload.get("session_id"))
+    return tuple(link for parent in dict.fromkeys(parents or [None])
+                 for link in _link(child, parent, "openclaw", observed_at))
 
 
 def gemini_parent_links(header: dict, *, observed_at: float, parent_session_id=None) -> tuple[ParentLink, ...]:
@@ -203,6 +209,94 @@ def gemini_parent_links(header: dict, *, observed_at: float, parent_session_id=N
         return ()
     return _link(member_key("gemini", header.get("sessionId")), member_key("gemini", parent_session_id),
                  "gemini", observed_at)
+
+
+def grok_parent_links(payload: dict, *, observed_at: float) -> tuple[ParentLink, ...]:
+    stamp = payload.get("lineage_observed_at")
+    if type(stamp) in {int, float} and math.isfinite(stamp) and stamp >= 0:
+        observed_at = float(stamp)
+    child = member_key("grok", payload.get("agent_id"), "agent")
+    if child:
+        parent_agent = payload.get("parent_agent_id")
+        parent = (member_key("grok", parent_agent, "agent") if parent_agent
+                  else member_key("grok", payload.get("parent_session_id") or payload.get("session_id")))
+        return _link(child, parent, "grok", observed_at)
+    event = payload.get("hook_event_name") or payload.get("hookEventName")
+    if event not in {"SubagentStart", "subagent_start"} and (payload.get("subagentType") or payload.get("subagent_type")):
+        return _link(member_key("grok", payload.get("session_id") or payload.get("sessionId")), None,
+                     "grok", observed_at)
+    return ()
+
+
+def read_hook_links(path: Path, provider: str, *, now: float) -> tuple[ParentLink, ...]:
+    """Recover bounded content-free evidence from normalized logs only."""
+    try:
+        with path.open("rb") as stream:
+            size = stream.seek(0, 2)
+            start = max(0, size - 2 * 1024 * 1024)
+            stream.seek(start)
+            if start:
+                stream.readline(MAX_HEADER_BYTES + 1)
+            raw = stream.read(2 * 1024 * 1024)
+        links = set()
+        for line in raw.splitlines()[-MAX_FILES * 8:]:
+            if len(line) > MAX_HEADER_BYTES:
+                continue
+            try:
+                payload = json.loads(line)
+                if (type(payload) is not dict or payload.get("record_kind") != "normalized"
+                        or payload.get("provider_id") != provider):
+                    continue
+                if "parent_links" in payload:
+                    evidence = persisted_parent_links(payload["parent_links"], provider)
+                elif provider == "grok" and payload.get("parent_work_id"):
+                    evidence = _link(member_key("grok", payload.get("provider_work_id"), "agent"),
+                        member_key("grok", payload.get("parent_work_id")), "grok", payload.get("occurred_at_epoch", 0))
+                else:
+                    continue
+                for link in evidence:
+                    if type(link.observed_at) not in {int, float}:
+                        continue
+                    if 0 <= now - link.observed_at <= 86_400:
+                        links.add(link)
+            except (ValueError, RecursionError):
+                continue
+        # Preserve conflicting parents for the resolver, but not every repeat
+        # of one parent from a busy stream.
+        newest = {}
+        for link in links:
+            key = (link.child, link.parent)
+            if key not in newest or newest[key].observed_at < link.observed_at:
+                newest[key] = link
+        return tuple(sorted(newest.values(), key=lambda link: (-link.observed_at, link.child, link.parent or ""))[:MAX_FILES])
+    except OSError:
+        return ()
+
+
+def hook_lineage_statuses(links, previous=(), *, now: float) -> tuple[AgentStatus, ...]:
+    """Keep hook evidence beside work truth without inventing activity."""
+    by_child = {}
+    retained = tuple(link for row in previous for link in row.parent_links if 0 <= now - link.observed_at <= 86_400)
+    for link in (*tuple(links), *retained):
+        parents = by_child.setdefault(link.child, {})
+        before = parents.get(link.parent)
+        if before is None or before.observed_at < link.observed_at:
+            parents[link.parent] = link
+    # A later explicit Grok link replaces the earlier unknown-child marker.
+    for child, parents in list(by_child.items()):
+        if child.startswith("grok:agent:") and any(parent is not None for parent in parents):
+            unknown = child.replace(":agent:", ":session:", 1)
+            if set(by_child.get(unknown, {})) == {None}:
+                by_child.pop(unknown)
+    result = []
+    for child, parents in by_child.items():
+        evidence = tuple(sorted(parents.values(), key=lambda link: (link.parent or "", link.observed_at)))
+        stamp = max(link.observed_at for link in evidence)
+        if len(evidence) > 4:
+            evidence = (ParentLink(child, None, child.split(":", 1)[0], stamp),)
+        result.append(AgentStatus(child.split(":", 1)[0], child, "Worker", AgentMode.UNKNOWN,
+                      datetime.fromtimestamp(stamp, timezone.utc), "LineageObserved", parent_links=evidence))
+    return tuple(sorted(result, key=lambda row: (-row.updated_at.timestamp(), row.agent_id))[:MAX_FILES])
 
 
 def read_openclaw_links(home: Path) -> tuple[ParentLink, ...]:
@@ -248,6 +342,12 @@ def match_opencode_roster(rows: tuple[AgentStatus, ...], observed: frozenset[str
         return agent if agent in observed and key not in observed else key
     result = []
     for row in rows:
+        alias = row.agent_id.replace("opencode:session:", "opencode:agent:", 1)
+        if row.provider == "opencode" and row.agent_id in observed and alias in observed:
+            for key in (row.agent_id, alias):
+                result.append(replace(row, agent_id=key, parent_links=tuple(
+                    replace(link, child=key, parent=None) for link in row.parent_links)))
+            continue
         key = match(row.agent_id)
         evidence = []
         for link in row.parent_links:
@@ -396,8 +496,9 @@ def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: f
                     native = None
             if type(native) is dict:
                 provider = _provider(native.get("driver"), worker.get("provider_instance_id"), registry_providers)
-                kind = "session" if provider in {"codex", "factory"} else "agent"
-                child = member_key(provider, native.get("nativeId"), kind)
+                kind = "session" if provider in {"codex", "factory", "cursor", "hermes", "opencode", "openclaw", "gemini", "grok"} else "agent"
+                native_id = native.get("nativeId")
+                child = member_key(provider, cursor_native_id(native_id) if provider == "cursor" else native_id, kind)
         if child:
             parent = keys.get(parent_tid) if child_tid not in ambiguous and parent_tid not in ambiguous else None
             links.append(ParentLink(child, parent, "t3code", observed_at))
@@ -427,8 +528,11 @@ class LocalLineageReader:
     request() never waits for disk. Results contain no transcript content.
     A fresh instance reconstructs the same links after a daemon restart.
     """
-    def __init__(self, home: Path):
+    def __init__(self, home: Path, *, state_dir: Path | None = None):
+        from .state_paths import default_state_dir
+
         self.home = home
+        self.state_dir = state_dir if state_dir is not None else default_state_dir(home)
         self._cache: dict[Path, tuple[tuple[int, int], tuple[ParentLink, ...]]] = {}
         self._directories: dict[Path, tuple[int, tuple[Path, ...]]] = {}
         self._lock = threading.Lock()
@@ -527,6 +631,8 @@ class LocalLineageReader:
             links.extend(read_opencode_links(self.home / ".local/share/opencode/opencode.db", observed_at=now))
         if "openclaw" in providers:
             links.extend(read_openclaw_links(self.home))
+        for provider in sorted(providers & {"cursor", "hermes", "openclaw", "grok"}):
+            links.extend(read_hook_links(self.state_dir / f"{provider}.jsonl", provider, now=now))
         by_child: dict[str, list[ParentLink]] = {}
         for link in links:
             by_child.setdefault(link.child, []).append(link)
@@ -570,7 +676,8 @@ def update_lineage_runtime(target) -> None:
         publish("lineage", ())
         return
     if reader is None:
-        reader = LocalLineageReader(Path.home())
+        from .state_paths import default_state_dir
+        reader = LocalLineageReader(Path.home(), state_dir=default_state_dir())
         target._local_lineage_reader = reader
     paths = getattr(monitor, "lineage_paths_by_session", {})
     active_paths = tuple(Path(path) for status in getattr(snapshot, "statuses", ()) if not status.stale

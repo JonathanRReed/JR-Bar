@@ -490,3 +490,14 @@ def test_hermes_oversize_keeps_callback_parent_fields(shim: Path, sock_dir: Path
     for key in ('child_session_id', 'child_subagent_id', 'parent_session_id', 'parent_subagent_id'):
         assert record[key] == payload[key]
     assert 'child_goal' not in record
+
+
+def test_grok_oversize_keeps_child_identity_and_native_aliases(shim: Path, sock_dir: Path) -> None:
+    payload = {"hookEventName": "SubagentStart", "sessionId": "grok-root",
+               "subagentId": "grok-child", "subagentType": "general-purpose",
+               "description": "A" * (MIB + 4096)}
+    record = json.loads(_delivered(shim, sock_dir, "grok", _compact(payload)).payload_text)
+    assert record['session_id'] == 'grok-root'
+    assert record['subagentId'] == 'grok-child'
+    assert record['subagentType'] == 'general-purpose'
+    assert 'description' not in record

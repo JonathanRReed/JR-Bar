@@ -91,12 +91,15 @@ def routed_hook_payload(
     line = format_hook_payload(provider, payload_text, logged_at=logged_at, include_origin=False)
     actual_provider = infer_provider_from_hook_line(provider, line)
     line = annotate_hook_line(actual_provider, line)
+    actual_log_path = log_path if actual_provider == provider else detect_log_path(actual_provider)
     if actual_provider == "grok":
         # A Grok sub-agent's session names no parent; its SubagentStart does.
+        import time
+        session = line.get("session_id") or line.get("sessionId")
+        declared_worker = line.get("subagentType") or line.get("subagent_type")
+        if declared_worker and type(session) is str and child_links.parent_of(session) is None:
+            child_links.recover(actual_log_path, now=time.time())
         line = stamp_child_identity(line, child_links)
-    actual_log_path = log_path
-    if actual_provider != provider:
-        actual_log_path = detect_log_path(actual_provider)
     return actual_provider, actual_log_path, line
 
 

@@ -200,6 +200,8 @@ static const struct meta_key META_KEYS[] = {
     { "parent_subagent_id", META_VALUE_BYTES },
     { "spawnedBy", META_VALUE_BYTES },
     { "spawnedBySessionId", META_VALUE_BYTES },
+    { "subagentId", META_VALUE_BYTES },
+    { "subagentType", META_VALUE_BYTES },
     { "callingSessionId", META_VALUE_BYTES },
     { "callingToolUseId", META_VALUE_BYTES },
     { "transcript_path", META_PATH_BYTES },
@@ -219,7 +221,7 @@ static uint64_t fnv1a64(const char *p, size_t n) {
 
 static int metadata_provider(const char *provider) {
     return !strcmp(provider, "claude") || !strcmp(provider, "codex") || !strcmp(provider, "cursor")
-        || !strcmp(provider, "hermes");
+        || !strcmp(provider, "hermes") || !strcmp(provider, "grok");
 }
 
 static size_t json_skip_ws(const char *b, size_t i, size_t n) {

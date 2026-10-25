@@ -1643,6 +1643,7 @@ class LiveAgentMonitor(LiveSessionMemory):
     def _ingest_hint_lines(self, hint, source, lines) -> None:
         clock = self._clock_sampler()
         batches: list[ProviderFactBatch] = []
+        lineage = []
         for line in lines:
             normalized = None
             try:
@@ -1680,6 +1681,14 @@ class LiveAgentMonitor(LiveSessionMemory):
                 observed_at_epoch=clock.wall_epoch,
             )
             batches.append(batch)
+            if type(normalized) is NormalizedProviderRecord:
+                lineage.extend(normalized.parent_links)
+        if lineage:
+            from .lineage_adapters import hook_lineage_statuses
+            source_id = f"hook-lineage-{hint.source_key.provider_id}"
+            with self.lock:
+                previous = self._external_statuses_by_source.get(source_id, ())
+            self.replace_external_statuses(source_id, hook_lineage_statuses(lineage, previous, now=clock.wall_epoch))
         with self.lock:
             retained_watermark = dict(self.operator_state.source_watermarks).get(
                 hint.source_key

@@ -11,19 +11,23 @@ sub-agent row under its session, its asks follow the Sub-agent asks setting
 and it never counts toward keep-awake, exactly as an OpenCode child does (the
 OpenCode plugin makes the same stamp at the source).
 
-A child whose ``SubagentStart`` was never seen (the daemon started after it,
-or the event arrived second) is left alone and travels as a top-level session,
-as before: nothing is guessed. The table lives in the daemon's memory and is
-bounded; the stamped records are what reach the log, so a replay needs no table.
+A child whose start was never observed stays unlinked. Normalized hook logs
+preserve explicit parent links, and a fresh table recovers those links before
+stamping a child's next event. Recovery reads a bounded log tail and keeps the
+original observation time. It cannot reconstruct an event Grok never emitted.
+
 """
 
 from __future__ import annotations
 
 import re
 import threading
+import time
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any, Final
 
+from .models import parse_datetime
 from .providers import canonical_event_name
 
 #: Links kept at once. A person runs a handful of sub-agents at a time; the
@@ -59,6 +63,8 @@ class GrokChildLinks:
             raise ValueError("invalid link limit")
         self._limit = limit
         self._parents: OrderedDict[str, str] = OrderedDict()
+        self._observed: dict[str, float] = {}
+        self._recovered: dict[Path, tuple[int, int]] = {}
         self._lock = threading.Lock()
 
     def __len__(self) -> int:
@@ -68,8 +74,43 @@ class GrokChildLinks:
     def clear(self) -> None:
         with self._lock:
             self._parents.clear()
+            self._observed.clear()
+            self._recovered.clear()
 
-    def remember(self, child: str, parent: str) -> bool:
+    def parent_of(self, session_id: str) -> str | None:
+        with self._lock:
+            return self._parents.get(session_id)
+
+    def observed_at(self, session_id: str) -> float:
+        with self._lock:
+            return self._observed.get(session_id, 0.0)
+
+    def recover(self, path: Path, *, now: float) -> None:
+        from .lineage_adapters import read_hook_links
+
+        try:
+            stat = path.stat()
+        except OSError:
+            return
+        signature = (stat.st_mtime_ns, stat.st_size)
+        with self._lock:
+            if self._recovered.get(path) == signature:
+                return
+            if len(self._recovered) >= 16:
+                self._recovered.clear()
+            self._recovered[path] = signature
+        candidates = {}
+        for link in read_hook_links(path, "grok", now=now):
+            if link.child.startswith("grok:agent:") and link.parent:
+                child = link.child.split(":", 2)[2]
+                parent = link.parent.split(":", 2)[2]
+                candidates.setdefault(child, {})[parent] = link.observed_at
+        for child, parents in candidates.items():
+            if len(parents) == 1 and self.parent_of(child) is None:
+                parent = next(iter(parents))
+                self.remember(child, parent, observed_at=parents[parent])
+
+    def remember(self, child: str, parent: str, *, observed_at: float | None = None) -> bool:
         """Record that ``parent`` spawned ``child``. False when the link is
         refused: an id that is not an opaque id, a session that is its own
         parent, a link that would close a loop, or one that would nest deeper
@@ -85,8 +126,10 @@ class GrokChildLinks:
             # never the one evicted.
             self._parents.pop(child, None)
             self._parents[child] = parent
+            self._observed[child] = time.time() if observed_at is None else observed_at
             while len(self._parents) > self._limit:
-                self._parents.popitem(last=False)
+                evicted, _ = self._parents.popitem(last=False)
+                self._observed.pop(evicted, None)
         return True
 
     def _ancestors(self, session_id: str) -> list[str] | None:
@@ -138,7 +181,8 @@ def stamp_child_identity(line: dict[str, Any], links: GrokChildLinks) -> dict[st
     child = session
     if event == "SubagentStart":
         spawned = _first_id(line, "subagent_id", "subagentId")
-        if spawned is None or not links.remember(spawned, session):
+        stamp = parse_datetime(line.get("logged_at") or line.get("timestamp")).timestamp()
+        if spawned is None or not links.remember(spawned, session, observed_at=stamp):
             return line
         child = spawned
     root = links.root_of(child)
@@ -147,6 +191,11 @@ def stamp_child_identity(line: dict[str, Any], links: GrokChildLinks) -> dict[st
     stamped = dict(line)
     stamped["agent_id"] = child
     stamped["session_id"] = root
+    parent = links.parent_of(child)
+    stamped["parent_session_id"] = parent
+    stamped["lineage_observed_at"] = links.observed_at(child)
+    if parent and links.root_of(parent):
+        stamped["parent_agent_id"] = parent
     if "sessionId" in stamped:
         stamped["sessionId"] = root
     return stamped
