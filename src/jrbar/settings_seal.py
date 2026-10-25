@@ -115,6 +115,7 @@ UNSEALED_PRIVILEGED: Final[Mapping[str, str]] = {
             "calendar_lead_minutes",
             "reminder_alerts_enabled",
             "focus_sync_enabled",
+            "presence_enabled",
             "completion_notification_enabled",
             "notification_policy_version",
             "battery_monitoring",

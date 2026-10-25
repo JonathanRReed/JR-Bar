@@ -235,6 +235,19 @@ def check_led_display(rig: Rig) -> None:
     _changes(rig, f"{DOT}.led_display", "battery", field="dot", before="agent")
 
 
+def check_enabled(rig: Rig) -> None:
+    rig.plan()
+    before = rig.pro.target.read_bytes()
+    rig.set(f"{PRO}.enabled", False)
+    assert not any(device.connected and device.device_id == rig.pro.device_id
+                   for device in rig.controller.status_bar_devices(remember=False))
+    rig.plan()
+    assert rig.pro.target.read_bytes() == before
+    rig.set(f"{PRO}.enabled", True)
+    assert any(device.connected and device.device_id == rig.pro.device_id
+               for device in rig.controller.status_bar_devices(remember=False))
+
+
 def check_brightness(rig: Rig) -> None:
     _changes(rig, f"{PRO}.brightness", 90, field="pro")
     # The Dot's own brightness caps it even while it follows the strip.
@@ -412,6 +425,7 @@ APP_DRAWN = {
 }
 
 MATRIX = {
+    "devices.N.enabled": check_enabled,
     "devices.N.led_display": check_led_display,
     "devices.N.brightness": check_brightness,
     "devices.N.auto_brightness_enabled": check_auto_brightness,

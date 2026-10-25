@@ -78,6 +78,7 @@ final class ShelfTimerModel {
 
     /// One wake, armed for the soonest deadline still to come — none at
     /// all while no timer runs, so an empty shelf costs nothing.
+    private let lifecycleHandles = FeatureLifecycleHandles()
     private var tick: Timer?
     /// When the armed wake is due; nil while nothing is armed. Tests read
     /// it rather than wait for the wake.
@@ -86,6 +87,37 @@ final class ShelfTimerModel {
     private let storeURL: URL
     private let clock: @MainActor () -> Date
     private let schedulingEnabled: Bool
+    private var enabled = true
+    var clockRunning: Bool { tick != nil }
+    var liveTimers: Int { lifecycleHandles.liveTimers }
+    var notificationObserverCount: Int { lifecycleHandles.liveObservers }
+
+    func setEnabled(_ enabled: Bool) {
+        guard self.enabled != enabled else { return }
+        self.enabled = enabled
+        if enabled {
+            if schedulingEnabled { observeClockAndWake() }
+            rearm()
+        } else {
+            tick?.invalidate()
+            tick = nil
+            armedFor = nil
+            removeObservers()
+        }
+    }
+
+    private func removeObservers() {
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        observers.removeAll()
+    }
+
+    isolated deinit {
+        tick?.invalidate()
+        removeObservers()
+    }
 
     /// `storeURL` is injectable so tests never touch the real file.
     init(storeURL: URL? = nil, schedulingEnabled: Bool = true,
@@ -105,10 +137,6 @@ final class ShelfTimerModel {
         rearm()
         if schedulingEnabled { observeClockAndWake() }
     }
-
-    // No deinit cleanup: the model lives for the app's run — the wake
-    // is a main-runloop timer and the observers are app-lifetime too.
-    // Isolated deinit would be nonisolated and can't touch them anyway.
 
     // MARK: - Mutations
 
@@ -210,11 +238,12 @@ final class ShelfTimerModel {
         tick?.invalidate()
         tick = nil
         armedFor = Self.nextDeadline(entries)
-        guard schedulingEnabled, let due = armedFor else { return }
+        guard enabled, schedulingEnabled, let due = armedFor else { return }
         let timer = Timer(fire: max(due, clock()), interval: 0, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.sweep() }
         }
         timer.tolerance = 0.3
+        lifecycleHandles.track(timer: timer)
         RunLoop.main.add(timer, forMode: .common)
         tick = timer
     }
@@ -224,6 +253,7 @@ final class ShelfTimerModel {
     /// the same — then arm for the next one. Internal so tests can run a
     /// sweep without waiting for the wake.
     func sweep() {
+        guard enabled else { return }
         let now = clock()
         var notices: [Entry] = []
         var retired = Set<String>()
@@ -256,6 +286,7 @@ final class ShelfTimerModel {
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in MainActor.assumeIsolated { self?.sweep() } })
+        for observer in observers { lifecycleHandles.track(observer: observer) }
     }
 
     // MARK: - Persistence

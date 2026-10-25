@@ -15834,6 +15834,7 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
             dataclass_replace(
                 self.controller.settings,
                 focus_profile_rules={"com.apple.focus.work": "Day"},
+                focus_sync_enabled=True,
             ),
         )
 
@@ -16289,6 +16290,7 @@ class LidObservationRuntimeTests(unittest.TestCase):
         self.controller._presentation_scheduler_state = self.status_bar.PresentationSchedulerState()
         self.controller._presentation_scheduler_inputs = None
         self.controller._runtime_started = True
+        self.controller.settings = dataclass_replace(self.controller.settings, virtual_status_device_enabled=True)
 
     def tearDown(self) -> None:
         registry = getattr(self.controller, "_runtime_worker_registry", None)

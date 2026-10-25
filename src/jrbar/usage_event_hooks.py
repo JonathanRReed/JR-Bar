@@ -577,6 +577,45 @@ def hook_argv(rule: UsageHookRule, event: UsageHookEvent) -> list[str]:
     return [rule.executable, *rule.arguments]
 
 
+class UsageHookJobs:
+    """Own the processes launched by one daemon's optional usage hooks."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.generation = 0
+        self._processes: set[subprocess.Popen] = set()
+
+    def is_current(self, generation: int) -> bool:
+        with self._lock:
+            return self.generation == generation
+
+    def register(self, process: subprocess.Popen, generation: int) -> bool:
+        with self._lock:
+            current = self.generation == generation
+            if current:
+                self._processes.add(process)
+        if not current:
+            _kill(process)
+        return current
+
+    def retire(self, process: subprocess.Popen) -> None:
+        with self._lock:
+            self._processes.discard(process)
+
+    def cancel(self) -> None:
+        with self._lock:
+            self.generation += 1
+            processes = tuple(self._processes)
+            self._processes.clear()
+        for process in processes:
+            _signal_kill(process)
+
+    @property
+    def active_count(self) -> int:
+        with self._lock:
+            return len(self._processes)
+
+
 def run_rule(
     rule: UsageHookRule,
     event: UsageHookEvent,
@@ -584,9 +623,13 @@ def run_rule(
     environ: Mapping[str, str] | None = None,
     timeout: float | None = None,
     clock: Callable[[], float] = time.time,
+    jobs: UsageHookJobs | None = None,
+    generation: int = 0,
 ) -> UsageHookResult:
     """Run one rule for one event, synchronously, and say what happened."""
     started = clock()
+    if jobs is not None and not jobs.is_current(generation):
+        return UsageHookResult(rule.id, event.name, event.provider_id, started, "refused", detail="hooks off")
     problem = rule_problem(rule)
     if problem is not None:
         return UsageHookResult(rule.id, event.name, event.provider_id, started, "refused", detail=problem)
@@ -611,6 +654,8 @@ def run_rule(
         return UsageHookResult(
             rule.id, event.name, event.provider_id, started, "error", detail=f"could not start: {getattr(error, 'strerror', None) or error}"
         )
+    if jobs is not None:
+        jobs.register(process, generation)
     try:
         process.communicate(input=payload if rule.argv != "legacy" else None, timeout=limit)
     except subprocess.TimeoutExpired:
@@ -627,6 +672,9 @@ def run_rule(
     except OSError as error:
         _kill(process)
         return UsageHookResult(rule.id, event.name, event.provider_id, started, "error", detail=str(error))
+    finally:
+        if jobs is not None:
+            jobs.retire(process)
     code = process.returncode
     return UsageHookResult(
         rule.id,
@@ -639,8 +687,8 @@ def run_rule(
     )
 
 
-def _kill(process: subprocess.Popen) -> None:
-    """Kill the hook and anything it started (its own process group)."""
+def _signal_kill(process: subprocess.Popen) -> None:
+    """Stop the process group without waiting on the daemon's main loop."""
     try:
         os.killpg(process.pid, 9)
     except OSError:
@@ -648,6 +696,10 @@ def _kill(process: subprocess.Popen) -> None:
             process.kill()
         except OSError:
             pass
+
+
+def _kill(process: subprocess.Popen) -> None:
+    _signal_kill(process)
     try:
         process.wait(timeout=2.0)
     except (subprocess.TimeoutExpired, OSError):
@@ -672,6 +724,7 @@ def dispatch_usage_hooks(
     environ: Mapping[str, str] | None = None,
     clock: Callable[[], float] = time.time,
     log: Callable[[str], None] = _log,
+    jobs: UsageHookJobs | None = None,
 ) -> threading.Thread | None:
     """Match events to rules, apply the limiter, and run the batch on one
     background thread. Returns the thread, or None when nothing runs."""
@@ -695,9 +748,14 @@ def dispatch_usage_hooks(
         return None
     snapshot_env = dict(os.environ if environ is None else environ)
 
+    generation = jobs.generation if jobs is not None else 0
+
     def _run() -> None:
         for rule, event in work:
-            result = run_rule(rule, event, environ=snapshot_env, clock=clock)
+            if jobs is not None and not jobs.is_current(generation):
+                return
+            result = run_rule(rule, event, environ=snapshot_env, clock=clock,
+                              **({"jobs": jobs, "generation": generation} if jobs is not None else {}))
             results.record(result)
             if result.outcome != "ok":
                 # A typo'd path used to fail forever in total silence; the

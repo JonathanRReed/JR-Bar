@@ -1000,6 +1000,9 @@ struct NotificationsPage: View {
                 .disabled(!(store.values.bool("dnd_schedule_enabled") ?? false) || store.values.string("dnd_schedule_mode") != "dim")
         }
 
+        SettingGroup("Presence") {
+            SettingToggle(store, "Mic and camera presence", path: "presence_enabled", default: true)
+        }
         SettingGroup("Focus", note: "A Focus without a rule uses the idle brightness from Lighting.") {
             SettingToggle(store, "React to Focus modes", subtitle: "Focus Status reads whether Focus is on. Full Disk Access adds named-mode rules.", path: "focus_sync_enabled")
             SettingPicker(store, "In Do Not Disturb", path: "dnd_focus_mode", options: Self.focusModes, default: "pause")

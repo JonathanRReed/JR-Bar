@@ -684,13 +684,17 @@ def discover_devices(
     *,
     mount_root: Path = MOUNT_ROOT,
     file_name: str = DEFAULT_FILE_NAME,
+    excluded_roots: tuple[str, ...] = (),
 ) -> list[DeviceCandidate]:
     file_name = _validated_file_name(file_name)
     if not _is_unlinked_directory(mount_root):
         return []
 
     candidates: list[DeviceCandidate] = []
+    excluded = frozenset(excluded_roots)
     for volume in sorted(iter_mounts(mount_root), key=lambda path: path.name.lower()):
+        if str(volume) in excluded:
+            continue
         if not _is_unlinked_directory(mount_root) or not _is_unlinked_directory(
             volume
         ):

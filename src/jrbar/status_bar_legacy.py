@@ -956,7 +956,9 @@ MAX_RUNTIME_PHYSICAL_DEVICES = 16
 
 @dataclass(frozen=True, slots=True)
 class DeviceInventoryRequest:
-    """Content-free authority to enumerate supported SidePulse volumes."""
+    """Content-free authority to enumerate enabled SidePulse volumes."""
+
+    excluded_roots: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -2548,6 +2550,8 @@ class StatusBarController(NSObject):
         if not self.settings.link_screen_bar_to_hardware:
             return self.settings.device_blend_mode(VIRTUAL_DEVICE_ID)
         for device in self.settings.devices:
+            if not device.enabled:
+                continue
             if device.device_id == VIRTUAL_DEVICE_ID:
                 continue
             if device.blend_mode:
@@ -2934,6 +2938,9 @@ class StatusBarController(NSObject):
 
     @objc.IBAction
     def refreshRemotePeers_(self, _sender):
+        if not self.settings.remote_peers.enabled:
+            self.stop_remote_peer_timer()
+            return
         skip = getattr(self, "_remote_peers_ticks_to_skip", 0)
         if skip > 0:
             self._remote_peers_ticks_to_skip = skip - 1
@@ -2941,6 +2948,9 @@ class StatusBarController(NSObject):
         self.start_remote_peer_refresh()
 
     def start_remote_peer_timer(self) -> None:
+        if not self.settings.remote_peers.enabled:
+            self.stop_remote_peer_timer()
+            return
         if self.remote_peers_timer is not None:
             return
         self.remote_peers_timer = (
@@ -4450,6 +4460,10 @@ class StatusBarController(NSObject):
         if getattr(self, "_runtime_termination_started", False):
             return None
         self._runtime_termination_started = True
+        for owner_name in ("_jrbar_phone_alerts", "_jrbar_usage_hook_jobs"):
+            owner = getattr(self, owner_name, None)
+            if owner is not None:
+                owner.cancel()
         # Repeating NSTimers retain their target; left running they keep
         # the controller alive and firing through launchd teardown.
         self._runtime_started = False
@@ -7518,6 +7532,11 @@ class StatusBarController(NSObject):
         object itself so tests that patch jrbar.status_bar.
         discover_devices never see a stale cache from a previous patch."""
         discover = discover_devices
+        excluded = self.settings.disabled_device_paths()
+        if self.settings.devices and not any(
+            device.enabled for device in self.settings.devices if device.device_id != VIRTUAL_DEVICE_ID
+        ):
+            return []
         cached = getattr(self, "_device_discovery_cache", None)
         if getattr(self, "_runtime_started", False):
             if cached is not None and cached[0] is discover:
@@ -7536,7 +7555,7 @@ class StatusBarController(NSObject):
 
                 def _revalidate():
                     try:
-                        fresh = discover()
+                        fresh = discover(excluded_roots=excluded) if excluded else discover()
                     except Exception as exc:
                         log_status_bar(f"device discovery error: {exc}")
                         fresh = cached[2]
@@ -7550,7 +7569,7 @@ class StatusBarController(NSObject):
                 threading.Thread(target=_revalidate, daemon=True).start()
             return cached[2]
         try:
-            candidates = discover()
+            candidates = discover(excluded_roots=excluded) if excluded else discover()
         except Exception as exc:
             log_status_bar(f"device discovery error: {exc}")
             candidates = []
@@ -7563,6 +7582,8 @@ class StatusBarController(NSObject):
 
         for candidate in candidates:
             device_id = device_id_for_root(candidate.root)
+            if not self.settings.device_enabled(device_id):
+                continue
             name = device_display_name(candidate.root.name)
             entries_by_id[device_id] = StatusBarDevice(
                 device_id=device_id,
@@ -7580,6 +7601,14 @@ class StatusBarController(NSObject):
             )
 
         for device in self.settings.devices:
+            if not device.enabled:
+                entries_by_id[device.device_id] = StatusBarDevice(
+                    device_id=device.device_id, name=device.name, root=Path(device.path),
+                    target=Path(device.path) / DEFAULT_FILE_NAME, connected=False, display=device.led_display,
+                    brightness=device.brightness, auto_brightness_enabled=False,
+                    reason="disabled",
+                )
+                continue
             if device.device_id == VIRTUAL_DEVICE_ID:
                 if (
                     SCREEN_BAR_FEATURE_ENABLED
@@ -8708,7 +8737,9 @@ class StatusBarController(NSObject):
                 )
         if command.key == "device-inventory" and type(command.payload) is DeviceInventoryRequest:
             try:
-                candidates = tuple(discover_devices())[:MAX_RUNTIME_PHYSICAL_DEVICES]
+                excluded = tuple(set(command.payload.excluded_roots) | set(self.settings.disabled_device_paths()))
+                discovered = discover_devices(excluded_roots=excluded) if excluded else discover_devices()
+                candidates = tuple(discovered)[:MAX_RUNTIME_PHYSICAL_DEVICES]
             except Exception:
                 return DeviceInventoryResult((), "device inventory unavailable")
             return DeviceInventoryResult(candidates)
@@ -9123,6 +9154,7 @@ class StatusBarController(NSObject):
         if (
             not self._hardware_write_active
             or command.generation != self._hardware_write_generation
+            or not self.settings.device_enabled(command.payload.device.device_id)
         ):
             raise ValueError("stale hardware write command")
         return self._sync_hardware_device(command.payload)
@@ -9372,7 +9404,10 @@ class StatusBarController(NSObject):
             return True
         if bool(getattr(self.keep_awake, "holding_requested", False)):
             return True
-        if not self.leds_enabled:
+        lights_wanted = self.settings.virtual_status_device_enabled or any(
+            device.enabled for device in self.settings.devices if device.device_id != VIRTUAL_DEVICE_ID
+        )
+        if not self.leds_enabled or not lights_wanted:
             return False
         return any(
             bool(self.settings.lid_animation(kind).program.strip())
@@ -9398,6 +9433,10 @@ class StatusBarController(NSObject):
             and self._lid_observation_relevant()
         )
 
+    def _physical_device_demand(self) -> bool:
+        devices = tuple(device for device in self.settings.devices if device.device_id != VIRTUAL_DEVICE_ID)
+        return not devices or any(device.enabled for device in devices)
+
     def _device_inventory_should_run(
         self,
         inputs: PresentationSchedulerInputs,
@@ -9411,6 +9450,7 @@ class StatusBarController(NSObject):
             self._runtime_started
             and not inputs.app_terminating
             and self.leds_enabled
+            and self._physical_device_demand()
         )
 
     def _hardware_write_should_run(
@@ -9431,6 +9471,7 @@ class StatusBarController(NSObject):
         return bool(
             self._runtime_started
             and self.leds_enabled
+            and self._physical_device_demand()
             and not inputs.app_terminating
             and not firmware_hold.any_held()
         )
@@ -9440,7 +9481,7 @@ class StatusBarController(NSObject):
         inputs: PresentationSchedulerInputs,
     ) -> bool:
         setting_relevant = bool(
-            any(device.auto_brightness_enabled for device in self.settings.devices)
+            any(device.enabled and device.auto_brightness_enabled for device in self.settings.devices)
             or self.settings.focus_sync_enabled
             or self.settings.focus_profile_rules
         )
@@ -9957,7 +9998,7 @@ class StatusBarController(NSObject):
                 key="device-inventory",
                 generation=self._os_poll_generation,
                 deadline=now + max(4.0, STATUS_BAR_DEVICE_POLL_SECONDS * 3.0),
-                payload=DeviceInventoryRequest(),
+                payload=DeviceInventoryRequest(excluded_roots=self.settings.disabled_device_paths()),
             )
         )
 
@@ -9977,12 +10018,11 @@ class StatusBarController(NSObject):
                 deadline=now + max(4.0, BRIGHTNESS_WATCH_SECONDS * 3.0),
                 payload=DisplayEnvironmentRequest(
                     read_brightness=any(
-                        device.auto_brightness_enabled
+                        device.enabled and device.auto_brightness_enabled
                         for device in self.settings.devices
                     ),
                     read_focus=bool(
-                        self.settings.focus_sync_enabled
-                        or self.settings.focus_profile_rules
+                        self.settings.focus_sync_enabled or self.settings.focus_profile_rules
                     ),
                     read_accessibility=read_accessibility,
                     previous_accessibility_preferences=(

@@ -97,6 +97,7 @@ SETTINGS_DOCUMENT_MAX_BYTES = 4 * 1024 * 1024
 
 DEVICE_SETTING_PERSISTED_FIELDS = frozenset(
     {
+        "enabled",
         "id",
         "name",
         "path",
@@ -311,10 +312,12 @@ class DeviceDisplaySetting:
     # rises, LED 1 rises, LED 0 falls, LED 1 falls -- a direction you can
     # see) or "crossfade" (the older soft swap). Only a Dot reads it.
     dot_travel_style: str = "wipe"
+    enabled: bool = True
 
     def to_dict(self) -> dict[str, object]:
         payload = {
             "id": self.device_id,
+            "enabled": self.enabled,
             "name": self.name,
             "path": self.path,
             # quota_runway persists as-is since 2026-08-26: the JR usage
@@ -555,6 +558,7 @@ class AgentMonitorSettings:
     # Access to (see focus_sync.py); silently defaulting this on would
     # look "broken" (no visible effect) for anyone who hasn't done that.
     focus_sync_enabled: bool = False
+    presence_enabled: bool = True
     # Settings > Remote's "serve status on loopback" switch: when on, the
     # core daemon runs `jrbar serve` (serve.py: port 8737, bearer token in
     # JRBAR_SERVE_ACCESS_TOKEN) as a supervised child. Off by default --
@@ -868,6 +872,12 @@ class AgentMonitorSettings:
         # quota_runway is honored since 2026-08-26 (producer: the JR
         # usage plane's gated lanes).
         return replace(self, led_display=display)
+
+    def device_enabled(self, device_id: str) -> bool:
+        return all(device.enabled for device in self.devices if device.device_id == device_id)
+
+    def disabled_device_paths(self) -> tuple[str, ...]:
+        return tuple(device.path for device in self.devices if not device.enabled)
 
     def display_for_device(self, device_id: str) -> str:
         for device in self.devices:
@@ -1915,6 +1925,7 @@ class AgentMonitorSettings:
             "idle_auto_off_enabled": self.idle_auto_off_enabled,
             "idle_auto_off_after_minutes": self.idle_auto_off_after_minutes,
             "focus_sync_enabled": self.focus_sync_enabled,
+            "presence_enabled": self.presence_enabled,
             "serve_enabled": self.serve_enabled,
             "serve_answer_enabled": self.serve_answer_enabled,
             "provider_status_feeds_enabled": self.provider_status_feeds_enabled,
@@ -2357,6 +2368,7 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
             default=DEFAULT_IDLE_AUTO_OFF_AFTER_MINUTES,
         ),
         focus_sync_enabled=_bool_setting(data.get("focus_sync_enabled"), False),
+        presence_enabled=_bool_setting(data.get("presence_enabled"), True),
         serve_enabled=_bool_setting(data.get("serve_enabled"), False),
         serve_answer_enabled=_bool_setting(data.get("serve_answer_enabled"), False),
         provider_status_feeds_enabled=_bool_setting(
@@ -2785,6 +2797,7 @@ def _device_display_settings(value: object, default_display: str) -> tuple[Devic
                 device_id=device_id,
                 name=name,
                 path=path,
+                enabled=_bool_setting(item.get("enabled"), True),
                 led_display=display,
                 brightness=brightness,
                 auto_brightness_enabled=auto_brightness_enabled,

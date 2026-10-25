@@ -128,6 +128,9 @@ def test_the_hardware_writer_pauses_while_anything_is_held(tmp_path: Path) -> No
         _runtime_started = True
         leds_enabled = True
 
+        def _physical_device_demand(self):
+            return True
+
     should_run = StatusBarController._hardware_write_should_run
     assert should_run(Fake(), Inputs()) is True
     firmware_hold.acquire(tmp_path, "updating firmware")

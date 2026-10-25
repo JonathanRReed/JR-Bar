@@ -26,6 +26,31 @@ enum NotchSurfaceMotion {
 
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
+    private static let layerFadeKey = "jrbar.surface-visibility"
+
+    /// Layer fades do not retain a window. Off cancels the layer's motion
+    /// before detaching the view and releasing its panel.
+    static func fade(layer: CALayer, to opacity: Float, from start: Float? = nil,
+                     duration: TimeInterval, reduced: Bool) {
+        let before = start ?? layer.presentation()?.opacity ?? layer.opacity
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.opacity = opacity
+        layer.removeAnimation(forKey: layerFadeKey)
+        CATransaction.commit()
+        guard !reduced, before != opacity else { return }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = before
+        fade.toValue = opacity
+        fade.duration = duration
+        fade.timingFunction = CAMediaTimingFunction(name: .default)
+        layer.add(fade, forKey: layerFadeKey)
+    }
+
+    static func cancelFade(layer: CALayer?) {
+        layer?.removeAnimation(forKey: layerFadeKey)
+    }
+
     /// One fade of `panel` to `alpha`, with whatever else moves in the
     /// same group (`alongside` gets the animator, or the panel itself on
     /// an instant swap). Under Reduce Motion `reducedDuration` is the

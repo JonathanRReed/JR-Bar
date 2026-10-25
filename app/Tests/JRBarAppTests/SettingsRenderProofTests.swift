@@ -18,6 +18,58 @@ import Testing
 struct SettingsRenderProofTests {
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
 
+    @Test("the mock's notification setting survives decoding and binding")
+    func notificationBinding() throws {
+        let fixture = try Self.fixture()
+        defer { fixture.toys.shutdown() }
+        #expect(fixture.core.settings?.document["completion_notification_enabled"] == .bool(true))
+        #expect(fixture.settings.bool("completion_notification_enabled").wrappedValue)
+        #expect(fixture.settings.bool("dnd_schedule_enabled").wrappedValue == false)
+    }
+
+    @Test("native switch proofs place the on thumb to the right of off", .enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1"))
+    func toggleStates() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        defer { fixture.toys.shutdown() }
+        let original = try #require(fixture.core.settings?.document)
+        for dark in [false, true] {
+            var images: [NSBitmapImageRep] = []
+            for on in [false, true] {
+                let document = SettingsDocument(original).replacing("completion_notification_enabled", with: .bool(on))
+                fixture.core.apply(.settings(CoreSettings(generation: on ? 3 : 2, schema: CoreProtocol.knownSettingsSchema,
+                                                          document: document.root)))
+                #expect(fixture.settings.bool("completion_notification_enabled").wrappedValue == on)
+                let view = Form {
+                    SettingToggle(fixture.settings, "Notification banner", path: "completion_notification_enabled")
+                }.formStyle(.grouped).tint(.blue)
+                let rep = try Self.snapshot(view, size: CGSize(width: 560, height: 140), dark: dark)
+                try Self.write(rep, named: "toggle-\(on ? "on" : "off")-\(dark ? "dark" : "light")")
+                images.append(rep)
+            }
+            var brighter = (count: 0, x: CGFloat(0))
+            var darker = (count: 0, x: CGFloat(0))
+            // The guarded host is inactive, so on switches are gray too.
+            // Compare the native thumb positions without relying on tint.
+            let off = images[0], on = images[1]
+            for y in stride(from: 0, to: off.pixelsHigh, by: 4) {
+                for x in stride(from: off.pixelsWide - 160, to: off.pixelsWide, by: 4) {
+                    let before = try #require(off.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                    let after = try #require(on.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                    let beforeLight = (before.redComponent + before.greenComponent + before.blueComponent) / 3
+                    let afterLight = (after.redComponent + after.greenComponent + after.blueComponent) / 3
+                    let delta = afterLight - beforeLight
+                    if delta > 0.1 { brighter.count += 1; brighter.x += CGFloat(x) }
+                    if delta < -0.1 { darker.count += 1; darker.x += CGFloat(x) }
+                }
+            }
+            try #require(brighter.count > 20 && darker.count > 20, "on and off must draw different thumb positions")
+            let onX = brighter.x / CGFloat(brighter.count)
+            let offX = darker.x / CGFloat(darker.count)
+            #expect(onX > offX + 10, "the on thumb must be to the right of the off thumb")
+        }
+    }
+
     /// The detail pane's width at the window's older default size;
     /// `JRBAR_RENDER_PROOF_WIDTH=430` draws the narrowest the window allows.
     static let paneWidth: CGFloat = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_WIDTH"]
@@ -26,6 +78,24 @@ struct SettingsRenderProofTests {
     static var directory: URL {
         URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"]
             ?? "/tmp/jrbar-settings-proof", isDirectory: true)
+    }
+
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1"))
+    func lifecycleSwitches() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        defer { fixture.toys.shutdown() }
+        for dark in [false, true] {
+            let presence = SettingsPageContainer(store: fixture.settings, page: .alerts)
+            let presenceImage = try Self.snapshot(presence, size: CGSize(width: 560, height: 7000), dark: dark)
+            try Self.write(presenceImage, named: "lifecycle-presence-\(dark ? "dark" : "light")")
+            let device = SettingsStore.DeviceEntry(index: 0, id: "fixture", name: "Fixture device", kind: "pro")
+            let controls = Form {
+                DeviceLightSettings(store: fixture.settings, device: device)
+            }.formStyle(.grouped)
+            let deviceImage = try Self.snapshot(controls, size: CGSize(width: 560, height: 1600), dark: dark)
+            try Self.write(deviceImage, named: "lifecycle-device-\(dark ? "dark" : "light")")
+        }
     }
 
     /// The mock monitor's settings document, read through its own script

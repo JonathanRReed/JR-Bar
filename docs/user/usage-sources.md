@@ -165,8 +165,8 @@ three are true:
 - you have not turned it off
   (`jrbar providers configure opencode --option go_usage=off`).
 
-With it off, OpenCode's card keeps its token totals from the local database
-and says "Usage off". The key is not read.
+With usage off, OpenCode's card says "Usage off". JR-Bar schedules no
+collection job and reads neither the key nor the local quota database.
 
 A Zen key with no Go subscription gets a 403, which the card shows as
 "no quota source", not as an error.

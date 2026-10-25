@@ -155,6 +155,11 @@ final class SystemTogglesStore {
         /// restore can never undo it.
         @ObservationIgnored var pendingDockAutohide: Bool?
         @ObservationIgnored var listening = false
+        @ObservationIgnored var listenerOwners: Set<UUID> = []
+        @ObservationIgnored var appearanceObserver: NSObjectProtocol?
+        @ObservationIgnored var appearanceCenter: NotificationCenter = DistributedNotificationCenter.default()
+        @ObservationIgnored var startAudio: @MainActor () -> Void = { AudioListener.shared.start() }
+        @ObservationIgnored var stopAudio: @MainActor () -> Void = { AudioListener.shared.stop() }
 
         /// The Dock's live `autohide` pair (`CoreDock`, the one the Dock
         /// utility's preview hold uses) — nil on a build where it does
@@ -558,6 +563,8 @@ final class SystemTogglesStore {
     private var dockDriver: (any DockAutohideDriver)? { state.dockDriver }
     private func dockHoldActive() -> Bool { state.dockHoldActive() }
 
+    private let listenerOwner = UUID()
+
     init(state: State = .shared) {
         self.state = state
     }
@@ -656,7 +663,6 @@ final class SystemTogglesStore {
     /// the system listeners, so a chip follows F10 or Control Center
     /// while the card is open instead of going stale.
     func refresh() {
-        startListening()
         for toggle in SystemToggle.allCases where !toggle.isMomentary {
             refresh(toggle)
         }
@@ -729,26 +735,41 @@ final class SystemTogglesStore {
     /// appearance notification and a CoreAudio listener on the default
     /// output (re-armed when the default device changes) keep those
     /// chips true without a poll.
-    private func startListening() {
+    func startObserving() {
+        state.listenerOwners.insert(listenerOwner)
         guard !state.listening else { return }
         state.listening = true
         let state = self.state
-        DistributedNotificationCenter.default().addObserver(
+        state.appearanceObserver = state.appearanceCenter.addObserver(
             forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
             object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated {
+                    guard state.listening else { return }
                     state.isOn[.darkMode] = (UserDefaults.standard.persistentDomain(
                         forName: UserDefaults.globalDomain)?["AppleInterfaceStyle"] as? String) == "Dark"
                 }
             }
         AudioListener.shared.onChange = {
             Task { @MainActor in
+                guard state.listening else { return }
                 state.isOn[.mute] = AudioMute.isMuted(.output, defaults: state.defaults)
                 state.isOn[.micMute] = AudioMute.isMuted(.input, defaults: state.defaults)
             }
         }
-        AudioListener.shared.start()
+        state.startAudio()
     }
+
+    func stopObserving() {
+        state.listenerOwners.remove(listenerOwner)
+        guard state.listenerOwners.isEmpty, state.listening else { return }
+        state.listening = false
+        if let token = state.appearanceObserver { state.appearanceCenter.removeObserver(token) }
+        state.appearanceObserver = nil
+        AudioListener.shared.onChange = nil
+        state.stopAudio()
+    }
+
+    isolated deinit { stopObserving() }
 
     // MARK: - Applies
 
@@ -1102,7 +1123,7 @@ final class AudioListener: @unchecked Sendable {
     private let queue = DispatchQueue(label: "devin.jrbar.toggles.audio")
     private var started = false
     private lazy var listeners = HALPropertyListeners(queue: queue) { [weak self] key in
-        guard let self else { return }
+        guard let self, self.started else { return }
         if Self.systemSelectors.contains(key.selector) { self.rewatchDevices() }
         self.onChange?()
     }
@@ -1120,8 +1141,16 @@ final class AudioListener: @unchecked Sendable {
         }
     }
 
+    func stop() {
+        queue.async { [self] in
+            started = false
+            listeners.reconcile([])
+        }
+    }
+
     /// Runs on `queue`; unchanged defaults keep their existing listeners.
     private func rewatchDevices() {
+        guard started else { return }
         var desired = Set(Self.systemSelectors.map {
             HALPropertyListeners.Key(system: .audio, object: AudioObjectID(kAudioObjectSystemObject), selector: $0)
         })

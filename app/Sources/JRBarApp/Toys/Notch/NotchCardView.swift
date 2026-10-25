@@ -35,7 +35,16 @@ final class NotchCardModel {
             refreshPrivacy()
             guard runtimeEnabled else { return }
             if pinned {
-                utility.start()
+                syncSources()
+                sourceObservation.start(read: { [weak self] in
+                    guard let self else { return }
+                    _ = self.mediaEnabled()
+                    _ = self.utility.lyrics.enabled()
+                    _ = self.presenceEnabled()
+                    _ = self.calendarEnabled()
+                    _ = self.remindersEnabled()
+                    _ = self.mirrorEnabled()
+                }, changed: { [weak self] in self?.syncSources() })
                 tray.revalidate()
                 tray.notePasteboard()
                 mirror.sync(enabled: mirrorEnabled() && mirrorSummoned)
@@ -43,6 +52,7 @@ final class NotchCardModel {
                 reminders.sync(enabled: remindersEnabled())
                 wingHint = Self.wingHintDue()
             } else {
+                sourceObservation.stop()
                 utility.stop()
                 calendar.stop()
                 reminders.stop()
@@ -50,6 +60,20 @@ final class NotchCardModel {
             }
         }
     }
+    @ObservationIgnored private let sourceObservation = LifecycleObservation()
+    var mediaEnabled: () -> Bool = { true }
+    var presenceEnabled: () -> Bool = { true }
+
+    func syncSources() {
+        guard pinned, runtimeEnabled else { return }
+        refreshPrivacy()
+        utility.start(mediaEnabled: mediaEnabled())
+        utility.lyrics.note(media: utility.media)
+        calendar.sync(enabled: calendarEnabled())
+        reminders.sync(enabled: remindersEnabled())
+        mirror.sync(enabled: mirrorEnabled() && mirrorSummoned)
+    }
+
     /// The Mirror was asked for on this open — ⌥-click on the island, or
     /// the camera button in the pinned header. Only then does the lens
     /// open; the setting just makes it available.
@@ -244,6 +268,7 @@ final class NotchCardModel {
 
     func refreshPrivacy() {
         privacyEpoch += 1
+        guard presenceEnabled() else { setPrivacyLine(nil); return }
         if let readPrivacy {
             setPrivacyLine(pinned ? readPrivacy() : nil)
             return
@@ -284,7 +309,7 @@ final class NotchCardModel {
     }
 
     private func privacyRead(_ sensors: NotchSensorState, names: [String], epoch: Int) {
-        guard epoch == privacyEpoch, pinned else { return }
+        guard presenceEnabled(), epoch == privacyEpoch, pinned else { return }
         if sensors.microphoneInUse { lastMicrophoneNames = names }
         setPrivacyLine(sensors.privacyLine(microphoneApps: names))
     }

@@ -240,6 +240,7 @@ OPEN_SETTING_ROOTS: Final = frozenset(
 #: ``name`` and ``path`` identify a device and are not.
 OPEN_DEVICE_FIELDS: Final = frozenset(
     {
+        "enabled",
         "led_display",
         "brightness",
         "auto_brightness_enabled",

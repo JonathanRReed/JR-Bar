@@ -35,7 +35,9 @@ import SwiftUI
 final class NotchBuddyToy: Toy {
     let core: CoreModel
     /// The owning store; weak, the store keeps the toy.
-    weak var store: ToysStore?
+    weak var store: ToysStore? {
+        didSet { syncRuntime() }
+    }
     /// Something the panels need to re-lay out for changed: `isOn`,
     /// `tucked`, `freePosition`, `showCaption`.
     var onVisibilityChange: (@MainActor () -> Void)?
@@ -98,13 +100,46 @@ final class NotchBuddyToy: Toy {
     /// displays wake: a parked buddy on an unplugged monitor, or a docked
     /// one under an anchor that moved, would otherwise sit wherever it
     /// last was until something else toggled.
+    @ObservationIgnored private let lifecycleHandles = FeatureLifecycleHandles()
     @ObservationIgnored private var displayObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
+    @ObservationIgnored private let sessionObservation = LifecycleObservation()
+    @ObservationIgnored private let notificationCenter: NotificationCenter
+    @ObservationIgnored private let workspaceCenter: NotificationCenter
+    var sessionObservationRunning: Bool { sessionObservation.isRunning }
+    var notificationObserverCount: Int { displayObservers.count }
     private(set) var isShutdown = false
 
     init(core: CoreModel,
          notificationCenter: NotificationCenter = .default,
          workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter) {
         self.core = core
+        self.notificationCenter = notificationCenter
+        self.workspaceCenter = workspaceCenter
+    }
+
+    @ObservationIgnored private var runtimeWasEnabled = false
+
+    func syncRuntime() {
+        let enabled = !isShutdown && store?.state.notchBuddy.enabled == true
+        guard enabled != runtimeWasEnabled else { return }
+        runtimeWasEnabled = enabled
+        guard enabled else {
+            sessionObservation.stop()
+            for observer in displayObservers { observer.center.removeObserver(observer.token) }
+            displayObservers.removeAll()
+            livelyWork?.cancel()
+            livelyWork = nil
+            livelyUntil = nil
+            openInFlight?.cancel()
+            openInFlight = nil
+            dismissPanels()
+            renamePanel = nil
+            cardPanel = nil
+            cachedDigest = Self.digest(of: [])
+            digestStale.withLock { $0 = true }
+            return
+        }
+        guard displayObservers.isEmpty else { return }
         for (center, name) in [(notificationCenter, NSApplication.didChangeScreenParametersNotification),
                                (workspaceCenter, NSWorkspace.screensDidWakeNotification)] {
             let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -115,6 +150,7 @@ final class NotchBuddyToy: Toy {
             }
             displayObservers.append((center, token))
         }
+        for observer in displayObservers { lifecycleHandles.track(observer: observer.token) }
     }
 
     isolated deinit {
@@ -124,6 +160,8 @@ final class NotchBuddyToy: Toy {
     func shutdown() {
         guard !isShutdown else { return }
         isShutdown = true
+        runtimeWasEnabled = false
+        sessionObservation.stop()
         onVisibilityChange = nil
         dockPointProvider = nil
         cancelTuck()
@@ -145,6 +183,12 @@ final class NotchBuddyToy: Toy {
         store = nil
     }
 
+    var lifecycleResources: [String: Int] {
+        ["panels": (renamePanel == nil ? 0 : 1) + (cardPanel == nil ? 0 : 1),
+         "observers": lifecycleHandles.liveObservers, "sessions": sessionObservation.isRunning ? 1 : 0,
+         "tasks": (livelyWork == nil ? 0 : 1) + (openInFlight == nil ? 0 : 1)]
+    }
+
     let id = "notch-buddy"
     let name = "Notch Buddy"
     let blurb = "An animated notch character that reflects current agent activity."
@@ -163,9 +207,8 @@ final class NotchBuddyToy: Toy {
             if newValue {
                 store?.state.notchBuddy.tucked = false
                 if wasTucked { arrive(fromScale: from.scale, fromOpacity: from.opacity) }
-            } else {
-                dismissPanels()
             }
+            syncRuntime()
             onVisibilityChange?()
         }
     }
@@ -850,6 +893,7 @@ final class NotchBuddyToy: Toy {
     /// right after a document (the tests do exactly that) can never see
     /// the old list. A lock because `onChange` is `@Sendable`.
     @ObservationIgnored private var cachedDigest = SessionDigest()
+    @ObservationIgnored private var digestRevision: UInt64?
     @ObservationIgnored private let digestStale = OSAllocatedUnfairLock(initialState: true)
     /// Bumped after every document the digest has followed, outside any
     /// render — the observable edge a view that only read the cache
@@ -861,8 +905,8 @@ final class NotchBuddyToy: Toy {
     /// document landed. The pass re-arms the one-shot observation.
     func sessionDigest() -> SessionDigest {
         _ = digestVersion
-        guard !isShutdown else { return cachedDigest }
-        if digestStale.withLock({ $0 }) { refreshDigest() }
+        guard !isShutdown, store?.state.notchBuddy.enabled == true else { return Self.digest(of: []) }
+        if digestRevision != core.sessionRevision || digestStale.withLock({ $0 }) { refreshDigest() }
         return cachedDigest
     }
 
@@ -879,19 +923,19 @@ final class NotchBuddyToy: Toy {
     }
 
     private func refreshDigest() {
-        guard !isShutdown else { return }
+        guard !isShutdown, store?.state.notchBuddy.enabled == true else { return }
         digestStale.withLock { $0 = false }
-        let stale = digestStale
-        cachedDigest = withObservationTracking {
-            let sessions = core.sessions
-            tempo.note(sessions: sessions, now: Date())
-            return Self.digest(of: sessions)
-        } onChange: { [weak self] in
-            stale.withLock { $0 = true }
-            // The re-read waits for the hop: onChange runs in the
-            // property's willSet, before the new document is stored.
-            Task { @MainActor [weak self] in self?.followDocument() }
-        }
+        digestRevision = core.sessionRevision
+        let sessions = core.sessions
+        tempo.note(sessions: sessions, now: Date())
+        cachedDigest = Self.digest(of: sessions)
+        sessionObservation.start(read: { [weak self] in
+            _ = self?.core.sessions
+        }, changed: { [weak self] in
+            guard let self, self.store?.state.notchBuddy.enabled == true else { return }
+            self.digestStale.withLock { $0 = true }
+            self.followDocument()
+        })
     }
 
     /// A new document landed: re-read it and tell the views. A render
@@ -902,7 +946,7 @@ final class NotchBuddyToy: Toy {
     /// in a frame or two. A completion's hop already holds it; an ask
     /// closing, a failure clearing or a run going idle did not.
     private func followDocument() {
-        guard !isShutdown else { return }
+        guard !isShutdown, store?.state.notchBuddy.enabled == true else { return }
         let awake = sessionDigest().isAwake
         if followedAwake, !awake { stayLively() }
         followedAwake = awake

@@ -113,7 +113,7 @@ final class NotchHUD {
     /// is one, and a coordinator built in a test took the suite down.
     func startSystemWatchers() {
         syncMediaTap()
-        announcements.start()
+        announcements.sync()
         // The tick's player loads now, off the main thread, so the first
         // announcement's click costs the island nothing.
         NotchSounds.prepare()
@@ -129,7 +129,7 @@ final class NotchHUD {
         if mediaHUDAllowed() { mediaKeys.start() } else { mediaKeys.stop() }
         // Bluetooth's registration is a permission ask: it waits for the
         // announcements to be on, and is made when they first are.
-        announcements.syncBluetooth()
+        announcements.sync()
     }
 
     private func tick() {

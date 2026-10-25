@@ -50,7 +50,7 @@ final class FoldToy: Toy {
     @ObservationIgnored private(set) var isShutdown = false
 
     /// The hinge. Polls only while the toy is on and JR-Bar is rendering.
-    let sensor = LidAngleSensor()
+    let sensor: LidAngleSensor
 
     /// The Simulate slider owns the angle while it is held, so the toy
     /// works on a Mac with no lid sensor at all. Not observed: it moves
@@ -154,6 +154,7 @@ final class FoldToy: Toy {
     @ObservationIgnored private var cooldownWork: DispatchWorkItem?
     /// What the renderer is currently showing — diagnostics only.
     @ObservationIgnored private var displayedDelta = 0.0
+    @ObservationIgnored private let lifecycleHandles = FeatureLifecycleHandles()
     @ObservationIgnored private var overlay: FoldOverlayWindow?
 
     /// True while the fold plane is on screen — overlay guests like the
@@ -220,13 +221,23 @@ final class FoldToy: Toy {
 
     init(core: CoreModel, store: ToysStore,
          makeTickLink: @escaping FoldTickDriver.Factory = FoldTickDriver.displayLink,
-         hotkeyCenter: HotkeyCenter = .shared) {
+         hotkeyCenter: HotkeyCenter = .shared,
+         sensor: LidAngleSensor? = nil) {
         self.core = core
+        self.sensor = sensor ?? LidAngleSensor()
         self.hotkeyCenter = hotkeyCenter
         self.store = store
         ticker = FoldTickDriver(makeLink: makeTickLink)
         motion.tolerance = store.state.fold.jitterTolerance
 
+        self.sensor.onSample = { [weak self] angle in self?.noteSensorSample(angle) }
+        ticker.onTick = { [weak self] time in self?.tickFrame(now: time) }
+        observe()
+        reconcile()
+    }
+
+    private func installObservers() {
+        guard observers.isEmpty, distributedObservers.isEmpty else { return }
         let workspace = NSWorkspace.shared.notificationCenter
         observers.append(workspace.addObserver(
             forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main
@@ -329,10 +340,13 @@ final class FoldToy: Toy {
             }
         })
 
-        sensor.onSample = { [weak self] angle in self?.noteSensorSample(angle) }
-        ticker.onTick = { [weak self] time in self?.tickFrame(now: time) }
-        observe()
-        publishCard()
+    }
+
+    var lifecycleResources: [String: Int] {
+        ["windows": lifecycleHandles.liveWindows, "observers": notificationObserverCount,
+         "display links": ticker.isRunning ? 1 : 0, "sensor": sensor.isPolling ? 1 : 0,
+         "capture": capture == nil ? 0 : 1, "demo timer": lifecycleHandles.liveTimers,
+         "tasks": [cardFlush, blackoutWork, cooldownWork, resumeWork, dwellWork].compactMap { $0 }.count]
     }
 
     var notificationObserverCount: Int { observers.count + distributedObservers.count }
@@ -563,6 +577,7 @@ final class FoldToy: Toy {
             publishCard()
         }
         guard settings.enabled, settings.provider == .jrbar else {
+            removeObservers()
             cancelTryIt()
             endBlackout(hide: true)
             entryFade.reset()
@@ -582,8 +597,12 @@ final class FoldToy: Toy {
             displayedDelta = 0
             standDown()
             sensor.setPolling(false)
+            overlay?.releaseFrames()
+            overlay?.close()
+            overlay = nil
             return
         }
+        installObservers()
         if dismissal.suppressed {
             standDown()
             sensor.setPolling(true)
@@ -1250,6 +1269,7 @@ final class FoldToy: Toy {
             let overlay = try FoldOverlayWindow(screen: screen)
             overlay.renderer.look = settings.look
             overlay.renderer.setCards(lastCards)
+            lifecycleHandles.track(window: overlay)
             self.overlay = overlay
             reframedVersion = -1
             return overlay
@@ -1560,7 +1580,9 @@ final class FoldToy: Toy {
     /// inside the tenth it only makes sure one flush is waiting.
     private func publishCard(now: TimeInterval = CACurrentMediaTime()) {
         guard !isShutdown else { return }
-        let due = cardFeed.due(at: now)
+        let active = settings.enabled || tryingIt || simulating
+        if !active { cardFlush?.cancel(); cardFlush = nil }
+        let due = active ? cardFeed.due(at: now) : now
         guard due <= now else {
             scheduleCardFlush(after: due - now)
             return
@@ -1701,6 +1723,7 @@ final class FoldToy: Toy {
                                   reference: reference, generation: generation)
             }
         }
+        lifecycleHandles.track(timer: timer)
         RunLoop.main.add(timer, forMode: .common)
         tryTimer = timer
     }

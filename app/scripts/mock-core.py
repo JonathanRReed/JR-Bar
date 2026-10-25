@@ -1113,7 +1113,7 @@ def default_settings_document() -> dict:
     def device(device_id: str, name: str, path: str) -> dict:
         return {
             "id": device_id, "name": name, "path": path, "led_display": "agent", "brightness": 255,
-            "auto_brightness_enabled": False, "red_gain": 1.0, "green_gain": 1.0, "blue_gain": 1.0,
+            "enabled": True, "auto_brightness_enabled": False, "red_gain": 1.0, "green_gain": 1.0, "blue_gain": 1.0,
             "resting_glow": 0.0, "blend_mode": None, "provider_pin": None, "signal_policy": None,
             "led_direction": "forward", "dot_travel_style": "wipe",
         }
@@ -1202,6 +1202,7 @@ def default_settings_document() -> dict:
         "focus_profile_rules": {},
         "focus_signal_policy": {},
         "focus_sync_enabled": False,
+        "presence_enabled": True,
         "global_action_shortcuts": {},
         "global_brightness_scale": 1.0,
         "idle_auto_off_after_minutes": 60.0,

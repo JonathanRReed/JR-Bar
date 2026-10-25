@@ -9,8 +9,9 @@ import SwiftUI
 /// schooling around it. An ask rises to bob with a bubble, a failed
 /// run sinks grey & settles on the sand, a completion drifts off the
 /// edge — school and all. Reads `core.state.sessions` (mains AND
-/// workers); the timeline pauses while the window is covered. Off by
-/// default.
+/// workers); the timeline pauses while the window is covered. Closing
+/// the window keeps the game counting and the ambient displays running.
+/// Switching Aquarium off stops its observations and economy. Off by default.
 @MainActor
 @Observable
 final class AquariumToy: Toy {
@@ -77,8 +78,15 @@ final class AquariumToy: Toy {
     /// after it clears. The newest wins, like the live card.
     @ObservationIgnored private var heldNotice: (title: String, reward: String?, symbol: String)?
 
+    @ObservationIgnored private let lifecycleHandles = FeatureLifecycleHandles()
     @ObservationIgnored private var windowController: AquariumWindowController?
     @ObservationIgnored private var gameTimer: Timer?
+    @ObservationIgnored private let sessionObservation = LifecycleObservation()
+    @ObservationIgnored private var connectionObservation: UUID?
+    var sessionObservationRunning: Bool { sessionObservation.isRunning }
+    var connectionObservationRunning: Bool { connectionObservation != nil }
+    var ownsWindow: Bool { windowController != nil }
+    var ambientRunning: Bool { ambient != nil }
     @ObservationIgnored private var workClock = AquariumWorkClock()
     /// The tank outside its window: the live wallpaper and the idle
     /// screensaver, both opt-in from the card.
@@ -86,6 +94,16 @@ final class AquariumToy: Toy {
     /// The two ambient settings the controller last synced to — the
     /// observation fires on any toys-state write, most of them not ours.
     @ObservationIgnored private var ambientSynced: (idle: Int, display: String?)?
+
+    var lifecycleResources: [String: Int] {
+        ["windows": lifecycleHandles.liveWindows,
+         "timers": lifecycleHandles.liveTimers,
+         "window observers": lifecycleHandles.liveObservers,
+         "observations": (sessionObservation.isRunning ? 1 : 0) + (connectionObservation != nil ? 1 : 0),
+         "termination observer": terminateObserver == nil ? 0 : 1,
+         "ambient owner": ambient == nil ? 0 : 1,
+         "recap task": recapTask == nil ? 0 : 1]
+    }
 
     /// A save of its own in the temporary directory — the default for
     /// every tank the app didn't explicitly point at the real one.
@@ -110,23 +128,14 @@ final class AquariumToy: Toy {
         // still believed the window open, earnings would never count
         // as "away". Reopening reports the summary either way.
         game.apply(.setWindowOpen(false), now: Date())
-        refreshFish()
-        observeSessions()
-        observeWorkConnection()
-        // The economy's tick runs only while the toy is on — the
-        // window being closed is exactly when the away counters fill.
-        // Twenty seconds of live time per tick; nothing accrues while
-        // the app is not running (no wall-clock catch-up anywhere).
-        // Off is not deaf, though: `observeSessions` and `noteEvent`
-        // stay armed, so a completion or quota reset landing while the
-        // tank is closed still applies to the game and persists — the
-        // away summary depends on it.
-        syncGameTimer()
-        // Left on at quit: the tank comes back at launch, without
-        // stealing focus for it.
+        syncRuntime()
         if isOn { present(activate: false) }
-        observeAmbientSettings()
-        observeRosterSettings()
+        syncAmbientSettings()
+        syncRosterSettings()
+    }
+
+    private func installTerminationObserver() {
+        guard terminateObserver == nil else { return }
         // The last tick may still be waiting for its five-minute batch.
         // Save it before the app ends, then wait for the writer.
         terminateObserver = NotificationCenter.default.addObserver(
@@ -143,17 +152,11 @@ final class AquariumToy: Toy {
     /// The card's roster rows — Fish at once, Raised fish stay and the
     /// inspector's species picks — reshape the tank at once instead of
     /// waiting for the next session change.
-    private func observeRosterSettings() {
+    private func syncRosterSettings() {
         guard !isShutdown else { return }
         let settings = store?.state.aquarium ?? AquariumSettings()
-        withObservationTracking {
-            _ = store?.state.aquarium.maxFish
-            _ = store?.state.aquarium.keepResidents
-            _ = store?.state.aquarium.speciesOverrides
-            _ = store?.state.aquarium.visitors
-        } onChange: { [weak self] in
-            _ = Task { @MainActor [weak self] in self?.observeRosterSettings() }
-        }
+
+        guard isOn else { return }
         if game.visitorsWelcome != settings.visitors { game.visitorsWelcome = settings.visitors }
         let wanted = RosterSettings(maxFish: settings.maxFish,
                                     keepResidents: settings.keepResidents,
@@ -175,14 +178,15 @@ final class AquariumToy: Toy {
 
     /// The wallpaper and the screensaver follow their two settings; the
     /// controller only exists once either is on.
-    private func observeAmbientSettings() {
+    private func syncAmbientSettings() {
         guard !isShutdown else { return }
         let settings = store?.state.aquarium ?? AquariumSettings()
-        withObservationTracking {
-            _ = store?.state.aquarium.idleFillMinutes
-            _ = store?.state.aquarium.ambientDisplay
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in self?.observeAmbientSettings() }
+
+        guard isOn else {
+            ambient?.tearDown()
+            ambient = nil
+            ambientSynced = nil
+            return
         }
         let wanted = (idle: settings.idleFillMinutes, display: settings.ambientDisplay)
         if let synced = ambientSynced, synced.idle == wanted.idle, synced.display == wanted.display {
@@ -207,12 +211,42 @@ final class AquariumToy: Toy {
     /// tick in line with the imported `enabled`, as the switch would have.
     func stateReplaced() {
         guard !isShutdown else { return }
+        let wasOn = economyRunning
+        syncRuntime()
+        syncAmbientSettings()
+        syncRosterSettings()
+        if isOn {
+            if !wasOn { present(activate: false) }
+        } else {
+            closeWindow()
+        }
+    }
+
+    private func syncRuntime() {
         syncGameTimer()
         if isOn {
-            if windowController == nil { present(activate: false) }
+            installTerminationObserver()
+            if !sessionObservation.isRunning { refreshFish() }
+            observeSessions()
+            observeWorkConnection()
         } else {
-            windowController?.close()
+            if let terminateObserver { NotificationCenter.default.removeObserver(terminateObserver) }
+            terminateObserver = nil
+            sessionObservation.stop()
+            stopConnectionObservation()
+            recapTask?.cancel()
+            recapTask = nil
+            ambient?.tearDown()
+            ambient = nil
+            ambientSynced = nil
+            saveWriter.flush()
         }
+    }
+
+    func closeWindow() {
+        let controller = windowController
+        windowController = nil
+        controller?.close()
     }
 
     func syncGameTimer() {
@@ -224,6 +258,7 @@ final class AquariumToy: Toy {
             let timer = Timer(timeInterval: AquariumRules.tickInterval, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.gameTick() }
             }
+            lifecycleHandles.track(timer: timer)
             RunLoop.main.add(timer, forMode: .common)
             gameTimer = timer
         } else {
@@ -234,13 +269,16 @@ final class AquariumToy: Toy {
     }
 
     isolated deinit {
+        stopConnectionObservation()
         gameTimer?.invalidate()
         if let terminateObserver { NotificationCenter.default.removeObserver(terminateObserver) }
     }
 
-    /// Terminal owner teardown. A normal toggle-off keeps observing for a later open.
+    /// Terminal owner teardown. A later on switch cannot restart this owner.
     func shutdown() {
         guard !isShutdown else { return }
+        sessionObservation.stop()
+        stopConnectionObservation()
         isShutdown = true
         gameTimer?.invalidate()
         gameTimer = nil
@@ -261,7 +299,7 @@ final class AquariumToy: Toy {
 
     let id = "aquarium"
     let name = "Aquarium"
-    let switchLabel = "Tank window"
+    let switchLabel = "Aquarium"
     let blurb = "An aquarium that represents agent sessions as fish."
     let symbol = "fish.fill"
 
@@ -270,11 +308,12 @@ final class AquariumToy: Toy {
         set {
             guard !isShutdown else { return }
             store?.state.aquarium.enabled = newValue
-            syncGameTimer()
+            syncRuntime()
             if newValue {
+                syncAmbientSettings()
                 present(activate: true)
             } else {
-                windowController?.close()
+                closeWindow()
             }
         }
     }
@@ -295,19 +334,7 @@ final class AquariumToy: Toy {
         return parts.joined(separator: " · ")
     }
 
-    /// Off still watches: `observeSessions` and `noteEvent` keep the
-    /// game's accrual alive while the tank is closed (the away summary
-    /// needs it), so the chip never claims a fully-off state — it says so
-    /// in a quiet neutral note, not a warning. The card's switch is the
-    /// tank window; the live wallpaper and the screensaver have their
-    /// own, and the chip says when one of them still draws.
-    var status: ToyStatus {
-        guard !isOn else { return .on }
-        let settings = store?.state.aquarium ?? AquariumSettings()
-        return Self.closedStatus(wallpaper: settings.ambientDisplay,
-                                 connected: NSScreen.screens.map(\.localizedName),
-                                 saverMinutes: settings.idleFillMinutes)
-    }
+    var status: ToyStatus { isOn ? .on : .off }
 
     /// The chip with the tank window closed: a wallpaper on a connected
     /// display is drawing right now, so it comes first; an armed
@@ -389,7 +416,7 @@ final class AquariumToy: Toy {
     /// "Fill screen" opens the tank first when the toy is off — the
     /// button is a reason to look, not a trapdoor.
     func fillScreen() {
-        if !isOn { isOn = true }
+        if isOn { present(activate: true) } else { isOn = true }
         windowController?.fillScreen()
     }
 
@@ -397,19 +424,19 @@ final class AquariumToy: Toy {
         let controller = windowController ?? AquariumWindowController(toy: self)
         windowController = controller
         controller.show(activate: activate)
+        if let window = controller.lifecycleWindow { lifecycleHandles.track(window: window) }
+        for observer in controller.lifecycleObservers { lifecycleHandles.track(observer: observer) }
         let now = Date()
         note(game.apply(.setWindowOpen(true), now: now), now: now)
         persist()
     }
 
-    /// The window's close button routes back through the store, so the
-    /// card's toggle and the tank can never disagree. Goes through the
-    /// `isOn` setter — writing `enabled` raw would leave the game timer
-    /// running the economy on a tank the card reads as off.
+    /// Closing the window leaves Aquarium on. Completions, quota resets
+    /// and the away summary keep accruing; ambient displays keep their
+    /// own switches. The Aquarium switch stops all of them.
     func windowDidClose() {
         windowController = nil
         windowOccluded = false
-        isOn = false
         let now = Date()
         note(game.apply(.setWindowOpen(false), now: now), now: now)
         persist()
@@ -591,7 +618,7 @@ final class AquariumToy: Toy {
     func openShop() {
         store?.wantsAquariumShop = true
         if isOn {
-            windowController?.show(activate: true)
+            present(activate: true)
         } else {
             isOn = true
         }
@@ -674,7 +701,7 @@ final class AquariumToy: Toy {
     /// A core event the coordinator forwards — today only `quota_reset`
     /// matters: the submarine comes to look at a fresh lane.
     func noteEvent(_ event: CoreEvent) {
-        guard !isShutdown, event.kind == "quota_reset" else { return }
+        guard isOn, event.kind == "quota_reset" else { return }
         let now = Date()
         lastResetAt = now
         note(game.apply(.quotaReset, now: now), now: now)
@@ -810,7 +837,7 @@ final class AquariumToy: Toy {
     // MARK: Fish
 
     private func refreshFish() {
-        guard !isShutdown else { return }
+        guard isOn else { return }
         // The tank takes every listed session: `core.sessions` is mains
         // only, and a sub-agent is somebody's fry. Species come from the
         // settings' per-provider casting, falling back to the table.
@@ -925,37 +952,23 @@ final class AquariumToy: Toy {
     /// reconnect can replace a disconnected snapshot. Re-arming is coalesced;
     /// no timer or timestamp-polling freshness heuristic is added.
     private func observeWorkConnection() {
-        guard !isShutdown else { return }
-        withObservationTracking {
-            _ = core.isLive
-        } onChange: { [weak self] in
-            // CoreModel publishes isLive on the main actor; onChange is a
-            // synchronous will-change callback. Do not read its old value.
-            MainActor.assumeIsolated {
-                if let self, !self.isShutdown { self.workClock.reset() }
-            }
-            Task { @MainActor [weak self] in
-                guard let self, !self.isShutdown else { return }
-                self.workClock.reset(connected: self.isOn && self.core.isLive,
-                                     at: ProcessInfo.processInfo.systemUptime)
-                self.refreshFish()
-                self.observeWorkConnection()
-            }
+        guard isOn, connectionObservation == nil else { return }
+        connectionObservation = core.observeLiveness { [weak self] connected in
+            guard let self, self.isOn else { return }
+            self.workClock.reset(connected: connected, at: ProcessInfo.processInfo.systemUptime)
         }
     }
 
-    /// Watches the session list like `NotchBuddyToy`: one observation
-    /// per change, coalesced into a main-queue turn.
+    private func stopConnectionObservation() {
+        if let connectionObservation { core.removeLivenessObserver(connectionObservation) }
+        connectionObservation = nil
+    }
+
     private func observeSessions() {
-        guard !isShutdown else { return }
-        withObservationTracking {
-            Self.observedFacts(core)
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.refreshFish()
-                self.observeSessions()
-            }
-        }
+        guard isOn else { return }
+        sessionObservation.start(read: { [weak self] in
+            guard let self else { return }
+            Self.observedFacts(self.core)
+        }, changed: { [weak self] in self?.refreshFish() })
     }
 }

@@ -894,6 +894,9 @@ struct DeviceLightSettings: View {
     }
 
     var body: some View {
+        if device.kind != "screen_bar" {
+            SettingToggle(store, "Use this device", path: "\(device.prefix).enabled", default: true)
+        }
         SettingPicker(store, "Display", path: "\(device.prefix).led_display", options: DevicesPage.displayModes, default: "agent")
             .disabled(linkedDot)
         SettingSlider(store, "Brightness", subtitle: brightnessSubtitle,

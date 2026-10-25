@@ -3013,3 +3013,21 @@ writes and output. It is a work count, never context occupancy or quota
 percentage. Context occupancy remains `context_tokens` and `context_window` in
 `session_usage`. Quota percentages remain provider window readings. `cost_usd` remains the compatible
 alias for approximate API-equivalent dollars, never subscription spend.
+
+### Optional feature lifecycle
+
+`settings.document.presence_enabled` is a boolean, default true. Off stops
+the app's microphone and camera presence reporting and its renewal work.
+Privacy dots use the same gate. The presence reporter polls Focus only
+while connected with `focus_sync_enabled` on. Notch announcements keep
+their own watcher gate. Neither switch grants system permission.
+
+Each physical `settings.document.devices` row has `enabled`, a boolean
+defaulting to true for existing devices. Settings shows it as "Use this
+device". Off stops inventory reads and LED writes for that device. The
+Screen Bar keeps its existing `virtual_status_device_enabled` gate.
+
+A provider with Track off or usage consent off schedules no collection
+job and reads no local quota or credential source. Turning it on starts a
+fresh collection. Disabled ambient cues do not run their observers or
+planners. Turning phone alerts off cancels queued and active deliveries.

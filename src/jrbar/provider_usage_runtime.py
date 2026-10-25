@@ -19,6 +19,7 @@ from .adaptive_refresh import (
 )
 from .provider_feature_settings import (
     ProviderCollectionFeature,
+    ProviderCollectionSettings,
     ProviderPresentationSettings,
     project_collection_settings,
 )
@@ -1082,6 +1083,14 @@ class ProviderUsageService:
             self._explicit_settings_revision = self._settings_revision
             self._cancel_due_locked()
 
+    def _has_collection_demand(self, settings: ProviderCollectionSettings) -> bool:
+        for preference in settings.providers:
+            collector = self._collectors.get(preference.provider_id)
+            if (preference.enabled and collector is not None
+                    and (preference.usage_consented or not getattr(collector, "requires_usage_consent", False))):
+                return True
+        return False
+
     def _settings(self) -> ProviderUsageSettings:
         settings, _revision = self._settings_with_revision()
         return settings
@@ -1204,6 +1213,15 @@ class ProviderUsageService:
                 getattr(collector, "requires_usage_consent", False)
                 and not preference.usage_consented
             )
+            if usage_off:
+                from .provider_usage_consent import usage_off_snapshot
+
+                books.failure_gates.pop(identity, None)
+                slots[slot] = usage_off_snapshot(
+                    provider_id, observed_at=observed_at,
+                    source_instance_id=preference.source_instance_id,
+                )
+                continue
             # CLI sign-in files belong to the default profile. Named
             # profiles use stored credentials and retry on their own
             # explicit reconnect, not another account's CLI rotation.
@@ -1364,7 +1382,8 @@ class ProviderUsageService:
             state = ProviderUsageState(
                 snapshots=ordered,
                 refreshed_at=observed_at,
-                next_refresh_at=observed_at + cadence_plan.interval_seconds,
+                next_refresh_at=(observed_at + cadence_plan.interval_seconds
+                                 if self._has_collection_demand(collection_settings) else None),
                 refreshing=False,
             )
         # State publication and its durable save are one revision-fenced
@@ -1472,6 +1491,18 @@ class ProviderUsageService:
         the round.
         """
         preference = job.preference
+        current_settings = self._settings_snapshot
+        if current_settings is not None:
+            current = current_settings.preference(preference.provider_id, preference.source_instance_id)
+            if not current.enabled:
+                return _empty_snapshot(preference.provider_id, observed_at=observed_at,
+                                       state=ProviderSourceState.DISABLED,
+                                       source_instance_id=preference.source_instance_id)
+            if getattr(job.collector, "requires_usage_consent", False) and not current.usage_consented:
+                from .provider_usage_consent import usage_off_snapshot
+
+                return usage_off_snapshot(preference.provider_id, observed_at=observed_at,
+                                          source_instance_id=preference.source_instance_id)
         try:
             if job.repair_grok:
                 # The user just ran `grok login`: clear any wedged
@@ -1955,6 +1986,13 @@ class ProviderUsageService:
                 return self._state
             self._scheduled_callback = callback
             now = float(self._clock())
+            if (not force and not self._state.refreshing
+                    and self._state.refreshed_at is not None
+                    and self._state.next_refresh_at is None
+                    and self._settings_snapshot is not None
+                    and not self._has_collection_demand(project_collection_settings(self._settings_snapshot))):
+                self._cancel_due_locked()
+                return self._state
             if (
                 not force
                 and self._state.next_refresh_at is not None

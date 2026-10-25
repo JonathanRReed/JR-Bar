@@ -30,6 +30,16 @@ import Observation
 @MainActor
 final class PresenceReporter {
     private let isConnected: @MainActor () -> Bool
+    private let enabled: @MainActor () -> Bool
+    private let focusEnabled: @MainActor () -> Bool
+    private var wasEnabled = false
+    private var wasFocusEnabled = false
+    private var initialized = false
+    private let mirrorObservation = LifecycleObservation()
+    private var cards: (@MainActor () -> [NotchCardModel])?
+    var renewalRunning: Bool { check != nil }
+    var focusPolling: Bool { focusPoll != nil }
+    var watchingActivation: Bool { activationObserver != nil }
     /// The daemon's `state.presence`, nil while it is away.
     private let presence: @MainActor () -> CorePresence?
     /// One report; true when the daemon took it.
@@ -91,8 +101,14 @@ final class PresenceReporter {
          ownCameraLive: @escaping @MainActor () -> Bool = { false },
          ownCameraGrace: TimeInterval = PresenceReporter.mirrorWindDown,
          readFocus: @escaping @MainActor () -> Bool? = { nil },
-         focusCheckInterval: TimeInterval? = nil) {
+         focusCheckInterval: TimeInterval? = nil,
+         enabled: @escaping @MainActor () -> Bool = { true },
+         focusEnabled: @escaping @MainActor () -> Bool = { true }) {
         self.isConnected = isConnected
+        self.enabled = enabled
+        self.focusEnabled = focusEnabled
+        self.wasEnabled = enabled()
+        self.wasFocusEnabled = focusEnabled()
         self.presence = presence
         self.send = send
         self.clock = clock
@@ -130,19 +146,16 @@ final class PresenceReporter {
                   },
                   ownCameraLive: { cards().contains(where: Self.mirrorHasCamera) },
                   readFocus: { Self.systemFocus() },
-                  focusCheckInterval: Self.focusCheckEvery)
+                  focusCheckInterval: Self.focusCheckEvery,
+                  enabled: { [weak core] in core?.settings?.document["presence_enabled"]?.boolValue ?? true },
+                  focusEnabled: { [weak core] in core?.settings?.document["focus_sync_enabled"]?.boolValue ?? false })
+        self.cards = cards
         observe(core)
-        observeMirrors(cards)
-        // A Focus often follows an app coming forward (a Focus filter, a
-        // schedule the person just noticed): read it then too.
-        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.focusMayHaveChanged() }
-        }
+        coreChanged()
     }
 
     isolated deinit {
+        sendTask?.cancel()
         check?.cancel()
         ownCameraSettling?.cancel()
         focusPoll?.cancel()
@@ -151,6 +164,7 @@ final class PresenceReporter {
 
     /// The Focus is read again; a change is an edge the daemon hears now.
     func focusMayHaveChanged() {
+        guard isConnected(), focusEnabled() else { return }
         let now = readFocus()
         guard now != focus else { return }
         focus = now
@@ -182,10 +196,11 @@ final class PresenceReporter {
 
     /// Whether the sensor monitor must run for the report: while the
     /// daemon is there to hear it.
-    var wantsSensors: Bool { isConnected() }
+    var wantsSensors: Bool { isConnected() && enabled() }
 
     /// A sensor edge from the notch's monitor.
     func noteSensors(_ state: NotchSensorState) {
+        guard enabled() else { return }
         guard state != reading else { return }
         reading = state
         // The closed Mirror's lens is seen to go dark: the beat is over.
@@ -213,15 +228,47 @@ final class PresenceReporter {
     /// The connection or the daemon's presence moved.
     func coreChanged() {
         let connected = isConnected()
-        if connected != wasConnected {
+        let sensors = enabled()
+        let focusAllowed = focusEnabled()
+        let focused = connected && focusAllowed
+        let gatesChanged = sensors != wasEnabled || focusAllowed != wasFocusEnabled
+        if !initialized || connected != wasConnected || gatesChanged {
+            initialized = true
             wasConnected = connected
-            if !connected {
-                reporting.reset()
+            wasEnabled = sensors
+            wasFocusEnabled = focusAllowed
+            if !connected || gatesChanged {
                 generation += 1
+                sendTask?.cancel()
+                sendTask = nil
+                sending = false
+                reporting.reset()
+                schedule(at: nil)
             }
-            // A connection's first report carries the Focus as it is now.
-            if connected { focus = readFocus() }
-            syncFocusPoll(connected: connected)
+            if !sensors {
+                reading = NotchSensorState()
+                ownCamera = false
+                ownCameraSettling?.cancel()
+                ownCameraSettling = nil
+                mirrorObservation.stop()
+            } else if let cards {
+                mirrorObservation.start(read: {
+                    for card in cards() { _ = Self.mirrorHasCamera(card) }
+                }, changed: { [weak self] in self?.ownCameraChanged() })
+            }
+            focus = focused ? readFocus() : nil
+            syncFocusPoll(connected: focused)
+            if let activationObserver {
+                NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
+                self.activationObserver = nil
+            }
+            if focused, focusCheckInterval != nil {
+                activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                    forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.focusMayHaveChanged() }
+                }
+            }
             onDemandChanged?()
         }
         refresh()
@@ -233,6 +280,7 @@ final class PresenceReporter {
         _ = core.connection
         _ = core.isLive
         _ = core.presence
+        _ = core.settings
     }
 
     private func observe(_ core: CoreModel) {
@@ -247,23 +295,12 @@ final class PresenceReporter {
         }
     }
 
-    private func observeMirrors(_ cards: @escaping @MainActor () -> [NotchCardModel]) {
-        withObservationTracking {
-            for card in cards() { _ = Self.mirrorHasCamera(card) }
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.ownCameraChanged()
-                self.observeMirrors(cards)
-            }
-        }
-    }
-
     /// Whether the Mirror has the camera moved: opening, the camera is
     /// ours at once; closing, it stays ours for the beat its session takes
     /// to wind down, then the reading is looked at again — whatever still
     /// holds the lens is another app's.
     private func noteOwnCamera() {
+        guard enabled() else { return }
         let live = ownCameraLive()
         guard live != ownCamera else { return }
         ownCamera = live
@@ -282,7 +319,7 @@ final class PresenceReporter {
 
     private func refresh() {
         noteOwnCamera()
-        let call = PresenceReporting.onCall(reading: callReading, presence: presence())
+        let call = enabled() && PresenceReporting.onCall(reading: callReading, presence: presence())
         if call != onCall {
             onCall = call
             onCallChanged?(call)
@@ -293,7 +330,7 @@ final class PresenceReporter {
     /// Send what is owed, or sleep until something will be.
     private func pump() {
         guard !sending else { return }
-        let connected = isConnected()
+        let connected = isConnected() && (enabled() || focusEnabled())
         guard let report = reporting.due(reading: callReading, focus: focus, connected: connected,
                                          now: clock()) else {
             schedule(at: reporting.nextCheck(connected: connected))
@@ -305,6 +342,8 @@ final class PresenceReporter {
         sendTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let taken = await self.send(report)
+            guard !Task.isCancelled, sentFor == self.generation else { return }
+            self.sendTask = nil
             self.sending = false
             if sentFor == self.generation {
                 if taken { self.reporting.sent(report, at: self.clock()) }
