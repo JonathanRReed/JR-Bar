@@ -21,6 +21,7 @@ from jrbar.lineage_adapters import (
     factory_parent_links,
     read_devin_links,
     t3_parent_links,
+    t3_registry_providers,
 )
 from jrbar.models import AgentMode, AgentStatus, ParentLink
 
@@ -44,7 +45,8 @@ def snapshot(rows):
 
 def seven_members():
     t3 = fixture("t3")
-    keys, links = t3_parent_links(t3["threads"], t3["bindings"], observed_at=NOW)
+    keys, links = t3_parent_links(t3["threads"], t3["bindings"], observed_at=NOW,
+                                 registry_providers=t3_registry_providers(fixture("t3-providers")))
     links += claude_parent_links(fixture("claude"), observed_at=NOW)
     links += codex_parent_links(fixture("codex"), observed_at=NOW)
     links += factory_parent_links(fixture("factory"), observed_at=NOW)
@@ -282,3 +284,32 @@ def test_devin_title_aliases_never_cross_sessions():
     assert ids[0] != ids[1]
     result = resolve_agent_groups(rows, now=NOW)
     assert len(result.groups) == 2 and all(len(group.members) == 2 for group in result.groups)
+
+
+def test_acp_registry_identity_comes_from_agent_id_not_instance_labels():
+    assert t3_registry_providers(fixture("t3-providers")) == {"factory-instance": "factory", "devin-instance": "devin"}
+    assert t3_registry_providers({"providerInstances": {"factory": {"driver": "acpRegistry", "enabled": True,
+                                               "config": {"agentId": "unrecognized"}}}}) == {}
+    disabled = fixture("t3-providers")
+    disabled["providerInstances"]["factory-instance"]["enabled"] = False
+    assert t3_registry_providers(disabled) == {"devin-instance": "devin"}
+    data = fixture("t3")
+    keys, _ = t3_parent_links(data["threads"], data["bindings"], observed_at=NOW)
+    assert keys["factory-child"] == "other:session:native-factory"
+    keys, _ = t3_parent_links(data["threads"], data["bindings"], observed_at=NOW,
+                             registry_providers=t3_registry_providers(fixture("t3-providers")))
+    assert keys["factory-child"] == "factory:session:native-factory"
+
+
+@pytest.mark.parametrize("provider,thread,native", [("codex", "codex-child", "native-codex-worker"),
+                                                    ("acpRegistry", "factory-child", "native-factory-worker")])
+def test_native_t3_task_and_transcript_use_the_same_member_key(provider, thread, native):
+    data = fixture("t3")
+    keys, links = t3_parent_links(data["threads"], data["bindings"], observed_at=NOW,
+                                 registry_providers=t3_registry_providers(fixture("t3-providers")),
+                                 subagents=[{"thread_id": thread, "child_thread_id": None, "status": "running",
+                                             "provider_instance_id": "factory-instance",
+                                             "native_task_ref": {"driver": provider, "nativeId": native}}])
+    native_link = next(link for link in links if link.child.endswith(native))
+    assert native_link.child == f"{'factory' if provider == 'acpRegistry' else provider}:session:{native}"
+    assert native_link.parent == keys[thread]

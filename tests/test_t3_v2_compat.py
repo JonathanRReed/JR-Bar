@@ -647,6 +647,7 @@ def test_native_bindings_and_subagents_join_cross_provider_groups_read_only(tmp_
 
     database = _v2(tmp_path)
     data = fixture("t3")
+    (database.parent / "settings.json").write_text(json.dumps(fixture("t3-providers")))
     for row in data["threads"]:
         _thread(database, row["thread_id"], provider=row["default_provider"],
                 active_provider_thread_id=row["active_provider_thread_id"])

@@ -23,9 +23,44 @@ MAX_FILES = 512
 MAX_HEADER_BYTES = 64 * 1024
 
 
-def _provider(driver):
+# ACP registry IDs, not instance labels. Registry entries are documented at
+# https://github.com/agentclientprotocol/registry/tree/main/factory-droid
+# and https://github.com/agentclientprotocol/registry/tree/main/devin.
+_ACP_REGISTRY_PROVIDERS = {"factory-droid": "factory", "devin": "devin"}
+
+
+def t3_registry_providers(document: dict) -> dict[str, str]:
+    instances = document.get("providerInstances")
+    if type(instances) is not dict:
+        return {}
+    result = {}
+    for instance, definition in instances.items():
+        if type(definition) is not dict or definition.get("driver") != "acpRegistry" or definition.get("enabled") is not True:
+            continue
+        config = definition.get("config")
+        agent_id = config.get("agentId") if type(config) is dict else None
+        if type(agent_id) is str and agent_id in _ACP_REGISTRY_PROVIDERS:
+            result[instance] = _ACP_REGISTRY_PROVIDERS[agent_id]
+    return result
+
+
+def read_t3_registry_providers(path: Path) -> dict[str, str]:
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(512 * 1024 + 1)
+        if len(raw) > 512 * 1024:
+            return {}
+        document = json.loads(raw)
+        return t3_registry_providers(document) if type(document) is dict else {}
+    except (OSError, ValueError, RecursionError):
+        return {}
+
+
+def _provider(driver, instance=None, registry_providers=None):
     from .t3_compat import _normalize_provider
 
+    if driver == "acpRegistry":
+        return (registry_providers or {}).get(instance, "other")
     return _normalize_provider(driver)
 
 
@@ -93,7 +128,7 @@ def devin_parent_links(rows, *, observed_at: float) -> tuple[ParentLink, ...]:
     return tuple(links)
 
 
-def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: float, subagents=()) -> tuple[dict[str, str], tuple[ParentLink, ...]]:
+def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: float, subagents=(), registry_providers=None) -> tuple[dict[str, str], tuple[ParentLink, ...]]:
     """Bind each app thread to exactly one provider-qualified native identity.
 
     Only each thread's selected provider thread is eligible. Several app
@@ -119,7 +154,7 @@ def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: f
             native = payload.get("nativeThreadRef") if type(payload) is dict else None
             if type(native) is not dict or native.get("driver") != binding.get("driver"):
                 continue
-            provider = _provider(binding.get("driver"))
+            provider = _provider(binding.get("driver"), binding.get("provider_instance_id"), registry_providers)
             key = member_key(provider, native.get("nativeId"))
             if key:
                 valid.append(key)
@@ -165,8 +200,9 @@ def t3_parent_links(threads: list[dict], bindings: list[dict], *, observed_at: f
                 except ValueError:
                     native = None
             if type(native) is dict:
-                provider = _provider(native.get("driver"))
-                child = member_key(provider, native.get("nativeId"), "agent")
+                provider = _provider(native.get("driver"), worker.get("provider_instance_id"), registry_providers)
+                kind = "session" if provider in {"codex", "factory"} else "agent"
+                child = member_key(provider, native.get("nativeId"), kind)
         if child:
             parent = keys.get(parent_tid) if child_tid not in ambiguous and parent_tid not in ambiguous else None
             links.append(ParentLink(child, parent, "t3code", observed_at))

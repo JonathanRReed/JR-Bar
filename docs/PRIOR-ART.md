@@ -696,3 +696,12 @@ closed-lid hold's user-activity assertion. It keeps display and computer
 sleep separate, releases the hold when agents finish, and retains its
 renewal watchdog. The policy, display-sleep and release tests were rerun.
 A physical closed-lid run remains separate from those tests.
+
+### ACP registry identity, 2026-10-25
+
+The ACP Registry at
+[`ee673c9d`](https://github.com/agentclientprotocol/registry/tree/ee673c9d848a53717c69ffea5fe2dd1e7286eafa),
+Apache-2.0, defines the registry IDs `factory-droid` and `devin`.
+JR-Bar reads those IDs from T3's local provider configuration to identify
+a generic ACP binding. Custom instance labels do not establish identity.
+No upstream code was copied. The daemon makes no registry request.

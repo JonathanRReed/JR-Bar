@@ -1044,7 +1044,7 @@ def _read_v2_snapshot(
                     ),
                 )
             )
-        from .lineage_adapters import t3_parent_links
+        from .lineage_adapters import read_t3_registry_providers, t3_parent_links
 
         # Bind only the selected provider thread. Native IDs, not T3's own
         # provider-thread handles, join the hook/transcript roster.
@@ -1066,17 +1066,20 @@ def _read_v2_snapshot(
         subagents = []
         if {"thread_id", "child_thread_id", "payload_json"}.issubset(subagent_columns):
             status_column = "status" if "status" in subagent_columns else "NULL"
+            instance_column = "provider_instance_id" if "provider_instance_id" in subagent_columns else "NULL"
             ordering = " ORDER BY updated_at DESC" if "updated_at" in subagent_columns else ""
             placeholders = ",".join("?" for _ in lineage_rows)
             if lineage_rows:
                 subagents = [dict(row) for row in connection.execute(
-                    f"SELECT thread_id, child_thread_id, {status_column} AS status, "
+                    f"SELECT thread_id, child_thread_id, {status_column} AS status, {instance_column} AS provider_instance_id, "
                     "json_extract(payload_json, '$.nativeTaskRef') AS native_task_ref "
                     f"FROM orchestration_v2_projection_subagents WHERE thread_id IN ({placeholders})"
                     f"{ordering} LIMIT ?", (*[row["thread_id"] for row in lineage_rows], T3_MAX_THREADS),
                 )]
         observed_at = now()
-        keys, links = t3_parent_links(lineage_rows, bindings, observed_at=observed_at.timestamp(), subagents=subagents)
+        registry_providers = read_t3_registry_providers(database.parent / "settings.json")
+        keys, links = t3_parent_links(lineage_rows, bindings, observed_at=observed_at.timestamp(),
+                                      subagents=subagents, registry_providers=registry_providers)
         for index, thread in enumerate(threads):
             key = keys[thread.thread_id]
             evidence = tuple(link for link in links if link.child == key)
@@ -1084,7 +1087,7 @@ def _read_v2_snapshot(
             # observation identity, but do not claim cross-provider lineage.
             native = key.split(":session:", 1)[1]
             if bindings or links:
-                threads[index] = replace(thread, provider_thread_id=native, parent_links=evidence)
+                threads[index] = replace(thread, provider=key.split(":", 1)[0], provider_thread_id=native, parent_links=evidence)
         return T3Snapshot(
             observed_at=now(),
             database_path=database,
