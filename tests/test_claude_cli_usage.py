@@ -18,29 +18,28 @@ def test_cli_screen_requires_labelled_usage_not_context_or_tool_share():
             parse_usage_screen(text)
 
 
-@pytest.mark.parametrize("enabled,instance,calls", [(False, "default", 0), (True, "default", 1), (True, "work", 0)])
-def test_cli_fallback_is_off_by_default_and_never_probes_named_accounts(tmp_path, monkeypatch, enabled, instance, calls):
+@pytest.mark.parametrize("enabled,instance", [(False, "default"), (True, "default"), (True, "work")])
+@pytest.mark.parametrize("failure", ["network_unavailable", "response_timed_out", "invalid_provider_response"])
+def test_reserved_cli_fallback_never_probes_or_changes_normal_state(tmp_path, monkeypatch, enabled, instance, failure):
     monkeypatch.setattr("jrbar.provider_reconnect.sync_claude_credential_in_background", lambda *_a, **_k: False)
+    monkeypatch.setattr("jrbar.claude_cli_usage.probe_usage", lambda *_a, **_k: pytest.fail("reserved CLI probe"))
     preference = default_provider_usage_settings().preference("claude")
     assert preference.option("cli_fallback") is None
     if enabled:
         preference = preference.with_option("cli_fallback", "true")
     preference = replace(preference, source_instance_id=instance)
-    probes = []
+    def fetch(_):
+        if failure == "invalid_provider_response":
+            return None
+        raise ValueError(failure)
 
-    def probe(token):
-        assert token == "synthetic-access"
-        probes.append(True)
-        return parse_usage_screen("Current session\n25% used")
-
-    result = collect_claude(preference, home=tmp_path, observed_at=1000, credentials=FixtureCredentials({("claude", "oauth-token"): "synthetic-access"}),
-                            quota_fetcher=lambda _: (_ for _ in ()).throw(ValueError("network_unavailable")),
-                            local_scanner=lambda *_: None, statusline_reader=lambda *_: None, cli_probe=probe)
-    assert len(probes) == calls
-    if calls:
-        assert result.state.value == "ready"
-        assert result.lanes[0].source_id == "claude-cli"
-        assert result.lanes[0].remaining_percent == 75
+    for now in (1000, 1001, 1299, 1300):
+        result = collect_claude(preference, home=tmp_path, observed_at=now,
+            credentials=FixtureCredentials({("claude", "oauth-token"): "synthetic-access"}),
+            quota_fetcher=fetch,
+            local_scanner=lambda *_: None, statusline_reader=lambda *_: None)
+        assert result.reason_code == ("invalid_provider_response" if failure == "invalid_provider_response" else "network_unavailable")
+        assert not result.lanes
 
 
 def test_probe_uses_temporary_config_access_token_only_and_reaps_process(tmp_path, monkeypatch):
@@ -126,33 +125,6 @@ def test_probe_stops_on_parsed_usage_and_reaps_before_removing_config(tmp_path, 
     assert processes[0].poll() is not None
     assert not configs[0].exists()
 
-
-@pytest.mark.parametrize("failure", ["rate_limited", "unauthorized", "forbidden"])
-def test_cli_does_not_retry_rate_limits_or_rejected_credentials(tmp_path, monkeypatch, failure):
-    monkeypatch.setattr("jrbar.provider_reconnect.sync_claude_credential_in_background", lambda *a, **kw: False)
-    preference = default_provider_usage_settings().preference("claude").with_option("cli_fallback", "true")
-    collect_claude(preference, home=tmp_path, observed_at=1000,
-        credentials=FixtureCredentials({("claude", "oauth-token"): "synthetic-access"}),
-        quota_fetcher=lambda _: (_ for _ in ()).throw(ValueError(failure)),
-        local_scanner=lambda *_: None, statusline_reader=lambda *_: None,
-        cli_probe=lambda _: pytest.fail("unhelpful CLI retry"))
-
-
-def test_failed_cli_probe_backs_off(tmp_path, monkeypatch):
-    monkeypatch.setattr("jrbar.provider_reconnect.sync_claude_credential_in_background", lambda *a, **kw: False)
-    preference = default_provider_usage_settings().preference("claude").with_option("cli_fallback", "true")
-    calls = []
-
-    def probe(_):
-        calls.append(True)
-        raise ValueError("no usage")
-
-    for now in (1000, 1001, 1299, 1300):
-        collect_claude(preference, home=tmp_path, observed_at=now,
-            credentials=FixtureCredentials({("claude", "oauth-token"): "synthetic-access"}),
-            quota_fetcher=lambda _: None, local_scanner=lambda *_: None,
-            statusline_reader=lambda *_: None, cli_probe=probe)
-    assert calls == [True, True]
 
 
 def test_unverified_production_cli_transport_cannot_launch(monkeypatch):

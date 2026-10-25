@@ -78,7 +78,7 @@ _IMPORT_ACCOUNT = "token"
 #: only -- ``csrf_token`` and anything a future provider adds stay inside
 #: the settings store. ``endpoint`` is loopback-validated at write time.
 _PUBLISHABLE_OPTION_KEYS = frozenset(
-    {"organization", "organization_id", "project_id", "endpoint", "region", "source", "cli_fallback", "panel_hidden"}
+    {"organization", "organization_id", "project_id", "endpoint", "region", "source", "panel_hidden"}
 )
 
 

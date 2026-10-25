@@ -1,4 +1,4 @@
-"""Opted-in Claude Code /usage probe. No prompts, login or token writes."""
+"""Disabled Claude Code /usage probe and synthetic PTY experiments."""
 
 from __future__ import annotations
 
@@ -117,6 +117,8 @@ def _probe_usage(access_token: str, *, timeout: float = 20.0) -> list[dict]:
                         )):
                             raise ValueError("claude_cli_interaction_required")
                         try:
+                            # TODO: Require fully drawn session and weekly sections.
+                            # See docs/archive/2026-10-25-claude-cli-usage-pty.md.
                             return parse_usage_screen(text)
                         except ValueError:
                             pass

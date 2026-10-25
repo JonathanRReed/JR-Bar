@@ -777,9 +777,6 @@ _OAUTH_REST_SECONDS = {
 }
 _oauth_rest_until: dict[tuple[str, str], tuple[float, str | None, str | None]] = {}
 _oauth_rest_lock = threading.Lock()
-_cli_retry_at: dict[tuple[str, str], float] = {}
-_CLI_RETRY_SECONDS = 300.0
-_CLI_HELPFUL_FAILURES = frozenset({"network_unavailable", "response_timed_out", "invalid_provider_response"})
 
 
 def clear_claude_auth_rest(*, source_instance_id: str = "default") -> None:
@@ -875,13 +872,11 @@ def collect_claude(
     quota_fetcher: Callable[[str], list[dict]] = _default_claude_quota_fetch,
     local_scanner: Callable[[Path, float], dict[str, object] | None] = _default_claude_local_scan,
     statusline_reader: Callable[[float], object] | None = None,
-    cli_probe: Callable[[str], list[dict]] | None = None,
 ) -> ProviderUsageSnapshot:
     # Claude Code's status line describes the account signed in on this Mac,
     # so it can only stand in for the default instance.
     default_instance = getattr(preference, "source_instance_id", "default") == "default"
     instance = getattr(preference, "source_instance_id", "default")
-    cli_fallback = default_instance and preference.option("cli_fallback") == "true"
     try:
         from .claude_quota import account_facts_from_claude_config
 
@@ -949,36 +944,6 @@ def collect_claude(
         with _oauth_rest_lock:
             _oauth_rest_until.pop(rest_key, None)
         return snapshot
-    with _oauth_rest_lock:
-        cli_due = observed_at >= _cli_retry_at.get(rest_key, 0)
-        if (cli_fallback and reading is None and cli_due
-                and snapshot.reason_code in _CLI_HELPFUL_FAILURES):
-            _cli_retry_at[rest_key] = observed_at + _CLI_RETRY_SECONDS
-            # Keep expired entries from accumulating across account changes.
-            for key, deadline in tuple(_cli_retry_at.items()):
-                if deadline <= observed_at:
-                    _cli_retry_at.pop(key, None)
-            try_cli = True
-        else:
-            try_cli = False
-    if try_cli:
-        try:
-            from .claude_cli_usage import probe_usage
-
-            access_token = _credential(credentials, "claude", "oauth-token")
-            if access_token is None:
-                return snapshot
-            windows = (cli_probe or probe_usage)(access_token)
-            fallback = parse_claude_usage(
-                windows=windows, observed_at=observed_at, account_plan=account_plan,
-                account_discriminator=account_discriminator,
-            )
-            if fallback.lanes:
-                return _with_local_usage(replace(
-                    fallback, lanes=tuple(replace(lane, source_id="claude-cli") for lane in fallback.lanes)
-                ), local)
-        except Exception:
-            pass
     if reading is None:
         return snapshot
     identity = _claude_credential_identity(credentials)
