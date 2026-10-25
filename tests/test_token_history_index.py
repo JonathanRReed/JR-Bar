@@ -454,3 +454,14 @@ def test_openclaw_wal_growth_updates_buckets(tmp_path):
         assert database.stat().st_mtime_ns == stamp
         after = index.scan({"openclaw": (root,)})
         assert sum(sum(r[4:8]) for r in after.records) == sum(sum(r[4:8]) for r in before.records) + 3
+
+
+def test_corrupt_history_cache_does_not_interrupt_quota_card_reads(tmp_path, monkeypatch):
+    from jrbar import provider_usage_codex_claude, token_history_index
+
+    path = tmp_path / ".local/state/jrbar/token-history.sqlite3"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"synthetic damaged cache")
+    monkeypatch.setattr(token_history_index, "_ENABLED", True)
+    assert token_history_index.cached_card("claude", tmp_path, 1_792_929_600) is None
+    assert provider_usage_codex_claude._cached_provider_local_scan("claude", tmp_path, 1_792_929_600) is None

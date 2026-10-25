@@ -642,6 +642,8 @@ def cached_card(provider, home, observed_at, *, extra_homes=None):
         return None
     try:
         totals = index.scan(roots, since_epoch=usage.card_window_start(observed_at), cached_only=True)
+    except (OSError, ValueError, sqlite3.Error):
+        return None
     finally:
         index.lock.release()
     if totals is None:
