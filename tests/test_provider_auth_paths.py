@@ -151,3 +151,30 @@ def test_cli_mode_of_verified_antigravity_server_can_supply_same_quota_rpc(tmp_p
         assert requests == ["http://127.0.0.1:44556/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary"]
     finally:
         collectors._cached_antigravity_connection.clear()
+
+
+@pytest.mark.parametrize("variable,resolve,relative", [
+    ("GROK_HOME", grok_auth_path, ".grok/auth.json"),
+    ("GEMINI_CLI_HOME", gemini_auth_path, ".gemini/oauth_creds.json"),
+    ("KIMI_CODE_HOME", kimi_code_home, ".kimi-code/credentials/kimi-code.json"),
+    ("XDG_DATA_HOME", kilo_auth_path, ".local/share/kilo/auth.json"),
+])
+def test_missing_override_also_checks_conventional_auth(tmp_path, monkeypatch, variable, resolve, relative):
+    monkeypatch.setenv(variable, str(tmp_path / "unused"))
+    conventional = tmp_path / relative
+    conventional.parent.mkdir(parents=True)
+    conventional.write_text("{}")
+    selected = resolve(tmp_path)
+    if variable == "KIMI_CODE_HOME":
+        selected /= "credentials/kimi-code.json"
+    assert selected == conventional
+
+
+def test_existing_override_is_not_replaced_by_another_accounts_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("GROK_HOME", str(tmp_path / "alternate"))
+    override = tmp_path / "alternate/auth.json"
+    default = tmp_path / ".grok/auth.json"
+    for path in (override, default):
+        path.parent.mkdir(parents=True)
+        path.write_text("{}")
+    assert grok_auth_path(tmp_path) == override
