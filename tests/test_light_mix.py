@@ -271,3 +271,11 @@ def test_two_sessions_of_one_provider_blend_identities_and_keep_its_animation():
         expected = _single_agent_program(blended, LedDisplayState.WORKING, led_count=8,
             brightness=255, settings=settings, provider="codex")
         assert program_for_snapshot(rows, colors=settings)[1] == expected
+
+
+def test_one_led_kitt_shares_name_the_compact_form():
+    for mode in ("spatial_split", "round_robin"):
+        settings = settings_for(mode, "kitt")
+        explanation = explain_what_plays(statuses(2), settings, led_count=2)
+        assert explanation["played"] == mode
+        assert any("one-LED share" in warning for warning in explanation["warnings"])

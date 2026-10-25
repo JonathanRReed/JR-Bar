@@ -112,6 +112,8 @@ def test_legacy_celebrations_layer_briefly_while_an_agent_works(monkeypatch, cue
     presentation = active_ambient_presentation(owner, AmbientEffectSurface.SCREEN_BAR,
         reduce_motion=False, brightness=255)
     assert presentation is not None
+    expected_color = {"completion": "#00FF66", "all_clear": "#F5EDE0", "reset_celebration": "#FFD700"}[cue]
+    assert presentation.nominal_static_fallback_program == expected_color
     assert presentation.next_visual_change_at == 101.0
     state, base = program_for_snapshot(statuses(1), colors=ColorSettings.defaults())
     assert compose_ambient_layer(base, state, presentation) != base

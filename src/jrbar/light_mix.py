@@ -539,6 +539,8 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
         try:
             if attempt in ("spatial_split", "round_robin"):
                 program = _shares(selected, settings, led_count, attempt)
+                if led_count < 2 * len(selected) and any(settings.agent_animation(agent.provider) == "kitt" for agent in selected):
+                    warnings.append("Knight Rider shows the beam's rise and fall on a one-LED share.")
             elif attempt == "cycle":
                 program = _cycle(selected, settings.with_blend_mode("cycle"), led_count, warnings)
                 if any(settings.agent_animation(agent.provider) == "kitt" for agent in selected) and led_count > 2:

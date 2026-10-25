@@ -132,7 +132,7 @@ def _working_celebration(controller, surface, *, reduce_motion, brightness):
     """Keep legacy completion signals visible over ongoing work."""
     from . import signals
     from .ambient_effect_dispatch import compile_ambient_effect_dispatch
-    from .celebrations import RESET_CELEBRATION_SECONDS
+    from .celebrations import REFILL_FALLBACK_COLOR, RESET_CELEBRATION_SECONDS
     from .semantic_effect_router import SemanticEffectCandidate, SemanticEventKind, route_semantic_effects
 
     projection = getattr(controller, "current_attention_projection", None)
@@ -153,14 +153,14 @@ def _working_celebration(controller, surface, *, reduce_motion, brightness):
     if allowed(signals.SIGNAL_QUOTA):
         deadline = getattr(controller, "quota_reset_celebration_until", 0.0)
         candidates.append(("reset_celebration", deadline - RESET_CELEBRATION_SECONDS,
-            deadline, getattr(controller, "_reset_celebration_color", lambda: None)()))
+            deadline, getattr(controller, "_reset_celebration_color", lambda: None)() or REFILL_FALLBACK_COLOR))
     for name, started, deadline, color in candidates:
         if started <= now < min(deadline, started + LAYER_SECONDS):
             from dataclasses import replace
 
-            from .ambient_effect_dispatch import AmbientSemanticColors
+            from .ambient_effect_runtime import _ambient_colors
 
-            palette = AmbientSemanticColors()
+            palette = _ambient_colors(controller)
             if color:
                 palette = replace(palette, completion=color)
             dispatch = compile_ambient_effect_dispatch(semantic_selection=route_semantic_effects((
