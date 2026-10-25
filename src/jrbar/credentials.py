@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import math
 import os
 import subprocess
 import sys
@@ -146,6 +147,8 @@ class KeychainConsentLedger:
         """
         payload = self._read()
         old = payload.get(service, {})
+        if not isinstance(old, dict):
+            old = {}
         entry = {"granted_at": float(now)}
         security_stamp = float(now) if security else old.get("security_granted_at")
         if security_stamp is not None:
@@ -167,7 +170,10 @@ class KeychainConsentLedger:
 
     def security_grant(self, service: str) -> bool:
         entry = self._read().get(service, {})
-        return isinstance(entry, dict) and bool(entry.get("security_granted_at"))
+        if not isinstance(entry, dict):
+            return False
+        stamp = entry.get("security_granted_at")
+        return type(stamp) in {int, float} and math.isfinite(stamp) and stamp > 0
 
     def access_lost(self, service: str) -> bool:
         entry = self._read().get(service)
