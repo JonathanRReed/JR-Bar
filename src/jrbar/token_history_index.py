@@ -148,15 +148,18 @@ class TokenHistoryIndex:
         # Creating a file needs durability; reopening an unchanged cache does not.
         if not self.path.exists():
             ensure_private_file(self.path)
-        from .private_io import _private_parent, _require_leaf_identity, _require_private_leaf
+        from .private_io import _chmod_if_needed, _private_parent, _require_leaf_identity, _require_private_leaf
 
         with _private_parent(self.path) as (target, parent, name):
             expected = _require_private_leaf(target, parent, name)
             if expected is None or expected.st_size > MAX_DATABASE_BYTES:
                 raise sqlite3.DatabaseError("history cache exceeds its size limit")
+            _chmod_if_needed(target, 0o600, expected)
             for suffix in ("-journal", "-wal", "-shm"):
                 sidecar = Path(str(target) + suffix)
-                _require_private_leaf(sidecar, parent, sidecar.name)
+                info = _require_private_leaf(sidecar, parent, sidecar.name)
+                if info is not None:
+                    _chmod_if_needed(sidecar, 0o600, info)
             db = sqlite3.connect(target, timeout=0.05)
             try:
                 _require_leaf_identity(target, parent, name, expected)
@@ -168,7 +171,8 @@ class TokenHistoryIndex:
                 db.execute("PRAGMA journal_mode=WAL")
                 db.execute("PRAGMA synchronous=NORMAL")
                 db.execute("PRAGMA cache_size=-32768")
-                db.execute(f"PRAGMA max_page_count={MAX_DATABASE_BYTES // 4096}")
+                page_size = db.execute("PRAGMA page_size").fetchone()[0]
+                db.execute(f"PRAGMA max_page_count={MAX_DATABASE_BYTES // page_size}")
                 db.execute("PRAGMA temp_store=MEMORY")
                 db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID")
                 version = json.dumps(semantics())
@@ -372,6 +376,11 @@ class TokenHistoryIndex:
             db.execute("INSERT OR IGNORE INTO dirty VALUES (?)", (canonical,))
             self.resolved_last_pass += 1
 
+    def _pending_totals(self, roots):
+        totals = usage.UsageTotals()
+        totals.source_coverage = {p: usage._CoverageState(p, root_present=True, root_walked=True, pending_files=1).finalize() for p in roots}
+        return totals
+
     def _failed_totals(self, roots):
         totals = usage.UsageTotals()
         totals.source_coverage = {p: usage._CoverageState(p, root_present=True, unreadable_files=1).finalize() for p in roots}
@@ -399,16 +408,17 @@ class TokenHistoryIndex:
             except OSError:
                 pass
 
-    def _cached_totals(self, roots, since_epoch):
+    def _cached_totals(self, roots, since_epoch, *, card_only=False):
         if not self.path.exists() or time.monotonic() < self.retry_at:
             return None
         db = self._connect()
         try:
+            db.execute("BEGIN")
             for provider, paths in roots.items():
                 manifest = json.dumps([os.path.realpath(root) for root in paths])
                 if db.execute("SELECT value FROM meta WHERE key=?", ("roots:" + provider,)).fetchone() != (manifest,):
                     return None
-            totals = self._totals(db, roots, since_epoch)
+            totals = self._totals(db, roots, since_epoch, card_only=card_only)
             totals.history_stale = self.scan_lock.locked() or any(db.execute("SELECT value FROM meta WHERE key=?", ("complete:" + p,)).fetchone() != ("True",) for p in roots)
             return totals
         finally:
@@ -438,7 +448,7 @@ class TokenHistoryIndex:
             if totals is not None:
                 totals.source_coverage = {p: usage._CoverageState(p, root_present=True, root_walked=True, pending_files=1).finalize() for p in roots}
                 return totals
-            return self._failed_totals(roots)
+            return self._pending_totals(roots)
         try:
             if self.stopping.is_set() or not self.enabled:
                 return usage.UsageTotals()
@@ -586,7 +596,6 @@ class TokenHistoryIndex:
                             state.pending_files += int(result.stopped_early)
                             changed = True
                             db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", ("complete:" + provider, "False"))
-                            db.commit()
                         if source.walk_complete:
                             for (key,) in db.execute("SELECT id FROM files WHERE root=?", (root_key,)).fetchall():
                                 if key not in present:
@@ -630,6 +639,8 @@ class TokenHistoryIndex:
                         ("roots:" + provider, json.dumps([os.path.realpath(root) for root in roots[provider]])),
                     )
                 db.commit()
+                if not unfinished:
+                    self._retire_legacy(db)
                 totals = self._totals(db, roots, since_epoch)
                 totals.source_coverage = coverage
                 self.error = None
@@ -643,8 +654,43 @@ class TokenHistoryIndex:
         finally:
             self.scan_lock.release()
 
-    def _totals(self, db, roots, since_epoch):
-        totals = usage._totals_from_window(self._records(db, roots, since_epoch))
+    def _retire_legacy(self, db):
+        if not all(db.execute("SELECT value FROM meta WHERE key=?", ("complete:" + p,)).fetchone() == ("True",) for p in ("claude", "codex")):
+            return
+        from .private_io import _private_parent, _require_private_leaf
+        for prefix in ("usage-scan-cache.json", "provider-usage-cache.json"):
+            for candidate in self.path.parent.glob(prefix + "*"):
+                if candidate.name != prefix and not candidate.name.startswith((prefix + ".", prefix + ".home-")):
+                    continue
+                try:
+                    with _private_parent(candidate) as (target, parent, name):
+                        info = _require_private_leaf(target, parent, name)
+                        if info is not None and info.st_uid == os.getuid():
+                            os.unlink(name, dir_fd=parent)
+                except OSError:
+                    pass
+
+    def _card_records(self, db, roots, since_epoch):
+        providers = tuple(roots)
+        marks = ",".join("?" for _ in providers)
+        day = datetime.fromtimestamp(since_epoch).date().isoformat()
+        query = f"""SELECT provider,model,day,SUM(inp),SUM(cached),SUM(created),SUM(out),SUM(records)
+            FROM hours WHERE provider IN ({marks}) AND day>=? GROUP BY provider,model,day"""
+        records = [BucketRecord((p, "", model, datetime.fromisoformat(date).timestamp(), inp, cached, created, out, ""), count)
+                   for p, model, date, inp, cached, created, out, count in db.execute(query, (*providers, day))]
+        for (dedupe,) in db.execute("SELECT dedupe FROM conflicts"):
+            row = db.execute("""SELECT r.provider,r.session,r.model,r.epoch,r.inp,r.cached,r.created,r.out,r.canonical,r.long_context
+                FROM raw r JOIN files f ON f.id=r.file WHERE r.canonical=? AND r.epoch>=?
+                ORDER BY f.ordering,r.seq LIMIT 1""", (dedupe, since_epoch)).fetchone()
+            if row and row[0] in providers:
+                records.append(BucketRecord(row[:9], 1, bool(row[9])))
+        return records
+
+    def _totals(self, db, roots, since_epoch, *, card_only=False):
+        if not db.in_transaction:
+            db.execute("BEGIN")
+        records = self._card_records(db, roots, since_epoch) if card_only else self._records(db, roots, since_epoch)
+        totals = usage._totals_from_window(records)
         if roots.get("codex"):
             root = "codex:" + os.path.realpath(roots["codex"][0])
             latest = (0, [])
@@ -663,7 +709,9 @@ class TokenHistoryIndex:
 
     def _records(self, db, roots, since_epoch):
         if not self.lock.acquire(timeout=0.05):
-            raise sqlite3.OperationalError("history view is busy")
+            error = sqlite3.OperationalError("history view is busy")
+            error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+            raise error
         try:
             return self._locked_records(db, roots, since_epoch)
         finally:
@@ -679,11 +727,11 @@ class TokenHistoryIndex:
         view_key = (providers, since_epoch, tuple(time.tzname), time.timezone)
         start = datetime.fromtimestamp(since_epoch)
         if since_epoch and (start.hour or start.minute or start.second or start.microsecond):
-            return [BucketRecord(row[:9], 1, bool(row[9])) for row in db.execute(
-                """SELECT canonical,provider,session,model,epoch,inp,cached,created,out,long_context FROM (
-                    SELECT r.*,ROW_NUMBER() OVER (PARTITION BY canonical ORDER BY f.ordering,r.seq) AS position
-                    FROM raw r JOIN files f ON f.id=r.file WHERE epoch>=?
-                ) WHERE position=1""", (since_epoch,)) for row in [(row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[0], row[9])] if row[0] in providers]
+            query = """SELECT provider,session,model,epoch,inp,cached,created,out,canonical,long_context FROM (
+                SELECT r.*,ROW_NUMBER() OVER (PARTITION BY canonical ORDER BY f.ordering,r.seq) AS position
+                FROM raw r JOIN files f ON f.id=r.file WHERE epoch>=?
+            ) WHERE position=1"""
+            return [BucketRecord(row[:9], 1, bool(row[9])) for row in db.execute(query, (since_epoch,)) if row[0] in providers]
         records = self.views.get(view_key)
         if records is None:
             records = []
@@ -760,7 +808,7 @@ def shared_index(path):
 
 
 def scan_history(
-    *, home=None, provider_ids=("claude", "codex"), since_epoch=0.0, budget=None, now=None, env=None, extras=None
+    *, home=None, provider_ids=("claude", "codex"), since_epoch=0.0, budget=None, env=None, extras=None
 ):
     if not _ENABLED:
         return usage.UsageTotals()
@@ -825,12 +873,12 @@ def cached_card(provider, home, observed_at, *, extra_homes=None):
     index = shared_index(path)
     card_key = (provider, usage.card_window_start(observed_at))
     def previous():
-        with index.lock:
-            card = index.cards.get(card_key)
-            return {**card, "history_stale": True} if card is not None else None
+        card = index.cards.get(card_key)
+        return {**card, "history_stale": True} if card is not None else None
     try:
-        totals = index.scan(roots, since_epoch=usage.card_window_start(observed_at), cached_only=True)
-    except (OSError, ValueError, sqlite3.Error):
+        totals = index._cached_totals(roots, usage.card_window_start(observed_at), card_only=True)
+    except (OSError, ValueError, sqlite3.Error) as error:
+        index._recover(error)
         return previous()
     if totals is None:
         return previous()
@@ -853,10 +901,15 @@ def cached_card(provider, home, observed_at, *, extra_homes=None):
     }
 
     document["history_stale"] = bool(getattr(totals, "history_stale", False))
-    with index.lock:
-        index.cards[card_key] = document
-        while len(index.cards) > 16:
-            index.cards.popitem(last=False)
+    if index.lock.acquire(timeout=0.05):
+        try:
+            index.cards[card_key] = document
+            while len(index.cards) > 16:
+                index.cards.popitem(last=False)
+        finally:
+            index.lock.release()
+    else:
+        document["history_stale"] = True
     if provider == "codex":
         document["windows"] = list(totals.codex_rate_limit_evidence)
         document["windows_observed_at"] = totals.codex_rate_limit_observed_at

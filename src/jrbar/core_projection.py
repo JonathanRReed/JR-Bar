@@ -1438,6 +1438,7 @@ def usage_document(
                 "action": getattr(snapshot, "action_label", None),
                 "observed_at": observed_at,
                 "read_at": read_at,
+                "token_history_state": getattr(snapshot, "token_history_state", None),
                 "tokens": {
                     "input": getattr(snapshot, "input_tokens", 0),
                     "cached_input": getattr(snapshot, "cached_input_tokens", 0),

@@ -2476,9 +2476,6 @@ def _sync_token_history(self):
     from .token_history_index import set_enabled
 
     set_enabled(self.settings.token_history_enabled)
-    if not self.settings.token_history_enabled:
-        from .session_usage import reset_cache
-        reset_cache()
     service = getattr(self, "_core_usage_history_service", None)
     if service is not None:
         service.close()
@@ -4071,10 +4068,6 @@ def _cmd_session_usage(self, args):
     provider's primary usage window opened (the Agent Overview's share).
     """
     from .session_usage import SESSION_USAGE_MAX_IDS, session_usage_document, window_openings
-    from .token_history_index import history_enabled
-
-    if not history_enabled():
-        raise CommandError("disabled", "Token history is off.")
     raw_ids = args.get("ids")
     if isinstance(raw_ids, str):
         raw_ids = [raw_ids]

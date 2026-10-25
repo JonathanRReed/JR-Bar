@@ -1593,6 +1593,7 @@ def mock_session_usage(session: dict, *, since: object = None, now: float) -> di
     model = "claude-opus-4-5-20251101" if claude else "gpt-5.6-sol"
     document = {
         "provider": session["provider"], "model": model, "models": {model: total}, "tokens": tokens,
+        "processed_tokens": total,
         "turns": 7 if worker else 42, "estimated_cost_usd": 4.12 if claude else 2.87,
         "cost_estimated": False, "unpriced_models": [],
         "context_tokens": 84_000 if claude else 131_000,

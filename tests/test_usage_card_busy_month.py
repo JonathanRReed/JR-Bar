@@ -35,6 +35,7 @@ import pytest
 import jrbar.provider_usage_codex_claude as subject
 from jrbar import usage_file_index, usage_stats
 from jrbar.state_paths import default_state_dir
+from tests import legacy_usage_cards as legacy_cards
 from tests import synthetic_usage_month as month
 
 NOW = 1_790_000_000
@@ -55,7 +56,7 @@ def _chicago_calendar():
     patch = pytest.MonkeyPatch()
     patch.setenv("TZ", "America/Chicago")
     time.tzset()
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
     try:
         yield
     finally:
@@ -89,11 +90,11 @@ def _scan_codex(home: Path, *, since: float, now: float = NOW) -> usage_stats.Us
 
 
 def _claude_card(home: Path) -> dict | None:
-    return subject._cached_provider_local_scan("claude", home, NOW, extra_homes=())
+    return legacy_cards._cached_provider_local_scan("claude", home, NOW, extra_homes=())
 
 
 def _codex_card(home: Path) -> dict | None:
-    return subject._cached_provider_local_scan("codex", home, NOW, extra_homes=())
+    return legacy_cards._cached_provider_local_scan("codex", home, NOW, extra_homes=())
 
 
 def _timed(label: str, action, report: list[str]):
@@ -238,7 +239,7 @@ def test_a_busy_claude_month_is_totalled_whole_and_stays_whole(
     )
     assert sorted(reads) == expected_reads, "an unchanged file was read again, or a tail read from the start"
     monkeypatch.undo()
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
 
     # --- (4) a duplicate of an old record in a new file is ignored
     old_ids = sorted(
@@ -270,15 +271,19 @@ def test_a_busy_claude_month_is_totalled_whole_and_stays_whole(
     def refuse(*_args, **_kwargs):
         raise AssertionError("the card read scanned the transcripts")
 
+    from jrbar.token_history_index import shared_index
+    shared_index(default_state_dir(tmp_path) / "token-history.sqlite3").scan({"claude": (tmp_path / ".claude/projects",)})
+
     monkeypatch.setattr(usage_stats, "_provider_inventory", refuse)
     monkeypatch.setattr(usage_stats, "_scan_inventory_usage", refuse)
     monkeypatch.setattr(usage_stats, "_read_verified_prefix", refuse)
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
     started = time.perf_counter()
     quick = subject._default_claude_local_scan(tmp_path, NOW)
     card_read = time.perf_counter() - started
     report.append(f"claude card read (cache load + sum) {card_read * 1000:.0f} ms")
-    assert quick == duplicated
+    for key, value in duplicated.items():
+        assert quick[key] == pytest.approx(value) if isinstance(value, float) else quick[key] == value
     assert card_read < 2.0, "the card read is no longer quick"
     monkeypatch.undo()
 
@@ -286,14 +291,14 @@ def test_a_busy_claude_month_is_totalled_whole_and_stays_whole(
     document = json.loads(cache.read_text(encoding="utf-8"))
     document["version"] = usage_stats.CACHE_VERSION - 1
     cache.write_text(json.dumps(document), encoding="utf-8")
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
     assert _claude_card(tmp_path) is None, "an old-version cache was trusted"
     _scan_claude(tmp_path, since=_start())
     assert json.loads(cache.read_text(encoding="utf-8"))["version"] == usage_stats.CACHE_VERSION
     assert _claude_card(tmp_path) == duplicated
 
     cache.write_bytes(b"\x00not json at all \xff")
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
     assert _claude_card(tmp_path) is None, "a corrupt cache was trusted"
     _scan_claude(tmp_path, since=_start())
     assert _claude_card(tmp_path) == duplicated
@@ -408,7 +413,7 @@ def test_a_busy_codex_month_is_totalled_whole_and_stays_whole(
         [(grown_path, before_size, grown_path.stat().st_size), (brand_new, 0, brand_new.stat().st_size)]
     ), "an unchanged rollout was read again, or a tail read from the start"
     monkeypatch.undo()
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
 
     # --- (4) a whole copy and a fork of old rollouts add nothing of their own
     old_session = next(
@@ -440,10 +445,13 @@ def test_a_busy_codex_month_is_totalled_whole_and_stays_whole(
     def refuse(*_args, **_kwargs):
         raise AssertionError("the card read scanned the transcripts")
 
+    from jrbar.token_history_index import shared_index
+    shared_index(default_state_dir(tmp_path) / "token-history.sqlite3").scan({"codex": (tmp_path / ".codex/sessions",)})
+
     monkeypatch.setattr(usage_stats, "_provider_inventory", refuse)
     monkeypatch.setattr(usage_stats, "_scan_inventory_usage", refuse)
     monkeypatch.setattr(usage_stats, "_read_verified_prefix", refuse)
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
     started = time.perf_counter()
     quick = subject._default_codex_local_scan(tmp_path, NOW)
     card_read = time.perf_counter() - started
@@ -458,14 +466,14 @@ def test_a_busy_codex_month_is_totalled_whole_and_stays_whole(
     document = json.loads(codex_cache.read_text(encoding="utf-8"))
     document["version"] = usage_stats.CACHE_VERSION - 1
     codex_cache.write_text(json.dumps(document), encoding="utf-8")
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
     assert _codex_card(tmp_path) is None, "an old-version cache was trusted"
     _scan_codex(tmp_path, since=_start())
     assert json.loads(codex_cache.read_text(encoding="utf-8"))["version"] == usage_stats.CACHE_VERSION
     assert _codex_card(tmp_path) == forked
 
     codex_cache.write_bytes(b"\x00not json at all \xff")
-    subject._local_tokens_memo.clear()
+    legacy_cards._local_tokens_memo.clear()
     assert _codex_card(tmp_path) is None, "a corrupt cache was trusted"
     _scan_codex(tmp_path, since=_start())
     assert _codex_card(tmp_path) == forked

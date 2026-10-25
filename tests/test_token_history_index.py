@@ -203,13 +203,17 @@ def test_off_starts_no_history_work(tmp_path, monkeypatch):
     monkeypatch.setattr(token_history_index, "_INDEXES", {})
     owner = SimpleNamespace(settings=SimpleNamespace(token_history_enabled=False))
     core_runtime._usage_history_warm_later(owner)
-    for command in (core_runtime._cmd_usage_history, core_runtime._cmd_usage_graph, core_runtime._cmd_session_usage):
+    for command in (core_runtime._cmd_usage_history, core_runtime._cmd_usage_graph):
         with pytest.raises(CommandError) as caught:
             command(owner, {})
         assert caught.value.code == "disabled"
+    with pytest.raises(CommandError) as caught:
+        core_runtime._cmd_session_usage(owner, {})
+    assert caught.value.code == "invalid_value"
+    monkeypatch.setattr(provider_usage_codex_claude, "_codex_windows_only", lambda home: {"windows": []})
     monkeypatch.setattr(usage, "_provider_inventory", forbidden)
     assert token_history_index.scan_history(home=tmp_path).records == []
-    assert provider_usage_codex_claude._default_provider_local_scan("codex", tmp_path, 1) is None
+    assert provider_usage_codex_claude._default_provider_local_scan("codex", tmp_path, 1) == {"windows": []}
     assert provider_usage_codex_claude._cached_provider_local_scan("claude", tmp_path, 1) is None
     service = UsageHistoryService(forbidden, enabled=lambda: False, thread_factory=forbidden)
     service.warm()
@@ -235,6 +239,8 @@ def test_card_and_history_share_index_without_transcript_reads(tmp_path, monkeyp
     assert card["input_tokens"] == 100
     assert card["cached_input_tokens"] == 20
     assert card["output_tokens"] == 30
+    monkeypatch.setattr(index, "_records", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("session view rebuilt for card")))
+    assert token_history_index.cached_card("claude", tmp_path, now)["input_tokens"] == 100
     assert len(index.views) == 1
     assert index.view_bytes <= token_history_index.VIEW_BYTES
 
@@ -303,7 +309,7 @@ def test_identical_concurrent_scans_parse_each_file_once(tmp_path, monkeypatch):
     def run(second=False):
         if second:
             second_started.set()
-        results.append(index.scan({"claude": (root,)}).input_tokens)
+        results.append(index.scan({"claude": (root,)}))
 
     first = threading.Thread(target=run)
     second = threading.Thread(target=run, args=(True,))
@@ -316,7 +322,10 @@ def test_identical_concurrent_scans_parse_each_file_once(tmp_path, monkeypatch):
     second.join(5)
     assert not first.is_alive() and not second.is_alive()
     assert calls == [1]
-    assert results == [100, 100]
+    assert any(result.input_tokens == 100 for result in results)
+    for result in results:
+        assert result.input_tokens == 100 or result.source_coverage["claude"].pending_files == 1
+    assert index.scan({"claude": (root,)}).input_tokens == 100
 
 
 def test_another_index_writer_invalidates_the_shared_view(tmp_path):
@@ -464,7 +473,7 @@ def test_corrupt_history_cache_does_not_interrupt_quota_card_reads(tmp_path, mon
     path.write_bytes(b"synthetic damaged cache")
     monkeypatch.setattr(token_history_index, "_ENABLED", True)
     assert token_history_index.cached_card("claude", tmp_path, 1_792_929_600) is None
-    assert provider_usage_codex_claude._cached_provider_local_scan("claude", tmp_path, 1_792_929_600) is None
+    assert provider_usage_codex_claude._cached_provider_local_scan("claude", tmp_path, 1_792_929_600)["history_state"] == "building"
 
 
 def test_a_view_over_its_byte_limit_is_served_without_retaining_it(tmp_path, monkeypatch):
@@ -709,3 +718,116 @@ def test_budgeted_reconciliation_resumes_without_reparsing(tmp_path, monkeypatch
     final = reopened.scan({"codex": (root,)})
     assert final.codex_tokens == 60000
     assert final.source_coverage["codex"].pending_files == 0
+
+
+def test_retired_cache_is_never_a_card_fallback_and_is_removed_only_when_complete(tmp_path, monkeypatch):
+    from jrbar import provider_usage_codex_claude as cards
+    from jrbar import token_history_index as module
+    monkeypatch.setattr(module, "_ENABLED", True)
+    monkeypatch.setattr(module, "_INDEXES", {})
+    state = tmp_path / ".local/state/jrbar"
+    state.mkdir(parents=True)
+    dead = state / "usage-scan-cache.json"
+    dead.write_text('{"old": "synthetic"}')
+    assert cards._cached_provider_local_scan("claude", tmp_path, 1792929600, extra_homes=())["history_state"] == "building"
+    assert dead.exists()
+    root = tmp_path / ".claude/projects"
+    root.mkdir(parents=True)
+    (root / "one.jsonl").write_text(claude("one", "2026-10-25T01:00:00Z"))
+    index = module.shared_index(state / "token-history.sqlite3")
+    index.scan({"claude": (root,)})
+    assert dead.exists()
+    index.scan({"codex": (tmp_path / ".codex/sessions",)})
+    assert not dead.exists()
+
+
+def test_history_off_preserves_codex_quota_without_token_parsing(tmp_path, monkeypatch):
+    from jrbar import provider_usage_codex_claude as cards
+    from jrbar import token_history_index as module
+    from jrbar.provider_usage_settings import ProviderPreference
+    from tests.test_codex_usage_lineage import _meta, _tokens, _write
+    row = _tokens(100, 100, "2026-10-25T10:00:00Z")
+    row["payload"]["rate_limits"] = {"primary": {"used_percent": 40, "window_minutes": 300, "resets_at": 1792933200}}
+    _write(tmp_path / ".codex/sessions/one.jsonl", [_meta("one"), row])
+    monkeypatch.setattr(module, "_ENABLED", False)
+    monkeypatch.setattr(usage, "_parse_codex_file", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("token parser")))
+    snapshot = cards.collect_codex(ProviderPreference("codex", True, False), home=tmp_path, observed_at=1792929600, read_auth=False)
+    assert snapshot.lanes[0].remaining_percent == 60
+    assert snapshot.model_count == 0
+    assert not (tmp_path / ".local/state/jrbar/token-history.sqlite3").exists()
+
+
+def test_partial_file_resumes_even_when_physical_stat_is_unchanged(tmp_path):
+    root = tmp_path / "claude"
+    root.mkdir()
+    (root / "one.jsonl").write_text("".join(claude(str(i), "2026-10-25T01:00:00Z") for i in range(1000)))
+    index = TokenHistoryIndex(tmp_path / "state/history.sqlite3")
+    class Budget:
+        checks = 0
+        def share(self, parts):
+            return self
+        def expired(self):
+            self.checks += 1
+            return self.checks > 1
+    index.scan({"claude": (root,)}, budget=Budget())
+    with index._connect() as db:
+        metadata = json.loads(db.execute("SELECT metadata FROM files").fetchone()[0])
+        assert metadata["size"] < (root / "one.jsonl").stat().st_size
+        assert "stat_size" not in metadata
+    final = TokenHistoryIndex(index.path).scan({"claude": (root,)})
+    assert final.input_tokens == 100000
+    assert sum(r.record_count for r in final.records) == 1000
+
+
+def test_busy_view_lock_returns_last_card_marked_stale(tmp_path, monkeypatch):
+    import threading
+
+    from jrbar import token_history_index as module
+    monkeypatch.setattr(module, "_ENABLED", True)
+    monkeypatch.setattr(module, "_INDEXES", {})
+    root = tmp_path / ".claude/projects"
+    root.mkdir(parents=True)
+    (root / "one.jsonl").write_text(claude("one", "2026-10-25T01:00:00Z"))
+    index = module.shared_index(tmp_path / ".local/state/jrbar/token-history.sqlite3")
+    index.scan({"claude": (root,)})
+    observed = datetime.fromisoformat("2026-10-25T12:00:00+00:00").timestamp()
+    module.cached_card("claude", tmp_path, observed)
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    results = []
+    def hold():
+        with index.lock:
+            entered.set()
+            assert release.wait(5)
+    def read():
+        results.append(module.cached_card("claude", tmp_path, observed))
+        finished.set()
+    holder = threading.Thread(target=hold)
+    reader = threading.Thread(target=read)
+    holder.start()
+    assert entered.wait(5)
+    reader.start()
+    try:
+        assert finished.wait(2)
+        assert results[0]["input_tokens"] == 100
+        assert results[0]["history_stale"] is True
+    finally:
+        release.set()
+        holder.join(5)
+        reader.join(5)
+    assert not holder.is_alive() and not reader.is_alive()
+
+
+def test_history_off_keeps_session_context_command(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from jrbar import core_runtime, session_usage, token_history_index
+    monkeypatch.setattr(token_history_index, "_ENABLED", False)
+    calls = []
+    def read(requests, **kwargs):
+        calls.extend(requests)
+        return {"sessions": [{"id": "one", "context_tokens": 900, "context_window": 10000}], "gaps": {}}
+    monkeypatch.setattr(session_usage, "session_usage_document", read)
+    owner = SimpleNamespace(last_snapshot=SimpleNamespace(statuses=[SimpleNamespace(agent_id="one", provider="codex", session_id="synthetic")]))
+    result = core_runtime._cmd_session_usage(owner, {"ids": ["one"]})
+    assert result["sessions"][0]["context_tokens"] == 900
+    assert calls == [("one", "codex", "synthetic", None)]

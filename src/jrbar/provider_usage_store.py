@@ -67,6 +67,7 @@ def _snapshot_document(snapshot: ProviderUsageSnapshot) -> dict[str, object]:
         # Optional on read and not a schema bump: a file with no key loads as
         # "read at observed_at", and an older build ignores the key.
         "read_at": snapshot.read_at,
+        "token_history_state": snapshot.token_history_state,
     }
 
 
@@ -147,6 +148,7 @@ def _snapshot(value: object) -> ProviderUsageSnapshot | None:
             reset_credits=_reset_credits(value.get("reset_credits")),
             account_discriminator=value.get("account_discriminator"),
             read_at=_read_at(value.get("read_at")),
+            token_history_state=value.get("token_history_state"),
         )
     except (TypeError, ValueError):
         return None

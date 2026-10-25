@@ -2878,15 +2878,25 @@ background is independent of the global working-state fade floor.
 
 `token_history_enabled` is a boolean setting, default true. False cancels
 startup warming and subsequent scan passes. It refuses `usage_history`,
-`usage_graph` and `session_usage` with `disabled`. Live quota collection stays on.
+`usage_graph` with `disabled`. Session tokens and context occupancy stay on.
+Codex quota percentages still read bounded rollout tails without indexing tokens.
 History reads use a private SQLite index, shared across ranges and clients.
 Unchanged transcripts require only a stat check. Appends resume a guarded
 byte offset for Claude and Codex. Other adapters replace changed files.
 Rewrites replace that file's contributions. Parser version,
-source identity and local timezone changes rebuild the index. Removed and
+source identity changes rebuild the index. Local timezone changes rebuild
+buckets from UTC timestamps without parsing transcripts. Removed and
 rotated files retract their contributions after a complete inventory walk.
 Global deduplication includes copied Claude messages and admitted Codex fork
-lineage. Hour/day/model buckets update in the same transaction as records.
+lineage. Files and rows older than 368 days are skipped or pruned. Newest
+files are read first. Reconciliation checkpoints survive a pass budget.
+
+Provider rows may include `token_history_state`: `ready`, `stale` or `building`.
+This describes local token totals independently of quota-window freshness.
+Cards retain the last index reading when busy. Retired JSON scan caches are
+never a fallback and are removed after Claude and Codex indexing completes.
+A damaged index is preserved and rebuilt after a delay. Disk-full failures
+back off for an hour and publish an unavailable history state.
 
 Token-history rows and `session_usage` publish `processed_tokens` separately from
 `estimated_cost_usd`. `processed_tokens` includes input, cache reads, cache

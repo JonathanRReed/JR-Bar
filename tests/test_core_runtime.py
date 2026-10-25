@@ -4732,11 +4732,16 @@ def test_usage_graph_command_routes_and_validates(headless, monkeypatch) -> None
     assert invalid.value.code == "invalid_args"
 
 
-def test_native_graph_reuse_belongs_to_controller_and_closes_at_quit(headless, monkeypatch):
-    from jrbar import usage_graph_worker
+def test_graph_uses_the_shared_token_index_and_stops_it_at_quit(headless, monkeypatch, tmp_path):
+    from collections import OrderedDict
+
+    from jrbar import token_history_index, usage_graph_worker
+    monkeypatch.setattr(token_history_index, "_INDEXES", OrderedDict())
+    monkeypatch.setattr(token_history_index, "_ENABLED", True)
     owners = []
     def document(_settings, **kwargs):
-        owners.append(kwargs["native_reuse"])
+        assert "native_reuse" not in kwargs
+        owners.append(token_history_index.shared_index(tmp_path / "token-history.sqlite3"))
         return {"graph": {}, "summary": ""}
     monkeypatch.setattr(usage_graph_worker, "usage_graph_document", document)
     headless.applicationDidFinishLaunching_(None)
@@ -4744,11 +4749,11 @@ def test_native_graph_reuse_belongs_to_controller_and_closes_at_quit(headless, m
     core_runtime._cmd_usage_graph(headless, {})
     other = SimpleNamespace(settings=headless.settings)
     core_runtime._cmd_usage_graph(other, {})
-    assert owners[0] is owners[1] and owners[0] is not owners[2]
+    assert owners[0] is owners[1] is owners[2]
     headless._core_lights_off = lambda: []
     headless._core_quit_flush()
-    assert owners[0]._closed and owners[0]._slot is None
-    assert not owners[2]._closed
+    assert owners[0].stopping.is_set()
+    assert not owners[0].views
 
 
 def test_confetti_journals_one_burst_in_the_sessions_colours(headless, monkeypatch) -> None:
