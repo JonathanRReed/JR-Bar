@@ -141,3 +141,105 @@ Physical hardware phase, live AX notification coverage and actual menu-app
 wakeups remain unmeasured. The installed-product memory issue, real visible
 animation CPU and the 24-hour CPU/memory budgets still need the owner's
 runtime validation. These receipts do not qualify an installed release.
+
+
+Fix round, 2026-10-25.
+
+Started clean at `84415ffc` in the existing `t3-50655566` worktree. The
+verified code snapshot is `147e38b6`. Code commits, in order:
+
+- `950e1b61` menu bar: debounce inventory scans and watch item lifetimes
+- `52bd7c36` fold: retain fast polling until lid motion settles safely
+- `c6648bd3` app: refresh aggregate status when the core reconnects
+- `b1cf7e32` screen bar: preserve smooth frames through keyframe preparation
+- `728b83ea` menu bar: test the production notification wake path
+- `470ffac9` fold: include timer leeway in the closing travel margin
+- `147e38b6` fold: avoid captured shadowing in motion state
+
+Inventory activity now trails by 750 ms and cannot scan sooner than two
+seconds after the preceding scan completes. Only Created and Destroyed
+notifications on the extras bar and its items wake listing. App-level
+Created/WindowCreated and item Moved/Resized registrations were removed.
+Geometry remains with the hider's existing 1 Hz pass. Each completed scan
+compares the owner's current AX elements, removes retired registrations and
+registers new items even when the PID stays the same. The hider, live probe
+and notification-to-scan test use the same subscription method.
+
+Motion over one degree resets the lid's ten-read stillness count. An open
+lid remains at 10 Hz until settled; armed reads retain 120 Hz and a shut lid
+retains 2 Hz. Stillness alone cannot make a 115-degree lid safe at 2 Hz:
+a 300-degree/second close can finish before the next read. The slow open
+class therefore also needs a reading above 171 degrees, with the current
+closed-angle floor and 50 ms timer leeway. Normal open angles
+keep 10 Hz. Virtual closes at 150 and 300 degrees/second from 115 and 180
+degrees cover sampling phases through 549 ms, including timer leeway, and
+all reach an armed read before `closedAngle`.
+
+The fallback display link again requests 24-60 Hz, preferred 60. Linked
+planning compares full-precision light against encoded endpoints before
+simplification, reserves half a code for interpolation rounding, and retries
+at tolerance two before falling back. A rolling gradient that exceeds the
+900-frame budget at tolerance one now fits at tolerance two. Tests check
+its maximum error and brightness 30, 35 and 40 against the existing two-code
+tolerance at every millisecond of two seconds.
+
+The fallback clock remains active while the view builds gradient values.
+The view reports installation only after adding the animations and committing
+the layer transaction. Fallback samples preserve the pending request; hiding
+or stopping invalidates a late installation. Gated-worker tests cover both
+handoff and cancellation. App refresh comparisons are split into short local
+expressions, and connection changes refresh aggregate status even with an
+identical roster. The lid stillness helper also avoids captured shadowing
+that the repository flags for older Swift compilers.
+
+Fresh verification, with `JRBAR_INTERACTIVE_TESTS` unset for Swift:
+
+- Full foreground `swift test --package-path app` passed. The four targets
+  reported 101 LEDS, 67 UI, 1,364 Core and 4,343 app tests, 5,875 total.
+- Full foreground Python suite passed 7,985 tests and 15 subtests, with
+  four warnings, in 717.59 seconds. It used the main checkout's interpreter
+  with this worktree's `src` on `PYTHONPATH`.
+- The final focused render run passed 41 app tests. All four final PNGs were
+  opened and inspected: the static linked frame and side-by-side frame-clock
+  versus installed-loop frames at cycle phases 400, 650 and 900 ms. The
+  light itself differs between phases. The proof freezes values from the
+  installed animation for offscreen rendering; it does not measure live
+  compositor playback. The static PNG retains the prior recorded SHA-256
+  `179abea83c0dadb0c1c7fc4d2ac0a08b4f3bd19c43d491e21eb60b8f8cfefbd7`.
+- The virtual notification test scans at 10.75 seconds after an event at
+  10 seconds, rather than waiting for the 34-second timeout. A hundred
+  signals within one virtual second cannot scan before the two-second beat.
+
+The final [standalone live probe](../../app/scripts/live-listing-probe.swift)
+compiled the production observer and listing loop, then performed read-only
+AX inventory scans for 188.997 seconds. It completed eight scans, **2.54 scans
+per minute including startup**. Settled gaps were about 31.6 seconds. It saw
+four menu-extra owners, zero inventory signals and zero child-read failures.
+No running Stats/iStat meter was found, and neither app was present in the
+checked system or user Applications folders. The live-width-meter case
+remains unmeasured; the virtual burst test supplies the rate-limit check.
+The installed JR-Bar kept running; no second JR-Bar instance was launched.
+This is one harness observation, not a whole-app CPU or installed-release
+qualification. The probe's scan enumerates running apps and reads their AX
+extras; its duration includes that work and host scheduling.
+
+Raw receipts are under `work/l5-fix/`, ignored by git:
+`full-swift-final.log`, `full-python.log`, `render-3.log`,
+`live-listing-final.log` and `render-final/`. Earlier failed build and proof
+attempts remain there too. The proof fixture was corrected to sample the
+steady rolling cycle after its settling hold and to read the installed loop.
+Local Swift was Apple 6.4 on arm64 macOS 27.2; Swift 6.3.3 was not run.
+
+Reproduce the live check from the worktree root:
+
+```sh
+mkdir -p work/l5-live
+env -u JRBAR_INTERACTIVE_TESTS swiftc -parse-as-library app/Sources/JRBarApp/Utilities/MenuBar/MenuBarInventoryObserver.swift app/Sources/JRBarApp/Utilities/MenuBar/MenuBarListingLoop.swift app/scripts/live-listing-probe.swift -o work/l5-live/probe
+env -u JRBAR_INTERACTIVE_TESTS work/l5-live/probe
+```
+
+Reproduce the motion PNGs with a fresh output directory:
+
+```sh
+env -u JRBAR_INTERACTIVE_TESTS JRBAR_RENDER_PROOF=1 JRBAR_RENDER_PROOF_DIR="$PWD/work/new-l5-proof" swift test --package-path app --skip-build --filter 'ScreenBarMotionRenderProofTests|ScreenBarKeyframePerformanceTests'
+```
