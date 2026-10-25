@@ -160,3 +160,15 @@ def test_one_at_a_time_turns_stay_four_seconds_across_reasserts(tmp_path, monkey
         assert all(abs(turn - 4000) <= 100 for turn in turns[2:-1]), turns
         assert _steady_state_variant(write.nominal_program) == write.nominal_program
 
+
+def test_a_new_turn_in_the_same_ember_band_gets_a_new_layer(monkeypatch):
+    colors = ColorSettings.defaults()
+    owner = SimpleNamespace(settings=SimpleNamespace(colors=colors), _ambient_turn_starts={"synthetic:turn": 1.0})
+    proposed = compile_ambient_effect_dispatch(turn_length_ember=plan_turn_length_ember(elapsed_seconds=1))
+    first, starts = _merge_runtime_dispatch(owner, proposed, now=1000.0)
+    owner._ambient_effect_dispatch = first
+    owner._ambient_effect_dispatch_started_at_by_surface = starts
+    owner._ambient_turn_starts = {"synthetic:turn": 5.0}
+    second, renewed = _merge_runtime_dispatch(owner, proposed, now=1005.0)
+    assert second.outputs == first.outputs
+    assert all(epoch == 1005.0 for epoch in renewed.values())

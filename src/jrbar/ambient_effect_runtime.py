@@ -283,6 +283,9 @@ def _merge_runtime_dispatch(
         "_ambient_effect_dispatch_started_at",
         None,
     )
+    turn = frozenset(getattr(controller, "_ambient_turn_starts", {}).items())
+    same_turn = turn == getattr(controller, "_ambient_ember_turn", turn)
+    setattr(controller, "_ambient_ember_turn", turn)
     outputs = []
     started_at_by_surface = {}
     disabled = disabled_cue_families(getattr(controller, "settings", None))
@@ -302,6 +305,7 @@ def _merge_runtime_dispatch(
         prior_active = (
             prior is not None
             and prior.family not in disabled
+            and (same_turn or prior.family is not AmbientEffectFamily.TURN_LENGTH_EMBER)
             and (
                 prior.family is not AmbientEffectFamily.ASK_HEARTBEAT
                 or (ask_plan is not None and ask_plan.request_count > 0)
@@ -311,7 +315,7 @@ def _merge_runtime_dispatch(
             < prior.expires_after_ms
         )
         same_ember = (
-            prior is not None and candidate is not None
+            same_turn and prior is not None and candidate is not None
             and prior.family is AmbientEffectFamily.TURN_LENGTH_EMBER
             and candidate.family is prior.family
             and prior.effect_identity == candidate.effect_identity
