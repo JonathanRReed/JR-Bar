@@ -1,3 +1,4 @@
+import ApplicationServices
 import AppKit
 import CoreGraphics
 import Foundation
@@ -127,19 +128,100 @@ struct MenuBarListingLoopTests {
     }
 
     @MainActor
-    @Test("a launch, a reveal or a screen change ends the long wait and the quick pace returns")
-    func activityBringsTheQuickPaceBack() async {
-        let room = Room()
-        room.items = [item("clock", x: 1200)]
-        room.onBeat = { beat in
-            if beat >= 200, room.activity == 0 { room.activity += 1 }
+    final class VirtualListing {
+        let wait = MenuBarListingWait()
+        var time: TimeInterval = 0
+        var jobs: [(TimeInterval, DispatchWorkItem)] = []
+        var scans: [TimeInterval] = []
+        var running = true
+
+        init() {
+            wait.now = { [unowned self] in time }
+            wait.schedule = { [unowned self] delay, work in jobs.append((time + delay, work)) }
         }
 
-        await run(room, beats: 215)
+        func settled() async {
+            for _ in 0..<1_000 {
+                if wait.waiting || !running { return }
+                await Task.yield()
+            }
+            Issue.record("listing did not reach its virtual wait")
+        }
 
-        let after = room.scans.filter { $0 >= 200 }
-        #expect(after.first == 212, "the scan restarts recovery after timeout activity")
-        #expect(after == [212, 213], "two recovery scans run before the calm wait")
+        func advance(to target: TimeInterval) async {
+            while let next = jobs.indices.min(by: { jobs[$0].0 < jobs[$1].0 }), jobs[next].0 <= target {
+                let (at, work) = jobs.remove(at: next)
+                time = at
+                if !work.isCancelled {
+                    work.perform()
+                    await settled()
+                }
+            }
+            time = target
+        }
+    }
+
+    @MainActor
+    @Test("inventory notifications interrupt a calm wait after the debounce")
+    func activityBringsTheQuickPaceBack() async {
+        let room = VirtualListing()
+        let token = NotificationCenter.default.addObserver(
+            forName: MenuBarItemLister.activityChanged, object: nil, queue: .main
+        ) { _ in MainActor.assumeIsolated { room.wait.activityChanged() } }
+        defer { NotificationCenter.default.removeObserver(token) }
+        let loop = MenuBarListingLoop(
+            visible: { true }, trusted: { true },
+            scan: { room.scans.append(room.time); return [self.item("fixture", x: 900)] },
+            activity: { MenuBarItemLister.barActivity }, afterScan: {},
+            sleep: { await room.wait.wait($0) }, keepGoing: { room.running })
+        let task = Task { await loop.run() }
+        await room.settled()
+        await room.advance(to: 10)
+        #expect(room.scans == [0, 2, 4])
+        MenuBarItemLister.noteBarActivity()
+        await room.advance(to: 10.74)
+        #expect(room.scans == [0, 2, 4])
+        await room.advance(to: 10.75)
+        #expect(room.scans == [0, 2, 4, 10.75])
+        room.running = false
+        room.wait.signal()
+        await task.value
+    }
+
+    @MainActor
+    @Test("one hundred signals in a virtual second produce at most one scan per beat")
+    func burstIsBounded() async {
+        let room = VirtualListing()
+        let loop = MenuBarListingLoop(
+            visible: { true }, trusted: { true },
+            scan: { room.scans.append(room.time); return [] }, activity: { 0 }, afterScan: {},
+            sleep: { await room.wait.wait($0) }, keepGoing: { room.running })
+        let task = Task { await loop.run() }
+        await room.settled()
+        for i in 0..<100 {
+            await room.advance(to: Double(i) / 100)
+            room.wait.activityChanged()
+        }
+        await room.advance(to: 1.99)
+        #expect(room.scans == [0])
+        await room.advance(to: 2)
+        #expect(room.scans == [0, 2])
+        room.running = false
+        room.wait.signal()
+        await task.value
+    }
+
+    @Test("inventory observes lifetime changes and replaces item registrations for an existing owner")
+    func inventoryRegistrations() {
+        #expect(MenuBarInventoryObserver.notifications == [kAXCreatedNotification, kAXUIElementDestroyedNotification])
+        let bar = AXUIElementCreateApplication(9_001)
+        let first = AXUIElementCreateApplication(9_002)
+        let replacement = AXUIElementCreateApplication(9_003)
+        let delta = MenuBarInventoryObserver.changes(from: [bar, first], to: [bar, replacement])
+        #expect(delta.removed.count == 1 && CFEqual(delta.removed[0], first))
+        #expect(delta.added.count == 1 && CFEqual(delta.added[0], replacement))
+        let unchanged = MenuBarInventoryObserver.changes(from: [bar, replacement], to: [bar, replacement])
+        #expect(unchanged.added.isEmpty && unchanged.removed.isEmpty)
     }
 
     @MainActor

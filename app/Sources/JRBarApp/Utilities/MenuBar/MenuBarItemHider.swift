@@ -505,7 +505,7 @@ final class MenuBarItemHider {
         observers.append(NotificationCenter.default.addObserver(
             forName: MenuBarItemLister.activityChanged, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.listingWait.signal() }
+            MainActor.assumeIsolated { self?.listingWait.activityChanged() }
         })
         let listingWait = self.listingWait
         listingTask = Task { [weak self] in

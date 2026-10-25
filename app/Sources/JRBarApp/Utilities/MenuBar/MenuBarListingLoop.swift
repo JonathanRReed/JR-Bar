@@ -15,12 +15,16 @@ struct MenuBarListingPace: Equatable, Sendable {
     mutating func restart() { calmScans = 0 }
 }
 
-/// An activity notification ends the current wait. The timeout is a recovery
-/// scan, not a polling beat. Tests supply their own scheduler.
+/// Inventory activity trails by 750 ms, with at least one beat between scans.
+/// The timeout remains a recovery scan. Tests supply the clock and scheduler.
 @MainActor
 final class MenuBarListingWait {
     private var continuation: CheckedContinuation<Void, Never>?
     private var timeout: DispatchWorkItem?
+    private var debounce: DispatchWorkItem?
+    private var startedAt: TimeInterval = 0
+    var now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    static let activityDebounce: TimeInterval = 0.75
     var schedule: (TimeInterval, DispatchWorkItem) -> Void = { seconds, work in
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
@@ -31,6 +35,7 @@ final class MenuBarListingWait {
         await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 self.continuation = continuation
+                startedAt = now()
                 let work = DispatchWorkItem { [weak self] in self?.signal() }
                 timeout = work
                 schedule(seconds, work)
@@ -40,7 +45,18 @@ final class MenuBarListingWait {
         }
     }
 
+    func activityChanged() {
+        guard waiting else { return }
+        debounce?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.signal() }
+        debounce = work
+        let delay = max(Self.activityDebounce, startedAt + MenuBarListingPace.beat - now())
+        schedule(delay, work)
+    }
+
     func signal() {
+        debounce?.cancel()
+        debounce = nil
         timeout?.cancel()
         timeout = nil
         let pending = continuation
