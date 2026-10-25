@@ -87,6 +87,7 @@ enum FeatureLifecycleRegistry {
 
     static let features: [FeatureLifecycleContract] = [
         .init(id: "aquarium", resources: ["window", "economy timer", "session observation", "connection observation", "save work", "wallpaper panels", "idle timers", "display observers"]),
+        .init(id: "notch", resources: ["island window", "capsule tasks", "media subscription", "audio tap", "power monitor", "sensor monitor", "shake monitor", "meeting watcher"]),
         .init(id: "announcements", resources: ["Focus watcher", "Bluetooth registrations", "Caps Lock monitors", "display observer"]),
         .init(id: "screen-bar", resources: ["panel", "display link", "keyframes", "island timer", "notice monitors", "menu watcher", "plan work"]),
         .init(id: "confetti", resources: ["burst window", "burst timer", "held burst"]),

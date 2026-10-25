@@ -267,6 +267,7 @@ final class NotchToy: Toy {
     /// The band owns gestures beginning on its painted wing.
     @ObservationIgnored var wingOwnsGesture: (NSPoint) -> Bool = { _ in false }
     @ObservationIgnored var canRestoreIslandWings: @MainActor (NSPoint) -> Bool = { _ in false }
+    @ObservationIgnored private let lifecycleHandles = FeatureLifecycleHandles()
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// Production owns AppKit windows and system readers. State-machine
     /// tests opt out before observation starts, so no later settings
@@ -324,6 +325,8 @@ final class NotchToy: Toy {
             guard let session = entry.watchSession else { return true }
             return self?.sessionStillWorking(session) ?? true
         }
+        cardModel.presenceEnabled = { [weak self] in self?.core.settings?.document["presence_enabled"]?.boolValue ?? true }
+        cardModel.mediaEnabled = { [weak self] in self?.settings.mediaEnabled ?? false }
         cardModel.calendarEnabled = { [weak self] in self?.settings.calendar ?? true }
         cardModel.remindersEnabled = { [weak self] in self?.settings.reminders ?? true }
         // The shelf's own rows: one tray serves both card surfaces, so
@@ -348,6 +351,14 @@ final class NotchToy: Toy {
             if !live { utility.audioLevels = [Float](repeating: 0, count: utility.audioLevels.count) }
         }
         guard runtimeEnabled else { return }
+        observe()
+        // The first pass: a toy that loads enabled must not wait for a
+        // change to show its island.
+        reconcile()
+    }
+
+    private func installObservers() {
+        guard observers.isEmpty else { return }
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
@@ -376,10 +387,28 @@ final class NotchToy: Toy {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.displayVersion += 1 }
         })
-        observe()
-        // The first pass: a toy that loads enabled must not wait for a
-        // change to show its island.
-        reconcile()
+        for observer in observers { lifecycleHandles.track(observer: observer) }
+    }
+
+    private func removeObservers() {
+        let workspace = NSWorkspace.shared.notificationCenter
+        for observer in observers {
+            workspace.removeObserver(observer)
+            NotificationCenter.default.removeObserver(observer)
+        }
+        observers.removeAll()
+    }
+
+    var ownsWindow: Bool { island != nil }
+    var notificationObserverCount: Int { observers.count }
+
+    var lifecycleResources: [String: Int] {
+        ["windows": lifecycleHandles.liveWindows, "observers": lifecycleHandles.liveObservers,
+         "media": mediaToken == nil ? 0 : 1, "power": powerMonitor == nil ? 0 : 1,
+         "sensors": sensorMonitor == nil ? 0 : 1,
+         "meeting watcher": meetingWatch.running ? 1 : 0,
+         "tasks": [expandWork, prewarmWork, peekWork, peekReleaseWork, capsuleWork,
+                    collapseWork, overlayWork, shelfSummonExpiry, shelfDragLeaveWork].compactMap { $0 }.count]
     }
 
     let id = "notch"
@@ -1618,8 +1647,10 @@ final class NotchToy: Toy {
         reconcileCount += 1
         // What this pass leaves behind is what the next doc is measured
         // against — taken at the end, after the pass moved what it moves.
-        defer { reconciledInputs = reconcileInputs }
+        defer { reconciledInputs = settings.enabled ? reconcileInputs : nil }
         guard runtimeEnabled else { return }
+        if settings.enabled { installObservers() } else { removeObservers() }
+        cardModel.timers.setEnabled(settings.enabled && settings.shelfEnabled)
         if shelfKeyboardEngaged, !settings.shelfEnabled || currentFace != .expanded {
             releaseShelfKeyboard()
         }
@@ -1664,6 +1695,7 @@ final class NotchToy: Toy {
         }
         if island == nil {
             island = NotchIslandWindow(toy: self)
+            if let island { lifecycleHandles.track(window: island) }
             // The first grow in a process builds everything the card
             // draws for the first time — 65 ms. Pay it once, a moment
             // after launch, into the windowless probe.
@@ -1701,9 +1733,7 @@ final class NotchToy: Toy {
         NotchCardPresenter.publishedSurface = notchSurface
     }
 
-    /// Ordered out and collapsed. The window object stays — a re-show is
-    /// a frame, not a rebuild — but nothing in it ticks while hidden:
-    /// the capsule timers die and the media listener lets go.
+    /// Releases the island and its sources. Reopening builds a new window.
     private func parkIsland() {
         cardPresentationGeneration &+= 1
         islandExpanded = false
@@ -1754,7 +1784,9 @@ final class NotchToy: Toy {
         stage.noteFace(expanded: false, settled: true)
         islandVisible = false
         publishSurface()
-        island?.orderOut(nil)
+        island?.contentView = nil
+        island?.close()
+        island = nil
         syncMediaMonitor()
         syncPowerMonitor()
         syncSensorMonitor()
@@ -2400,7 +2432,7 @@ final class NotchToy: Toy {
     /// calls it when a taker elsewhere comes or goes.
     func syncSensorMonitor() {
         let want = Self.wantsSensorMonitor(runtimeEnabled: runtimeEnabled && nativeSourcesEnabled, islandVisible: islandVisible,
-                                           indicatorsOn: sensorIndicatorsEnabled, earsDrawn: earsDrawn,
+                                           indicatorsOn: sensorIndicatorsEnabled && (core.settings?.document["presence_enabled"]?.boolValue ?? true), earsDrawn: earsDrawn,
                                            wantedElsewhere: sensorsWantedElsewhere(),
                                            wantedForPresence: sensorsWantedForPresence())
         if sensorsReading != want { sensorsReading = want }
@@ -2458,6 +2490,7 @@ final class NotchToy: Toy {
         guard runtimeEnabled else { return }
         withObservationTracking {
             _ = store?.state.notch
+            guard settings.enabled else { return }
             _ = core.sessions
             _ = core.asks                 // a pinned ask answered elsewhere steps its capsule down
             _ = core.usage
@@ -2522,6 +2555,7 @@ final class NotchToy: Toy {
     /// said gets said. Internal so the tests can drive it without a
     /// runtime.
     func noteInputsChanged() {
+        guard settings.enabled else { reconcile(); return }
         guard reconcileInputs == reconciledInputs else {
             reconcile()
             return

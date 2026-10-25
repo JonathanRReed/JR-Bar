@@ -41,6 +41,20 @@ struct FeatureLifecycleTests {
             tank.isOn = false
             await drain()
             stopped(tank.lifecycleResources, feature: contract.id)
+        case "notch":
+            let toys = store(CoreModel(), notchRuntime: true)
+            defer { toys.shutdown() }
+            let notch = toys.notch!
+            notch.isOn = true
+            #expect(notch.notificationObserverCount > 0)
+            notch.isOn = false
+            await drain()
+            stopped(notch.lifecycleResources, feature: contract.id)
+            notch.isOn = true
+            #expect(notch.notificationObserverCount > 0)
+            notch.isOn = false
+            await drain()
+            stopped(notch.lifecycleResources, feature: contract.id)
         case "screen-bar":
             let bar = ScreenBarController(planRenderer: { _ in nil }, reduceMotionOverride: false,
                                           nativeNoticesEnabled: false)

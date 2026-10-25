@@ -378,6 +378,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         // …and its calendar and reminders glances follow the Notch
         // settings' switches, the same as the grown island's.
+        notchCard.model.presenceEnabled = { [weak core] in core?.settings?.document["presence_enabled"]?.boolValue ?? true }
+        notchCard.model.mediaEnabled = { [weak toysStore] in toysStore?.state.notch.mediaEnabled ?? false }
         notchCard.model.calendarEnabled = { [weak toysStore] in toysStore?.state.notch.calendar ?? true }
         notchCard.model.remindersEnabled = { [weak toysStore] in toysStore?.state.notch.reminders ?? true }
         // Lyrics ask LRCLIB only once the switch is on and agreed to.
