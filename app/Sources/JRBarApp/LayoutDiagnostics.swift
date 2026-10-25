@@ -12,8 +12,9 @@ enum LayoutDiagnostics {
         set { lock.withLock { output = newValue } }
     }
 
-    static func check(_ size: CGSize, viewType: String, phase: String) {
+    static func check(_ size: CGSize, viewType: @autoclosure () -> String, phase: String) {
         guard !size.width.isFinite || !size.height.isFinite || size.width < 0 || size.height < 0 else { return }
+        let viewType = viewType()
         let key = viewType + ":" + phase
         let emit = lock.withLock {
             reported.count < 64 && reported.insert(key).inserted

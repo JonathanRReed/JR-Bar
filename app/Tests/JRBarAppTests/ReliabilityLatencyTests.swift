@@ -32,6 +32,15 @@ struct ReliabilityLatencyTests {
         #expect(!controller.panelOnScreen && !controller.clockRunning)
     }
 
+    @Test func healthyLayoutNeverComputesItsTypeName() {
+        var reflections = 0
+        func name() -> String { reflections += 1; return "LazySyntheticShelf" }
+        LayoutDiagnostics.check(CGSize(width: 10, height: 20), viewType: name(), phase: "fixture")
+        #expect(reflections == 0)
+        LayoutDiagnostics.check(CGSize(width: -1, height: 20), viewType: name(), phase: "fixture")
+        #expect(reflections == 1)
+    }
+
     @Test func layoutDiagnosticsNameTheTypeAndProposedSizeOnce() {
         final class Lines: @unchecked Sendable {
             let lock = NSLock()
