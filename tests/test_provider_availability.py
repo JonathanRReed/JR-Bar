@@ -14,8 +14,13 @@ from jrbar.provider_usage_settings import load_provider_usage_settings
 
 @pytest.fixture(autouse=True)
 def isolated_provider_settings(tmp_path, monkeypatch):
-    monkeypatch.setattr("jrbar.provider_usage_settings.default_provider_usage_settings_path",
-                        lambda: tmp_path / "provider-usage.json")
+    from jrbar import provider_management, provider_usage_settings
+
+    def path():
+        return tmp_path / "provider-usage.json"
+
+    monkeypatch.setattr(provider_usage_settings, "default_provider_usage_settings_path", path)
+    monkeypatch.setattr(provider_management, "default_provider_usage_settings_path", path)
 
 
 def reading(*, measured=True, provider="antigravity", reason="quota_service_not_running"):
