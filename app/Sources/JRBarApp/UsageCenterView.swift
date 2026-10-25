@@ -30,6 +30,9 @@ struct UsageCenterView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .windowCard(padding: 14)
                             }
+                            if store.resetSaveFailure != nil {
+                                ResetSaveNotice { store.loadResetStatus(retry: true) }
+                            }
                             statusLine
                             if store.providers.count > 1 {
                                 CombinedUsageCard(providers: store.providers, store: store)
@@ -1953,5 +1956,20 @@ extension UsageFormat {
         case "GBP": return "£"
         default: return currency + " "
         }
+    }
+}
+
+struct ResetSaveNotice: View {
+    let retry: () -> Void
+
+    var body: some View {
+        HStack {
+            Label("Reset feedback not saved", systemImage: "exclamationmark.triangle")
+            Spacer()
+            Button("Retry", action: retry)
+        }
+        .font(.callout)
+        .foregroundStyle(.orange)
+        .windowCard(padding: 14)
     }
 }

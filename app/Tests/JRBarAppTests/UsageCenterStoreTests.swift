@@ -47,6 +47,30 @@ struct UsageCenterStoreTests {
     }
 
     @MainActor
+    @Test("overflow reconciles history without replaying decorative pulses")
+    func overflowReconciles() async {
+        let core = CoreModel()
+        core.handle(.connected)
+        core.apply(.state(CoreState(usage: CoreUsage(providers: [CoreProviderUsage(id: "claude", state: "ready")]))))
+        let store = UsageCenterStore(core: core)
+        var reads = 0
+        store.readHistory = { provider, range in
+            reads += 1
+            return UsageHistory(provider: provider, range: range.rawValue, days: [])
+        }
+        store.readProviderRows = { [] }
+        store.windowDidOpen()
+        for index in 0..<40 {
+            core.apply(.event(CoreEvent(id: "overflow-\(index)", kind: index == 39 ? "quota_reset" : "completed", provider: "claude")))
+        }
+        let tasks = store.coreDidChange()
+        for task in tasks { await task.value }
+        #expect(reads >= UsageHistoryRange.allCases.count)
+        #expect(store.resetPulses.isEmpty)
+        store.windowDidClose()
+    }
+
+    @MainActor
     @Test("a named account reset only celebrates that account")
     func accountReset() async throws {
         let data = Data(#"{"id":"reset-work","kind":"quota_reset","provider":"claude","instance":"work"}"#.utf8)
@@ -74,4 +98,22 @@ struct UsageCenterStoreTests {
         await Task.yield()
     }
 
+}
+
+@MainActor @Suite("Reset save status")
+struct ResetSaveStatusTests {
+    @Test func failureIsVisibleAndRetryUsesTheCurrentDaemonState() async {
+        let store = UsageCenterStore(core: CoreModel())
+        var retries: [Bool] = []
+        store.readResetStatus = { retry in
+            retries.append(retry)
+            return CoreReply(id: "fixture", ok: true, result: .object([
+                "persistence": .object(["dirty": .bool(!retry),
+                                         "error": retry ? .null : .string("refused_full")])]))
+        }
+        await store.loadResetStatus().value
+        #expect(store.resetSaveFailure == "refused_full")
+        await store.loadResetStatus(retry: true).value
+        #expect(retries == [false, true] && store.resetSaveFailure == nil)
+    }
 }

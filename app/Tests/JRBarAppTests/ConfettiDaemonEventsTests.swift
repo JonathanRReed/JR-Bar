@@ -113,6 +113,28 @@ struct ConfettiDaemonEventsTests {
         #expect(bursts.lines.contains { $0.contains("quota_reset claude weekly") && $0.contains("delivered") })
     }
 
+    @Test("overflow reconciles the omitted reset after the room clears")
+    func overflowReconciles() async throws {
+        let (toy, store, bursts) = try makeToy()
+        store.noteCallPresence(true)
+        var omitted: CoreEvent?
+        for index in 0...ConfettiToy.maximumHeldFacts {
+            let reset = try event("{\"id\":\"reset-\(index)\",\"kind\":\"quota_reset\",\"provider\":\"claude\",\"lane\":\"weekly\",\"event_id\":\"fact-\(index)\"}")
+            if index == 0 { omitted = reset }
+            toy.noteEvent(reset)
+        }
+        #expect(toy.needsResetReconciliation)
+        var reads = 0
+        let recovered = try #require(omitted)
+        toy.readPendingResets = { reads += 1; return [recovered] }
+        toy.reconcileResets()
+        #expect(reads == 0, "a full held queue does not churn through daemon pages")
+        store.noteCallPresence(false)
+        await toy.waitForResetReconciliation()
+        #expect(reads == 1)
+        #expect(bursts.receipts.contains { $0.eventID == "fact-0" && $0.outcome == .delivered })
+    }
+
     @Test("a reset the room holds is kept, not spent, and plays once the room clears")
     func heldResetIsNotSpent() throws {
         let (toy, store, bursts) = try makeToy()

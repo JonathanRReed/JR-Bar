@@ -63,11 +63,11 @@ final class ReplayStore {
         }
     }
 
-    /// Watches `core.lastEvent` like the toys watch sessions: one
+    /// Watches `core.eventSequence` like the toys watch sessions: one
     /// observation per frame, coalesced into a main-queue turn.
     private func observeFrames() {
         withObservationTracking {
-            _ = core.lastEvent?.id
+            _ = core.eventSequence
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }

@@ -229,6 +229,32 @@ final class UsageCenterStore {
     @ObservationIgnored private var historySequence: UInt64 = 0
     @ObservationIgnored private var historyRequests: [String: UInt64] = [:]
     @ObservationIgnored private var dirtyHistoryKeys: Set<String> = []
+    private(set) var resetSaveFailure: String?
+    @ObservationIgnored var readResetStatus: (Bool) async throws -> CoreReply
+    @ObservationIgnored private var resetStatusRequest: UInt64 = 0
+
+    @discardableResult
+    func loadResetStatus(retry: Bool = false) -> Task<Void, Never> {
+        resetStatusRequest &+= 1
+        let request = resetStatusRequest
+        return Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.readResetStatus(retry)
+                guard self.resetStatusRequest == request else { return }
+                guard reply.ok else {
+                    if retry { self.resetSaveFailure = Self.refusal(reply) }
+                    return
+                }
+                let persistence = reply.result?["persistence"]
+                self.resetSaveFailure = persistence?["dirty"]?.boolValue == true
+                    ? persistence?["error"]?.stringValue : nil
+            } catch {
+                if self.resetStatusRequest == request, retry { self.resetSaveFailure = error.localizedDescription }
+            }
+        }
+    }
+
     @ObservationIgnored var readHistory: (String, UsageHistoryRange) async throws -> UsageHistory
     @ObservationIgnored var readHistoryStatus: (String, UsageHistoryRange) async throws -> UsageHistory
     @ObservationIgnored var readProviderRows: () async throws -> [ProviderRow]
@@ -248,6 +274,7 @@ final class UsageCenterStore {
 
     init(core: CoreModel) {
         self.core = core
+        readResetStatus = { retry in try await core.send("reset_status", args: retry ? ["retry": .bool(true)] : [:]) }
         writeSetting = { try await core.setSetting($0, value: $1) }
         readHistory = { try await core.usageHistory(provider: $0, range: $1) }
         readHistoryStatus = { try await core.usageHistory(provider: $0, range: $1, observe: true) }
@@ -270,8 +297,22 @@ final class UsageCenterStore {
             MainActor.assumeIsolated { self?.tick() }
         }
         observeCore()
-        loadAll()
+        lastEventSequence = core.eventSequence
+        loadResetStatus()
+        _ = reconcileHistory()
         loadProviderRows()
+    }
+
+    private func reconcileHistory() -> [Task<Void, Never>] {
+        guard isOpen else { return [] }
+        var tasks: [Task<Void, Never>] = []
+        resetPulses.removeAll()
+        for provider in historyProviders {
+            for range in UsageHistoryRange.allCases {
+                if let task = load(provider: provider, force: true, range: range) { tasks.append(task) }
+            }
+        }
+        return tasks
     }
 
     func windowDidClose() {
@@ -327,10 +368,18 @@ final class UsageCenterStore {
     @discardableResult
     func coreDidChange() -> [Task<Void, Never>] {
         rememberUsage()
-        let events = core.events(after: lastEventSequence)
+        let read = core.readEvents(after: lastEventSequence)
+        let events = read.hasGap ? [] : read.events
         lastEventSequence = core.eventSequence
+        var reconciliationTasks: [Task<Void, Never>] = []
+        if read.hasGap {
+            reconciliationTasks = reconcileHistory()
+            loadResetStatus()
+            loadProviderRows()
+        }
         var historyEvents: [CoreEvent] = []
         for event in events {
+            if event.kind == "reset_save_failed" || event.kind == "reset_saved" { loadResetStatus() }
             if event.kind == "quota_reset" {
                 if !historyEvents.isEmpty {
                     historyDidComplete(historyEvents)
@@ -366,7 +415,7 @@ final class UsageCenterStore {
             providerRows = [:]
         }
         let ids = core.usage.map(\.identity)
-        var resumed: [Task<Void, Never>] = []
+        var resumed: [Task<Void, Never>] = reconciliationTasks
         if live && !wasLive && isOpen {
             // A retry that came due while disconnected could not finish.
             // Resume its partial history, including an earlier graph range.
