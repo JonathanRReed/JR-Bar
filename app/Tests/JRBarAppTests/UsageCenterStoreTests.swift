@@ -71,6 +71,41 @@ struct UsageCenterStoreTests {
     }
 
     @MainActor
+    @Test("reopening refreshes only the current range unless events overflowed while closed")
+    func reopeningReconcilesOnlyAfterGap() async {
+        let core = CoreModel()
+        core.handle(.connected)
+        core.apply(.state(CoreState(usage: CoreUsage(providers: [CoreProviderUsage(id: "claude", state: "ready")]))))
+        let store = UsageCenterStore(core: core)
+        var ranges: [UsageHistoryRange] = []
+        var resetReads = 0
+        store.readHistory = { provider, range in
+            ranges.append(range)
+            return UsageHistory(provider: provider, range: range.rawValue, days: [])
+        }
+        store.readProviderRows = { [] }
+        store.readResetStatus = { _ in resetReads += 1; return CoreReply(id: "fixture", ok: true) }
+        for task in store.windowDidOpen() { await task.value }
+        store.windowDidClose()
+        ranges.removeAll()
+        core.apply(.event(CoreEvent(id: "small-burst", kind: "completed")))
+        for task in store.windowDidOpen() { await task.value }
+        #expect(ranges == [store.range])
+        #expect(resetReads == 0)
+        store.windowDidClose()
+        ranges.removeAll()
+        for index in 0..<40 {
+            core.apply(.event(CoreEvent(id: "closed-overflow-\(index)", kind: "completed")))
+        }
+        _ = store.coreDidChange()
+        let readsBeforeOpen = resetReads
+        for task in store.windowDidOpen() { await task.value }
+        #expect(Set(ranges.map(\.rawValue)) == Set(UsageHistoryRange.allCases.map(\.rawValue)))
+        #expect(resetReads == readsBeforeOpen + 1)
+        store.windowDidClose()
+    }
+
+    @MainActor
     @Test("a named account reset only celebrates that account")
     func accountReset() async throws {
         let data = Data(#"{"id":"reset-work","kind":"quota_reset","provider":"claude","instance":"work"}"#.utf8)

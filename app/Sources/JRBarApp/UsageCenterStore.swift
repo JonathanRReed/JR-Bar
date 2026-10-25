@@ -267,6 +267,7 @@ final class UsageCenterStore {
 
     @ObservationIgnored private var ticker: Timer?
     @ObservationIgnored private var lastEventSequence = 0
+    @ObservationIgnored private var closedEventSequence: Int?
     @ObservationIgnored private var observing = false
     @ObservationIgnored private var isOpen = false
     // Keep quota readings through a monitor restart.
@@ -288,7 +289,8 @@ final class UsageCenterStore {
 
     // MARK: Lifecycle
 
-    func windowDidOpen() {
+    @discardableResult
+    func windowDidOpen() -> [Task<Void, Never>] {
         isOpen = true
         rememberUsage()
         now = Date()
@@ -297,10 +299,18 @@ final class UsageCenterStore {
             MainActor.assumeIsolated { self?.tick() }
         }
         observeCore()
+        let read = core.readEvents(after: closedEventSequence ?? lastEventSequence)
+        closedEventSequence = nil
         lastEventSequence = core.eventSequence
-        loadResetStatus()
-        _ = reconcileHistory()
+        var tasks: [Task<Void, Never>] = []
+        if read.hasGap {
+            tasks = reconcileHistory()
+            tasks.append(loadResetStatus())
+        } else {
+            tasks = historyProviders.compactMap { load(provider: $0, force: true) }
+        }
         loadProviderRows()
+        return tasks
     }
 
     private func reconcileHistory() -> [Task<Void, Never>] {
@@ -316,6 +326,7 @@ final class UsageCenterStore {
     }
 
     func windowDidClose() {
+        closedEventSequence = lastEventSequence
         isOpen = false
         ticker?.invalidate()
         ticker = nil
@@ -372,7 +383,7 @@ final class UsageCenterStore {
         let events = read.hasGap ? [] : read.events
         lastEventSequence = core.eventSequence
         var reconciliationTasks: [Task<Void, Never>] = []
-        if read.hasGap {
+        if read.hasGap, isOpen {
             reconciliationTasks = reconcileHistory()
             loadResetStatus()
             loadProviderRows()
