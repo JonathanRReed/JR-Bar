@@ -19,6 +19,7 @@ struct T3CodeStatus: Equatable {
     var readOnly: Bool
     var observation: Observation?
     var running: Bool = false
+    var installed: Bool = false
 
     /// The reply's document; nil when it is not one.
     static func parse(_ json: JSONValue?) -> T3CodeStatus? {
@@ -34,9 +35,11 @@ struct T3CodeStatus: Equatable {
                 reason: seen["reason"]?.stringValue,
                 inFlight: seen["in_flight"]?.boolValue ?? false)
         }
+        let running = json["running"]?.boolValue ?? false
+        let installed = json["installed"]?.boolValue ?? (present || running)
         return T3CodeStatus(present: present, enabled: enabled,
                             readOnly: json["read_only"]?.boolValue ?? false, observation: observation,
-                            running: json["running"]?.boolValue ?? false)
+                            running: running, installed: installed)
     }
 
     var line: String { running ? "Detected" : "Not running" }
@@ -106,13 +109,12 @@ final class T3CodeModel {
 
 /// Automatic T3 Code detection in Settings.
 struct T3CodeRow: View {
-    let model: T3CodeModel
-    let core: CoreModel
+    let status: T3CodeStatus?
 
     private var style: ProviderStyle { ProviderStyle.style(for: "t3code") }
 
     var body: some View {
-        if let status = model.status {
+        if let status, status.installed {
             HStack(spacing: 10) {
                 ProviderTile(style: style, size: 24)
                 Text(style.name)

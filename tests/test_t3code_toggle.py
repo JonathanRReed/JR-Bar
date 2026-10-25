@@ -147,3 +147,19 @@ def test_legacy_disabled_key_does_not_hide_automatic_observation(t3_home, monkey
     assert reply['enabled'] is False
     assert reply['running'] is True
     assert reply['observation']['in_flight'] is True
+
+
+@pytest.mark.parametrize('database_present, app_present, expected', [
+    (False, False, False), (True, False, True), (False, True, True),
+])
+def test_installation_presence_includes_database_or_app(t3_home, monkeypatch, database_present, app_present, expected):
+    from jrbar import t3_process
+
+    monkeypatch.setattr(t3_process, 't3_code_running', lambda **kw: False)
+    monkeypatch.setattr(Path, 'is_dir', lambda candidate: app_present and candidate == Path('/Applications/T3 Code.app'))
+    if database_present:
+        _make_database(t3_home)
+    document, _ = t3code_integration()
+    assert document['installed'] is expected
+    assert document['present'] is database_present
+    assert document['running'] is False

@@ -45,10 +45,18 @@ def t3code_integration(
     from .t3_process import t3_code_running
 
     database = t3_database_path(settings.t3code_base_dir)
+    present = database.is_file()
+    running = t3_code_running(base_dir=settings.t3code_base_dir)
+    installed = present or running or any(
+        (directory / name).is_dir()
+        for directory in (Path("/Applications"), Path.home() / "Applications")
+        for name in ("T3 Code.app", "T3 Code Nightly.app", "T3 Code (Nightly).app")
+    )
     return (
         {
-            "present": database.is_file(),
-            "running": t3_code_running(base_dir=settings.t3code_base_dir),
+            "present": present,
+            "installed": installed,
+            "running": running,
             "database": str(database),
             "enabled": settings.t3code_enabled is True,
             "activity_statistics": settings.t3code_activity_statistics_enabled is True,

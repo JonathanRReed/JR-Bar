@@ -349,8 +349,7 @@ struct AgentsPage: View {
     /// `hooks_doctor`'s per-provider report — read when the page shows
     /// and again whenever an install or removal settles.
     @ViewState private var doctor = HooksDoctorModel()
-    /// `t3code_integration` — the T3 Code row shows once it says the
-    /// database is on this Mac.
+    /// Automatic T3 status, shown only when its database or app is here.
     @ViewState private var t3 = T3CodeModel()
 
     static let openChoices: [(value: String, label: String)] = [
@@ -371,8 +370,8 @@ struct AgentsPage: View {
             ForEach(split.found, id: \.self) { provider in
                 AgentRow(store: store, provider: provider, doctor: doctor.entry(for: provider, live: store.isLive))
             }
-            // Not a hook: T3 Code is read from its own database, by opt-in.
-            T3CodeRow(model: t3, core: store.core)
+            // T3 reports automatically from its local database while running.
+            T3CodeRow(status: t3.status)
             HStack(spacing: 10) {
                 ProviderTile(style: ProviderStyle.style(for: "factory"), size: 24)
                 SettingLabel(title: "Factory usage", subtitle: "Subscription usage and browser sign-in.")
