@@ -28,6 +28,24 @@ struct SettingsRenderProofTests {
             ?? "/tmp/jrbar-settings-proof", isDirectory: true)
     }
 
+    @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1"))
+    func lifecycleSwitches() throws {
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        defer { fixture.toys.shutdown() }
+        for dark in [false, true] {
+            let presence = SettingsPageContainer(store: fixture.settings, page: .alerts)
+            let presenceImage = try Self.snapshot(presence, size: CGSize(width: 560, height: 7000), dark: dark)
+            try Self.write(presenceImage, named: "lifecycle-presence-\(dark ? "dark" : "light")")
+            let device = SettingsStore.DeviceEntry(index: 0, id: "fixture", name: "Fixture device", kind: "pro")
+            let controls = Form {
+                DeviceLightSettings(store: fixture.settings, device: device)
+            }.formStyle(.grouped)
+            let deviceImage = try Self.snapshot(controls, size: CGSize(width: 560, height: 1600), dark: dark)
+            try Self.write(deviceImage, named: "lifecycle-device-\(dark ? "dark" : "light")")
+        }
+    }
+
     /// The mock monitor's settings document, read through its own script
     /// so the proof never drifts from what `mock-core.py` serves.
     private static func document() throws -> JSONValue {
