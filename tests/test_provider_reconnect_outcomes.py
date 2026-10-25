@@ -132,7 +132,7 @@ def test_a_fresh_look_at_the_keychain_item_skips_the_sixty_second_cache(monkeypa
 def test_the_credential_fingerprint_passes_a_fresh_look_through(tmp_path, monkeypatch) -> None:
     seen: list[bool] = []
 
-    def spy(service, *, now=None, fresh=False):
+    def spy(service, *, now=None, fresh=False, cached_only=False):
         seen.append(fresh)
         return (("keychain", service, "stamp", "created"),)
 
