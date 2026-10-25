@@ -4706,7 +4706,6 @@ def test_usage_graph_command_routes_and_validates(headless, monkeypatch) -> None
                 "summary": "Last 30 days: nothing"}
 
     monkeypatch.setattr(usage_graph_worker, "usage_graph_document", document)
-    monkeypatch.setattr(usage_graph_worker, "_drop_to_utility_qos", lambda: None)
 
     reply = controller._core_dispatch(
         "usage_graph",

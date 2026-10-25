@@ -561,6 +561,9 @@ struct HistoryRowView: View {
                 Rectangle().fill(.primary.opacity(0.06)).frame(height: 1).padding(.leading, 96).padding(.trailing, 16)
             }
         }
+        .task(id: expanded && store.timeline(for: row) == nil) {
+            await store.loadMissingExpandedTimeline(for: row)?.value
+        }
     }
 
     /// The row's session timeline — the same view the Overview inspector

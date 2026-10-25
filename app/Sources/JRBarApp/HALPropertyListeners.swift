@@ -6,12 +6,13 @@ import os
 /// Owns C listener registrations. Call reconcile on the owner's actor or queue.
 final class HALPropertyListeners {
     struct Key: Hashable, Sendable {
-        enum System: Sendable { case audio, camera }
+        enum System: Hashable, Sendable { case audio, camera }
         let system: System
         let object: UInt32
         let selector: UInt32
         var scope: UInt32 = kAudioObjectPropertyScopeGlobal
         var element: UInt32 = kAudioObjectPropertyElementMain
+        var processID: pid_t?
     }
 
     struct API {
@@ -42,6 +43,12 @@ final class HALPropertyListeners {
     private let queue: DispatchQueue
     private let changed: @Sendable (Key) -> Void
     private let report: (Key, OSStatus) -> Void
+    private struct Object: Hashable {
+        let system: Key.System
+        let id: UInt32
+        init(_ key: Key) { system = key.system; id = key.object }
+    }
+    private var reportedRemovals: Set<Object> = []
     private var registrations: [Key: UInt] = [:]
     var count: Int { registrations.count }
 
@@ -56,12 +63,12 @@ final class HALPropertyListeners {
     }
 
     /// Failed removals stay owned and inactive, and are retried next time.
-    /// A returning object reuses its registration instead of adding another.
+    /// A different PID on the same process object gets a new registration.
     func reconcile(_ desired: Set<Key>) {
         for (key, token) in registrations where !desired.contains(key) {
             Self.contexts.setEnabled(token, false)
             let status = api.remove(key, Self.audioCallback, Self.cameraCallback, Self.pointer(token))
-            if status != noErr { report(key, status) }
+            if status != noErr, reportedRemovals.insert(Object(key)).inserted { report(key, status) }
             let gone = key.system == .audio ? kAudioHardwareBadObjectError : OSStatus(kCMIOHardwareBadObjectError)
             if status == noErr || status == gone {
                 Self.contexts.remove(token)
@@ -80,6 +87,7 @@ final class HALPropertyListeners {
                 Self.contexts.remove(token)
             }
         }
+        reportedRemovals.formIntersection(Set(registrations.keys.map(Object.init)))
     }
 
     deinit {

@@ -106,8 +106,11 @@ final class NotchSensorMonitor {
                   selector: UInt32(kCMIOHardwarePropertyDevices)),
         ]
         let me = getpid()
-        for process in MicrophoneCapture.processObjects() where MicrophoneCapture.pid(of: process) != me {
-            desired.insert(.init(system: .audio, object: process, selector: kAudioProcessPropertyIsRunningInput))
+        for process in MicrophoneCapture.processObjects() {
+            let pid = MicrophoneCapture.pid(of: process)
+            guard pid != me else { continue }
+            desired.insert(.init(system: .audio, object: process, selector: kAudioProcessPropertyIsRunningInput,
+                                 processID: pid))
         }
         for device in Self.cameraDevices() {
             desired.insert(.init(system: .camera, object: device,

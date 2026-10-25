@@ -72,18 +72,7 @@ final class CoreCommandReplyFixture {
     }
 
     private func send(_ name: String, args: [String: JSONValue]) async throws -> CoreReply {
-        let command = Task { [core] in try await core.send(name, args: args) }
-        let deadline = Task.detached {
-            do { try await ContinuousClock().sleep(for: .seconds(10)) }
-            catch { return }
-            command.cancel()
-        }
-        defer { deadline.cancel() }
-        return try await withTaskCancellationHandler {
-            try await command.value
-        } onCancel: {
-            command.cancel()
-        }
+        try await core.send(name, args: args)
     }
 
     func seed(_ batch: String) async throws {

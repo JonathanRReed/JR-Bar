@@ -98,6 +98,46 @@ struct HALPropertyListenersTests {
         #expect(fake.live.isEmpty)
     }
 
+    @Test func reusedProcessObjectReplacesItsRegistration() {
+        let fake = Fake()
+        let listeners = HALPropertyListeners(api: fake.api) { _ in }
+        let old = Key(system: .audio, object: 42, selector: 1, processID: 101)
+        let replacement = Key(system: .audio, object: 42, selector: 1, processID: 202)
+        listeners.reconcile([old])
+        let context = fake.live[old]?.context
+        listeners.reconcile([replacement])
+        #expect(fake.removes == 1)
+        #expect(fake.adds == 2)
+        #expect(Set(fake.live.keys) == [replacement])
+        #expect(fake.live[replacement]?.context != context)
+        listeners.reconcile([replacement])
+        #expect(fake.adds == 2)
+    }
+
+    @Test func removalFailuresAreReportedOncePerObjectAcrossSelectorsAndRetries() {
+        let fake = Fake()
+        var failures: [UInt32] = []
+        let listeners = HALPropertyListeners(api: fake.api, report: { key, _ in failures.append(key.object) }) { _ in }
+        let first = Key(system: .audio, object: 42, selector: 1)
+        let second = Key(system: .audio, object: 42, selector: 2)
+        let other = Key(system: .audio, object: 43, selector: 1)
+        listeners.reconcile([first, second, other])
+        fake.failure = -1
+        for _ in 0..<10 { listeners.reconcile([]) }
+        #expect(failures.sorted() == [42, 43])
+        #expect(listeners.count == 3)
+        fake.failure = noErr
+        listeners.reconcile([])
+        #expect(fake.live.isEmpty)
+        // Once an object leaves, a later registration owns its own diagnostic.
+        listeners.reconcile([first])
+        fake.failure = -1
+        listeners.reconcile([])
+        #expect(failures.filter { $0 == 42 }.count == 2)
+        fake.failure = noErr
+        listeners.reconcile([])
+    }
+
     @Test func failedAddIsRetried() {
         let fake = Fake()
         fake.failAdd = true
