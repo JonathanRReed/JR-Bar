@@ -3671,46 +3671,8 @@ def _peak_color_for_agent(agent: _ActiveAgent, settings: ColorSettings) -> str:
 
 
 def _peak_color_for_agent_with_alert(agent: _ActiveAgent, settings: ColorSettings) -> str:
-    """Like _peak_color_for_agent, but applies the Round-Robin/Cycle urgency
-    alert color swap first -- used by preview_led_colors() for those two
-    modes so the static preview matches what program_for_snapshot() would
-    actually render."""
+    """Apply the urgency colour swap before the agent's peak brightness."""
     return _peak_for_state(_display_color_for_agent(agent, settings), agent.state, settings)
-
-
-def preview_led_colors(
-    statuses: tuple[AgentStatus, ...],
-    *,
-    led_count: int = 8,
-    colors: ColorSettings | None = None,
-    fallback_mode: AgentMode = AgentMode.IDLE_READY,
-) -> list[str]:
-    """Peak colours from the same program the live renderer plays."""
-    from .animation import ColorList, IndexedPaint, PaintStep, RollStep, WholeBar, read_program
-
-    count = max(1, int(led_count))
-    _state, program = program_for_snapshot(statuses, colors=colors, led_count=count,
-        fallback_mode=fallback_mode)
-    animation, _problems = read_program(program)
-    peaks = ["#000000"] * count
-    def level(color):
-        return max(int(color[index:index + 2], 16) for index in (1, 3, 5))
-    for step in animation.steps:
-        if isinstance(step, PaintStep):
-            for segment in step.segments:
-                if isinstance(segment, WholeBar):
-                    pairs = enumerate([segment.color] * count)
-                elif isinstance(segment, ColorList):
-                    pairs = enumerate(segment.colors)
-                elif isinstance(segment, IndexedPaint):
-                    pairs = segment.assignments
-                for index, color in pairs:
-                    color = "#000000" if color == "off" else color
-                    if index < count and level(color) >= level(peaks[index]):
-                        peaks[index] = color
-        elif isinstance(step, RollStep):
-            peaks = [max(peaks, key=level)] * count
-    return peaks
 
 
 def demo_statuses_for_preview() -> tuple[AgentStatus, ...]:

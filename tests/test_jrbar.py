@@ -6273,25 +6273,6 @@ class RoundRobinAndPaletteTests(unittest.TestCase):
         color = default_agent_color("some-future-provider")
         self.assertIn(color, CURATED_PALETTE)
 
-    def test_round_robin_repeats_agent_sequence_across_every_led(self) -> None:
-        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN)
-        statuses = (
-            _status("codex", AgentMode.WORKING),
-            _status("claude", AgentMode.WORKING),
-            _status("devin", AgentMode.WORKING),
-        )
-        preview = colors_module.preview_led_colors(statuses, led_count=8, colors=settings)
-        expected_agents = ["codex", "claude", "devin"]
-        expected = [
-            colors_module.scale_hex_brightness(
-                _identity_color(statuses, expected_agents[i % 3]),
-                settings.fade_range(colors_module.MODE_WORKING)[1],
-            )
-            for i in range(8)
-        ]
-        self.assertEqual(preview, expected)
-
-
     def test_attention_arrival_crests_once_then_holds_static_anchor(self) -> None:
         settings = ColorSettings.defaults()
         statuses = (
@@ -6803,36 +6784,6 @@ class AnimationStyleTests(unittest.TestCase):
         idle = program_for_display_state(LedDisplayState.IDLE, led_count=8, brightness=255)
         # Idle's default is the asymmetric breath now, not a pulse line.
         self.assertIn("850ms none", idle)
-
-
-class PreviewLedColorsTests(unittest.TestCase):
-    def test_preview_led_colors(self) -> None:
-        demo = colors_module.demo_statuses_for_preview()
-        modes = {status.mode for status in demo}
-        self.assertEqual(len(modes), 3)
-
-        # Round-Robin paints each LED an agent's colour: one distinct
-        # colour per active agent.
-        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN)
-        preview = colors_module.preview_led_colors(demo, led_count=8, colors=settings)
-        self.assertEqual(len(preview), 8)
-        self.assertEqual(len(set(preview)), 1, "only the working provider owns the animation")
-
-        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_COLOR)
-        preview = colors_module.preview_led_colors(demo, led_count=8, colors=settings)
-        self.assertEqual(len(set(preview)), 1, "color_blend should paint every LED the same color")
-
-        # Idle preview is the fallback mode colour, one LED deep each.
-        settings = ColorSettings.defaults()
-        preview = colors_module.preview_led_colors((), led_count=4, colors=settings)
-        self.assertEqual(len(set(preview)), 1)
-        self.assertEqual(len(preview), 4)
-
-        # The preview shows the same colour the snapshot program peaks at.
-        statuses = (_status("codex", AgentMode.WORKING),)
-        preview = colors_module.preview_led_colors(statuses, led_count=8, colors=settings)
-        _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
-        self.assertIn(preview[0], program)
 
 
 class PreviewScenarioTests(unittest.TestCase):
