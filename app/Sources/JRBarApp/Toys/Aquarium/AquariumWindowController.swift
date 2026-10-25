@@ -13,6 +13,10 @@ final class AquariumWindowController: NSObject, NSWindowDelegate {
     /// (`toy.windowDidClose` drops this controller).
     private let toy: AquariumToy
     private var window: NSWindow?
+    var lifecycleWindow: NSWindow? { window }
+    var lifecycleObservers: [NSObjectProtocol] {
+        [occlusionObserver, screenObserver, resignObserver, mainWindowObserver].compactMap { $0 }
+    }
     private let notificationCenter: NotificationCenter
     private let bringWindow: @MainActor (NSWindow) -> Void
     private let screenFrame: @MainActor (NSWindow) -> NSRect?

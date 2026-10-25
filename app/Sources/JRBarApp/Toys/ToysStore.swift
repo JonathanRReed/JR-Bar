@@ -23,7 +23,10 @@ final class ToysStore {
 
     /// Everything the toys persist; mirrors `AppState.toys`.
     var state: ToysState {
-        didSet { scheduleSave() }
+        didSet {
+            scheduleSave()
+            if state.aquarium != oldValue.aquarium { aquarium?.stateReplaced() }
+        }
     }
 
     /// The cards, in contract order: Fold, Aquarium, Notch Buddy,

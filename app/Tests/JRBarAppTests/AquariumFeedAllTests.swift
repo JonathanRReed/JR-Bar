@@ -26,11 +26,14 @@ struct AquariumFeedAllTests {
                         mode: "tool_running", lifecycle: "active"),
             CoreSession(id: "x", provider: "gemini", lifecycle: "failed"),
         ])))
-        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+        var enabledState = ToysState()
+        enabledState.aquarium.enabled = true
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: enabledState,
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         let file = scratch()
         defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
         let tank = AquariumToy(core: core, store: store, saveFile: file)
+        defer { tank.shutdown() }
         let now = Date()
         #expect(tank.feedAll(at: now) == 2)
         #expect(tank.game.pets["a"]?.feedings == 1)
@@ -47,11 +50,14 @@ struct AquariumFeedAllTests {
         core.apply(.state(CoreState(sessions: [
             CoreSession(id: "a", provider: "claude", mode: "tool_running", lifecycle: "active"),
         ])))
-        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+        var enabledState = ToysState()
+        enabledState.aquarium.enabled = true
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: enabledState,
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         let file = scratch()
         defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
         let tank = AquariumToy(core: core, store: store, saveFile: file)
+        defer { tank.shutdown() }
         let now = Date()
         for _ in 0..<(AquariumRules.feedingsPerFishPerDay + 5) { tank.feedAll(at: now) }
         #expect(tank.game.pets["a"]?.feedings == AquariumRules.feedingsPerFishPerDay)
@@ -60,10 +66,13 @@ struct AquariumFeedAllTests {
     @Test("an empty tank feeds nobody")
     func emptyTank() {
         let core = CoreModel()
-        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: ToysState(),
+        var enabledState = ToysState()
+        enabledState.aquarium.enabled = true
+        let store = ToysStore(core: core, settings: SettingsStore(core: core), state: enabledState,
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         let file = scratch()
         let tank = AquariumToy(core: core, store: store, saveFile: file)
+        defer { tank.shutdown() }
         let residents = tank.fish.count
         #expect(tank.feedAll() == residents)
         try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent())

@@ -100,11 +100,13 @@ struct AquariumMotionTests {
         ])))
         var state = ToysState()
         state.aquarium.motion = .still
+        state.aquarium.enabled = true
         let store = ToysStore(core: core, settings: SettingsStore(core: core), state: state,
                               cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
         let file = AquariumToy.scratchSave()
         let toy = AquariumToy(core: core, store: store, saveFile: file)
         defer {
+            toy.shutdown()
             toy.flushSave()
             try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent())
         }

@@ -20,6 +20,27 @@ struct FeatureLifecycleTests {
     @Test("every registered owner releases what it starts", arguments: FeatureLifecycleRegistry.features)
     func onThenOff(_ contract: FeatureLifecycleContract) async throws {
         switch contract.id {
+        case "aquarium":
+            let core = CoreModel()
+            let toys = store(core)
+            let tank = try #require(toys.aquarium)
+            defer { toys.shutdown() }
+            tank.isOn = true
+            #expect(tank.economyRunning && tank.sessionObservationRunning)
+            tank.isOn = false
+            await drain()
+            stopped(tank.lifecycleResources, feature: contract.id)
+            let game = tank.game
+            tank.noteEvent(CoreEvent(id: "off", kind: "quota_reset", provider: "claude"))
+            core.apply(.state(CoreState(sessions: [CoreSession(id: "new", provider: "claude", mode: "working")], asks: [])))
+            await drain()
+            #expect(tank.game == game)
+            stopped(tank.lifecycleResources, feature: contract.id)
+            tank.isOn = true
+            #expect(tank.economyRunning)
+            tank.isOn = false
+            await drain()
+            stopped(tank.lifecycleResources, feature: contract.id)
         case "shelf-media":
             let monitor = Monitor()
             let feed = MediaFeed(monitor: monitor)

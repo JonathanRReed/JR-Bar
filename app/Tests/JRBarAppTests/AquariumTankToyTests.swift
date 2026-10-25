@@ -64,7 +64,7 @@ struct AquariumTankToyTests {
                   cardModel: makeTestCardModel(), notchRuntimeEnabled: false)
     }
 
-    @Test("a closed tank trims an overgrown save to the cap as the sessions refresh")
+    @Test("an enabled tank trims an overgrown save to the cap as the sessions refresh")
     func refreshPrunes() throws {
         let file = scratch()
         defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
@@ -79,8 +79,9 @@ struct AquariumTankToyTests {
         core.apply(.state(CoreState(sessions: [CoreSession(id: "p3", provider: "claude", mode: "working")],
                                     asks: [])))
         let toys = store(core)
+        toys.state.aquarium.enabled = true
         let tank = AquariumToy(core: core, store: toys, saveFile: file)
-        #expect(!tank.isOn)
+        #expect(tank.isOn)
         #expect(tank.game.pets.count == AquariumRules.maxPets)
         #expect(tank.game.pets["raised"] != nil, "the resident stays")
         #expect(tank.game.pets["p3"] != nil, "a live session's record stays")
@@ -123,7 +124,7 @@ struct AquariumTankToyTests {
         #expect(!tank.game.windowOpen)
         #expect(file.load().game.windowOpen)
 
-        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
+        tank.shutdown()
         #expect(!file.load().game.windowOpen)
         withExtendedLifetime(toys) {}
     }
