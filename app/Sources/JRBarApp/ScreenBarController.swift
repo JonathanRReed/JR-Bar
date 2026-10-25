@@ -59,13 +59,17 @@ final class ScreenBarPlanQueue {
         if active == nil { resumeIdleWaiters() }
     }
 
-    func cancel() {
+    func pause() {
         worker?.cancel()
         worker = nil
         active = nil
         pending = nil
-        onResult = nil
         resumeIdleWaiters()
+    }
+
+    func cancel() {
+        pause()
+        onResult = nil
     }
 
     /// Deterministic test seam: waits for the active render and its one
@@ -139,7 +143,7 @@ final class ScreenBarController {
     /// whether the panel keeps its `.fullScreenAuxiliary` membership.
     var showsInFullScreen = true {
         didSet {
-            panel.showsInFullScreen = showsInFullScreen
+            panel?.showsInFullScreen = showsInFullScreen
             if showsInFullScreen != oldValue { updateVideoGuard() }
         }
     }
@@ -257,7 +261,7 @@ final class ScreenBarController {
     /// a poll worth stopping.
     var drawsSensorDots: Bool { isShown && notchWingsEnabled && capsule == nil }
     var canCycleCompactAwake: Bool {
-        guard visibility.live, panel.isVisible, carriesMenuBarMarks,
+        guard visibility.live, (panel?.isVisible ?? false), carriesMenuBarMarks,
               !sensors.anyInUse, !dismissedWings.contains(.right),
               let slot = effectiveWings.right, slot.accessory != nil,
               view.wingGeometry.notchDepth > 0,
@@ -464,7 +468,20 @@ final class ScreenBarController {
     /// `JRBAR_LOG_MOTION=1` logs which path each program takes.
     private static let logsMotion = ProcessInfo.processInfo.environment["JRBAR_LOG_MOTION"] != nil
 
-    private let panel: ScreenBarPanel
+    private let lifecycleHandles = FeatureLifecycleHandles()
+    private var panel: ScreenBarPanel!
+    private var observersInstalled = false
+    var ownsPanel: Bool { panel != nil }
+    var ownsDisplayLink: Bool { displayLink != nil }
+    var observingSystem: Bool { observersInstalled }
+    var lifecycleResources: [String: Int] {
+        ["panels": lifecycleHandles.liveWindows, "display links": lifecycleHandles.liveDisplayLinks,
+         "observers": observersInstalled ? 1 : 0, "timers": lifecycleHandles.liveTimers,
+         "notice monitors": noticeMonitorsRunning ? 1 : 0,
+         "plan work": (planQueue.pendingGeneration == nil ? 0 : 1) + (planQueue.activeGeneration == nil ? 0 : 1),
+         "tasks": (islandRescanWork == nil ? 0 : 1) + (videoGuardRecheck == nil ? 0 : 1)]
+    }
+
     private let view: ScreenBarView
     private var displayLink: CADisplayLink?
     private var sampler: LEDSSampler?
@@ -517,7 +534,7 @@ final class ScreenBarController {
     var programAnchorEpoch: Double? { lastAnchorEpoch }
     func waitForPlanBuilds() async { await planQueue.waitUntilIdle() }
     /// The band's window is on screen.
-    var panelOnScreen: Bool { panel.isVisible }
+    var panelOnScreen: Bool { (panel?.isVisible ?? false) }
     private(set) var programText: String = ""
     /// The raw text of the last ACCEPTED program -- refusal never reaches
     /// it, so a refused republish can neither dedupe against nor move the
@@ -579,9 +596,7 @@ final class ScreenBarController {
         // defaults (`wrap`, no manual gap or wing).
         let frame = screen.map { ScreenBarGeometry.windowFrame(for: $0, wrapMenuBar: Self.defaultWrapMenuBar, capsule: nil) }
             ?? NSRect(x: 0, y: 0, width: ScreenBarDesign.windowWidth, height: ScreenBarGeometry.windowHeight(notchDepth: 0))
-        panel = ScreenBarPanel(frame: frame)
         view = ScreenBarView(frame: NSRect(origin: .zero, size: frame.size))
-        panel.contentView = view
         view.relayout()
         if let reduceMotionOverride { reduceMotion = reduceMotionOverride }
         planQueue.onResult = { [weak self] generation, sampler, plan in
@@ -593,6 +608,26 @@ final class ScreenBarController {
             self?.updateAccessibility()
             self?.onGeometryChange?()
         }
+        // A device transition takes the ambient wing for a beat, then the
+        // slot it replaced comes back — the queue's life constant is the
+        // same beat the island's capsules hold.
+        powerMonitor.onTransition = { [weak self] old, new in
+            guard let self, let slot = ScreenBarNotices.power(from: old, to: new) else { return }
+            self.presentWingNotice(.right, slot: slot)
+        }
+        peek.anchor = { [weak self] in self?.peekAnchor }
+        audioMonitor.onChange = { [weak self] name, transport in
+            guard let self else { return }
+            let result = ScreenBarNotices.audio(name: name, transport: transport,
+                                                recent: self.recentAudioNotices, now: Date())
+            self.recentAudioNotices = result.recent
+            if let slot = result.slot { self.presentWingNotice(.right, slot: slot) }
+        }
+    }
+
+    private func installObservers() {
+        guard !observersInstalled else { return }
+        observersInstalled = true
         let center = self.notificationCenter
         center.addObserver(self, selector: #selector(screensChanged(_:)), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         // The Notch card's Display pick moved the island: the band follows.
@@ -630,30 +665,31 @@ final class ScreenBarController {
             MainActor.assumeIsolated { self?.defaultsChanged() }
         }
 
-        // A device transition takes the ambient wing for a beat, then the
-        // slot it replaced comes back — the queue's life constant is the
-        // same beat the island's capsules hold.
-        powerMonitor.onTransition = { [weak self] old, new in
-            guard let self, let slot = ScreenBarNotices.power(from: old, to: new) else { return }
-            self.presentWingNotice(.right, slot: slot)
-        }
-        peek.anchor = { [weak self] in self?.peekAnchor }
-        audioMonitor.onChange = { [weak self] name, transport in
-            guard let self else { return }
-            let result = ScreenBarNotices.audio(name: name, transport: transport,
-                                                recent: self.recentAudioNotices, now: Date())
-            self.recentAudioNotices = result.recent
-            if let slot = result.slot { self.presentWingNotice(.right, slot: slot) }
-        }
+    }
+
+    private func removeObservers() {
+        notificationCenter.removeObserver(self)
+        workspaceCenter.removeObserver(self)
+        if let defaultsObserver { notificationCenter.removeObserver(defaultsObserver) }
+        defaultsObserver = nil
+        observersInstalled = false
     }
 
     isolated deinit {
         planQueue.cancel()
+        displayLink?.invalidate()
+        islandWatch?.invalidate()
+        islandRescanWork?.cancel()
+        removeObservers()
+        powerMonitor.stop()
+        audioMonitor.stop()
+        appMenus.stop()
+        panel?.close()
     }
 
     /// The band's rounded rect in screen coordinates, for hit testing.
     var bandScreenRect: NSRect? {
-        guard isShown, panel.isVisible, !steppedAsideForVideo else { return nil }
+        guard isShown, (panel?.isVisible ?? false), !steppedAsideForVideo else { return nil }
         return panel.convertToScreen(view.convert(view.bandRect, to: nil))
     }
 
@@ -662,7 +698,7 @@ final class ScreenBarController {
     /// read by `ScreenBarInteraction`'s monitors — and they are exactly the
     /// drawn capsules, so a click on one is a click on something of ours.
     var hoverScreenRects: [NSRect] {
-        guard isShown, panel.isVisible, !steppedAsideForVideo else { return [] }
+        guard isShown, (panel?.isVisible ?? false), !steppedAsideForVideo else { return [] }
         // A dismissed wing's ghost stays in the region: the lobe is gone
         // but a swipe across where it stood is the summon gesture. Ghost
         // rects are already screen-space — stored post-conversion.
@@ -676,14 +712,14 @@ final class ScreenBarController {
     }
 
     var shoulderScreenPath: CGPath? {
-        guard visibility.live, isShown, panel.isVisible, !steppedAsideForVideo, let path = view.nativeShoulderPath else { return nil }
+        guard visibility.live, isShown, (panel?.isVisible ?? false), !steppedAsideForVideo, let path = view.nativeShoulderPath else { return nil }
         let origin = panel.convertPoint(toScreen: view.convert(.zero, to: nil))
         var transform = CGAffineTransform(translationX: origin.x, y: origin.y)
         return path.copy(using: &transform)
     }
 
     func shoulderContains(_ point: NSPoint) -> Bool {
-        guard visibility.live, isShown, panel.isVisible, !steppedAsideForVideo, let path = view.nativeShoulderPath else { return false }
+        guard visibility.live, isShown, (panel?.isVisible ?? false), !steppedAsideForVideo, let path = view.nativeShoulderPath else { return false }
         let local = view.convert(panel.convertPoint(fromScreen: point), from: nil)
         return path.contains(local)
     }
@@ -720,12 +756,25 @@ final class ScreenBarController {
     /// 0.18 s); Reduce Motion keeps the instant swap.
     private static let fadeSeconds: TimeInterval = 0.18
 
+    private func fadeVisibility(to opacity: Float, from start: Float? = nil) {
+        guard let layer = view.layer else { return }
+        NotchSurfaceMotion.fade(layer: layer, to: opacity, from: start,
+                                duration: Self.fadeSeconds, reduced: reduceMotion)
+    }
+
     func show() {
+        if panel == nil {
+            panel = ScreenBarPanel(frame: view.frame)
+            lifecycleHandles.track(window: panel)
+            panel.contentView = view
+            panel.showsInFullScreen = showsInFullScreen
+        }
+        installObservers()
         visibility.shown = true
         reposition()
         visibility.steppedAside = wantsVideoGuard()
-        NotchSurfaceMotion.present(panel, to: steppedAsideForVideo ? 0 : 1, from: 0,
-                                   duration: Self.fadeSeconds, reducedDuration: nil, curve: nil)
+        fadeVisibility(to: steppedAsideForVideo ? 0 : 1, from: 0)
+        WindowPresenter.automatic.order(panel)
         updateNoticeMonitors()
         updateAppMenuWatch()
         settleVisibility()
@@ -744,13 +793,19 @@ final class ScreenBarController {
         updateNoticeMonitors()
         updateAppMenuWatch()
         settleVisibility()
-        // Ordered out at full alpha, so the next show fades from a clean
-        // start.
-        let band = panel
-        NotchSurfaceMotion.dismiss(band, duration: Self.fadeSeconds, reducedDuration: nil, curve: nil,
-                                   stillGone: { [weak self] in self.map { !$0.isShown } ?? false },
-                                   then: { band.alphaValue = 1 })
-        updateClock()
+        displayLink?.invalidate()
+        displayLink = nil
+        planQueue.pause()
+        view.stopKeyframes()
+        NotchSurfaceMotion.cancelFade(layer: view.layer)
+        islandRescanWork?.cancel()
+        islandRescanWork = nil
+        removeObservers()
+        videoGuardRecheck?.cancel()
+        videoGuardRecheck = nil
+        panel?.contentView = nil
+        panel?.close()
+        panel = nil
     }
 
     @objc private func screensChanged(_ note: Notification) {
@@ -781,6 +836,7 @@ final class ScreenBarController {
     /// handle click flips the hidden run right after the hit test
     /// answers. One debounced look covers them all.
     private func scheduleIslandRescan() {
+        guard isShown else { return }
         islandRescanWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.islandFrameChanged() }
@@ -816,6 +872,7 @@ final class ScreenBarController {
                 MainActor.assumeIsolated { self?.islandFrameChanged() }
             }
             timer.tolerance = Self.islandWatchInterval / 4
+            lifecycleHandles.track(timer: timer)
             RunLoop.main.add(timer, forMode: .common)
             islandWatch = timer
             islandFrameChanged()
@@ -946,8 +1003,7 @@ final class ScreenBarController {
         publishStatus()
         settleVisibility()
         onGeometryChange?()
-        NotchSurfaceMotion.fade(panel, to: want ? 0 : 1, duration: Self.fadeSeconds,
-                                reducedDuration: nil, curve: nil)
+        fadeVisibility(to: want ? 0 : 1)
     }
 
     /// Whether `pid` has an ordinary on-screen window filling `screen`: its
@@ -1057,7 +1113,7 @@ final class ScreenBarController {
     /// Which drawn wing a screen point is over — the dismiss swipe's
     /// target. The band and empty flank room answer nil.
     func wingSide(atScreenPoint point: NSPoint) -> ScreenBarWingSide? {
-        guard isShown, panel.isVisible, !steppedAsideForVideo else { return nil }
+        guard isShown, (panel?.isVisible ?? false), !steppedAsideForVideo else { return nil }
         let local = view.convert(panel.convertPoint(fromScreen: point), from: nil)
         guard view.isMenuSafePoint(local) else { return nil }
         for (side, rect) in [(ScreenBarWingSide.left, view.leftWingRect),
@@ -1070,7 +1126,7 @@ final class ScreenBarController {
     }
 
     func wingRestorationContains(_ point: NSPoint, island: CGRect, headerHeight: CGFloat) -> Bool {
-        guard hasDismissedWings, isShown, panel.isVisible, !steppedAsideForVideo else { return false }
+        guard hasDismissedWings, isShown, (panel?.isVisible ?? false), !steppedAsideForVideo else { return false }
         let local = view.convert(panel.convertPoint(fromScreen: point), from: nil)
         guard view.isMenuSafePoint(local) else { return false }
         if dismissedWingRects.values.contains(where: { $0.contains(point) }) { return true }
@@ -1173,6 +1229,7 @@ final class ScreenBarController {
     }
 
     private func reposition() {
+        guard panel != nil else { return }
         guard let screen = ScreenBarGeometry.preferredScreen() else { return }
         let oldRects = (view.bandRect, view.leftWingRect, view.rightWingRect, view.housingRect, view.nativeShoulderPath?.boundingBoxOfPath)
         let oldWingGeometry = view.wingGeometry
@@ -1271,7 +1328,7 @@ final class ScreenBarController {
     /// Whether the right ear opens the peek right now: the ears carry
     /// the menu bar, the feed has something to show, and the ear draws.
     var peekAvailable: Bool {
-        carriesMenuBarMarks && panel.isVisible && view.rightWingRect != nil
+        carriesMenuBarMarks && (panel?.isVisible ?? false) && view.rightWingRect != nil
             && !(menuBarFeed?.isEmpty ?? true)
     }
 
@@ -1298,7 +1355,7 @@ final class ScreenBarController {
     /// The right ear's drawn bounds in screen coordinates while it
     /// stands.
     private var rightEarScreenRect: NSRect? {
-        guard isShown, panel.isVisible, !steppedAsideForVideo, let rect = view.rightWingRect else { return nil }
+        guard isShown, (panel?.isVisible ?? false), !steppedAsideForVideo, let rect = view.rightWingRect else { return nil }
         return panel.convertToScreen(view.convert(rect, to: nil))
     }
 
@@ -1306,7 +1363,7 @@ final class ScreenBarController {
     /// band's screen.
     private var peekAnchor: ScreenBarPeekAnchor? {
         guard let ear = rightEarScreenRect,
-              let screen = panel.screen ?? ScreenBarGeometry.preferredScreen() else { return nil }
+              let screen = panel?.screen ?? ScreenBarGeometry.preferredScreen() else { return nil }
         return ScreenBarPeekAnchor(ear: ear, band: bandScreenRect, screen: screen.frame)
     }
 
@@ -1593,7 +1650,7 @@ final class ScreenBarController {
         view.setAccessibilityLabel(lastRejection == nil
             ? "Screen Bar — \(summary ?? "agent status light")"
             : "Screen Bar — \(summary ?? "agent status light"); a program was refused, showing the last safe one")
-        let live = visibility.live && panel.isVisible && !view.bandRect.isEmpty
+        let live = visibility.live && (panel?.isVisible ?? false) && !view.bandRect.isEmpty
         view.setAccessibilityElement(live)
         view.onAccessibilityPress = { [weak self] in self?.onAccessibilityPress?() ?? false }
         guard live else {
@@ -1628,6 +1685,7 @@ final class ScreenBarController {
         if shouldRun {
             if displayLink == nil {
                 let link = view.displayLink(target: self, selector: #selector(tick(_:)))
+                lifecycleHandles.track(displayLink: link)
                 link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 60, preferred: 60)
                 link.add(to: .main, forMode: .common)
                 displayLink = link

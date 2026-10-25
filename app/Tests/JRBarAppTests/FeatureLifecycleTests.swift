@@ -41,6 +41,21 @@ struct FeatureLifecycleTests {
             tank.isOn = false
             await drain()
             stopped(tank.lifecycleResources, feature: contract.id)
+        case "screen-bar":
+            let bar = ScreenBarController(planRenderer: { _ in nil }, reduceMotionOverride: false,
+                                          nativeNoticesEnabled: false)
+            bar.apply(programText: "#ff0000 1s linear\n#000000 1s linear\nrepeat")
+            bar.show()
+            #expect(bar.ownsDisplayLink)
+            #expect(bar.ownsPanel && bar.observingSystem)
+            bar.hide()
+            await drain()
+            stopped(bar.lifecycleResources, feature: contract.id)
+            bar.show()
+            #expect(bar.ownsPanel)
+            bar.hide()
+            await drain()
+            stopped(bar.lifecycleResources, feature: contract.id)
         case "announcements":
             let owner = NotchAnnouncements()
             var enabled = true
