@@ -35,7 +35,6 @@ final class PresenceReporter {
     private var wasEnabled = false
     private var wasFocusEnabled = false
     private var initialized = false
-    private var sendTask: Task<Void, Never>?
     private let mirrorObservation = LifecycleObservation()
     private var cards: (@MainActor () -> [NotchCardModel])?
     var renewalRunning: Bool { check != nil }
