@@ -174,3 +174,84 @@ The release owner can report these bullets in the changelog: lower percent
 history writes; refills survive resumed use; event-gap recovery; visible,
 retryable reset saves; explicit endpoint answering consent; asks appear
 promptly; Fold startup avoids the cache lock; layout and open/wake diagnostics.
+
+
+## Verification follow-up
+
+Started this repair from `d7b814f2` on `t3/3354892a`, with a clean tree.
+All eleven verification findings are addressed in this worktree. This
+section supersedes the earlier Screen Bar destination-hold behavior and
+reopen reconciliation described above.
+
+1. Added the event-refresh and reset-persistence names to the controller
+   attribute registry, including the computed retry-deadline exception.
+   Updated the hook-refresh and reset-receipt contract expectations.
+2. The second-ask Fold test awaits its own cache and injects that cache
+   into the renderer. Parallel shared-cache warming cannot change its result.
+3. An ask parks the interrupted notice if it is fresh and outranks the
+   waiting notice. Otherwise it reports eviction for fallback delivery.
+   The original age is preserved. Tests resolve the ask, call `finish`,
+   and check notice resumption, expiry and eviction.
+4. The Screen Bar samples the running program while its keyframes prepare.
+   Both paths keep the same anchor. The test compares a green-to-red fade
+   with sampler and keyframe values around a simulated 300 ms compile delay,
+   within the keyframe renderer's existing three-code interpolation tolerance.
+5. Standalone serve warns when answering is unavailable and keeps serving
+   status. Each answering request reads fresh consent. The scripts-and-status
+   page documents this behavior. Authentication and answer refusals remain.
+6. Usage Center retains the close cursor even when observations run while
+   closed. Reopening reloads all ranges and reset status only after a gap;
+   otherwise it force-reloads the current range. Closed gap observations
+   defer recovery until reopen.
+7. Urgent refreshes have a 50 ms floor. An injected-clock test sends twenty
+   starts and verifies one trailing refresh at the floor, preserving the
+   urgent request instead of waiting for ordinary chatter coalescing.
+8. Percent-history appends inspect one trailing byte and prefix a newline
+   after a torn row. Tests cover both append paths without rewriting history.
+9. Fold caches compile failures through the retry cooldown, including builds
+   with no readiness waiter. The next overlay attempt observes the failure,
+   and overlay creation honors the toy's cooldown. Tests cover failure,
+   repeated requests and a retry after the injected clock advances.
+10. Layout diagnostics evaluate the reflected type name only after detecting
+    an invalid size. A counter proves healthy sizes do not evaluate it.
+11. Overview requires a selected session before scheduling a timeline refresh.
+    Panel replay IDs are deduplicated. Delivered reset receipts supersede
+    dropped receipts in either arrival order and survive persistence.
+
+Fresh checks:
+
+- Full Python suite, using this worktree's `src` on `PYTHONPATH` and the main
+  checkout's interpreter: **8005 passed, 15 subtests passed, 4 warnings**.
+  Command arguments were `-m pytest tests -q`. Exit status was zero.
+- Selected Swift run: **34 core tests and 49 app tests passed**, all eight
+  permitted suites. The filter was
+  `EventGapTests|AlcoveEventsTests|ReliabilityLatencyTests|UsageCenterStoreTests|ResetSaveStatusTests|FoldRendererTests|FoldShaderCacheTests|ConfettiDaemonEventsTests`.
+- Ten consecutive `swift test --skip-build --filter 'FoldRendererTests|FoldShaderCacheTests'`
+  runs passed. Each ran 13 tests, including `aSecondAskCompilesNothing`,
+  alongside shared-cache renderer warming. All ten exited zero.
+- Repository-wide Ruff passed for `src tests packaging scripts`. Doc links
+  and `git diff --check` passed.
+
+Swift ran locally with Apple Swift 6.4. The full Swift suite was not run.
+The selected suites present no windows; the new Screen Bar test leaves its
+panel hidden, and Fold renders offscreen. No installed app, real LED device
+or provider answer was exercised. The phase test proves sampled color
+agreement, not measured synchronization with physical LEDs. Swift 6.3.3 CI,
+first-pixel latency, the historical write destination and the 24-hour budgets
+remain unproved. Nothing was pushed or released.
+
+Follow-up code and test commits:
+
+- `20747461` runtime: declare L7 controller state and update test contracts
+- `0213a103` runtime: coalesce urgent refresh bursts within fifty milliseconds
+- `3ceab43b` serve: keep status available while answering is unavailable
+- `fc8591a5` history: separate torn percent samples before appending
+- `24a0cbfa` resets: let delivery win over racing dropped receipts
+- `a19d5d7f` history: keep percent history imports ordered
+- `596b00e8` fold: isolate and await the cache used by the second ask test
+- `43e7b507` fold: retain overlay compile failures through the retry cooldown
+- `5031f404` screen-bar: keep the live fallback at the hardware program phase
+- `160cd89a` layout: reflect hosting view types only for invalid sizes
+- `5cf6b727` events: skip empty timeline refreshes and deduplicate panel replays
+- `dd98fa9d` asks: resume fresh notices after an ask interrupts them
+- `2a08b779` usage: reconcile closed-window gaps without reloading every range on open
