@@ -414,6 +414,8 @@ def handle_provider_usage_action(
     if provider_id == "antigravity" and (
         "Antigravity" in label or "agy" in label
     ):
+        if label == "Run agy in a terminal":
+            return "Run `agy` in a terminal. JR-Bar reads its quota service on the next refresh."
         # Antigravity's quota comes from its own loopback service; the
         # only "reconnect" is making sure that service is up. This
         # label used to match nothing -- a dead button (audit).

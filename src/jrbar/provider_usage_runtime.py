@@ -1569,7 +1569,8 @@ class ProviderUsageService:
                 terminal=True,
                 fingerprint=job.fingerprint,
             )
-        elif candidate.state in _TRANSIENT_FAILURE_STATES:
+        elif (candidate.state in _TRANSIENT_FAILURE_STATES
+              and candidate.reason_code != "quota_service_not_running"):
             books.failure_gates[identity] = note_failure(
                 job.gate,
                 now=observed_at,

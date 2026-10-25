@@ -676,7 +676,7 @@ def test_antigravity_without_a_running_server_invents_no_lane__and_1_more(tmp_pa
     assert result.state.value == "unavailable"
     assert result.reason_code == "quota_service_not_running"
     assert result.action_label
-    assert result.action_label.startswith("Open Antigravity")
+    assert result.action_label in {"Open Antigravity", "Run agy in a terminal"}
     assert result.lanes == ()
     assert result.input_tokens == 0
 

@@ -1004,6 +1004,14 @@ def _discover_antigravity_endpoints(
     return endpoints
 
 
+def _antigravity_idle_action(home: Path) -> str:
+    if any(path.is_dir() for path in (
+        Path("/Applications/Antigravity.app"), home / "Applications/Antigravity.app",
+    )):
+        return "Open Antigravity"
+    return "Run agy in a terminal"
+
+
 def collect_antigravity(
     preference: ProviderPreference,
     *,
@@ -1179,7 +1187,7 @@ def collect_antigravity(
         observed_at=observed_at,
         state=ProviderSourceState.UNAVAILABLE,
         reason="quota_service_not_running",
-        action="Open Antigravity",
+        action=_antigravity_idle_action(Path(home) if home is not None else Path.home()),
     )
 
 _OPENAI_USAGE_MAX_PAGES = 4

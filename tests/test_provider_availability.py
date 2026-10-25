@@ -287,3 +287,11 @@ def test_hide_can_be_undone_without_changing_collection(tmp_path, monkeypatch):
     assert preference.option("panel_hidden") == "false"
     assert availability_document(reading(), now=700000, installed=False,
                                  hidden=preference.option("panel_hidden") == "true")["panel_visible"]
+
+
+def test_agy_only_idle_source_never_offers_open_app():
+    snapshot = replace(reading(), action_label="Run agy in a terminal")
+    row = availability_document(snapshot, now=2001, installed=True)
+    assert row["availability"] == "source_idle"
+    assert row["action"] == "Run agy in a terminal"
+    assert row["action_kind"] is None
