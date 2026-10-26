@@ -58,82 +58,23 @@ lists it); the Dock's top-edge option and per-display docks resolve through
 
 ## Motion
 
-Everything that moves on the island takes its numbers from one file,
-`NotchMotion` (`app/Sources/JRBarCore/NotchMotion.swift`). Three rules
-run through it.
+The native island uses `NotchFrameTransition` and the shared
+`JRBarTokens.Motion` curves. Opening takes 250 ms and closing takes 180 ms,
+with no overshoot. A retarget starts at the frame already on screen.
 
-- **The shape is the clock, and the content has one of its own that
-  starts with it.** The island's frame is one spring (`NotchFrameSpring`),
-  advanced by its exact solution so 60 Hz and 120 Hz draw the same curve.
-  The edge light, the corners, the shoulder and the soft foot are pure
-  functions of how far the shape has travelled (`NotchMorph.openness`,
-  `NotchReveal`). The card's content is not: read only off the shape it
-  could only arrive after it, so the grown shape was empty black for its
-  first 90 ms and a fold ended with empty black falling away. It runs on a
-  small spring of its own (`NotchContentClock`), ticked by the same
-  display link, that is aimed at the face the island is going to: it begins
-  to resolve on the tick the shape begins to move (`NotchMotion.contentIn`)
-  and, aimed the other way, leaves ahead of it (`contentOut`). The clock
-  keeps its position and its velocity across a change of aim, so a reversal
-  in either direction bends the content and never pops it, and a landed
-  move snaps it whole or gone. `jrbar.notchStagedMotion` set to false (and
-  Reduce Motion, which has no travel at all) take the old rule back: the
-  content is wherever the shape is.
-- **Opening is lively, closing is quick and calm.** The grow overshoots about
-  1% of its travel (2% of the width's), only outward and downward, and never
-  at the bezel (the top edge is held by a test); the fold is home in about
-  135 ms and lands under 0.02% so a dismissal never bounces.
-- **The width has its own clock.** The card is laid out once at its own
-  width and the shape uncovers it, so on the grow the width runs a quarter
-  quicker than the depth (`NotchMotion.widthLead`, 0.72 of the response)
-  and on the fold it trails (`widthLag`, 1.3). The card's openness is the
-  lesser of the shape's depth and width (`NotchMorph.openness(size:)`), so
-  the sides never cut through content that is already lit.
-- **Reduce Motion swaps every move for a quiet 0.15 s crossfade.** No
-  swell, no travel, no blur; the card is simply there
-  (`NotchMotion.faceTransition` is the one branch).
+The card, notices and asks keep their final layout and readable content
+from the first frame. The shape clips and reveals them without scaling,
+blur or a row cascade. The edge light and soft foot still follow the
+shape's travel. The silhouette and shelf layout stay the same.
 
-| Token | Response | Damping | Overshoot | 90% at | Used for |
-| --- | --- | --- | --- | --- | --- |
-| `open` | 0.42 s | 0.78 | 2.0% | 195 ms | the island growing into the card |
-| `live` | 0.34 s | 0.80 | 1.5% | 162 ms | a short hop outward: a notice dropping under the notch, a shoulder gaining a mark (growth under 110 pt) |
-| `close` | 0.23 s | 0.95 | 0.01% | 133 ms | any fold or shrink |
-| `nudge` | 0.30 s | 0.90 | 0.15% | 163 ms | content-driven resizes, the swell relaxing |
-| `hover` | 0.20 s | 0.72 | 3.8% | 86 ms | the small swell when hover-to-open is off; hover-to-open keeps the resting shape until the card opens |
-| `hoverMarks` | 0.18 s | 0.75 | 2.8% | 77 ms | marks scale slightly (1.02); the resting outline stays fixed when hover-to-open is on |
-| `contentIn` | 0.20 s | 0.92 | 0.06% | 110 ms | the card's content (and a notice's) resolving: a third of the way at 40 ms, whole by about 170 ms |
-| `contentOut` | 0.14 s | 0.95 | 0% | about 80 ms | content leaves ahead of the shape but stays visible through the first fold frames |
-| `pageTurn` | 0.24 s | 0.92 | 0.06% | 135 ms | a page of the grown card arriving after a sideways swipe: readable (opaque) by about 70 ms, landed by 0.25 s |
+Reduce Motion changes layout immediately and fades faces over 80 ms.
+Hover opens the card after 150 ms by default, and a click opens it at once.
+The saved Open after preference can choose another delay. Completion
+notices require a known turn duration longer than two minutes.
 
-`NotchMotion.frameMotion(from:to:)` picks the spring from the size of the
-change, so no caller names one. Why these numbers: Boring Notch opens on
-0.42 / 0.8 and closes critically damped (0.45 / 1.0), Atoll on 0.42 / 1.0,
-DynamicNotchKit on a 0.4 s bounce; the grow here sits at the livelier end
-of that range and the fold at the calm end, and the hover swell is the
-liveliest because it only travels 2 to 4 pt and has to start moving at
-once. The research and the sources are in
-[docs/archive/2026-10-07-notch-premium-research.md](archive/2026-10-07-notch-premium-research.md).
-
-| Layer | Window (of the shape's travel) | Why |
-| --- | --- | --- |
-| Sheet (header and rows together) | the content clock's level (`NotchReveal.sheet(level:)`): opacity is the level, from an 8 pt blur that clears, a 0.96 scale and a 6 pt lift | it starts with the shape and leaves ahead of it; the old rule, still the `jrbar.notchStagedMotion` revert, was 0.45 to 0.90 of the shape's travel |
-| Sheet width | scaled to stand as wide as the shape, 8 pt in from each side, while the shape is narrower than the card (`NotchReveal.fit`, never under 0.5) | the sheet is laid out once at the card's width, and a sheet that arrives with the shape would have its rows cut by the sides; it condenses out of the notch, the Dynamic Island's own gesture |
-| Row cascade | by level: first row at 0.10, 0.04 later per step (six at most), each over 0.50 | the rows follow the sheet in, and the last leaves first on a fold; the old rule was 0.52 and 0.02 of the shape's travel |
-| Soft foot | 18 pt of black over the shape's lower edge while it is within 24 pt of the content's own height (`NotchReveal.footFade`) | the edge dissolves what it uncovers instead of slicing through a button or a line of text; black on black, so no mask and no offscreen pass, and nothing drawn once the shape has landed |
-| Edge light | 0.55 to 0.95 | a hairline of white (14% at its brightest) along the foot and bottom corners; absent on the resting island, which stays exactly the bezel's black |
-
-A notice, an ask or a level is laid out once at the width of its own frame
-and never re-wraps while the island grows. It runs on the same kind of
-clock as the card (`NotchStageModel.noticeClock`), with a 3 pt blur and a
-6 pt settle, held by a gate on how far the lip has dropped
-(`NotchReveal.noticeGate`: nothing until a fifth down, all of it from three
-fifths, so the lower edge never cuts a line that arrived before the lip
-did; it was 40% to 85% of the shape's travel). It stands as wide as the
-shape while the shape is narrower than the face, as the card's sheet does,
-and leaves ahead of the shape on dismissal, remaining visible through the first fold frames.
-Only when nothing moves on a stage (the shape at rest, Reduce Motion, the
-old per-tick resize) does it fall back to a plain fade of 0.18 s in and
-0.14 s out.
+`NotchFrameSpring` and `NotchContentClock` remain pure analysis helpers for
+older filmstrip fixtures. They no longer set the native island's entrance
+or exit timing.
 
 ### Widths that fit their content
 
@@ -159,24 +100,15 @@ old per-tick resize) does it fall back to a plain fade of 0.18 s in and
   stops at 313, under the card's 320. The ask, meeting and level faces keep
   their own widths. The notch-less pill fits between 150 and 340.
 
-Fades that are not springs: one face giving way to another
-fades 0.18 s in and 0.12 s out; a new track's cover dissolves into the last
-one's over 0.22 s (`NotchMotion.trackSwap`) while its title and byline go in
+A new track's cover dissolves into the last one's over 0.22 s (`NotchMotion.trackSwap`) while its title and byline go in
 sequence, the old words out over 0.09 s and the new in over 0.15 s after a
 0.07 s wait (`NotchMotion.trackSwapLevels`, `NotchTrackLine`), so two sets of
 small glyphs are never both more than a fifth legible; the detached glass panels fade on
-`NotchMotion.panelCurve`. The hover clocks: a direct arrival can earn the
-hover mark on the same turn (`peekDelay` is 0), with `hoverDelay` (120 ms) for one that came down from the
-menu bar's row,
-which may only be reaching a menu; the card opens at "Open after"
-(default 0.12 s, never sooner than 0.30 s from the bar's row), and a
-card the pointer leaves folds after 0.10 s, so a brief leave and return
-does not ping-pong it. Staying is more generous than arriving: a swell holds
-for `swellGrace` (80 ms) after the pointer slips off the island, so a pointer
-riding the notch's edge does not shiver it, and a grown card is not folded
-while the pointer is within `leaveSlop` (8 pt) of it, at its sides and under
-its foot (`NotchHoverBand`). A click on the swollen notch opens at once and
-drops the dwell that was armed. With hover-to-open on, the resting shape stays
+`NotchMotion.panelCurve`. The hover clocks use the saved Open after delay, with a 150 ms default for
+both direct arrivals and arrivals from the menu bar. A click opens at once.
+Leaving a card folds it after 100 ms. The 80 ms swell grace and 8 pt leave
+slop still prevent a brief pointer leave from folding it.
+With hover-to-open on, the resting shape stays
 fixed until the card opens. With it off, the small swell remains. Reduce Motion has no swell at all, and a click
 still just shows the card. Two-finger swipe down on the resting island opens
 it and up (or down) on the card folds it; a pinch does the same.
@@ -189,11 +121,11 @@ moves between them (the tabs at its foot do the same by click).
 - **The page that arrives comes from the side the fingers went**
   (`NotchPageTurn`). A swipe toward the left brings Shelf in from the right,
   a swipe back brings Now in from the left: 18 pt of slide, a 3 pt blur that
-  clears and a fade that is whole by 0.6 of the spring's travel, all on the
-  `pageTurn` spring. The page that left is gone in the same frame (a removal
+  clears and a fade that is whole by 0.6 of its travel, on the shared 160 ms
+  `rowChange` curve. The page that left is gone in the same frame (a removal
   of nothing), so the two never share the card and the card is never taller
   than the page it shows. The header and the tab bar do not move; the shape
-  still follows the new height on its own `nudge` spring. The rows used to
+  still follows the new height on the shared frame curve. The rows used to
   swap in one frame, which read as a flicker. Reduce Motion keeps the arrival
   and drops the slide and the blur: a plain fade on the same curve.
 - **Past the last page the card gives a little.** A swipe left on Shelf, or
@@ -225,19 +157,17 @@ the panel is non-activating, so the terminal stays the frontmost app) and
 
 | Key | Does |
 | --- | --- |
-| Tab, Right, Down | the ring moves to the next verb, from nowhere to the first, wrapping |
-| Shift-Tab, Left, Up | the other way, from nowhere to the last |
-| Return, Enter, Space | presses the verb the ring is on; with the ring nowhere, nothing |
+| Tab / Shift-Tab | shows the next / previous ask without answering |
+| Right, Down / Left, Up | moves the ring through the displayed ask's verbs |
+| Return, Enter | presses the chosen verb, or Approve without focus for a non-destructive ask |
+| Space | presses the explicitly focused verb; does nothing without focus |
 | Esc | lets the keyboard go; never denies, never dismisses |
 | anything else | spent, and does nothing |
 
-No key answers an ask by itself: engaging focuses nothing, the first press
-of Return does nothing until a person has moved the ring, and Esc, a click
-elsewhere (`resignKey`), 15 s without a key (`NotchToy.askKeyIdle`), the ask
-being answered or replaced, and the capsule stepping down all give the
-keyboard back and clear the ring. The window gives key status back by being
-ordered out and in within one turn of the run loop, with no ordering
-notification, so the Screen Bar's coupling does not blink.
+Engaging the keyboard sends no answer. Approval requires the person's
+Return press, click or VoiceOver action. A question with several choices
+has no default approval. Escape, a click elsewhere, 15 seconds without a
+key, or resolving the ask returns typing to the previous window.
 
 The buttons, the keyboard and VoiceOver share one door,
 `NotchToy.performAskVerb`, which first checks the verb is still on the face
@@ -250,7 +180,7 @@ to the pointer and VoiceOver. VoiceOver reads the face as one item, "<who>
 needs you", valued with the question, with every verb as an action on it and
 as a labelled button with a hint. The ring is a white line on the verb's own
 edge with a dark one inside it (so it reads on the white Approve), and the
-row's left end says "Tab to choose", then "Press Return". The Settings
+row's left end says "Return to approve", then "Press Return" when a verb is chosen. The Settings
 shortcuts page lists the key; it has no default.
 
 ### The shadow

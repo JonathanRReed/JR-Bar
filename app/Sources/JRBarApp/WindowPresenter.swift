@@ -80,6 +80,21 @@ struct WindowPresenter {
         present(window, order)
     }
 
+    /// Explicit offscreen render proofs may become key to capture active controls.
+    /// Ordinary tests keep the desktop gate even when a proof is running.
+    static func renderProofKey(_ window: NSWindow) throws {
+        guard ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+              !NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) else {
+            throw Refusal.desktopPresentationInTests
+        }
+        NSRunningApplication.current.activate()
+        NSApp.activate()
+        WindowFront.orderIn(window, isOnActiveSpace: window.isOnActiveSpace) { proof in
+            proof.makeKeyAndOrderFront(nil)
+            proof.makeKey()
+        }
+    }
+
     /// Activation, keyboard focus and superclass ordering share the same gate.
     func perform(_ action: () -> Void) {
         guard desktop else { return }

@@ -110,8 +110,7 @@ struct UsageChartRenderCostTests {
             return try ProofRender.render(UsageGraphView(store: store).frame(width: 900, height: 620)
                 .background(Color.white), size: fixture.size, dark: false, scale: 1, settle: 0)
         }
-        let chart = UsageChart(history: fixture.history, range: fixture.range, metric: fixture.metric,
-                               accent: Color(red: 0.12, green: 0.45, blue: 0.90))
+        let chart = UsageTokenChart(history: fixture.history, range: fixture.range, accent: Color(red: 0.12, green: 0.45, blue: 0.90), metric: fixture.metric)
             .padding(12)
             .frame(width: 560, height: 260)
             .background(Color.white)

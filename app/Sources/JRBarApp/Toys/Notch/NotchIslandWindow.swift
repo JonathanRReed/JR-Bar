@@ -491,12 +491,9 @@ final class NotchIslandWindow: NSPanel {
 
     private var pullBase: (frame: NSRect, surface: NotchPullGesture.Surface)?
 
-    /// The island's frame motion: a display-link-integrated spring —
-    /// retargeting mid-flight continues from wherever the frame
-    /// actually is with the velocity it actually has, so an
-    /// interrupted morph never snaps (the `animator().setFrame` this
-    /// replaces restarted instead).
-    private var spring: NotchFrameSpring?
+    /// The display link advances the shared bounded curve. A retarget
+    /// starts at the frame already on screen and never overshoots.
+    private var spring: NotchFrameTransition?
     private var springLink: CADisplayLink?
     private var springTickAt: CFTimeInterval = 0
     /// Where a face change runs between: the resting island's height and
@@ -743,8 +740,8 @@ final class NotchIslandWindow: NSPanel {
             return
         }
         if let flip { morph = flip }
-        var spring = spring ?? NotchFrameSpring(at: presentedFrame)
-        spring.retarget(frame, motion: NotchFrameSpring.motion(from: spring.frame, to: frame))
+        var spring = spring ?? NotchFrameTransition(at: presentedFrame)
+        spring.retarget(frame)
         self.spring = spring
         // The notch is read once per morph, not once per display tick.
         springNotch = surroundingsOverride.map(\.floor) ?? toy?.notchFloor
@@ -790,7 +787,7 @@ final class NotchIslandWindow: NSPanel {
     /// where it is going, set before the first tick draws. The shape
     /// goes onto the stage in the same turn, so the view never fills a
     /// window larger than the shape for even a frame.
-    private func holdStage(for spring: NotchFrameSpring) {
+    private func holdStage(for spring: NotchFrameTransition) {
         guard Self.stagedMotion else { return }
         let want = NotchStage.frame(presented: spring.frame, target: spring.target,
                                     motion: spring.motion, within: stageBounds, scale: springScale)
@@ -849,8 +846,7 @@ final class NotchIslandWindow: NSPanel {
         advanceSpring(by: dt)
     }
 
-    /// One tick of the move: integrate, then draw the shape where the
-    /// spring says. (A test calls this by hand.)
+    /// One display tick. Tests advance the same curve directly.
     func advanceSpring(by dt: TimeInterval) {
         guard var spring else {
             springLink?.invalidate()

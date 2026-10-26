@@ -14,7 +14,7 @@ import Observation
 final class SetupStore {
     /// The five steps, in order.
     enum Step: String, CaseIterable, Identifiable, Sendable {
-        case welcome, agents, permissions, appearance, done
+        case welcome, agents, asks, permissions, appearance, done
 
         var id: String { rawValue }
         var index: Int { Self.allCases.firstIndex(of: self)! }
@@ -22,20 +22,34 @@ final class SetupStore {
         var title: String {
             switch self {
             case .welcome: return "Welcome to JR-Bar"
-            case .agents: return "Connect your agents"
+            case .agents: return "Providers"
+            case .asks: return "Only you answer an ask"
             case .permissions: return "Permissions"
-            case .appearance: return "Menu bar & Screen Bar"
+            case .appearance: return "Lights"
             case .done: return "You're set"
             }
         }
 
         var subtitle: String {
             switch self {
-            case .welcome: return "A one-minute tour of the two things to switch on."
-            case .agents: return "Choose the agents to monitor, and which to show usage for. Connecting updates that agent's configuration; usage stays off until you turn it on."
+            case .welcome: return "Connect the providers on this Mac."
+            case .agents: return "Usage requests stay off until you turn them on."
+            case .asks: return ""
             case .permissions: return "Each one unlocks a feature; grant what's useful, skip the rest."
-            case .appearance: return "What the menu bar shows, and whether the band is up."
+            case .appearance: return ""
             case .done: return "What's set, and what's still waiting on you."
+            }
+        }
+
+        var optional: Bool { self == .permissions || self == .appearance }
+        var navigationTitle: String {
+            switch self {
+            case .welcome: "Welcome"
+            case .agents: "Providers"
+            case .asks: "Asks"
+            case .permissions: "Permissions"
+            case .appearance: "Lights"
+            case .done: "Ready"
             }
         }
 
@@ -59,7 +73,7 @@ final class SetupStore {
 
     /// The world the steps read and act on; `.live(core:)` once the
     /// delegate wires it, the safe defaults before.
-    var model: SetupModel
+    var model: SetupModel { didSet { observeInstalledProviders() } }
     /// "Open Toys" on the Done step — the delegate sends it to the Toys page.
     var onOpenToys: (@MainActor () -> Void)?
     /// Finish/Open Toys have run — the window closes itself on this.
@@ -175,6 +189,37 @@ final class SetupStore {
         self.menuBarIconStyle = model.iconStyle()
     }
 
+    var onNewProvider: (SetupAgent) -> Void = { _ in }
+
+    @ObservationIgnored private let providerObservation = LifecycleObservation()
+
+    private func observeInstalledProviders() {
+        providerObservation.stop()
+        providerObservation.start(read: { [weak self] in
+            _ = self?.model.monitorLive()
+            _ = self?.model.agents()
+        }, changed: { [weak self] in
+            guard let self, self.model.monitorLive() else { return }
+            self.reconcileInstalledProviders(self.model.agents())
+        })
+    }
+
+    /// First live inventory is a baseline. Later additions get a card, never Setup.
+    func reconcileInstalledProviders(_ agents: [SetupAgent]) {
+        guard hasFinished, !agents.isEmpty, agents.allSatisfy({ $0.detected != nil }) else { return }
+        let installed = agents.filter { $0.detected == true && $0.id != "t3code" }
+        let ids = Set(installed.map(\.id))
+        let previous = state.knownProviders.map(Set.init)
+        let combined = ids.union(previous ?? [])
+        guard state.knownProviders == nil || Set(state.knownProviders ?? []) != combined else { return }
+        var candidate = state
+        candidate.knownProviders = combined.sorted()
+        guard commit(candidate) else { return }
+        if let previous {
+            for agent in installed where !previous.contains(agent.id) { onNewProvider(agent) }
+        }
+    }
+
     // MARK: Launch gate
 
     /// The launch-time gate: present until the walkthrough has run to
@@ -228,7 +273,7 @@ final class SetupStore {
         switch step {
         case .welcome: return "Get Started"
         case .done: return "Finish"
-        default: return "Next"
+        default: return "Continue"
         }
     }
 
@@ -279,6 +324,7 @@ final class SetupStore {
         candidate.finishedAt = Date().timeIntervalSince1970
         guard commit(candidate) else { return false }
         completedSteps = completed
+        if model.monitorLive() { reconcileInstalledProviders(model.agents()) }
         onFinished?()
         return true
     }
@@ -318,6 +364,7 @@ final class SetupStore {
 
     var monitorLive: Bool { model.monitorLive() }
     var agentRows: [SetupAgent] { model.agents() }
+    var installedAgentRows: [SetupAgent] { agentRows.filter { $0.detected == true && $0.id != "t3code" } }
 
     /// The Install button's enablement — the Agents page's own rule:
     /// the monitor must be live and the CLI found.

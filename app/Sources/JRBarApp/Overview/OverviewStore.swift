@@ -77,9 +77,9 @@ final class OverviewStore {
     /// whole two-thousand-row record.
     static let usageRowBudget = 48
 
-    init(core: CoreModel, desk: AskAnswerDesk? = nil) {
+    init(core: CoreModel, desk: AskAnswerDesk? = nil, sessionUsage: SessionUsageStore? = nil) {
         self.core = core
-        self.sessionUsage = SessionUsageStore(core: core)
+        self.sessionUsage = sessionUsage ?? SessionUsageStore(core: core)
         self.ownDesk = desk ?? AskAnswerDesk(core: core)
         self.fetchGraph = { [weak core] days, metric, providers in
             guard let core else { throw CoreClientError.notConnected }

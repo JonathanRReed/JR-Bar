@@ -32,15 +32,16 @@ struct SetupState: Codable, Equatable, Sendable {
     /// only records; a later look that finds one of these gone says so
     /// once — the reset an OS update or a re-signed build can leave.
     var grantedPermissions: [String]?
-    /// The release (`WhatsNewCatalog.releaseID`) whose What's New window
-    /// was last closed. nil until one is — the launch gate's "not seen".
+    /// Installed providers from the last complete inventory.
+    var knownProviders: [String]?
+    /// The release whose What's New window was last closed.
     var whatsNewSeen: String?
 
     static let currentVersion = 1
 
     init(version: Int = SetupState.currentVersion, completedSteps: [String] = [],
          skippedSteps: [String] = [], finishedAt: Double? = nil, presentedCount: Int = 0,
-         grantedPermissions: [String]? = nil, whatsNewSeen: String? = nil) {
+         grantedPermissions: [String]? = nil, whatsNewSeen: String? = nil, knownProviders: [String]? = nil) {
         self.version = version
         self.completedSteps = completedSteps
         self.skippedSteps = skippedSteps
@@ -48,10 +49,11 @@ struct SetupState: Codable, Equatable, Sendable {
         self.presentedCount = presentedCount
         self.grantedPermissions = grantedPermissions
         self.whatsNewSeen = whatsNewSeen
+        self.knownProviders = knownProviders
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, completedSteps, skippedSteps, finishedAt, presentedCount, grantedPermissions, whatsNewSeen
+        case version, completedSteps, skippedSteps, finishedAt, presentedCount, grantedPermissions, whatsNewSeen, knownProviders
     }
 
     /// Missing or wrongly typed keys read as the defaults; unknown keys
@@ -64,6 +66,7 @@ struct SetupState: Codable, Equatable, Sendable {
         finishedAt = (try? container.decodeIfPresent(Double.self, forKey: .finishedAt)) ?? nil
         presentedCount = (try? container.decodeIfPresent(Int.self, forKey: .presentedCount)) ?? 0
         grantedPermissions = (try? container.decodeIfPresent([String].self, forKey: .grantedPermissions)) ?? nil
+        knownProviders = try? container.decodeIfPresent([String].self, forKey: .knownProviders)
         whatsNewSeen = (try? container.decodeIfPresent(String.self, forKey: .whatsNewSeen)) ?? nil
     }
 }

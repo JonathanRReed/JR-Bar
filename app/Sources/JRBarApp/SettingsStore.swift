@@ -364,20 +364,21 @@ final class SettingsStore {
     /// Persists the choice; wired to `AppState` by the delegate.
     var onSetMenuBarIconStyle: (@MainActor (String) -> Void)?
 
-    /// "Summon the panel with ⌃⌥J": an app-local UserDefaults key (not a
+    @ObservationIgnored private let shortcutDefaults: UserDefaults
+    /// "Summon the panel with ⌥⌘J": an app-local UserDefaults key (not a
     /// daemon setting); the delegate registers/unregisters the Carbon
     /// hot-key when it flips.
-    var panelHotkeyEnabled: Bool = UserDefaults.standard.bool(forKey: PanelHotkey.defaultsKey) {
+    var panelHotkeyEnabled: Bool = false {
         didSet {
             guard panelHotkeyEnabled != oldValue else { return }
-            UserDefaults.standard.set(panelHotkeyEnabled, forKey: PanelHotkey.defaultsKey)
+            shortcutDefaults.set(panelHotkeyEnabled, forKey: PanelHotkey.defaultsKey)
             onPanelHotkeyChange?(panelHotkeyEnabled)
         }
     }
     var onPanelHotkeyChange: (@MainActor (Bool) -> Void)?
 
     /// The delegate mirrors `PanelHotkey.registrationFailed` here so the
-    /// toggle can say "⌃⌥J is taken by another app" instead of silently
+    /// toggle can say "⌥⌘J is taken by another app" instead of silently
     /// doing nothing while looking enabled.
     var panelHotkeyRegistrationFailed = false
 
@@ -385,33 +386,48 @@ final class SettingsStore {
     /// app-local UserDefaults pattern as the panel's key; the delegate
     /// toggles the island card on the press.
     static let shelfHotkeyDefaultsKey = "shelfHotkeyEnabled"
-    var shelfHotkeyEnabled: Bool = UserDefaults.standard.bool(forKey: shelfHotkeyDefaultsKey) {
+    var shelfHotkeyEnabled: Bool = false {
         didSet {
             guard shelfHotkeyEnabled != oldValue else { return }
-            UserDefaults.standard.set(shelfHotkeyEnabled, forKey: Self.shelfHotkeyDefaultsKey)
+            shortcutDefaults.set(shelfHotkeyEnabled, forKey: Self.shelfHotkeyDefaultsKey)
             onShelfHotkeyChange?(shelfHotkeyEnabled)
         }
     }
     var onShelfHotkeyChange: (@MainActor (Bool) -> Void)?
     var shelfHotkeyRegistrationFailed = false
 
+    static let studioHotkeyDefaultsKey = "studioHotkeyEnabled"
+    var studioHotkeyEnabled: Bool = true {
+        didSet {
+            guard studioHotkeyEnabled != oldValue else { return }
+            shortcutDefaults.set(studioHotkeyEnabled, forKey: Self.studioHotkeyDefaultsKey)
+            onStudioHotkeyChange?(studioHotkeyEnabled)
+        }
+    }
+    var onStudioHotkeyChange: (@MainActor (Bool) -> Void)?
+    var studioHotkeyRegistrationFailed = false
+    var studioHotkeyChord: HotkeyChord? {
+        _ = hotkeyChordVersion
+        return HotkeyChordDefaults.chord(for: PanelHotkey.studioID, fallback: PanelHotkey.studioDefault, defaults: shortcutDefaults)
+    }
+
     /// Bumped on every chord write so views re-read the defaults-backed
     /// chords below.
     private var hotkeyChordVersion = 0
 
     /// The panel's and the shelf's chords — the persisted rebind, the
-    /// shipped ⌃⌥J / ⌃⌥D, or nil once cleared on Settings › Shortcuts.
+    /// shipped ⌥⌘J / ⌃⌥D, or nil once cleared on Settings › Shortcuts.
     var panelHotkeyChord: HotkeyChord? {
         _ = hotkeyChordVersion
-        return HotkeyChordDefaults.chord(for: PanelHotkey.panelID, fallback: PanelHotkey.panelDefault)
+        return HotkeyChordDefaults.chord(for: PanelHotkey.panelID, fallback: PanelHotkey.panelDefault, defaults: shortcutDefaults)
     }
 
     var shelfHotkeyChord: HotkeyChord? {
         _ = hotkeyChordVersion
-        return HotkeyChordDefaults.chord(for: PanelHotkey.shelfID, fallback: PanelHotkey.shelfDefault)
+        return HotkeyChordDefaults.chord(for: PanelHotkey.shelfID, fallback: PanelHotkey.shelfDefault, defaults: shortcutDefaults)
     }
 
-    /// The keys as General's rows name them: "⌃⌥J", or a plain phrase
+    /// The keys as General's rows name them: "⌥⌘J", or a plain phrase
     /// once no key is bound.
     var panelHotkeyLabel: String { panelHotkeyChord?.displayString ?? "the panel shortcut" }
     var shelfHotkeyLabel: String { shelfHotkeyChord?.displayString ?? "the shelf shortcut" }
@@ -423,15 +439,23 @@ final class SettingsStore {
     func setShortcut(_ chord: HotkeyChord?, for id: String) {
         switch id {
         case PanelHotkey.panelID:
-            HotkeyChordDefaults.set(chord, for: id)
+            HotkeyChordDefaults.set(chord, for: id, defaults: shortcutDefaults)
             hotkeyChordVersion += 1
             if chord != nil, !panelHotkeyEnabled {
                 panelHotkeyEnabled = true
             } else {
                 onPanelHotkeyChange?(panelHotkeyEnabled)
             }
+        case PanelHotkey.studioID:
+            HotkeyChordDefaults.set(chord, for: id, defaults: shortcutDefaults)
+            hotkeyChordVersion += 1
+            if chord != nil, !studioHotkeyEnabled {
+                studioHotkeyEnabled = true
+            } else {
+                onStudioHotkeyChange?(studioHotkeyEnabled)
+            }
         case PanelHotkey.shelfID:
-            HotkeyChordDefaults.set(chord, for: id)
+            HotkeyChordDefaults.set(chord, for: id, defaults: shortcutDefaults)
             hotkeyChordVersion += 1
             if chord != nil, !shelfHotkeyEnabled {
                 shelfHotkeyEnabled = true
@@ -687,7 +711,11 @@ final class SettingsStore {
 
     /// The launch-at-login state is read by the General page when it
     /// shows (`refreshLaunchAtLogin`), not here: the read is an XPC call.
-    init(core: CoreModel, providerList: ProviderListStore? = nil) {
+    init(core: CoreModel, providerList: ProviderListStore? = nil, shortcutDefaults: UserDefaults = .standard) {
+        self.shortcutDefaults = shortcutDefaults
+        self.panelHotkeyEnabled = shortcutDefaults.bool(forKey: PanelHotkey.defaultsKey)
+        self.shelfHotkeyEnabled = shortcutDefaults.bool(forKey: Self.shelfHotkeyDefaultsKey)
+        self.studioHotkeyEnabled = shortcutDefaults.object(forKey: Self.studioHotkeyDefaultsKey) as? Bool ?? true
         self.core = core
         self.providerList = providerList ?? ProviderListStore(core: core)
         self.firmware = FirmwareStore { name, args in try await core.send(name, args: args) }
@@ -1825,6 +1853,9 @@ final class SettingsStore {
             case PanelHotkey.defaultsKey:
                 guard let on = value.boolValue else { malformed.append(key); continue }
                 panelHotkeyEnabled = on
+            case Self.studioHotkeyDefaultsKey:
+                guard let on = value.boolValue else { malformed.append(key); continue }
+                studioHotkeyEnabled = on
             case Self.shelfHotkeyDefaultsKey:
                 guard let on = value.boolValue else { malformed.append(key); continue }
                 shelfHotkeyEnabled = on

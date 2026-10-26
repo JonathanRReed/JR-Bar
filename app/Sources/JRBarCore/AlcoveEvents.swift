@@ -237,6 +237,7 @@ public enum AlcoveEventPolicy {
         default: return nil
         }
         guard kinds.isOn(kind) else { return nil }
+        if kind == .completed, !(event.duration.map { $0.isFinite && $0 > 120 } ?? false) { return nil }
 
         let provider = event.provider ?? session?.provider
         let providerName = provider.map { SessionLabel.providerName($0) }
@@ -539,6 +540,17 @@ public struct AlcoveCapsuleQueue: Equatable, Sendable {
             pendingAt = nil
         }
         return current.map(matches) ?? false
+    }
+
+    /// A person selected an ask with the keyboard. It stays at the ordinary tier.
+    public mutating func selectAsk(_ notice: AlcoveNotice, at now: Date) {
+        guard notice.kind == .ask else { return }
+        overlay = nil
+        var selected = notice
+        selected.takeover = false
+        current = selected
+        currentShownAt = now
+        if pending?.session == notice.session { pending = nil; pendingAt = nil }
     }
 
     /// The ask escalated to the takeover tier. The capsule already

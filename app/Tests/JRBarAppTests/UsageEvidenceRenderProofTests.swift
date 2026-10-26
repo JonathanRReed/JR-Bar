@@ -27,8 +27,8 @@ struct UsageEvidenceRenderProofTests {
         #expect(store.forecast(for: providers[1], window: providers[1].windows[0]).verdict == .guarded(reason: "window_elapsed"))
         try WindowsRenderProofTests.write("usage-evidence-paused", size: CGSize(width: 800, height: 820)) {
             VStack(spacing: 16) {
-                ProviderUsageCard(provider: providers[0], store: store)
-                ProviderUsageCard(provider: providers[1], store: store)
+                UsageProviderDetail(provider: providers[0], store: store, showCost: true)
+                UsageProviderDetail(provider: providers[1], store: store, showCost: true)
             }.padding(24)
         }
     }
@@ -55,7 +55,7 @@ struct UsageEvidenceRenderProofTests {
         #expect(store.history(for: provider)?.cacheSavings == nil)
         #expect(store.history(for: provider)?.cacheShare == 0.5)
         try WindowsRenderProofTests.write("usage-evidence-mixed-cache", size: CGSize(width: 800, height: 860)) {
-            ProviderUsageCard(provider: provider, store: store).padding(24)
+            UsageProviderDetail(provider: provider, store: store, showCost: true).padding(24)
         }
     }
 

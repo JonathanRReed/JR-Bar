@@ -103,36 +103,10 @@ struct UsageWindowInspection {
 
     var verdictColor: Color {
         guard hasAmount, readingNotice == nil else { return .secondary }
-        return ProviderUsageCard.verdictTint(displayForecast)
+        return UsageCardCopy.verdictTint(displayForecast)
     }
 }
 
-struct UsageWindowInspectButton: View {
-    let provider: CoreProviderUsage
-    let window: CoreUsageWindow
-    @Bindable var store: UsageCenterStore
-    let accent: Color
-    @ViewState private var inspecting = false
-
-    var body: some View {
-        let forecast = store.forecast(for: provider, window: window)
-        let inspection = UsageWindowInspection(provider: provider, window: window, forecast: forecast,
-                                               isLive: store.isLive, now: store.now)
-        Button { inspecting = true } label: {
-            QuotaRing(window: window, forecast: inspection.displayForecast, accent: accent, now: store.now,
-                      reduced: store.reduceMotion, reset: inspection.resetText)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Show the \(window.longName) window's reading and forecast evidence")
-        .accessibilityLabel(inspection.inspectLabel)
-        .accessibilityHint("Shows the reset, reading time and forecast evidence for this window.")
-        .accessibilityIdentifier("usage-window-inspect-\(provider.identity)-\(window.id)")
-        .popover(isPresented: WindowPresenter.presentation($inspecting)) {
-            UsageWindowInspectionView(inspection: inspection)
-        }
-    }
-}
 
 struct UsageWindowInspectionView: View {
     let inspection: UsageWindowInspection

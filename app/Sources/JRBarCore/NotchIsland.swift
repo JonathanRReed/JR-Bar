@@ -87,6 +87,9 @@ public struct NotchIslandRow: Equatable, Sendable, Identifiable {
     /// The open ask a waiting row carries — the card's inline Approve /
     /// Deny read it (`NotchAskVerbs`); nil on every other row.
     public var ask: CoreAsk?
+    public var members: [NotchIslandRow] = []
+    public var workerCount: Int = 0
+    public var unlinked = false
 
     public init(id: String, label: String, provider: String, activity: SessionActivity,
                 ask: CoreAsk? = nil) {
@@ -209,7 +212,8 @@ public enum NotchIsland {
     /// keeps its pieces from disagreeing. `asks` is `state.asks`: a
     /// waiting row carries the pinned ask over the one embedded in its
     /// session, the same precedence the panel's rows take (`liveAsk`).
-    public static func summarize(_ sessions: [CoreSession], asks: [CoreAsk] = []) -> NotchIslandSummary {
+    public static func summarize(_ sessions: [CoreSession], asks: [CoreAsk] = [],
+                                 groups: [CoreAgentGroup] = [], allSessions: [CoreSession] = []) -> NotchIslandSummary {
         var s = NotchIslandSummary()
         var tally: [String: Int] = [:]
         var oldest: (id: String, at: Double)?
@@ -244,6 +248,29 @@ public enum NotchIsland {
             case .done, .ended, .idle: break
             }
         }
+        let inventory = allSessions.isEmpty ? sessions : allSessions
+        let byID = Dictionary(inventory.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for index in s.rows.indices {
+            s.rows[index].unlinked = byID[s.rows[index].id]?.unlinkedWorker == true
+        }
+        // Membership comes only from the daemon's proven groups. An ask keeps its own row.
+        for group in groups {
+            let members = group.members.compactMap { byID[$0] }
+            guard let root = byID[group.rootWorkKey], members.contains(where: { SessionActivity.reduce($0) == .working }) else { continue }
+            let memberIDs = Set(group.members)
+            s.rows.removeAll { memberIDs.contains($0.id) && ($0.activity == .working || $0.activity == .failed) }
+            var row = NotchIslandRow(id: root.id, label: root.displayLabel, provider: group.rootProvider, activity: .working)
+            if s.rows.contains(where: { $0.id == row.id }) { row.id = "group:" + group.id }
+            row.workerCount = group.workerCount
+            row.members = members.filter { $0.id != root.id }.map {
+                NotchIslandRow(id: $0.id, label: $0.displayLabel, provider: $0.provider, activity: SessionActivity.reduce($0))
+            }
+            s.rows.append(row)
+        }
+        // Dim workers remain visible, but do not count as an agent or a provider on the strip.
+        let workingRows = s.rows.filter { $0.activity == .working && !$0.unlinked }
+        s.working = workingRows.count
+        tally = Dictionary(workingRows.map { ($0.provider, 1) }, uniquingKeysWith: +)
         s.oldestWaiting = oldest?.id
         // Busiest first; the id tiebreak keeps a split house from
         // flickering between ticks, the same rule the buddy uses.
