@@ -51,23 +51,35 @@ def test_native_table_identifies_this_process_without_starting_a_child(monkeypat
     assert entry.command == pt.launch_path(os.getpid())
 
 
-def test_launch_path_reads_only_the_prefix_and_handles_permission_denial():
+def test_launch_path_uses_the_required_size_erases_the_buffer_and_handles_denial():
     import errno
 
+    buffers = []
     def read(mib, count, buffer, size, *_):
         assert list(mib) == [1, 49, 42]
-        assert len(buffer) == 4100
-        buffer.raw = b"\x01\0\0\0/opt/bin/claude\0".ljust(len(buffer), b"\0")
-        ctypes.set_errno(errno.ENOMEM)
-        return -1
+        if buffer is None:
+            ctypes.cast(size, ctypes.POINTER(ctypes.c_size_t)).contents.value = 20_000
+        else:
+            assert len(buffer) == 20_000
+            buffers.append(buffer)
+            buffer.raw = b"\x01\0\0\0/opt/bin/claude\0".ljust(len(buffer), b"x")
+        return 0
 
     assert pt.launch_path(42, sysctl=read) == "/opt/bin/claude"
+    assert buffers[0].raw == b"\0" * 20_000
 
     def denied(*_):
         ctypes.set_errno(errno.EPERM)
         return -1
 
     assert pt.launch_path(42, sysctl=denied) is None
+
+    def oversized(mib, count, buffer, size, *_):
+        assert buffer is None
+        ctypes.cast(size, ctypes.POINTER(ctypes.c_size_t)).contents.value = 1024 * 1024 + 1
+        return 0
+
+    assert pt.launch_path(42, sysctl=oversized) is None
 
 
 def test_native_table_omits_zombies_but_keeps_inaccessible_pid_as_unknown():

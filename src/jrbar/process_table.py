@@ -53,21 +53,26 @@ def _sysctl():
 
 
 def launch_path(pid: int, *, sysctl=None) -> str | None:
-    # KERN_PROCARGS2 starts with argc and the exec-time launch path. Request
-    # a bounded prefix and decode only the path. Discard all remaining
-    # bytes. ENOMEM still fills the prefix on Darwin for large environments.
+    # Darwin returns the TOP of the argument area for a short buffer, which
+    # can omit the launch path. Query its size before reading, then decode
+    # only the saved path and erase the transient argument/environment area.
     call = _sysctl() if sysctl is None else sysctl
     mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
-    prefix = ctypes.create_string_buffer(4096 + ctypes.sizeof(ctypes.c_int))
-    size = ctypes.c_size_t(len(prefix))
-    ctypes.set_errno(0)
-    result = call(mib, 3, prefix, ctypes.byref(size), None, 0)
-
-    if result != 0 and ctypes.get_errno() != errno.ENOMEM:
+    size = ctypes.c_size_t()
+    if call(mib, 3, None, ctypes.byref(size), None, 0) != 0 or not 4 < size.value <= 1024 * 1024:
         return None
-    raw = prefix.raw[ctypes.sizeof(ctypes.c_int):min(size.value, len(prefix))]
-    end = raw.find(b"\0")
-    return os.fsdecode(raw[:end]) if end > 0 else None
+    buffer = ctypes.create_string_buffer(size.value)
+    try:
+        if call(mib, 3, buffer, ctypes.byref(size), None, 0) != 0:
+            return None
+        if not 4 < size.value <= len(buffer):
+            return None
+        raw = ctypes.string_at(ctypes.addressof(buffer) + 4, min(4096, size.value - 4))
+        end = raw.find(b"\0")
+        return os.fsdecode(raw[:end]) if end > 0 else None
+    finally:
+        ctypes.memset(buffer, 0, len(buffer))
+
 
 
 def _terminals() -> dict[int, str]:

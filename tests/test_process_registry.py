@@ -445,7 +445,8 @@ int main(int argc, char **argv) {
     launcher = tmp_path / "claude"
     launcher.symlink_to(tmp_path / "1.0.0")
     parent = subprocess.Popen([str(launcher), str(tmp_path / "node")],
-                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                              env={**os.environ, "JRBAR_SYNTHETIC_PADDING": "x" * 20_000})
     child = None
     try:
         lines = [parent.stdout.readline().strip(), parent.stdout.readline().strip()]
