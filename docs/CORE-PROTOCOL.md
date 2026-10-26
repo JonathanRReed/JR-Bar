@@ -2121,9 +2121,10 @@ Ambient families follow these rules on the strip, Dot and Screen Bar:
   deadline.
 
 Share mixes allocate one share per provider. Groups and sessions of that
-provider merge; their most urgent state wins. A failure remains visible
-while another session works. The share keeps the provider colour as sessions
-come and go. Explicit session colours and Color by Project still apply.
+provider merge; their most urgent state wins. A fresh failure keeps its share
+until its five-second signal expires, even while another session works.
+Retained failed and ended sessions take no share. The share keeps the provider
+colour as sessions come and go. Explicit session colours and Color by Project still apply.
 Asks stay individual and take priority. Everyone uses contiguous shares when
 a chosen animation is a sweep, including Knight Rider, Scanner and Pendulum.
 Each sweep then travels through adjacent LEDs inside its own share.
