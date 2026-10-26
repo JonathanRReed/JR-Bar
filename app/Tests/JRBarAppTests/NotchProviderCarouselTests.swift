@@ -312,7 +312,7 @@ struct NotchProviderFocusTests {
         _ = store.screenBarWings
         let ask = CoreAsk(session: "codex:ask", openedAt: 90, summary: "Run tests?", answerable: true, request: "fixture-request")
         let asking = CoreSession(id: "codex:ask", provider: "codex", label: "Waiting work", ask: ask)
-        let failed = CoreSession(id: "gemini:failed", provider: "gemini", label: "Failed work", mode: "failed")
+        let failed = CoreSession(id: "gemini:failed", provider: "gemini", label: "Failed work", mode: "failed", updatedAt: 200, failureSignalUntil: 205)
         clock = 200
         core.apply(.state(CoreState(sessions: sessions() + [asking, failed], asks: [ask])))
         #expect(store.screenBarWings.left?.provider == "codex")
@@ -322,7 +322,10 @@ struct NotchProviderFocusTests {
         core.apply(.state(CoreState(sessions: sessions() + [failed])))
         #expect(store.screenBarFocus.focusSession == "gemini:failed")
         #expect(store.screenBarWings.left?.workingActivity == false)
-        #expect(store.nextAskAgeTick(now: clock) == nil)
+        #expect(store.nextAskAgeTick(now: clock) == 205)
+        clock = 205
+        #expect(store.screenBarFocus.focusSession != "gemini:failed")
+        #expect(store.screenBarWings.left?.workingActivity == true)
     }
 
     @Test("a manually selected working session is never overridden by a provider turn")

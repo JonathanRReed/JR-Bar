@@ -7,6 +7,7 @@ from enum import Enum
 
 from .ask_lifetime import ASK_MAY_BE_STALE_SECONDS, AskStanding, ask_standing
 from .collector import MonitorSnapshot
+from .failure_policy import ended_without_failure, failure_signal_until, signals_failure
 from .freshness import bounded_age_seconds
 from .models import AgentMode, AgentStatus
 from .operator_state import (
@@ -52,6 +53,7 @@ class ProjectedAgentRow:
     # pulses more calmly, and the panel says so and offers Dismiss.
     ask_may_be_stale: bool = False
     unlinked_worker: bool = False
+    failure_signal_until: float | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,7 @@ class TransientSignal:
     kind: SignalKind
     repetitions: int
     source_agent_id: str | None
+    duration_seconds: float | None = None
 
 
 _LIFECYCLE_PRIORITY = {
@@ -116,7 +119,7 @@ class AttentionProjection:
         grouped = list(asking)
         for group in resolution.groups:
             root = rows.get(group.root_work_key)
-            members = [rows[key] for key in group.members if key in rows]
+            members = [light_signal_row(rows[key]) for key in group.members if key in rows]
             if root is None or not members or asking_ids.intersection(group.members):
                 continue
             driver = min(members, key=lambda row: (_LIFECYCLE_PRIORITY[row.lifecycle_mode], row.agent_id))
@@ -298,7 +301,7 @@ def project_attention(
     emitted = set(consumed)
     for status in plausible_statuses:
         event_key = stable_event_key(status)
-        if not _is_failure_event(status) or event_key in emitted:
+        if not _is_failure_event(status) or not signals_failure(status, now=collected_at) or event_key in emitted:
             continue
         signals.append(
             TransientSignal(
@@ -306,6 +309,7 @@ def project_attention(
                 kind=SignalKind.FAILURE,
                 repetitions=2,
                 source_agent_id=status.agent_id,
+                duration_seconds=(failure_signal_until(status) or collected_at.timestamp()) - collected_at.timestamp(),
             )
         )
         emitted.add(event_key)
@@ -368,6 +372,10 @@ def settle_completed_for_lights(
         return projection
 
     def settled(row: ProjectedAgentRow) -> ProjectedAgentRow:
+        if row.lifecycle_mode is LifecycleMode.FAILED_VISIBLE:
+            if row.is_subagent or row.failure_signal_until is None or now.timestamp() >= row.failure_signal_until:
+                return replace(row, lifecycle_mode=LifecycleMode.IDLE, failure_signal_until=None)
+            return row
         if row.lifecycle_mode is not LifecycleMode.COMPLETED_RECENTLY:
             return row
         if (now - row.updated_at).total_seconds() <= glow_seconds:
@@ -554,6 +562,14 @@ def _promote_delegating_parents(
     )
 
 
+def light_signal_row(row: ProjectedAgentRow) -> ProjectedAgentRow:
+    if row.lifecycle_mode is LifecycleMode.FAILED_VISIBLE and (
+        row.is_subagent or row.unlinked_worker or row.failure_signal_until is None
+    ):
+        return replace(row, lifecycle_mode=LifecycleMode.IDLE)
+    return row
+
+
 def _light_driver_candidates(
     primary_rows: tuple[ProjectedAgentRow, ...],
     worker_rows: tuple[ProjectedAgentRow, ...],
@@ -573,7 +589,7 @@ def _light_driver_candidates(
     still the only thing happening, and going dark would be a worse lie
     than naming it.
     """
-    return primary_rows or worker_rows
+    return tuple(light_signal_row(row) for row in (primary_rows or worker_rows))
 
 
 def _project_row(
@@ -592,6 +608,7 @@ def _project_row(
         is_subagent=status.is_subagent,
         updated_at=status.updated_at,
         source_status=status,
+        failure_signal_until=failure_signal_until(status) if now is not None and signals_failure(status, now=now) else None,
         work_key=status.work_key,
         request_key=status.request_key,
     )
@@ -605,7 +622,7 @@ def _lifecycle_mode(
 ) -> LifecycleMode:
     if actionable:
         return LifecycleMode.WAITING
-    if status.is_capacity_limited:
+    if ended_without_failure(status):
         return LifecycleMode.IDLE
     if status.mode in {
         AgentMode.WORKING,
@@ -614,12 +631,6 @@ def _lifecycle_mode(
     }:
         return LifecycleMode.ACTIVE
     if status.mode == AgentMode.BLOCKED_ERROR:
-        if (
-            now is not None
-            and (now - status.updated_at).total_seconds()
-            > COMPLETED_RECENT_SECONDS * 2
-        ):
-            return LifecycleMode.IDLE
         return LifecycleMode.FAILED_VISIBLE
     if status.mode == AgentMode.COMPLETED:
         # Done is a MOMENT: past the recent window the row settles to

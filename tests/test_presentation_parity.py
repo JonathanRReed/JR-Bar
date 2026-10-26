@@ -93,7 +93,7 @@ def _projection(
                     failure_event,
                     SignalKind.FAILURE,
                     2,
-                    None,
+                    status.agent_id,
                 ),
             )
             if failure_event is not None
@@ -233,7 +233,7 @@ def test_active_projection_resolves_once_before_literal_dot_pro_and_screen_bar_p
         ),
         (
             "fresh-failure",
-            _projection(LifecycleMode.FAILED_VISIBLE),
+            _projection(LifecycleMode.FAILED_VISIBLE, failure_event=_event(TransitionKind.FAILED, "event:failed").key),
             (_event(TransitionKind.FAILED, "event:failed"),),
             None,
             GlanceOverrideReason.NONE,

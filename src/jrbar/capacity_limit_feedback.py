@@ -24,7 +24,9 @@ def _identity(status) -> tuple[str, str]:
 
 
 def update_capacity_limit_alert(controller, projection, *, wall_now: float, monotonic_now: float, signal_kind, operator_events=()) -> None:
-    statuses = tuple(row.source_status for row in projection.all_rows)
+    statuses = tuple(row.source_status for row in projection.all_rows
+                     if not row.source_status.is_subagent and not getattr(row, "unlinked_worker", False))
+    primary_works = {status.work_key for status in statuses if status.work_key is not None}
     seen = dict(getattr(controller, "_capacity_limit_seen", {}))
     recovered = dict(getattr(controller, "_capacity_limit_recovered", {}))
     limited_lanes = dict(getattr(controller, "_capacity_limit_lanes", {}))
@@ -76,7 +78,7 @@ def update_capacity_limit_alert(controller, projection, *, wall_now: float, mono
         for status in statuses if status.is_capacity_limited
     ]
     for event in operator_events:
-        if not is_capacity_terminal(event):
+        if not is_capacity_terminal(event) or event.subject_key not in primary_works:
             continue
         source = event.subject_key.source_key
         instance = "default" if source.source_instance_id == "global" else source.source_instance_id

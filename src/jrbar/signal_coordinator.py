@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import math
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .attention import AttentionProjection, TransientSignal
 from .presentation_policy import (
@@ -45,6 +46,7 @@ class FiniteSignalCoordinator:
         self._visible_event_keys: set[str] = set()
         self._active: ActiveSignal | None = None
         self._pending: TransientSignal | None = None
+        self._pending_expires_at: float | None = None
         self._signals_started_in_burst = 0
 
     @property
@@ -117,6 +119,8 @@ class FiniteSignalCoordinator:
             and self._signals_started_in_burst < self.max_signals_per_burst
         ):
             self._pending = fresh[0]
+            duration = fresh[0].duration_seconds
+            self._pending_expires_at = now + duration if duration is not None else None
 
         return before != (self._active, self._pending)
 
@@ -134,9 +138,14 @@ class FiniteSignalCoordinator:
             and self._signals_started_in_burst < self.max_signals_per_burst
         ):
             pending = self._pending
+            expires = self._pending_expires_at
             self._pending = None
-            self._start(pending, now)
-            return self._active
+            self._pending_expires_at = None
+            if expires is None or now < expires:
+                if expires is not None:
+                    pending = replace(pending, duration_seconds=expires - now)
+                self._start(pending, now)
+                return self._active
 
         self._pending = None
         self._signals_started_in_burst = 0
@@ -147,7 +156,8 @@ class FiniteSignalCoordinator:
         self._active = ActiveSignal(
             signal=signal,
             started_at=now,
-            ends_at=now + self.failure_cycle_seconds * signal.repetitions,
+            ends_at=now + (signal.duration_seconds if signal.duration_seconds is not None
+                           else self.failure_cycle_seconds * signal.repetitions),
         )
 
     def _consume(self, event_key: str, now: float) -> None:
@@ -170,6 +180,8 @@ def _valid_transient_signal(signal: object) -> bool:
         isinstance(signal, TransientSignal)
         and type(signal.repetitions) is int
         and 1 <= signal.repetitions <= DEFAULT_MAX_SIGNALS_PER_BURST
+        and (signal.duration_seconds is None or (isinstance(signal.duration_seconds, (int, float))
+             and math.isfinite(signal.duration_seconds) and 0 < signal.duration_seconds <= 5))
     )
 
 

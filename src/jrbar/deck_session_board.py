@@ -261,11 +261,17 @@ class DeckSessionBoard:
                                              "unavailable", False, pinned))
                     continue
                 fresh = _fresh(status, now)
+                from .failure_policy import ended_without_failure, signals_failure
+                state = states.get(status.mode, "idle")
+                if ended_without_failure(status):
+                    state = "ended_unconfirmed"
+                elif status.mode is AgentMode.BLOCKED_ERROR and not signals_failure(status, now=now):
+                    state = "idle"
                 source = status.work_key.source_key
                 slots.append(SessionSlot(index, identity, _text(status.display_name),
                                          f"{_text(status.provider, 24)} · {_text(source.adapter_id, 28)} · "
                                          f"{_text(source.source_instance_id, 24)}",
-                                         states.get(status.mode, "idle") if fresh else "stale",
+                                         state if fresh else "stale",
                                          fresh and identity in self._navigation_keys, pinned))
             return BoardSnapshot(self._revision, self._bank,
                                  max(1, (len(self._view()) + SLOTS_PER_BANK - 1) // SLOTS_PER_BANK),

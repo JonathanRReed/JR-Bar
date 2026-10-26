@@ -147,13 +147,13 @@ public enum EventPolicy {
     /// work being watched. Callers that cannot prove it pass false and
     /// every rung fires as before.
     public static func delivery(for event: CoreEvent, state: CoreState?, settings: SettingsDocument?,
-                                askingFrontmost: Bool = false) -> EventDelivery {
-        let decided = decision(for: event, state: state, settings: settings, askingFrontmost: askingFrontmost)
+                                askingFrontmost: Bool = false, now: Double = Date().timeIntervalSince1970) -> EventDelivery {
+        let decided = decision(for: event, state: state, settings: settings, askingFrontmost: askingFrontmost, now: now)
         return holdingQuiet(decided, for: event, focus: state?.focus)
     }
 
     private static func decision(for event: CoreEvent, state: CoreState?, settings: SettingsDocument?,
-                                 askingFrontmost: Bool) -> EventDelivery {
+                                 askingFrontmost: Bool, now: Double) -> EventDelivery {
         let focusMode = (state?.focus?.mode ?? "normal").lowercased()
         let soundsSuppressed = soundsHeld(by: state?.focus)
         let chimeSuppressed = focusMode == "pause"
@@ -214,9 +214,12 @@ public enum EventPolicy {
             return delivery
 
         case "failed":
-            guard notify else { return .nothing }
+            guard notify, session?.isSubagent != true, session?.unlinkedWorker != true else { return .nothing }
+            if let at = event.at, now < at || now >= at + 5 { return .nothing }
+            let project = session?.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }
+            let title = project.map { "\(providerName) · \($0) failed" } ?? "\(label) failed"
             var delivery = EventDelivery(sound: sound(failureSound))
-            delivery.notification = .init(identifier: "failed:\(event.session ?? event.id)", title: "\(label) failed",
+            delivery.notification = .init(identifier: "failed:\(event.session ?? event.id)", title: title,
                                           body: event.detail ?? "\(providerName) stopped with an error. Click to open the session.",
                                           session: event.session)
             return delivery

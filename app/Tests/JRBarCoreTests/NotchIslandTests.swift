@@ -16,7 +16,7 @@ struct NotchIslandTests {
 
     private func session(_ id: String, provider: String = "claude",
                          mode: String? = "working", label: String? = nil) -> CoreSession {
-        CoreSession(id: id, provider: provider, label: label, mode: mode)
+        CoreSession(id: id, provider: provider, label: label, mode: mode, updatedAt: 100)
     }
 
     // MARK: Settings
@@ -75,7 +75,7 @@ struct NotchIslandTests {
             session("d", provider: "gemini", mode: "failed", label: "gemini-run"),
             session("e", provider: "pi", mode: "idle"),
             session("f", provider: "codex", mode: "completed", label: "done one"),
-        ])
+        ], now: 100)
         #expect(summary.working == 2)
         #expect(summary.waiting == 1)
         #expect(summary.failed == 1)

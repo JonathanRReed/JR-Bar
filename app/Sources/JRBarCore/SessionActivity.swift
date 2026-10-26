@@ -265,3 +265,15 @@ extension CoreSession {
     /// is in the panel. `AquariumModel.isMain` is its complement.
     var isChildWorker: Bool { kind != "main" && parent != nil }
 }
+
+
+extension CoreSession {
+    /// Failure marks remain in the panel after their five-second signal ends.
+    public func signalsFailure(at now: Double) -> Bool {
+        guard kind == "main", parent == nil, !unlinkedWorker, !stale,
+              SessionActivity.reduce(self) == .failed else { return false }
+        guard let start = updatedAt ?? since else { return false }
+        let end = failureSignalUntil ?? start + 5
+        return start <= now && now < end
+    }
+}

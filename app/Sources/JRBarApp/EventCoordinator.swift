@@ -312,6 +312,13 @@ final class EventCoordinator {
     }
 
     func handle(_ event: CoreEvent) {
+        if event.kind == "failed" {
+            let now = Date().timeIntervalSince1970
+            if event.notify == false { return }
+            if let at = event.at, now < at || now >= at + 5 { return }
+            if let id = event.session, let session = core.state?.session(withID: id),
+               session.isSubagent || session.unlinkedWorker { return }
+        }
         if let session = event.session {
             if event.kind == "ask_opened" {
                 inFrontChecks[session] = nil

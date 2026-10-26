@@ -141,6 +141,8 @@ def session_visibility(
     age = max(0.0, age)
     lifecycle = str(row.get("lifecycle") or "active")
     acknowledged = _row_is_acknowledged(row, acknowledged_at_by_id)
+    if lifecycle == "failed":
+        return HIDDEN if acknowledged else VISIBLE_COMPLETION
     if lifecycle in FINISHED_LIFECYCLES:
         if acknowledged or age > float(completed_visible_seconds):
             return HIDDEN

@@ -877,7 +877,7 @@ final class PanelStore {
 
     private func focusPick(at now: Double) -> SessionRow? {
         rows.first { $0.ask != nil }
-            ?? rows.first { $0.activity == .failed }
+            ?? rows.first { $0.activity == .failed && core.state?.session(withID: $0.id)?.signalsFailure(at: now) == true }
             ?? workingFocus(at: now)
             ?? rows.first { $0.activity == .done }
     }
@@ -1049,8 +1049,10 @@ final class PanelStore {
                                         holdUntil: holdUntil)
         _ = screenBarEarMarks(at: now)
         let awakeTick = compactAwakeCarousel.nextChange
-        guard rows.allSatisfy({ $0.ask == nil && $0.activity != .failed }), manualWorkingFocus == nil else {
-            return [askTick, awakeTick].compactMap { $0 }.min()
+        let failureTick = core.sessions.filter { $0.signalsFailure(at: now) }
+            .compactMap { $0.failureSignalUntil ?? ($0.updatedAt ?? $0.since).map { $0 + 5 } }.min()
+        guard rows.allSatisfy({ $0.ask == nil }), failureTick == nil, manualWorkingFocus == nil else {
+            return [askTick, awakeTick, failureTick].compactMap { $0 }.min()
         }
         return [askTick, awakeTick, workingProviderCarousel.nextChange].compactMap { $0 }.min()
     }

@@ -150,6 +150,27 @@ They reconcile hook worker IDs with the session database after restart.
 An unresolved subagent alias cannot override a database session parent.
 Local lineage evidence augments observed sessions and creates no activity rows.
 
+## Failure signals
+
+A failed run keeps `lifecycle: "failed"` in the panel until cleared.
+Its `failure_signal_until` is a Unix timestamp five seconds after the
+failure, or null when it has no signal. Only a fresh top-level failure
+signals. Workers, including unlinked workers, never drive failure colours,
+counts, notices, banners or sounds. Their failed marks stay inside their
+group or dim unlinked row.
+
+The notch, Screen Bar, LEDs and Stream Deck stop signalling at that
+deadline. `aggregate.failed` counts current failure signals, not retained
+failed rows. The failure notice names the provider and project and lasts
+five seconds. Asks still take priority. Replayed expired failures stay quiet.
+Cancellation, interruption and a delegated task stopped by capacity or
+transport errors read as `ended`, without a failure signal.
+
+T3 children without a native provider binding keep a stable T3-qualified
+identity and their explicit parent link. An absent binding is not an
+ambiguous binding. Settled native children retain identity-only lineage
+for 24 hours, independently of the ten-minute worker activity window.
+
 ## Who may send what
 
 Any process running as you can open `core.sock`: the daemon checks the peer's

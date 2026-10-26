@@ -222,7 +222,8 @@ public enum NotchIsland {
     /// waiting row carries the pinned ask over the one embedded in its
     /// session, the same precedence the panel's rows take (`liveAsk`).
     public static func summarize(_ sessions: [CoreSession], asks: [CoreAsk] = [],
-                                 groups: [CoreAgentGroup] = [], allSessions: [CoreSession] = []) -> NotchIslandSummary {
+                                 groups: [CoreAgentGroup] = [], allSessions: [CoreSession] = [],
+                                 now: Double = Date().timeIntervalSince1970) -> NotchIslandSummary {
         var s = NotchIslandSummary()
         var tally: [String: Int] = [:]
         var oldest: (id: String, at: Double)?
@@ -242,11 +243,13 @@ public enum NotchIsland {
                     || (at == oldest!.at && session.id < oldest!.id) {
                     oldest = (session.id, at)
                 }
-            case .failed: s.failed += 1
+            case .failed:
+                if session.signalsFailure(at: now) { s.failed += 1 }
             case .done, .ended, .idle: break
             }
             switch activity {
             case .working, .waiting, .failed:
+                if activity == .failed && !session.signalsFailure(at: now) { continue }
                 s.rows.append(NotchIslandRow(
                     id: session.id,
                     label: SessionLabel.display(label: session.label, shortId: session.shortId,
