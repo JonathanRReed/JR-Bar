@@ -1178,7 +1178,9 @@
     "weave/gradient/low/1/2": "chase",
     "weave/gradient/low/1/8": "chase",
     "tide/gradient/low/1/2": "chase",
-    "tide/gradient/low/1/8": "chase"
+    "tide/gradient/low/1/8": "chase",
+    "effect/gradient/low/1/2": "chase",
+    "effect/gradient/low/1/8": "chase"
   },
   "reason_counts": {
     "shares > LEDs": 288,

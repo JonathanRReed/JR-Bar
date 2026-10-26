@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from functools import lru_cache
@@ -11,6 +12,7 @@ from .animation import (
     ColorList,
     IndexedPaint,
     PaintStep,
+    RepeatStep,
     RollStep,
     Timing,
     WholeBar,
@@ -40,7 +42,7 @@ MIX_LABELS = {
     "color_blend": "Smooth", "round_robin": "Everyone",
     "spatial_split": "Split", "cycle": "One at a Time",
     "alternate": "Alternate", "relay": "Relay", "weave": "Weave",
-    "tide": "Tide", "classic": "Status Only",
+    "tide": "Tide", "classic": "Status Only", "effect": "Play an effect",
 }
 
 
@@ -429,7 +431,7 @@ def _shares(agents, settings, count, mode, warnings=None):
     sizes = [count // len(agents)] * len(agents)
     for index in rank[:count % len(agents)]:
         sizes[index] += 1
-    if mode == "spatial_split":
+    if mode == "spatial_split" or (mode == "round_robin" and _has_sweep(agents, settings)):
         slots = []
         start = 0
         for size in sizes:
@@ -614,14 +616,105 @@ def _multi_color(agents, settings, count, mode, warnings):
     raise ValueError(mode)
 
 
+def _has_sweep(agents, settings):
+    return any(settings.agent_animation(agent.provider) in {"kitt", "scanner", "pendulum"}
+               for agent in agents)
+
+
 def selected_agents(agents):
-    """Asks stay individual. Active providers own the ordinary animation."""
+    """Asks stay individual. Each provider owns one ordinary share."""
+    from .colors import _representative_state, weighted_blend
+
     asks = [agent for agent in agents if agent.state is LedDisplayState.ASK]
     if asks:
         return asks
     working = [agent for agent in agents if agent.state is LedDisplayState.WORKING]
-    candidates = working or agents
-    return list(candidates)
+    providers = {}
+    for agent in working or agents:
+        providers.setdefault(agent.provider, []).append(agent)
+    merged = []
+    for members in providers.values():
+        starts = [agent.started_at for agent in members if agent.started_at is not None]
+        merged.append(replace(members[0], state=_representative_state(members),
+            color=weighted_blend([(agent.color, float(agent.weight)) for agent in members]),
+            weight=max(agent.weight for agent in members),
+            started_at=min(starts) if starts else None))
+    working = [agent for agent in merged if agent.state is LedDisplayState.WORKING]
+    return working or merged
+
+
+@lru_cache(maxsize=8)
+def _installed_mix_effects(root, fingerprint):
+    from .core_effects import registry_with_packs
+    from .effect_pack_store import EffectPackStore
+
+    packs = EffectPackStore(root).list()
+    return registry_with_packs(packs), packs
+
+
+def _provider_tint(source, agent, settings):
+    from .colors import _peak_for_state
+    from .motion_shapes import shade
+
+    pattern = r"#[0-9a-fA-F]{6}\b"
+    colors = re.findall(pattern, source)
+    peak = max((max(int(color[i:i + 2], 16) for i in (1, 3, 5)) for color in colors), default=0)
+    if not peak:
+        return source
+    target = _peak_for_state(agent.color, agent.state, settings)
+    return re.sub(pattern, lambda match: shade(target,
+        max(int(match[0][i:i + 2], 16) for i in (1, 3, 5)) / peak), source)
+
+
+def _library_effect(agents, settings, count, warnings):
+    from .core_effects import normalize_parameters, pack_effect_for, render_effect_source
+    from .effect_registry import EFFECT_REGISTRY
+
+    packs = ()
+    identifier = settings.mix_effect.get("effect_id")
+    effect = EFFECT_REGISTRY.get(identifier) if isinstance(identifier, str) else None
+    if effect is None and isinstance(identifier, str) and identifier.startswith("pack:"):
+        from .effect_pack_store import EffectPackStore, EffectPackStoreError
+
+        store = EffectPackStore()
+        try:
+            registry, packs = _installed_mix_effects(store.root, store.fingerprint())
+            effect = registry.get(identifier)
+        except (OSError, ValueError, EffectPackStoreError) as error:
+            raise CannotFit("the installed effect library is unavailable") from error
+    if effect is None:
+        raise CannotFit("choose an available library effect")
+    requested = settings.mix_effect.get("parameters", {})
+    values = normalize_parameters(effect, requested, pack_effect=pack_effect_for(packs, identifier))
+    for key, value in requested.items():
+        if key not in values or values[key] != value:
+            warnings.append(f"Mix effect {key} cannot play exactly; using its safe default.")
+    # A persistent mix always loops. Each turn is one whole native cycle.
+    values = {key: value for key, value in values.items() if key not in {"pass_mode", "repeat"}}
+    lines = []
+    for agent in agents:
+        # Provider colour owns the palette, including effects with a colour control.
+        palette = {**values, "color": agent.color}
+        if effect.catalog == "provider_animation":
+            policy = settings.with_agent_animation(agent.provider, effect.identifier)
+            policy = policy.with_agent_animation_parameters(agent.provider, values)
+            source = "\n".join(_body(agent, policy, count, compact=True))
+        else:
+            source = render_effect_source(effect, palette, led_count=count, color=agent.color)
+        source = _provider_tint(source, agent, settings)
+        animation, problems = read_program(source, led_count=count)
+        if any(problem.severity == "error" and problem.code not in {"too-long", "too-many-lines"}
+               for problem in problems):
+            raise CannotFit("the library effect is invalid")
+        previous = None
+        for step in animation.steps:
+            if isinstance(step, RepeatStep):
+                continue
+            if isinstance(step, RollStep) and step == previous:
+                continue
+            lines.append(render_step(step))
+            previous = step
+    return _checked(lines, count), effect.label
 
 
 def _provider_parameter_warnings(agents, settings):
@@ -667,10 +760,8 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
             color = c.weighted_blend([(agent.color, float(agent.weight)) for agent in selected])
         return MixPlan(state, apply_brightness(color, brightness), mode, mode,
                        f"{MIX_LABELS[mode]} holds still. Asks still blink.")
-    warnings = _provider_parameter_warnings(selected, settings)
-    if len(selected) > 1 and len({agent.provider for agent in selected}) == 1:
-        color = c.weighted_blend([(agent.color, float(agent.weight)) for agent in selected])
-        selected = [replace(selected[0], color=color, state=state)]
+    warnings = ([] if mode == "effect" and len(selected) > 1
+                else _provider_parameter_warnings(selected, settings))
     if len(selected) == 1:
         agent = selected[0]
         program = c._single_agent_program(agent.color, state, settings=settings,
@@ -705,6 +796,8 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
                 program = _shares(selected, settings, led_count, attempt, warnings)
                 if led_count < 2 * len(selected) and any(settings.agent_animation(agent.provider) == "kitt" for agent in selected):
                     warnings.append("Knight Rider shows the beam's rise and fall on a one-LED share.")
+            elif attempt == "effect":
+                program, effect_label = _library_effect(selected, settings, led_count, warnings)
             elif attempt == "cycle":
                 program = _cycle(selected, settings.with_blend_mode("cycle"), led_count, warnings)
                 if any(settings.agent_animation(agent.provider) == "kitt" for agent in selected) and led_count > 2:
@@ -721,6 +814,10 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
             program = _safe_program(program, led_count, warnings)
             reason = (f"{MIX_LABELS[attempt]} plays because {names} are working."
                       if attempt == requested else f"Showing {MIX_LABELS[attempt]} because the requested program cannot fit exactly.")
+            if attempt == "round_robin" and _has_sweep(selected, settings):
+                reason += " Sweep animations use contiguous provider shares."
+            if attempt == "effect":
+                reason = f"{effect_label} plays one cycle per provider in their colours: {names}."
             if attempt == "classic":
                 reason = "Status Only shows the current state colour with no animation."
             return MixPlan(state, apply_brightness(program, brightness), requested, attempt, reason, tuple(warnings))

@@ -44,7 +44,8 @@ def statuses(count, mode=AgentMode.WORKING):
 
 
 def settings_for(mode, family):
-    settings = ColorSettings.defaults().with_blend_mode(mode)
+    settings = replace(ColorSettings.defaults().with_blend_mode(mode),
+        mix_effect={"effect_id": "marquee", "parameters": {}})
     for provider in PROVIDERS:
         settings = settings.with_agent_animation(provider, family)
         settings = settings.with_agent_animation_parameters(provider, PARAMETERS.get(family, {}))
@@ -131,7 +132,7 @@ def test_share_programs_keep_studio_values_in_the_played_bytes(mix, family):
     paints = [step for step in animation.steps if isinstance(step, PaintStep)]
     assert paints
     for index, agent in enumerate(agents):
-        slots = tuple(range(index * 4, (index + 1) * 4)) if mix == "spatial_split" else tuple(range(index, 8, 2))
+        slots = tuple(range(index * 4, (index + 1) * 4)) if mix == "spatial_split" or family == "kitt" else tuple(range(index, 8, 2))
         if mix == "cycle":
             slots = tuple(range(8))
         expected = _share_steps(_body(agent, settings, len(slots)), slots)

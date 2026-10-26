@@ -25,7 +25,8 @@ CASES = tuple((mix, animation, variant, providers, count)
 
 
 def settings_for_case(mix, animation, variant):
-    settings = ColorSettings.defaults().with_blend_mode(mix)
+    settings = replace(ColorSettings.defaults().with_blend_mode(mix),
+        mix_effect={"effect_id": "marquee", "parameters": {}})
     values = {}
     if variant != "default":
         for spec in _PROVIDER_PARAMETER_METADATA.get(animation, ()):
@@ -267,7 +268,7 @@ def test_automatic_follows_a_chosen_native_cycle_without_retiming_it(providers):
     plan = plan_agent_mix(agents, settings)
     assert plan.played == "round_robin", plan.warnings
     animation, _ = read_program(plan.program)
-    share = tuple(range(0, 8, providers))
+    share = tuple(range((8 + providers - 1) // providers))
     native, _ = read_program("\n".join(_body(agents[0], settings, len(share), compact=True)))
     assert animation_duration_ms(animation) == animation_duration_ms(native)
     assert share_errors(plan.program, agents[:1], settings, [share], horizon=7400) == [0]
@@ -280,7 +281,7 @@ def test_owner_automatic_follows_the_chosen_knight_rider_curve_exactly(providers
 
     settings = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", "kitt")
     agents = _active_agents(statuses(providers), settings)
-    share = tuple(range(0, 8, providers))
+    share = tuple(range((8 + providers - 1) // providers))
     plan = plan_agent_mix(agents, settings, led_count=8)
     reference = RawSdLedWasmController(8)
     actual = RawSdLedWasmController(8)
@@ -335,7 +336,8 @@ def test_rejected_keyframes_exceed_the_limit_in_the_firmware(monkeypatch, animat
     for provider, animation in zip(PROVIDERS, animations):
         settings = settings.with_agent_animation(provider, animation)
     agents = _active_agents(statuses(len(animations)), settings)
-    slots = [tuple(range(index, 8, len(agents))) for index in range(len(agents))]
+    sizes = [8 // len(agents) + (index < 8 % len(agents)) for index in range(len(agents))]
+    slots = [tuple(range(sum(sizes[:index]), sum(sizes[:index + 1]))) for index in range(len(agents))]
     # Inspect the rejected candidate without changing the production limit.
     monkeypatch.setattr("jrbar.light_mix.KEYFRAME_MAX_ERROR", 255)
     candidate = _shares(agents, settings, 8, "round_robin")
@@ -356,7 +358,7 @@ def test_accepted_smooth_keyframes_stay_within_the_limit_in_the_firmware():
     plan = plan_agent_mix(agents, settings)
     assert plan.played == "round_robin", plan.warnings
     assert any("Breathe is simplified slightly to share the strip with Knight Rider" in w for w in plan.warnings)
-    errors = share_errors(plan.program, agents, settings, [(0, 2, 4, 6), (1, 3, 5, 7)])
+    errors = share_errors(plan.program, agents, settings, [(0, 1, 2, 3), (4, 5, 6, 7)])
     assert max(errors) <= KEYFRAME_MAX_ERROR, errors
     print(f"smooth Breathe + Knight Rider: accepted candidate errors {errors}/255")
 

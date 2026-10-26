@@ -537,6 +537,7 @@ BLEND_MODE_CHOICES: tuple[str, ...] = (
     BLEND_MODE_ALTERNATE,
     BLEND_MODE_WEAVE,
     BLEND_MODE_TIDE,
+    "effect",
 )
 # Smooth is the default: on a wide blended surface (the Screen Bar mixes
 # every LED with its neighbours) per-agent alternating LEDs average into a
@@ -555,6 +556,7 @@ BLEND_MODE_DESCRIPTIONS: dict[str, str] = {
     BLEND_MODE_ALTERNATE: "Provider colours crossfade across the whole strip on a beat.",
     BLEND_MODE_WEAVE: "Provider colours interleave and drift along the strip.",
     BLEND_MODE_TIDE: "Provider colours flow in from both ends and meet.",
+    "effect": "A library effect takes turns in the active providers' colours.",
 }
 
 # NOTE on layout crossfades: every program swap already eases instead of
@@ -1099,6 +1101,7 @@ class ColorSettings:
     session_colors: dict[str, str] = field(default_factory=dict)
     blend_mode: str = DEFAULT_BLEND_MODE
     mix_parameters: dict[str, dict[str, Any]] = field(default_factory=dict)
+    mix_effect: dict[str, Any] = field(default_factory=dict)
     fade_floor: dict[str, float] = field(default_factory=_default_fade_floor)
     fade_ceiling: dict[str, float] = field(default_factory=_default_fade_ceiling)
     mode_animation: dict[str, str] = field(default_factory=_default_mode_animation)
@@ -1444,6 +1447,7 @@ class ColorSettings:
             "session_colors": dict(sorted(self.session_colors.items())),
             "blend_mode": self.blend_mode,
             "mix_schema_version": 1,
+            "mix_effect": dict(self.mix_effect),
             "mix_parameters": {key: dict(value) for key, value in self.mix_parameters.items()},
             "fade_floor": dict(self.fade_floor),
             "fade_ceiling": dict(self.fade_ceiling),
@@ -1602,6 +1606,7 @@ class ColorSettings:
             agent_colors=agent_colors,
             session_colors=session_colors,
             blend_mode=blend_mode,
+            mix_effect=clean_mix_effect(data.get("mix_effect")),
             mix_parameters={
                 key: clean_animation_parameters(value)
                 for key, value in data.get("mix_parameters", {}).items()
@@ -1625,6 +1630,13 @@ class ColorSettings:
 #: A provider's motion values are small: a few numbers, choices and colours.
 MAX_ANIMATION_PARAMETERS = 16
 MAX_ANIMATION_PALETTE = 4
+
+
+def clean_mix_effect(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict) or not isinstance(value.get("effect_id"), str):
+        return {}
+    return {"effect_id": value["effect_id"],
+            "parameters": clean_animation_parameters(value.get("parameters"))}
 
 
 def clean_animation_parameters(values: object) -> dict[str, Any]:

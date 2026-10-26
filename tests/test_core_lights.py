@@ -4,6 +4,7 @@ profile slots, and the Focus roster."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -478,6 +479,7 @@ def test_a_blend_mode_previews_against_a_mixed_fleet() -> None:
     from jrbar.animation import firmware_parse_error
 
     settings = AgentMonitorSettings()
+    settings = settings.with_colors(replace(settings.colors, mix_effect={"effect_id": "marquee", "parameters": {}}))
     daemon = SimpleNamespace(settings=settings)
     reply = core_runtime._cmd_preview_fleet(daemon, {})
     assert reply["scenario"] == "fleet"
