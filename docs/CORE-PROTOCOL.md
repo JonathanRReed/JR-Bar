@@ -3137,6 +3137,22 @@ percentage. Context occupancy remains `context_tokens` and `context_window` in
 `session_usage`. Quota percentages remain provider window readings. `cost_usd` remains the compatible
 alias for approximate API-equivalent dollars, never subscription spend.
 
+### Observed Focus
+
+`state.focus.observed_active` is the observed macOS Focus activity, independent
+of JR-Bar's quiet policy and `focus_sync_enabled`. It is `true`, `false`, or
+`null` when no observation is available. `observed_identifiers` contains the
+active mode identifiers already observed for named Focus/profile rules, or an
+empty array when names are unavailable. Quiet `mode` and `source` retain their
+existing meaning. Clients must not infer observed activity from those fields.
+
+Publishing these fields performs no filesystem reads. It reuses the daemon's
+public Focus status, fresh app presence hint, and existing named-rule observations.
+The app never opens the protected Focus database. Its announcement watcher also
+reads the public Focus Status API on a bounded background worker, independent of
+Focus sync. A new observation updates activity; an unavailable source keeps the
+other source's reading. An unknown observation does not announce Focus off. Identifier changes while active announce the new mode.
+
 ### Optional feature lifecycle
 
 `settings.document.presence_enabled` is a boolean, default true. Off stops

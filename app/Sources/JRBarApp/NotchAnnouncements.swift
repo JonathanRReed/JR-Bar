@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import IOBluetooth
+import Intents
 import JRBarCore
 
 /// The system announcements Alcove surfaces in the island: a Focus
@@ -167,13 +168,10 @@ final class NotchAnnouncements {
         return connected ? "wave.3.right" : "wave.3.right.circle"
     }
 
-    /// The daemon's `focus_sync` reading of the same assertions DB —
-    /// forwarded on every state push so an app without Full Disk
-    /// Access still hears a toggle. The file watch stays the primary
-    /// reader; the daemon feed only lands when it is unreadable.
-    func noteDaemonFocus(mode: String?, source: String?) {
+    /// Focus observations are independent of the daemon's quiet policy.
+    func noteDaemonFocus(active: Bool?, identifiers: [String]) {
         guard started else { return }
-        focus.noteDaemon(mode: mode, source: source)
+        focus.noteDaemon(active: active, identifiers: identifiers)
     }
 
     private static func focusSymbol(for name: String) -> String {
@@ -188,7 +186,7 @@ final class NotchAnnouncements {
     }
 }
 
-/// Announces the daemon's Focus state without reading the protected Focus database.
+/// Observes public Focus activity off main and accepts daemon mode observations.
 @MainActor
 final class FocusWatcher {
     /// A flip worth announcing — never the baseline.
@@ -199,13 +197,59 @@ final class FocusWatcher {
 
     /// The baseline read at start — never announces, only diffs.
     private var active: (on: Bool, mode: String)?
+    private var publicActive: Bool?
+    private var daemonActive: Bool?
+    private var identifiers: [String] = []
+    private var poll: Task<Void, Never>?
+    private var generation = UUID()
+    private let publicReads: BackgroundLookupCache<UUID, Bool>
+
+    init(readPublic: @escaping @Sendable () -> Bool? = FocusWatcher.readPublic) {
+        publicReads = BackgroundLookupCache(limit: 1, capacity: 2, load: { _ in readPublic() })
+    }
+
+    nonisolated private static func readPublic() -> Bool? {
+        let center = INFocusStatusCenter.default
+        guard center.authorizationStatus == .authorized else { return nil }
+        return center.focusStatus.isFocused
+    }
 
     isolated deinit { stop() }
 
-    func stop() { active = nil }
+    func stop() {
+        poll?.cancel()
+        poll = nil
+        generation = UUID()
+        active = nil
+        publicActive = nil
+        daemonActive = nil
+        identifiers = []
+    }
 
     func start() {
-        active = nil
+        stop()
+        let token = generation
+        let reads = publicReads
+        poll = Task { [weak self] in
+            while !Task.isCancelled {
+                let observed = await reads.resolve(UUID())
+                guard !Task.isCancelled else { return }
+                self?.receivePublic(observed, generation: token)
+                do { try await Task.sleep(for: .seconds(15)) } catch { return }
+            }
+        }
+    }
+
+    func refreshPublic() async {
+        let token = generation
+        let observed = await publicReads.resolve(UUID())
+        receivePublic(observed, generation: token)
+    }
+
+    private func receivePublic(_ observed: Bool?, generation token: UUID) {
+        guard token == generation else { return }
+        publicActive = observed
+        settle(on: observed ?? daemonActive)
     }
 
     /// Off reads as the mode that just ended ("Work · Focus off"), not
@@ -216,11 +260,15 @@ final class FocusWatcher {
         return before.mode
     }
 
-    /// The daemon supplies the state through the existing core protocol.
-    func noteDaemon(mode: String?, source: String?) {
-        let (on, name) = Self.daemonFocus(mode: mode, source: source)
-        // The first relayed document is a baseline, like the file's
-        // first read: it settles and says nothing.
+    func noteDaemon(active observed: Bool?, identifiers: [String]) {
+        daemonActive = observed
+        self.identifiers = identifiers
+        settle(on: observed ?? publicActive)
+    }
+
+    private func settle(on observed: Bool?) {
+        guard let on = observed else { return }
+        let name = on ? (identifiers.sorted().map(Self.modeName).first ?? "Focus") : "Focus"
         guard let before = active else {
             active = (on, name)
             onSettle(name, on)
@@ -228,19 +276,11 @@ final class FocusWatcher {
         }
         guard on != before.on || name != before.mode else { return }
         active = (on, name)
-        onChange(Self.announcedName(now: (on, name), before: before), on)
+        // A name arriving after the public baseline enriches that baseline.
+        if !(before.on && on && before.mode == "Focus" && name != "Focus") {
+            onChange(Self.announcedName(now: (on, name), before: before), on)
+        }
         onSettle(name, on)
-    }
-
-    /// `state.focus` read as a Focus. It describes JR-Bar's whole quiet
-    /// state: `mode` is `"off"` when nothing is quiet (never "normal"),
-    /// and only `source: "focus"` is a macOS Focus — a quiet mode picked
-    /// from the menu or quiet hours are not the Mac's Focus and never
-    /// announce as one. The daemon does not name the Focus.
-    static func daemonFocus(mode: String?, source: String?) -> (on: Bool, mode: String) {
-        let mode = mode?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
-        let quiet = !mode.isEmpty && mode != "off" && mode != "normal"
-        return (quiet && source?.lowercased() == "focus", "Focus")
     }
 
     /// `com.apple.donotdisturb.mode.default` → "Do Not Disturb";

@@ -271,10 +271,8 @@ final class EventCoordinator {
                 if let state = self.core.state {
                     self.toys?.confetti.noteState(state)
                     self.toys?.notchBuddy.noteState(state)
-                    // The daemon's focus_sync reading — a Focus toggle
-                    // announces in the notch pill.
-                    self.hud.announcements.noteDaemonFocus(mode: state.focus?.mode,
-                                                           source: state.focus?.source)
+                    self.hud.announcements.noteDaemonFocus(active: state.focus?.observedActive,
+                                                          identifiers: state.focus?.observedIdentifiers ?? [])
                     self.noteClosedLid(state.power?.closedLid)
                     self.checkSilentSessions()
                 }

@@ -116,7 +116,7 @@ struct NotchQuietHoldTests {
         toy.offer(news(.completed, id: "held"))
         #expect(toy.capsuleQueue.held.count == 1)
         owner.stop()
-        owner.noteDaemonFocus(mode: "dim", source: "focus")
+        owner.noteDaemonFocus(active: true, identifiers: [])
         #expect(toy.macFocus == nil && toy.quietContext == nil)
         #expect(toy.capsuleQueue.held.isEmpty)
         #expect(toy.activeCapsule == nil)

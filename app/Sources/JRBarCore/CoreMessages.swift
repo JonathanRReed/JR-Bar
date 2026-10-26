@@ -1849,6 +1849,9 @@ public struct CorePresence: Codable, Hashable, Sendable {
 }
 
 public struct CoreFocus: Codable, Hashable, Sendable {
+    public var observedActive: Bool?
+    public var observedIdentifiers: [String]?
+
     public var mode: String?
     public var source: String?
     public var until: Double?
@@ -1873,6 +1876,8 @@ public struct CoreFocus: Codable, Hashable, Sendable {
         case bannerAllowed = "banner_allowed"
         case audibleAllowed = "audible_allowed"
         case namedReadable = "named_readable"
+        case observedActive = "observed_active"
+        case observedIdentifiers = "observed_identifiers"
         case overrideRevision = "override_revision"
     }
 

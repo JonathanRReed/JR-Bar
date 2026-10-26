@@ -588,6 +588,21 @@ def augment_presence_document(controller: Any, document: dict[str, Any], *, now:
     if isinstance(focus, dict):
         readable = getattr(controller, "_focus_observation_available", None)
         focus["named_readable"] = readable if isinstance(readable, bool) else None
+        dnd = getattr(controller, "dnd_controller", None)
+        observation = getattr(dnd, "focus_observation", None)
+        activity = getattr(getattr(observation, "activity", None), "value", None)
+        active = {"active": True, "inactive": False}.get(activity)
+        facts = presence_facts(controller)
+        if active is None and facts is not None:
+            active = facts.focus_hint(now)
+        cached = getattr(controller, "_focus_ids_cache", None)
+        fresh_named = readable is True and cached is not None and 0 <= time.monotonic() - cached[0] <= 10
+        identifiers = sorted(cached[1]) if fresh_named else []
+        if active is None and fresh_named:
+            active = bool(identifiers)
+        focus["observed_active"] = active
+        focus["observed_identifiers"] = identifiers if active is True else []
+
 
 
 def merge_history(

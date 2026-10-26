@@ -433,3 +433,43 @@ def test_the_call_quiet_setting_can_switch_calls_off(powered) -> None:
     state = controller._core_build_state()
     assert state["presence"]["on_call"] is True and state["presence"]["quiet"] == "off"
     assert state["focus"]["source"] is None
+
+
+def test_observed_focus_is_independent_of_quiet_policy(powered) -> None:
+    from jrbar.focus_status import FocusActivity, FocusAuthorization, FocusStatusObservation
+
+    controller = powered
+    controller.settings = controller.settings.with_focus_sync_enabled(False)
+    controller.dnd_controller._focus_observation = FocusStatusObservation(
+        FocusAuthorization.AUTHORIZED, FocusActivity.ACTIVE,
+    )
+    controller._focus_observation_available = True
+    controller._focus_ids_cache = (time.monotonic(), ["com.apple.focusmodes.work"])
+    work = controller._core_build_state()["focus"]
+    assert work["mode"] == "off"
+    assert work["observed_active"] is True
+    assert work["observed_identifiers"] == ["com.apple.focusmodes.work"]
+    controller._focus_ids_cache = (time.monotonic(), ["com.apple.focusmodes.personal"])
+    personal = controller._core_build_state()["focus"]
+    assert personal["observed_identifiers"] == ["com.apple.focusmodes.personal"]
+    assert personal["observed_active"] is True
+    controller.dnd_controller._focus_observation = FocusStatusObservation(
+        FocusAuthorization.AUTHORIZED, FocusActivity.INACTIVE,
+    )
+    inactive = controller._core_build_state()["focus"]
+    assert inactive["observed_active"] is False
+    assert inactive["observed_identifiers"] == []
+
+
+def test_expired_named_focus_is_not_published_as_a_current_observation(powered) -> None:
+    from jrbar.focus_status import FocusActivity, FocusAuthorization, FocusStatusObservation
+
+    controller = powered
+    controller.dnd_controller._focus_observation = FocusStatusObservation(
+        FocusAuthorization.UNAVAILABLE, FocusActivity.UNAVAILABLE,
+    )
+    controller._focus_observation_available = True
+    controller._focus_ids_cache = (time.monotonic() - 30, ["synthetic.work"])
+    focus = controller._core_build_state()["focus"]
+    assert focus["observed_active"] is None
+    assert focus["observed_identifiers"] == []
