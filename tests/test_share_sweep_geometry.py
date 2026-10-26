@@ -37,7 +37,7 @@ def test_owner_sweep_lights_every_position_to_its_peak_each_cycle(groups, mix, g
     _state, program = program_for_snapshot(rows, colors=settings, led_count=8)
     from jrbar.light_mix import plan_agent_mix, selected_agents
 
-    agents = selected_agents(_active_agents(rows, settings))
+    agents = selected_agents(_active_agents(rows, settings), settings)
     assert len(agents) == 2
     plan = plan_agent_mix(agents, settings)
     assert plan.played == mix, plan.warnings
@@ -71,7 +71,7 @@ def test_automatic_sweep_path_uses_its_own_share_size(motion, groups):
 
     rows, settings = owner_setup(groups, "round_robin")
     settings = settings.with_agent_animation("codex", motion).with_agent_animation_parameters("codex", {})
-    agents = selected_agents(_active_agents(rows, settings))
+    agents = selected_agents(_active_agents(rows, settings), settings)
     # Check the native local render before any physical share mapping.
     for count in (2, 3, 4):
         local = _share_steps(_body(agents[0], settings, count, compact=True), tuple(range(count)))

@@ -6029,7 +6029,7 @@ class ColorSettingsTests(unittest.TestCase):
         self.assertIn(settings.rendered_error_color(), program)
         self.assertNotIn(settings.mode_color(colors_module.MODE_ASK), program)
 
-        # Owner decision: Calm overrides ordinary motion and completion flourishes.
+        # A solo working provider keeps its motion; other Calm states hold still.
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC).with_round_robin_urgency_alert(False)
         fade_kwargs = {
             "idle_floor": colors_module.DEFAULT_FADE_FLOOR,
@@ -6056,11 +6056,14 @@ class ColorSettingsTests(unittest.TestCase):
                     **fade_kwargs,
                 )
                 self.assertEqual(state, expected_state)
-                if expected_state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
+                if expected_state is LedDisplayState.WORKING:
+                    expected = program_for_snapshot((_status("codex", mode),), led_count=led_count,
+                        colors=settings.with_blend_mode("round_robin"))[1]
+                elif expected_state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
                     expected = settings.mode_color(colors_module._STATE_TO_MODE_KEY[expected_state])
                 self.assertEqual(program, expected)
 
-        # Fade ranges still affect asks, while ordinary Calm states hold still.
+        # Fade ranges affect asks and the solo working provider's motion.
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC).with_round_robin_urgency_alert(False)
         for key in colors_module.FADE_MODE_KEYS:
             settings = settings.with_fade_floor(key, 0.0).with_fade_ceiling(key, 1.0)
@@ -6073,7 +6076,10 @@ class ColorSettingsTests(unittest.TestCase):
         ):
             state, program = program_for_snapshot((_status("codex", mode),), led_count=8, colors=settings)
             expected = program_for_display_state(expected_state, led_count=8, brightness=255)
-            if expected_state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
+            if expected_state is LedDisplayState.WORKING:
+                expected = program_for_snapshot((_status("codex", mode),), led_count=8,
+                    colors=settings.with_blend_mode("round_robin"))[1]
+            elif expected_state not in {LedDisplayState.ASK, LedDisplayState.FAILED}:
                 expected = settings.mode_color(colors_module._STATE_TO_MODE_KEY[expected_state])
             self.assertEqual(program, expected)
 
@@ -12669,9 +12675,10 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
                 self.assertTrue(program, label)
                 self.assertLessEqual(len(program.splitlines()), 20, label)
                 self.assertLessEqual(len(program.encode()), 512, label)
-                solo_projection = dataclass_replace(projection, visible_rows=(projection.visible_rows[0],))
-                self.assertEqual(program, colors_module.program_for_projection(
-                    solo_projection, colors=settings, led_count=led_count)[1], label)
+                from jrbar.light_mix import explain_what_plays
+
+                plan = explain_what_plays(projection, settings, led_count=led_count)
+                self.assertEqual({row["provider"] for row in plan["providers"]}, {"codex", "claude"}, label)
 
 
 

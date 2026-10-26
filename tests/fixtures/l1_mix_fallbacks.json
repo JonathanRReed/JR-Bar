@@ -1147,6 +1147,8 @@
     "tide/chase/2/3": "alternate"
   },
   "safety_substitutions": {
+    "color_blend/gradient/low/1/2": "chase",
+    "color_blend/gradient/low/1/8": "chase",
     "round_robin/gradient/low/1/2": "chase",
     "round_robin/gradient/low/1/8": "chase",
     "round_robin/gradient/low/2/2": "alternate",
@@ -1173,6 +1175,8 @@
     "cycle/gradient/low/3/8": "alternate",
     "cycle/gradient/low/4/2": "alternate",
     "cycle/gradient/low/4/8": "alternate",
+    "classic/gradient/low/1/2": "chase",
+    "classic/gradient/low/1/8": "chase",
     "alternate/gradient/low/1/2": "chase",
     "alternate/gradient/low/1/8": "chase",
     "weave/gradient/low/1/2": "chase",

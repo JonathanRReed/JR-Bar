@@ -621,26 +621,32 @@ def _has_sweep(agents, settings):
                for agent in agents)
 
 
-def selected_agents(agents):
+def selected_agents(agents, settings=None):
     """Asks stay individual. Each provider owns one ordinary share."""
-    from .colors import _representative_state, weighted_blend
+    from .colors import _representative_state, readable_identity_hex, weighted_blend
 
     asks = [agent for agent in agents if agent.state is LedDisplayState.ASK]
     if asks:
         return asks
-    working = [agent for agent in agents if agent.state is LedDisplayState.WORKING]
     providers = {}
-    for agent in working or agents:
+    for agent in agents:
         providers.setdefault(agent.provider, []).append(agent)
     merged = []
     for members in providers.values():
         starts = [agent.started_at for agent in members if agent.started_at is not None]
-        merged.append(replace(members[0], state=_representative_state(members),
-            color=weighted_blend([(agent.color, float(agent.weight)) for agent in members]),
+        color = weighted_blend([(agent.color, float(agent.weight)) for agent in members])
+        if settings is not None and not settings.color_by_project and not any(
+            settings.session_color(agent.identity) for agent in members
+        ):
+            color = readable_identity_hex(settings.agent_color(members[0].provider))
+        failures = [agent for agent in members if agent.state is LedDisplayState.FAILED]
+        merged.append(replace(members[0], state=_representative_state(failures or members),
+            color=color,
             weight=max(agent.weight for agent in members),
             started_at=min(starts) if starts else None))
-    working = [agent for agent in merged if agent.state is LedDisplayState.WORKING]
-    return working or merged
+    if any(agent.state is LedDisplayState.WORKING for agent in merged):
+        return [agent for agent in merged if agent.state in {LedDisplayState.WORKING, LedDisplayState.FAILED}]
+    return merged
 
 
 @lru_cache(maxsize=8)
@@ -740,7 +746,7 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
     from . import colors as c
 
     mode = settings.mix_mode
-    selected = selected_agents(agents)
+    selected = selected_agents(agents, settings)
     state = c._representative_state(selected)
     if led_count <= 0:
         return MixPlan(state, "", mode, "off", "No LED shares are available.")
@@ -751,7 +757,7 @@ def plan_agent_mix(agents, settings, *, led_count=8, brightness=255):
         program = c._single_agent_program(settings.mode_color("ask"), state,
             settings=settings, led_count=led_count, brightness=brightness)
         return MixPlan(state, program, mode, "ask", "An ask needs you.")
-    if mode in {"classic", "color_blend"}:
+    if mode in {"classic", "color_blend"} and not (len(selected) == 1 and state is LedDisplayState.WORKING):
         if mode == "classic":
             state = c._representative_state(agents)
             color = (settings.rendered_error_color() if state is LedDisplayState.FAILED
@@ -837,7 +843,7 @@ def explain_what_plays(state, settings, *, led_count=8, ambient=None):
     plan = plan_agent_mix(agents, settings, led_count=led_count)
     _state, program = (c.program_for_projection(state, colors=settings, led_count=led_count)
                        if projection else c.program_for_snapshot(tuple(state), colors=settings, led_count=led_count))
-    selected = selected_agents(agents)
+    selected = selected_agents(agents, settings)
     providers = [{"provider": agent.provider, "animation": settings.agent_animation(agent.provider),
                   "parameters": settings.agent_animation_parameters(agent.provider)} for agent in selected]
     chosen = [row for row in providers if row["animation"] != "auto"]
