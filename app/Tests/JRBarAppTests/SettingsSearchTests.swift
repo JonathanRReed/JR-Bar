@@ -70,24 +70,8 @@ import Testing
         #expect(SettingsSearch.search("zzqqxx", in: entries).isEmpty)
     }
 
-    @Test func everyListedRowIsStillARowTheAppDraws() throws {
-        // The list is hand-kept, so it is held honest against the source:
-        // a renamed or removed row fails here instead of leading a search
-        // to a title that is no longer on the page.
-        let sources = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appending(path: "Sources/JRBarApp")
-        let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
-        var text = ""
-        // The index itself quotes every title, so it cannot vouch for one.
-        for case let url as URL in files
-        where url.pathExtension == "swift" && url.lastPathComponent != "SettingsSearch.swift" {
-            text += (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-        }
-        #expect(!text.isEmpty)
-        for row in SettingsSearch.rows {
-            #expect(text.contains("\"\(row.title)\""), "no row titled \(row.title) remains")
-        }
+    @Test @MainActor func everyCatalogueKeyHasItsRenderedDestination() async throws {
+        try await SettingsRenderProofTests.assertCatalogueHomes()
     }
 
     @Test func aRowThatIsOnlySometimesDrawnSaysWhenItAppears() {

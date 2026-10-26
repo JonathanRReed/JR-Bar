@@ -842,23 +842,27 @@ extension SettingsRenderProofTests {
         let previousAppearance = NSApp.appearance
         NSApp.appearance = appearance
         defer { NSApp.appearance = previousAppearance }
-        let size = NSSize(width: 900, height: height)
+        let size = SettingsWindowController.defaultSize
         let root = view.environment(\.colorScheme, dark ? .dark : .light)
             .environment(\.controlActiveState, .key)
+            .tint(.blue).accentColor(.blue)
             .jrbarAccessibility(reduceMotion: true)
-            .frame(width: size.width, height: size.height)
         let window = SettingsKeyProofWindow(contentRect: NSRect(origin: NSPoint(x: -20000, y: -20000), size: size),
-                                            styleMask: [.borderless], backing: .buffered, defer: false)
+                                            styleMask: SettingsWindowController.windowStyle, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.title = "JR-Bar Settings"
+        window.toolbarStyle = .unified
+        window.toolbar = NSToolbar(identifier: "u3-proof-toolbar")
         window.appearance = appearance
         let controller = WindowContentLifecycle.attach(to: window, title: "JR-Bar Settings") {
             SettingsHostingController(rootView: AnyView(CheckedContent(content: root)))
         }
         let host = controller.view
         host.appearance = appearance
-        host.frame = NSRect(origin: .zero, size: size)
-        try WindowPresenter.renderProofKey(window)
+        window.setContentSize(size)
         defer { WindowContentLifecycle.detach(from: window); window.close() }
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        try WindowPresenter.renderProofKey(window)
         if !window.isKeyWindow { FoundationRenderProofTests.runUntilKey(window) }
         #expect(window.isKeyWindow)
         if let table = SettingsWindowController.sidebarTable(in: host) { window.makeFirstResponder(table) }
@@ -869,9 +873,10 @@ extension SettingsRenderProofTests {
         }
         CATransaction.flush()
         #expect(window.isKeyWindow, "The page is captured as a native key window")
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        let frame = try #require(window.contentView?.superview)
+        let bitmap = try #require(frame.bitmapImageRepForCachingDisplay(in: frame.bounds))
         appearance.performAsCurrentDrawingAppearance {
-            host.cacheDisplay(in: host.bounds, to: bitmap)
+            frame.cacheDisplay(in: frame.bounds, to: bitmap)
         }
         let data = try #require(bitmap.representation(using: .png, properties: [:]))
         try data.write(to: Self.directory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
@@ -883,4 +888,145 @@ private final class SettingsKeyProofWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+}
+
+extension SettingsRenderProofTests {
+    static func assertCatalogueHomes() async throws {
+        let expected = SettingsCatalogueHomes.expected
+        #expect(Set(expected.keys) == Set(SettingsKey.all.map(\.path)), "Every catalogue key needs an explicit destination")
+        let fixture = try Self.fixture()
+        defer { fixture.toys.shutdown() }
+        Self.goLive(fixture.core)
+        let hardware = fixture.settings.deviceEntries.map { CoreDevice(id: $0.id, kind: $0.kind, connected: true) }
+        fixture.core.apply(.state(CoreState(devices: hardware)))
+        let provider = try JSONDecoder().decode(ProviderRow.self, from: Data("""
+        {"id":"claude","enabled":true,"usage_consent":{"granted":false,"version":1}}
+        """.utf8))
+        fixture.settings.providerList.readRows = { [provider] }
+        await fixture.settings.providerList.refresh()
+        fixture.settings.openFolds.formUnion([SettingsFold.dotClock, SettingsFold.screenBarAdvanced])
+        let customShape = SettingsDocument(try Self.document()).replacing("screen_bar_notch_profile", with: .string("custom"))
+        fixture.core.apply(.settings(CoreSettings(generation: 2, schema: CoreProtocol.knownSettingsSchema, document: customShape.root)))
+        var homes: [String: Set<String>] = [:]
+        let routes = Set(expected.values.filter { !$0.hasPrefix("studio.") })
+        for route in routes.sorted() {
+            let parts = route.split(separator: "/").map(String.init)
+            fixture.settings.page = try #require(SettingsStore.Page(rawValue: parts[0]))
+            fixture.settings.subpage = parts.count > 1 && parts[1] != "provider" && parts[1] != "calibration" ? parts[1] : nil
+            fixture.settings.selectedProvider = parts.last == "provider" ? "claude" : nil
+            let paths: Set<String>
+            if route == "devices/calibration" {
+                let device = try #require(fixture.settings.deviceEntries.first)
+                paths = try await controlPaths(CalibrationSheet(store: fixture.settings, deviceID: device.id,
+                                                                dismiss: {}, fineTuneExpanded: true))
+            } else {
+                paths = try await controlPaths(SettingsPageContainer(store: fixture.settings, page: fixture.settings.page))
+            }
+            #expect(!paths.isEmpty, "No controls rendered for \(route)")
+            if route == "devices" {
+                #expect(paths.contains(ScreenBarController.stillOnCameraDefaultsKey))
+            }
+            for key in paths.map(SettingsCatalogueHomes.normalized) where expected[key] != nil {
+                homes[key, default: []].insert(route)
+            }
+        }
+        let hasU4 = EffectStudioStore.Mode(rawValue: "devices") != nil
+        if hasU4 {
+            let suite = "jrbar.catalogue-home-\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let studio = EffectStudioStore(core: fixture.core, defaults: defaults)
+            for mode in EffectStudioStore.Mode.allCases {
+                studio.mode = mode
+                let route = "studio.\(mode.rawValue)"
+                let paths = try await controlPaths(EffectStudioView(store: studio))
+                for key in paths.map(SettingsCatalogueHomes.normalized) where expected[key] != nil {
+                    homes[key, default: []].insert(route)
+                }
+            }
+        }
+        for (key, destination) in expected {
+            if destination.hasPrefix("studio."), !hasU4 {
+                #expect(homes[key] == nil, "\(key) belongs to U4, but Settings renders it in \(homes[key] ?? [])")
+            } else {
+                #expect(homes[key] == [destination], "\(key): expected \(destination), rendered \(homes[key] ?? [])")
+            }
+        }
+        let settingsCount = expected.values.filter { !$0.hasPrefix("studio.") }.count
+        print("Catalogue homes: \(settingsCount) Settings keys checked by destination; \(expected.count - settingsCount) explicit Studio owners; U4 rendered gate \(hasU4 ? "active" : "pending separate merge")")
+    }
+
+    private static func controlPaths<V: View>(_ view: V) async throws -> Set<String> {
+        var rendered: Set<String> = []
+        let root = view.onPreferenceChange(SettingsControlPaths.self) { rendered.formUnion($0) }
+            .environment(\.ledPreviewsHeld, true)
+        let host = NSHostingView(rootView: root)
+        let size = NSSize(width: 720, height: 10000)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        host.frame = NSRect(origin: .zero, size: size)
+        defer { window.contentView = nil; window.close() }
+        for _ in 0..<8 {
+            host.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            CATransaction.flush()
+            await drainMainQueue()
+        }
+        return rendered
+    }
+}
+
+extension SettingsRenderProofTests {
+    @Test("U3 fix round at the normal Settings size", .enabled(if: Self.enabled))
+    func fixRoundKeyWindows() async throws {
+        try U5Proof.pinDefaultAccent()
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        defer { fixture.toys.shutdown() }
+        Self.goLive(fixture.core)
+        let hardware = fixture.settings.deviceEntries.map { CoreDevice(id: $0.id, kind: $0.kind, connected: true) }
+        fixture.core.apply(.state(CoreState(devices: hardware)))
+        let row = try JSONDecoder().decode(ProviderRow.self, from: Data("""
+        {"id":"claude","enabled":true,"usage_consent":{"granted":false,"version":1,"detail":"Reads account quota."}}
+        """.utf8))
+        fixture.settings.providerList.readRows = { [row] }
+        await fixture.settings.providerList.refresh()
+        for page in SettingsStore.Page.allCases {
+            fixture.settings.page = page
+            try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "fix-\(page.rawValue)", height: 620, dark: false)
+        }
+        fixture.settings.page = .agents
+        fixture.settings.providerList.readRows = { throw CoreReplyError(code: "unavailable", message: "Provider list unavailable") }
+        await fixture.settings.providerList.refresh()
+        try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "fix-provider-retry", height: 620, dark: false)
+        fixture.settings.providerList.readRows = { [row] }
+        await fixture.settings.providerList.refresh()
+        fixture.settings.selectedProvider = "claude"
+        try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "fix-provider-detail", height: 620, dark: false)
+        fixture.settings.page = .alerts
+        fixture.settings.subpage = "advanced"
+        try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "fix-alerts-advanced", height: 620, dark: false)
+        fixture.settings.page = .utilities
+        fixture.settings.subpage = "keepAwake"
+        let previous = KeepAwakeUtility.shared.proofHolders
+        KeepAwakeUtility.shared.proofHolders = []
+        defer { KeepAwakeUtility.shared.proofHolders = previous }
+        try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "fix-keep-awake", height: 620, dark: false)
+        fixture.settings.subpage = "notch-buddy"
+        try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "fix-buddy", height: 620, dark: false)
+        fixture.settings.page = .devices
+        fixture.settings.openFolds.insert(SettingsFold.dotClock)
+        try await Self.keySnapshot(ScrollView { VStack {
+            DeviceLinkSettings(store: fixture.settings)
+            ScreenBarMotionSettings(store: fixture.settings)
+        }.padding(JRBarTokens.Space.lg) }.environment(fixture.settings), name: "fix-hardware-links", height: 620, dark: false)
+        fixture.core.handle(.disconnected(reason: "Synthetic disconnect"))
+        try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "fix-devices-offline", height: 620, dark: false)
+        for page in [SettingsStore.Page.devices, .utilities, .agents] {
+            fixture.settings.page = page
+            try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "fix-\(page.rawValue)", height: 620, dark: true)
+        }
+    }
 }
