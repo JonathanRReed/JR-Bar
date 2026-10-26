@@ -169,7 +169,7 @@ struct FoundationRenderProofTests {
         .padding(8)
     }
 
-    private func runUntilKey(_ window: NSWindow) {
+    static func runUntilKey(_ window: NSWindow) {
         // Swift Testing runs tasks without NSApplication's event loop. AppKit
         // completes the key-window request only while that loop is running.
         let notification = NotificationCenter.default.addObserver(
@@ -222,7 +222,7 @@ struct FoundationRenderProofTests {
         window.contentView = hosting
         try WindowPresenter.renderProofKey(window)
         defer { window.close() }
-        if !window.isKeyWindow { runUntilKey(window) }
+        if !window.isKeyWindow { Self.runUntilKey(window) }
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         #expect(abs(size.width - width) < 1)

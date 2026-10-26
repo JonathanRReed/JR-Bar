@@ -12,7 +12,7 @@ struct SettingsWindowLifecycleTests {
         let controller = SettingsWindowController(store: store)
         let window = NSWindow(
             contentRect: NSRect(x: 80, y: 120, width: 680, height: 460),
-            styleMask: [.titled], backing: .buffered, defer: false)
+            styleMask: SettingsWindowController.windowStyle, backing: .buffered, defer: false)
 
         weak var firstHost: NSViewController?
         weak var firstHostingView: NSView?
