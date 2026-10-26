@@ -610,7 +610,6 @@ struct DevicesPage: View {
         DeviceLinkSettings(store: store)
 
         ScreenBarSettingsCard(store: store, device: layout.screenBar)
-        ScreenBarMotionSettings(store: store)
     }
 }
 
@@ -625,7 +624,7 @@ struct ScreenBarSettingsCard: View {
             let bar = store.deviceFacts("screen-bar")
             SettingsGroupHeader(title: "Screen Bar", symbol: "rectangle.topthird.inset.filled",
                                 tint: Color(nsColor: .systemTeal),
-                                pill: DevicesPage.screenBarStatus(device: bar, live: store.isLive),
+                                pill: store.isLive ? DevicesPage.screenBarStatus(device: bar, live: true) : nil,
                                 pillTint: store.isLive && bar?.enabled == true ? .green : .secondary)
         }
     }
@@ -659,7 +658,7 @@ struct DeviceCard: View {
             SettingsGroupHeader(title: device.name,
                                 symbol: device.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill",
                                 tint: SettingsStore.Page.devices.tint,
-                                pill: DeviceConnectionLine.title(device: state, live: store.isLive),
+                                pill: store.isLive ? DeviceConnectionLine.title(device: state, live: true) : nil,
                                 pillTint: store.isLive && state?.isPresent == true ? .green : .orange,
                                 trailing: device.kind == "dot" ? "2 LEDs" : device.kind == "pro" ? "8 LEDs" : nil)
         }
@@ -967,17 +966,19 @@ struct CreatorMicroCard: View {
 
     var body: some View {
         SettingGroup(anchor: "Creator Micro") {
-            SettingsRow("Status") {
-                VStack(alignment: .trailing, spacing: 3) {
-                    StatusPill(statusText, tint: statusColor)
-                    // The toggle's own answer, where the click happened.
-                    if let note = store.deckNote {
-                        Text(note.text)
-                            .font(.caption)
-                            .foregroundStyle(note.isError ? Color.red : Color.secondary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.trailing)
-                            .transition(.opacity)
+            if store.isLive || store.deckNote != nil {
+                SettingsRow("Status") {
+                    VStack(alignment: .trailing, spacing: 3) {
+                        if store.isLive { StatusPill(statusText, tint: statusColor) }
+                        // The toggle's own answer, where the click happened.
+                        if let note = store.deckNote {
+                            Text(note.text)
+                                .font(.caption)
+                                .foregroundStyle(note.isError ? Color.red : Color.secondary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.trailing)
+                                .transition(.opacity)
+                        }
                     }
                 }
             }
