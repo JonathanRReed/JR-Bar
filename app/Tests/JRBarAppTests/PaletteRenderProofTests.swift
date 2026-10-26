@@ -14,7 +14,7 @@ import Testing
 @MainActor
 struct PaletteRenderProofTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
-    func palette() throws {
+    func palette() async throws {
         let env = ProcessInfo.processInfo.environment
         let directory = URL(fileURLWithPath: env["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/palette-proof",
                             isDirectory: true)
@@ -87,12 +87,7 @@ struct PaletteRenderProofTests {
                 }
                 .frame(width: PalettePanel.width + 40, height: PalettePanel.height + 40)
                 .environment(\.colorScheme, dark ? .dark : .light)
-                let renderer = ImageRenderer(content: view)
-                renderer.scale = 2
-                let rep = NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
-                let png = try #require(rep.representation(using: .png, properties: [:]))
-                let file = "palette-\(shot.name)-\(dark ? "dark" : "light").png"
-                try png.write(to: directory.appendingPathComponent(file))
+                try await U5Proof.render(view, name: "palette-\(shot.name)", width: PalettePanel.width + 40, dark: dark)
             }
         }
     }

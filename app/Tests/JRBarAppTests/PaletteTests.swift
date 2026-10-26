@@ -44,7 +44,7 @@ struct PaletteTests {
     func homeOrder() {
         let items = [
             row("m1", "Mail", section: .menuBar),
-            row("q1", "Quiet for 1 Hour", section: .quiet),
+            row("q1", "Quiet for 1 hour", section: .quiet),
             row("s1", "fix-ci", section: .sessions),
             row("a1", "fix-ci needs you", section: .needsYou, urgent: true),
             row("m2", "Slack", section: .menuBar),
@@ -54,7 +54,7 @@ struct PaletteTests {
         usage.record("q1", at: now)
         usage.record("m2", at: now)
         usage.record("gone", at: now)           // not on offer: skipped, not a hole
-        usage.record("a1", at: now)             // urgent rows stay under Needs You
+        usage.record("a1", at: now)             // urgent rows stay under Needs you
         let sections = PaletteRanking.home(items, usage: usage, now: now)
         #expect(sections.map(\.section) == [.needsYou, .suggestions, .sessions, .menuBar])
         #expect(sections[0].items.map(\.id) == ["a1"])
@@ -63,10 +63,10 @@ struct PaletteTests {
         #expect(!sections.contains { $0.section == .quiet }, "its only row moved to Suggestions")
     }
 
-    @Test("favorites sit under Needs You in pin order, listed once, and win a query tie")
+    @Test("favorites sit under Needs you in pin order, listed once, and win a query tie")
     func homeFavorites() {
         let items = [
-            row("m1", "Mail"), row("q1", "Quiet for 1 Hour", section: .quiet),
+            row("m1", "Mail"), row("q1", "Quiet for 1 hour", section: .quiet),
             row("s1", "Slack"), row("a1", "fix-ci", section: .needsYou, urgent: true),
         ]
         var usage = PaletteUsage()
@@ -95,9 +95,9 @@ struct PaletteTests {
     @Test("a title beats a subtitle, and bare scattered letters never match")
     func queryRanking() {
         let items = [
-            row("sub", "Quiet for 1 Hour", subtitle: "Dark mode for the lights"),
-            row("title", "Dark Mode"),
-            row("scatter", "Dock Auto-Hide", subtitle: "Restarts the Dock"),
+            row("sub", "Quiet for 1 hour", subtitle: "Dark mode for the lights"),
+            row("title", "Dark mode"),
+            row("scatter", "Dock auto-hide", subtitle: "Restarts the Dock"),
         ]
         let hits = PaletteRanking.rank(items, query: "dark", usage: PaletteUsage(), now: now)
         #expect(hits.map(\.id) == ["title", "sub"])
@@ -586,13 +586,13 @@ struct PaletteTests {
             id: "ask.x", title: "fix-ci", subtitle: "Which branch?", icon: .symbol("circle", .gray),
             kind: "Ask", section: .needsYou,
             actions: [
-                PaletteAction(id: "open", title: "Open Session", symbol: "circle") {
+                PaletteAction(id: "open", title: "Open session", symbol: "circle") {
                     log.ran.append("open")
                     return nil
                 },
                 PaletteAction(id: "reply", title: "Reply…", symbol: "circle", shortcut: .secondary,
                               input: PaletteInput(
-                                prompt: "Reply to fix-ci…", submitTitle: "Send Reply",
+                                prompt: "Reply to fix-ci…", submitTitle: "Send reply",
                                 initial: { draft },
                                 onChange: { log.ran.append("draft:\($0)") },
                                 submit: { log.ran.append("send:\($0)"); return nil })),
@@ -766,7 +766,7 @@ struct PaletteTests {
 
     @Test("a tag that only repeats its section's header is left off; under Results it stays")
     func tagsDoNotRepeatTheHeader() {
-        let tags = [PaletteTag(text: "Needs You", tone: .attention), PaletteTag(text: "2m")]
+        let tags = [PaletteTag(text: "Needs you", tone: .attention), PaletteTag(text: "2m")]
         #expect(PaletteRowView.shownTags(tags, under: PaletteSection.needsYou.title) == [PaletteTag(text: "2m")])
         #expect(PaletteRowView.shownTags(tags, under: PaletteSection.results.title) == tags)
         #expect(PaletteRowView.shownTags(tags, under: nil) == tags)

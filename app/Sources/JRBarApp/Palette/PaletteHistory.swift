@@ -42,7 +42,7 @@ enum HistoryPaletteRows {
                 return nil
             }]
             if let session = row.session, verbs.isLive(session) {
-                actions.append(PaletteAction(id: "session", title: "Open Session", symbol: "macwindow") {
+                actions.append(PaletteAction(id: "session", title: "Open session", symbol: "macwindow") {
                     verbs.openSession(session)
                     return nil
                 })

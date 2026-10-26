@@ -50,7 +50,7 @@ struct PaletteSourcesTests {
         #expect(item.urgent)
         #expect(item.section == .needsYou)
         #expect(item.subtitle == "Run npm test")
-        #expect(item.primary?.title == "Open Session")
+        #expect(item.primary?.title == "Open session")
         #expect(item.action(for: .secondary)?.title == "Approve")
         #expect(item.action(for: .command("d"))?.title == "Deny")
         #expect(item.actions.first { $0.id == "deny" }?.isDestructive == true)
@@ -90,12 +90,12 @@ struct PaletteSourcesTests {
                           request: "req-2")
         let item = AgentPaletteRows.askItem(row: session("claude:s2", mode: "waiting", ask: ask),
                                             ask: ask, now: now, verbs: verbs)
-        #expect(item.primary?.title == "Open Session", "Return still only opens")
+        #expect(item.primary?.title == "Open session", "Return still only opens")
         let reply = item.action(for: .secondary)
         #expect(reply?.title == "Reply…")
         #expect(!item.actions.contains { $0.id == "approve" || $0.id == "deny" }, "words, not a verdict")
         #expect(reply?.input?.prompt == "Reply to claude:s2…")
-        #expect(reply?.input?.submitTitle == "Send Reply")
+        #expect(reply?.input?.submitTitle == "Send reply")
         #expect(reply?.input?.initial() == "use the")
         #expect(reply?.run() == nil)
         #expect(log.calls.isEmpty, "picking Reply… sends nothing by itself")
@@ -154,7 +154,7 @@ struct PaletteSourcesTests {
         #expect(log.calls == ["clear:claude:d", "copy:claude:d"])
     }
 
-    @Test("Snooze For… takes a typed length on sessions and asks, and refuses anything else")
+    @Test("Snooze for… takes a typed length on sessions and asks, and refuses anything else")
     func snoozeForTypedLength() {
         let log = Log()
         let working = AgentPaletteRows.sessionItem(row: session("claude:w"), now: now, verbs: agentVerbs(log))
@@ -213,9 +213,9 @@ struct PaletteSourcesTests {
         let items = QuietPaletteRows.items(mode: "dim", quietLabel: nil, quietIsOurs: false, now: now, verbs: verbs)
         #expect(items.map(\.id) == ["quiet.30m", "quiet.1h", "quiet.4h", "quiet.morning"])
         let hour = items[1]
-        #expect(hour.title == "Quiet for 1 Hour")
+        #expect(hour.title == "Quiet for 1 hour")
         #expect(hour.subtitle == "Dim — stills the lights")
-        #expect(hour.primary?.title == "Dim for 1 Hour")
+        #expect(hour.primary?.title == "Dim for 1 hour")
         #expect(hour.actions.count == PanelStore.quietModes.count)
         _ = hour.primary?.run()
         _ = hour.actions.first { $0.id == "pause" }?.run()
@@ -223,7 +223,7 @@ struct PaletteSourcesTests {
         #expect(items[3].title.hasPrefix("Quiet Until"))
     }
 
-    @Test("End Quiet appears only for a quiet this app set")
+    @Test("End quiet appears only for a quiet this app set")
     func quietEnd() {
         let verbs = QuietPaletteVerbs(quiet: { _, _ in }, end: {})
         let ours = QuietPaletteRows.items(mode: "pause", quietLabel: "Paused 52m", quietIsOurs: true,
@@ -244,7 +244,7 @@ struct PaletteSourcesTests {
         #expect(PaletteArguments.duration("45 min") == 45 * 60)
         #expect(PaletteArguments.duration("90 minutes") == 90 * 60)
         #expect(PaletteArguments.duration("2h") == 2 * 3600)
-        #expect(PaletteArguments.duration("2 Hours") == 2 * 3600)
+        #expect(PaletteArguments.duration("2 hours") == 2 * 3600)
         #expect(PaletteArguments.duration("1.5h") == 90 * 60)
         #expect(PaletteArguments.duration("1h30") == 90 * 60, "minutes after hours may go bare")
         #expect(PaletteArguments.duration("1h 30m") == 90 * 60)
@@ -260,10 +260,10 @@ struct PaletteSourcesTests {
                      String(repeating: "9", count: 400), "1h" + String(repeating: "9", count: 400)] {
             #expect(PaletteArguments.duration(huge) == nil, "“\(huge)”")
         }
-        #expect(PaletteArguments.durationLabel(45 * 60) == "45 Minutes")
-        #expect(PaletteArguments.durationLabel(60) == "1 Minute")
-        #expect(PaletteArguments.durationLabel(3600) == "1 Hour")
-        #expect(PaletteArguments.durationLabel(90 * 60) == "1 Hour 30 Minutes")
+        #expect(PaletteArguments.durationLabel(45 * 60) == "45 minutes")
+        #expect(PaletteArguments.durationLabel(60) == "1 minute")
+        #expect(PaletteArguments.durationLabel(3600) == "1 hour")
+        #expect(PaletteArguments.durationLabel(90 * 60) == "1 hour 30 minutes")
     }
 
     @Test("a quiet command names its mode or leaves the remembered one, and needs a length")
@@ -276,7 +276,7 @@ struct PaletteSourcesTests {
         #expect(PaletteArguments.quiet("quiet") == nil)
         #expect(PaletteArguments.quiet("quiet for") == nil)
         #expect(PaletteArguments.quiet("quiet mode") == nil)
-        #expect(PaletteArguments.quiet("dark mode") == nil, "Dark Mode is a toggle, not a quiet")
+        #expect(PaletteArguments.quiet("dark mode") == nil, "Dark mode is a toggle, not a quiet")
         #expect(PaletteArguments.quiet("hide 1p") == nil)
         #expect(PaletteArguments.quiet("quiet 99999999999999999999") == nil)
         #expect(PaletteArguments.quiet("dim for 999999999999999999:00") == nil)
@@ -302,14 +302,14 @@ struct PaletteSourcesTests {
         #expect(rows.count == 1)
         let row = rows[0]
         #expect(row.id == "quiet.typed")
-        #expect(row.title == "Quiet for 45 Minutes")
+        #expect(row.title == "Quiet for 45 minutes")
         let ends = PanelStore.clockTime(now.addingTimeInterval(45 * 60))
         #expect(row.subtitle == "Dim — stills the lights, until \(ends)")
-        #expect(row.primary?.title == "Dim for 45 Minutes")
+        #expect(row.primary?.title == "Dim for 45 minutes")
         #expect(row.actions.count == PanelStore.quietModes.count)
         _ = row.primary?.run()
         let named = QuietPaletteRows.typedItems(query: "mute for 2h", mode: "dim", now: now, verbs: verbs)
-        #expect(named.first?.primary?.title == "Mute for 2 Hours", "a named mode leads")
+        #expect(named.first?.primary?.title == "Mute for 2 hours", "a named mode leads")
         _ = named.first?.primary?.run()
         #expect(log.calls == ["dim:2700", "mute:7200"])
         // A preset's length is that preset's row — its habit included.
@@ -346,7 +346,7 @@ struct PaletteSourcesTests {
         controller.open()
         defer { controller.close() }
         controller.model.query = "quiet 90"
-        #expect(controller.model.rows.first?.title == "Quiet for 1 Hour 30 Minutes",
+        #expect(controller.model.rows.first?.title == "Quiet for 1 hour 30 minutes",
                 "a title the fuzzy match would never find still leads")
         #expect(controller.model.selectedID == "quiet.typed")
         controller.model.query = "quiet 1h"
@@ -385,7 +385,7 @@ struct PaletteSourcesTests {
         #expect(!bare.contains { $0.id == "lights.brightness" })
     }
 
-    @Test("Why This Light says the panel's headline, raises the session it is about, and copies with its details")
+    @Test("Why this light says the panel's headline, raises the session it is about, and copies with its details")
     func whyLightRow() {
         let log = Log()
         let verbs = WhyLightPaletteVerbs(openSession: { log.calls.append("open:\($0)") },
@@ -398,7 +398,7 @@ struct PaletteSourcesTests {
         #expect(items.map(\.id) == ["lights.why"])
         #expect(items[0].subtitle == "Amber pulse: Codex sidepulse-core is waiting on you (permission, 45 s)")
         #expect(items[0].icon == .symbol("questionmark.bubble.fill", .orange))
-        #expect(items[0].primary?.title == "Open Session")
+        #expect(items[0].primary?.title == "Open session")
         _ = items[0].primary?.run()
         #expect(items[0].action(for: .commandShift("c"))?.run() == "Copied why this light")
         #expect(log.calls == [
@@ -407,7 +407,7 @@ struct PaletteSourcesTests {
         ])
         let idle = LightExplanation(why: "idle", kind: .idle, motion: "Dim ember", reason: "Nothing running")
         #expect(WhyLightPaletteRows.items(explanation: idle, verbs: verbs).first?.primary?.title
-                == "Copy Explanation", "no session, nothing to raise")
+                == "Copy explanation", "no session, nothing to raise")
         #expect(WhyLightPaletteRows.items(explanation: nil, verbs: verbs).isEmpty)
         #expect(PaletteRanking.rank(items, query: "why", usage: PaletteUsage(), now: now).count == 1)
     }
@@ -424,7 +424,7 @@ struct PaletteSourcesTests {
         let dark = items.first { $0.id == "system.darkMode" }
         #expect(dark?.tags == [PaletteTag(text: "On", tone: .positive)])
         #expect(dark?.primary?.title == "Turn Off")
-        #expect(dark?.primary?.run() == "Turning Dark Mode off")
+        #expect(dark?.primary?.run() == "Turning Dark mode off")
         let awake = items.first { $0.id == "system.keepAwake" }
         #expect(awake?.primary?.run() == "Keep Awake on")
         #expect(items.first { $0.id == "system.hiddenFiles" }?.tags == [PaletteTag(text: "Applying…")])
@@ -458,13 +458,13 @@ struct PaletteSourcesTests {
 
     // MARK: Aquarium
 
-    @Test("Feed the Tank shows only with a fish to feed; the tank's switch reads its state")
+    @Test("Feed the tank shows only with a fish to feed; the tank's switch reads its state")
     func aquariumRows() {
         let log = Log()
         let verbs = AquariumPaletteVerbs(feed: { log.calls.append("feed"); return "Fed 3 fish" },
                                          setOpen: { log.calls.append("open:\($0)") })
         let fed = AquariumPaletteRows.items(fishCount: 3, isOn: false, verbs: verbs)
-        #expect(fed.first?.title == "Feed the Tank")
+        #expect(fed.first?.title == "Feed the tank")
         #expect(fed.first?.subtitle == "A pellet for each of 3 fish")
         #expect(fed.first?.primary?.run() == "Fed 3 fish")
         #expect(fed.last?.primary?.title == "Open the Tank")
@@ -486,7 +486,7 @@ struct PaletteSourcesTests {
         #expect(off.map(\.id) == ["toys.confetti"])
         #expect(off[0].section == .toys)
         #expect(off[0].tags.isEmpty, "no Off tag on a row that still fires")
-        #expect(off[0].primary?.title == "Fire Confetti")
+        #expect(off[0].primary?.title == "Fire confetti")
         #expect(off[0].primary?.run() == nil, "the burst is its own proof")
         #expect(off[0].secondary?.title == "Turn On Automatic Bursts")
         #expect(off[0].secondary?.run() == "Automatic confetti on")
@@ -532,7 +532,7 @@ struct PaletteSourcesTests {
         #expect(HistoryPaletteRows.items(query: "fl", rows: rows, now: now, verbs: historyVerbs(log)).isEmpty)
     }
 
-    @Test("the palette's Open Session goes through SessionOpener, and a refusal is the verb's HUD line")
+    @Test("the palette's Open session goes through SessionOpener, and a refusal is the verb's HUD line")
     func openSessionThroughOpener() async {
         let log = Log()
         let ticket = PaletteVerbTicket()
