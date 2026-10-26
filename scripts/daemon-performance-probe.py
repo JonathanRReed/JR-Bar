@@ -27,10 +27,14 @@ import tracemalloc
 from pathlib import Path
 
 
-def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
+def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool = False) -> None:
     sys.path.insert(0, str(root / "src"))
     if trace:
         tracemalloc.start(1)
+    if profile:
+        import yappi
+
+        yappi.set_clock_type("cpu")
     original_run = subprocess.Popen
     spawns = collections.Counter()
     blocked_spawns = collections.Counter()
@@ -125,6 +129,7 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
         next_hook = start
         next_probe = start
         round_number = 0
+        profiling_started = False
         spawn_start = spawns.copy()
         blocked_start = blocked_spawns.copy()
         admissions = collections.Counter()
@@ -135,6 +140,9 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
         while time.monotonic() < end:
             now = time.monotonic()
             measured = now >= start + warmup
+            if profile and measured and not profiling_started:
+                yappi.start(builtins=True, profile_threads=True)
+                profiling_started = True
             if now >= next_hook:
                 for index in range(sessions):
                     event = ("UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop")[round_number % 4]
@@ -211,6 +219,7 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
                   "spawn_counts": dict(spawns - spawn_start), "framework_images": framework_images,
                   "blocked_probe_attempts": dict(blocked_spawns - blocked_start),
                   "startup_ready_seconds": holder[0]._core_ready_at - startup_at,
+                  "performance": holder[0]._core_performance_document(),
                   "source_commit": (root / "revision.txt").read_text().strip()}
         (root / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         client.close()
@@ -232,6 +241,13 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
             agent.terminate()
         for agent in agents:
             agent.wait(timeout=3)
+        if profile:
+            yappi.stop()
+            yappi.get_func_stats().save(str(root / "profile.pstats"), type="pstat")
+            (root / "profile-threads.json").write_text(json.dumps([
+                {"name": thread.name, "cpu_seconds": thread.ttot, "schedules": thread.sched_count}
+                for thread in yappi.get_thread_stats()
+            ], indent=2) + "\n")
 
 
 def main():
@@ -240,12 +256,13 @@ def main():
     parser.add_argument("--seconds", type=float, default=600)
     parser.add_argument("--sessions", type=int, choices=range(3, 7), default=3)
     parser.add_argument("--trace", action="store_true")
+    parser.add_argument("--profile", action="store_true", help="separate CPU profile run; not a timing receipt")
     parser.add_argument("--source", type=Path, help="replay a frozen src directory from an earlier run")
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     root = args.output.resolve()
     if args.child:
-        child(root, args.seconds, args.sessions, args.trace)
+        child(root, args.seconds, args.sessions, args.trace, args.profile)
         return
     root.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[1]
@@ -270,6 +287,8 @@ def main():
     command = [sys.executable, "-X", "importtime", str(root / "probe.py"), str(root), "--child", "--seconds", str(args.seconds), "--sessions", str(args.sessions)]
     if args.trace:
         command.append("--trace")
+    if args.profile:
+        command.append("--profile")
     with (root / "stdout.log").open("w") as out, (root / "importtime.log").open("w") as err:
         result = subprocess.run(command, env=env, stdout=out, stderr=err, timeout=args.seconds + 180, check=False)
     if not (root / "report.json").exists():
