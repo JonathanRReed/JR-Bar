@@ -364,3 +364,10 @@ def test_a_tampered_cache_is_checked_again_and_dropped(tmp_path: Path) -> None:
     path.write_bytes(data[:100] + bytes([data[100] ^ 0xFF]) + data[101:])
     assert package.load_cached(tmp_path, release) is None
     assert not path.exists()
+
+
+def test_synthetic_package_bytes_do_not_depend_on_wall_clock(monkeypatch):
+    monkeypatch.setattr(zipfile.time, "localtime", lambda *_: (2026, 1, 1, 0, 0, 0, 3, 1, 0))
+    first = make_zip("synthetic.zip", make_image())
+    monkeypatch.setattr(zipfile.time, "localtime", lambda *_: (2026, 1, 2, 0, 0, 0, 4, 2, 0))
+    assert make_zip("synthetic.zip", make_image()) == first

@@ -235,13 +235,8 @@ def test_a_lone_main_agent_is_not_a_crowd__and_2_more() -> None:
     )
 
     _floor, ceiling = colors.fade_range(MODE_WORKING)
-    pulses = [line for line in program.splitlines() if "pulse" in line][0]
-    hues = {
-        token.split(":", 1)[1]
-        for token in pulses.replace(";", " ").split()
-        if ":#" in token
-    }
-    assert hues == {
+    profile = program.splitlines()[0].split()[:2]
+    assert set(profile) == {
         scale_hex_brightness(colors.agent_color("claude"), ceiling),
         scale_hex_brightness(colors.agent_color("codex"), ceiling),
     }
@@ -572,16 +567,9 @@ def test_an_idle_only_fleet_keeps_its_ambient_presence__and_1_more() -> None:
     _, program = program_for_snapshot(
         statuses, led_count=8, colors=ColorSettings.defaults().with_blend_mode("round_robin"), brightness=255
     )
-    working_line = next(line for line in program.splitlines() if "pulse" in line)
-    peaks = {
-        segment.split("#", 1)[1][:6]
-        for segment in working_line.split("; ")
-        if "#" in segment
-    }
-    assert len(peaks) == 2, (
-        "two sessions on eight LEDs both keep their slots; "
-        f"saw peaks {peaks}"
-    )
+    solo = program_for_snapshot((statuses[0],), led_count=8,
+        colors=ColorSettings.defaults().with_blend_mode("round_robin"), brightness=255)[1]
+    assert program == solo, "idle companions do not change the active provider animation"
 
 
 

@@ -1270,6 +1270,7 @@ def render_motion(
     head: str | None = None,
     ceiling: float = 1.0,
     reserve_bytes: int = RENDER_RESERVE_BYTES,
+    strict: bool = False,
 ) -> list[str]:
     """One motion as whole-strip lines: the only geometry JR-Bar has.
 
@@ -1300,6 +1301,8 @@ def render_motion(
     not undo every other. An unsettled motion (``UNSETTLED_MOTIONS``) plays
     without the settle ease, so it only needs ``UNSETTLED_RESERVE_BYTES``.
     If the defaults still do not fit, a circulating motion drops to one lap.
+    ``strict`` keeps every value. The caller must check the budget and
+    report any fallback instead of dropping parameters here.
     """
     values = params if isinstance(params, dict) else {}
     reserve = int(reserve_bytes)
@@ -1321,6 +1324,8 @@ def render_motion(
         )
 
     lines = draw(values)
+    if strict:
+        return lines
     if fits(lines, reserve_bytes=reserve):
         return lines
     kept: dict = {}

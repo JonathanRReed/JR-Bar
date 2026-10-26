@@ -65,7 +65,7 @@ def test_two_active_agents_render_as_a_crowd__and_2_more() -> None:
     projection = _projection(_row("codex:session:a", "codex"), _row("claude:session:b", "claude"))
     assert _decide(_glance(GlanceSemantic.ACTIVE), projection) is True
 
-    # --- scenario: a_single_agent_keeps_the_single_color_path
+    # --- scenario: a_single_agent_keeps_the_base_glance_route
     projection = _projection(_row("codex:session:a", "codex"))
     assert _decide(_glance(GlanceSemantic.ACTIVE), projection) is False
 
@@ -87,3 +87,14 @@ def test_two_active_agents_render_as_a_crowd__and_2_more() -> None:
 
 def test_no_projection_falls_back() -> None:
     assert _decide(_glance(GlanceSemantic.ACTIVE), None) is False
+
+
+def test_waiting_rows_still_count_as_engaged():
+    from dataclasses import replace
+
+    active = _row("codex:synthetic", "codex")
+    waiting = replace(_row("claude:synthetic", "claude"), lifecycle_mode=LifecycleMode.WAITING)
+    projection = _projection(active, waiting)
+    assert _decide(_glance(GlanceSemantic.ACTIVE), projection) is True
+    assert _decide(None, projection) is True
+    assert _decide(_glance(GlanceSemantic.ATTENTION), projection) is False

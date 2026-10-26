@@ -1950,6 +1950,9 @@ def build_settings_document(
     read_only: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     document = dict(settings_dict)
+    colors = settings_dict.get("colors")
+    if isinstance(colors, dict) and "blend_mode" in colors:
+        document["colors"] = {**colors, "mix_mode": colors["blend_mode"]}
     for key, value in (read_only or {}).items():
         if key in READ_ONLY_SETTINGS:
             document[key] = value

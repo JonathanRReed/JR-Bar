@@ -77,6 +77,7 @@ _OPEN_COMMANDS: Final = (
     "list_finish_looks",
     "list_scene_packs",
     "list_cues",
+    "what_plays",
     "list_focuses",
     "list_light_log",
     "usage_history",

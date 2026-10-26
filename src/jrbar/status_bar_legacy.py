@@ -7841,6 +7841,10 @@ class StatusBarController(NSObject):
 
         def evaluate_claim(claim_key: SignalClaimKey) -> bool:
             try:
+                if claim_key in {SignalClaimKey.COMPLETION, SignalClaimKey.ALL_CLEAR, SignalClaimKey.RESET_CELEBRATION}:
+                    projection = getattr(self, "current_attention_projection", None)
+                    if projection is not None and any(row.lifecycle_mode is LifecycleMode.ACTIVE for row in projection.light_rows):
+                        return False
                 return claim_facts[claim_key]()
             except Exception as exc:
                 # A buggy claim must not silently disable its signal
@@ -8227,6 +8231,7 @@ class StatusBarController(NSObject):
             presentation=None,
             *,
             force_dark: bool = False,
+            fallback_brightness_applied: bool = False,
         ) -> None:
             # Apply Screen Bar calibration here; Colors previews keep true hex.
             def transform(value: str) -> str:
@@ -8258,9 +8263,9 @@ class StatusBarController(NSObject):
                 ),
                 static_fallback_program=(
                     transform(
-                        apply_brightness(
-                            presentation.static_fallback_dsl,
-                            brightness,
+                        presentation.static_fallback_dsl
+                        if fallback_brightness_applied else apply_brightness(
+                            presentation.static_fallback_dsl, brightness,
                         )
                     )
                     if presentation is not None
@@ -8477,7 +8482,28 @@ class StatusBarController(NSObject):
                     include_attention_arrival=arrival_fresh,
                 )
                 self._screen_bar_ask_latch = bar_state is LedDisplayState.ASK
-            _set_virtual(program, presentation)
+            from .ambient_effect_consumer import active_screen_bar_ambient_presentation
+            from .ambient_layers import compose_ambient_layer
+            from .led_status import display_state_for_mode
+
+            ambient = active_screen_bar_ambient_presentation(
+                self, reduce_motion=bool(getattr(self._accessibility_display_preferences, "reduce_motion", False)),
+                brightness=brightness,
+            )
+            layer_state = display_state_for_projection(projection) if projection is not None else display_state_for_mode(mode)
+            layered = compose_ambient_layer(program, layer_state, ambient)
+            self._ambient_screen_bar_layer_until = ambient.next_visual_change_at if layered != program else None
+            has_layer = layered != program
+            if has_layer:
+                template = presentation or ambient.screen_bar_program
+                presentation = dataclass_replace(
+                    template, dsl=layered, motion=MotionClass.CONTINUOUS,
+                    static_fallback_dsl=layered,
+                    playback_anchor=ambient.started_at,
+                    next_visual_change_at=ambient.next_visual_change_at,
+                )
+                program = layered
+            _set_virtual(program, presentation, fallback_brightness_applied=has_layer)
         _vt3 = time.monotonic()
         if _vt3 - _vt0 > 0.1:
             log_status_bar(
@@ -9242,6 +9268,13 @@ class StatusBarController(NSObject):
                 if not statuses_for_device:
                     fallback_for_device = AgentMode.IDLE_READY
             controller = self.agent_controller_for_device(device)
+            from .ambient_effect_consumer import active_hardware_ambient_presentation
+
+            ambient = active_hardware_ambient_presentation(
+                self, device_id=device.device_id, led_count=device_led_count,
+                reduce_motion=bool(getattr(request.accessibility_preferences, "reduce_motion", False)),
+                brightness=controller.brightness,
+            )
             device_projection = (
                 self.projection_for_device(request.projection, device)
                 if request.projection is not None
@@ -9255,6 +9288,7 @@ class StatusBarController(NSObject):
                     colors_for_render,
                     active_signal=self.active_failure_signal(),
                     relay_elapsed_seconds=request.relay_elapsed_seconds,
+                    ambient=ambient,
                 )
             elif request.resolved_glance is not None:
                 preferences = request.accessibility_preferences
@@ -9306,6 +9340,7 @@ class StatusBarController(NSObject):
                     apply_brightness(presentation.dsl, controller.brightness),
                     display_state_for_resolved_glance(request.resolved_glance),
                     dedupe_token=continuity,
+                    ambient=ambient,
                 )
             elif device_projection is not None:
                 write = controller.sync_projection(
@@ -9313,6 +9348,7 @@ class StatusBarController(NSObject):
                     colors_for_render,
                     active_signal=self.active_failure_signal(),
                     relay_elapsed_seconds=request.relay_elapsed_seconds,
+                    ambient=ambient,
                 )
             else:
                 write = controller.sync_snapshot(
@@ -9320,6 +9356,7 @@ class StatusBarController(NSObject):
                     colors_for_render,
                     fallback_mode=fallback_for_device,
                     relay_elapsed_seconds=request.relay_elapsed_seconds,
+                    ambient=ambient,
                 )
             label = f"{device.name} {write.label}"
         return HardwareWriteResult(

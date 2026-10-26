@@ -201,6 +201,7 @@ def test_cmd_effects_dispatches_through_the_runtime_owner__and_2_more(monkeypatc
         calls["reduce_motion"] = reduce_motion
         calls["brightness"] = brightness
         return SimpleNamespace(
+            output=SimpleNamespace(family=SimpleNamespace(value="glance_light"), short_layer=False),
             screen_bar_program=SimpleNamespace(dsl="ambient dsl"),
             accessibility_text="ambient text",
         )
@@ -247,6 +248,7 @@ def test_cmd_effects_dispatches_through_the_runtime_owner__and_2_more(monkeypatc
         calls["reduce_motion"] = reduce_motion
         calls["brightness"] = brightness
         return SimpleNamespace(
+            output=SimpleNamespace(family=SimpleNamespace(value="dot_binary_heartbeat"), short_layer=False),
             program="ambient hardware program",
             led_state=legacy.LedDisplayState.WORKING,
         )
@@ -327,4 +329,3 @@ def test_cmd_effects_dispatches_through_the_runtime_owner__and_2_more(monkeypatc
     assert result.agent_display_rendered is False
     assert result.completed_at == 123.0
     assert records and records[0][1][0] == "hardware_render"
-

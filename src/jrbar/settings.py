@@ -2225,6 +2225,11 @@ def settings_from_data(data: dict) -> AgentMonitorSettings:
     led_display = _led_display_setting(data.get("led_display"), LED_DISPLAY_AGENT)
     parsed_dnd = parse_dnd_settings(data)
     devices = _device_display_settings(data.get("devices"), led_display)
+    color_data = data.get("colors")
+    mix_schema = color_data.get("mix_schema_version") if isinstance(color_data, dict) else None
+    if mix_schema != 1:
+        devices = tuple(replace(device, blend_mode="cycle") if device.blend_mode == "relay" else device
+                        for device in devices)
     return AgentMonitorSettings(
         codex_transcripts_enabled=_bool_setting(transcript.get("codex"), False),
         pi_transcripts_enabled=_bool_setting(transcript.get("pi"), False),
@@ -3170,6 +3175,7 @@ _OWNED_COLLECTION_PATHS = frozenset(
         "colors.mode_animation",
         "colors.provider_animation",
         "colors.provider_animation_parameters",
+        "colors.mix_parameters",
         "colors.speed_overrides",
         "signal_styles",
         "calibration_profiles",
@@ -3195,7 +3201,7 @@ def _merge_unknown_fields(
         merged = {
             source_key: source_value
             for source_key, source_value in source.items()
-            if source_key not in encoded
+            if source_key not in encoded and not (path == "colors" and source_key == "mix_mode")
         }
         for encoded_key, encoded_value in encoded.items():
             merged[encoded_key] = _merge_unknown_fields(
