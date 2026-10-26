@@ -3180,6 +3180,7 @@ _OWNED_COLLECTION_PATHS = frozenset(
         "colors.provider_animation",
         "colors.provider_animation_parameters",
         "colors.mix_parameters",
+        "colors.mix_effect",
         "colors.speed_overrides",
         "signal_styles",
         "calibration_profiles",

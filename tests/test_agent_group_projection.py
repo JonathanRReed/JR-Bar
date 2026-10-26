@@ -226,3 +226,20 @@ def test_everyone_gives_a_t3_group_one_share_beside_a_solo_codex(raw_snapshot, p
     firmware = RawSdLedWasmController(8)
     assert firmware.parse(result["program"], 0).ok
     assert len({tuple(frame) for frame in firmware.step_batch(0, 40, 120)}) > 4
+
+
+@pytest.mark.parametrize("raw_snapshot", [False, True])
+def test_five_unrelated_groups_of_two_providers_get_two_mix_shares(raw_snapshot):
+    from jrbar.light_mix import explain_what_plays
+
+    rows = tuple(status(f"{provider}:session:synthetic-{index}")
+                 for index, provider in enumerate(("codex", "codex", "codex", "claude", "claude")))
+    projection = project_attention(snapshot(rows), AgentMonitorSettings())
+    assert len(active_agent_groups(projection)) == 5
+    colors = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", "kitt")
+    result = explain_what_plays(rows if raw_snapshot else projection, colors)
+    assert {row["provider"] for row in result["providers"]} == {"codex", "claude"}
+    assert len(result["providers"]) == 2
+    assert result["played"] == "round_robin"
+    assert "contiguous provider shares" in result["reason"]
+    assert not result["warnings"]

@@ -1168,20 +1168,20 @@ struct AssignSheet: View {
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Assign “\(effect?.label ?? "")”").font(.title3.weight(.semibold))
-                    Text("Pick where this look applies. More specific scopes win: device › project › instance › provider › scene › state › everywhere.")
-                        .jrbarType(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Form {
-                Picker("Scope", selection: Binding(get: { store.draftScope }, set: { scope in
-                    store.draftScope = scope
-                    store.draftTarget = store.defaultTarget(for: scope)
+                Picker("Scope", selection: Binding(get: { store.draftIsMix ? "mix" : store.draftScope.rawValue }, set: { value in
+                    store.draftIsMix = value == "mix"
+                    if let scope = EffectScope(rawValue: value) {
+                        store.draftScope = scope
+                        store.draftTarget = store.defaultTarget(for: scope)
+                    }
                 })) {
-                    ForEach(EffectScope.allCases) { Text($0.label).tag($0) }
+                    ForEach(EffectScope.allCases) { Text($0.label).tag($0.rawValue) }
+                    if store.mixSupported { Text("When several providers work").tag("mix") }
                 }
-                target
+                if !store.draftIsMix { target }
                 if let effect, !effect.parameters.isEmpty {
                     Toggle("Keep the parameters shown for this target", isOn: $store.draftUsesParameters)
                 }
@@ -1210,7 +1210,7 @@ struct AssignSheet: View {
                 Label(Self.describe(problem), systemImage: "xmark.circle")
                     .jrbarType(.caption)
                     .foregroundStyle(.red)
-            } else if let existing = store.existingAssignmentForDraft,
+            } else if !store.draftIsMix, let existing = store.existingAssignmentForDraft,
                       let effect, existing.effectID != effect.id {
                 // One assignment per (scope, target): say what this replaces.
                 let name = store.catalog?.effect(existing.effectID)?.label ?? existing.effectID

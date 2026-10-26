@@ -25,7 +25,8 @@ CASES = tuple((mix, animation, variant, providers, count)
 
 
 def settings_for_case(mix, animation, variant):
-    settings = ColorSettings.defaults().with_blend_mode(mix)
+    settings = replace(ColorSettings.defaults().with_blend_mode(mix),
+        mix_effect={"effect_id": "marquee", "parameters": {}})
     values = {}
     if variant != "default":
         for spec in _PROVIDER_PARAMETER_METADATA.get(animation, ()):
@@ -50,13 +51,13 @@ CYCLE_TOO_LARGE = {"scanner", "pendulum", "flicker", "stack", "twinkle", "drift"
 
 
 def expected_played(mix, animation, variant, providers, count):
-    if mix in {"classic", "color_blend"}:
-        return mix
     # The low Gradient preset requests 300 ms, below the standing speed
     # safety gate. A solo uses Chase; a share/cycle explicitly falls back.
     unsafe_gradient = animation == "gradient" and variant == "low"
     if providers == 1:
         return "chase" if unsafe_gradient else animation
+    if mix in {"classic", "color_blend"}:
+        return mix
     if mix == "relay" and count < 4:
         return "alternate"
     if mix in {"weave", "tide"} and providers > count:
@@ -97,7 +98,7 @@ def test_all_mix_animation_parameter_provider_combinations(raw_firmware, mix, an
     plan = plan_agent_mix(_active_agents(rows, settings), settings, led_count=count)
     expected = expected_played(mix, animation, variant, providers, count)
     assert plan.played == expected, (plan.played, plan.warnings)
-    if expected != (animation if providers == 1 and mix not in {"classic", "color_blend"} else mix):
+    if expected != (animation if providers == 1 else mix):
         assert any("cannot play exactly" in warning for warning in plan.warnings)
     if providers > 1 and plan.played == "cycle":
         from jrbar.animation import animation_duration_ms, read_program
@@ -267,7 +268,7 @@ def test_automatic_follows_a_chosen_native_cycle_without_retiming_it(providers):
     plan = plan_agent_mix(agents, settings)
     assert plan.played == "round_robin", plan.warnings
     animation, _ = read_program(plan.program)
-    share = tuple(range(0, 8, providers))
+    share = tuple(range((8 + providers - 1) // providers))
     native, _ = read_program("\n".join(_body(agents[0], settings, len(share), compact=True)))
     assert animation_duration_ms(animation) == animation_duration_ms(native)
     assert share_errors(plan.program, agents[:1], settings, [share], horizon=7400) == [0]
@@ -280,7 +281,7 @@ def test_owner_automatic_follows_the_chosen_knight_rider_curve_exactly(providers
 
     settings = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", "kitt")
     agents = _active_agents(statuses(providers), settings)
-    share = tuple(range(0, 8, providers))
+    share = tuple(range((8 + providers - 1) // providers))
     plan = plan_agent_mix(agents, settings, led_count=8)
     reference = RawSdLedWasmController(8)
     actual = RawSdLedWasmController(8)
@@ -335,7 +336,8 @@ def test_rejected_keyframes_exceed_the_limit_in_the_firmware(monkeypatch, animat
     for provider, animation in zip(PROVIDERS, animations):
         settings = settings.with_agent_animation(provider, animation)
     agents = _active_agents(statuses(len(animations)), settings)
-    slots = [tuple(range(index, 8, len(agents))) for index in range(len(agents))]
+    sizes = [8 // len(agents) + (index < 8 % len(agents)) for index in range(len(agents))]
+    slots = [tuple(range(sum(sizes[:index]), sum(sizes[:index + 1]))) for index in range(len(agents))]
     # Inspect the rejected candidate without changing the production limit.
     monkeypatch.setattr("jrbar.light_mix.KEYFRAME_MAX_ERROR", 255)
     candidate = _shares(agents, settings, 8, "round_robin")
@@ -356,7 +358,7 @@ def test_accepted_smooth_keyframes_stay_within_the_limit_in_the_firmware():
     plan = plan_agent_mix(agents, settings)
     assert plan.played == "round_robin", plan.warnings
     assert any("Breathe is simplified slightly to share the strip with Knight Rider" in w for w in plan.warnings)
-    errors = share_errors(plan.program, agents, settings, [(0, 2, 4, 6), (1, 3, 5, 7)])
+    errors = share_errors(plan.program, agents, settings, [(0, 1, 2, 3), (4, 5, 6, 7)])
     assert max(errors) <= KEYFRAME_MAX_ERROR, errors
     print(f"smooth Breathe + Knight Rider: accepted candidate errors {errors}/255")
 
@@ -376,7 +378,8 @@ def test_small_native_clock_change_is_disclosed_when_the_error_stays_small():
     from jrbar.light_mix import KEYFRAME_MAX_ERROR
 
     settings = settings_for_case("round_robin", "chase", "default")
-    agents = [replace(agent, color="#101010") for agent in _active_agents(statuses(3), settings)]
+    settings = settings.with_fade_floor("working", 0.0).with_fade_ceiling("working", 0.05)
+    agents = _active_agents(statuses(3), settings)
     plan = plan_agent_mix(agents, settings)
     assert plan.played == "round_robin", plan.warnings
     assert any("native 2520 ms cycle plays in 2200 ms" in warning for warning in plan.warnings)

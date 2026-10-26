@@ -25,19 +25,20 @@ def owner_setup(groups, mix, glow=0):
     rows = tuple(AgentStatus(provider=provider, agent_id=f"synthetic:{index}",
         display_name=provider, mode=AgentMode.WORKING,
         updated_at=datetime(2026, 10, 1, tzinfo=timezone.utc), event_name="test")
-        for index, provider in enumerate(("codex", "claude", "claude")[:groups]))
+        for index, provider in enumerate(["codex"] * ((groups + 1) // 2) + ["claude"] * (groups // 2)))
     return rows, settings
 
 
-@pytest.mark.parametrize("groups", (2, 3))
+@pytest.mark.parametrize("groups", (2, 3, 4, 5, 6))
 @pytest.mark.parametrize("mix", ("round_robin", "spatial_split"))
 @pytest.mark.parametrize("glow", (0, 20))
 def test_owner_sweep_lights_every_position_to_its_peak_each_cycle(groups, mix, glow):
     rows, settings = owner_setup(groups, mix, glow)
     _state, program = program_for_snapshot(rows, colors=settings, led_count=8)
-    from jrbar.light_mix import plan_agent_mix
+    from jrbar.light_mix import plan_agent_mix, selected_agents
 
-    agents = _active_agents(rows, settings)
+    agents = selected_agents(_active_agents(rows, settings), settings)
+    assert len(agents) == 2
     plan = plan_agent_mix(agents, settings)
     assert plan.played == mix, plan.warnings
     animation, problems = read_program(program, led_count=8)
@@ -55,12 +56,7 @@ def test_owner_sweep_lights_every_position_to_its_peak_each_cycle(groups, mix, g
     for cycle in range(3):
         current = frames[cycle * period // 10:(cycle + 1) * period // 10]
         for index, agent in enumerate(agents):
-            if mix == "round_robin":
-                share = tuple(range(index, 8, groups))
-            else:
-                sizes = [8 // groups + (i < 8 % groups) for i in range(groups)]
-                start = sum(sizes[:index])
-                share = tuple(range(start, start + sizes[index]))
+            share = tuple(range(index * 4, (index + 1) * 4))
             peak = max(int(agent.color[i:i + 2], 16) for i in (1, 3, 5)) * 0.5
             assert all(max(max(frame[led]) for frame in current) >= peak * 0.95
                        for led in share), (share, cycle)
@@ -69,13 +65,13 @@ def test_owner_sweep_lights_every_position_to_its_peak_each_cycle(groups, mix, g
 
 
 @pytest.mark.parametrize("motion", ("kitt", "scanner", "pendulum"))
-@pytest.mark.parametrize("groups", (2, 3))
+@pytest.mark.parametrize("groups", (2, 3, 4, 5, 6))
 def test_automatic_sweep_path_uses_its_own_share_size(motion, groups):
-    from jrbar.light_mix import _body, _share_steps, _shares
+    from jrbar.light_mix import _body, _share_steps, _shares, selected_agents
 
     rows, settings = owner_setup(groups, "round_robin")
     settings = settings.with_agent_animation("codex", motion).with_agent_animation_parameters("codex", {})
-    agents = _active_agents(rows, settings)
+    agents = selected_agents(_active_agents(rows, settings), settings)
     # Check the native local render before any physical share mapping.
     for count in (2, 3, 4):
         local = _share_steps(_body(agents[0], settings, count, compact=True), tuple(range(count)))
@@ -90,8 +86,8 @@ def test_automatic_sweep_path_uses_its_own_share_size(motion, groups):
     frames = firmware.step_batch(0, 10, period * 4 // 10 + 1)
     for cycle in range(3):
         current = frames[cycle * period // 10:(cycle + 1) * period // 10]
-        for index in range(groups):
-            share = tuple(range(index, 8, groups))
+        for index in range(2):
+            share = tuple(range(index * 4, (index + 1) * 4))
             heads = {max(share, key=lambda led: max(frame[led])) for frame in current}
             assert heads == set(share), (motion, share, cycle, heads)
             assert all(any(max(frame[led]) > 0 for frame in current) for led in share)

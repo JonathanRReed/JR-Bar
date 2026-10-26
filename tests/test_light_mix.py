@@ -44,7 +44,8 @@ def statuses(count, mode=AgentMode.WORKING):
 
 
 def settings_for(mode, family):
-    settings = ColorSettings.defaults().with_blend_mode(mode)
+    settings = replace(ColorSettings.defaults().with_blend_mode(mode),
+        mix_effect={"effect_id": "marquee", "parameters": {}})
     for provider in PROVIDERS:
         settings = settings.with_agent_animation(provider, family)
         settings = settings.with_agent_animation_parameters(provider, PARAMETERS.get(family, {}))
@@ -82,8 +83,8 @@ def test_mix_animation_cue_grid(firmware, mix, family, cue, providers):
     state = statuses(providers)
     plan = plan_agent_mix(_active_agents(state, settings), settings, led_count=count)
     explanation = explain_what_plays(state, settings, led_count=count, ambient=cue_for(cue, count))
-    expected = family if providers == 1 and mix not in {"classic", "color_blend"} else mix
-    # Calm mixes intentionally override solo motion; other mixes retain it.
+    expected = family if providers == 1 else mix
+    # Every mix retains the sole working provider's animation.
     if providers > 1:
         if (mix == "relay" and count == 2) or (mix in {"weave", "tide"} and providers > count):
             expected = "alternate"
@@ -131,7 +132,7 @@ def test_share_programs_keep_studio_values_in_the_played_bytes(mix, family):
     paints = [step for step in animation.steps if isinstance(step, PaintStep)]
     assert paints
     for index, agent in enumerate(agents):
-        slots = tuple(range(index * 4, (index + 1) * 4)) if mix == "spatial_split" else tuple(range(index, 8, 2))
+        slots = tuple(range(index * 4, (index + 1) * 4)) if mix == "spatial_split" or family == "kitt" else tuple(range(index, 8, 2))
         if mix == "cycle":
             slots = tuple(range(8))
         expected = _share_steps(_body(agent, settings, len(slots)), slots)
@@ -235,7 +236,7 @@ def test_a_solo_provider_does_not_take_the_mix_tempo():
     settings = settings.with_speed_override("round_robin", 8.0)
     solo = statuses(1)
     programs = {program_for_snapshot(solo, colors=settings.with_blend_mode(mix))[1]
-                for mix in BLEND_MODE_CHOICES if mix not in {"classic", "color_blend"}}
+                for mix in BLEND_MODE_CHOICES}
     assert len(programs) == 1
 
 
@@ -265,12 +266,13 @@ def test_asks_win_over_every_mix_and_cue(mix):
         assert layered["cue"] is None
 
 
-def test_two_sessions_of_one_provider_blend_identities_and_keep_its_animation():
+def test_explicit_session_colours_blend_and_keep_the_provider_animation():
     from jrbar.colors import _single_agent_program, weighted_blend
 
     rows = (statuses(1)[0], replace(statuses(1)[0], agent_id="codex:second"))
     for animation in ("auto", "kitt", "breathe"):
         settings = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", animation)
+        settings = settings.with_session_color(rows[0].agent_id, "#22CC88")
         agents = _active_agents(rows, settings)
         assert agents[0].color != agents[1].color
         blended = weighted_blend([(agent.color, float(agent.weight)) for agent in agents])
@@ -290,8 +292,7 @@ def test_one_led_kitt_shares_name_the_compact_form():
 @pytest.mark.parametrize("mix", ("classic", "color_blend"))
 @pytest.mark.parametrize("providers", (0, 1, 3))
 @pytest.mark.parametrize("mode", (AgentMode.IDLE_READY, AgentMode.WORKING, AgentMode.COMPLETED))
-def test_calm_mixes_hold_still_in_the_firmware(firmware, mix, providers, mode):
-    # Owner decision: Calm overrides solo animations, including completion flourishes.
+def test_calm_mixes_hold_still_except_for_a_solo_working_provider(firmware, mix, providers, mode):
     settings = settings_for(mix, "kitt")
     rows = statuses(providers, mode)
     state, program = program_for_snapshot(rows, colors=settings, led_count=firmware.led_count)
@@ -301,7 +302,11 @@ def test_calm_mixes_hold_still_in_the_firmware(firmware, mix, providers, mode):
     assert firmware.parse(program, 0).ok
     frames = firmware.step_batch(0, 40, 250)
     assert any(sum(pixel) for pixel in frames[0])
-    assert all(frame == frames[0] for frame in frames)
+    if providers == 1 and mode is AgentMode.WORKING:
+        assert explanation["played"] == "kitt"
+        assert any(frame != frames[0] for frame in frames[1:])
+    else:
+        assert all(frame == frames[0] for frame in frames)
 
 
 @pytest.mark.parametrize("mix", ("classic", "color_blend"))

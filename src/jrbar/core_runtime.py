@@ -2076,6 +2076,20 @@ def _cmd_set_assignment(self, args):
     from .effect_studio import AssignmentScope, EffectStudioError, plan_assignment
 
     effect = _require_effect(self, args.get("effect_id"))
+    if args.get("scope") == "mix":
+        pack_effect = core_effects.pack_effect_for(_effect_packs(self), effect.identifier)
+        parameters = _jsonable(core_effects.normalize_parameters(effect, args.get("parameters"), pack_effect=pack_effect))
+        descriptor = {"effect_id": effect.identifier, "parameters": parameters}
+        settings = self.settings.with_colors(replace(self.settings.colors,
+            blend_mode="effect", mix_effect=descriptor))
+        try:
+            with self._core_settings_save_lock:
+                self._core_legacy().save_settings(settings)
+                self.settings = settings
+        except OSError as error:
+            raise CommandError("save_failed", "Mix effect could not be saved") from error
+        self._core_publish_settings()
+        return {**_assignments_document(self), "mix_effect": descriptor}
     scope = _assignment_scope(args.get("scope"))
     target = args.get("target_id")
     target = str(target).strip() if target is not None else None

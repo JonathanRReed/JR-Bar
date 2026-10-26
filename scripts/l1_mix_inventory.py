@@ -23,7 +23,7 @@ def main():
         mix, animation, variant, providers, count = case
         settings = settings_for_case(mix, animation, variant)
         plan = plan_agent_mix(_active_agents(statuses(providers), settings), settings, led_count=count)
-        expected = animation if providers == 1 and mix not in {"classic", "color_blend"} else mix
+        expected = animation if providers == 1 else mix
         if plan.played != expected:
             if any("at this speed" in warning or "too fast" in warning for warning in plan.warnings):
                 safety[case_key(case)] = plan.played
@@ -34,7 +34,7 @@ def main():
     for mix, family, count, providers in itertools.product(BLEND_MODE_CHOICES, FAMILIES, (2, 8), (1, 2, 3)):
         settings = settings_for(mix, family)
         plan = plan_agent_mix(_active_agents(statuses(providers), settings), settings, led_count=count)
-        expected = family if providers == 1 and mix not in {"classic", "color_blend"} else mix
+        expected = family if providers == 1 else mix
         if plan.played != expected:
             custom[f"{mix}/{family}/{count}/{providers}"] = plan.played
     categories = Counter()

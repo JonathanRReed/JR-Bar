@@ -5,12 +5,9 @@ import pytest
 from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
 from jrbar.colors import (
     ColorSettings,
-    _active_agents,
-    _single_agent_program,
     plan_fleet_projection,
     program_for_projection,
     program_for_snapshot,
-    weighted_blend,
 )
 from jrbar.led_status import LedDisplayState
 from jrbar.models import AgentMode, AgentStatus
@@ -51,14 +48,7 @@ def test_a_providers_chosen_working_shape_survives_more_sessions(renderer, blend
     crowded = [status("codex", AgentMode.WORKING, i) for i in range(3)]
     crowded.append(status("devin", AgentMode.COMPLETED))
 
-    working = [agent for agent in _active_agents(tuple(crowded), settings)
-               if agent.state is LedDisplayState.WORKING]
-    assert len({agent.color for agent in working}) == 3
-    blended = weighted_blend([(agent.color, float(agent.weight)) for agent in working])
-    expected = _single_agent_program(blended, LedDisplayState.WORKING, led_count=8,
-        brightness=255, settings=settings, provider="codex")
-    assert render(crowded, settings, renderer) == (LedDisplayState.WORKING, expected)
-    assert expected != render(solo, settings, renderer)[1]
+    assert render(crowded, settings, renderer) == render(solo, settings, renderer)
 
 
 @pytest.mark.parametrize("renderer", ("snapshot", "projection", "fleet"))
@@ -73,10 +63,9 @@ def test_a_chosen_working_motion_never_hides_a_permission_request(renderer):
 
 @pytest.mark.parametrize("renderer", ("snapshot", "projection", "fleet"))
 @pytest.mark.parametrize("mix", ("classic", "color_blend"))
-def test_calm_overrides_solo_motion_in_every_light_renderer(renderer, mix):
+def test_calm_keeps_solo_motion_in_every_light_renderer(renderer, mix):
     from jrbar.led_wasm import RawSdLedWasmController
 
-    # Calm is the explicit exception to solo-provider animation equivalence.
     settings = ColorSettings.defaults().with_blend_mode(mix).with_agent_animation("codex", "kitt")
     rows = [status("codex", AgentMode.WORKING)]
     state, program = render(rows, settings, renderer)
@@ -84,7 +73,8 @@ def test_calm_overrides_solo_motion_in_every_light_renderer(renderer, mix):
     firmware = RawSdLedWasmController(8)
     assert firmware.parse(program, 0).ok
     frames = firmware.step_batch(0, 40, 250)
-    assert all(frame == frames[0] for frame in frames)
+    assert any(frame != frames[0] for frame in frames[1:])
+    assert (state, program) == render(rows, settings.with_blend_mode("round_robin"), renderer)
     state, attention = render([*rows, status("claude", AgentMode.WAITING_FOR_INPUT)], settings, renderer)
     assert state is LedDisplayState.ASK
     assert attention != program

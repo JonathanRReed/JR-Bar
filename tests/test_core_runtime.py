@@ -5401,3 +5401,24 @@ def test_shared_provider_display_roundtrips_through_existing_command(headless):
         controller._core_dispatch("set_setting", {"path": "provider_display.order", "value": ["codex", "codex"]})
     assert caught.value.code == "invalid_value"
     assert controller.settings.provider_display == display
+
+
+def test_mix_assignment_saves_one_setting_without_changing_provider_motion(headless, tmp_path, monkeypatch):
+    controller, _store = _effects_daemon(headless, monkeypatch, tmp_path)
+    original = controller.settings.colors.with_agent_animation("codex", "kitt")
+    controller.settings = controller.settings.with_colors(original)
+    before = controller._core_dispatch("list_assignments", {})["assignments"]
+    descriptor = {"effect_id": "marquee", "parameters": {"duration_seconds": 1.8, "crests": 2}}
+    reply = controller._core_dispatch("set_assignment", {"scope": "mix", **descriptor})
+    assert reply["assignments"] == before
+    assert reply["mix_effect"]["effect_id"] == "marquee"
+    assert controller.settings.colors.blend_mode == "effect"
+    assert controller.settings.colors.agent_animation("codex") == "kitt"
+    assert controller.settings.colors.mix_effect["parameters"]["duration_seconds"] == 1.8
+    from jrbar.settings import load_settings
+
+    restored = load_settings(tmp_path / "pytest-sidepulse-settings.json")
+    assert restored.colors.mix_effect == controller.settings.colors.mix_effect
+    assert restored.colors.blend_mode == "effect"
+    controller._core_dispatch("set_setting", {"path": "colors.mix_effect.parameters.duration_seconds", "value": 3.2})
+    assert controller.settings.colors.mix_effect["parameters"]["duration_seconds"] == 3.2

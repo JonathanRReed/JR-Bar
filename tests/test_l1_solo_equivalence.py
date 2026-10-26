@@ -1,9 +1,4 @@
-"""Reviewed solo bytes from 59acbc0a with the owner's Calm change.
-
-Classic and Smooth now hold ordinary states. Ask and failure hashes stay
-byte-for-byte equal to the original fixture. Only the approved ordinary
-states may be recaptured with this file's generator.
-"""
+"""Solo working providers keep native motion; other states keep reviewed bytes."""
 import hashlib
 import json
 from datetime import datetime, timezone
@@ -12,11 +7,13 @@ from pathlib import Path
 import pytest
 
 from jrbar.colors import (
+    BLEND_MODE_CHOICES,
     PROVIDER_ANIMATION_CHOICES,
     ColorSettings,
     program_for_snapshot,
     provider_motion_preview_program,
 )
+from jrbar.led_status import LedDisplayState, display_state_for_mode
 from jrbar.models import AgentMode, AgentStatus
 
 FIXTURE = Path(__file__).parent / "fixtures" / "l1_solo_59acbc0a.json"
@@ -36,6 +33,9 @@ def solo_bytes(animation, mode, count, blend):
 @pytest.mark.parametrize("mode", tuple(mode.value for mode in AgentMode))
 @pytest.mark.parametrize("animation", PROVIDER_ANIMATION_CHOICES)
 def test_every_solo_animation_and_state_matches_reviewed_contract(animation, mode, count, blend):
+    if display_state_for_mode(AgentMode(mode)) is LedDisplayState.WORKING:
+        assert solo_bytes(animation, mode, count, blend) == solo_bytes(animation, mode, count, "round_robin")
+        return
     baseline = json.loads(FIXTURE.read_text())
     assert baseline["revision"] == "59acbc0a"
     key = f"{animation}/{mode}/{count}/{blend}"
@@ -44,9 +44,9 @@ def test_every_solo_animation_and_state_matches_reviewed_contract(animation, mod
 
 @pytest.mark.parametrize("animation", PROVIDER_ANIMATION_CHOICES)
 @pytest.mark.parametrize("count", (2, 8))
-def test_hover_preview_uses_the_live_solo_program(animation, count):
-    # Animated mixes keep solo/hover equivalence; Calm deliberately holds still.
-    settings = ColorSettings.defaults().with_blend_mode("round_robin").with_agent_animation("codex", animation)
+@pytest.mark.parametrize("blend", BLEND_MODE_CHOICES)
+def test_hover_preview_uses_the_live_solo_program(animation, count, blend):
+    settings = ColorSettings.defaults().with_blend_mode(blend).with_agent_animation("codex", animation)
     status = AgentStatus(provider="codex", agent_id="codex:synthetic", display_name="Synthetic",
         mode=AgentMode.WORKING, updated_at=NOW, event_name="synthetic")
     preview = provider_motion_preview_program("codex", settings.agent_color("codex"), settings,
@@ -64,6 +64,6 @@ if __name__ == "__main__":
             assert digest == baseline["sha256"][key], f"Unapproved attention change: {key}"
     FIXTURE.write_text(json.dumps({
         "revision": "59acbc0a",
-        "calm_contract": "2026-10-26: ordinary classic and color_blend hold still; ask and failure bytes are unchanged.",
+        "calm_contract": "2026-10-26: a solo working provider keeps its motion; other Calm states and attention bytes are unchanged.",
         "sha256": rows,
     }, indent=2) + "\n")
