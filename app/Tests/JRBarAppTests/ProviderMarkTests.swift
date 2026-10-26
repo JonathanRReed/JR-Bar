@@ -78,6 +78,25 @@ struct ProviderMarkTests {
         #expect(samples == [.logo("claude"), .logo("openai"), .logo("gemini"), .logo("devin")])
     }
 
+    @MainActor @Test func everyAliasUsesTheSameMarkAcrossSurfaces() throws {
+        for (alias, canonical) in ProviderID.aliases {
+            let expected = ProviderStyle.style(for: canonical)
+            #expect(ProviderStyle.style(for: alias).glyph == expected.glyph)
+            #expect(NotchProviderTile.style(for: alias).glyph == expected.glyph)
+            #expect(ProviderPalette.logoID(for: alias) == ProviderPalette.logoID(for: canonical))
+            #expect(ProviderLogo.named(ProviderPalette.logoID(for: alias)) != nil)
+            #expect(ProviderLogoTile(provider: alias).provider == canonical)
+            #expect(StatusItemController.meter(for: alias, fraction: 0.5, approximate: false).glyph ==
+                    StatusItemController.meter(for: canonical, fraction: 0.5, approximate: false).glyph)
+            #expect(SessionLabel.providerName(alias) == SessionLabel.providerName(canonical))
+            let session = CoreSession(id: "fixture", provider: alias)
+            #expect(SessionRow(session: session, pinnedAsk: nil).style.id == canonical)
+            var carousel = NotchProviderCarousel()
+            #expect(carousel.update([alias, canonical], now: 100) == canonical)
+            #expect(carousel.providers == [canonical])
+        }
+    }
+
     // MARK: Ink
 
     static func rgb(_ color: NSColor) -> ProviderMarkInk.RGB {

@@ -1,4 +1,5 @@
 import Foundation
+import JRBarCore
 
 /// Provider turns keep their place when session order or recency changes.
 struct NotchProviderCarousel: Equatable {
@@ -16,7 +17,7 @@ struct NotchProviderCarousel: Equatable {
 
     @discardableResult
     mutating func update(_ activeProviders: [String], now: TimeInterval) -> String? {
-        let active = Set(activeProviders)
+        let active = Set(activeProviders.map(ProviderID.canonical))
         let oldProviders = providers
         let oldCurrent = current
         providers = oldProviders.filter { active.contains($0) }

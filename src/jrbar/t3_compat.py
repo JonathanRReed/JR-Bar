@@ -156,23 +156,6 @@ T3_V2_PROTOCOL_FINGERPRINT = "sha256:" + hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
-_PROVIDER_ALIASES = {
-    "codex": "codex",
-    "openai": "codex",
-    "claude": "claude",
-    "claudeagent": "claude",
-    "anthropic": "claude",
-    "cursor": "cursor",
-    "grok": "grok",
-    "xai": "grok",
-    "opencode": "opencode",
-    "open-code": "opencode",
-    "antigravity": "antigravity",
-    "devin": "devin",
-    "factory": "factory",
-    "factorydroid": "factory",
-    "droid": "factory",
-}
 _SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~:-]{0,255}\Z")
 
 
@@ -501,8 +484,10 @@ def _normalize_provider(*values: object) -> str:
     # or arbitrary substring never grants another provider's identity.
     for value in values:
         if isinstance(value, str) and value.strip():
-            name = value.strip().casefold()
-            return _PROVIDER_ALIASES.get(name, "other")
+            from .provider_ids import PROVIDER_ALIASES, canonical_provider_id
+
+            name = canonical_provider_id(value)
+            return name if name in PROVIDER_ALIASES else "other"
     return "other"
 
 

@@ -78,6 +78,12 @@ T3CODE = Source(
     "99641fd09a509feb644b3c8ef718c12c60cf436c",
     "MIT, Copyright (c) 2026 T3 Tools Inc.",
 )
+FACTORY = Source(
+    "Factory",
+    "https://github.com/Factory-AI/factory",
+    "892925c655a97e7a0bc7d558236015ebb22cb214",
+    "Copyright (c) 2025-2026 Factory AI. All rights reserved; provider trademark identification",
+)
 JRBAR = Source(
     "JR-Bar",
     "app/Sources/JRBarUI/StatusIconRenderer.swift (drawMark)",
@@ -262,6 +268,10 @@ def marks() -> list[Mark]:
         _svg("cursor", "Cursor", SIMPLE_ICONS, "simple-icons/cursor.svg", 0.98, "slug cursor"),
         _svg("hermes", "Hermes Agent", LOBEHUB, "lobehub/hermesagent.svg", 1.0, "slug hermesagent"),
         _svg("kiro", "Kiro", LOBEHUB, "lobehub/kiro.svg", 0.98, "slug kiro"),
+        _svg("factory", "Factory", FACTORY, "factory/mark.svg", 0.98,
+             "the standalone emblem from the final path of docs/logo/dark.svg; full source in factory/wordmark.svg"),
+        _svg("kimi", "Kimi", LOBEHUB, "lobehub/kimi.svg", 0.98, "slug kimi"),
+        _svg("kilo", "Kilo Code", LOBEHUB, "lobehub/kilocode.svg", 0.98, "slug kilocode"),
         _svg("t3code", "T3 Code", T3CODE, "t3code/T3Mark.svg", 1.0, "apps/mobile/assets/widget/T3Mark.svg"),
         Mark("jrbar", "JR-Bar", JRBAR, (), jrbar_mark(), 1.0, "the notch cap over the bar"),
     ]

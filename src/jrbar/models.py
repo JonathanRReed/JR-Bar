@@ -15,6 +15,7 @@ from .provider_facts import (
     request_key_to_payload,
     work_key_to_payload,
 )
+from .provider_ids import canonical_provider_id, canonical_work_id
 
 
 class AgentMode(str, Enum):
@@ -93,6 +94,10 @@ class HookEvent:
     origin: str | None = None
     _terminal_provenance: object | None = None
 
+    def __post_init__(self) -> None:
+        if isinstance(self.provider, str):
+            object.__setattr__(self, "provider", canonical_provider_id(self.provider))
+
     @property
     def status_key(self) -> str:
         if self.provider == "openclaw" and self.session_id and ":subagent:" in self.session_id:
@@ -167,6 +172,12 @@ class AgentStatus:
     parent_links: tuple[ParentLink, ...] = ()
 
     terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE
+
+    def __post_init__(self) -> None:
+        if isinstance(self.provider, str):
+            object.__setattr__(self, "provider", canonical_provider_id(self.provider))
+        if isinstance(self.agent_id, str):
+            object.__setattr__(self, "agent_id", canonical_work_id(self.agent_id))
 
     @property
     def is_capacity_limited(self) -> bool:
@@ -296,6 +307,7 @@ def parse_datetime(value: Any, fallback: datetime | None = None) -> datetime:
 
 
 def provider_label(provider: str) -> str:
+    provider = canonical_provider_id(provider)
     return {
         "codex": "Codex",
         "claude": "Claude",

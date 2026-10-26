@@ -552,7 +552,7 @@ def test_idle_transport_is_not_inferred_success(tmp_path, turn_state, expected):
 
 
 def test_gemini_is_not_silently_rebranded_as_antigravity():
-    assert t3_compat._normalize_provider("gemini", "antigravity-main", "gemini-model") == "other"
+    assert t3_compat._normalize_provider("gemini", "antigravity-main", "gemini-model") == "gemini"
 
 
 def test_a_t3_0_0_43_schema_stays_compatible(tmp_path: Path) -> None:

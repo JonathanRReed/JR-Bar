@@ -339,7 +339,7 @@ def test_subagents_are_retained_but_archived_and_deleted_threads_are_not_listed(
         ("antigravity", "antigravity"),
         ("acpRegistry_devin", "other"),
         ("acpRegistry_somethingnew", "other"),
-        ("gemini", "other"),
+        ("gemini", "gemini"),
     ),
 )
 def test_provider_drivers_map_to_the_provider_they_run(tmp_path: Path, raw: str, expected: str) -> None:

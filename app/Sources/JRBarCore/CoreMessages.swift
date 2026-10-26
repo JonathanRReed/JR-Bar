@@ -495,7 +495,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
                 axes: CoreSessionAxes? = nil, sourceIntegration: String? = nil,
                 groupId: String? = nil, unlinkedWorker: Bool = false, failureSignalUntil: Double? = nil) {
         self.id = id
-        self.provider = provider
+        self.provider = ProviderID.canonical(provider)
         self.kind = kind
         self.parent = parent
         self.label = label
@@ -542,7 +542,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
-        provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? "unknown"
+        provider = ProviderID.canonical(try c.decodeIfPresent(String.self, forKey: .provider) ?? "unknown")
         kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "main"
         parent = try c.decodeIfPresent(String.self, forKey: .parent)
         label = try c.decodeIfPresent(String.self, forKey: .label)

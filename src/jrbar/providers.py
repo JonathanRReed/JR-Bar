@@ -2210,6 +2210,9 @@ def detect_log_path(provider: str, home: Path | None = None) -> Path:
 
 
 def parse_log_line(provider: str, line: str) -> HookEvent | None:
+    from .provider_ids import canonical_provider_id
+
+    provider = canonical_provider_id(provider)
     line = line.strip()
     if not line:
         return None
