@@ -12,9 +12,9 @@ from __future__ import annotations
 import argparse
 import collections
 import hashlib
+import importlib
 import json
 import os
-from pathlib import Path
 import resource
 import shutil
 import signal
@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 import tracemalloc
+from pathlib import Path
 
 
 def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
@@ -31,12 +32,18 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
     if trace:
         tracemalloc.start(1)
     original_run = subprocess.Popen
+    spawns = collections.Counter()
+    blocked_spawns = collections.Counter()
+    startup_at = time.monotonic()
 
     def guarded_popen(args, *rest, **kwargs):
         executable = Path(args[0] if isinstance(args, (list, tuple)) else args).name
         if executable in {"security", "osascript", "caffeinate", "pmset", "ioreg", "hidutil"}:
+            blocked_spawns[executable] += 1
             raise OSError("hardware and account probes are disabled in the synthetic workload")
-        return original_run(args, *rest, **kwargs)
+        process = original_run(args, *rest, **kwargs)
+        spawns[executable] += 1
+        return process
 
     subprocess.Popen = guarded_popen
 
@@ -45,7 +52,12 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
             raise OSError("network is disabled in the synthetic workload")
 
     sys.addaudithook(audit)
-    from jrbar import core_runtime, status_bar_legacy as controller_module
+    from jrbar import core_runtime
+    from jrbar.accessibility_display import AccessibilityDisplayPreferences
+    from jrbar.cli_entry import jrbar_main
+
+    controller_name = "daemon_controller" if (root / "src/jrbar/daemon_controller.py").exists() else "status_bar_legacy"
+    controller_module = importlib.import_module("jrbar." + controller_name)
     from jrbar.device_writer import discover_devices
 
     volumes = root / "Volumes"
@@ -55,6 +67,7 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
         (volume / "LEDS.LED").write_text("off\n")
         (volume / "STATUS.TXT").write_text(f"led_count={count}\n")
     controller_module.discover_devices = lambda **_: discover_devices(mount_root=volumes)
+    controller_module.refresh_accessibility_display_preferences = lambda *_: AccessibilityDisplayPreferences()
     # The pad is outside this workload. Never enumerate the owner's HID bus.
     from jrbar.application_composition import compose_status_bar_application
 
@@ -62,10 +75,12 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
     cls = core_runtime.build_headless_controller_class()
     cls._core_deck_probe_now = lambda self: None
     holder = []
+    agents = []
 
     class Allocation:
         def init(self):
             result = cls.alloc().init()
+            result._accessibility_display_preferences = AccessibilityDisplayPreferences()
             holder.append(result)
             return result
 
@@ -80,6 +95,7 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
     def sample():
         from jrbar.hook_ingress_protocol import HookIngressRequest, submit_hook_ingress
         from jrbar.memory_probe import resident_bytes
+        from jrbar.process_registry import ProcessEntry, process_start_epoch, record_agent_process
         from jrbar.state_paths import default_state_dir
 
         sock = root / "core.sock"
@@ -91,6 +107,13 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         client.connect(str(sock))
         client.settimeout(0.2)
+        for index in range(sessions):
+            agent = subprocess.Popen([sys.executable, "-c", "import threading; threading.Event().wait(3600)"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            agents.append(agent)
+            record_agent_process("claude", f"probe-session-{index}",
+                ProcessEntry(agent.pid, os.getpid(), process_start_epoch(agent.pid), sys.executable),
+                cwd=str(root / "project"))
         messages = collections.Counter()
         sizes = collections.Counter()
         pending = b""
@@ -102,6 +125,8 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
         next_hook = start
         next_probe = start
         round_number = 0
+        spawn_start = spawns.copy()
+        blocked_start = blocked_spawns.copy()
         admissions = collections.Counter()
         session_counts = []
         errors = []
@@ -137,6 +162,8 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
                 next_probe = now + 1
             if not measured:
                 cpu_start = resource.getrusage(resource.RUSAGE_SELF)
+                spawn_start = spawns.copy()
+                blocked_start = blocked_spawns.copy()
             try:
                 pending += client.recv(1024 * 1024)
                 while b"\n" in pending:
@@ -147,7 +174,8 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
                     if frame.get("t") == "state":
                         session_counts.append(len(frame.get("sessions", [])))
                     elif frame.get("t") == "state_delta" and "sessions" in frame.get("slices", {}):
-                        session_counts.append(len(frame["slices"]["sessions"]["value"] or []))
+                        roster = frame["slices"]["sessions"]
+                        session_counts.append(len(roster.get("order", roster.get("value") or [])))
                     if frame.get("t") == "reply" and frame.get("ok") is False:
                         errors.append(frame.get("error"))
                     if frame.get("t") == "log" and "failed" in str(frame.get("message", "")).lower():
@@ -156,11 +184,19 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
                         kind = frame.get("t", "unknown")
                         messages[kind] += 1
                         sizes[kind] += len(line) + 1
-            except socket.timeout:
+            except TimeoutError:
                 pass
         cpu_end = resource.getrusage(resource.RUSAGE_SELF)
         cpu_seconds = cpu_end.ru_utime + cpu_end.ru_stime - cpu_start.ru_utime - cpu_start.ru_stime
         loaded = sorted(name for name in sys.modules if name.split(".")[0] in {"AppKit", "Foundation", "WebKit", "Quartz", "objc"})
+        import ctypes
+
+        dyld = ctypes.CDLL(None)
+        dyld._dyld_image_count.restype = ctypes.c_uint32
+        dyld._dyld_get_image_name.argtypes = [ctypes.c_uint32]
+        dyld._dyld_get_image_name.restype = ctypes.c_char_p
+        framework_images = [dyld._dyld_get_image_name(index).decode() for index in range(dyld._dyld_image_count())
+            if any(name in (dyld._dyld_get_image_name(index) or b"") for name in (b"/AppKit.framework/", b"/WebKit.framework/"))]
         report = {"duration_seconds": seconds, "sessions": sessions, "tracing": trace,
                   "cpu_percent": 100 * cpu_seconds / seconds, "cpu_seconds": cpu_seconds,
                   "rss_mean_mb": sum(x for x in rss if x) / len(rss) / 1048576,
@@ -172,6 +208,9 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
                   "loop_over_250ms": sum(x > 250 for x in latency), "framework_modules": loaded,
                   "hook_admissions": dict(admissions), "max_visible_sessions": max(session_counts, default=0),
                   "errors": errors, "source_sha256": (root / "source-sha256.txt").read_text().strip(),
+                  "spawn_counts": dict(spawns - spawn_start), "framework_images": framework_images,
+                  "blocked_probe_attempts": dict(blocked_spawns - blocked_start),
+                  "startup_ready_seconds": holder[0]._core_ready_at - startup_at,
                   "source_commit": (root / "revision.txt").read_text().strip()}
         (root / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         client.close()
@@ -186,7 +225,13 @@ def child(root: Path, seconds: float, sessions: int, trace: bool) -> None:
             os.kill(os.getpid(), signal.SIGTERM)
 
     threading.Thread(target=sampling_thread, name="synthetic-workload", daemon=True).start()
-    raise SystemExit(core_runtime.run_core(["--socket", str(root / "core.sock")]))
+    try:
+        raise SystemExit(jrbar_main(["core", "--socket", str(root / "core.sock")]))
+    finally:
+        for agent in agents:
+            agent.terminate()
+        for agent in agents:
+            agent.wait(timeout=3)
 
 
 def main():
@@ -195,6 +240,7 @@ def main():
     parser.add_argument("--seconds", type=float, default=600)
     parser.add_argument("--sessions", type=int, choices=range(3, 7), default=3)
     parser.add_argument("--trace", action="store_true")
+    parser.add_argument("--source", type=Path, help="replay a frozen src directory from an earlier run")
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     root = args.output.resolve()
@@ -203,13 +249,15 @@ def main():
         return
     root.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[1]
-    shutil.copytree(repo / "src", root / "src", ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(args.source or repo / "src", root / "src", ignore=shutil.ignore_patterns("__pycache__"))
     digest = hashlib.sha256()
     for path in sorted((root / "src").rglob("*.py")):
         digest.update(str(path.relative_to(root)).encode())
         digest.update(path.read_bytes())
     (root / "source-sha256.txt").write_text(digest.hexdigest() + "\n")
-    (root / "revision.txt").write_text(subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True))
+    prior_revision = args.source.parent / "revision.txt" if args.source else None
+    revision = prior_revision.read_text() if prior_revision and prior_revision.exists() else subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+    (root / "revision.txt").write_text(revision)
     env = os.environ.copy()
     for key in list(env):
         if key.startswith(("JRBAR_", "SIDEPULSE_")) or key in {"CODEX_HOME", "CLAUDE_CONFIG_DIR", "PYTEST_CURRENT_TEST"}:
