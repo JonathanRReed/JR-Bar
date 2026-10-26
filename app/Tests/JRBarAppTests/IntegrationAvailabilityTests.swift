@@ -45,6 +45,8 @@ struct IntegrationAvailabilityTests {
         device.enabled = true
         device.connected = false
         #expect(IntegrationStatus.device(device, live: true, firmware: "1.2.3") == "Not connected")
+        device.connected = nil
+        #expect(IntegrationStatus.device(device, live: true, firmware: "1.2.3") == "Status not reported")
         #expect(IntegrationStatus.device(device, live: false, firmware: "1.2.3") == "Monitor not connected")
         var deck = DeckState(device: DeckDevice(connected: true, approved: true))
         deck.settings.enabled = false

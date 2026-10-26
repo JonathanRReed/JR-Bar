@@ -147,7 +147,8 @@ enum IntegrationStatus {
     static func device(_ device: CoreDevice, live: Bool, firmware: String?) -> String {
         guard live else { return "Monitor not connected" }
         guard device.enabled != false else { return "Off" }
-        guard device.connected == true else { return "Not connected" }
+        guard let connected = device.connected else { return "Status not reported" }
+        guard connected else { return "Not connected" }
         return "Connected · " + (firmware.map { "Firmware \($0)" } ?? "Firmware not read")
     }
 
