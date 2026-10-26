@@ -704,7 +704,7 @@ def explain_what_plays(state, settings, *, led_count=8, ambient=None):
 
     projection = hasattr(state, "light_rows")
     agents = (c.projection_mix_agents(state, settings, led_count) if projection
-              else c._active_agents(c._statuses_for_strip(tuple(state), led_count), settings))
+              else c._active_agents(tuple(state), settings, led_count))
     plan = plan_agent_mix(agents, settings, led_count=led_count)
     _state, program = (c.program_for_projection(state, colors=settings, led_count=led_count)
                        if projection else c.program_for_snapshot(tuple(state), colors=settings, led_count=led_count))

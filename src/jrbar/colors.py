@@ -2268,8 +2268,28 @@ def _stable_agent_sort_key(status: AgentStatus) -> tuple[int, str]:
     return (_PROVIDER_ORDER_INDEX.get(status.provider, len(_PROVIDER_ORDER_INDEX)), status.provider)
 
 
-def _active_agents(statuses: tuple[AgentStatus, ...], colors: ColorSettings) -> list[_ActiveAgent]:
-    ordered = sorted(statuses, key=_stable_agent_sort_key)
+def _active_agents(
+    statuses: tuple[AgentStatus, ...], colors: ColorSettings, led_count: int = 8,
+) -> list[_ActiveAgent]:
+    from .agent_groups import resolve_agent_groups
+
+    resolution = resolve_agent_groups(
+        statuses, now=max((status.updated_at.timestamp() for status in statuses), default=0),
+    )
+    by_id = {status.agent_id: status for status in statuses}
+    asking = [status for status in statuses if display_state_for_mode(status.mode) is LedDisplayState.ASK]
+    asking_ids = {status.agent_id for status in asking}
+    roots = list(asking)
+    for group in resolution.groups:
+        if asking_ids.intersection(group.members):
+            continue
+        root = by_id[group.root_work_key]
+        driver = max((by_id[member] for member in group.members), key=lambda status: urgency_weight(status.mode))
+        roots.append(replace(root, mode=driver.mode))
+    roots = _under_pressure_keep_engaged(
+        roots, led_count, lambda status: display_state_for_mode(status.mode) is LedDisplayState.IDLE,
+    )
+    ordered = sorted(roots, key=_stable_agent_sort_key)
     # Identity colors ("color = agent") apply only when there's a crowd
     # to tell apart; a lone session keeps its provider's brand color.
     identity: dict[str, str] = {}
@@ -2325,20 +2345,6 @@ def _under_pressure_keep_engaged(items, led_count: int, is_idle) -> list:
         return items
     engaged = [item for item in items if not is_idle(item)]
     return engaged or items
-
-
-def _statuses_for_strip(
-    statuses: tuple[AgentStatus, ...],
-    led_count: int,
-) -> tuple[AgentStatus, ...]:
-    return tuple(
-        _under_pressure_keep_engaged(
-            statuses,
-            led_count,
-            lambda status: display_state_for_mode(status.mode)
-            is LedDisplayState.IDLE,
-        )
-    )
 
 
 def _representative_state(agents: list[_ActiveAgent]) -> LedDisplayState:
@@ -3287,7 +3293,7 @@ def program_for_snapshot(
         )
         return state, program
 
-    agents = _active_agents(_statuses_for_strip(statuses, led_count), settings)
+    agents = _active_agents(statuses, settings, led_count)
 
     from .light_mix import plan_agent_mix
 
