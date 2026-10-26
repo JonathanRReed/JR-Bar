@@ -581,9 +581,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         statusItem.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
 
         // Overview window (⌘O): the scoped roster workspace.
-        let overviewStore = OverviewStore(core: core)
-        // One per-session usage reader for the panel and the Overview.
-        overviewStore.sessionUsage = store.sessionUsage
+        let overviewStore = OverviewStore(core: core, sessionUsage: store.sessionUsage)
         // The Usage heatmap's day click, one window over.
         overviewStore.onOpenHistoryDay = { [weak historyWindow] day in historyWindow?.show(day: day) }
         let overviewWindow = OverviewWindowController(store: overviewStore)
@@ -613,7 +611,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         historyStore.onRevealSession = { [weak overviewWindow] id in overviewWindow?.show(selecting: id) }
 
         // Usage Center (⌘U) and Effect Studio windows.
-        let usageStore = UsageCenterStore(core: core)
+        let usageStore = UsageCenterStore(core: core, sessionUsage: store.sessionUsage)
         let usageWindow = UsageCenterWindowController(store: usageStore)
         self.usageStore = usageStore
         self.usageWindow = usageWindow

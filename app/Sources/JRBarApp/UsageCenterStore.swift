@@ -17,6 +17,7 @@ final class UsageCenterStore {
 
     let core: CoreModel
     let sessionUsage: SessionUsageStore
+    @ObservationIgnored let chartCache = UsageChartCache()
 
     /// The daemon's settings document: `usage_graph_days` and
     /// `usage_display_mode` live there, so the Settings page's "Graph
@@ -151,6 +152,25 @@ final class UsageCenterStore {
 
     @ObservationIgnored var readOverviewGraph: () async throws -> CoreUsageGraphDocument
     @ObservationIgnored private var overviewFollowUp = false
+    @ObservationIgnored private var overviewContinuation: UUID?
+    @ObservationIgnored var scheduleOverviewContinuation: (@escaping @MainActor () -> Void) -> Void = { resume in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            MainActor.assumeIsolated { resume() }
+        }
+    }
+
+    private func continueOverviewIfNeeded() {
+        guard isOpen, core.isLive, !tokenHistoryOff, (overviewGraph?.readingFiles ?? 0) > 0,
+              overviewContinuation == nil else { return }
+        let generation = UUID()
+        overviewContinuation = generation
+        scheduleOverviewContinuation { [weak self] in
+            guard let self, self.overviewContinuation == generation else { return }
+            self.overviewContinuation = nil
+            guard (self.overviewGraph?.readingFiles ?? 0) > 0 else { return }
+            self.loadOverviewGraph()
+        }
+    }
 
     @discardableResult
     func loadOverviewGraph(force: Bool = false) -> Task<Void, Never>? {
@@ -163,7 +183,12 @@ final class UsageCenterStore {
         overviewRequestID = request
         overviewRequest = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
-            defer { if self.overviewRequestID == request { self.overviewRequest = nil } }
+            defer {
+                if self.overviewRequestID == request {
+                    self.overviewRequest = nil
+                    self.continueOverviewIfNeeded()
+                }
+            }
             repeat {
                 self.overviewFollowUp = false
                 do {
@@ -330,10 +355,10 @@ final class UsageCenterStore {
     // Keep quota readings through a monitor restart.
     private var lastUsage: CoreUsage?
 
-    init(core: CoreModel) {
+    init(core: CoreModel, sessionUsage: SessionUsageStore? = nil) {
         self.core = core
         readOverviewGraph = { try await core.usageGraph(days: 30, metric: "tokens") }
-        sessionUsage = SessionUsageStore(core: core)
+        self.sessionUsage = sessionUsage ?? SessionUsageStore(core: core)
         readResetStatus = { retry in try await core.send("reset_status", args: retry ? ["retry": .bool(true)] : [:]) }
         writeSetting = { try await core.setSetting($0, value: $1) }
         readHistory = { try await core.usageHistory(provider: $0, range: $1) }
@@ -401,6 +426,7 @@ final class UsageCenterStore {
         overviewRequest = nil
         overviewRequestID = nil
         overviewFollowUp = false
+        overviewContinuation = nil
         ticker?.invalidate()
         ticker = nil
     }
@@ -539,7 +565,9 @@ final class UsageCenterStore {
         var values: [String: Double] = [:]
         for window in provider.windows {
             if let reset = window.resetsAt, let span = UsageWindowLabel.windowSpan(id: window.id, name: window.name), span > 0 {
-                values[window.name] = min(100, max(0, (1 - (reset - now.timeIntervalSince1970) / span) * 100))
+                let remaining = reset - now.timeIntervalSince1970
+                let elapsed = (1 - remaining / span) * 100
+                values[window.name] = min(100, max(0, elapsed))
             }
         }
         return values

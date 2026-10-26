@@ -745,13 +745,6 @@
     "animation: duration: 0.35": 1,
     "radius: cornerRadius: 10": 1
   },
-  "app/Sources/JRBarApp/UsageCenterView.swift": {
-    "animation: duration: 0.15": 3,
-    "animation: duration: 0.9": 1,
-    "animation: response: 0.45": 1,
-    "animation: response: 0.6": 2,
-    "radius: cornerRadius: 10": 2
-  },
   "app/Sources/JRBarApp/UsageResetBudget.swift": {
     "radius: cornerRadius: 8": 1
   },

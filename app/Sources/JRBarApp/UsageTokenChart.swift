@@ -9,15 +9,15 @@ struct UsageTokenChart: View {
     let range: UsageHistoryRange
     let accent: Color
     var metric: UsageCenterStore.Metric = .tokens
+    var cache = UsageChartCache()
     @ViewState private var hidden: Set<String> = ["Cache reads"]
     @ViewState private var selected: Date?
 
     private var hourly: Bool { UsageChartPreparation.usesHours(history, range: range) }
-    private var points: [UsagePoint] { UsageChartPreparation.points(history, range: range, metric: metric == .tokens ? .tokens : .cost) }
-    private var visible: [UsagePoint] { points.filter { !hidden.contains($0.kind) } }
-    private var axis: UsageChartAxis { UsageChartAxis(maximum: visible.map(\.value).max() ?? 0, minimumStep: metric == .tokens ? 1 : 0.01) }
     private func color(_ kind: String) -> Color {
-        if history.stale { return JRBarTokens.Ink.stale }
+        if history.stale {
+            return JRBarTokens.Ink.stale.opacity(kind == "Output" ? 0.75 : kind == "Cache reads" ? 0.5 : 1)
+        }
         return switch kind {
         case "Output": JRBarTokens.Ink.live
         case "Cache reads": JRBarTokens.Ink.tertiary
@@ -26,10 +26,14 @@ struct UsageTokenChart: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
+        let data = cache.history(history, range: range, metric: metric, hidden: hidden)
+        let visible = data.visible
+        let axis = data.axis
+        let nearestSelection = data.nearest(to: selected)
+        return VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
             HStack(spacing: JRBarTokens.Space.xxl) {
                 ForEach(metric == .tokens ? ["Input", "Output", "Cache reads"] : ["Cost"], id: \.self) { kind in
-                    let total = points.filter { $0.kind == kind }.reduce(0) { $0 + $1.value }
+                    let total = data.totals[kind] ?? 0
                     Button {
                         if hidden.contains(kind) { hidden.remove(kind) } else { hidden.insert(kind) }
                     } label: {
@@ -48,22 +52,23 @@ struct UsageTokenChart: View {
             }
             Chart {
                 ForEach(visible) { point in
-                    AreaMark(x: .value("Date", point.date), y: .value("Tokens", max(0, point.value)),
+                    AreaMark(x: .value("Date", point.date), y: .value(metric.label, max(0, point.value)),
                              stacking: .unstacked)
                         .foregroundStyle(by: .value("Kind", point.kind))
                         .opacity(0.08).interpolationMethod(.monotone)
-                    LineMark(x: .value("Date", point.date), y: .value("Tokens", max(0, point.value)))
+                    LineMark(x: .value("Date", point.date), y: .value(metric.label, max(0, point.value)))
                         .foregroundStyle(by: .value("Kind", point.kind)).interpolationMethod(.monotone)
+                        .lineStyle(StrokeStyle(lineWidth: 2, dash: history.stale ? Self.staleDash(point.kind) : []))
                 }
-                ForEach(singletons) { point in
-                    PointMark(x: .value("Date", point.date), y: .value("Tokens", max(0, point.value)))
+                ForEach(data.singletons) { point in
+                    PointMark(x: .value("Date", point.date), y: .value(metric.label, max(0, point.value)))
                         .foregroundStyle(color(point.kind))
                 }
                 if let date = nearestSelection {
                     RuleMark(x: .value("Selected", date)).foregroundStyle(JRBarTokens.Ink.tertiary)
                 }
             }
-            .chartYScale(domain: 0...axis.maximum)
+            .chartYScale(domain: 0...axis.maximum, range: .plotDimension(startPadding: 4, endPadding: 4))
             .chartYAxis {
                 AxisMarks(position: .leading, values: axis.ticks) { value in
                     AxisGridLine().foregroundStyle(JRBarTokens.Ink.separator)
@@ -91,7 +96,7 @@ struct UsageTokenChart: View {
                         VStack(alignment: .leading, spacing: JRBarTokens.Space.xs) {
                             Text(date.formatted(date: .abbreviated, time: hourly ? .shortened : .omitted))
                                 .font(JRBarTokens.TypeStyle.headline.font)
-                            ForEach(visible.filter { $0.date == date }) { point in
+                            ForEach(data.byDate[date] ?? []) { point in
                                 HStack {
                                     Text(point.kind)
                                     Spacer()
@@ -111,7 +116,7 @@ struct UsageTokenChart: View {
             }
             .chartPlotStyle { $0.clipped() }
             .frame(height: 220)
-            .accessibilityLabel("Tokens over \(range.days) days")
+            .accessibilityLabel("\(metric.label) over \(range.days) days")
         }
     }
 
@@ -126,14 +131,14 @@ struct UsageTokenChart: View {
         metric == .tokens ? UsageFormat.tokens(Int(value)) : UsageFormat.cost(value, currency: history.pricing?.currency ?? "USD")
     }
 
-    private var singletons: [UsagePoint] {
-        Dictionary(grouping: visible, by: \.kind).values.filter { $0.count == 1 }.compactMap(\.first)
+    static func staleDash(_ kind: String) -> [CGFloat] {
+        switch kind {
+        case "Output": return [6, 3]
+        case "Cache reads": return [2, 3]
+        default: return []
+        }
     }
 
-    private var nearestSelection: Date? {
-        guard let selected else { return nil }
-        return visible.min { abs($0.date.timeIntervalSince(selected)) < abs($1.date.timeIntervalSince(selected)) }?.date
-    }
 }
 
 struct UsageChartAxis: Equatable {

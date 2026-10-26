@@ -29,7 +29,7 @@ struct UsageProviderDetail: View {
                           onRetry: quotaRetry)
             if let row = store.row(for: provider.identity) {
                 DisclosureGroup("Connection") {
-                    ProviderUsageCard(provider: provider, store: store).connectionSection(row)
+                    UsageProviderConnection(provider: provider, store: store, row: row)
                 }
             }
             if let note = store.signInNotes[provider.identity] { SignInNoteLine(note: note) }
@@ -54,7 +54,7 @@ struct UsageProviderDetail: View {
                 if showCost, store.metric == .cost, history.costIsUnpriced {
                     Text("No price for this usage").foregroundStyle(JRBarTokens.Ink.secondary)
                 } else {
-                    UsageTokenChart(history: history, range: store.range, accent: accent, metric: showCost ? store.metric : .tokens)
+                    UsageTokenChart(history: history, range: store.range, accent: accent, metric: showCost ? store.metric : .tokens, cache: store.chartCache)
                 }
 
                 if showCost {
@@ -96,9 +96,9 @@ enum UsageHistoryPresentation {
                       loading: Bool, scanning: Bool, error: String?) -> State? {
         if disabled { return State(title: "Token history is off", detail: nil) }
         switch provider.tokenHistoryState {
-        case "disk_full": return State(title: "Disk full", detail: "Free space to resume token history. Last totals stay visible.", failure: true, retry: true)
+        case "disk_full": return State(title: "Disk full", detail: "Free space to resume token history. Last totals stay visible.", failure: true)
         case "damaged": return State(title: "Token history needs repair", detail: "The cache is damaged. Recovery will retry from local transcripts.", failure: true, retry: true)
-        case "over_cap": return State(title: "Token history reached its size limit", detail: "Last totals stay visible while the cache is at its size limit.", failure: true, retry: true)
+        case "over_cap": return State(title: "Token history reached its size limit", detail: "Local token history exceeded its 4 GB cache limit. Last totals stay visible.", failure: true)
         case "failed": return State(title: "Token history refresh failed", detail: error ?? "Showing the last totals.", failure: true, retry: true)
         case "building": return State(title: "Building token history", detail: "Showing records read so far.")
         case "stale": return State(title: "Token history is stale", detail: "Showing the last totals.", retry: true)
