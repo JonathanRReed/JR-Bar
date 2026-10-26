@@ -405,7 +405,7 @@ struct PanelTitleBar: View {
             }
             Spacer(minLength: 0)
             if let hold = store.awakeHold {
-                Button { store.openSettings(page: .alerts) } label: {
+                Button { store.openKeepAwakeSettings() } label: {
                     Image(systemName: hold.symbol).font(JRBarTokens.TypeStyle.caption.font)
                 }
                 .buttonStyle(.plain).help(hold.text).accessibilityLabel(hold.text)

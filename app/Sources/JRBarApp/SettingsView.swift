@@ -19,32 +19,18 @@ struct SettingsRootView: View {
                     .focused($searchFocused)
                     .accessibilityLabel("Search settings")
                     .padding(JRBarTokens.Space.md)
-                List(selection: $store.page) {
-                if store.searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
-                    ForEach(SettingsStore.Page.sidebarGroups.flatMap { $0 }.filter {
-                        $0 != .integrations || store.t3Integration.status?.installed == true
-                    }) { page in
-                        Label {
-                            Text(page.title)
-                                .foregroundStyle(store.page == page ? JRBarTokens.Ink.onAccent : JRBarTokens.Ink.label)
-                        } icon: {
-                            SidebarIcon(symbol: page.symbol, tint: page.tint)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: JRBarTokens.Space.xxxl, alignment: .leading)
-                        .padding(.horizontal, JRBarTokens.Space.sm)
-                        .background {
-                            RoundedRectangle(cornerRadius: JRBarTokens.Radius.control)
-                                .fill(store.page == page ? JRBarTokens.Ink.accent : .clear)
-                                .padding(.horizontal, -JRBarTokens.Space.sm)
-                        }
-                        .listRowInsets(EdgeInsets())
-                        .tag(page)
+                SettingsSidebarList(store: store)
+                Button { store.onOpenEffects?() } label: {
+                    HStack(spacing: JRBarTokens.Space.sm) {
+                        SidebarIcon(symbol: "paintpalette.fill", tint: JRBarTokens.Ink.accent)
+                        Text("Studio")
+                        Spacer()
+                        Image(systemName: "arrow.up.right").foregroundStyle(.secondary)
                     }
-                } else {
-                    SettingsSearchResults(store: store)
+                    .padding(JRBarTokens.Space.md)
+                    .contentShape(Rectangle())
                 }
-            }
-            .listStyle(.sidebar)
+                .buttonStyle(.plain)
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 250)
             // ⌘F lands in the search field from anywhere in the window.
@@ -77,6 +63,18 @@ struct SettingsRootView: View {
             DoctorSheet(report: store.doctorReport ?? .object([:]), dismiss: { store.doctorReport = nil })
         }
         .confirmationDialog(
+            "Remove \(store.pendingIntegrationRemoval.map(ProviderPalette.displayName(for:)) ?? "") integration?",
+            isPresented: WindowPresenter.presentation(Binding(
+                get: { store.pendingIntegrationRemoval != nil },
+                set: { if !$0 { store.cancelIntegrationRemoval() } })),
+            titleVisibility: .visible
+        ) {
+            Button("Remove integration", role: .destructive) { store.confirmIntegrationRemoval() }
+            Button("Cancel", role: .cancel) { store.cancelIntegrationRemoval() }
+        } message: {
+            Text("Removes JR-Bar's hooks from this provider's configuration. You can install them again from Providers.")
+        }
+        .confirmationDialog(
             "Reset \(store.resetTarget?.title ?? "") to defaults?",
             isPresented: WindowPresenter.presentation(Binding(get: { store.resetTarget != nil }, set: { if !$0 { store.resetTarget = nil } })),
             titleVisibility: .visible
@@ -89,6 +87,49 @@ struct SettingsRootView: View {
         } message: {
             Text(store.resetTarget.map(SettingsStore.resetMessage(for:)) ?? "")
         }
+    }
+}
+
+struct SettingsSidebarList: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        List(selection: $store.page) {
+            if store.searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+                ForEach(SettingsStore.Page.sidebarGroups.indices, id: \.self) { index in
+                    if index > 0 {
+                        Text(index == 1 ? "Hardware" : "More")
+                            .jrbarType(.section)
+                            .accessibilityAddTraits(.isHeader)
+                            .padding(.top, JRBarTokens.Space.sm)
+                    }
+                    ForEach(SettingsStore.Page.sidebarGroups[index].filter {
+                        $0 != .integrations || store.t3Integration.status?.installed == true
+                    }) { page in
+                        sidebarRow(page)
+                    }
+                }
+            } else { SettingsSearchResults(store: store) }
+        }
+        .listStyle(.sidebar)
+    }
+
+    private func sidebarRow(_ page: SettingsStore.Page) -> some View {
+        Label {
+            Text(page.title)
+                .foregroundStyle(store.page == page ? JRBarTokens.Ink.onAccent : JRBarTokens.Ink.label)
+        } icon: {
+            SidebarIcon(symbol: page.symbol, tint: page.tint)
+        }
+        .frame(maxWidth: .infinity, minHeight: JRBarTokens.Space.xxxl, alignment: .leading)
+        .padding(.horizontal, JRBarTokens.Space.sm)
+        .background {
+            RoundedRectangle(cornerRadius: JRBarTokens.Radius.control)
+                .fill(store.page == page ? JRBarTokens.Ink.accent : .clear)
+                .padding(.horizontal, -JRBarTokens.Space.sm)
+        }
+        .listRowInsets(EdgeInsets())
+        .tag(page)
     }
 }
 
@@ -232,34 +273,7 @@ struct SettingsPageContainer: View {
                     SettingsSealBanner(seal: seal)
                 }
             }
-            if !store.isLive {
-                Section {
-                    SettingsBanner(symbol: "bolt.horizontal.circle.fill", tint: .orange,
-                                   title: "Monitor not connected")
-                }
-            }
-            if let schema = store.settingsSchema, schema > CoreProtocol.knownSettingsSchema {
-                Section {
-                    SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: .orange,
-                                   title: "Newer settings schema",
-                                   detail: "The monitor speaks schema \(schema); this app knows \(CoreProtocol.knownSettingsSchema). Newer settings may not appear — update the app.")
-                }
-            }
-            if let error = store.lastError {
-                Section {
-                    SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: .red, title: error)
-                }
-            }
-            if store.lastError == nil, let status = store.status {
-                Section {
-                    SettingsBanner(symbol: "checkmark.circle.fill", tint: .green, title: status)
-                }
-            }
-            if let hit = store.searchHit, hit.page == page, hit.title != page.title {
-                Section {
-                    SettingsBanner(symbol: "magnifyingglass", tint: page.tint, title: SettingsSearch.banner(for: hit))
-                }
-            }
+            SettingsPageNotice(store: store, page: page)
             if let provider = store.selectedProvider {
                 SettingsProviderDetail(store: store, provider: provider)
             } else if store.subpage == "calibration" {
@@ -294,11 +308,13 @@ struct SettingsPageContainer: View {
 struct Provided<Content: View>: View {
     let store: SettingsStore
     let paths: [String]
+    let recordsControl: Bool
     @ViewBuilder var content: () -> Content
 
-    init(_ store: SettingsStore, _ paths: String..., @ViewBuilder content: @escaping () -> Content) {
+    init(_ store: SettingsStore, _ paths: String..., recordsControl: Bool = true, @ViewBuilder content: @escaping () -> Content) {
         self.store = store
         self.paths = paths
+        self.recordsControl = recordsControl
         self.content = content
     }
 
@@ -307,6 +323,7 @@ struct Provided<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             content()
+                .settingControl(recordsControl ? paths : [])
                 .disabled(!provided || !store.isLive)
             if store.hasDocument, !provided {
                 NotProvidedHint()
@@ -333,13 +350,15 @@ struct SettingLabel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .foregroundStyle(isEnabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                .foregroundStyle(.primary)
+                .environment(\.isEnabled, true)
             if let subtitle {
                 Text(subtitle)
                     .font(.subheadline)
                     // A disabled row's line is often the reason it is disabled,
                     // so it stays readable, only dimmer.
-                    .foregroundStyle(isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                    .foregroundStyle(.secondary)
+                    .environment(\.isEnabled, true)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -355,7 +374,8 @@ struct ValueText: View {
     var body: some View {
         Text(text)
             .monospacedDigit()
-            .foregroundStyle(isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.quaternary))
+            .foregroundStyle(.secondary)
+            .environment(\.isEnabled, true)
             .frame(width: width, alignment: .trailing)
     }
 }
@@ -695,8 +715,6 @@ struct SettingsPageBody: View {
             advancedLink
         case .devices:
             DevicesPage(store: store)
-                .disabled(!store.isLive)
-                .opacity(store.isLive ? 1 : 0.55)
             SettingsGroup {
                 SettingsNavigationRow("Calibration profiles") { store.subpage = "calibration" }
             }

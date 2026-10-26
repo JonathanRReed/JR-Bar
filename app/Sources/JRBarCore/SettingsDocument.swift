@@ -167,8 +167,7 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
         var keys: [SettingsKey] = [
             // General
             SettingsKey(.general, "menu_bar_icon_style", .string),
-            // The brightness cap sits on Lighting, beside the dimming rows.
-            SettingsKey(.lighting, "global_brightness_scale", .number),
+            SettingsKey(.devices, "global_brightness_scale", .number),
             // Agents
             SettingsKey(.agents, "subagent_asks_alert", .bool),
             SettingsKey(.agents, "ask_stale_after_hours", .number),

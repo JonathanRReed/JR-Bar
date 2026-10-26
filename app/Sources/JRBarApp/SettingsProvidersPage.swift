@@ -40,7 +40,7 @@ struct SettingsProvidersPage: View {
             if store.isLive && !list.loading && list.providers.isEmpty && list.failure == nil {
                 StatusBanner("No providers reported")
             }
-            if store.isLive, let failure = list.failure { StatusBanner(failure, kind: .failure) }
+            if store.isLive, list.failure != nil { SettingsProviderFailureBanner(list: list) }
             SectionNote("Track off stops JR-Bar's reads and jobs. The hook stays installed until you remove the integration.")
         }
         .id(SettingsStore.groupAnchor("Providers"))
@@ -166,6 +166,13 @@ struct SettingsProviderDetail: View {
                     .labelsHidden().toggleStyle(.switch)
                     .disabled(!row.enabled || row.usageConsent == nil || store.providerList.busy.contains(row.identity))
                 }
+                Provided(store, "session_open_preferences") {
+                    SettingsRow("Clicks Open") {
+                        Picker("Clicks Open", selection: store.optionalString("session_open_preferences.\(provider)")) {
+                            ForEach(AgentsPage.openChoices, id: \.value) { Text($0.label).tag($0.value) }
+                        }.labelsHidden()
+                    }
+                }
                 if provider == "claude" { ClaudePlanLimitsRow(store: store) }
                 if ["factory", "kimi", "kilo"].contains(provider) {
                     ProviderCredentialControls(row: row, core: store.core,
@@ -177,7 +184,7 @@ struct SettingsProviderDetail: View {
                 AgentRow(store: store, provider: provider, doctor: doctor.entry(for: provider, live: store.isLive))
                     .padding(JRBarTokens.Space.md)
                 SettingsRow("Remove integration", subtitle: "Removes JR-Bar's hook from this provider's configuration.") {
-                    Button("Remove integration", role: .destructive) { store.uninstallHooks(provider) }
+                    Button("Remove integration", role: .destructive) { store.requestIntegrationRemoval(provider) }
                         .disabled(store.hookBusy.contains(provider) || store.hookStatus(provider) == "missing")
                 }
             }
@@ -188,6 +195,20 @@ struct SettingsProviderDetail: View {
                 Button("Cancel", role: .cancel) {}
             } message: { Text(row.usageConsent?.summary ?? "") }
         }
-        if let failure = store.providerList.failure { StatusBanner(failure, kind: .failure) }
+        SettingsProviderFailureBanner(list: store.providerList)
+    }
+}
+
+struct SettingsProviderFailureBanner: View {
+    let list: ProviderListStore
+
+    func retry() async { await list.refresh() }
+
+    var body: some View {
+        if let failure = list.failure {
+            StatusBanner(failure, kind: .failure) {
+                Button("Retry") { _ = Task { await retry() } }
+            }
+        }
     }
 }

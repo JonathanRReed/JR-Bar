@@ -378,12 +378,18 @@ struct SettingsStorePathTests {
         let hardware = try #require(SettingsSearch.rows.first { $0.group == "Devices" && $0.title == "Brightness" })
         store.reveal(hardware)
         #expect(store.openFolds.isEmpty)
-        for title in ["Display", "Pin to", "Asks only", "Blend", "Phase nudge", "Minimum glow"] {
+        for title in ["Display", "Pin to", "Asks only", "Blend"] {
             let lighting = try #require(SettingsSearch.rows.first { $0.group == "Screen Bar" && $0.title == title })
             #expect(lighting.chapter == .lighting)
             store.reveal(lighting)
         }
-        #expect(studioOpens == 6)
+        #expect(studioOpens == 4)
+        for title in ["Phase nudge", "Minimum glow"] {
+            let row = try #require(SettingsSearch.rows.first { $0.group == "Screen Bar" && $0.title == title })
+            #expect(row.chapter == .devices)
+            store.reveal(row)
+            #expect(store.page == .devices)
+        }
         let advanced = try #require(SettingsSearch.rows.first { $0.group == "Screen Bar" && $0.title == "Gap width" })
         store.openFolds.removeAll()
         store.reveal(advanced)
@@ -418,7 +424,7 @@ struct SettingsStorePathTests {
         let devices = SettingsStore.resetMessage(for: .devices)
         #expect(devices.contains("brightness, colour gains and resting glow"))
         #expect(devices.contains("hidden apps"))
-        #expect(SettingsStore.resetMessage(for: .agents).contains("how a click opens each session"))
+        #expect(SettingsStore.resetMessage(for: .agents).contains("Session clicks return to their defaults"))
         #expect(SettingsStore.resetMessage(for: .alerts).contains("per-Focus dim rules"))
         #expect(SettingsStore.resetMessage(for: .general).contains("menu bar icon"))
         for page in SettingsStore.Page.allCases {

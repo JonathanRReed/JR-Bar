@@ -578,6 +578,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
             self.alcove = alcove
         }
+        store.onOpenKeepAwake = { [weak settingsWindow] in
+            settingsWindow?.store.openKeepAwakeSettings()
+            settingsWindow?.show()
+        }
         store.onOpenSettings = { [weak settingsWindow] page in settingsWindow?.show(page: page) }
         statusItem.onOpenSettings = { [weak settingsWindow] in settingsWindow?.show() }
 
@@ -638,6 +642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.effectsWindow = effectsWindow
         store.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         statusItem.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
+        settingsStore.onOpenStudioDevices = { [weak effectsWindow] in effectsWindow?.showDevices() }
         settingsStore.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         let menuBarRules = utilitiesStore.menuBar.stateRules
         menuBarRules.sceneLease.connect(to: core)

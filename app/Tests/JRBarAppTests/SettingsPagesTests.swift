@@ -177,6 +177,6 @@ extension SettingsPagesTests {
         #expect(!devices.contains("devices.0.provider_pin"))
         #expect(devices.contains("devices.0.red_gain"))
         #expect(!devices.contains("colors.blend_mode"))
-        #expect(!devices.contains("screen_bar_phase_offset_ms"))
+        #expect(devices.contains("screen_bar_phase_offset_ms"))
     }
 }

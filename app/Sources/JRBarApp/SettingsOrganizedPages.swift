@@ -36,6 +36,10 @@ struct SettingsUsageOptions: View {
             SettingPicker(store, "Lead with", path: "usage_display_mode", options: [
                 ("tokens", "Tokens"), ("cost", "Cost"),
             ], default: "tokens", segmented: true)
+            Provided(store, "usage_graph_providers") {
+                MultiSelectMenu(store, "Graph providers", path: "usage_graph_providers",
+                                options: SettingsKey.providers.map { ($0, ProviderStyle.style(for: $0).name) })
+            }
             SettingIntPicker(store, "Graph range", path: "usage_graph_days", options: [
                 (7, "7 days"), (30, "30 days"), (90, "90 days"), (365, "A year"),
             ], default: 7)
@@ -136,14 +140,15 @@ struct ClaudePlanLimitsRow: View {
                     get: { store.values.bool("claude_plan_limits_enabled") ?? false },
                     set: { store.setClaudePlanLimits($0) }
                 )).labelsHidden().toggleStyle(.switch)
+                    .settingControl("claude_plan_limits_consent_version")
             }
         }
     }
 }
 
 
-/// Output choices stay in Studio; device calibration stays in Devices.
-struct DeviceLightingOverrides: View {
+/// Hardware links stay in Devices. Colours and the Dot role stay in Studio.
+struct DeviceLinkSettings: View {
     let store: SettingsStore
 
     var body: some View {
@@ -153,16 +158,8 @@ struct DeviceLightingOverrides: View {
                           step: 0.05, default: 0.3, format: SettingsStore.percent)
                 .disabled(!(store.values.bool("devices_linked") ?? true))
             LinkedBrightnessToggle(store: store)
-            DotRoleControls(store: store, inDeviceCard: false)
             LinkedSyncControls(store: store)
         }
-        ForEach(store.deviceEntries) { device in
-            SettingGroup(device.name) {
-                DeviceLightSettings(store: store, device: device)
-                if device.kind == "dot" { DotTravelStyleRow(store: store, device: device) }
-            }
-        }
-        ScreenBarMotionSettings(store: store)
     }
 }
 
@@ -181,8 +178,39 @@ struct ScreenBarMotionSettings: View {
             SettingsRow("Hold still on camera", subtitle: ScreenBarCameraHold.subtitle(
                 cameraReadable: ScreenBarLiveStatus.shared.cameraReadable)) {
                 Toggle("Hold still on camera", isOn: $stillOnCamera).labelsHidden().toggleStyle(.switch)
+                    .settingControl(ScreenBarController.stillOnCameraDefaultsKey)
                     .disabled(!ScreenBarLiveStatus.shared.cameraReadable)
             }
+        }
+    }
+}
+
+struct SettingsPageNotice: View {
+    let store: SettingsStore
+    let page: SettingsStore.Page
+
+    enum Notice: Equatable { case offline, schema(Int), failure(String), search(String), saved(String) }
+
+    static func notice(store: SettingsStore, page: SettingsStore.Page) -> Notice? {
+        if !store.isLive { return .offline }
+        if let schema = store.settingsSchema, schema > CoreProtocol.knownSettingsSchema { return .schema(schema) }
+        if let error = store.lastError { return .failure(error) }
+        if let hit = store.searchHit, hit.page == page, hit.title != page.title {
+            return .search(SettingsSearch.banner(for: hit))
+        }
+        return store.status.map(Notice.saved)
+    }
+
+    var body: some View {
+        switch Self.notice(store: store, page: page) {
+        case .offline:
+            StatusBanner("Monitor not connected", detail: "Showing saved settings.")
+        case .schema(let schema):
+            StatusBanner("Newer settings schema", detail: "Monitor schema \(schema). Update JR-Bar to see all settings.")
+        case .failure(let message): StatusBanner(message, kind: .failure)
+        case .search(let message): StatusBanner(message)
+        case .saved(let message): StatusBanner(message)
+        case nil: EmptyView()
         }
     }
 }

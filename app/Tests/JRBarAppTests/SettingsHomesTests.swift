@@ -47,7 +47,7 @@ struct SettingsHomesTests {
         let shelf = SettingsSearch.search("shelf hotkey", in: entries).first
         #expect(shelf?.chapter == .shortcuts && shelf?.title == "Open the shelf")
         let brightness = SettingsSearch.search("maximum brightness", in: entries).first
-        #expect(brightness?.chapter == .lighting && brightness?.title == "Maximum brightness")
+        #expect(brightness?.chapter == .devices && brightness?.title == "Maximum brightness")
         let meters = SettingsSearch.search("menu bar meters", in: entries).first
         #expect(meters?.chapter == .agents && meters?.title == "Menu bar")
         #expect(!SettingsSearch.rows.contains { $0.chapter == .general && $0.title.hasSuffix("hotkey") },
@@ -65,10 +65,9 @@ struct SettingsHomesTests {
         #expect(store.searchHit?.title == "Show the panel")
         #expect(store.revealRequest == before + 1)
         store.page = .general
-        var studioOpened = false
-        store.onOpenEffects = { studioOpened = true }
         store.revealHome(.brightness)
-        #expect(studioOpened)
+        #expect(store.page == .devices)
+        #expect(store.searchHit?.title == "Maximum brightness")
         store.revealHome(.hotkeys, titled: "Open the shelf")
         #expect(store.searchHit?.title == "Open the shelf")
         store.revealHome(.meters)
@@ -78,7 +77,7 @@ struct SettingsHomesTests {
     @Test("the brightness cap's reset belongs to the page it is drawn on")
     func brightnessResetsWithLighting() {
         let key = SettingsKey.all.first { $0.path == "global_brightness_scale" }
-        #expect(key?.page == .lighting)
+        #expect(key?.page == .devices)
         #expect(!SettingsKey.all.contains { $0.page == .general && $0.path == "global_brightness_scale" })
     }
 
@@ -99,7 +98,7 @@ struct SettingsHomesTests {
         #expect(count("setHotkeyEnabled", in: card) == 0)
         #expect(count("menuBar.setHotkeyEnabled", in: shell) == 1)
         // The brightness cap: one slider, on Lighting.
-        #expect(count("\"global_brightness_scale\"", in: general) == 0)
+        #expect(count("\"global_brightness_scale\"", in: general) == 1)
         #expect(count("\"global_brightness_scale\"", in: lighting) == 1)
         let providers = try source("SettingsProvidersPage.swift")
         #expect(providers.contains("store.providerList"))

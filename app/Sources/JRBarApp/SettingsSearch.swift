@@ -5,13 +5,9 @@ import JRBarCore
 /// "alert burst" lands on the right page without knowing where it lives.
 /// Raycast's ⌘F over every setting, for JR-Bar's pages.
 ///
-/// The rows are listed here rather than discovered: a page builds its
-/// rows only when shown, and the daemon's pages are plain SwiftUI. A test
-/// holds the list honest — every title here must still be a row title in
-/// the app's sources — and the dynamic rows (each toy and utility and
-/// the rows inside their cards, each shortcut action and quick toggle)
-/// are added at search time from their own catalogues, so they can
-/// never go stale.
+/// Pages build their controls when shown. The catalogue home test renders
+/// those destinations. Toy, utility and shortcut rows come from their own
+/// catalogues at search time.
 struct SettingsSearchEntry: Hashable, Identifiable, Sendable {
     /// The chapter the row sits in (the area Settings once listed as a page).
     let chapter: SettingsStore.Chapter
@@ -88,11 +84,13 @@ enum SettingsSearch {
 
     private nonisolated static func currentEntry(_ entry: SettingsSearchEntry) -> SettingsSearchEntry? {
         // Lighting and animation controls moved into Studio.
-        let studioDeviceRows: Set<String> = ["Display", "Pin to", "Asks only", "Blend", "Travel", "Mirror hardware strip", "Phase nudge", "Minimum glow", "Hold still on camera"]
-        if entry.chapter == .lighting || (entry.chapter == .devices && entry.group == "Pro & Dot")
-            || (entry.chapter == .devices && studioDeviceRows.contains(entry.title)) {
+        let studioDeviceRows: Set<String> = ["Display", "Pin to", "Asks only", "Blend", "Role", "Also glow for finished runs"]
+        if (entry.chapter == .lighting && entry.title != "Maximum brightness") || (entry.chapter == .devices && studioDeviceRows.contains(entry.title)) {
             return SettingsSearchEntry(.lighting, entry.group, entry.title, subtitle: entry.subtitle,
                                        keywords: entry.keywords, card: entry.card, hint: entry.hint)
+        }
+        if entry.title == "Maximum brightness" {
+            return SettingsSearchEntry(.devices, "Brightness", entry.title, keywords: entry.keywords)
         }
         if ["Providers in the icon", "Show meters for", "Remove Hooks"].contains(entry.title) { return nil }
         var chapter = entry.chapter
@@ -162,6 +160,7 @@ enum SettingsSearch {
               keywords: ["menu bar meters", "menu bar", "meter", "icon"]),
         .init(.usage, "Display", "Lead with"),
         .init(.usage, "Display", "Graph range"),
+        .init(.usage, "Usage", "Graph providers"),
         .init(.usage, "Usage Center", "Usage Center", subtitle: "See provider history, token counts, cost and pace.",
               keywords: ["graphs", "dashboard", "history", "tokens", "cost", "pace"]),
         .init(.usage, "Claude", "Read plan limits", subtitle: "Reads your subscription's official 5-hour and 7-day windows from Anthropic. Off until you opt in."),
@@ -319,6 +318,7 @@ enum SettingsSearch {
         .init(.general, "Power", "Keep Mac awake", subtitle: "While agents run, the Mac never idles to sleep."),
         .init(.general, "Power", "Keep display awake", subtitle: "While agents run, the screen stays on too — so it never locks mid-run. Off lets the display sleep while the Mac stays up."),
         .init(.general, "Power", "Lid closed"),
+        .init(.utilities, "Keep Awake", "Closed-lid grace", card: "keepAwake"),
         .init(.general, "Power", "Keep awake on battery", subtitle: "Off releases the hold whenever the Mac is unplugged."),
         .init(.notifications, "Battery", "Low battery alert", subtitle: "Every surface switches to the slow red breathe until power returns."),
         .init(.notifications, "Battery", "Below"),
@@ -330,6 +330,7 @@ enum SettingsSearch {
               keywords: ["charger", "plug", "unplug"]),
         .init(.remote, "Peers", "Remote peers", subtitle: "Discover other Macs running JR-Bar and show their agents here."),
         .init(.remote, "Peers", "Publish this Mac", subtitle: "Lets peers read this desk's sessions."),
+        .init(.remote, "Peers", "Muted machines"),
         .init(.remote, "Peers", "Unmuted machines", subtitle: "Machines whose asks still take a light here while remote asks are muted.",
               keywords: ["peers", "machine", "mute"]),
         .init(.remote, "Peers", "Mute remote asks", subtitle: "A peer's asks take no light here until you unmute that machine."),

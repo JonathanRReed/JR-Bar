@@ -129,14 +129,18 @@ struct CalibrationSheet: View {
             DisclosureGroup(isExpanded: $fineTuneExpanded) {
                 VStack(alignment: .leading, spacing: 10) {
                     gainRow("Red", value: $model.red, tint: .red)
+                        .settingControl("\(device?.prefix ?? "devices.0").red_gain")
                     gainRow("Green", value: $model.green, tint: .green)
+                        .settingControl("\(device?.prefix ?? "devices.0").green_gain")
                     gainRow("Blue", value: $model.blue, tint: .blue)
+                        .settingControl("\(device?.prefix ?? "devices.0").blue_gain")
                     Text("1.00 is the die as shipped; below dims the channel, above boosts a weak one.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 12) {
                         Text("Resting glow").frame(width: 90, alignment: .leading)
                         Slider(value: $model.glow, in: CalibrationModel.glowRange)
+                            .settingControl("\(device?.prefix ?? "devices.0").resting_glow")
                             .frame(minWidth: 0, maxWidth: .infinity)
                         ValueText(text: SettingsStore.percent(model.glow), width: 48)
                     }

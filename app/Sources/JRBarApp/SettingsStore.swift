@@ -92,7 +92,8 @@ final class SettingsStore {
             switch self {
             case .general: return [.general]
             case .agents: return [.agents, .usage]
-            case .alerts, .utilities: return [.notifications]
+            case .alerts: return [.notifications, .remote]
+            case .utilities: return [.notifications]
             case .devices: return [.devices]
             case .privacy: return [.agents, .usage, .notifications]
             case .remote: return [.remote]
@@ -112,6 +113,13 @@ final class SettingsStore {
             "virtual_status_device_enabled", "screen_bar_follow_alcove", "screen_bar_show_in_full_screen",
             "screen_bar_gap_width", "screen_bar_wing_length", "screen_bar_notch_wings",
             "screen_bar_notch_profile", "screen_bar_notch_corner", "screen_bar_hidden_apps",
+            "global_brightness_scale", "devices_linked", "linked_dot_scale", "linked_follow_brightness",
+            "dot_extend_style", "dot_extend_side", "linked_dot_phase_trim_ms", "linked_dot_clock_correction",
+            "linked_sync_tolerance_ms", "link_screen_bar_to_hardware", "screen_bar_phase_offset_ms", "screen_bar_min_glow",
+        ]
+
+        private static let alertRemotePaths: Set<String> = [
+            "escalation_webhook_url", "webhook_events", "ntfy_enabled", "ntfy_topic", "ntfy_only_when_away",
         ]
 
         func resetPaths(in document: SettingsDocument) -> [String] {
@@ -119,11 +127,13 @@ final class SettingsStore {
                 let power = Self.powerPaths.contains(path)
                 let privacy = Self.privacyPaths.contains(path) || path.hasPrefix("transcript_monitoring.")
                 switch self {
+                case .alerts: return !power && !privacy && (SettingsKey.keys(on: .notifications).contains { $0.path == path } || Self.alertRemotePaths.contains(path))
+                case .remote: return !Self.alertRemotePaths.contains(path)
                 case .utilities: return power
                 case .privacy: return privacy
                 case .devices:
                     if path.hasPrefix("devices.") {
-                        return ["enabled", "brightness", "auto_brightness_enabled", "led_direction", "red_gain", "green_gain", "blue_gain", "resting_glow"].contains(path.components(separatedBy: ".").last ?? "")
+                        return ["enabled", "brightness", "auto_brightness_enabled", "led_direction", "dot_travel_style", "red_gain", "green_gain", "blue_gain", "resting_glow"].contains(path.components(separatedBy: ".").last ?? "")
                     }
                     return Self.devicePaths.contains(path)
                 default: return !power && !privacy
@@ -265,6 +275,7 @@ final class SettingsStore {
     /// delegate owns it.
     weak var utilities: UtilitiesStore?
     /// Lighting › Effects… opens the Effect Studio window.
+    var onOpenStudioDevices: (@MainActor () -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
     /// Devices opens the Creator Micro window.
     var onOpenControlCenter: (@MainActor () -> Void)?
@@ -700,7 +711,8 @@ final class SettingsStore {
     func reveal(_ entry: SettingsSearchEntry) {
         if entry.chapter == .lighting || entry.title == "Open Studio" {
             openFolds.formUnion(folds(holding: entry))
-            onOpenEffects?()
+            if ["Role", "Also glow for finished runs"].contains(entry.title) { onOpenStudioDevices?() }
+            else { onOpenEffects?() }
             return
         }
         searchHit = entry
@@ -708,6 +720,7 @@ final class SettingsStore {
         page = entry.page
         subpage = entry.card ?? (SettingsFold.isAdvanced(chapter: entry.chapter, group: entry.group) ? "advanced" : nil)
         selectedProvider = entry.title == "Read plan limits" ? "claude" : nil
+        if entry.title == "Clicks Open" { selectedProvider = providerList.providers.first?.id }
         if entry.group == "Calibration profiles" { subpage = "calibration" }
         openFolds.formUnion(folds(holding: entry))
         if let card = entry.card, card.hasPrefix("provider:") {
@@ -814,6 +827,8 @@ final class SettingsStore {
         self.shelfHotkeyEnabled = shortcutDefaults.bool(forKey: Self.shelfHotkeyDefaultsKey)
         self.studioHotkeyEnabled = shortcutDefaults.object(forKey: Self.studioHotkeyDefaultsKey) as? Bool ?? true
         self.core = core
+        self.hookRemover = { try await core.uninstallHooksNow(providers: $0) }
+        self.pageResetter = { try await core.resetSettings(paths: $0) }
         self.providerList = providerList ?? ProviderListStore(core: core)
         self.firmware = firmware ?? FirmwareStore { name, args in try await core.send(name, args: args) }
         watchSettings()
@@ -1537,18 +1552,33 @@ final class SettingsStore {
         runHook(provider: provider, verb: "Install") { try await self.core.installHooksNow(providers: [provider]) }
     }
 
-    func uninstallHooks(_ provider: String) {
-        runHook(provider: provider, verb: "Remove") { try await self.core.uninstallHooksNow(providers: [provider]) }
+    var pendingIntegrationRemoval: String?
+    @ObservationIgnored var hookRemover: ([String]) async throws -> CoreReply
+    @ObservationIgnored var pageResetter: ([String]) async throws -> CoreReply
+
+    func requestIntegrationRemoval(_ provider: String) {
+        guard !hookBusy.contains(provider), isLive else { return }
+        pendingIntegrationRemoval = provider
     }
 
-    private func runHook(provider: String, verb: String, _ body: @escaping @MainActor () async throws -> CoreReply) {
-        guard !hookBusy.contains(provider) else { return }
+    func cancelIntegrationRemoval() { pendingIntegrationRemoval = nil }
+
+    @discardableResult
+    func confirmIntegrationRemoval() -> Task<Void, Never>? {
+        guard let provider = pendingIntegrationRemoval else { return nil }
+        pendingIntegrationRemoval = nil
+        return runHook(provider: provider, verb: "Remove") { try await self.hookRemover([provider]) }
+    }
+
+    @discardableResult
+    private func runHook(provider: String, verb: String, _ body: @escaping @MainActor () async throws -> CoreReply) -> Task<Void, Never>? {
+        guard !hookBusy.contains(provider) else { return nil }
         guard core.isLive else {
             noteHook(provider, "Monitor offline", isError: true)
-            return
+            return nil
         }
         hookBusy.insert(provider)
-        Task { [weak self] in
+        return Task { [weak self] in
             guard let self else { return }
             defer { self.hookBusy.remove(provider) }
             do {
@@ -2009,7 +2039,7 @@ final class SettingsStore {
         var text = "The monitor's settings on this page go back to their defaults."
         switch page {
         case .general: text += " The menu bar icon returns to its default look."
-        case .agents: text += " That includes how a click opens each session."
+        case .agents: text += " Track turns on and providers return to the menu bar and panel. Usage consent stays as you chose it. Session clicks return to their defaults."
         case .devices: text += " That includes device switches, brightness, colour gains and resting glow, direction, Screen Bar placement and hidden apps."
         case .alerts: text += " That includes your per-Focus dim rules."
         default: break
@@ -2017,22 +2047,23 @@ final class SettingsStore {
         return text + " Shortcuts, sounds, window choices and other settings that live in the app are not touched. This cannot be undone."
     }
 
-    func resetPage(_ page: Page) {
+    @discardableResult
+    func resetPage(_ page: Page) -> Task<Void, Never>? {
         let document = SettingsDocument(core.settings?.document ?? .object([:]))
         let paths = page.resetPaths(in: document)
-        guard !paths.isEmpty else { return }
-        Task { [weak self] in
+        guard !paths.isEmpty else { return nil }
+        return Task { [weak self] in
             guard let self else { return }
             do {
-                let reply = try await self.core.resetSettings(paths: paths)
+                let reply = try await self.pageResetter(paths)
                 if reply.ok {
                     // The icon style has a copy in the app that the picker and
                     // the status item read; the monitor's reset does not reach it.
                     if page == .general {
                         self.menuBarIconStyle = StatusIconStyle.agents.rawValue
                     }
-                    if page == .agents, document.contains("provider_display") {
-                        try await self.providerList.setPreferences(.init())
+                    if page == .agents {
+                        try await self.providerList.resetPresentationAndTracking(resetDisplay: document.contains("provider_display"))
                     }
                     self.show(status: "\(page.title) is back to its defaults")
                 } else {
@@ -2042,6 +2073,11 @@ final class SettingsStore {
                 self.report(error: "reset: \(error)")
             }
         }
+    }
+
+    func openKeepAwakeSettings() {
+        page = .utilities
+        subpage = "keepAwake"
     }
 
     func revealStateFolder() {
@@ -2203,7 +2239,7 @@ enum SettingsFold {
     /// Rows listed in search that live inside one of those disclosures.
     static let nested: [(chapter: SettingsStore.Chapter, group: String, titles: Set<String>, fold: String)] = [
         (.devices, "Screen Bar", ["Gap width", "Wing length"], screenBarAdvanced),
-        (.lighting, "Pro & Dot", ["Keep in step", "Sync tolerance"], dotClock),
+        (.devices, "Pro & Dot", ["Keep in step", "Sync tolerance"], dotClock),
     ]
 }
 

@@ -29,7 +29,7 @@ enum SettingsHome: String, CaseIterable, Sendable {
         switch self {
         case .hotkeys: return "Show the panel"
         case .meters: return "Menu bar"
-        case .brightness: return "Open Studio"
+        case .brightness: return "Maximum brightness"
         }
     }
 
@@ -38,7 +38,7 @@ enum SettingsHome: String, CaseIterable, Sendable {
         switch self {
         case .hotkeys: return "Hotkeys are on Shortcuts."
         case .meters: return "Choose providers on Providers."
-        case .brightness: return "Lighting is in Studio."
+        case .brightness: return "Maximum brightness is on Devices."
         }
     }
 
@@ -47,7 +47,7 @@ enum SettingsHome: String, CaseIterable, Sendable {
         switch self {
         case .hotkeys: return "Open Shortcuts"
         case .meters: return "Open Providers"
-        case .brightness: return "Open Studio"
+        case .brightness: return "Open Devices"
         }
     }
 
@@ -62,7 +62,6 @@ extension SettingsStore {
     /// does. `titled` names another row on the same page (the shelf's
     /// key, beside the panel's).
     func revealHome(_ home: SettingsHome, titled: String? = nil) {
-        if home == .brightness { onOpenEffects?(); return }
         let title = titled ?? home.title
         if let entry = SettingsSearch.rows.first(where: { $0.chapter == home.chapter && $0.title == title }) {
             reveal(entry)

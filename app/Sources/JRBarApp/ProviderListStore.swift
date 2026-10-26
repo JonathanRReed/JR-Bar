@@ -134,6 +134,18 @@ final class ProviderListStore {
         }
     }
 
+    /// Reset the controls owned by Providers without granting usage consent.
+    func resetPresentationAndTracking(resetDisplay: Bool) async throws {
+        await refresh()
+        if let failure { throw CoreReplyError(code: "providers_unavailable", message: failure) }
+        for original in rows where original.id != "t3code" {
+            if !original.enabled { try await setTracked(original, true) }
+            let current = rows.first { $0.identity == original.identity } ?? original
+            if current.options["panel_hidden"] == "true" { try await setPanelVisible(current, true) }
+        }
+        if resetDisplay { try await setPreferences(.init()) }
+    }
+
     private func update(_ row: ProviderRow, write: () async throws -> ProviderRow) async throws {
         guard busy.insert(row.identity).inserted else { throw CoreReplyError(code: "busy") }
         rowsRevision += 1

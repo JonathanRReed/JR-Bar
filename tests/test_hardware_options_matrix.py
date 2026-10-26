@@ -254,6 +254,11 @@ def check_brightness(rig: Rig) -> None:
     _changes(rig, f"{DOT}.brightness", 90, field="dot")
 
 
+def check_global_brightness(rig: Rig) -> None:
+    _changes(rig, "global_brightness_scale", 0.35, field="pro_bytes", before=1.0)
+    _changes(rig, "global_brightness_scale", 0.7, field="dot")
+
+
 def check_auto_brightness(rig: Rig) -> None:
     _changes(rig, f"{PRO}.auto_brightness_enabled", True, field="pro")
     # Following the strip, the Dot ignores its own auto-brightness (the
@@ -425,6 +430,7 @@ APP_DRAWN = {
 }
 
 MATRIX = {
+    "global_brightness_scale": check_global_brightness,
     "devices.N.enabled": check_enabled,
     "devices.N.led_display": check_led_display,
     "devices.N.brightness": check_brightness,

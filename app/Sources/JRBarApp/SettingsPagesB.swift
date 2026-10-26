@@ -103,7 +103,7 @@ struct LightingPage: View {
                           path: "active_scene", options: Self.scenes, default: "calm")
             ScenePackPicker(store: store)
         }
-        DeviceLightingOverrides(store: store)
+        DeviceLinkSettings(store: store)
     }
 
     /// The lit states' colours for the vision check — idle is the dark
@@ -818,6 +818,7 @@ struct ProviderSwatch: View {
             ColorPicker("", selection: store.color(path, default: style.accentHex), supportsOpacity: false)
                 .labelsHidden()
                 .accessibilityLabel("\(style.name) colour")
+                .settingControl(path)
                 .disabled(!store.isProvided(path))
             VStack(alignment: .leading, spacing: 4) {
                 SwatchTitle(name: style.name,
@@ -863,6 +864,7 @@ struct ModeSwatch: View {
             ColorPicker("", selection: store.color(path, default: fallback), supportsOpacity: false)
                 .labelsHidden()
                 .accessibilityLabel("\(label.name) colour")
+                .settingControl(path)
                 .disabled(!store.isProvided(path))
             VStack(alignment: .leading, spacing: 4) {
                 SwatchTitle(name: label.name,
@@ -1073,6 +1075,7 @@ struct PowerGroup: View {
             SettingPicker(store, "Lid closed", subtitle: closedLidNote, path: "closed_lid_awake_policy", options: [
                 ("never", "Let it sleep"), ("agents", "Stay awake while agents run"), ("always", "Always stay awake"),
             ], default: "never")
+            SettingNumberField(store, "Closed-lid grace", path: "closed_lid_grace_minutes", in: 0...60, default: 5, unit: "min")
             SettingToggle(store, "Keep awake on battery", subtitle: "Off releases the hold whenever the Mac is unplugged.", path: "keep_awake_on_battery", default: true)
         }
     }
@@ -1103,7 +1106,7 @@ struct AlertsProfileRow: View {
     }
 
     var body: some View {
-        Provided(store, AlertsProfile.keys[0], AlertsProfile.keys[1], AlertsProfile.keys[2], AlertsProfile.keys[3]) {
+        Provided(store, AlertsProfile.keys[0], AlertsProfile.keys[1], AlertsProfile.keys[2], AlertsProfile.keys[3], recordsControl: false) {
             Picker(selection: selection) {
                 ForEach(AlertsProfile.allCases, id: \.rawValue) { profile in
                     Text(profile.title).tag(profile.rawValue)
@@ -1321,6 +1324,8 @@ struct RemotePage: View {
                 .disabled(!(store.values.bool("remote_peers.enabled") ?? false))
             SettingToggle(store, "Mute remote asks", subtitle: "A peer's asks take no light here until you unmute that machine.",
                           path: "remote_peers.remote_interrupts_muted", default: true)
+                .disabled(!(store.values.bool("remote_peers.enabled") ?? false))
+            MachineList(store: store, path: "remote_peers.muted_machines", title: "Muted machines")
                 .disabled(!(store.values.bool("remote_peers.enabled") ?? false))
             MachineList(store: store, path: "remote_peers.unmuted_machines", title: "Unmuted machines")
                 .disabled(!(store.values.bool("remote_peers.enabled") ?? false))

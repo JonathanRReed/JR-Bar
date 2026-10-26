@@ -154,6 +154,7 @@ struct MenuBarStylePicker: View {
             .labelsHidden()
             .frame(width: 128)
         }
+        .settingControl("menu_bar_icon_style")
     }
 
     private var labelText: String? {
@@ -461,26 +462,18 @@ struct AgentRow: View {
         }
     }
 
-    /// Reinstall, Remove and what a click opens, behind one … so the row
-    /// fits the window.
+    /// Hook actions share one menu. Click behavior has its own row in provider details.
     private var actions: some View {
         Menu {
             Button(status == "ok" ? "Reinstall Hooks" : "Install Hooks") { store.installHooks(provider) }
                 .disabled(!canInstall)
-            Button("Remove Hooks") { store.uninstallHooks(provider) }
+            Button("Remove Hooks") { store.requestIntegrationRemoval(provider) }
                 .disabled(!store.isLive || status == "missing" || busy)
-            Divider()
-            Picker("Clicks Open", selection: store.optionalString("session_open_preferences.\(provider)")) {
-                ForEach(AgentsPage.openChoices, id: \.value) { choice in
-                    Text(choice.label).tag(choice.value)
-                }
-            }
-            .disabled(!store.isProvided("session_open_preferences"))
         } label: {
             Image(systemName: "ellipsis.circle")
-                .accessibilityLabel("\(style.name) hooks and what a click opens")
+                .accessibilityLabel("\(style.name) hooks")
         }
-        .help("Install or remove \(style.name)'s hooks, and choose what a click on its session opens")
+        .help("Install or remove \(style.name)'s hooks")
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
@@ -583,6 +576,10 @@ struct DevicesPage: View {
     }
 
     var body: some View {
+        SettingGroup("Brightness") {
+            SettingSlider(store, "Maximum brightness", path: "global_brightness_scale", in: 0.05...1,
+                          default: 1, format: SettingsStore.percent)
+        }
         let layout = Layout(entries: store.deviceEntries)
         let devices = layout.devices
         if devices.isEmpty {
@@ -601,11 +598,19 @@ struct DevicesPage: View {
                 .id(device.id == devices.first?.id ? SettingsStore.groupAnchor("Devices") : "device:\(device.id)")
         }
 
-        CreatorMicroCard(store: store)
-
-        StreamDeckCard(store: store)
+        if store.isLive {
+            CreatorMicroCard(store: store)
+            StreamDeckCard(store: store)
+        } else {
+            DisclosureRow("Other hardware", fold: "devices.offline.other") {
+                CreatorMicroCard(store: store)
+                StreamDeckCard(store: store)
+            }
+        }
+        DeviceLinkSettings(store: store)
 
         ScreenBarSettingsCard(store: store, device: layout.screenBar)
+        ScreenBarMotionSettings(store: store)
     }
 }
 
@@ -638,11 +643,18 @@ struct DeviceCard: View {
             if state?.isPresent == true {
                 DeviceRightNowRow(store: store, deviceID: device.id)
             }
-            if device.kind == "pro" || device.kind == "dot" {
+            if store.isLive, device.kind == "pro" || device.kind == "dot" {
                 FirmwareRows(firmware: firmware, device: device, isLive: store.isLive,
                              isFirst: isFirstFirmware, stateJob: store.core.firmware)
             }
-            settingsRows
+            if store.isLive && state?.isPresent == true {
+                settingsRows
+            } else {
+                DisclosureRow("Saved settings", subtitle: savedBrightness, fold: "device.saved.\(device.id)") {
+                    settingsRows
+                }
+                .padding(JRBarTokens.Space.md)
+            }
         } header: {
             SettingsGroupHeader(title: device.name,
                                 symbol: device.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill",
@@ -653,11 +665,20 @@ struct DeviceCard: View {
         }
     }
 
+    private var savedBrightness: String {
+        let value = store.values.double(SettingsPath("\(device.prefix).brightness")) ?? 255
+        return "Brightness \(Int((value / 255 * 100).rounded()))%"
+    }
+
     @ViewBuilder
     private var settingsRows: some View {
         DeviceReceiptRow(store: store, deviceID: device.id, deviceName: device.kind == "dot" ? "Dot" : "SidePulse")
         DeviceHardwareSettings(store: store, device: device)
         LEDDirectionRow(store: store, device: device)
+        if device.kind == "dot" {
+            DotTravelStyleRow(store: store, device: device)
+            SettingsNavigationRow("Dot role in Studio") { store.onOpenStudioDevices?() }
+        }
         if device.kind == "pro" {
             EjectGuardRow(store: store)
         }
