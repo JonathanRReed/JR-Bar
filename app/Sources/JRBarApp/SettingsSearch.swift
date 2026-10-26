@@ -85,7 +85,7 @@ enum SettingsSearch {
     private nonisolated static func currentEntry(_ entry: SettingsSearchEntry) -> SettingsSearchEntry? {
         // Lighting and animation controls moved into Studio.
         let studioDeviceRows: Set<String> = ["Display", "Pin to", "Asks only", "Blend", "Role", "Also glow for finished runs"]
-        if (entry.chapter == .lighting && entry.title != "Maximum brightness") || (entry.chapter == .devices && studioDeviceRows.contains(entry.title)) {
+        if entry.group == "Calibration profiles" || (entry.chapter == .lighting && entry.title != "Maximum brightness") || (entry.chapter == .devices && studioDeviceRows.contains(entry.title)) {
             return SettingsSearchEntry(.lighting, entry.group, entry.title, subtitle: entry.subtitle,
                                        keywords: entry.keywords, card: entry.card, hint: entry.hint)
         }

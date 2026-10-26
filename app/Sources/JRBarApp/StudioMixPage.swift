@@ -51,6 +51,7 @@ struct StudioMixPage: View {
             }
         }
         .disabled(!store.isLive)
+        .settingControl(lights.plan?.mixes.isEmpty == false ? ["colors.blend_mode"] : [])
     }
     private func cards(_ ids: [String], columns: Int) -> some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 140)), count: columns), spacing: JRBarTokens.Space.sm) {

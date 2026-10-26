@@ -805,11 +805,6 @@ extension SettingsRenderProofTests {
                                            name: "u3-\(page.rawValue)-advanced", height: page == .alerts ? 2800 : 1600, dark: dark)
             }
         }
-        fixture.settings.page = .devices
-        fixture.settings.subpage = "calibration"
-        for dark in [false, true] {
-            try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "u3-calibration", height: 1400, dark: dark)
-        }
         fixture.settings.page = .agents
         fixture.settings.selectedProvider = "claude"
         for dark in [false, true] {
@@ -891,6 +886,22 @@ private final class SettingsKeyProofWindow: NSWindow {
 }
 
 extension SettingsRenderProofTests {
+    @Test("Integrated Devices page as a key window", .enabled(if: Self.enabled))
+    func integratedDevicesKeyWindows() async throws {
+        try U5Proof.pinDefaultAccent()
+        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let fixture = try Self.fixture()
+        defer { fixture.toys.shutdown() }
+        Self.goLive(fixture.core)
+        let hardware = fixture.settings.deviceEntries.map { CoreDevice(id: $0.id, kind: $0.kind, connected: true) }
+        fixture.core.apply(.state(CoreState(devices: hardware)))
+        fixture.settings.page = .devices
+        for dark in [false, true] {
+            try await Self.keySnapshot(SettingsRootView(store: fixture.settings), name: "integration-settings-devices",
+                                       height: 2600, dark: dark)
+        }
+    }
+
     static func assertCatalogueHomes() async throws {
         let expected = SettingsCatalogueHomes.expected
         #expect(Set(expected.keys) == Set(SettingsKey.all.map(\.path)), "Every catalogue key needs an explicit destination")
@@ -908,6 +919,7 @@ extension SettingsRenderProofTests {
         let customShape = SettingsDocument(try Self.document()).replacing("screen_bar_notch_profile", with: .string("custom"))
         fixture.core.apply(.settings(CoreSettings(generation: 2, schema: CoreProtocol.knownSettingsSchema, document: customShape.root)))
         var homes: [String: Set<String>] = [:]
+        let renderedOwners = expected.merging(["calibration_profiles": "studio.profiles"]) { current, _ in current }
         let routes = Set(expected.values.filter { !$0.hasPrefix("studio.") })
         for route in routes.sorted() {
             let parts = route.split(separator: "/").map(String.init)
@@ -926,40 +938,65 @@ extension SettingsRenderProofTests {
             if route == "devices" {
                 #expect(paths.contains(ScreenBarController.stillOnCameraDefaultsKey))
             }
-            for key in paths.map(SettingsCatalogueHomes.normalized) where expected[key] != nil {
+            for key in paths.map(SettingsCatalogueHomes.normalized) where renderedOwners[key] != nil {
                 homes[key, default: []].insert(route)
             }
         }
-        let hasU4 = EffectStudioStore.Mode(rawValue: "devices") != nil
-        if hasU4 {
-            let suite = "jrbar.catalogue-home-\(UUID().uuidString)"
-            let defaults = try #require(UserDefaults(suiteName: suite))
-            defer { defaults.removePersistentDomain(forName: suite) }
-            let studio = EffectStudioStore(core: fixture.core, defaults: defaults)
-            for mode in EffectStudioStore.Mode.allCases {
-                studio.mode = mode
-                let route = "studio.\(mode.rawValue)"
+        let suite = "jrbar.catalogue-home-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let studio = EffectStudioStore(core: fixture.core, defaults: defaults, settings: fixture.settings)
+        studio.covered = true
+        studio.lightsStudio.requestPlan = {
+            StudioLightPlan(mixes: [StudioMix(id: "color_blend", name: "Smooth", parameters: [])], devices: [])
+        }
+        studio.finishLookLoader = {
+            FinishLookList(current: "bloom", enabled: true, looks: [
+                FinishLookList.Look(style: "bloom", label: "Bloom", program: "#0088FF", dotProgram: "#0088FF")])
+        }
+        studio.scenePackLoader = { [ScenePackSummary(id: "fixture", name: "Fixture", scenes: ["calm"], installed: true)] }
+        await studio.loadScenePacks()
+        await studio.lightsStudio.refreshPlan()
+        for mode in EffectStudioStore.Mode.allCases {
+            studio.mode = mode
+            let route = "studio.\(mode.rawValue)"
+            // Each conditional Auto-dim control must render in its owning page.
+            let dimModes = mode == .colours ? ["off", "schedule", "display", "ambient"] : ["off"]
+            for dimMode in dimModes {
+                let document = customShape.replacing("auto_dim.mode", with: .string(dimMode))
+                let generation = (fixture.core.settings?.generation ?? 0) + 1
+                fixture.core.apply(.settings(CoreSettings(generation: generation, schema: CoreProtocol.knownSettingsSchema,
+                                                          document: document.root)))
                 let paths = try await controlPaths(EffectStudioView(store: studio))
-                for key in paths.map(SettingsCatalogueHomes.normalized) where expected[key] != nil {
+                for key in paths.map(SettingsCatalogueHomes.normalized) where renderedOwners[key] != nil {
                     homes[key, default: []].insert(route)
                 }
             }
         }
-        for (key, destination) in expected {
-            if destination.hasPrefix("studio."), !hasU4 {
-                #expect(homes[key] == nil, "\(key) belongs to U4, but Settings renders it in \(homes[key] ?? [])")
-            } else {
-                #expect(homes[key] == [destination], "\(key): expected \(destination), rendered \(homes[key] ?? [])")
-            }
+        for (key, destination) in renderedOwners {
+            #expect(homes[key] == [destination], "\(key): expected \(destination), rendered \(homes[key] ?? [])")
         }
+        let beforeSearch = fixture.core.settings?.document
+        fixture.settings.onOpenStudioSearch = { studio.reveal($0) }
+        for entry in SettingsSearch.rows where entry.chapter == .lighting {
+            let previousRequest = studio.searchRequest
+            fixture.settings.reveal(entry)
+            #expect(studio.searchRequest == previousRequest + 1, "\(entry.id) must route through Studio")
+            let target = try #require(studio.searchPath)
+            let paths = try await controlPaths(EffectStudioView(store: studio))
+            #expect(paths.contains(target), "\(entry.id) did not render its target \(target) in \(studio.mode)")
+        }
+        #expect(fixture.core.settings?.document == beforeSearch, "Search must not write settings to reveal a control")
         let settingsCount = expected.values.filter { !$0.hasPrefix("studio.") }.count
-        print("Catalogue homes: \(settingsCount) Settings keys checked by destination; \(expected.count - settingsCount) explicit Studio owners; U4 rendered gate \(hasU4 ? "active" : "pending separate merge")")
+        #expect(expected.count == 151)
+        #expect(settingsCount == 96)
+        print("Catalogue homes: \(expected.count) keys rendered exactly once by destination, \(settingsCount) Settings and \(expected.count - settingsCount) Studio")
     }
 
     private static func controlPaths<V: View>(_ view: V) async throws -> Set<String> {
         var rendered: Set<String> = []
         let root = view.onPreferenceChange(SettingsControlPaths.self) { rendered.formUnion($0) }
-            .environment(\.ledPreviewsHeld, true)
+            .environment(\.ledPreviewsHeld, true).environment(\.renderSnapshot, true)
         let host = NSHostingView(rootView: root)
         let size = NSSize(width: 720, height: 10000)
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),

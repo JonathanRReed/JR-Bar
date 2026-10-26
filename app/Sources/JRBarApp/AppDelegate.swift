@@ -645,6 +645,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.effectsWindow = effectsWindow
         store.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         statusItem.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
+        settingsStore.onOpenStudioSearch = { [weak effectsWindow] entry in effectsWindow?.show(search: entry) }
         settingsStore.onOpenStudioDevices = { [weak effectsWindow] in effectsWindow?.showDevices() }
         settingsStore.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         let menuBarRules = utilitiesStore.menuBar.stateRules

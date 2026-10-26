@@ -51,6 +51,7 @@ private struct StudioProviderRow: View {
                 ColorPicker("\(ProviderPalette.displayName(for: provider)) colour",
                             selection: settings.color("colors.agent_colors.\(provider)", default: settings.providerStyle(provider).accentHex),
                             supportsOpacity: false).labelsHidden()
+                    .settingControl("colors.agent_colors.\(provider)")
                 Picker("Animation", selection: Binding(get: { motion }, set: { id in
                     let chosen = id == "auto" ? store.catalog?.effect("auto") : effects.first { $0.id == id }
                     _ = store.saveProvider(provider, effect: chosen)

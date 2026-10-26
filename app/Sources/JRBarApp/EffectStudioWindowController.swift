@@ -15,6 +15,11 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
         store.prepareForOpening()
     }
 
+    func show(search entry: SettingsSearchEntry) {
+        store.reveal(entry)
+        show()
+    }
+
     func showDevices() {
         if let mode = EffectStudioStore.Mode(rawValue: "devices") { store.mode = mode }
         show()

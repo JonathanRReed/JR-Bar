@@ -35,6 +35,7 @@ final class EffectStudioStore {
         didSet { defaults.set(spotlightExplained, forKey: "studioSpotlightExplained") }
     }
     var search = ""
+    @ObservationIgnored var finishLookLoader: (@MainActor () async -> FinishLookList?)?
     var selectedID: String? {
         didSet { defaults.set(selectedID, forKey: "effectStudioSelection") }
     }
@@ -707,8 +708,13 @@ final class EffectStudioStore {
     }
 
     /// The room on screen — remembered per Mac, a viewer convenience.
+    var searchPath: String?
+    var searchRequest = 0
     var mode: Mode = .mix {
-        didSet { defaults.set(mode.rawValue, forKey: "effectStudioMode") }
+        didSet {
+            if mode != oldValue { searchPath = nil }
+            defaults.set(mode.rawValue, forKey: "effectStudioMode")
+        }
     }
 
     /// The hand-written program's editor state.

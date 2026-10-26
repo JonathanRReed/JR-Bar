@@ -225,7 +225,7 @@ struct LightMomentsView: View {
                     .jrbarType(.headline)
                     .padding(JRBarTokens.Space.md)
                 LidMomentsSection(store: store)
-                FinishMomentsSection(store: store)
+                FinishMomentsSection(store: store, loader: store.finishLookLoader)
             }
             .padding(WindowMetrics.margin)
             .frame(maxWidth: 820, alignment: .leading)
@@ -330,6 +330,7 @@ private struct MomentRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
+        .settingControl(control == .always ? [] : moment.setting.map { [$0] } ?? [])
     }
 
     /// The switch moved: through the monitor's cue switch when it has
@@ -628,6 +629,7 @@ struct FinishMomentsSection: View {
                 }
                 .windowCard(padding: 0)
                 .opacity(list.enabled ? 1 : 0.55)
+                .settingControl(list.looks.isEmpty ? [] : ["colors.done_celebration_style"])
             }
         }
         .task(id: loadKey) { await load() }

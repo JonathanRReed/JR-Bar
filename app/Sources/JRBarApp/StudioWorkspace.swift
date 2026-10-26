@@ -14,7 +14,7 @@ struct StudioWorkspace: View {
             VStack(spacing: 0) {
                 StudioStage(store: store)
                 Divider()
-                page
+                StudioSearchPage(store: store) { page }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if lights.inspector {

@@ -556,11 +556,18 @@ struct MilestoneStepsField: View {
 /// `lights.auto_dim`, what the daemon read and the factor it applied.
 struct AutoDimSection: View {
     @Bindable var store: SettingsStore
+    @Environment(\.studioSearchPath) private var searchPath
 
     /// The `auto_dim` object, read as one path.
     private var autoDim: SettingsDocument { store.values.document([AutoDimSettings.root]) }
     private var settings: AutoDimSettings { AutoDimSettings(document: autoDim) }
     private var mode: AutoDimSettings.Mode { settings.mode }
+    private var shownMode: AutoDimSettings.Mode {
+        if searchPath?.hasPrefix("auto_dim.schedule.") == true { return .schedule }
+        if searchPath?.hasPrefix("auto_dim.display.") == true { return .display }
+        if searchPath?.hasPrefix("auto_dim.ambient.") == true || searchPath == "studio.roomMarks" { return .ambient }
+        return mode
+    }
     private var provided: Bool { store.hasDocument && AutoDimSettings.isProvided(in: autoDim) }
 
     var body: some View {
@@ -579,7 +586,8 @@ struct AutoDimSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            switch mode {
+            if shownMode != mode { Text("\(shownMode.label) settings").jrbarType(.section) }
+            switch shownMode {
             case .off:
                 EmptyView()
             case .schedule:
@@ -617,6 +625,7 @@ struct AutoDimSection: View {
                                   ?? "Needs a live ambient reading; the monitor is not reporting one")
                     }
                 }
+                .settingControl("studio.roomMarks")
             }
             if provided, mode != .off {
                 AutoDimReadoutRow(result: store.core.lights?.autoDim, settings: settings)

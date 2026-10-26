@@ -14,10 +14,12 @@ struct StudioCueControls: View {
             SettingsRow("Celebrate completions") {
                 Toggle("Celebrate completions", isOn: settings.bool("colors.done_celebration_enabled", default: true))
                     .labelsHidden().toggleStyle(.switch)
+                    .settingControl("colors.done_celebration_enabled")
             }
             SettingsRow("Tint by tool") {
                 Toggle("Tint by tool", isOn: settings.bool("colors.tint_by_tool"))
                     .labelsHidden().toggleStyle(.switch)
+                    .settingControl("colors.tint_by_tool")
             }
         }
         SettingSlider(settings, "Automatic speed", path: "colors.cycle_speed_seconds", in: 0.5...8,
@@ -43,8 +45,6 @@ struct StudioStateColours: View {
                     ForEach(SettingsKey.fadeModes, id: \.self) { FadeRow(store: settings, mode: $0) }
                 }
                 SettingGroup("Dimming") {
-                    SettingSlider(settings, "Maximum brightness", path: "global_brightness_scale", in: 0.05...1,
-                                  default: 1, format: SettingsStore.percent)
                     SettingToggle(settings, "Dim when idle", path: "idle_dim_enabled", default: true)
                     SettingSlider(settings, "After", path: "idle_dim_after_minutes", in: 1...180, step: 1,
                                   default: 10, format: SettingsStore.minutes)
@@ -72,6 +72,7 @@ struct StudioScenesPage: View {
                 missingPack
                 scenePacks
                 importButton
+                    .settingControl("studio.scenePacks")
             }.padding(JRBarTokens.Space.lg)
         }
     }
@@ -83,6 +84,7 @@ struct StudioScenesPage: View {
     private var scenePacks: some View {
         let packs: [ScenePackSummary] = store.scenePacks
         return ForEach(packs) { pack in ScenePackRow(pack: pack, store: store) }
+            .settingControl(packs.isEmpty ? [] : ["active_scene_pack"])
     }
 
     private var sceneControls: some View {
@@ -113,7 +115,7 @@ struct StudioScenesPage: View {
     private var scenePicker: some View {
         Picker("Saved scene", selection: Binding(get: { store.selectedScene }, set: { _ = store.setActiveScene($0) })) {
             ForEach(EffectScene.allCases) { Text($0.label).tag($0.rawValue) }
-        }.labelsHidden().disabled(store.sceneChanging)
+        }.labelsHidden().disabled(store.sceneChanging).settingControl("active_scene")
     }
 }
 
@@ -157,19 +159,19 @@ private struct StudioDeviceRows: View {
             SettingsRow("\(device.name): Display") {
                 Picker("\(device.name) display", selection: settings.string("\(device.prefix).led_display", default: "agent")) {
                     ForEach(DevicesPage.displayModes, id: \.value) { Text($0.label).tag($0.value) }
-                }.labelsHidden().disabled(linked)
+                }.labelsHidden().disabled(linked).settingControl("\(device.prefix).led_display")
             }
             SettingsRow("\(device.name): Mix") {
                 Picker("\(device.name) mix", selection: settings.optionalString("\(device.prefix).blend_mode")) {
                     Text("Global Mix").tag("")
                     ForEach(mixes) { Text($0.name).tag($0.id) }
-                }.labelsHidden().disabled(linked || mirrorsHardware)
+                }.labelsHidden().disabled(linked || mirrorsHardware).settingControl("\(device.prefix).blend_mode")
             }
             SettingsRow("\(device.name): Asks only") {
                 Toggle("\(device.name) asks only", isOn: Binding(
                     get: { settings.values.string(SettingsPath("\(device.prefix).signal_policy")) == "asks_only" },
                     set: { settings.set("\(device.prefix).signal_policy", $0 ? .string("asks_only") : .null) }
-                )).labelsHidden().toggleStyle(.switch).disabled(linked)
+                )).labelsHidden().toggleStyle(.switch).disabled(linked).settingControl("\(device.prefix).signal_policy")
             }
             SettingsRow("\(device.name): Provider") {
                 Picker("\(device.name) provider", selection: settings.optionalString("\(device.prefix).provider_pin")) {
@@ -177,18 +179,19 @@ private struct StudioDeviceRows: View {
                     ForEach(SettingsKey.providers.filter { $0 != "t3code" }, id: \.self) {
                         Text(ProviderPalette.displayName(for: $0)).tag($0)
                     }
-                }.labelsHidden().disabled(linked)
+                }.labelsHidden().disabled(linked).settingControl("\(device.prefix).provider_pin")
             }
             if device.kind == "dot", device.id == settings.deviceEntries.first(where: { $0.kind == "dot" })?.id {
                 SettingsRow("\(device.name): Role") {
                     Picker("Dot role", selection: settings.string("dot_role", default: DotRole.extend.rawValue)) {
                         ForEach(DotRole.allCases) { Text($0.label).tag($0.rawValue) }
-                    }.labelsHidden().disabled(!(settings.values.bool("devices_linked") ?? true))
+                    }.labelsHidden().disabled(!(settings.values.bool("devices_linked") ?? true)).settingControl("dot_role")
                 }
                 SettingsRow("\(device.name): Finished runs") {
                     Toggle("Also show finished runs", isOn: settings.bool("dot_role_include_completions"))
                         .labelsHidden().toggleStyle(.switch)
                         .disabled(!DotRole.parse(settings.values.string("dot_role")).usesCompletions)
+                        .settingControl("dot_role_include_completions")
                 }
             }
             if linked { Text("\(device.name) follows the strip.")

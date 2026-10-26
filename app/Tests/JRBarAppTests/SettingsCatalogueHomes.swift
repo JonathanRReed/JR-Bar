@@ -3,8 +3,7 @@ import JRBarCore
 import Testing
 @testable import JRBarApp
 
-/// Every catalogue entry names its actual destination. Studio ownership is
-/// explicit while U4 is separate; its rendered assertions activate on merge.
+/// Every catalogue entry names the one rendered destination that owns it.
 enum SettingsCatalogueHomes {
     static let expected: [String: String] = [
         "active_scene": "studio.scenes",
