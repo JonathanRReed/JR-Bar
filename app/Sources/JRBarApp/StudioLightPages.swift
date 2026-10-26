@@ -37,7 +37,7 @@ struct StudioStateColours: View {
                 SettingsGroup {
                     ForEach(SettingsKey.modes, id: \.self) { mode in
                         ModeSwatch(store: settings, mode: mode)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(JRBarTokens.Space.md)
+                            .frame(maxWidth: .infinity, alignment: .leading).settingsRowInsets()
                     }
                 }
                 ColorVisionNote(store: settings, colors: StudioPalette.states(settings), others: StudioPalette.providers(settings))
@@ -200,7 +200,7 @@ private struct StudioDeviceRows: View {
                 }
             }
             if linked { Text("\(device.name) follows the strip.")
-                .jrbarType(.caption).foregroundStyle(.secondary).padding(JRBarTokens.Space.md) }
+                .jrbarType(.caption).foregroundStyle(.secondary).settingsRowInsets() }
         }
     }
 }

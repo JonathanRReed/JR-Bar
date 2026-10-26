@@ -341,11 +341,12 @@ struct SettingLabel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
+                .jrbarType(.body)
                 .foregroundStyle(.primary)
                 .environment(\.isEnabled, true)
             if let subtitle {
                 Text(subtitle)
-                    .font(.subheadline)
+                    .jrbarType(.caption)
                     // A disabled row's line is often the reason it is disabled,
                     // so it stays readable, only dimmer.
                     .foregroundStyle(.secondary)

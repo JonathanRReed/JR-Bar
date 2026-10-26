@@ -147,6 +147,15 @@ struct FoundationRenderProofTests {
             StatusBanner("Usage is off", detail: "Turn it on to read account quotas.")
             StatusBanner("Claude needs you", kind: .attention) { Button("Open") {} }
             SettingsGroup {
+                Picker(selection: .constant("stable")) {
+                    Text("Stable").tag("stable")
+                    Text("Beta").tag("beta")
+                } label: {
+                    VStack(alignment: .leading) {
+                        Text("Update channel")
+                        Text("Stable or beta builds.").jrbarType(.caption)
+                    }
+                }
                 SettingsRow("Track Claude") { Toggle("Track Claude", isOn: .constant(true)).labelsHidden().toggleStyle(.switch) }
                 SettingsRow("Read usage", subtitle: "Account quota and reset times") { Toggle("Read usage", isOn: .constant(false)).labelsHidden().toggleStyle(.switch) }
                 SettingsRow("Show in menu bar") { Toggle("Show in menu bar", isOn: .constant(true)).labelsHidden().toggleStyle(.switch).disabled(true) }

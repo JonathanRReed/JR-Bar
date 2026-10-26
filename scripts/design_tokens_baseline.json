@@ -218,7 +218,6 @@
     "radius: cornerRadius: 4.5": 1
   },
   "app/Sources/JRBarApp/SettingsAtoms.swift": {
-    "animation: duration: 0.12": 1,
     "animation: duration: 0.28": 2,
     "font: .system(size: 9": 1
   },

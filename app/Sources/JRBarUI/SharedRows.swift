@@ -130,8 +130,7 @@ public struct SettingsRow<Control: View>: View {
             control.controlSize(.small)
         }
         .foregroundStyle(neutralInk.label)
-        .padding(.vertical, JRBarTokens.Space.sm).padding(.horizontal, JRBarTokens.Space.md)
-        .frame(minHeight: 40)
+        .settingsRowInsets()
     }
 }
 
@@ -161,7 +160,38 @@ public struct SettingsNavigationRow: View {
     }
 }
 
-/// Variadic rows receive inset separators without callers drawing their own.
+private struct SettingsGroupOwnsInsetsKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var settingsGroupOwnsInsets: Bool {
+        get { self[SettingsGroupOwnsInsetsKey.self] }
+        set { self[SettingsGroupOwnsInsetsKey.self] = newValue }
+    }
+}
+
+private struct SettingsRowInsets: ViewModifier {
+    @Environment(\.settingsGroupOwnsInsets) private var grouped
+
+    func body(content: Content) -> some View {
+        if grouped {
+            content
+        } else {
+            content
+                .padding(.vertical, JRBarTokens.Space.sm)
+                .padding(.horizontal, JRBarTokens.Space.md)
+                .frame(minHeight: 40)
+        }
+    }
+}
+
+public extension View {
+    /// Standalone rows keep the same insets as rows inside a settings group.
+    func settingsRowInsets() -> some View { modifier(SettingsRowInsets()) }
+}
+
+/// The group owns row insets, including bare native controls and custom rows.
 public struct SettingsGroup<Content: View>: View {
     @Environment(\.jrbarInk) private var neutralInk
     @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
@@ -174,12 +204,17 @@ public struct SettingsGroup<Content: View>: View {
             Group(subviews: content) { rows in
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                     if index > 0 {
-                        Rectangle().fill(neutralInk.separator).frame(height: 0.5).padding(.leading, JRBarTokens.Space.md)
+                        Rectangle().fill(neutralInk.separator).frame(height: 0.5).padding(.horizontal, JRBarTokens.Space.md)
                     }
                     row
+                        .padding(.vertical, JRBarTokens.Space.sm)
+                        .padding(.horizontal, JRBarTokens.Space.md)
+                        .frame(minHeight: 40)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
+        .environment(\.settingsGroupOwnsInsets, true)
         .background((transparencyOverride ?? systemReduceTransparency) ? JRBarTokens.Ink.content : JRBarTokens.Ink.group)
         .clipShape(RoundedRectangle(cornerRadius: JRBarTokens.Radius.group))
         .overlay { RoundedRectangle(cornerRadius: JRBarTokens.Radius.group).strokeBorder(neutralInk.groupEdge, lineWidth: 0.5) }

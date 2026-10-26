@@ -78,8 +78,7 @@ struct SettingsProvidersPage: View {
             .buttonStyle(.plain).frame(width: 20)
             .accessibilityLabel("Open \(ProviderPalette.displayName(for: row.id)) settings")
         }
-        .padding(.horizontal, JRBarTokens.Space.md)
-        .padding(.vertical, JRBarTokens.Space.sm)
+        .settingsRowInsets()
         .disabled(!store.isLive || list.busy.contains(row.identity) || list.writingPresentation)
         .contextMenu {
             Button("Move Up") { move(row, by: -1) }
