@@ -987,6 +987,11 @@ final class EffectStudioStore {
         }
     }
 
+    static func providerParameters(_ effect: EffectDefinition, assignment: [String: JSONValue],
+                                   playback: [String: JSONValue]?) -> [String: JSONValue] {
+        effect.normalizedParameters(playback ?? assignment)
+    }
+
     func pendingProviderMotion(_ provider: String) -> String? {
         providerDrafts[provider].map { $0.effect?.id ?? "auto" }
     }

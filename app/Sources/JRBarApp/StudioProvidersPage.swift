@@ -32,9 +32,10 @@ private struct StudioProviderRow: View {
     private var parameters: [String: JSONValue] {
         if let pending = store.pendingProviderParameters(provider) { return effect?.normalizedParameters(pending) ?? pending }
         let row = store.assignments?.assignments.first { $0.scope == .provider && $0.targetID == provider && $0.effectID == motion }
-        if let row { return effect?.normalizedParameters(row.parameters) ?? row.parameters }
-        let saved = settings.values.value(at: SettingsPath("colors.provider_animation_parameters.\(provider)"))?.objectValue ?? [:]
-        return effect?.normalizedParameters(saved) ?? saved
+        let table = settings.values.object("colors.provider_animation_parameters")
+        let playback = table.map { $0[provider]?.objectValue ?? [:] }
+        guard let effect else { return playback ?? row?.parameters ?? [:] }
+        return EffectStudioStore.providerParameters(effect, assignment: row?.parameters ?? [:], playback: playback)
     }
 
     var body: some View {

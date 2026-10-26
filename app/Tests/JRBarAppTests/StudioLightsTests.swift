@@ -148,6 +148,20 @@ struct StudioLightsTests {
         } catch { store.windowDidClose(); await fixture.stop(); throw error }
     }
 
+    @Test("playback parameters keep migrated timing and do not resurrect removed assignment values")
+    func migratedProviderParameters() {
+        let duration = EffectParameter(name: "duration_seconds", type: .number, defaultValue: 2.2)
+        let amplitude = EffectParameter(name: "amplitude", type: .number, defaultValue: 1)
+        let effect = EffectDefinition(id: "breathe", label: "Breathe", meaning: "work", parameters: [duration, amplitude], catalog: "provider_animation")
+        let old: [String: JSONValue] = ["duration_seconds": 2.2, "amplitude": 0.4]
+        let migrated = EffectStudioStore.providerParameters(effect, assignment: old, playback: ["duration_seconds": 5.5])
+        #expect(migrated["duration_seconds"] == 5.5 && migrated["amplitude"] == 1)
+        let removed = EffectStudioStore.providerParameters(effect, assignment: old, playback: [:])
+        #expect(removed == effect.defaultParameters)
+        let olderDaemon = EffectStudioStore.providerParameters(effect, assignment: old, playback: nil)
+        #expect(olderDaemon["duration_seconds"] == 2.2 && olderDaemon["amplitude"] == 0.4)
+    }
+
     @Test("a drag keeps its latest provider parameters while a write is pending")
     func providerDragKeepsLastValue() async throws {
         let fixture = try CoreCommandReplyFixture()
