@@ -645,7 +645,7 @@ final class AppDisplayNames: @unchecked Sendable {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
             return bundleID.split(separator: ".").last.map(String.init) ?? bundleID
         }
-        return FileManager.default.displayName(atPath: url.path)
+        return url.deletingPathExtension().lastPathComponent
             .replacingOccurrences(of: ".app", with: "")
     }
 }

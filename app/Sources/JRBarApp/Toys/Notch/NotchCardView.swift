@@ -387,8 +387,7 @@ final class NotchCardModel {
     func handFiles(_ urls: [URL], session: String) {
         let files = urls.filter(\.isFileURL)
         guard !files.isEmpty, !CoreSession.isRemoteID(session) else { return }
-        tray.copyForAgent(files, attachImage: files.count == 1
-                          && ShelfTrayModel.withinAttachBound(files[0]))
+        tray.copyForAgent(files, attachImage: files.count == 1)
         onOpenRow?(session)
     }
 
@@ -2346,7 +2345,7 @@ private struct ShelfStackChip: View {
                                                      style: .continuous))
                     .opacity(item.missing ? 0.38 : 1)
                     .background(ShelfDragSource(
-                        urls: { FileManager.default.fileExists(atPath: item.path) ? [item.url] : [] },
+                        urls: { item.missing ? [] : [item.url] },
                         policy: { tray.dragOutPolicy() },
                         ended: { operation, outside in
                             if ShelfDragOutRule.removes(operation: operation, outside: outside,

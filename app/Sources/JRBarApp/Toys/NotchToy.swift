@@ -480,7 +480,7 @@ final class NotchToy: Toy {
         for folder in ["/Applications", NSHomeDirectory() + "/Applications"] {
             for name in ["boring.notch.app", "Boring Notch.app", "boringNotch.app"] {
                 let path = URL(fileURLWithPath: "\(folder)/\(name)")
-                if let id = Bundle(url: path)?.bundleIdentifier {
+                if let id = ExternalFileMetadata.shared.bundleID(path) {
                     return (id, path)
                 }
             }

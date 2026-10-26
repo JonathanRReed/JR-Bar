@@ -97,15 +97,11 @@ final class AlcoveMediaAdapter {
         }
     }
 
-    private var perlIsInstalled: Bool {
-        FileManager.default.isExecutableFile(atPath: "/usr/bin/perl")
-    }
-
     func start() {
         guard !running else { return }
         running = true
-        guard perlIsInstalled, let dylib = materialize() else {
-            fail(perlIsInstalled ? "the helper dylib could not be written" : "no /usr/bin/perl")
+        guard let dylib = materialize() else {
+            fail("the helper dylib could not be written")
             return
         }
         let token = UUID()
