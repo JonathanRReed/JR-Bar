@@ -36,10 +36,9 @@ struct AlertsRenderProofTests {
         ]
         panel.toggleDoneWatch(rows[1])
         panel.selectedID = rows[0].id
-        let width = SessionRowView.trailingWidth(rows: rows, now: now)
         for dark in [false, true] {
             let view = VStack(spacing: 0) {
-                ForEach(rows) { row in SessionRowView(row: row, store: panel, trailingWidth: width) }
+                ForEach(rows) { row in PanelAgentView(agent: PanelAgent(row: row, members: [], unlinked: false, workerCount: 0), store: panel) }
             }
             .padding(.vertical, 6)
             .background(Color(nsColor: .windowBackgroundColor))

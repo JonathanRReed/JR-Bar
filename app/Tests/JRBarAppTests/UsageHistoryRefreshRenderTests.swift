@@ -58,7 +58,7 @@ struct UsageHistoryRefreshRenderTests {
         let width: CGFloat = fixture == .refreshing || fixture == .costOnly ? 760 : 520
         try WindowsRenderProofTests.write("usage-history-refresh-\(fixture.rawValue)",
                                          size: CGSize(width: width, height: 800)) {
-            ProviderUsageCard(provider: provider, store: store).padding(24)
+            UsageProviderDetail(provider: provider, store: store, showCost: true).padding(24)
         }
     }
 }

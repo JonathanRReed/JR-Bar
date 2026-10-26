@@ -16,6 +16,8 @@ final class UsageCenterStore {
     }
 
     let core: CoreModel
+    let sessionUsage: SessionUsageStore
+    @ObservationIgnored let chartCache = UsageChartCache()
 
     /// The daemon's settings document: `usage_graph_days` and
     /// `usage_display_mode` live there, so the Settings page's "Graph
@@ -143,6 +145,68 @@ final class UsageCenterStore {
             self.pendingMetric = nil
         }
     }
+    var overviewGraph: CoreUsageGraph?
+    var overviewGraphError: String?
+    @ObservationIgnored private var overviewRequest: Task<Void, Never>?
+    @ObservationIgnored private var overviewRequestID: UUID?
+
+    @ObservationIgnored var readOverviewGraph: () async throws -> CoreUsageGraphDocument
+    @ObservationIgnored private var overviewFollowUp = false
+    @ObservationIgnored private var overviewContinuation: UUID?
+    @ObservationIgnored var scheduleOverviewContinuation: (@escaping @MainActor () -> Void) -> Void = { resume in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            MainActor.assumeIsolated { resume() }
+        }
+    }
+
+    private func continueOverviewIfNeeded() {
+        guard isOpen, core.isLive, !tokenHistoryOff, (overviewGraph?.readingFiles ?? 0) > 0,
+              overviewContinuation == nil else { return }
+        let generation = UUID()
+        overviewContinuation = generation
+        scheduleOverviewContinuation { [weak self] in
+            guard let self, self.overviewContinuation == generation else { return }
+            self.overviewContinuation = nil
+            guard (self.overviewGraph?.readingFiles ?? 0) > 0 else { return }
+            self.loadOverviewGraph()
+        }
+    }
+
+    @discardableResult
+    func loadOverviewGraph(force: Bool = false) -> Task<Void, Never>? {
+        guard isOpen, core.isLive, !tokenHistoryOff else { return nil }
+        if let overviewRequest {
+            if force { overviewFollowUp = true }
+            return overviewRequest
+        }
+        let request = UUID()
+        overviewRequestID = request
+        overviewRequest = Task { [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            defer {
+                if self.overviewRequestID == request {
+                    self.overviewRequest = nil
+                    self.continueOverviewIfNeeded()
+                }
+            }
+            repeat {
+                self.overviewFollowUp = false
+                do {
+                    let document = try await self.readOverviewGraph()
+                    guard !Task.isCancelled, self.overviewRequestID == request, !self.tokenHistoryOff else { return }
+                    if self.overviewFollowUp { continue }
+                    self.overviewGraph = UsageSourceReading.providerGraph(document.graph)
+                    self.overviewGraphError = nil
+                } catch {
+                    guard !Task.isCancelled, self.overviewRequestID == request, !self.tokenHistoryOff else { return }
+                    if self.overviewFollowUp { continue }
+                    self.overviewGraphError = Self.describe(error)
+                }
+            } while self.overviewFollowUp && self.isOpen && self.core.isLive && !self.tokenHistoryOff
+        }
+        return overviewRequest
+    }
+
     var now = Date()
     var refreshing = false
     private(set) var historyDisabled = false
@@ -291,8 +355,10 @@ final class UsageCenterStore {
     // Keep quota readings through a monitor restart.
     private var lastUsage: CoreUsage?
 
-    init(core: CoreModel) {
+    init(core: CoreModel, sessionUsage: SessionUsageStore? = nil) {
         self.core = core
+        readOverviewGraph = { try await core.usageGraph(days: 30, metric: "tokens") }
+        self.sessionUsage = sessionUsage ?? SessionUsageStore(core: core)
         readResetStatus = { retry in try await core.send("reset_status", args: retry ? ["retry": .bool(true)] : [:]) }
         writeSetting = { try await core.setSetting($0, value: $1) }
         readHistory = { try await core.usageHistory(provider: $0, range: $1) }
@@ -334,6 +400,8 @@ final class UsageCenterStore {
                 return load(provider: $0, force: retry)
             }
         }
+        if !tokenHistoryOff { sessionUsage.refresh(ids: openSessions.map(\.id)) }
+        loadOverviewGraph()
         tasks.append(loadResetStatus())
         loadProviderRows()
         return tasks
@@ -341,6 +409,7 @@ final class UsageCenterStore {
 
     private func reconcileHistory() -> [Task<Void, Never>] {
         guard isOpen else { return [] }
+        loadOverviewGraph(force: true)
         var tasks: [Task<Void, Never>] = []
         resetPulses.removeAll()
         for provider in historyProviders {
@@ -353,12 +422,18 @@ final class UsageCenterStore {
 
     func windowDidClose() {
         isOpen = false
+        overviewRequest?.cancel()
+        overviewRequest = nil
+        overviewRequestID = nil
+        overviewFollowUp = false
+        overviewContinuation = nil
         ticker?.invalidate()
         ticker = nil
     }
 
     private func tick() {
         now = Date()
+        if !tokenHistoryOff { sessionUsage.refresh(ids: openSessions.map(\.id)) }
         reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         // Expired pulses go away so the overlay is not kept alive for nothing.
         resetPulses = resetPulses.filter { now.timeIntervalSince($0.value) < 3 }
@@ -403,6 +478,12 @@ final class UsageCenterStore {
 
     @discardableResult
     func coreDidChange() -> [Task<Void, Never>] {
+        if tokenHistoryOff {
+            overviewRequest?.cancel()
+            overviewRequest = nil
+            overviewRequestID = nil
+            overviewFollowUp = false
+        }
         rememberUsage()
         let read = core.readEvents(after: lastEventSequence)
         let events = read.hasGap ? [] : read.events
@@ -472,6 +553,29 @@ final class UsageCenterStore {
     }
 
     // MARK: Data
+
+    func providerTitle(_ provider: CoreProviderUsage) -> String {
+        let name = ProviderStyle.style(for: provider.id, document: document).name
+        guard providers.filter({ $0.id == provider.id }).count > 1 else { return name }
+        let account = provider.instanceLabel ?? provider.account?.label ?? provider.instance.map(UsageSourceNotes.instanceBadge)
+        return account.map { name + " · " + $0 } ?? name
+    }
+
+    func quotaPace(for provider: CoreProviderUsage) -> [String: Double] {
+        var values: [String: Double] = [:]
+        for window in provider.windows {
+            if let reset = window.resetsAt, let span = UsageWindowLabel.windowSpan(id: window.id, name: window.name), span > 0 {
+                let remaining = reset - now.timeIntervalSince1970
+                let elapsed = (1 - remaining / span) * 100
+                values[window.name] = min(100, max(0, elapsed))
+            }
+        }
+        return values
+    }
+
+    var openSessions: [CoreSession] {
+        core.allSessions.filter { [.working, .waiting, .idle].contains(SessionActivity.reduce($0)) }
+    }
 
     var isLive: Bool { core.isLive }
 
@@ -661,6 +765,7 @@ final class UsageCenterStore {
 
     /// Failure facts invalidate memory; observation checks for newer success without retrying work.
     private func historyDidComplete(_ events: [CoreEvent]) {
+        loadOverviewGraph(force: true)
         for provider in historyProviders {
             var outcomes: [UsageHistoryRange: Bool] = [:]
             for event in events {
@@ -737,6 +842,7 @@ final class UsageCenterStore {
             guard let self else { return }
             do {
                 try await self.core.refreshUsage()
+                self.loadOverviewGraph(force: true)
                 self.actionSucceeded(.refresh)
                 for provider in self.historyProviders {
                     self.load(provider: provider, force: true)

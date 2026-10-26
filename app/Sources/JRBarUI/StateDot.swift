@@ -29,19 +29,35 @@ public struct StateDot: View {
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.jrbarReduceMotion) private var motionOverride
     private var reduceMotion: Bool { motionOverride ?? systemReduceMotion }
-    @UIState private var breathing = false
+    /// Hosted breathing dots, used to verify that closed views stop animating.
+    @MainActor public static private(set) var activePulses = 0
 
     public init(_ state: State) { self.state = state }
 
     public var body: some View {
-        Circle().fill(state == .stale ? neutralInk.tertiary : state.ink).frame(width: 8, height: 8)
-            .opacity(breathing && !reduceMotion ? 0.35 : 1)
-            .task(id: "\(state.rawValue)-\(reduceMotion)") {
-                breathing = false
-                if let duration = state.breathDuration, !reduceMotion {
+        Group {
+            if let duration = state.breathDuration, !reduceMotion {
+                BreathingDot(ink: state.ink, duration: duration).id(state)
+            } else {
+                Circle().fill(state == .stale ? neutralInk.tertiary : state.ink).frame(width: 8, height: 8)
+            }
+        }
+        .accessibilityLabel(state.rawValue.capitalized)
+    }
+
+    private struct BreathingDot: View {
+        let ink: Color
+        let duration: Double
+        @UIState private var breathing = false
+
+        var body: some View {
+            Circle().fill(ink).frame(width: 8, height: 8)
+                .opacity(breathing ? 0.35 : 1)
+                .onAppear {
+                    StateDot.activePulses += 1
                     withAnimation(.easeInOut(duration: duration / 2).repeatForever(autoreverses: true)) { breathing = true }
                 }
-            }
-            .accessibilityLabel(state.rawValue.capitalized)
+                .onDisappear { StateDot.activePulses -= 1 }
+        }
     }
 }

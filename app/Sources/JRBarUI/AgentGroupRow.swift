@@ -11,6 +11,7 @@ public struct AgentGroupRow<Members: View>: View {
     public let state: StateDot.State
     public let memberMarks: [String]
     public let workerCount: Int
+    public let askingCount: Int
     public let unlinked: Bool
     @Binding private var expanded: Bool
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -23,7 +24,7 @@ public struct AgentGroupRow<Members: View>: View {
 
     public init(provider: String, name: String, project: String? = nil, subtitle: String? = nil,
                 elapsed: String? = nil, state: StateDot.State = .working, memberMarks: [String] = [],
-                workerCount: Int, unlinked: Bool = false, expanded: Binding<Bool>,
+                workerCount: Int, askingCount: Int = 0, unlinked: Bool = false, expanded: Binding<Bool>,
                 @ViewBuilder members: () -> Members) {
         self.provider = provider
         self.name = name
@@ -33,6 +34,7 @@ public struct AgentGroupRow<Members: View>: View {
         self.state = state
         self.memberMarks = memberMarks
         self.workerCount = max(0, workerCount)
+        self.askingCount = max(0, askingCount)
         self.unlinked = unlinked
         self._expanded = expanded
         self.members = members()
@@ -67,6 +69,13 @@ public struct AgentGroupRow<Members: View>: View {
         .opacity(unlinked ? 0.55 : 1)
     }
 
+    private var taskSubtitle: String? {
+        if unlinked { return "No parent found · no share of the strip" }
+        let attention = askingCount > 0 ? "\(askingCount) needs you" : nil
+        let parts = [subtitle, attention].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: unlinked ? "info.circle" : "chevron.right")
@@ -85,7 +94,7 @@ public struct AgentGroupRow<Members: View>: View {
                             .foregroundStyle(neutralInk.secondary).lineLimit(1).truncationMode(.tail)
                     }
                 }
-                if let task = unlinked ? "No parent found · no share of the strip" : subtitle {
+                if let task = taskSubtitle {
                     Text(task).font(JRBarTokens.TypeStyle.caption.font)
                         .foregroundStyle(neutralInk.secondary).lineLimit(1).truncationMode(.tail)
                 }
@@ -142,6 +151,7 @@ public struct AgentMemberRow: View {
             Text(name).lineLimit(1)
             if let role { Text(role).foregroundStyle(neutralInk.secondary).lineLimit(1) }
             Spacer(minLength: 0)
+            if state == .done { Text("Done").foregroundStyle(JRBarTokens.Ink.done) }
             if let elapsed { Text(elapsed).foregroundStyle(neutralInk.secondary).monospacedDigit() }
             StateDot(state)
         }

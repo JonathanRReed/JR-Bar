@@ -41,13 +41,13 @@ final class UsageCenterWindowController: NSObject, NSWindowDelegate {
 
     private func makeWindow() -> NSWindow {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 720),
+            contentRect: NSRect(x: 0, y: 0, width: 980, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         attachContent(to: window)
         window.toolbarStyle = .unified
-        window.setContentSize(NSSize(width: 760, height: 720))
-        window.minSize = NSSize(width: 640, height: 440)
+        window.setContentSize(NSSize(width: 980, height: 720))
+        window.minSize = NSSize(width: 800, height: 480)
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
@@ -55,7 +55,7 @@ final class UsageCenterWindowController: NSObject, NSWindowDelegate {
         // Developer switch, as in Settings: a tall window puts a whole
         // provider card (rings, forecast, graph) in one screenshot.
         if let tall = ProcessInfo.processInfo.environment["JRBAR_USAGE_HEIGHT"].flatMap(Double.init) {
-            window.setContentSize(NSSize(width: 760, height: tall))
+            window.setContentSize(NSSize(width: 980, height: tall))
             window.center()
         }
         window.identifier = NSUserInterfaceItemIdentifier("jrbar.usage")

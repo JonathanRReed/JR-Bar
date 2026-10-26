@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import Observation
 import SwiftUI
 
@@ -544,7 +545,8 @@ final class NotchToy: Toy {
 
     /// The capsule's contents, reduced by `NotchIsland` — the view reads
     /// this and `core.sessions` is observed, so it never sits stale.
-    var islandSummary: NotchIslandSummary { NotchIsland.summarize(core.sessions, asks: core.asks) }
+    var islandSummary: NotchIslandSummary { NotchIsland.summarize(core.sessions + (core.state?.askingWorkers ?? []), asks: core.asks,
+        groups: core.state?.agentGroups ?? [], allSessions: core.allSessions) }
 
     /// The island's on-screen frame — part of the band's shared hover
     /// region while the island is up.

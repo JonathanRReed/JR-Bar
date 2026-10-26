@@ -150,7 +150,7 @@ struct NotchHoverIntentTests {
         #expect(!toy.islandHoverPeek, "and the swell has settled")
         #expect(timers.live == 0)
         toy.setHovered(true)
-        timers.advance(by: NotchMotion.hoverDelays(openAfter: 0.12, fromBar: false).expand + 0.001)
+        timers.advance(by: NotchSettings.defaultHoverOpenDelay + 0.001)
         #expect(toy.islandExpanded, "resting past the dwell opens it")
     }
 

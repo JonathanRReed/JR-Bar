@@ -258,6 +258,11 @@ struct ShortcutsPage: View {
                         center: center,
                         onChange: { store.setShortcut($0, for: PanelHotkey.panelID) },
                         onTakeOver: { store.setShortcut(nil, for: $0) })
+            ShortcutRow(title: "Open Studio", id: PanelHotkey.studioID,
+                        chord: store.studioHotkeyChord, isOn: $store.studioHotkeyEnabled,
+                        registrationFailed: store.studioHotkeyRegistrationFailed, center: center,
+                        onChange: { store.setShortcut($0, for: PanelHotkey.studioID) },
+                        onTakeOver: { store.setShortcut(nil, for: $0) })
             ShortcutRow(title: "Open the shelf", subtitle: "Folds it again on a second press.",
                         id: PanelHotkey.shelfID,
                         chord: store.shelfHotkeyChord, isOn: $store.shelfHotkeyEnabled,

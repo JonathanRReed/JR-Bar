@@ -240,9 +240,8 @@ import Testing
     @Test func fixSignInReplacesTheDeadLookingButtonsAndNeverRunsOnOpen() throws {
         let view = try source("UsageCenterView.swift")
         let store = try source("UsageCenterStore.swift")
-        // The card with a sign-in problem leads with the one button: in the manage row's controls, in the
-        // signed-out card, and on the combined card's signed-out row.
-        #expect(count(of: "FixSignInButton(provider: provider, store: store)", in: view) == 3)
+        // The provider detail's connection controls own the sign-in button.
+        #expect(count(of: "FixSignInButton(provider: provider, store: store)", in: view) == 1)
         #expect(count(of: "ProviderFixControls(provider: provider, store: store)", in: view) == 1)
         #expect(view.contains("if provider.offersSignInFix"))
         // The daemon's own fix-it is words beside it, not the action.

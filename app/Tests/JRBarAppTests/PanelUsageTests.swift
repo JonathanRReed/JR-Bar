@@ -225,8 +225,8 @@ struct PanelUsageTests {
         #expect(tag(exhaustedPast) == nil)
     }
 
-    @Test("the quiet providers take one row between them in the panel's layout")
-    func quietRowCountsOnce() {
+    @Test("the panel gives zero readings and unavailable sources their own rows")
+    func allProviderStatesCountInTheLayout() {
         let core = CoreModel()
         core.handle(.connected)
         core.apply(.state(CoreState(usage: CoreUsage(providers: [
@@ -238,6 +238,6 @@ struct PanelUsageTests {
         let store = makeStore(core, asked: Log())
         #expect(store.usage.map(\.id) == ["claude"])
         #expect(store.quietUsage.map(\.id) == ["gemini", "grok", "cursor"])
-        #expect(store.layoutContent.usageProviders == 2)
+        #expect(store.layoutContent.usageProviders == 4)
     }
 }

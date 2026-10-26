@@ -219,33 +219,6 @@
     "radius: cornerRadius: 7": 1,
     "radius: cornerRadius: 9": 1
   },
-  "app/Sources/JRBarApp/PanelController.swift": {
-    "font: .system(size: 10": 2,
-    "font: .system(size: 11": 5,
-    "font: .system(size: 12": 2,
-    "radius: cornerRadius: 10": 1
-  },
-  "app/Sources/JRBarApp/PanelMotion.swift": {
-    "animation: response: 0.32": 1
-  },
-  "app/Sources/JRBarApp/PanelView.swift": {
-    "animation: duration: 0.9": 1,
-    "animation: duration: 1.3": 1,
-    "animation: duration: 1.4": 1,
-    "font: .system(size: 10": 23,
-    "font: .system(size: 11": 20,
-    "font: .system(size: 11.5": 2,
-    "font: .system(size: 12": 11,
-    "font: .system(size: 12.5": 1,
-    "font: .system(size: 13": 2,
-    "font: .system(size: 15": 1,
-    "font: .system(size: 8": 1,
-    "font: .system(size: 8.5": 1,
-    "font: .system(size: 9": 5,
-    "radius: cornerRadius: 20": 1,
-    "radius: cornerRadius: 6": 1,
-    "radius: cornerRadius: 7": 7
-  },
   "app/Sources/JRBarApp/ScreenBarPeek.swift": {
     "font: .system(size: 10": 1,
     "font: .system(size: 11": 3,
@@ -274,12 +247,8 @@
     "radius: cornerRadius: 8": 2
   },
   "app/Sources/JRBarApp/Setup/SetupView.swift": {
-    "font: .system(size: 13": 4,
-    "font: .system(size: 14": 1,
-    "font: .system(size: 15": 4,
-    "font: .system(size: 20": 1,
     "radius: cornerRadius: 14": 2,
-    "radius: cornerRadius: 8": 3
+    "radius: cornerRadius: 8": 1
   },
   "app/Sources/JRBarApp/ShortcutRecorder.swift": {
     "font: .system(size: 11.5": 1,
@@ -672,20 +641,6 @@
     "animation: duration: 0.15": 1,
     "animation: duration: 1": 1,
     "animation: duration: 20": 1,
-    "font: .system(size: 10": 20,
-    "font: .system(size: 10.5": 7,
-    "font: .system(size: 11": 19,
-    "font: .system(size: 11.5": 8,
-    "font: .system(size: 12": 1,
-    "font: .system(size: 12.5": 1,
-    "font: .system(size: 13": 2,
-    "font: .system(size: 14": 1,
-    "font: .system(size: 15": 1,
-    "font: .system(size: 16": 2,
-    "font: .system(size: 7": 1,
-    "font: .system(size: 8": 2,
-    "font: .system(size: 9": 5,
-    "font: .system(size: 9.5": 9,
     "radius: cornerRadius: 1.6": 1,
     "radius: cornerRadius: 11": 2,
     "radius: cornerRadius: 14": 4,
@@ -694,20 +649,11 @@
     "radius: cornerRadius: 6": 1
   },
   "app/Sources/JRBarApp/Toys/Notch/NotchIslandView.swift": {
-    "font: .system(size: 10": 2,
-    "font: .system(size: 11": 3,
-    "font: .system(size: 11.5": 1,
-    "font: .system(size: 12": 3,
-    "font: .system(size: 7": 1,
-    "font: .system(size: 9": 1,
-    "font: .system(size: 9.5": 3,
     "radius: cornerRadius: 3.5": 2
   },
   "app/Sources/JRBarApp/Toys/Notch/NotchTimerGlance.swift": {
-    "font: .system(size: 10": 1,
     "font: .system(size: 11": 2,
     "font: .system(size: 12": 1,
-    "font: .system(size: 9": 1,
     "radius: cornerRadius: 10": 1
   },
   "app/Sources/JRBarApp/Toys/NotchBuddyBodies.swift": {
@@ -755,21 +701,6 @@
     "animation: duration: 0.3": 1,
     "animation: duration: 0.35": 1,
     "radius: cornerRadius: 10": 1
-  },
-  "app/Sources/JRBarApp/UsageCenterView.swift": {
-    "animation: duration: 0.15": 4,
-    "animation: duration: 0.25": 1,
-    "animation: duration: 0.9": 1,
-    "animation: response: 0.45": 1,
-    "animation: response: 0.6": 2,
-    "font: .system(size: 14": 1,
-    "font: .system(size: 15": 1,
-    "font: .system(size: 22": 1,
-    "font: .system(size: 26": 1,
-    "font: .system(size: 7": 1,
-    "font: .system(size: 8": 1,
-    "font: .system(size: 9": 1,
-    "radius: cornerRadius: 10": 2
   },
   "app/Sources/JRBarApp/UsageResetBudget.swift": {
     "radius: cornerRadius: 8": 1
@@ -848,18 +779,6 @@
     "radius: cornerRadius: 10": 2,
     "radius: cornerRadius: 12": 2,
     "radius: cornerRadius: 7": 1
-  },
-  "app/Sources/JRBarApp/WhatsNew/WhatsNewView.swift": {
-    "animation: duration: 0.15": 1,
-    "animation: duration: 0.18": 1,
-    "font: .system(size: 11": 1,
-    "font: .system(size: 12": 1,
-    "font: .system(size: 13": 2,
-    "font: .system(size: 15": 1,
-    "font: .system(size: 20": 1,
-    "radius: cornerRadius: 14": 2,
-    "radius: cornerRadius: 5": 2,
-    "radius: cornerRadius: 9": 1
   },
   "app/Sources/JRBarApp/WindowChrome.swift": {
     "font: .system(size: 11": 3,

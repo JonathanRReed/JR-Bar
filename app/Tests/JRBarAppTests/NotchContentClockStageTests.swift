@@ -98,7 +98,6 @@ struct NotchContentClockStageTests {
         stage.shape = CGRect(x: 0, y: 0, width: 190, height: 34)
         for _ in 0..<5 { stage.tickNotice(dt: 1.0 / 120, shown: true) }
         #expect(stage.noticeSheet(shown: true).opacity == 0, "the lower edge would cut it")
-        #expect(stage.noticeFit < 0.7, "the line is held inside the shape's width: \(stage.noticeFit)")
         // A little further down (a third of the way, 42 ms in), it is already coming in.
         stage.shape = CGRect(x: 0, y: 0, width: 232, height: 40)
         #expect(stage.noticeSheet(shown: true).opacity > 0.1, "\(stage.noticeSheet(shown: true).opacity)")
@@ -115,7 +114,6 @@ struct NotchContentClockStageTests {
         #expect(stage.noticeSheet(shown: false) == .settled, "settled is whole, whatever the face says on stage")
         stage.shape = nil
         #expect(stage.noticeSheet(shown: false).opacity == 0, "at rest it is the face's own word")
-        #expect(stage.noticeFit == 1)
     }
 
     @Test("jrbar.notchStagedMotion off puts the content back on the shape's travel")

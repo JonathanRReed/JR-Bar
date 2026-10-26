@@ -133,8 +133,8 @@ struct UsageHistoryScopeTests {
         let task = try #require(model.load(provider: local))
         await task.value
         let view = VStack(spacing: 12) {
-            ProviderUsageCard(provider: local, store: model)
-            ProviderUsageCard(provider: work, store: model)
+            UsageProviderDetail(provider: local, store: model, showCost: true)
+            UsageProviderDetail(provider: work, store: model, showCost: true)
         }
         .padding(16)
         .frame(width: 720)

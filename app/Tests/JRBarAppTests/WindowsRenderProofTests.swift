@@ -275,7 +275,7 @@ struct WindowsRenderProofTests {
         store.refreshSparklines(force: true)
         await drainMainQueue()
         try Self.write("panel-live", size: Self.panelSize(store), plate: .glass) { Self.panel(store) }
-        #expect(store.headerCounts == "2 sessions")
+        #expect(store.headerCounts == "2 working")
         #expect(store.awakeHold?.symbol == "cup.and.saucer.fill")
     }
 
@@ -307,7 +307,7 @@ struct WindowsRenderProofTests {
         let store = Self.panelStore(CoreState(now: Self.t, aggregate: CoreAggregate(mode: "working", active: 2),
                                               sessions: quietSessions, devices: Self.devices, usage: quietUsage))
         try Self.write("panel-quiet", size: Self.panelSize(store), plate: .glass) { Self.panel(store) }
-        #expect(store.headerCounts == "2 of 3 sessions")
+        #expect(store.headerCounts == "2 working")
         #expect(store.quietUsage.map(\.id) == ["opencode"])
     }
 
