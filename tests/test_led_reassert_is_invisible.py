@@ -38,6 +38,7 @@ def test_steady_state_variant_drops_only_the_approach_frame__and_1_more() -> Non
 @pytest.mark.parametrize("program", [
     "#163A58 700ms linear\n#603A16 900ms cosine\nrepeat",
     "#163A58\n#603A16 900ms cosine\n#163A58 700ms linear\nrepeat",
+    "0:#164880 1:#603A16\n#603A16 900ms cosine\n#164880 700ms linear\nrepeat",
 ])
 def test_reassert_preserves_phase_across_repeated_device_writes(tmp_path, monkeypatch, program):
     from jrbar.led_wasm import RawSdLedWasmController

@@ -718,8 +718,15 @@ def _cut_step(
 
 def playback_span_ms(step) -> int:
     """A zero-span paint occupies one firmware frame, not zero time."""
-    span = step_duration_ms(step)
-    return 17 if type(step) is PaintStep and span == 0 else span
+    if type(step) is not PaintStep:
+        return step_duration_ms(step)
+    spans = []
+    for segment in step.segments:
+        timing = segment.timing
+        untimed = timing.duration_ms is None and timing.easing is None and timing.delay_ms is None
+        spans.append(17 if untimed else timing.span_ms)
+    span = max(spans, default=0)
+    return span if span else 17
 
 
 def playback_loop_ms(animation: Animation) -> int | None:
