@@ -1,5 +1,5 @@
 import AppKit
-import JRBarCore
+@testable import JRBarCore
 import JRBarUI
 import QuartzCore
 import SwiftUI
@@ -16,6 +16,38 @@ struct StudioWorkspaceRenderProofTests {
         let providers: [String: String]
         let cues: [LightCueState]
         let settings: JSONValue
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
+    func integratedLightHomesAsKeyWindows() async throws {
+        try U5Proof.pinDefaultAccent()
+        let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF_DIR"] ?? "/tmp/jrbar-u4-proof")
+        let programs = try JSONDecoder().decode(Programs.self, from: Data(contentsOf: directory.appendingPathComponent("daemon-programs.json")))
+        let core = CoreModel(socketPath: NSTemporaryDirectory() + "jrbar-integration-proof-unused.sock")
+        let suite = ScratchDefaults.suiteName("studio-integration-render")
+        defer { ScratchDefaults.remove(suite) }
+        let store = EffectStudioStore(core: core, defaults: ScratchDefaults.open(suite))
+        store.covered = true
+        core.handle(.connected)
+        core.apply(.state(CoreState(devices: [CoreDevice(id: "proof-strip", kind: "pro", leds: 8, connected: true),
+                                             CoreDevice(id: "proof-dot", kind: "dot", leds: 2, connected: true)])))
+        var document = SettingsDocument(programs.settings)
+        document = document.replacing("devices", with: [["id": "proof-strip", "name": "SidePulse Pro", "blend_mode": "weave"],
+                                                        ["id": "proof-dot", "name": "PulseDot", "signal_policy": "asks_only"]])
+        document = document.replacing("dot_role", with: "status")
+        core.apply(.settings(CoreSettings(generation: 1, document: document.root)))
+        store.lightsStudio.settings.syncMirrors()
+        store.lightsStudio.requestPlan = { programs.plan }
+        store.lightsStudio.requestPreview = { scenario, mode in try #require(programs.previews["\(scenario)|\(mode)"]) }
+        await store.lightsStudio.refreshPlan()
+        await store.lightsStudio.refreshPreviews()
+        for mode in [EffectStudioStore.Mode.colours, .devices] {
+            store.mode = mode
+            for dark in [false, true] {
+                try await render(EffectStudioView(store: store), name: "integration-studio-\(mode.rawValue)",
+                                 dark: dark, directory: directory)
+            }
+        }
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"))
