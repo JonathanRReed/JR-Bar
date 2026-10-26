@@ -23,7 +23,7 @@ from jrbar.colors import ColorSettings, _active_agents, program_for_snapshot
 from jrbar.effect_registry import PROVIDER_ANIMATION_EFFECTS
 from jrbar.led_status import LedDisplayState
 from jrbar.led_wasm import RawSdLedWasmController
-from jrbar.light_mix import MIX_LABELS, _body, _share_steps, explain_what_plays, mix_catalog, selected_agents
+from jrbar.light_mix import MIX_LABELS, _body, _has_sweep, _share_steps, explain_what_plays, mix_catalog, selected_agents
 from jrbar.linked_sync import DeviceTiming, PhaseRotationUnavailable, apply_device_timing
 from jrbar.models import AgentMode, AgentStatus
 
@@ -366,7 +366,7 @@ def inspect(case, firmware):
 
         if case.state not in {"working", "stale"} or case.mix in {"classic", "color_blend"}:
             return Result(case, program, played, warnings, failures, checks, reassert_action)
-        agents = selected_agents(_active_agents(rows, settings, case.leds))
+        agents = selected_agents(_active_agents(rows, settings, case.leds), settings)
         # The planner collapses one-provider sessions after selected_agents.
         if len({a.provider for a in agents}) == 1:
             agents = agents[:1]
@@ -383,7 +383,8 @@ def inspect(case, firmware):
             start = 0
             for index, agent in enumerate(agents):
                 size = sizes[index]
-                slots = (tuple(range(start, start + size)) if played == "spatial_split"
+                contiguous = played == "spatial_split" or _has_sweep(agents, settings)
+                slots = (tuple(range(start, start + size)) if contiguous
                          else tuple(range(index, case.leds, len(agents))))
                 shares.append((agent, slots))
                 start += size

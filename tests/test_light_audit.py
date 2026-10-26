@@ -57,6 +57,22 @@ def test_checker_rejects_skipped_and_one_way_bouncing_heads():
     assert not sweep_errors(frames([0, 1, 2, 3, 0]), (0, 1, 2, 3), "chase")
 
 
+@pytest.mark.parametrize("motion", ("kitt", "scanner", "pendulum"))
+def test_audit_measures_contiguous_everyone_sweeps(motion):
+    variant = next(v for v in catalogue() if v.name == motion + ".default")
+    result = inspect(Case(variant, "round_robin", (1, 1), 8, "working"), Firmware())
+    assert {"sweep_path", "share_fidelity"} <= result.checks
+    assert not result.failures
+
+
+@pytest.mark.parametrize("motion", ("breathe", "heartbeat", "ember"))
+def test_audit_uses_provider_colours_after_collapsing_sessions(motion):
+    variant = next(v for v in catalogue() if v.name == motion + ".default")
+    result = inspect(Case(variant, "round_robin", (2, 1, 1), 8, "working"), Firmware())
+    assert "share_fidelity" in result.checks
+    assert not result.failures
+
+
 def test_baseline_detects_regressions_and_reports_resolved_cases():
     new, resolved = baseline_delta({"sweep_path": ["b"], "budget": ["c"]}, {"sweep_path": ["a", "b"]})
     assert new == {"budget": ["c"]}
