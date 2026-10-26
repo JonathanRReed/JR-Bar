@@ -5004,8 +5004,15 @@ def build_headless_controller_class() -> type:
                 self._event_refresh_urgent = False
 
         def _install_dnd_environment_observers(self):
-            # The app reports these native workspace edges over core.sock.
-            return None
+            from .core_environment import EnvironmentFallback
+
+            self._core_environment_fallback = EnvironmentFallback(self)
+
+        def _remove_dnd_environment_observers(self):
+            fallback = getattr(self, "_core_environment_fallback", None)
+            if fallback is not None:
+                fallback.close()
+            super()._remove_dnd_environment_observers()
 
         def _install_accessibility_display_observer(self):
             self._apply_accessibility_display_preferences(
@@ -5490,6 +5497,12 @@ def build_headless_controller_class() -> type:
 
         def coreHousekeepingTick_(self, _timer):
             now = time.monotonic()
+            fallback = getattr(self, "_core_environment_fallback", None)
+            if fallback is not None:
+                try:
+                    fallback.tick(self._core is not None and self._core.environment_reporter_connected)
+                except Exception:
+                    legacy.log_status_bar(f"core: native environment fallback failed: {traceback.format_exc(limit=3)}")
             expired = [name for name, preview in self._core_previews.items() if preview.until_monotonic <= now]
             for name in expired:
                 self._core_previews.pop(name, None)

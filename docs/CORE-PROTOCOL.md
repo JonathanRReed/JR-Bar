@@ -2298,7 +2298,16 @@ The four accessibility flags are booleans in `accessibility`; the optional
 `frontmost` is a bundle identifier. A snapshot also supplies `display_asleep`
 and `session_active`. These are local sensor readings. The daemon applies
 the existing DND and presentation policies. The app already owns these
-workspace observations, so the daemon needs no AppKit event host.
+workspace observations. Until a connected app successfully reports all four
+accessibility flags, the daemon keeps a native workspace fallback for
+accessibility changes, sleep/wake, display sleep, session and clock edges.
+A two-second startup grace lets a capable app report before the fallback
+loads AppKit. Without a report, including with a 0.9.17.2 app or no app,
+the fallback reads the actual flags and pumps native notifications. Before
+that first reading, unavailable flags remain conservative. A valid report
+stops native observations; losing that reporting connection restores them.
+Native fallback mode loads AppKit through its C ABI, without PyObjC or any
+window. Once loaded, the framework remains resident until daemon exit.
 
 ## Hook shim
 

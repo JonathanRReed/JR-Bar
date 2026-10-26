@@ -1,6 +1,8 @@
 """Local workspace readings supplied by the native app, without a GUI bridge."""
 from __future__ import annotations
 
+import time
+
 from .accessibility_display import AccessibilityDisplayPreferences
 from .core_server import CommandError
 
@@ -83,6 +85,9 @@ def report(controller, args):
     _frontmost = frontmost
     if preferences is not None:
         _preferences = preferences
+        fallback = getattr(controller, "_core_environment_fallback", None)
+        if fallback is not None:
+            fallback.app_reported()
         controller._apply_accessibility_display_preferences(preferences)
     if event in EVENTS:
         getattr(controller, EVENTS[event])(None)
@@ -92,3 +97,48 @@ def report(controller, args):
         if "session_active" in args:
             getattr(controller, "dndSessionDidBecomeActive_" if args["session_active"] else "dndSessionDidResignActive_")(None)
     return {"accepted": True}
+
+
+class EnvironmentFallback:
+    """A capable app owns readings only while its reporting socket is alive."""
+    def __init__(self, controller, *, clock=time.monotonic, factory=None, grace=2.0):
+        self.controller = controller
+        self.clock = clock
+        self.ready_at = clock() + grace
+        self.factory = factory
+        self.native = None
+        self.timer = None
+        self.reported = False
+
+    def app_reported(self):
+        self.reported = True
+        self.close()
+
+    def tick(self, reporter_connected):
+        if self.reported and reporter_connected:
+            return
+        self.reported = False
+        if self.native is not None or self.clock() < self.ready_at:
+            return
+        from .daemon_loop import Timer
+        from .native_workspace import NativeWorkspace
+
+        try:
+            self.native = (self.factory or NativeWorkspace)(self.controller)
+        except Exception:
+            self.ready_at = self.clock() + 30.0
+            raise
+        self.timer = Timer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.1, self, "poll:", None, True)
+
+    def poll_(self, _):
+        if self.native is not None:
+            self.native.poll()
+
+    def close(self):
+        if self.timer is not None:
+            self.timer.invalidate()
+            self.timer = None
+        if self.native is not None:
+            self.native.close()
+            self.native = None

@@ -278,6 +278,7 @@ class _Client:
         # then does the daemon take privileged commands from it.
         self.authenticated = False
         self.state_slices = False
+        self.environment_reported = False
         from .core_state_slices import StateSlices
 
         self._state_slices = StateSlices()
@@ -619,6 +620,11 @@ class CoreServer:
     def client_count(self) -> int:
         with self._lock:
             return sum(1 for client in self._clients if client.alive)
+
+    @property
+    def environment_reporter_connected(self) -> bool:
+        with self._lock:
+            return any(client.alive and client.environment_reported for client in self._clients)
 
     @staticmethod
     def _unlink_stale(path: Path) -> None:
@@ -1100,7 +1106,10 @@ class CoreServer:
                 args = {**args, SLOW_LANE_RECEIVED_AT: time.time()}
             self._queue_slow(client, command_id, name, args)
             return
-        self._send_reply(client, self.run_command(command_id, name, args), name)
+        reply = self.run_command(command_id, name, args)
+        if name == "environment" and reply.get("ok") and isinstance(args.get("accessibility"), dict):
+            client.environment_reported = True
+        self._send_reply(client, reply, name)
 
     def _refuse_privileged(
         self, client: _Client, command_id: str | None, name: str, authority: CoreAuthority

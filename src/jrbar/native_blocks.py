@@ -17,14 +17,17 @@ _implementations = {}
 _tokens = itertools.count(1)
 
 
-def completion(callback, argument_types, signature):
+def completion(callback, argument_types, signature, *, repeating=False):
     key = (argument_types, signature)
     if key not in _implementations:
         @c.CFUNCTYPE(None, c.c_void_p, *argument_types)
         def invoke(pointer, *arguments):
             token = c.cast(pointer, c.POINTER(Block)).contents.token
-            function = _callbacks.pop(token, None)
-            if function is not None:
+            entry = _callbacks.get(token)
+            if entry is not None:
+                function, repeats = entry
+                if not repeats:
+                    _callbacks.pop(token, None)
                 try:
                     function(*arguments)
                 except Exception:
@@ -36,7 +39,7 @@ def completion(callback, argument_types, signature):
     system = c.CDLL("/usr/lib/libSystem.B.dylib")
     isa = c.addressof(c.c_void_p.in_dll(system, "_NSConcreteStackBlock"))
     token = next(_tokens)
-    _callbacks[token] = callback
+    _callbacks[token] = callback, repeating
     return Block(isa, 1 << 30, 0, c.cast(invoke, c.c_void_p), c.pointer(descriptor), token)
 
 
