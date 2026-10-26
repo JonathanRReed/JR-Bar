@@ -31,6 +31,7 @@ from jrbar.animation import read_program, step_duration_ms
 from jrbar.colors import PROVIDER_ANIMATION_CHOICES, program_for_snapshot
 from jrbar.dot_role import replace_brightness_line
 from jrbar.led_status import AgentLedController, LedDisplayState
+from jrbar.light_mix import MIX_LABELS
 from jrbar.semantic_effect_router import SemanticEffectCandidate, SemanticEventKind, route_semantic_effects
 
 BASELINE = Path(__file__).with_name("fixtures") / "light-audit-baseline.json"
@@ -73,6 +74,16 @@ def test_audit_uses_provider_colours_after_collapsing_sessions(motion):
     assert not result.failures
 
 
+@pytest.mark.parametrize("leds", (2, 8))
+@pytest.mark.parametrize("counts", ((1, 1), (2, 1, 1)))
+def test_audit_plays_the_selected_library_mix(leds, counts):
+    variant = next(v for v in catalogue() if v.name == "kitt.default")
+    result = inspect(Case(variant, "effect", counts, leds, "working"), Firmware())
+    assert result.played == "effect", result.warnings
+    assert not result.warnings
+    assert not result.failures
+
+
 def test_baseline_detects_regressions_and_reports_resolved_cases():
     new, resolved = baseline_delta({"sweep_path": ["b"], "budget": ["c"]}, {"sweep_path": ["a", "b"]})
     assert new == {"budget": ["c"]}
@@ -104,7 +115,7 @@ def test_recorded_baseline_has_no_new_failures():
     # 199,584-case run; this bounded test catches baseline regressions in CI.
     variants = [v for v in catalogue() if v.name.endswith(".default")]
     for variant in variants:
-        for mix in ("spatial_split", "round_robin", "cycle", "alternate", "relay", "weave", "tide", "classic", "color_blend"):
+        for mix in MIX_LABELS:
             for leds in (8, 2):
                 case = Case(variant, mix, (1, 1), leds, "working")
                 keys.add(case.key)

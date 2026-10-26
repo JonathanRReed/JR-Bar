@@ -137,6 +137,7 @@ def settings_for(variant, mix):
         "provider_animation": animations,
         "provider_animation_parameters": {p: variant.parameters for p, motion in animations.items()
                                            if motion != "auto"},
+        "mix_effect": {"effect_id": "marquee", "parameters": {}},
         "mix_parameters": mix_values, "mode_animation": {"working": "roll"},
         "fade_floor": {"working": 0.01}, "fade_ceiling": {"working": 0.5},
     })
