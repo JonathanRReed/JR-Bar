@@ -11,6 +11,7 @@ struct StudioProvidersPage: View {
                 ForEach(store.providerTargets.filter { $0.id != "t3code" }, id: \.id) { provider in
                     StudioProviderRow(store: store, provider: provider.id)
                 }
+                ColorVisionNote(store: store.lightsStudio.settings, colors: StudioPalette.providers(store.lightsStudio.settings))
             }.padding(JRBarTokens.Space.lg)
         }
     }

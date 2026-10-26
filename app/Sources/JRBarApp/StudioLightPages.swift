@@ -38,6 +38,7 @@ struct StudioStateColours: View {
                             .frame(maxWidth: .infinity, alignment: .leading).padding(JRBarTokens.Space.md)
                     }
                 }
+                ColorVisionNote(store: settings, colors: StudioPalette.states(settings), others: StudioPalette.providers(settings))
                 SettingGroup("Pulse range") {
                     ForEach(SettingsKey.fadeModes, id: \.self) { FadeRow(store: settings, mode: $0) }
                 }
@@ -157,6 +158,30 @@ private struct StudioDeviceRows: View {
             }
             if linked { Text("\(device.name) follows the strip.")
                 .jrbarType(.caption).foregroundStyle(.secondary).padding(JRBarTokens.Space.md) }
+        }
+    }
+}
+
+/// The existing palette check uses the same configured colours as the controls.
+@MainActor
+enum StudioPalette {
+    static func providers(_ settings: SettingsStore) -> [ColorVisionNote.Entry] {
+        SettingsKey.providers.filter { provider in
+            provider != "t3code" && (settings.runningProviders.contains(provider)
+                || (settings.hookStatus(provider).map { $0 != "missing" } ?? false))
+        }.map { provider in
+            let style = settings.providerStyle(provider)
+            let path = "colors.agent_colors.\(provider)"
+            return ColorVisionNote.Entry(id: provider, name: style.name, path: path,
+                                         hex: settings.values.string(SettingsPath(path)) ?? style.accentHex)
+        }
+    }
+
+    static func states(_ settings: SettingsStore) -> [ColorVisionNote.Entry] {
+        SettingsKey.modes.filter { $0 != "idle" }.map { mode in
+            let path = "colors.mode_colors.\(mode)"
+            return ColorVisionNote.Entry(id: mode, name: ModeSwatch.labels[mode]?.name ?? mode.capitalized,
+                                         path: path, hex: settings.values.string(SettingsPath(path)) ?? ModeSwatch.defaults[mode] ?? "#8E8E93")
         }
     }
 }
