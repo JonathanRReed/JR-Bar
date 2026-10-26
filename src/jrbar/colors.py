@@ -3425,10 +3425,26 @@ def _only_stale_asks_are_lit(projection) -> bool:
     )
 
 
-def projection_mix_agents(projection, settings, led_count=8):
+def projection_mix_agents(projection, settings, led_count=8, *, now=None):
     from .attention import LifecycleMode
+    from .failure_policy import ended_without_failure
 
-    rows = tuple(projection.light_rows)
+    observed_at = (now or datetime.now(timezone.utc)).timestamp()
+    # Panel history is not a provider share. Check the deadline here too:
+    # explanations and mirrors can render a retained projection between refreshes.
+    rows = tuple(
+        row for row in projection.light_rows
+        if row.lifecycle_mode in {LifecycleMode.ACTIVE, LifecycleMode.WAITING}
+        or not (
+            row.source_status.mode in {AgentMode.BLOCKED_ERROR, AgentMode.ENDED_UNCONFIRMED}
+            or ended_without_failure(row.source_status)
+        )
+        or (
+            row.lifecycle_mode is LifecycleMode.FAILED_VISIBLE
+            and row.failure_signal_until is not None
+            and row.updated_at.timestamp() <= observed_at < row.failure_signal_until
+        )
+    )
     ordered = sorted(rows, key=lambda row: _stable_agent_sort_key(row.source_status))
     ordered = _under_pressure_keep_engaged(
         ordered,

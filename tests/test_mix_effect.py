@@ -93,7 +93,8 @@ def test_a_failed_session_wins_over_work_by_the_same_provider(projection):
 
         projected = (status("codex:session:working"), status("claude:session:working"),
                      status("codex:session:failed", mode=AgentMode.BLOCKED_ERROR))
-        agents = projection_mix_agents(project_attention(snapshot(projected), AgentMonitorSettings()), settings)
+        agents = projection_mix_agents(project_attention(snapshot(projected), AgentMonitorSettings()), settings,
+                                       now=projected[0].updated_at)
     else:
         agents = _active_agents(rows, settings)
     selected = selected_agents(agents, settings)
