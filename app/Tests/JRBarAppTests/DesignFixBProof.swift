@@ -36,6 +36,8 @@ enum DesignFixBProof {
         defer { window.contentView = nil; window.close() }
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         try #require(!NSScreen.screens.contains { $0.frame.intersects(window.frame) })
+        try WindowPresenter.renderProofKey(window)
+        if !window.isKeyWindow { FoundationRenderProofTests.runUntilKey(window) }
         for _ in 0..<8 {
             host.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
@@ -50,10 +52,7 @@ enum DesignFixBProof {
     }
 }
 
-// Active appearance is supplied by the proof host, without OS app activation.
 private final class DesignFixBWindow: NSWindow {
-    override var isKeyWindow: Bool { true }
-    override var isMainWindow: Bool { true }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }

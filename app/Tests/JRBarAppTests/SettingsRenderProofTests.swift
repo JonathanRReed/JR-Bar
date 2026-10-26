@@ -861,6 +861,8 @@ extension SettingsRenderProofTests {
         window.setContentSize(size)
         defer { WindowContentLifecycle.detach(from: window); window.close() }
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        try WindowPresenter.renderProofKey(window)
+        if !window.isKeyWindow { FoundationRenderProofTests.runUntilKey(window) }
         #expect(window.isKeyWindow)
         if let table = SettingsWindowController.sidebarTable(in: host) { window.makeFirstResponder(table) }
         for _ in 0..<6 {
@@ -869,7 +871,7 @@ extension SettingsRenderProofTests {
             await drainMainQueue()
         }
         CATransaction.flush()
-        #expect(window.isKeyWindow, "The proof host supplies key appearance")
+        #expect(window.isKeyWindow, "The page is captured as a native key window")
         let frame = try #require(window.contentView?.superview)
         let bitmap = try #require(frame.bitmapImageRepForCachingDisplay(in: frame.bounds))
         appearance.performAsCurrentDrawingAppearance {
@@ -882,8 +884,6 @@ extension SettingsRenderProofTests {
 
 @MainActor
 private final class SettingsKeyProofWindow: NSWindow {
-    override var isKeyWindow: Bool { true }
-    override var isMainWindow: Bool { true }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
