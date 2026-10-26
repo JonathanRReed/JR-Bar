@@ -174,6 +174,8 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
         rss = []
         latency = []
         heap = []
+        peak_allocations = None
+        peak_rss = 0
         start = time.monotonic()
         cpu_start = resource.getrusage(resource.RUSAGE_SELF)
         next_hook = start
@@ -211,9 +213,25 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
                 next_hook = now + 5
             if now >= next_probe:
                 if measured:
-                    rss.append(resident_bytes())
+                    reading = resident_bytes()
+                    rss.append(reading)
                     if trace:
                         heap.append(tracemalloc.get_traced_memory()[0])
+                        if reading and reading > peak_rss:
+                            peak_rss = reading
+                            snapshot = tracemalloc.take_snapshot()
+                            snapshot.dump(str(root / "peak-tracemalloc.snapshot"))
+                            peak_allocations = {
+                                "sampled_rss_mb": reading / 1048576,
+                                "seconds_into_measurement": now - start - warmup,
+                                "tracer_overhead_mb": tracemalloc.get_tracemalloc_memory() / 1048576,
+                                "top_lines": [
+                                    {"location": str(stat.traceback[0]).replace(str(root), "<probe>"),
+                                     "bytes": stat.size, "allocations": stat.count}
+                                    for stat in snapshot.statistics("lineno")[:25]
+                                ],
+                            }
+                            del snapshot
                 posted = time.monotonic()
                 done = threading.Event()
 
@@ -265,6 +283,7 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
                   "rss_mean_mb": sum(x for x in rss if x) / len(rss) / 1048576,
                   "rss_max_mb": max(x for x in rss if x) / 1048576,
                   "heap_max_mb": max(heap) / 1048576 if heap else None,
+                  "peak_allocations": peak_allocations,
                   "messages_per_minute": {key: value * 60 / seconds for key, value in messages.items()},
                   "bytes_per_minute": {key: value * 60 / seconds for key, value in sizes.items()},
                   "loop_max_ms": max(latency, default=None), "loop_samples": len(latency),
