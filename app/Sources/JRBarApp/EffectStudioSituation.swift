@@ -174,6 +174,8 @@ struct EffectSituationPanel: View {
                     }
                 }
             }
+            Text("Device, project, provider account, provider, scene, event, then Everywhere. The first matching assignment wins. Asks and failures keep their reserved alerts.")
+                .font(.caption).foregroundStyle(.secondary)
             outcome
         }
         .onAppear {

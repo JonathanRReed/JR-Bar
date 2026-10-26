@@ -69,6 +69,36 @@ struct LEDPreviewStripTests {
         window.close()
     }
 
+    @Test func repeatingPreviewsUseCachedKeyframesAndStopWhenHidden() async throws {
+        let config = Self.config()
+        let first = LEDStripLayerView(config: config, held: false, reduceMotion: false)
+        let plan = try #require(await first.preparedKeyframes())
+        #expect(plan.loop != nil)
+        first.layoutSubtreeIfNeeded()
+        let layers = try #require(first.layer?.sublayers)
+        first.installKeyframes(plan)
+        #expect(first.isAnimating && first.playingKeyframes)
+        let drawn = first.framesDrawn
+        first.advanceFrame(at: CACurrentMediaTime() + 0.5)
+        #expect(first.framesDrawn == drawn)
+        #expect(layers.count == 8)
+        for dot in layers {
+            let animation = try #require(dot.animation(forKey: "preview-loop-backgroundColor") as? CAKeyframeAnimation)
+            #expect(animation.repeatCount == .infinity)
+            #expect(animation.values?.count == plan.loop?.count)
+        }
+        first.refreshAnimating()
+        #expect(!first.isAnimating, "a preview with no visible window stops Core Animation too")
+        #expect(layers.allSatisfy { $0.animationKeys()?.isEmpty ?? true })
+        #expect(!LEDStripLayerView.animates(inWindow: true, onScreen: true, windowVisible: true,
+            held: false, reduceMotion: false, paused: false, moving: true, visibleInViewport: false))
+        let second = LEDStripLayerView(config: config, held: true, reduceMotion: false)
+        #expect(await second.preparedKeyframes() == plan)
+        #expect(!second.isAnimating)
+        first.stopAnimating()
+        second.stopAnimating()
+    }
+
     // MARK: Frames
 
     @Test("a frame recolours the layers and nothing in SwiftUI updates")

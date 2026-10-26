@@ -636,7 +636,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         statusItem.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
         settingsStore.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
-        let effectsStore = EffectStudioStore(core: core)
+        let studioDefaults: UserDefaults = .standard
+        let studioSettings: SettingsStore? = settingsStore
+        let makeStudio: (CoreModel, UserDefaults, SettingsStore?) -> EffectStudioStore = EffectStudioStore.init
+        let effectsStore = makeStudio(core, studioDefaults, studioSettings)
         let effectsWindow = EffectStudioWindowController(store: effectsStore)
         self.effectsStore = effectsStore
         self.effectsWindow = effectsWindow

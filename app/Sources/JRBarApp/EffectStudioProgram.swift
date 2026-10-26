@@ -1,6 +1,7 @@
 import AppKit
 import JRBarCore
 import JRBarLEDS
+import JRBarUI
 import Observation
 import SwiftUI
 
@@ -466,8 +467,8 @@ struct LEDSStudioView: View {
                 .autocorrectionDisabled()
                 .scrollContentBackground(.hidden)
                 .padding(6)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(nsColor: .textBackgroundColor)))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous).fill(Color(nsColor: .textBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: JRBarTokens.Radius.control, style: .continuous)
                     .strokeBorder(model.analysis.firstError == nil ? Color.primary.opacity(0.10) : Color.red.opacity(0.55), lineWidth: 1))
                 .frame(minHeight: 220)
                 .accessibilityLabel("LEDS program")
@@ -607,7 +608,7 @@ struct LEDSStudioView: View {
             Text(model.isSavedProgram
                  ? "This is the Studio program. A device set to Display › Studio program plays it."
                  : model.savedProgram.isEmpty
-                    ? "No Studio program yet. Keep this one and choose Studio program under Settings › Devices & Lighting › Display."
+                    ? "Keep this program, then choose Studio program in Studio › Devices › Display."
                     : "Differs from the saved Studio program.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
