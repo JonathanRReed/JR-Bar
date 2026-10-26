@@ -14,7 +14,7 @@ import Testing
     }
 
     private func pageSource() throws -> String {
-        try String(contentsOf: appSources.appending(path: "SettingsPagesA.swift"), encoding: .utf8)
+        try String(contentsOf: appSources.appending(path: "SettingsOrganizedPages.swift"), encoding: .utf8)
     }
 
     @Test func theKeyIsAUsageSwitchTheDaemonServes() {
@@ -49,6 +49,6 @@ import Testing
         #expect(source.contains("subtitle: ProviderStatusPagesCopy.subtitle"))
         let row = SettingsSearch.rows.first { $0.title == "Provider status pages" }
         #expect(row?.subtitle == ProviderStatusPagesCopy.subtitle)
-        #expect(row?.chapter == .usage)
+        #expect(row?.chapter == .privacy)
     }
 }

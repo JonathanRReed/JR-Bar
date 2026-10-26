@@ -7,8 +7,10 @@ import Testing
 /// of them, in links, search, the palette and anything saved.
 @MainActor
 @Suite struct SettingsPagesTests {
-    @Test func sevenPagesAtMost() {
-        #expect(SettingsStore.Page.allCases.count <= 7)
+    @Test func approvedPages() {
+        #expect(SettingsStore.Page.allCases.count == 11)
+        #expect(SettingsStore.Page.agents.title == "Providers")
+        #expect(SettingsStore.Page.devices.title == "Devices")
     }
 
     @Test func everyChapterSitsOnExactlyOnePage() {
@@ -27,7 +29,7 @@ import Testing
             "utilities": (.utilities, .utilities), "toys": (.utilities, .toys),
             "notifications": (.alerts, .notifications), "sounds": (.alerts, .sounds),
             "shortcuts": (.shortcuts, .shortcuts), "remote": (.remote, .remote),
-            "advanced": (.general, .advanced),
+            "advanced": (.advanced, .advanced),
         ]
         for (name, expected) in old {
             let found = SettingsStore.Page.destination(named: name)
@@ -87,7 +89,8 @@ import Testing
             }
         }
         let doctor = SettingsSearch.rows.first { $0.title == "Doctor" }
-        #expect(doctor.map { store.folds(holding: $0).contains(SettingsFold.advanced(.general)) } == true)
+        #expect(doctor?.page == .advanced)
+        #expect(doctor.map { store.folds(holding: $0).isEmpty } == true)
     }
 
     @Test func aRowOnTheFaceOfAPageOpensNoAdvancedFold() {
@@ -98,8 +101,82 @@ import Testing
 
     @Test func resettingAPageCoversEveryChapterItHolds() {
         #expect(SettingsStore.Page.agents.resettable.count == 2)
-        #expect(SettingsStore.Page.devices.resettable.count == 2)
+        #expect(SettingsStore.Page.devices.resettable.count == 1)
         #expect(SettingsStore.Page.general.resettable == SettingsStore.Page.general.chapters
             .filter { $0 != .advanced }.compactMap(\.catalogue))
+    }
+}
+
+extension SettingsPagesTests {
+    @Test func providerOrderMovesOneRowAndPreservesTheOthers() {
+        let ids = ["claude", "codex", "gemini", "factory"]
+        #expect(SettingsProvidersPage.moving("factory", before: "codex", in: ids)
+                == ["claude", "factory", "codex", "gemini"])
+        #expect(SettingsProvidersPage.moving("claude", before: "gemini", in: ids)
+                == ["codex", "claude", "gemini", "factory"])
+        #expect(SettingsProvidersPage.moving("missing", before: "codex", in: ids) == ids)
+    }
+
+    @Test func privacyAndPowerSearchOpenTheirActualControls() throws {
+        let store = SettingsStore(core: CoreModel())
+        for title in ["Watch transcripts", "Mic and camera presence", "Keep history", "Check for agent updates"] {
+            let entry = try #require(SettingsSearch.rows.first { $0.title == title })
+            store.reveal(entry)
+            #expect(store.page == .privacy)
+            #expect(store.subpage == nil)
+        }
+        let power = try #require(SettingsSearch.rows.first { $0.title == "Lid closed" })
+        store.reveal(power)
+        #expect(store.page == .utilities)
+        #expect(store.subpage == "keepAwake")
+    }
+
+    @Test func t3IntegrationAppearsOnlyWhenInstalled() {
+        let store = SettingsStore(core: CoreModel())
+        #expect(!store.searchEntries.contains { $0.page == .integrations })
+        store.t3Integration.receive(T3CodeStatus(present: false, enabled: true, readOnly: true,
+                                                observation: nil, running: false, installed: true))
+        #expect(store.searchEntries.contains { $0.page == .integrations })
+        #expect(store.providerList.providers.allSatisfy { $0.id != "t3code" })
+    }
+}
+
+
+extension SettingsPagesTests {
+    @Test func lightingSearchOpensStudio() {
+        let store = SettingsStore(core: CoreModel())
+        var opened = 0
+        store.onOpenEffects = { opened += 1 }
+        store.reveal(SettingsSearchEntry(.lighting, "", "Lighting"))
+        #expect(opened == 1)
+    }
+}
+
+
+extension SettingsPagesTests {
+    @Test func pageResetsFollowMovedControls() {
+        let document = SettingsDocument(.object([
+            "devices": .array([.object(["id": .string("fixture")])]),
+        ]))
+        let providers = SettingsStore.Page.agents.resetPaths(in: document)
+        let privacy = SettingsStore.Page.privacy.resetPaths(in: document)
+        let utilities = SettingsStore.Page.utilities.resetPaths(in: document)
+        let alerts = SettingsStore.Page.alerts.resetPaths(in: document)
+        let devices = SettingsStore.Page.devices.resetPaths(in: document)
+        #expect(privacy.contains("presence_enabled"))
+        #expect(privacy.contains("transcript_monitoring.claude"))
+        #expect(privacy.contains("capacity_history_retention_days"))
+        #expect(!providers.contains("transcript_monitoring.claude"))
+        #expect(!providers.contains("capacity_history_enabled"))
+        #expect(providers.contains("token_history_enabled"))
+        #expect(utilities.contains("closed_lid_awake_policy"))
+        #expect(!alerts.contains("closed_lid_awake_policy"))
+        #expect(!alerts.contains("presence_enabled"))
+        #expect(devices.contains("devices.0.brightness"))
+        #expect(devices.contains("devices.0.enabled"))
+        #expect(!devices.contains("devices.0.provider_pin"))
+        #expect(devices.contains("devices.0.red_gain"))
+        #expect(!devices.contains("colors.blend_mode"))
+        #expect(devices.contains("screen_bar_phase_offset_ms"))
     }
 }

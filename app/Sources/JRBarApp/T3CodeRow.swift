@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import Observation
 import SwiftUI
@@ -92,13 +93,15 @@ final class T3CodeModel {
         }
     }
 
+    func receive(_ status: T3CodeStatus) { self.status = status }
+
     private func run(core: CoreModel) async {
         busy = true
         defer { busy = false }
         do {
             let reply = try await core.send("t3code_integration", args: [:], timeout: 10)
             if reply.ok, let parsed = T3CodeStatus.parse(reply.result) {
-                status = parsed
+                receive(parsed)
                 followUpIfSettling(parsed, core: core)
             }
         } catch {
@@ -111,18 +114,13 @@ final class T3CodeModel {
 struct T3CodeRow: View {
     let status: T3CodeStatus?
 
-    private var style: ProviderStyle { ProviderStyle.style(for: "t3code") }
-
     var body: some View {
         if let status, status.installed {
-            HStack(spacing: 10) {
-                ProviderTile(style: style, size: 24)
-                Text(style.name)
-                Spacer()
-                Text(status.line)
-                    .foregroundStyle(.secondary)
+            SettingsRow("T3 Code") {
+                ProviderLogoTile(provider: "t3code")
+                StateDot(status.running ? .live : .stale)
+                Text(status.line).foregroundStyle(.secondary)
             }
-            .padding(.vertical, 1)
         }
     }
 }

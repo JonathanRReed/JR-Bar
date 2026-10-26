@@ -8,6 +8,7 @@ Import `JRBarUI`. Components render supplied facts and start no jobs or timers.
   font and leading to wrapped text. Section text is secondary and semibold.
 - `JRBarTokens.Ink` supplies adaptive labels, fills, separators and status
   colours, including hover, group, groupEdge, quaternary and accentSoft.
+  `onAccent` is the native selected-control text colour.
   Neutral ink strengthens in Increase Contrast. `accent` follows the system;
   `working` stays blue. Stale text uses `stale`; stale bars use `tertiary`.
 - `Radius` and `Space` hold the approved radii and 4 pt spacing grid.

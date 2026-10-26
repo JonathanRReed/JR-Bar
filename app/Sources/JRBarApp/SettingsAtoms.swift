@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -10,19 +11,19 @@ import SwiftUI
 /// The spacing scale and the few fixed sizes the Settings window uses.
 enum SettingsMetrics {
     /// 4 · 8 · 12 · 16: the only gaps a Settings view should need.
-    static let xs: CGFloat = 4
-    static let s: CGFloat = 8
-    static let m: CGFloat = 12
-    static let l: CGFloat = 16
+    static let xs: CGFloat = JRBarTokens.Space.xs
+    static let s: CGFloat = JRBarTokens.Space.sm
+    static let m: CGFloat = JRBarTokens.Space.md
+    static let l: CGFloat = JRBarTokens.Space.lg
     /// The air above and below one row inside a card body, where the
     /// form's own row padding does not reach.
-    static let rowPadding: CGFloat = 5
+    static let rowPadding: CGFloat = JRBarTokens.Space.xs
     /// Icon tiles: the sidebar's glyph, a card's mark, a page's header.
     static let sidebarTile: CGFloat = 22
     static let cardTile: CGFloat = 32
     static let headerTile: CGFloat = 44
     /// Corners of the inset panels a disclosure opens onto.
-    static let panelRadius: CGFloat = 10
+    static let panelRadius: CGFloat = JRBarTokens.Radius.group
 }
 
 /// An SF Symbol on a tinted, softly lit rounded square — System
@@ -102,10 +103,6 @@ struct SettingsPageHeader: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(page.title)
                     .font(.title3.weight(.semibold))
-                Text(page.blurb)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
@@ -121,7 +118,11 @@ extension SettingsStore.Page {
         case .general: return "Startup, menu bar, power, updates and diagnostics."
         case .agents: return "Agent connections, usage and permission requests."
         case .alerts: return "Sounds, notifications and quiet periods."
-        case .devices: return "SidePulse, Screen Bar and lighting settings."
+        case .devices: return "SidePulse and Screen Bar hardware."
+        case .notch: return "Notch and shelf."
+        case .privacy: return "Local data and permissions."
+        case .integrations: return "Automatic compatibility."
+        case .advanced: return "Diagnostics, transfer and reset."
         case .utilities: return "Optional tools and toys for the menu bar, Dock, notch and agents."
         case .shortcuts: return "Keyboard shortcuts, links and commands."
         case .remote: return "Remote Macs, status endpoints and cloud agents."
@@ -138,25 +139,7 @@ struct SettingsBanner: View {
     var detail: String? = nil
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .fontWeight(detail == nil ? .regular : .semibold)
-                    .lineLimit(2)
-                if let detail {
-                    Text(detail)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .accessibilityElement(children: .combine)
+        StatusBanner(title, kind: tint == .red ? .failure : .information, detail: detail)
     }
 }
 
@@ -245,17 +228,22 @@ struct CardNote: View {
 /// A card-body toggle: the system switch, trailing, with a row's air.
 struct CardToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
-        Toggle(configuration)
-            .toggleStyle(.switch)
-            .padding(.vertical, SettingsMetrics.rowPadding)
+        HStack(spacing: SettingsMetrics.m) {
+            configuration.label.frame(maxWidth: .infinity, alignment: .leading)
+            Toggle(configuration).labelsHidden().toggleStyle(.switch)
+        }
+        .padding(.vertical, SettingsMetrics.rowPadding)
     }
 }
 
 /// A card-body labelled row: the form's own layout, with a row's air.
 struct CardLabeledContentStyle: LabeledContentStyle {
     func makeBody(configuration: Configuration) -> some View {
-        LabeledContent(configuration)
-            .padding(.vertical, SettingsMetrics.rowPadding)
+        HStack(spacing: SettingsMetrics.m) {
+            configuration.label.frame(maxWidth: .infinity, alignment: .leading)
+            configuration.content
+        }
+        .padding(.vertical, SettingsMetrics.rowPadding)
     }
 }
 
@@ -319,7 +307,7 @@ struct DisclosureChevron: View {
 
     var body: some View {
         Image(systemName: "chevron.right")
-            .font(.system(size: 10, weight: .bold))
+            .font(JRBarTokens.TypeStyle.caption.font.weight(.bold))
             .foregroundStyle(hovering ? .primary : .secondary)
             .rotationEffect(.degrees(open ? 90 : 0))
             .frame(width: 22, height: 22)
@@ -498,20 +486,14 @@ struct SettingGroup<Header: View, Content: View>: View {
     }
 
     var body: some View {
-        if inline {
-            inlineBody
-        } else {
-            Section {
-                content()
-            } header: {
-                if let anchor {
-                    header().id(SettingsStore.groupAnchor(anchor))
-                } else {
-                    header()
-                }
-            } footer: {
-                if let note { SectionNote(note) }
+        VStack(alignment: .leading, spacing: JRBarTokens.Space.sm) {
+            if let anchor {
+                header().jrbarType(.section).id(SettingsStore.groupAnchor(anchor))
+            } else {
+                header().jrbarType(.section)
             }
+            SettingsGroup { content() }
+            if let note { SectionNote(note) }
         }
     }
 
@@ -593,7 +575,8 @@ extension SettingGroup where Header == EmptyView {
 struct SettingRowStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .padding(.vertical, 2)
+            .padding(.vertical, JRBarTokens.Space.sm)
+            .padding(.horizontal, JRBarTokens.Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -618,12 +601,7 @@ struct SettingRow<Control: View>: View {
     }
 
     var body: some View {
-        LabeledContent {
-            control()
-        } label: {
-            SettingLabel(title: title, subtitle: subtitle)
-        }
-        .settingRowStyle()
+        SettingsRow(title, subtitle: subtitle) { control() }
     }
 }
 

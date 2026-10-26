@@ -42,12 +42,37 @@ enum WindowContentLifecycle {
     static func detach(from window: NSWindow) {
         let geometry = Geometry(of: window)
         let oldBounds = window.contentView?.bounds ?? .zero
+        let recalculatesKeyViews = window.autorecalculatesKeyViewLoop
+        window.autorecalculatesKeyViewLoop = false
+        window.endEditing(for: nil)
+        window.makeFirstResponder(nil)
+        window.initialFirstResponder = nil
+        let views = window.contentView.map(descendants) ?? []
+        clearKeyViews(views)
+        (window.contentViewController as? ReleasingWindowContent)?.releaseRoot()
+        clearKeyViews(views)
         window.contentViewController = nil
         // AppKit may leave a detached controller's view installed as the
         // window content. Replace it so the NSHostingView and ViewGraph are
         // released too, not only their controller wrapper.
         window.contentView = NSView(frame: oldBounds)
+        window.recalculateKeyViewLoop()
         geometry.restore(to: window)
+        window.autorecalculatesKeyViewLoop = recalculatesKeyViews
+    }
+
+    private static func descendants(_ view: NSView) -> [NSView] {
+        [view] + view.subviews.flatMap(descendants)
+    }
+
+    private static func clearKeyViews(_ views: [NSView]) {
+        for view in views {
+            var seen = Set<ObjectIdentifier>()
+            while let previous = view.previousKeyView, seen.insert(ObjectIdentifier(previous)).inserted {
+                previous.nextKeyView = nil
+            }
+            view.nextKeyView = nil
+        }
     }
 
     /// A hosting controller for a window that owns its geometry. The
@@ -133,4 +158,9 @@ enum WindowContentLifecycle {
             window.contentMinSize = contentMinSize
         }
     }
+}
+
+@MainActor
+protocol ReleasingWindowContent {
+    func releaseRoot()
 }

@@ -200,7 +200,7 @@ struct DeckModelTests {
         #expect(DeckControls.label(for: 20) == "Analog sector 1" && DeckControls.label(for: 23) == "Analog sector 4")
         #expect(DeckControls.label(for: 24) == "AG24")
         #expect(DeckControls.keycode(for: 0) == "KV_OAI_AG00" && DeckControls.keycode(for: 19) == "KV_OAI_AG19")
-        #expect(DeckControls.actionLabel("open_control_center") == "Control Center")
+        #expect(DeckControls.actionLabel("open_control_center") == "Creator Micro")
         #expect(DeckControls.actionLabel("something_else") == "Something Else")
         #expect(DeckInput(index: 3).sentence == "Key 4 pressed")
         #expect(DeckInput(index: 17, kind: "joystick").sentence == "Joystick sector 2 moved")

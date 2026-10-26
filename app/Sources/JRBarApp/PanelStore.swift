@@ -371,6 +371,7 @@ final class PanelStore {
     var onToggleScreenBar: (@MainActor (Bool) -> Void)?
     var onQuit: (@MainActor () -> Void)?
     var onClose: (@MainActor () -> Void)?
+    var onOpenKeepAwake: (@MainActor () -> Void)?
     var onOpenSettings: (@MainActor (SettingsStore.Page?) -> Void)?
     var onOpenHistory: (@MainActor () -> Void)?
     var onOpenOverview: (@MainActor () -> Void)?
@@ -2370,6 +2371,11 @@ final class PanelStore {
     func toggleScreenBar() {
         screenBarShown.toggle()
         onToggleScreenBar?(screenBarShown)
+    }
+
+    func openKeepAwakeSettings() {
+        onClose?()
+        onOpenKeepAwake?()
     }
 
     func openSettings(page: SettingsStore.Page? = nil) {

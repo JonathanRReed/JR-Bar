@@ -182,7 +182,7 @@ import Testing
     }
 
     @Test func thePageBindsThatKeyAndDoesNotDefaultItOn() throws {
-        let page = try source("SettingsPagesA.swift")
+        let page = try source("SettingsOrganizedPages.swift")
         #expect(page.contains("path: \"provider_update_checks_enabled\""))
         #expect(!page.contains("path: \"provider_update_checks_enabled\", default: true"))
         #expect(page.contains("subtitle: ProviderUpdateChecksCopy.subtitle"))
@@ -196,7 +196,7 @@ import Testing
         #expect(words.contains("nothing is contacted until you turn it on"))
         let row = SettingsSearch.rows.first { $0.title == "Check for agent updates" }
         #expect(row?.subtitle == words, "the search index shares the page's words")
-        #expect(row?.chapter == .agents)
+        #expect(row?.chapter == .privacy)
     }
 
     // MARK: nothing runs by itself
@@ -204,13 +204,13 @@ import Testing
     @Test func anUpdateRunsOnlyFromTheRowsButton() throws {
         let store = try source("SettingsStore.swift")
         let doctor = try source("AgentsHooksDoctor.swift")
-        let page = try source("SettingsPagesA.swift")
+        let page = try source("SettingsProvidersPage.swift") + source("SettingsOrganizedPages.swift")
         // The definition and the one button: nothing starts an updater on appear, on a timer or from a setting.
         #expect(count(of: "updateProvider(", in: store) == 2, "the store's method and its call to the core")
         #expect(count(of: "store.updateProvider(", in: doctor) == 1)
         #expect(count(of: "updateProvider(", in: page) == 0)
         // The only thing the page sends on its own is the check, which the daemon gates on the setting.
-        #expect(count(of: "checkProviderUpdates()", in: page) == 3)
+        #expect(count(of: "checkProviderUpdates()", in: page) == 2)
         #expect(!page.contains("signInProvider("))
     }
 

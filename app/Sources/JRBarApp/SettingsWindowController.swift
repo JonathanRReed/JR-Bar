@@ -9,6 +9,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Room for a card's head and its switch column side by side and a
     /// page header above the fold; the frame is remembered after that.
     static let defaultSize = NSSize(width: 820, height: 620)
+    static let windowStyle: NSWindow.StyleMask = [
+        .titled, .closable, .miniaturizable, .resizable, .fullSizeContentView,
+    ]
 
     let store: SettingsStore
     private var window: NSWindow?
@@ -75,7 +78,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private func makeWindow() -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: Self.defaultSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            styleMask: Self.windowStyle,
             backing: .buffered,
             defer: false)
         attachSettingsContent(to: window)
@@ -122,10 +125,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// exercises this without showing or activating a desktop window.
     @discardableResult
     func attachSettingsContent(to window: NSWindow) -> NSViewController {
+        self.window = window
         // The subtitle is the current page; `observePage` continues to own
         // later page changes while the window stays open.
-        WindowContentLifecycle.attach(to: window, title: "JR-Bar Settings", subtitle: store.page.title) {
-            WindowContentLifecycle.hosting(SettingsRootView(store: store))
+        return WindowContentLifecycle.attach(to: window, title: "JR-Bar Settings", subtitle: store.page.title) {
+            SettingsHostingController(rootView: AnyView(CheckedContent(content: SettingsRootView(store: store))))
         }
     }
 
@@ -149,7 +153,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     /// SwiftUI's sidebar `List` is backed by an `NSTableView`; the first one
     /// in the hierarchy is the sidebar.
-    private static func sidebarTable(in view: NSView?) -> NSTableView? {
+    static func sidebarTable(in view: NSView?) -> NSTableView? {
         guard let view else { return nil }
         if let table = view as? NSTableView { return table }
         for subview in view.subviews {
@@ -165,5 +169,25 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             store.settingsWindowDidClose()
         }
         WindowContentLifecycle.retractWhenLastWindowCloses()
+    }
+}
+
+@MainActor
+final class SettingsHostingController: NSHostingController<AnyView>, ReleasingWindowContent {
+    override init(rootView: AnyView) {
+        super.init(rootView: rootView)
+        sizingOptions = []
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func releaseRoot() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { rootView = AnyView(EmptyView()) }
+        _ = sizeThatFits(in: view.bounds.size)
+        view.needsLayout = true
+        view.layoutSubtreeIfNeeded()
     }
 }

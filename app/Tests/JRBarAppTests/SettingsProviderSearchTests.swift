@@ -89,10 +89,10 @@ struct SettingsProviderSearchTests {
         grok.label = "Grok"
         var reads = 0
         var writes = 0
-        settings.providerUsage.readRows = { _ in reads += 1; return [factory, named, grok] }
-        settings.providerUsage.writeConsent = { _, _, _ in writes += 1; return factory }
-        settings.providerUsage.setActive(true, core: core)
-        try await until { !settings.providerUsage.loading && settings.providerUsage.switchRows.count == 2 }
+        settings.providerList.readRows = { reads += 1; return [factory, named, grok] }
+        settings.providerList.writeConsent = { _, _ in writes += 1; return factory }
+        await settings.providerList.refresh()
+        #expect(settings.providerList.providers.count == 2)
         let entry = try #require(SettingsSearch.search("Factory API key", in: settings.searchEntries).first)
         #expect(entry.title == "Factory API key")
         #expect(entry.chapter == .usage && entry.group == "Provider usage")

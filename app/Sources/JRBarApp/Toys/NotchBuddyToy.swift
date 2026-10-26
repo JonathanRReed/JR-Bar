@@ -1700,7 +1700,7 @@ private struct BuddyControlsView: View {
 
     /// Each character's column: its tile and the air to the next, wide
     /// enough for "Mushroom" at full size.
-    private static let rosterCell: CGFloat = 48
+    private static let rosterCell: CGFloat = 64
     private static let rosterTile: CGFloat = 40
     /// The first tile's edge lines up with the labels above it.
     private static let rosterInset: CGFloat = (rosterCell - rosterTile) / 2
@@ -1720,10 +1720,10 @@ private struct BuddyControlsView: View {
                 .overlay(tile.strokeBorder(selected ? Color.accentColor.opacity(0.75) : Color.primary.opacity(0.06),
                                            lineWidth: selected ? 1.5 : 0.5))
             Text(c.displayName)
-                .font(.system(size: 9.5, weight: selected ? .semibold : .regular))
+                .jrbarType(.caption)
+                .fontWeight(selected ? .semibold : .regular)
                 .foregroundStyle(selected ? .primary : .secondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.85)
         }
         .frame(width: Self.rosterCell)
         .contentShape(Rectangle())
@@ -1772,7 +1772,7 @@ enum BuddyRosterPaces {
 /// A roster tile's figure: the still patrol pose, or — for the tile
 /// under the pointer — the pose pacing on its own 30 fps clock. Only
 /// that one tile's timeline runs; a still tile asks for no frames.
-private struct BuddyRosterFigure: View {
+struct BuddyRosterFigure: View {
     let character: BuddyCharacter
     let pacing: Bool
 

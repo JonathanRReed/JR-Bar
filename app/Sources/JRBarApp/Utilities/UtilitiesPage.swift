@@ -1,48 +1,45 @@
-import AppKit
-import JRBarCore
+import JRBarUI
 import SwiftUI
 
-/// The Utilities page (docs/UTILITIES.md): one card per utility in
-/// contract order — Menu Bar, Dock, Keep Awake, Agent Overview, Notch —
-/// each its own group under the page header the container
-/// draws. The cards reuse `ToyCard`'s shape so the page reads like
-/// Toys: same tile, name, pill, blurb, switch and disclosure body.
 struct UtilitiesPage: View {
     let store: SettingsStore
-    private var tint: Color { SettingsStore.Chapter.utilities.tint }
-
-    private func tint(_ id: String) -> Color { ToyCard.tint(for: id, page: tint) }
-
     var body: some View {
-        if let utilities = store.utilities {
-            Section {
-                MenuBarUtilityCard(utility: utilities.menuBar, tint: tint(utilities.menuBar.id))
-            }
-            Section {
-                DockUtilityCard(utility: utilities.dock, tint: tint(utilities.dock.id))
-            }
-            Section {
-                // The person's own hold, beside the utilities it keeps
-                // running; Settings › General › Power keeps its rows.
-                ToyCard(toy: KeepAwakeUtility.shared, tint: tint(KeepAwakeUtility.shared.id))
-            }
-            Section {
-                // The roster's management seat — the compact list and
-                // the session verbs; the Overview window stays the canvas.
-                AgentUtilityCard(utility: utilities.agents, tint: tint(utilities.agents.id))
-            }
-            // Notch lives in ToysStore but reads as a utility — it
-            // manages the notch itself, not something playful.
-            if let notch = store.toys?.notch {
-                Section {
-                    ToyCard(toy: notch, tint: tint(notch.id))
-                }
-            }
-        } else {
-            Section {
-                Text("Utilities are not available in this build.")
-                    .foregroundStyle(.secondary)
+        SettingGroup("Utilities") {
+            if let utilities = store.utilities {
+                SettingsFeatureRow(store: store, toy: utilities.menuBar)
+                SettingsFeatureRow(store: store, toy: utilities.dock)
+                SettingsFeatureRow(store: store, toy: KeepAwakeUtility.shared)
+                SettingsFeatureRow(store: store, toy: utilities.agents)
             }
         }
+    }
+}
+
+struct SettingsFeatureRow: View {
+    let store: SettingsStore
+    let toy: any Toy
+    var body: some View {
+        HStack(spacing: JRBarTokens.Space.md) {
+            Button { store.openFeature(toy.id) } label: {
+                HStack(spacing: JRBarTokens.Space.md) {
+                    SidebarIcon(symbol: toy.symbol, tint: ToyCard.tint(for: toy.id, page: .blue))
+                    Text(toy.id == "keepAwake" ? "Keep Awake manually" : toy.name)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Toggle(toy.switchLabel, isOn: Binding(get: { toy.isOn }, set: { toy.isOn = $0 }))
+                .labelsHidden().toggleStyle(.switch)
+        }
+        .padding(JRBarTokens.Space.md)
+    }
+}
+
+extension SettingsStore {
+    func openFeature(_ id: String) {
+        subpage = id
+        expandedCards.insert(id)
     }
 }

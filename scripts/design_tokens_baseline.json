@@ -238,29 +238,13 @@
   "app/Sources/JRBarApp/SettingsAtoms.swift": {
     "animation: duration: 0.12": 1,
     "animation: duration: 0.28": 2,
-    "font: .system(size: 10": 1,
-    "font: .system(size: 15": 1,
     "font: .system(size: 9": 1
-  },
-  "app/Sources/JRBarApp/SettingsPagesA.swift": {
-    "font: .system(size: 11.5": 1,
-    "font: .system(size: 12": 1,
-    "font: .system(size: 13": 1,
-    "radius: cornerRadius: 6": 1
   },
   "app/Sources/JRBarApp/SettingsPagesB.swift": {
     "animation: duration: 0.2": 1,
     "font: .system(size: 11": 2,
-    "font: .system(size: 9.5": 1,
     "radius: cornerRadius: 6": 3,
     "radius: cornerRadius: 8": 2
-  },
-  "app/Sources/JRBarApp/SettingsStore.swift": {
-    "colour: Color(red: 0.93": 1
-  },
-  "app/Sources/JRBarApp/SettingsView.swift": {
-    "animation: duration: 0.15": 2,
-    "animation: duration: 0.3": 2
   },
   "app/Sources/JRBarApp/Setup/SetupView.swift": {
     "radius: cornerRadius: 14": 2,
@@ -681,7 +665,6 @@
     "radius: cornerRadius: 5.6": 1
   },
   "app/Sources/JRBarApp/Toys/NotchBuddyToy.swift": {
-    "font: .system(size: 9.5": 1,
     "radius: cornerRadius: 11": 1
   },
   "app/Sources/JRBarApp/Toys/NotchBuddyView.swift": {

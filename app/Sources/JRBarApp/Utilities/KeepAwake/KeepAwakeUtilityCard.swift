@@ -165,20 +165,7 @@ struct KeepAwakeUtilityControls: View {
 
     @ViewBuilder
     private func agentRows(_ settings: SettingsStore) -> some View {
-        CardSectionHeader("While agents run")
-        SettingToggle(settings, "Keep Mac awake", subtitle: KeepAwakeReading.agentSleepHelp,
-                      path: "agent_keep_awake_enabled", default: true)
-        SettingToggle(settings, "Keep display awake",
-                      subtitle: KeepAwakeReading.displaySleepHelp,
-                      path: "keep_display_awake", default: true)
-        SettingPicker(settings, "Lid closed",
-                      subtitle: ClosedLidNote.text(settings.core.state?.power?.closedLid),
-                      path: "closed_lid_awake_policy", options: [
-                        ("never", "Let it sleep"), ("agents", "Stay awake while agents run"),
-                        ("always", "Always stay awake"),
-                      ], default: "never")
-        SettingToggle(settings, "Keep awake on battery", subtitle: "Off releases the hold whenever the Mac is unplugged.",
-                      path: "keep_awake_on_battery", default: true)
+        PowerGroup(store: settings)
     }
 
     // MARK: Durations

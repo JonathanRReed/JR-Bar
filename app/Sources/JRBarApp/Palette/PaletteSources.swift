@@ -719,7 +719,7 @@ enum ControlCenterPaletteRows {
                 id: "system.\(toggle.rawValue)", title: title(of: toggle), subtitle: subtitle(of: toggle),
                 keywords: keywords(of: toggle),
                 icon: .symbol(toggle.symbol, tint(of: toggle)), tags: tags,
-                kind: "Control Center", section: .controlCenter,
+                kind: "Creator Micro", section: .controlCenter,
                 actions: [PaletteAction(id: "apply", title: verb, symbol: toggle.symbol) {
                     apply(toggle)
                     return confirmation(for: toggle, wasOn: on)
@@ -959,7 +959,7 @@ enum WindowPaletteRows {
                    run: verbs.history),
             window("effects", "Effect Studio", "Light effects, scenes and assignments",
                    "wand.and.stars", .pink, keywords: ["leds", "animations", "lights"], run: verbs.effects),
-            window("deck", "Control Center", "Creator Micro 2 keys and the Rail",
+            window("deck", "Creator Micro", "Keys and rail",
                    "keyboard.fill", .purple, keywords: ["deck", "creator micro", "rail", "keys"], run: verbs.deck),
             window("replay", "Event Replay", "The journaled events, read-only",
                    "play.rectangle.fill", .teal, keywords: ["events", "journal"], run: verbs.replay),
@@ -1009,6 +1009,9 @@ enum WindowPaletteRows {
         case .advanced: return ["debug", "reset", "logs", "diagnostics"]
         case .shortcuts: return ["hotkeys", "keyboard", "shortcut", "recorder", "chords"]
         case .sounds: return ["sound", "chime", "alert", "audio", "silence"]
+        case .notch: return ["notch", "shelf"]
+        case .privacy: return ["privacy", "permissions", "transcripts"]
+        case .integrations: return ["t3", "compatibility"]
         }
     }
 
@@ -1024,6 +1027,7 @@ enum WindowPaletteRows {
         case .remote: return .teal
         case .shortcuts: return .yellow
         case .sounds: return .mint
+        case .notch, .privacy, .integrations: return .gray
         }
     }
 }

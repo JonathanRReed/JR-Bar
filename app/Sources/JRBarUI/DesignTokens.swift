@@ -133,6 +133,7 @@ public enum JRBarTokens {
 
     public enum Ink {
         public static let accent = Color.accentColor
+        public static let onAccent = Color(nsColor: .alternateSelectedControlTextColor)
         public static let label = Palette().label
         public static let secondary = Palette().secondary
         public static let tertiary = Palette().tertiary

@@ -14,6 +14,11 @@ final class EffectStudioWindowController: NSObject, NSWindowDelegate {
         super.init()
     }
 
+    func showDevices() {
+        if let mode = EffectStudioStore.Mode(rawValue: "devices") { store.mode = mode }
+        show()
+    }
+
     func show(effect: String? = nil) {
         let interval = AppLatency.begin("Studio open")
         defer { AppLatency.end("Studio open", interval) }

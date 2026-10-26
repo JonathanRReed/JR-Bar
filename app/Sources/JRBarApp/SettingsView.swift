@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -12,27 +13,25 @@ struct SettingsRootView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $store.page) {
-                if store.searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
-                    ForEach(Array(SettingsStore.Page.sidebarGroups.enumerated()), id: \.offset) { _, group in
-                        Section {
-                            ForEach(group) { page in
-                                Label {
-                                    Text(page.title)
-                                } icon: {
-                                    SidebarIcon(symbol: page.symbol, tint: page.tint)
-                                }
-                                .tag(page)
-                            }
-                        }
+            VStack(spacing: 0) {
+                TextField("Search settings", text: $store.searchQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($searchFocused)
+                    .accessibilityLabel("Search settings")
+                    .padding(JRBarTokens.Space.md)
+                SettingsSidebarList(store: store)
+                Button { store.onOpenEffects?() } label: {
+                    HStack(spacing: JRBarTokens.Space.sm) {
+                        SidebarIcon(symbol: "paintpalette.fill", tint: JRBarTokens.Ink.accent)
+                        Text("Studio")
+                        Spacer()
+                        Image(systemName: "arrow.up.right").foregroundStyle(.secondary)
                     }
-                } else {
-                    SettingsSearchResults(store: store)
+                    .padding(JRBarTokens.Space.md)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
-            .listStyle(.sidebar)
-            .searchable(text: $store.searchQuery, placement: .sidebar, prompt: "Search settings")
-            .searchFocused($searchFocused)
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 250)
             // ⌘F lands in the search field from anywhere in the window.
             .background {
@@ -47,7 +46,10 @@ struct SettingsRootView: View {
             SettingsPageContainer(store: store, page: store.page)
         }
         .navigationSplitViewStyle(.balanced)
-        .modifier(ProviderUsageLifecycle(store: store))
+        .task { store.t3Integration.refresh(core: store.core) }
+        .onChange(of: store.isLive) { _, live in
+            if live { store.t3Integration.refresh(core: store.core) }
+        }
         .frame(minWidth: 640, minHeight: 420)
         // A covered, minimised or far-Space window holds every preview.
         .environment(\.ledPreviewsHeld, heldAbove || store.windowCovered)
@@ -59,6 +61,18 @@ struct SettingsRootView: View {
         }
         .sheet(isPresented: WindowPresenter.presentation(Binding(get: { store.doctorReport != nil }, set: { if !$0 { store.doctorReport = nil } }))) {
             DoctorSheet(report: store.doctorReport ?? .object([:]), dismiss: { store.doctorReport = nil })
+        }
+        .confirmationDialog(
+            "Remove \(store.pendingIntegrationRemoval.map(ProviderPalette.displayName(for:)) ?? "") integration?",
+            isPresented: WindowPresenter.presentation(Binding(
+                get: { store.pendingIntegrationRemoval != nil },
+                set: { if !$0 { store.cancelIntegrationRemoval() } })),
+            titleVisibility: .visible
+        ) {
+            Button("Remove integration", role: .destructive) { store.confirmIntegrationRemoval() }
+            Button("Cancel", role: .cancel) { store.cancelIntegrationRemoval() }
+        } message: {
+            Text("Removes JR-Bar's hooks from this provider's configuration. You can install them again from Providers.")
         }
         .confirmationDialog(
             "Reset \(store.resetTarget?.title ?? "") to defaults?",
@@ -73,6 +87,49 @@ struct SettingsRootView: View {
         } message: {
             Text(store.resetTarget.map(SettingsStore.resetMessage(for:)) ?? "")
         }
+    }
+}
+
+struct SettingsSidebarList: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        List(selection: $store.page) {
+            if store.searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+                ForEach(SettingsStore.Page.sidebarGroups.indices, id: \.self) { index in
+                    if index > 0 {
+                        Text(index == 1 ? "Hardware" : "More")
+                            .jrbarType(.section)
+                            .accessibilityAddTraits(.isHeader)
+                            .padding(.top, JRBarTokens.Space.sm)
+                    }
+                    ForEach(SettingsStore.Page.sidebarGroups[index].filter {
+                        $0 != .integrations || store.t3Integration.status?.installed == true
+                    }) { page in
+                        sidebarRow(page)
+                    }
+                }
+            } else { SettingsSearchResults(store: store) }
+        }
+        .listStyle(.sidebar)
+    }
+
+    private func sidebarRow(_ page: SettingsStore.Page) -> some View {
+        Label {
+            Text(page.title)
+                .foregroundStyle(store.page == page ? JRBarTokens.Ink.onAccent : JRBarTokens.Ink.label)
+        } icon: {
+            SidebarIcon(symbol: page.symbol, tint: page.tint)
+        }
+        .frame(maxWidth: .infinity, minHeight: JRBarTokens.Space.xxxl, alignment: .leading)
+        .padding(.horizontal, JRBarTokens.Space.sm)
+        .background {
+            RoundedRectangle(cornerRadius: JRBarTokens.Radius.control)
+                .fill(store.page == page ? JRBarTokens.Ink.accent : .clear)
+                .padding(.horizontal, -JRBarTokens.Space.sm)
+        }
+        .listRowInsets(EdgeInsets())
+        .tag(page)
     }
 }
 
@@ -100,8 +157,8 @@ struct SettingsSearchResults: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(entry.title)
                                 .lineLimit(1)
-                            Text(entry.group.isEmpty || entry.group == entry.title
-                                 ? entry.page.title : "\(entry.page.title) › \(entry.group)")
+                            Text(entry.chapter == .lighting ? "Studio" : (entry.group.isEmpty || entry.group == entry.title
+                                 ? entry.page.title : "\(entry.page.title) › \(entry.group)"))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -110,7 +167,7 @@ struct SettingsSearchResults: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("Opens \(entry.page.title)")
+                .accessibilityHint(entry.chapter == .lighting ? "Opens Studio" : "Opens \(entry.page.title)")
             }
         }
     }
@@ -130,6 +187,7 @@ extension SettingsStore {
     /// The toy or utility a search hit's card id names, so the hit can
     /// wear that card's tile.
     func cardToy(_ id: String) -> (any Toy)? {
+        if id == "keepAwake" { return KeepAwakeUtility.shared }
         var cards: [any Toy] = []
         if let utilities {
             cards += [utilities.menuBar, utilities.dock, utilities.agents] as [any Toy]
@@ -147,9 +205,9 @@ extension SettingsStore.Page {
     /// what it watches and does, then how you and other machines reach
     /// it. Every page sits in exactly one run.
     static let sidebarGroups: [[SettingsStore.Page]] = [
-        [.general],
-        [.agents, .alerts, .devices, .utilities],
-        [.shortcuts, .remote],
+        [.general, .agents, .alerts, .shortcuts],
+        [.devices, .notch],
+        [.utilities, .remote, .privacy, .integrations, .advanced],
     ]
 }
 
@@ -169,7 +227,7 @@ struct SettingsPageContainer: View {
                 .task(id: store.revealRequest) { await scrollToHit(proxy) }
         }
         .environment(store)
-        .id(page)
+        .id("\(page.rawValue)/\(store.subpage ?? "")/\(store.selectedProvider ?? "")")
     }
 
     /// Scroll to what a search hit or a link opened, once the new page has
@@ -182,7 +240,7 @@ struct SettingsPageContainer: View {
             if let anchor = chapter.anchor {
                 try? await Task.sleep(for: .milliseconds(120))
                 guard !Task.isCancelled else { return }
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
+                withAnimation(reduceMotion ? nil : JRBarTokens.Motion.rowChange.animation(reduceMotion: reduceMotion)) {
                     proxy.scrollTo(anchor, anchor: .top)
                 }
             }
@@ -195,7 +253,7 @@ struct SettingsPageContainer: View {
         guard let target else { return }
         try? await Task.sleep(for: .milliseconds(120))
         guard !Task.isCancelled else { return }
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
+        withAnimation(reduceMotion ? nil : JRBarTokens.Motion.rowChange.animation(reduceMotion: reduceMotion)) {
             proxy.scrollTo(target, anchor: .top)
         }
         guard let card else { return }
@@ -205,7 +263,8 @@ struct SettingsPageContainer: View {
     }
 
     private var form: some View {
-        Form {
+        ScrollView {
+            VStack(alignment: .leading, spacing: JRBarTokens.Space.lg) {
             Section {
                 SettingsPageHeader(page: page)
             }
@@ -214,41 +273,31 @@ struct SettingsPageContainer: View {
                     SettingsSealBanner(seal: seal)
                 }
             }
-            if !store.hasDocument {
-                Section {
-                    SettingsBanner(symbol: "bolt.horizontal.circle.fill", tint: .orange,
-                                   title: "Not connected",
-                                   detail: "Settings are shown with defaults and cannot be changed until the monitor connects.")
-                }
+            SettingsPageNotice(store: store, page: page)
+            if let provider = store.selectedProvider {
+                SettingsProviderDetail(store: store, provider: provider)
+            } else if store.subpage == "calibration" {
+                SettingsBackRow(store: store)
+                CalibrationProfilesSection(store: store)
+            } else if let subpage = store.subpage, subpage != "advanced", let toy = store.cardToy(subpage) {
+                SettingsBackRow(store: store)
+                SettingsFeatureDetail(toy: toy)
+            } else if store.subpage == "advanced" {
+                SettingsBackRow(store: store)
+                SettingsAdvancedBody(store: store, page: page)
+            } else {
+                SettingsPageBody(store: store, page: page)
             }
-            if let schema = store.settingsSchema, schema > CoreProtocol.knownSettingsSchema {
-                Section {
-                    SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: .orange,
-                                   title: "Newer settings schema",
-                                   detail: "The monitor speaks schema \(schema); this app knows \(CoreProtocol.knownSettingsSchema). Newer settings may not appear — update the app.")
-                }
             }
-            if let error = store.lastError {
-                Section {
-                    SettingsBanner(symbol: "exclamationmark.triangle.fill", tint: .red, title: error)
-                }
-            }
-            if store.lastError == nil, let status = store.status {
-                Section {
-                    SettingsBanner(symbol: "checkmark.circle.fill", tint: .green, title: status)
-                }
-            }
-            if let hit = store.searchHit, hit.page == page, hit.title != page.title {
-                Section {
-                    SettingsBanner(symbol: "magnifyingglass", tint: page.tint, title: SettingsSearch.banner(for: hit))
-                }
-            }
-            SettingsPageBody(store: store, page: page)
+            .padding(JRBarTokens.Space.xl)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .formStyle(.grouped)
+        .background(JRBarTokens.Ink.content)
         .disclosureGroupStyle(SettingsDisclosureStyle())
-        .animation(.easeInOut(duration: 0.15), value: store.lastError == nil)
-        .animation(.easeInOut(duration: 0.15), value: store.status == nil)
+        .toggleStyle(CardToggleStyle())
+        .controlSize(.small)
+        .animation(JRBarTokens.Motion.rowChange.animation(reduceMotion: reduceMotion), value: store.lastError == nil)
+        .animation(JRBarTokens.Motion.rowChange.animation(reduceMotion: reduceMotion), value: store.status == nil)
     }
 }
 
@@ -259,11 +308,13 @@ struct SettingsPageContainer: View {
 struct Provided<Content: View>: View {
     let store: SettingsStore
     let paths: [String]
+    let recordsControl: Bool
     @ViewBuilder var content: () -> Content
 
-    init(_ store: SettingsStore, _ paths: String..., @ViewBuilder content: @escaping () -> Content) {
+    init(_ store: SettingsStore, _ paths: String..., recordsControl: Bool = true, @ViewBuilder content: @escaping () -> Content) {
         self.store = store
         self.paths = paths
+        self.recordsControl = recordsControl
         self.content = content
     }
 
@@ -272,7 +323,8 @@ struct Provided<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             content()
-                .disabled(!provided)
+                .settingControl(recordsControl ? paths : [])
+                .disabled(!provided || !store.isLive)
             if store.hasDocument, !provided {
                 NotProvidedHint()
             }
@@ -298,13 +350,15 @@ struct SettingLabel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .foregroundStyle(isEnabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                .foregroundStyle(.primary)
+                .environment(\.isEnabled, true)
             if let subtitle {
                 Text(subtitle)
                     .font(.subheadline)
                     // A disabled row's line is often the reason it is disabled,
                     // so it stays readable, only dimmer.
-                    .foregroundStyle(isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                    .foregroundStyle(.secondary)
+                    .environment(\.isEnabled, true)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -320,7 +374,8 @@ struct ValueText: View {
     var body: some View {
         Text(text)
             .monospacedDigit()
-            .foregroundStyle(isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.quaternary))
+            .foregroundStyle(.secondary)
+            .environment(\.isEnabled, true)
             .frame(width: width, alignment: .trailing)
     }
 }
@@ -342,8 +397,10 @@ struct SettingToggle: View {
 
     var body: some View {
         Provided(store, path) {
-            Toggle(isOn: store.bool(path, default: fallback)) {
-                SettingLabel(title: title, subtitle: subtitle)
+            SettingsRow(title, subtitle: subtitle) {
+                Toggle(title, isOn: store.bool(path, default: fallback))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
             }
         }
     }
@@ -381,10 +438,8 @@ struct SettingSlider: View {
 
     var body: some View {
         Provided(store, path) {
-            HStack(spacing: 12) {
-                SettingLabel(title: title, subtitle: subtitle)
-                Spacer(minLength: 8)
-                HStack(spacing: 10) {
+            SettingsRow(title, subtitle: subtitle) {
+                HStack(spacing: JRBarTokens.Space.sm) {
                     Slider(value: binding, in: range)
                         .labelsHidden()
                         .frame(width: 180)
@@ -421,17 +476,17 @@ struct SettingPicker: View {
 
     var body: some View {
         Provided(store, path) {
-            let picker = Picker(selection: store.string(path, default: fallback)) {
+            SettingsRow(title, subtitle: subtitle) {
+            let picker = Picker(title, selection: store.string(path, default: fallback)) {
                 ForEach(options, id: \.value) { option in
                     Text(option.label).tag(option.value)
                 }
-            } label: {
-                SettingLabel(title: title, subtitle: subtitle)
-            }
+            }.labelsHidden().accessibilityLabel(title)
             if segmented {
                 picker.pickerStyle(.segmented)
             } else {
                 picker.pickerStyle(.menu)
+            }
             }
         }
     }
@@ -457,14 +512,14 @@ struct SettingIntPicker: View {
 
     var body: some View {
         Provided(store, path) {
-            Picker(selection: store.int(path, default: fallback)) {
+            SettingsRow(title, subtitle: subtitle) {
+            Picker(title, selection: store.int(path, default: fallback)) {
                 ForEach(options, id: \.value) { option in
                     Text(option.label).tag(option.value)
                 }
-            } label: {
-                SettingLabel(title: title, subtitle: subtitle)
-            }
+            }.labelsHidden().accessibilityLabel(title)
             .pickerStyle(.menu)
+            }
         }
     }
 }
@@ -493,15 +548,13 @@ struct SettingStepper: View {
 
     var body: some View {
         Provided(store, path) {
-            LabeledContent {
+            SettingsRow(title, subtitle: subtitle) {
                 HStack(spacing: 6) {
                     ValueText(text: "\(store.values.int(SettingsPath(path)) ?? fallback) \(unit)", width: 44)
                     Stepper("", value: store.int(path, default: fallback), in: range, step: step)
                         .labelsHidden()
                         .accessibilityLabel(title)
                 }
-            } label: {
-                SettingLabel(title: title, subtitle: subtitle)
             }
         }
     }
@@ -531,7 +584,7 @@ struct SettingTextField: View {
 
     var body: some View {
         Provided(store, path) {
-            LabeledContent {
+            SettingsRow(title, subtitle: subtitle) {
                 TextField("", text: Binding(get: { focused ? draft : current }, set: { draft = $0 }), prompt: Text(prompt))
                     .labelsHidden()
                     .accessibilityLabel(title)
@@ -544,8 +597,6 @@ struct SettingTextField: View {
                     .font(monospaced ? .system(.body, design: .monospaced) : .body)
                     .frame(minWidth: 220, maxWidth: 320)
                     .multilineTextAlignment(.leading)
-            } label: {
-                SettingLabel(title: title, subtitle: subtitle)
             }
         }
     }
@@ -582,7 +633,7 @@ struct SettingNumberField: View {
 
     var body: some View {
         Provided(store, path) {
-            LabeledContent {
+            SettingsRow(title, subtitle: subtitle) {
                 HStack(spacing: 6) {
                     TextField("", text: Binding(get: { editing ? draft : currentText }, set: { draft = $0 }), onEditingChanged: { began in
                         if began { draft = currentText; editing = true } else { commit() }
@@ -596,8 +647,6 @@ struct SettingNumberField: View {
                     .frame(width: 64)
                     ValueText(text: unit, width: max(16, CGFloat(unit.count) * 9))
                 }
-            } label: {
-                SettingLabel(title: title, subtitle: subtitle)
             }
         }
     }
@@ -636,7 +685,7 @@ extension SettingsStore.Chapter {
     /// titled group. nil for a chapter at the top of its page.
     var anchor: String? {
         switch self {
-        case .usage: return SettingsStore.groupAnchor("Provider usage")
+        case .usage: return SettingsStore.groupAnchor("Usage")
         case .sounds: return SettingsStore.groupAnchor("Event sounds")
         case .lighting: return SettingsStore.groupAnchor("Provider colours")
         case .toys: return SettingsStore.groupAnchor("Toys")
@@ -654,53 +703,61 @@ struct SettingsPageBody: View {
 
     var body: some View {
         switch page {
-        case .general:
-            GeneralPage(store: store)
-            PageAdvanced(store: store, page: page,
-                         subtitle: "Setup, the beta channel, diagnostics, backup and reset.") {
-                GeneralAdvanced(store: store)
-            }
+        case .general: GeneralPage(store: store)
         case .agents:
-            AgentsPage(store: store)
-            UsagePage(store: store)
-            PageAdvanced(store: store, page: page,
-                         subtitle: "How long asks live, agent updates, transcripts, other usage sources and history.") {
-                AgentsAdvanced(store: store)
-                UsageAdvanced(store: store)
-            }
+            SettingsProvidersPage(store: store)
+            SettingsUsageOptions(store: store)
+            advancedLink
         case .alerts:
             NotificationsPage(store: store)
             SoundsPage(store: store)
             PhoneAlertGroup(store: store)
-            PageAdvanced(store: store, page: page,
-                         subtitle: "Escalation timing, calendar glow, battery, sound output and the webhook.") {
-                NotificationsAdvanced(store: store)
-                SoundsAdvanced(store: store)
-            }
+            advancedLink
         case .devices:
             DevicesPage(store: store)
-            LightingPage(store: store)
-            PageAdvanced(store: store, page: page,
-                         subtitle: "Calibration profiles, pulse range, Auto-dim and ambient cues.") {
-                CalibrationProfilesSection(store: store)
-                LightingAdvanced(store: store)
+            SettingsGroup {
+                SettingsNavigationRow("Calibration profiles") { store.subpage = "calibration" }
+            }
+            SettingsStudioLink(store: store)
+        case .notch:
+            if let notch = store.toys?.notch {
+                SettingsFeatureDetail(toy: notch)
             }
         case .utilities:
             UtilitiesPage(store: store)
-            Section {
-                VStack(alignment: .leading, spacing: SettingsMetrics.xs) {
-                    SettingsGroupHeader(title: "Toys", symbol: SettingsStore.Chapter.toys.symbol, tint: SettingsStore.Chapter.toys.tint)
-                    SectionNote("Just for fun. None of it touches your agents or your usage, and each one can be turned off.")
-                }
-                .id(SettingsStore.groupAnchor("Toys"))
-            }
             ToysPage(store: store)
         case .shortcuts:
             ShortcutsPage(store: store)
-            PageAdvanced(store: store, page: page, subtitle: "Links and the command line.") {
-                ShortcutsAdvanced()
-            }
+            advancedLink
         case .remote: RemotePage(store: store)
+        case .privacy: SettingsPrivacyPage(store: store)
+        case .integrations:
+            SettingGroup("T3 Code") { T3CodeRow(status: store.t3Integration.status) }
+        case .advanced: GeneralAdvanced(store: store)
+        }
+    }
+
+    private var advancedLink: some View {
+        SettingsGroup {
+            SettingsNavigationRow("Advanced") { store.subpage = "advanced" }
+        }
+    }
+}
+
+struct SettingsAdvancedBody: View {
+    let store: SettingsStore
+    let page: SettingsStore.Page
+
+    var body: some View {
+        switch page {
+        case .agents:
+            AgentsAdvanced(store: store)
+            UsageAdvanced(store: store)
+        case .alerts:
+            NotificationsAdvanced(store: store)
+            SoundsAdvanced(store: store)
+        case .shortcuts: ShortcutsAdvanced()
+        default: EmptyView()
         }
     }
 }

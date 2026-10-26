@@ -17,14 +17,15 @@ struct GeneralPage: View {
 
         SettingGroup("Menu bar") {
             MenuBarStylePicker(store: store)
-            MenuBarProviderPicker(store: store)
             // The summon keys have one home, with a recorder: Shortcuts.
             SettingsPointerRow(store: store, home: .hotkeys, line: store.summonHotkeyLine)
-            SettingsPointerRow(store: store, home: .meters)
-            SettingsPointerRow(store: store, home: .brightness)
+            SettingsNavigationRow("Providers") { store.page = .agents }
+            SettingsNavigationRow("Open Studio") { store.onOpenEffects?() }
         }
 
-        PowerGroup(store: store)
+        SettingsGroup {
+            SettingsNavigationRow("Keep Awake") { store.page = .utilities; store.subpage = "keepAwake" }
+        }
 
         SettingGroup("Software Update") {
             SettingRow("Version", subtitle: softwareUpdateSubtitle) {
@@ -139,43 +140,21 @@ struct MenuBarStylePicker: View {
         }
     }
 
-    private static let columns = Array(repeating: GridItem(.flexible(), spacing: SettingsMetrics.s),
-                                       count: 3)
-
     var body: some View {
-        VStack(alignment: .leading, spacing: SettingsMetrics.s + 2) {
-            SettingLabel(title: "Menu bar icon", subtitle: "What the status item shows.")
-            // Read once for the nine tiles, not once per tile.
-            let tileColors = colors
-            let shown = shownProviders
-            let tileMeters = makeMeters(shown, colors: tileColors)
-            let tileOverflow = max(0, shown.count - StatusIconRenderer.maxMeters)
-            let tileSessions = makeSessions(colors: tileColors)
-            let tileLabel = labelText
-            let chosen = current
-            LazyVGrid(columns: Self.columns, spacing: SettingsMetrics.s) {
-                ForEach(StatusIconStyle.allCases, id: \.self) { style in
-                    MenuBarStyleTile(style: style,
-                                     selected: chosen == style,
-                                     meters: tileMeters,
-                                     overflow: tileOverflow,
-                                     sessions: tileSessions,
-                                     label: tileLabel) {
-                        store.menuBarIconStyle = style.rawValue
-                    }
-                }
+        let tileColors = colors
+        let shown = shownProviders
+        let meters = makeMeters(shown, colors: tileColors)
+        let overflow = max(0, shown.count - StatusIconRenderer.maxMeters)
+        let sessions = makeSessions(colors: tileColors)
+        SettingsRow("Menu bar icon") {
+            MenuBarPreview(style: current, meters: meters, overflow: overflow, sessions: sessions, label: labelText)
+            Picker("Menu bar icon", selection: $store.menuBarIconStyle) {
+                ForEach(StatusIconStyle.allCases, id: \.self) { style in Text(style.title).tag(style.rawValue) }
             }
-            // The chosen style's own sentence, under the gallery.
-            Label {
-                Text(chosen.subtitle)
-                    .fixedSize(horizontal: false, vertical: true)
-            } icon: {
-                Image(systemName: "info.circle")
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
+            .labelsHidden()
+            .frame(width: 128)
         }
-        .padding(.vertical, 2)
+        .settingControl("menu_bar_icon_style")
     }
 
     private var labelText: String? {
@@ -204,7 +183,7 @@ struct MenuBarStyleRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 13))
+                    .font(JRBarTokens.TypeStyle.body.font)
                     .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.6))
                 MenuBarPreview(style: style, meters: meters, overflow: overflow, sessions: sessions, label: label)
                 VStack(alignment: .leading, spacing: 1) {
@@ -322,7 +301,7 @@ struct MenuBarPreview: View {
                 // Nothing stands in the bar; a struck eye says so instead
                 // of an empty strip that reads as a preview still loading.
                 Image(systemName: "eye.slash")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(JRBarTokens.TypeStyle.callout.font.weight(.medium))
                     .foregroundStyle(.tertiary)
             } else {
                 Image(nsImage: image)
@@ -331,27 +310,20 @@ struct MenuBarPreview: View {
                     .frame(width: size.width, height: size.height)
             }
             if style == .glyphLabel, let label {
-                Text(label).font(.system(size: 11.5, weight: .medium)).monospacedDigit()
+                Text(label).font(JRBarTokens.TypeStyle.caption.font.weight(.medium)).monospacedDigit()
             }
         }
         .padding(.horizontal, 7)
         // One width for every chip, so the names beside them line up.
         .frame(width: width, height: 26)
         .frame(maxWidth: width == nil ? .infinity : nil)
-        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.07)))
+        .background(RoundedRectangle(cornerRadius: JRBarTokens.Radius.tile, style: .continuous).fill(Color.primary.opacity(0.07)))
     }
 }
 
 // MARK: - Agents
 
-struct AgentsPage: View {
-    @Bindable var store: SettingsStore
-    /// `hooks_doctor`'s per-provider report — read when the page shows
-    /// and again whenever an install or removal settles.
-    @ViewState private var doctor = HooksDoctorModel()
-    /// Automatic T3 status, shown only when its database or app is here.
-    @ViewState private var t3 = T3CodeModel()
-
+enum AgentsPage {
     static let openChoices: [(value: String, label: String)] = [
         ("", "Automatic"), ("app", "Its app"), ("terminal", "Terminal"), ("vscode", "VS Code"),
     ]
@@ -364,70 +336,9 @@ struct AgentsPage: View {
         (providers.filter { detected($0) != false }, providers.filter { detected($0) == false })
     }
 
-    var body: some View {
-        let split = Self.partition(SettingsKey.providers) { store.hookDetected($0) }
-        SettingGroup("Providers", note: "Hooks let each agent report its sessions. Each row's … menu reinstalls or removes them and picks what a click on a session opens.") {
-            ForEach(split.found, id: \.self) { provider in
-                AgentRow(store: store, provider: provider, doctor: doctor.entry(for: provider, live: store.isLive))
-            }
-            // T3 reports automatically from its local database while running.
-            T3CodeRow(status: t3.status)
-            HStack(spacing: 10) {
-                ProviderTile(style: ProviderStyle.style(for: "factory"), size: 24)
-                SettingLabel(title: "Factory usage", subtitle: "Subscription usage and browser sign-in.")
-                Spacer(minLength: 8)
-                Button("Manage usage…") { store.open(chapter: .usage) }
-                    .controlSize(.small)
-            }
-            .settingRowStyle()
-            if !split.missing.isEmpty {
-                // No CLI to hook into: out of the way, but Remove stays a
-                // click away for hooks an old install left behind.
-                DisclosureGroup("CLI not found (\(split.missing.count))") {
-                    ForEach(split.missing, id: \.self) { provider in
-                        AgentRow(store: store, provider: provider, doctor: doctor.entry(for: provider, live: store.isLive))
-                    }
-                }
-                .help("No CLI for these agents in ~/.local/bin, /opt/homebrew/bin or /usr/local/bin")
-            }
-            HooksDoctorStatusRow(doctor: doctor, live: store.isLive) {
-                doctor.recheck(core: store.core)
-            }
-        }
-        .task {
-            doctor.refresh(core: store.core)
-            t3.refresh(core: store.core)
-            // Free while "Check for agent updates" is off: the daemon asks nothing.
-            store.core.checkProviderUpdates()
-        }
-        .onChange(of: store.hookBusy) { before, after in
-            // An install, repair or removal just finished: read again.
-            if after.count < before.count { doctor.refresh(core: store.core) }
-        }
-        .onChange(of: store.core.providerUpdates) { before, after in
-            // An update just finished: the CLI's own version moved.
-            let wasRunning = before.values.contains { $0.isRunning }
-            if wasRunning, !after.values.contains(where: { $0.isRunning }) { doctor.refresh(core: store.core) }
-        }
-        .onChange(of: store.isLive) { _, live in
-            guard live else { return }
-            doctor.refresh(core: store.core)
-            t3.refresh(core: store.core)
-            store.core.checkProviderUpdates()
-        }
-
-        SettingGroup("Asks") {
-            SettingToggle(store, "Sub-agent asks", subtitle: SubagentAsksCopy.subtitle,
-                          path: "subagent_asks_alert")
-            SettingRow("Try an ask", subtitle: "A demo ask with Approve and Deny that answer nothing, so you can see where asks appear. It is not from an agent and is not recorded.") {
-                Button("Show a Demo Ask") { DemoAskStore.shared.tryIt() }
-            }
-        }
-    }
 }
 
-/// What Agents keeps behind its Advanced disclosure: how long an ask
-/// lives, the agents' own update checks and which transcripts are read.
+/// Provider settings for how long an unanswered ask stays open.
 struct AgentsAdvanced: View {
     @Bindable var store: SettingsStore
 
@@ -437,26 +348,6 @@ struct AgentsAdvanced: View {
                                path: "ask_stale_after_hours", in: 0.25...168, default: 6, unit: "h")
             SettingNumberField(store, "Expire unanswered after", subtitle: AskLifetimeCopy.expireSubtitle,
                                path: "ask_expire_after_days", in: 1...90, default: 7, unit: "days")
-        }
-
-        SettingGroup("Updates", note: "Each agent's Update button runs that CLI's own updater, and only when you click it.") {
-            SettingToggle(store, "Check for agent updates", subtitle: ProviderUpdateChecksCopy.subtitle,
-                          path: "provider_update_checks_enabled")
-        }
-        .onChange(of: store.values.bool("provider_update_checks_enabled") ?? false) { _, on in
-            // Turned on: look now, not at the next tick.
-            if on { store.core.checkProviderUpdates() }
-        }
-
-        SettingGroup("Transcripts", note: "Reads each agent's local transcript files for token and cost figures.") {
-            Provided(store, "transcript_monitoring.claude", "transcript_monitoring.codex",
-                     "transcript_monitoring.gemini", "transcript_monitoring.pi") {
-                MultiSelectMenu(store, "Watch transcripts",
-                                subtitle: "Agents whose transcripts are read.",
-                                keyPrefix: "transcript_monitoring",
-                                options: SettingsKey.transcriptProviders.map { ($0, ProviderStyle.style(for: $0).name) },
-                                providerTiles: true)
-            }
         }
     }
 }
@@ -571,26 +462,18 @@ struct AgentRow: View {
         }
     }
 
-    /// Reinstall, Remove and what a click opens, behind one … so the row
-    /// fits the window.
+    /// Hook actions share one menu. Click behavior has its own row in provider details.
     private var actions: some View {
         Menu {
             Button(status == "ok" ? "Reinstall Hooks" : "Install Hooks") { store.installHooks(provider) }
                 .disabled(!canInstall)
-            Button("Remove Hooks") { store.uninstallHooks(provider) }
+            Button("Remove Hooks") { store.requestIntegrationRemoval(provider) }
                 .disabled(!store.isLive || status == "missing" || busy)
-            Divider()
-            Picker("Clicks Open", selection: store.optionalString("session_open_preferences.\(provider)")) {
-                ForEach(AgentsPage.openChoices, id: \.value) { choice in
-                    Text(choice.label).tag(choice.value)
-                }
-            }
-            .disabled(!store.isProvided("session_open_preferences"))
         } label: {
             Image(systemName: "ellipsis.circle")
-                .accessibilityLabel("\(style.name) hooks and what a click opens")
+                .accessibilityLabel("\(style.name) hooks")
         }
-        .help("Install or remove \(style.name)'s hooks, and choose what a click on its session opens")
+        .help("Install or remove \(style.name)'s hooks")
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
@@ -603,85 +486,14 @@ struct AgentRow: View {
 
 // MARK: - Usage
 
-struct UsagePage: View {
-    @Bindable var store: SettingsStore
-
-    var body: some View {
-        SettingGroup("Usage Center") {
-            SettingRow("Usage Center", subtitle: "See provider history, token counts, cost and pace.") {
-                Button("Open Usage Center…") { store.onOpenUsageCenter?() }
-                    .help("Open the Usage Center (⌘U)")
-            }
-        }
-
-        ProviderUsageSwitchesGroup(store: store, model: store.providerUsage)
-
-        SettingGroup("Menu bar meters", note: "The panel and Usage Center always show every provider with usage.") {
-            Provided(store, "usage_graph_providers") {
-                MultiSelectMenu(store, "Show meters for",
-                                subtitle: "Providers that get a meter in Meters-style menu-bar icons.",
-                                path: "usage_graph_providers",
-                                options: SettingsKey.providers.map { ($0, ProviderStyle.style(for: $0).name) },
-                                providerTiles: true)
-            }
-        }
-
-        SettingGroup("Display", note: "The Usage Center (⌘U) opens on this range. The panel's sparklines cover a week, or a month when the range is longer.") {
-            SettingToggle(store, "Token history", path: "token_history_enabled", default: true)
-            SettingPicker(store, "Lead with", path: "usage_display_mode", options: [
-                ("tokens", "Tokens"), ("cost", "Cost"),
-            ], default: "tokens", segmented: true)
-            SettingIntPicker(store, "Graph range", path: "usage_graph_days", options: [
-                (7, "7 days"), (30, "30 days"), (90, "90 days"), (365, "A year"),
-            ], default: 7)
-        }
-
-        SettingGroup("Claude") {
-            Provided(store, "claude_plan_limits_enabled") {
-                Toggle(isOn: Binding(
-                    get: { store.values.bool("claude_plan_limits_enabled") ?? false },
-                    // Consent-stamped write: the consent version lands
-                    // first so a consent-aware core keeps the enable.
-                    set: { on in store.setClaudePlanLimits(on) }
-                )) {
-                    SettingLabel(title: "Read plan limits",
-                                 subtitle: "Reads your subscription's official 5-hour and 7-day windows from Anthropic. Off until you opt in.")
-                }
-                .settingRowStyle()
-            }
-        }
-
-        SettingGroup("Quota alerts") {
-            SettingToggle(store, "Alert at thresholds", subtitle: "A nudge, then a warning, as a usage window fills.",
-                          path: "quota_alerts_enabled", default: true)
-            Provided(store, "quota_alert_thresholds") {
-                ThresholdRow(store: store)
-            }
-        }
-
-    }
-}
-
 /// What Usage keeps behind its Advanced disclosure: other sources for the
 /// numbers, outage checks and how long samples are kept.
 struct UsageAdvanced: View {
     @Bindable var store: SettingsStore
 
     var body: some View {
-        SettingGroup("Incidents") {
-            SettingToggle(store, "Provider status pages", subtitle: ProviderStatusPagesCopy.subtitle,
-                          path: "provider_status_feeds_enabled")
-        }
-
         UsageExtrasSections(store: store)
 
-        SettingGroup("History") {
-            SettingToggle(store, "Keep history", subtitle: "Stores usage samples locally so graphs can look back.", path: "capacity_history_enabled")
-            SettingIntPicker(store, "Keep for", path: "capacity_history_retention_days", options: [
-                (1, "1 day"), (7, "7 days"), (30, "30 days"), (90, "90 days"),
-            ], default: 7)
-                .disabled(!(store.values.bool("capacity_history_enabled") ?? false))
-        }
     }
 }
 
@@ -720,7 +532,7 @@ struct ThresholdRow: View {
     }
 
     var body: some View {
-        LabeledContent("Thresholds") {
+        SettingsRow("Thresholds") {
             HStack(spacing: 14) {
                 HStack(spacing: 4) {
                     ValueText(text: "Nudge at \(binding(0).wrappedValue)%", width: 100)
@@ -764,6 +576,10 @@ struct DevicesPage: View {
     }
 
     var body: some View {
+        SettingGroup("Brightness") {
+            SettingSlider(store, "Maximum brightness", path: "global_brightness_scale", in: 0.05...1,
+                          default: 1, format: SettingsStore.percent)
+        }
         let layout = Layout(entries: store.deviceEntries)
         let devices = layout.devices
         if devices.isEmpty {
@@ -779,24 +595,22 @@ struct DevicesPage: View {
         ForEach(devices) { device in
             DeviceCard(store: store, device: device, firmware: store.firmware,
                        isFirstFirmware: device.id == firstFirmwareID)
+                .id(device.id == devices.first?.id ? SettingsStore.groupAnchor("Devices") : "device:\(device.id)")
         }
 
-        SettingGroup("Pro & Dot", note: "The role is what the Dot is for; the link is whether the monitor drives it at all.") {
-            SettingToggle(store, "Dot follows strip", subtitle: "The Dot takes its light from the Pro instead of rendering its own; the Dot's role says how.",
-                          path: "devices_linked", default: true)
-            SettingSlider(store, "Dot brightness", subtitle: "Two nearby LEDs read much brighter than eight across a desk. The alert beacon is never dimmed.",
-                          path: "linked_dot_scale", in: 0.05...1.0, step: 0.05, default: 0.3) { "\(Int(($0 * 100).rounded()))%" }
-                .disabled(!(store.values.bool("devices_linked") ?? true))
-            LinkedBrightnessToggle(store: store)
-            DotRoleControls(store: store, inDeviceCard: false)
-            LinkedSyncControls(store: store)
+        if store.isLive {
+            CreatorMicroCard(store: store)
+            StreamDeckCard(store: store)
+        } else {
+            DisclosureRow("Other hardware", fold: "devices.offline.other") {
+                CreatorMicroCard(store: store)
+                StreamDeckCard(store: store)
+            }
         }
-
-        CreatorMicroCard(store: store)
-
-        StreamDeckCard(store: store)
+        DeviceLinkSettings(store: store)
 
         ScreenBarSettingsCard(store: store, device: layout.screenBar)
+        ScreenBarMotionSettings(store: store)
     }
 }
 
@@ -805,7 +619,7 @@ struct ScreenBarSettingsCard: View {
     let device: SettingsStore.DeviceEntry?
 
     var body: some View {
-        SettingGroup(note: "The gap is the span treated as the notch, between the two risers; the wing is each stroke's reach beyond it. Automatic measures the notch and Alcove; manual values are points and always win.") {
+        SettingGroup(anchor: "Screen Bar") {
             ScreenBarCard(store: store, device: device)
         } header: {
             let bar = store.deviceFacts("screen-bar")
@@ -829,17 +643,17 @@ struct DeviceCard: View {
             if state?.isPresent == true {
                 DeviceRightNowRow(store: store, deviceID: device.id)
             }
-            if linkedDot {
-                LinkedDotNote()
-            }
-            if device.kind == "pro" || device.kind == "dot" {
+            if store.isLive, device.kind == "pro" || device.kind == "dot" {
                 FirmwareRows(firmware: firmware, device: device, isLive: store.isLive,
                              isFirst: isFirstFirmware, stateJob: store.core.firmware)
             }
-            // Folded until asked for: a device's dozen rows and previews
-            // are most of what the page costs to open.
-            SettingsFoldRow(store, id: SettingsFold.device(device.id), title: "Settings", subtitle: foldSubtitle) {
+            if store.isLive && state?.isPresent == true {
                 settingsRows
+            } else {
+                DisclosureRow("Saved settings", subtitle: savedBrightness, fold: "device.saved.\(device.id)") {
+                    settingsRows
+                }
+                .padding(JRBarTokens.Space.md)
             }
         } header: {
             SettingsGroupHeader(title: device.name,
@@ -851,37 +665,25 @@ struct DeviceCard: View {
         }
     }
 
-    /// Everything the fold holds.
+    private var savedBrightness: String {
+        let value = store.values.double(SettingsPath("\(device.prefix).brightness")) ?? 255
+        return "Brightness \(Int((value / 255 * 100).rounded()))%"
+    }
+
     @ViewBuilder
     private var settingsRows: some View {
         DeviceReceiptRow(store: store, deviceID: device.id, deviceName: device.kind == "dot" ? "Dot" : "SidePulse")
-        DeviceLightSettings(store: store, device: device)
+        DeviceHardwareSettings(store: store, device: device)
         LEDDirectionRow(store: store, device: device)
-        DotTravelStyleRow(store: store, device: device)
         if device.kind == "dot" {
-            DotRoleControls(store: store, inDeviceCard: true)
-        } else if device.kind == "pro" {
+            DotTravelStyleRow(store: store, device: device)
+            SettingsNavigationRow("Dot role in Studio") { store.onOpenStudioDevices?() }
+        }
+        if device.kind == "pro" {
             EjectGuardRow(store: store)
         }
     }
 
-    /// What the fold holds, in the card's own words.
-    private var foldSubtitle: String {
-        switch device.kind {
-        case "dot": return "Display, brightness, pinning, blend, calibration, direction, travel and the Dot's role."
-        case "pro": return "Display, brightness, pinning, blend, calibration, strip direction and the eject guard."
-        default: return "Display, brightness, pinning, blend and calibration."
-        }
-    }
-
-    /// A Dot the monitor drives through its role (`devices_linked` on and
-    /// any role but On its own): its Display, Pin to, Asks only and Blend
-    /// do nothing, so they are switched off with the reason on the card.
-    private var linkedDot: Bool {
-        device.kind == "dot"
-            && (store.values.bool("devices_linked") ?? true)
-            && DotRole.parse(store.values.string("dot_role")) != .status
-    }
 }
 
 /// Controls backed by one configured device's settings entry.
@@ -894,19 +696,8 @@ struct DeviceLightSettings: View {
     }
 
     var body: some View {
-        if device.kind != "screen_bar" {
-            SettingToggle(store, "Use this device", path: "\(device.prefix).enabled", default: true)
-        }
         SettingPicker(store, "Display", path: "\(device.prefix).led_display", options: DevicesPage.displayModes, default: "agent")
             .disabled(linkedDot)
-        SettingSlider(store, "Brightness", subtitle: brightnessSubtitle,
-                      path: "\(device.prefix).brightness", in: 0...255, step: 1, default: 255) {
-            "\(Int(($0 / 255 * 100).rounded()))%"
-        }
-        .disabled(automaticBrightness || (linkedDot && followsStripBrightness))
-        SettingToggle(store, "Auto-brightness", subtitle: autoBrightnessSubtitle,
-                      path: "\(device.prefix).auto_brightness_enabled")
-            .disabled(linkedDot && followsStripBrightness)
         Provided(store, "\(device.prefix).provider_pin") {
             Picker(selection: store.optionalString("\(device.prefix).provider_pin")) {
                 ForEach(pinOptions, id: \.value) { Text($0.label).tag($0.value) }
@@ -937,7 +728,6 @@ struct DeviceLightSettings: View {
             .pickerStyle(.menu)
         }
         .disabled(linkedDot || mirrorsHardware)
-        DeviceCalibrationRow(store: store, deviceID: device.id, prefix: device.prefix)
     }
 
     private var linkedDot: Bool {
@@ -946,28 +736,8 @@ struct DeviceLightSettings: View {
             && DotRole.parse(store.values.string("dot_role")) != .status
     }
 
-    /// Matching the strip's brightness, a linked Dot ignores its own
-    /// auto-brightness.
-    private var followsStripBrightness: Bool { store.values.bool("linked_follow_brightness") ?? true }
-
     private var mirrorsHardware: Bool {
         device.kind == "screen_bar" && (store.values.bool("link_screen_bar_to_hardware") ?? true)
-    }
-
-    private var automaticBrightness: Bool {
-        store.values.bool(SettingsPath("\(device.prefix).auto_brightness_enabled")) ?? false
-    }
-
-    private var brightnessSubtitle: String? {
-        if linkedDot && followsStripBrightness { return "The Dot follows the strip's brightness." }
-        return automaticBrightness ? "Saved manual level. Turn off Auto-brightness to change it." : nil
-    }
-
-    private var autoBrightnessSubtitle: String {
-        if linkedDot && followsStripBrightness {
-            return "Linked: the Dot matches the strip's brightness instead."
-        }
-        return "Follows the display's brightness: dim in a dark room, bright in daylight."
     }
 
     /// The per-device blend's note: what it does, and the case for it —
@@ -981,7 +751,7 @@ struct DeviceLightSettings: View {
         guard let mode, let entry = LightingPage.blendModes.first(where: { $0.value == mode }) else {
             let global = store.values.string("colors.blend_mode") ?? "color_blend"
             let label = LightingPage.blendModes.first { $0.value == global }?.label ?? global
-            return "Follows Settings › Devices & Lighting (\(label)). A strip can take its own — Everyone reads cleanly on eight LEDs while the band stays Smooth."
+            return "Follows Studio (\(label)). Choose a separate blend for this device here."
         }
         return entry.detail
     }
@@ -1107,8 +877,8 @@ enum DeviceHealthLine {
     }
 }
 
-/// The Creator Micro 2: the three switches of `deck-controls.json`, what
-/// the core says about the pad, and the door to the Control Center, where
+/// The Creator Micro: the three switches of `deck-controls.json`, what
+/// the core says about the pad, and the door to Creator Micro, where
 /// everything else about it is done.
 struct CreatorMicroCard: View {
     @Bindable var store: SettingsStore
@@ -1171,9 +941,9 @@ struct CreatorMicroCard: View {
                     let text: String
                     switch code {
                     case "no_device":
-                        text = "No Creator Micro 2 found. If Codex Micro is open, remove its device connection there first, then plug the pad in"
+                        text = "No Creator Micro found. If Codex Micro is open, remove its device connection there first, then plug the pad in"
                     case "ambiguous_device_identity", "device_identity_unavailable":
-                        text = "More than one pad found — approve it in the Control Center"
+                        text = "More than one pad found — approve it in Creator Micro"
                     default:
                         text = reply?.error?.message ?? "Approval failed"
                     }
@@ -1196,8 +966,8 @@ struct CreatorMicroCard: View {
     }
 
     var body: some View {
-        SettingGroup(note: "Thirteen session keys per bank, a dial and a joystick with explicit mappings. Pins, banks, the rail, input check and the keymap live in the Control Center; the monitor owns the device.") {
-            LabeledContent {
+        SettingGroup(anchor: "Creator Micro") {
+            SettingsRow("Status") {
                 VStack(alignment: .trailing, spacing: 3) {
                     StatusPill(statusText, tint: statusColor)
                     // The toggle's own answer, where the click happened.
@@ -1210,21 +980,17 @@ struct CreatorMicroCard: View {
                             .transition(.opacity)
                     }
                 }
-            } label: {
-                Text("Status")
             }
-            SettingRow("Control Center", subtitle: "Pins, banks, the rail, input check and the keymap.") {
-                Button("Control Center…") { store.onOpenControlCenter?() }
-            }
+            SettingsNavigationRow("Open Creator Micro") { store.onOpenControlCenter?() }
             SettingsFoldRow(store, id: SettingsFold.creatorMicro, title: "Settings",
                             subtitle: "The pad's switch, session keys, analog sectors, details and layers.") {
                 switchRows
             }
         } header: {
-            SettingsGroupHeader(title: "Creator Micro 2", symbol: "keyboard.fill",
+            SettingsGroupHeader(title: "Creator Micro", symbol: "keyboard.fill",
                                 tint: Color(nsColor: .systemIndigo),
                                 pill: device?.approved == false && device?.connected == true
-                                    ? "Approve it in the Control Center" : nil,
+                                    ? "Approve it in Creator Micro" : nil,
                                 pillTint: .orange)
         }
     }
@@ -1233,7 +999,7 @@ struct CreatorMicroCard: View {
     @ViewBuilder
     private var switchRows: some View {
         Toggle(isOn: Binding(get: { settings.enabled }, set: { set(enabled: $0) })) {
-            SettingLabel(title: "Enable Creator Micro 2",
+            SettingLabel(title: "Enable Creator Micro",
                          subtitle: "The monitor drives the approved pad's per-key colours and listens to its inputs.")
         }
         .disabled(!live)
@@ -1246,29 +1012,29 @@ struct CreatorMicroCard: View {
         .settingRowStyle()
         Toggle(isOn: Binding(get: { settings.analogEnabled }, set: { set(analogEnabled: $0) })) {
             SettingLabel(title: "Analog joystick sectors",
-                         subtitle: "Sectors 1–4 (AG20–AG23) count as inputs and can carry mappings in the Control Center.")
+                         subtitle: "Sectors 1–4 (AG20–AG23) count as inputs and can carry mappings in Creator Micro.")
         }
         .disabled(!live || !settings.enabled)
         .settingRowStyle()
         if let deck {
             DisclosureRow("Details") {
-                LabeledContent("Keymap") {
+                SettingsRow("Keymap") {
                     Text(deck.keymap.label).foregroundStyle(deck.keymap.needsRecovery ? .orange : .secondary)
                 }
-                LabeledContent("Compact rail") {
+                SettingsRow("Compact rail") {
                     Text(deck.rail.edge.label).foregroundStyle(.secondary)
                 }
-                LabeledContent("Sessions") {
+                SettingsRow("Sessions") {
                     Text("\(deck.keySlots.filter { !$0.isEmpty }.count) of 13 on this bank · \(deck.banks.title)")
                         .foregroundStyle(.secondary)
                 }
-                LabeledContent("Board scope") {
+                SettingsRow("Board scope") {
                     Text(deck.scope == "automatic" ? "Automatic — all providers"
                          : ProviderStyle.style(for: deck.scope).name)
                         .foregroundStyle(.secondary)
                 }
                 if let receipt = deck.device?.receipt {
-                    LabeledContent("Last receipt") {
+                    SettingsRow("Last receipt") {
                         Text(receipt.text).foregroundStyle(receipt.isProblem ? .orange : .secondary)
                             .multilineTextAlignment(.trailing)
                     }
@@ -1278,7 +1044,7 @@ struct CreatorMicroCard: View {
                 DisclosureRow("Layers", subtitle: "Who each hardware layer belongs to. Layer 1 is always JR-Bar's; a layer handed to Codex, Claude or other apps is left to that writer instead of fought over.") {
                     ForEach(deck.keymap.layers.sorted(by: { $0.layer < $1.layer })) { layer in
                         if layer.layer == 0 {
-                            LabeledContent("Layer 1") {
+                            SettingsRow("Layer 1") {
                                 Text("JR-Bar — the auto layer")
                                     .foregroundStyle(.secondary)
                             }
@@ -1305,29 +1071,21 @@ struct CreatorMicroCard: View {
 struct ScreenBarCard: View {
     @Bindable var store: SettingsStore
     let device: SettingsStore.DeviceEntry?
-    /// The camera hold is the app's own: the band is drawn here, and the
-    /// camera reading is the app's too — the notch island's poll, so the
-    /// row follows `ScreenBarCameraHold`.
-    @AppStorage(ScreenBarController.stillOnCameraDefaultsKey) private var stillOnCamera = true
     /// The video guard is the app's too: it reads the now-playing app and
     /// the frontmost window, neither of which the daemon sees.
     @AppStorage(ScreenBarController.hideOverVideoDefaultsKey) private var hideOverVideo = true
 
     var body: some View {
         ScreenBarRightNowRow(store: store)
-        SettingsFoldRow(store, id: SettingsFold.screenBar, title: "Settings",
-                        subtitle: "Display, brightness, pinning, blend, calibration, visibility, notch shape and mirroring.") {
-            settingsRows
-        }
+        settingsRows
     }
 
-    /// Everything the fold holds.
     @ViewBuilder
     private var settingsRows: some View {
         SettingToggle(store, "Show Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
         if let device {
             DeviceReceiptRow(store: store, deviceID: device.id, deviceName: "Screen Bar")
-            DeviceLightSettings(store: store, device: device)
+            DeviceHardwareSettings(store: store, device: device)
         } else {
             SettingRow("Device settings", subtitle: "Screen Bar display, brightness and calibration settings have not been reported.") {
                 EmptyView()
@@ -1362,21 +1120,9 @@ struct ScreenBarCard: View {
                           path: "screen_bar_notch_corner", in: 4...16, step: 0.5,
                           default: Double(NotchProfile.standardCornerRadius)) { SettingsStore.points($0) }
         }
-        SettingToggle(store, "Mirror hardware strip", subtitle: "Play the strip's program on its clock; off, the bar renders its own display.", path: "link_screen_bar_to_hardware", default: true)
-        Toggle(isOn: $stillOnCamera) {
-            SettingLabel(title: "Hold still on camera",
-                         subtitle: ScreenBarCameraHold.subtitle(cameraReadable: ScreenBarLiveStatus.shared.cameraReadable))
-        }
-        .disabled(!ScreenBarLiveStatus.shared.cameraReadable)
-        .settingRowStyle()
-        DisclosureRow("Advanced", subtitle: "Phase, geometry and the band's dim floor.", fold: SettingsFold.screenBarAdvanced) {
-            SettingSlider(store, "Phase nudge", subtitle: "Shift the bar against the strip if the two are visibly out of step. Positive holds the bar back.",
-                          path: "screen_bar_phase_offset_ms", in: -500...500, step: 10, default: 0) { "\(Int($0)) ms" }
-                .disabled(!(store.values.bool("link_screen_bar_to_hardware") ?? true))
+        DisclosureRow("Advanced", subtitle: nil, fold: SettingsFold.screenBarAdvanced) {
             NullableSlider(store: store, title: "Gap width", path: "screen_bar_gap_width", range: 120...400, fallback: 180)
             NullableSlider(store: store, title: "Wing length", path: "screen_bar_wing_length", range: 0...80, fallback: 14)
-            SettingSlider(store, "Minimum glow", subtitle: "The band's dim floor; zero is pitch black.",
-                          path: "screen_bar_min_glow", in: 0...1, default: 0.25, format: SettingsStore.percent)
         }
     }
 
@@ -1436,7 +1182,7 @@ enum ScreenBarCameraHold {
     static func subtitle(cameraReadable: Bool) -> String {
         cameraReadable
             ? "While a camera is live the band stops moving — nothing pulses beside the lens or in your glasses, and an ask stays a steady amber."
-            : "Needs a camera reading: turn on Mic & camera indicators under Utilities › Notch."
+            : "Needs a camera reading: turn on Mic & camera indicators under Notch & Shelf."
     }
 }
 
@@ -1479,7 +1225,7 @@ struct NullableSlider: View {
 
     var body: some View {
         Provided(store, path) {
-            LabeledContent {
+            SettingsRow(title, subtitle: subtitle) {
                 HStack(spacing: 10) {
                     Toggle("Automatic", isOn: Binding(
                         get: { store.isNull(path) },
@@ -1492,8 +1238,6 @@ struct NullableSlider: View {
                         .disabled(store.isNull(path))
                     ValueText(text: store.isNull(path) ? "auto" : SettingsStore.points(store.values.double(SettingsPath(path)) ?? fallback), width: 48)
                 }
-            } label: {
-                SettingLabel(title: title, subtitle: subtitle)
             }
         }
     }
