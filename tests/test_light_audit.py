@@ -157,8 +157,8 @@ def test_mirror_publishes_every_audited_program(headless):
         expected = replace_brightness_line(expected, 255)
         assert actual == expected, row["case"]
         assert bar["anchor"] == 1000.0, row["case"]
-        # Parse/budget/pixel checks belong to inspect() and its recorded
-        # baseline. This checks the live publication path even for a mirror
+        # The CLI checks Swift pixels against the delivered firmware corpus.
+        # This checks the live publication path even for a mirror
         # that the display parser will reject.
 
 
@@ -205,3 +205,138 @@ def test_controller_reassert_writes_the_bytes_measured_by_the_checker(tmp_path, 
     else:
         assert controller.last_error is None
         assert first.target.read_text() == first.program
+
+
+def mutated_mix(tmp_path, monkeypatch, old, new):
+    """Load the real production module with one defect restored in a scratch file."""
+    import importlib.util
+
+    import jrbar.light_mix as production
+
+    text = Path(production.__file__).read_text()
+    assert old in text
+    path = tmp_path / "light_mix.py"
+    path.write_text(text.replace(old, new, 1))
+    spec = importlib.util.spec_from_file_location("jrbar._audit_mutant", path)
+    module = importlib.util.module_from_spec(spec)
+    # Dataclasses resolve their defining module during import.
+    import sys
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(production, "_shares", module._shares)
+    monkeypatch.setattr(production, "_has_sweep", module._has_sweep)
+
+
+@pytest.mark.parametrize("motion", ("kitt", "scanner", "pendulum"))
+@pytest.mark.parametrize("mix", ("round_robin", "spatial_split"))
+@pytest.mark.parametrize("glow", (0, 20))
+def test_inspect_rejects_original_broken_automatic_follower(tmp_path, monkeypatch, motion, mix, glow):
+    mutated_mix(tmp_path, monkeypatch, '''                leader = agents[explicit[0]]
+                if (settings.agent_animation(leader.provider) in {"kitt", "scanner", "pendulum"}
+                        and settings.animation_style("working") == "roll"):
+                    tracks[index] = _follow_sweep(agent, leader, settings, share, chosen_spans)
+                    continue
+''', "")
+    variant = next(v for v in catalogue() if v.name == f"{motion}.follow-glow{glow}")
+    result = inspect(Case(variant, mix, (3, 2), 8, "working"), Firmware())
+    assert "sweep_path" in result.failures, result.failures
+    assert "claude" in result.failures["sweep_path"]
+    assert "share_fidelity" in result.failures
+
+
+@pytest.mark.parametrize("motion", ("kitt", "scanner", "pendulum"))
+def test_inspect_rejects_shared_sweep_predicate_regression(tmp_path, monkeypatch, motion):
+    mutated_mix(tmp_path, monkeypatch,
+                'return any(settings.agent_animation(agent.provider) in {"kitt", "scanner", "pendulum"}\n'
+                '               for agent in agents)', 'return False')
+    variant = next(v for v in catalogue() if v.name == motion + ".default")
+    result = inspect(Case(variant, "round_robin", (3, 2), 8, "working"), Firmware())
+    assert {"sweep_path", "share_fidelity"} <= result.failures.keys(), result.failures
+
+
+@pytest.fixture(scope="module")
+def swift_sampler(tmp_path_factory):
+    from swift_light_audit import build_sampler
+
+    return build_sampler(tmp_path_factory.mktemp("swift-light-audit"))
+
+
+def test_swift_mirror_matches_firmware(swift_sampler):
+    from swift_light_audit import mirror_failures
+
+    from jrbar.presentation_compiler import compile_presentation_program
+
+    rows = []
+    for row in bank():
+        compiled = compile_presentation_program(row["program"], led_count=row["leds"])
+        assert compiled.accepted
+        rows.append(dict(row, program=compiled.program))
+    assert not mirror_failures(swift_sampler, rows)
+
+
+def test_swift_mirror_rejects_wrong_source_canvas(tmp_path):
+    from swift_light_audit import REPO, build_sampler, mirror_failures
+
+    sources = []
+    for source in sorted((REPO / "app/Sources/JRBarLEDS").glob("*.swift")):
+        path = tmp_path / source.name
+        text = source.read_text()
+        if source.name == "LEDSSampler.swift":
+            old = "let ledCount = LEDSProgram.normalizedLedCount(requestedLedCount)"
+            assert old in text
+            text = text.replace(old, "let ledCount = LEDSProgram.normalizedLedCount(outputLedCount ?? requestedLedCount)", 1)
+        path.write_text(text)
+        sources.append(path)
+    executable = build_sampler(tmp_path, sources=sources)
+    rows = [{"case": "wrong-canvas", "leds": 2,
+             "program": "brightness 128\n#FF0000 #00FF00 500ms none\nroll 2s\nrepeat"}]
+    assert mirror_failures(executable, rows)
+
+
+@pytest.mark.parametrize("motion,period", (("kitt", 2217), ("scanner", 1865), ("pendulum", 2217)))
+def test_firmware_period_includes_seed_frame(motion, period):
+    from jrbar.motion_shapes import render_motion
+
+    lines = render_motion(motion, "#804020", "#000000", led_count=4, cycle_ms=2200, compact=True,
+                          params={"beam_width": 3, "overlap": 0.5})
+    # Map indexed local paints to the eight-LED emulator without changing time.
+    program = "\n".join([*lines, "repeat"])
+    firmware = Firmware()
+    trace = firmware.trace(program, 8)
+    assert trace.period == period
+    controller = firmware.controllers[8]
+    controller.reset(0)
+    assert controller.parse(program, 0).ok
+    frames = controller.step_batch(0, 1, period * 4)
+    # Independently find the exact repeating lag from firmware playback.
+    losses = {lag: sum(abs(a - b) for t in range(period, 2 * period)
+                      for left, right in zip(frames[t], frames[t + lag])
+                      for a, b in zip(left, right)) for lag in range(period - 20, period + 21)}
+    assert min(losses, key=losses.get) == period
+    assert losses[period] == 0
+    assert losses[period - 17] > 0
+
+
+def test_inspect_does_not_claim_python_mirror_pixel_verification():
+    result = inspect(Case(catalogue()[0], "round_robin", (1,), 2, "working"), Firmware())
+    assert "mirror_pixels" not in result.checks
+
+
+def test_source_locations_survive_removed_source_needles():
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "scripts/audit_lights.py"
+    spec = importlib.util.spec_from_file_location("audit_lights_cli", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.source_location("src/jrbar/light_mix.py", "removed_source_needle") == "src/jrbar/light_mix.py"
+    assert module.source_location("removed-source.py", "anything") == "removed-source.py"
+
+
+def test_loop_seam_rejects_an_added_zero_span_seed_frame():
+    firmware = Firmware()
+    smooth = "#FF0000 1000ms linear\n#00FF00 1000ms linear\nrepeat"
+    broken = "#FF0000 0ms\n" + smooth
+    assert firmware.seam_error(smooth, 2) <= 41
+    assert firmware.trace(broken, 2).period == 2017
+    assert firmware.seam_error(broken, 2) > 41
