@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import ctypes
 import hashlib
 import importlib
 import json
@@ -27,7 +28,7 @@ import tracemalloc
 from pathlib import Path
 
 
-def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool = False) -> None:
+def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool = False, census: bool = False) -> None:
     sys.path.insert(0, str(root / "src"))
     if trace:
         tracemalloc.start(1)
@@ -78,6 +79,55 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
     compose_status_bar_application()
     cls = core_runtime.build_headless_controller_class()
     cls._core_deck_probe_now = lambda self: None
+    census_seconds = collections.Counter()
+    census_calls = collections.Counter()
+
+    def thread_cpu():
+        class Info(ctypes.Structure):
+            _fields_ = [("user", ctypes.c_uint64), ("system", ctypes.c_uint64)] + [
+                (name, ctypes.c_int32) for name in ("usage", "policy", "state", "flags", "sleep", "curpri", "pri", "maxpri")
+            ] + [("name", ctypes.c_char * 64)]
+
+        lib = ctypes.CDLL("/usr/lib/libproc.dylib")
+        lib.proc_pidinfo.restype = ctypes.c_int
+        lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        ids = (ctypes.c_uint64 * 1024)()
+        count = lib.proc_pidinfo(os.getpid(), 6, 0, ids, ctypes.sizeof(ids)) // 8
+        names = {thread.native_id: thread.name for thread in threading.enumerate()}
+        result = {}
+        for identity in ids[:count]:
+            info = Info()
+            if lib.proc_pidinfo(os.getpid(), 5, identity, ctypes.byref(info), ctypes.sizeof(info)) == ctypes.sizeof(info):
+                result[identity] = {"name": names.get(identity) or bytes(info.name).decode(errors="replace"),
+                    "seconds": (info.user + info.system) / 1e9}
+        return result
+
+    def measure(target, name, label):
+        original = getattr(target, name)
+
+        def measured(*args, **kwargs):
+            before = time.thread_time()
+            try:
+                return original(*args, **kwargs)
+            finally:
+                census_seconds[label] += time.thread_time() - before
+                census_calls[label] += 1
+
+        setattr(target, name, measured)
+
+    if census:
+        for name, label in (("refresh_", "refresh"), ("_execute_hardware_write_command", "hardware"),
+                ("_core_build_state", "state_projection"), ("_core_build_lights", "lights_projection"),
+                ("coreHousekeepingTick_", "housekeeping")):
+            measure(cls, name, label)
+        from jrbar import process_registry
+        from jrbar.core_server import CoreServer
+        from jrbar.hook_ingress import AppOwnedHookIngressProcessor
+
+        measure(process_registry, "_list_processes_uncached", "process_table")
+        measure(CoreServer, "_encode", "server_encoding")
+        measure(CoreServer, "_fan_out", "server_delivery")
+        measure(AppOwnedHookIngressProcessor, "__call__", "hook_processing")
     holder = []
     agents = []
 
@@ -130,6 +180,8 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
         next_probe = start
         round_number = 0
         profiling_started = False
+        census_started = False
+        census_thread_start = {}
         spawn_start = spawns.copy()
         blocked_start = blocked_spawns.copy()
         admissions = collections.Counter()
@@ -143,6 +195,11 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
             if profile and measured and not profiling_started:
                 yappi.start(builtins=True, profile_threads=True)
                 profiling_started = True
+            if census and measured and not census_started:
+                census_seconds.clear()
+                census_calls.clear()
+                census_started = True
+                census_thread_start = thread_cpu()
             if now >= next_hook:
                 for index in range(sessions):
                     event = ("UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop")[round_number % 4]
@@ -197,8 +254,6 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
         cpu_end = resource.getrusage(resource.RUSAGE_SELF)
         cpu_seconds = cpu_end.ru_utime + cpu_end.ru_stime - cpu_start.ru_utime - cpu_start.ru_stime
         loaded = sorted(name for name in sys.modules if name.split(".")[0] in {"AppKit", "Foundation", "WebKit", "Quartz", "objc"})
-        import ctypes
-
         dyld = ctypes.CDLL(None)
         dyld._dyld_image_count.restype = ctypes.c_uint32
         dyld._dyld_get_image_name.argtypes = [ctypes.c_uint32]
@@ -220,6 +275,10 @@ def child(root: Path, seconds: float, sessions: int, trace: bool, profile: bool 
                   "blocked_probe_attempts": dict(blocked_spawns - blocked_start),
                   "startup_ready_seconds": holder[0]._core_ready_at - startup_at,
                   "performance": holder[0]._core_performance_document(),
+                  "cpu_census": {key: {"seconds": value, "calls": census_calls[key]}
+                    for key, value in census_seconds.items()} if census else None,
+                  "cpu_threads": [{"name": value["name"], "seconds": value["seconds"] - census_thread_start.get(key, {}).get("seconds", 0)}
+                    for key, value in thread_cpu().items()] if census else None,
                   "source_commit": (root / "revision.txt").read_text().strip()}
         (root / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         client.close()
@@ -257,12 +316,13 @@ def main():
     parser.add_argument("--sessions", type=int, choices=range(3, 7), default=3)
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--profile", action="store_true", help="separate CPU profile run; not a timing receipt")
+    parser.add_argument("--census", action="store_true", help="record thread CPU per controller job")
     parser.add_argument("--source", type=Path, help="replay a frozen src directory from an earlier run")
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     root = args.output.resolve()
     if args.child:
-        child(root, args.seconds, args.sessions, args.trace, args.profile)
+        child(root, args.seconds, args.sessions, args.trace, args.profile, args.census)
         return
     root.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[1]
@@ -289,6 +349,8 @@ def main():
         command.append("--trace")
     if args.profile:
         command.append("--profile")
+    if args.census:
+        command.append("--census")
     with (root / "stdout.log").open("w") as out, (root / "importtime.log").open("w") as err:
         result = subprocess.run(command, env=env, stdout=out, stderr=err, timeout=args.seconds + 180, check=False)
     if not (root / "report.json").exists():
