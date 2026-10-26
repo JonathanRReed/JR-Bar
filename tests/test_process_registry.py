@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from jrbar import process_registry as pr
 from jrbar.hook_ingress import HookIngressRequest, register_shim_process
@@ -410,3 +413,66 @@ def test_an_orphaned_frame_that_is_not_a_session_end_registers_nothing(
     assert args[0] == "codex" and '"SessionEnd"' in args[1]
     assert kwargs == {}
     assert not list(pr.registry_dir(tmp_path / "jrbar").glob("**/*.json"))
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin libproc launch identity")
+def test_versioned_symlink_agent_outlives_its_node_child(tmp_path):
+    import signal
+    import subprocess
+
+    from jrbar.process_table import read_process_table
+
+    source = tmp_path / "fixture.c"
+    source.write_text("""
+#include <unistd.h>
+#include <stdio.h>
+#include <signal.h>
+#include <sys/wait.h>
+int main(int argc, char **argv) {
+    if (argc > 1) {
+        int child = fork();
+        if (child == 0) { execl(argv[1], argv[1], NULL); _exit(1); }
+        printf("%d\\n", child); fflush(stdout);
+        getchar(); kill(child, SIGTERM); waitpid(child, NULL, 0);
+        printf("exited\\n"); fflush(stdout);
+    } else { printf("ready\\n"); fflush(stdout); }
+    pause(); return 0;
+}
+""")
+    for name in ("1.0.0", "node"):
+        subprocess.run(["/usr/bin/cc", str(source), "-o", str(tmp_path / name)],
+                       check=True, capture_output=True, timeout=30)
+    launcher = tmp_path / "claude"
+    launcher.symlink_to(tmp_path / "1.0.0")
+    parent = subprocess.Popen([str(launcher), str(tmp_path / "node")],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                              env={**os.environ, "JRBAR_SYNTHETIC_PADDING": "x" * 20_000})
+    child = None
+    try:
+        lines = [parent.stdout.readline().strip(), parent.stdout.readline().strip()]
+        child = int(next(line for line in lines if line != "ready"))
+        native = read_process_table()
+        assert native[parent.pid].basename == "claude"
+        assert Path(native[parent.pid].executable).name == "1.0.0"
+        legacy = pr._list_processes_uncached(lambda *args, **kwargs: subprocess.run(*args, **kwargs))
+        records = []
+        for reader, table in (("libproc", native), ("ps", legacy)):
+            assert table[parent.pid].basename == "claude"
+            assert table[child].basename == "node"
+            entry = pr.discover_agent_process("claude", start_pid=child, table=table)
+            assert entry.pid == parent.pid
+            records.append(pr.record_agent_process("claude", f"synthetic-{reader}", entry, state_dir=tmp_path))
+        parent.stdin.write("\n")
+        parent.stdin.flush()
+        assert parent.stdout.readline().strip() == "exited"
+        assert parent.poll() is None
+        remaining = read_process_table()
+        assert all(pr.process_is_live(record, remaining) == (True, "alive") for record in records)
+    finally:
+        if child is not None:
+            try:
+                os.kill(child, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        parent.terminate()
+        parent.wait(timeout=3)

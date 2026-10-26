@@ -13,7 +13,7 @@ from jrbar import status_bar
 from jrbar.announcer_stack import empty_announcer_stack_state
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS_BAR_LEGACY = ROOT / "src" / "jrbar" / "status_bar_legacy.py"
+STATUS_BAR_LEGACY = ROOT / "src" / "jrbar" / "daemon_controller.py"
 
 
 @pytest.fixture

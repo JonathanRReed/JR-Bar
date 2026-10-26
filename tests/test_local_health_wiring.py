@@ -147,7 +147,7 @@ def test_production_shutdown_records_latency_without_changing_close_order__and_2
     )
     text = source.read_text(encoding="utf-8")
     refresh_block = text[text.index("        def refresh_(self, sender):") :]
-    refresh_block = refresh_block[: refresh_block.index("        @", 1)]
+    refresh_block = refresh_block[: refresh_block.index("        def refreshFromEvent_", 1)]
 
     assert refresh_block.index('"refresh",') < refresh_block.index(
         "self.local_health_snapshot()"

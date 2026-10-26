@@ -1,37 +1,64 @@
-"""Security contracts for Claude's read-only usage transport."""
+"""Apple transport parity, including the redirect callback's native ABI."""
+import json
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import pytest
+
+from jrbar.claude_quota import request_via_apple_stack
 
 
-def test_the_redirect_guard_refuses_a_cross_origin_hop():
-    """A 30x to another host would hand the Authorization header to
-    whoever answered it. Ported from CodexBar's ProviderHTTPClient."""
-    from types import SimpleNamespace
+@pytest.mark.skipif(sys.platform != "darwin", reason="NSURLSession")
+def test_native_transport_keeps_same_origin_redirects_and_refuses_cross_origin():
+    forwarded = []
 
-    from jrbar.claude_quota import _redirect_guard_class
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
 
-    guard = _redirect_guard_class().alloc().initWithOrigin_(
-        ("https", "api.anthropic.com", None)
-    )
-    answers = []
+        def do_GET(self):
+            if self.path in {"/same", "/cross"}:
+                destination = source.server_port if self.path == "/same" else other.server_port
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{destination}/final")
+                self.end_headers()
+            else:
+                forwarded.append((self.server.server_port, self.headers.get("Authorization")))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
 
-    def _request(scheme, host):
-        return SimpleNamespace(
-            URL=lambda: SimpleNamespace(
-                scheme=lambda: scheme, host=lambda: host, port=lambda: None
-            )
-        )
+        def log_message(self, *args):
+            pass
 
-    same = _request("https", "api.anthropic.com")
-    guard.URLSession_task_willPerformHTTPRedirection_newRequest_completionHandler_(
-        None, None, None, same, answers.append
-    )
-    assert answers[-1] is same, "a same-origin redirect is allowed"
+    source = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    other = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in (source, other)]
+    for thread in threads:
+        thread.start()
+    try:
+        root = f"http://127.0.0.1:{source.server_port}"
+        request_via_apple_stack(root + "/final", method="GET", headers={"Authorization": "Bearer synthetic"}, timeout=3)
+        assert forwarded == [(source.server_port, "Bearer synthetic")]
+        status, body = request_via_apple_stack(root + "/same", method="GET", headers={"Authorization": "Bearer synthetic"}, timeout=3)
+        assert status == 200 and json.loads(body) == {"ok": True}
+        assert len(forwarded) == 2 and forwarded[-1][0] == source.server_port
+        status, body = request_via_apple_stack(root + "/echo", method="POST", headers={}, body=b'{"synthetic":true}', timeout=3)
+        assert status == 200 and body == b'{"synthetic":true}'
+        status, _ = request_via_apple_stack(root + "/cross", method="GET", headers={"Authorization": "Bearer synthetic"}, timeout=3)
+        assert status == 302
+        assert len(forwarded) == 2
+        from jrbar import native_apple_http
 
-    guard.URLSession_task_willPerformHTTPRedirection_newRequest_completionHandler_(
-        None, None, None, _request("https", "evil.example.com"), answers.append
-    )
-    assert answers[-1] is None, "a cross-origin redirect is refused"
-
-    guard.URLSession_task_willPerformHTTPRedirection_newRequest_completionHandler_(
-        None, None, None, _request("http", "api.anthropic.com"), answers.append
-    )
-    assert answers[-1] is None, "a downgrade to http is refused"
+        assert native_apple_http._callbacks == {}
+        assert native_apple_http._origins == {}
+    finally:
+        for server in (source, other):
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join(timeout=3)

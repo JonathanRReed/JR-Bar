@@ -189,7 +189,7 @@ def test_a_held_family_comes_back_when_the_floor_ends() -> None:
     status event or the 15 s refresh during a long shell command."""
     from types import SimpleNamespace
 
-    from jrbar.status_bar_legacy import tool_tinted_colors
+    from jrbar.daemon_controller import tool_tinted_colors
 
     gate = ToolTintGate()
     woken: list[float] = []

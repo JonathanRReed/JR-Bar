@@ -653,7 +653,9 @@ public final class CoreClient: @unchecked Sendable {
             if splitter.droppedOversizedFrames > droppedBefore {
                 let why = "a frame over \(CoreCodec.maxFrameBytes) bytes was dropped"
                 handler(.decodeFailure(why))
-                if splitter.lastDroppedOversizedType == "state" { handler(.stateRejected(why)) }
+                let type = splitter.lastDroppedOversizedType
+                if type == "state" || type == "state_delta" { handler(.stateRejected(why)) }
+                if type == "state_delta" { return (why, sawHello) }
             }
             for frame in frames {
                 lock.lock()
@@ -665,6 +667,13 @@ public final class CoreClient: @unchecked Sendable {
                         sawHello = true
                         beginAuthentication(hello: hello, socket: socket)
                         beginResumableStream(hello: hello, socket: socket)
+                        if hello.capabilities.contains("state_slices") {
+                            let subscription = CoreCommand(id: nextCommandID(), name: "subscribe",
+                                                           args: ["state_slices": .bool(true)])
+                            if let bytes = try? CoreCodec.encode(command: subscription) {
+                                if let error = writeAll(socket, bytes) { return (String(cString: strerror(error)), sawHello) }
+                            }
+                        }
                         if idleProbes == nil { idleProbes = beginIdleProbes() }
                     }
                     if case .reply(let reply) = message {
@@ -697,7 +706,9 @@ public final class CoreClient: @unchecked Sendable {
                 } catch {
                     let why = String(describing: error)
                     handler(.decodeFailure(why))
-                    if CoreCodec.declaredType(ofFrame: frame) == "state" { handler(.stateRejected(why)) }
+                    let type = CoreCodec.declaredType(ofFrame: frame)
+                    if type == "state" || type == "state_delta" { handler(.stateRejected(why)) }
+                    if type == "state_delta" { return (why, sawHello) }
                 }
             }
         }

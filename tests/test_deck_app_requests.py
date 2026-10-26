@@ -179,7 +179,7 @@ def test_the_daemon_publishes_a_request_only_to_a_connected_app() -> None:
 
 
 def test_a_probe_that_raises_answers_not_connected_and_names_itself_in_the_log(monkeypatch) -> None:
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
 
     lines: list[str] = []
     monkeypatch.setattr(legacy, "log_status_bar", lines.append)

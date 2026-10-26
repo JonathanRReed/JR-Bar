@@ -123,7 +123,7 @@ class WebhookMomentEventTests(unittest.TestCase):
         self.assertEqual(self.posted, [])
 
     def test_a_refused_batch_posts_nothing(self) -> None:
-        from jrbar import status_bar_legacy
+        from jrbar import daemon_controller
         from jrbar.activity_ledger import ActivityValidationError
 
         self._enable("ask_opened")
@@ -131,14 +131,14 @@ class WebhookMomentEventTests(unittest.TestCase):
         def _raise(*_args, **_kwargs):
             raise ActivityValidationError("ledger refused")
 
-        original = status_bar_legacy.record_activities
-        status_bar_legacy.record_activities = _raise
+        original = daemon_controller.record_activities
+        daemon_controller.record_activities = _raise
         try:
             self.controller.record_activity_entries(
                 (_entry(ActivityKind.ASKED),)
             )
         finally:
-            status_bar_legacy.record_activities = original
+            daemon_controller.record_activities = original
         self.assertEqual(self.posted, [])
 
     def test_the_grant_gate_knows_every_new_event(self) -> None:

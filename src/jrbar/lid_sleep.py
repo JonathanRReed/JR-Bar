@@ -281,13 +281,9 @@ def parse_bool_ioreg_property(text: str | bytes, property_name: str) -> bool | N
 
 def external_display_is_active() -> bool | None:
     try:
-        from Quartz import CGDisplayIsActive, CGDisplayIsBuiltin, CGGetOnlineDisplayList
+        from .native_displays import external_display_is_active as read
 
-        error, displays, count = CGGetOnlineDisplayList(32, None, None)
-        if error or not 0 < count < 32:
-            return None
-        return any(CGDisplayIsActive(display) and not CGDisplayIsBuiltin(display)
-                   for display in displays[:count])
+        return read()
     except Exception:
         return None
 

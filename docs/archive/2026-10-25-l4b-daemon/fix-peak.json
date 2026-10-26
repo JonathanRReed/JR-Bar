@@ -1,0 +1,223 @@
+{
+  "duration_seconds": 60.0,
+  "sessions": 3,
+  "tracing": true,
+  "cpu_percent": 16.050536666666666,
+  "cpu_seconds": 9.630322,
+  "rss_mean_mb": 179.47121710526315,
+  "rss_max_mb": 232.203125,
+  "heap_max_mb": 43.76017093658447,
+  "peak_allocations": {
+    "sampled_rss_mb": 232.203125,
+    "seconds_into_measurement": 14.80031408398645,
+    "tracer_overhead_mb": 22.115829467773438,
+    "top_lines": [
+      {
+        "location": "<frozen importlib._bootstrap>:488",
+        "bytes": 14776750,
+        "allocations": 114250
+      },
+      {
+        "location": "<python>/lib/python3.12/dataclasses.py:473",
+        "bytes": 4681783,
+        "allocations": 39373
+      },
+      {
+        "location": "<frozen importlib._bootstrap_external>:757",
+        "bytes": 3554907,
+        "allocations": 32869
+      },
+      {
+        "location": "<frozen importlib._bootstrap_external>:774",
+        "bytes": 3399613,
+        "allocations": 18666
+      },
+      {
+        "location": "<probe>/src/jrbar/dot_continue.py:205",
+        "bytes": 1925120,
+        "allocations": 30080
+      },
+      {
+        "location": "<python>/lib/python3.12/dataclasses.py:1233",
+        "bytes": 1561733,
+        "allocations": 8197
+      },
+      {
+        "location": "<string>:2",
+        "bytes": 835888,
+        "allocations": 6806
+      },
+      {
+        "location": "<python>/lib/python3.12/enum.py:595",
+        "bytes": 617447,
+        "allocations": 2159
+      },
+      {
+        "location": "<probe>/src/jrbar/dot_continue.py:197",
+        "bytes": 457496,
+        "allocations": 2904
+      },
+      {
+        "location": "<python>/lib/python3.12/dataclasses.py:424",
+        "bytes": 453480,
+        "allocations": 3779
+      },
+      {
+        "location": "<probe>/src/jrbar/dot_continue.py:264",
+        "bytes": 430160,
+        "allocations": 3842
+      },
+      {
+        "location": "<python>/lib/python3.12/enum.py:277",
+        "bytes": 383040,
+        "allocations": 2280
+      },
+      {
+        "location": "<probe>/src/jrbar/linked_sync.py:193",
+        "bytes": 287896,
+        "allocations": 5141
+      },
+      {
+        "location": "<python>/lib/python3.12/dataclasses.py:861",
+        "bytes": 287321,
+        "allocations": 4195
+      },
+      {
+        "location": "<python>/lib/python3.12/dataclasses.py:474",
+        "bytes": 281720,
+        "allocations": 4675
+      },
+      {
+        "location": "<probe>/src/jrbar/core_runtime.py:9395",
+        "bytes": 262144,
+        "allocations": 1
+      },
+      {
+        "location": "<python>/lib/python3.12/dataclasses.py:870",
+        "bytes": 216336,
+        "allocations": 504
+      },
+      {
+        "location": "<python>/lib/python3.12/dataclasses.py:256",
+        "bytes": 149688,
+        "allocations": 1386
+      },
+      {
+        "location": "<python>/lib/python3.12/dataclasses.py:253",
+        "bytes": 149688,
+        "allocations": 693
+      },
+      {
+        "location": "<frozen os>:861",
+        "bytes": 140733,
+        "allocations": 1224
+      },
+      {
+        "location": "<python>/lib/python3.12/tracemalloc.py:67",
+        "bytes": 127808,
+        "allocations": 1997
+      },
+      {
+        "location": "<python>/lib/python3.12/enum.py:271",
+        "bytes": 119774,
+        "allocations": 2215
+      },
+      {
+        "location": "<frozen abc>:106",
+        "bytes": 117004,
+        "allocations": 449
+      },
+      {
+        "location": "<frozen importlib._bootstrap_external>:128",
+        "bytes": 106451,
+        "allocations": 843
+      },
+      {
+        "location": "<python>/lib/python3.12/dataclasses.py:1137",
+        "bytes": 104101,
+        "allocations": 459
+      }
+    ]
+  },
+  "messages_per_minute": {
+    "state_delta": 23.0,
+    "lights": 24.0,
+    "log": 10.0,
+    "event": 9.0
+  },
+  "bytes_per_minute": {
+    "state_delta": 31674.0,
+    "lights": 58331.0,
+    "log": 1674.0,
+    "event": 2159.0
+  },
+  "loop_max_ms": 31.497583026066422,
+  "loop_samples": 57,
+  "loop_over_250ms": 0,
+  "framework_modules": [],
+  "hook_admissions": {
+    "HookIngressDisposition.ACCEPTED": 54
+  },
+  "max_visible_sessions": 3,
+  "errors": [],
+  "source_sha256": "1327d6da076342526a9ca730f2c93807f15ef0ac8be7044f855c03737b1bf239",
+  "spawn_counts": {
+    "touch": 1
+  },
+  "framework_images": [
+    "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit"
+  ],
+  "blocked_probe_attempts": {
+    "ioreg": 12,
+    "caffeinate": 31
+  },
+  "startup_ready_seconds": 3.5155142080038786,
+  "performance": {
+    "metrics": {
+      "hardware_render": {
+        "count": 39,
+        "p50_ms": 5.401,
+        "p95_ms": 83.586,
+        "max_ms": 104.434,
+        "outcomes": {
+          "ok": 39
+        }
+      },
+      "refresh": {
+        "count": 43,
+        "p50_ms": 7.44,
+        "p95_ms": 52.671,
+        "max_ms": 176.296,
+        "outcomes": {
+          "ok": 43
+        }
+      },
+      "refresh_skipped": {
+        "count": 5,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "max_ms": 0.0,
+        "outcomes": {
+          "noop": 5
+        }
+      }
+    },
+    "cpu": {
+      "user_s": 14.135,
+      "system_s": 0.798,
+      "percent_since_last": null
+    },
+    "frames": {
+      "state_generation": 46,
+      "lights_generation": 36,
+      "state_per_minute": 23,
+      "lights_per_minute": 24
+    }
+  },
+  "cpu_census": null,
+  "cpu_threads": null,
+  "source_commit": "70c3883751094c3fa1c2fc821bae3c576172da09",
+  "workload_valid": true,
+  "probe_sha256": "8edc12e277aa49de5187ef12bc849fedb797e346115ffc34cbae6ff4d12f27c6",
+  "peak_snapshot_sha256": "6cadcd20cc16b52e82936f883d7b666bf23c6efda772fb74c5473c695c5a3ea9"
+}

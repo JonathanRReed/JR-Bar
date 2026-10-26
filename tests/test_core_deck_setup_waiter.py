@@ -20,7 +20,7 @@ from jrbar import core_deck, core_runtime
 from jrbar.core_server import CommandError
 from jrbar.creator_micro_adapter import Receipt
 from jrbar.creator_micro_keymap import KeymapPlan
-from jrbar.creator_micro_setup_controller import (
+from jrbar.creator_micro_setup_runtime import (
     SetupPreview,
     SetupResult,
     begin_creator_micro_inspection,
@@ -120,12 +120,12 @@ def test_a_setup_overtaken_by_a_runtime_reconfiguration_releases_its_waiter_as_s
 def test_a_superseded_inspection_is_refused_with_the_superseded_code_by_the_command(
     deck, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from jrbar import creator_micro_setup_controller
+    from jrbar import creator_micro_setup_runtime
 
     _deliver_main_thread_hops_inline(deck)
     start = _inspection(deck, tmp_path, reconfigure_midway=True)
     # deck_plan_keymap and deck_apply_keymap inspect first, through this call.
-    monkeypatch.setattr(creator_micro_setup_controller, "begin_creator_micro_inspection", lambda target: start())
+    monkeypatch.setattr(creator_micro_setup_runtime, "begin_creator_micro_inspection", lambda target: start())
 
     with pytest.raises(CommandError) as refused:
         deck._core_deck_inspect()

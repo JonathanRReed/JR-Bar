@@ -291,18 +291,9 @@ def system_is_away(idle_seconds: float = AWAY_IDLE_SECONDS) -> bool:
     for ``idle_seconds``. Only reads: it posts no input. When the answer
     cannot be had, the Mac is not called away."""
     try:
-        import Quartz  # type: ignore[import-not-found]
-    except ImportError:
-        return False
-    try:
-        session = Quartz.CGSessionCopyCurrentDictionary()
-        if session and bool(session.get("CGSSessionScreenIsLocked", False)):
-            return True
-        idle = Quartz.CGEventSourceSecondsSinceLastEventType(
-            Quartz.kCGEventSourceStateCombinedSessionState,
-            Quartz.kCGAnyInputEventType,
-        )
-        return float(idle) >= idle_seconds
+        from .native_displays import user_is_away
+
+        return user_is_away(idle_seconds)
     except Exception:
         return False
 

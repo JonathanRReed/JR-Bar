@@ -1,0 +1,29 @@
+{
+  "python": {
+    "passed": 15760,
+    "subtests_passed": 15,
+    "warnings": 4,
+    "seconds": 927.92,
+    "command": "PYTHONPATH=$PWD/src /path/to/JR-Bar/.venv/bin/python -m pytest -q"
+  },
+  "swift": {
+    "passed_by_target": [
+      106,
+      67,
+      1389,
+      4394
+    ],
+    "total_reported": 5956,
+    "command": "env -u JRBAR_INTERACTIVE_TESTS swift test --no-parallel"
+  },
+  "focused_history": {
+    "passed": 45
+  },
+  "native_smoke": {
+    "passed": 133
+  },
+  "fast_gate": {
+    "passed": true,
+    "seconds": 35.01
+  }
+}

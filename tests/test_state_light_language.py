@@ -482,9 +482,9 @@ def test_a_waiting_agent_beats_while_a_working_one_chases__and_1_more() -> None:
     from datetime import timedelta
 
     from jrbar.collector import MonitorSnapshot, aggregate_status
+    from jrbar.daemon_controller import settled_completion_display_mode
     from jrbar.models import AgentMode
     from jrbar.operator_state import COMPLETED_GLOW_SECONDS
-    from jrbar.status_bar_legacy import settled_completion_display_mode
 
     finished = datetime(2026, 8, 20, 18, 0, 0, tzinfo=timezone.utc)
     done = AgentStatus(

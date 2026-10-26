@@ -47,24 +47,9 @@ def _bind() -> None:
     """
     global _error
     try:
-        # A run loop with no sources makes CFRunLoopRunInMode return
-        # kCFRunLoopRunFinished instantly -- the pump would spin at a
-        # full core. An empty mach port is the classic keep-alive: one
-        # permanent source, never firing, so the loop truly sleeps
-        # between matching callbacks. Resolve it BEFORE binding: if
-        # PyObjC is absent the pump must fall back now, not fail after
-        # ``_ready`` and leave a dying thread bound.
-        try:
-            from Foundation import (  # type: ignore[import-not-found]
-                NSDate,
-                NSDefaultRunLoopMode,
-                NSMachPort,
-                NSRunLoop,
-            )
+        from .native_run_loop import Pump
 
-            pump = "nsrunloop"
-        except ImportError:
-            pump = "wait"
+        pump = Pump()
 
         import hid  # type: ignore[import-not-found]
 
@@ -76,23 +61,11 @@ def _bind() -> None:
         _ready.set()
         return
     _ready.set()
-    if pump == "nsrunloop":
-        loop = NSRunLoop.currentRunLoop()
-        # The port is retained by the loop while scheduled; the local
-        # stays referenced here so nothing collects the source.
-        keepalive = NSMachPort.port()
-        loop.addPort_forMode_(keepalive, NSDefaultRunLoopMode)
+    try:
         while not _stop.is_set():
-            loop.runMode_beforeDate_(
-                NSDefaultRunLoopMode,
-                NSDate.dateWithTimeIntervalSinceNow_(PUMP_WAKE_SECONDS),
-            )
-    else:
-        # No run-loop machinery: the binding alone still prevents the
-        # dead-run-loop crash (the thread never exits); device-matching
-        # callbacks just go unpumped, matching pre-affinity behaviour.
-        while not _stop.is_set():
-            _stop.wait(PUMP_WAKE_SECONDS)
+            pump.run(PUMP_WAKE_SECONDS)
+    finally:
+        pump.close()
 
 
 def ensure_hid_binding() -> None:

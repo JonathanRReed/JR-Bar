@@ -27,7 +27,7 @@ _SELECTORS = (
 
 
 def _default_workspace() -> object:
-    from AppKit import NSWorkspace
+    from .core_environment import Workspace as NSWorkspace
 
     return NSWorkspace.sharedWorkspace()
 

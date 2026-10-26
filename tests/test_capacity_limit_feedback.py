@@ -126,11 +126,11 @@ def test_capacity_session_keeps_failed_history_but_does_not_claim_live_failure_a
 def test_capacity_operator_event_cannot_bypass_the_normal_attention_filter():
     from jrbar.accessibility_display import AccessibilityDisplayPreferences
     from jrbar.attention import LifecycleMode, project_attention
+    from jrbar.daemon_controller import StatusBarController
     from jrbar.operator_state import CanonicalOperatorEvent, SemanticEventKey, TransitionKind, classify_operator_event
     from jrbar.presentation_policy import GlanceSemantic
     from jrbar.provider_facts import EventToken, ProviderWatermark, SourceFreshness, WatermarkBasis
     from jrbar.settings import AgentMonitorSettings
-    from jrbar.status_bar_legacy import StatusBarController
 
     limited = status()
     snapshot = SimpleNamespace(statuses=(limited,), stale_statuses=(),

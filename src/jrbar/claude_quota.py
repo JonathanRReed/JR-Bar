@@ -192,67 +192,6 @@ def credential_needs_sign_in(raw: object) -> bool:
     return has_refresh and not has_access
 
 
-_REDIRECT_GUARD_CLASS = None
-
-
-def _redirect_guard_class():
-    """Build the redirect delegate on first use.
-
-    Defined lazily so this module stays importable without PyObjC --
-    the parsers and reason codes here run in headless tests.
-    """
-    global _REDIRECT_GUARD_CLASS
-    if _REDIRECT_GUARD_CLASS is not None:
-        return _REDIRECT_GUARD_CLASS
-
-    import objc
-    from Foundation import NSObject
-
-    class _SameOriginRedirectGuard(NSObject):
-        """Refuse cross-origin redirects on a request carrying a bearer
-        token. A 30x to another host would hand the Authorization header
-        to whoever answered it. CodexBar's ProviderHTTPClient blocks
-        exactly this; urllib follows such redirects silently, which is
-        one more reason token requests do not belong on it.
-        """
-
-        def initWithOrigin_(self, origin):
-            this = objc.super(_SameOriginRedirectGuard, self).init()
-            if this is None:
-                return None
-            this._origin = tuple(origin)
-            return this
-
-        def URLSession_task_willPerformHTTPRedirection_newRequest_completionHandler_(
-            self, _session, _task, _response, request, handler
-        ):
-            try:
-                url = request.URL()
-                origin = (
-                    str(url.scheme() or ""),
-                    str(url.host() or ""),
-                    int(url.port().intValue()) if url.port() is not None else None,
-                )
-            except Exception:
-                handler(None)
-                return
-            handler(request if origin == self._origin else None)
-
-    _REDIRECT_GUARD_CLASS = _SameOriginRedirectGuard
-    return _REDIRECT_GUARD_CLASS
-
-
-def _origin_of(url: str) -> tuple:
-    from Foundation import NSURL
-
-    parsed = NSURL.URLWithString_(url)
-    return (
-        str(parsed.scheme() or ""),
-        str(parsed.host() or ""),
-        int(parsed.port().intValue()) if parsed.port() is not None else None,
-    )
-
-
 def request_via_apple_stack(
     url: str,
     *,
@@ -261,60 +200,13 @@ def request_via_apple_stack(
     body: bytes | None = None,
     timeout: float,
 ) -> tuple[int, bytes]:
-    """One HTTP round trip through NSURLSession, same-origin only.
+    """One bounded, ephemeral NSURLSession request with same-origin redirects."""
+    from .native_apple_http import request
 
-    Ephemeral configuration so a token response never reaches the
-    on-disk URL cache, and the timeout is set on the REQUEST as well as
-    the wait, so an expired wait does not leave a task running.
-    """
-    import threading
-
-    from Foundation import (
-        NSURL,
-        NSData,
-        NSMutableURLRequest,
-        NSURLSession,
-        NSURLSessionConfiguration,
-    )
-
-    request = NSMutableURLRequest.requestWithURL_(NSURL.URLWithString_(url))
-    request.setHTTPMethod_(method)
-    for key, value in headers.items():
-        request.setValue_forHTTPHeaderField_(value, key)
-    if body is not None:
-        request.setHTTPBody_(NSData.dataWithBytes_length_(body, len(body)))
-    request.setTimeoutInterval_(float(timeout))
-
-    guard = _redirect_guard_class().alloc().initWithOrigin_(_origin_of(url))
-    session = NSURLSession.sessionWithConfiguration_delegate_delegateQueue_(
-        NSURLSessionConfiguration.ephemeralSessionConfiguration(), guard, None
-    )
-    finished = threading.Event()
-    outcome: dict[str, object] = {}
-
-    def handler(data, response, error) -> None:
-        outcome["status"] = int(response.statusCode()) if response is not None else 0
-        outcome["body"] = bytes(data) if data is not None else b""
-        outcome["error"] = error is not None
-        finished.set()
-
-    task = session.dataTaskWithRequest_completionHandler_(request, handler)
-    task.resume()
     try:
-        if not finished.wait(max(1.0, float(timeout)) + 1.0):
-            try:
-                task.cancel()
-            except Exception:
-                pass
-            raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_NETWORK)
-        if outcome.get("error") or not outcome.get("status"):
-            raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_NETWORK)
-        return int(outcome["status"]), bytes(outcome["body"])
-    finally:
-        try:
-            session.finishTasksAndInvalidate()
-        except Exception:
-            pass
+        return request(url, method=method, headers=headers, body=body, timeout=timeout)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise ClaudeQuotaUnavailableError(CLAUDE_REMOTE_QUOTA_NETWORK) from exc
 
 
 def forget_installed_claude_version() -> None:

@@ -42,7 +42,7 @@ def test_urgent_refresh_cancels_trailing_wait_but_chatter_stays_coalesced():
 
 
 def test_urgent_hint_is_not_lost_behind_already_queued_chatter():
-    schedule = method('status_bar_legacy.py', 'schedule_event_refresh', {})
+    schedule = method('daemon_controller.py', 'schedule_event_refresh', {})
     calls = []
     target = SimpleNamespace(event_refresh_pending=False,
                              performSelectorOnMainThread_withObject_waitUntilDone_=lambda *args: calls.append(args))
@@ -79,7 +79,7 @@ def test_transcript_lifecycle_edges_bypass_coalescing_while_detail_changes_do_no
     import threading
     from types import MethodType
 
-    edge = method('status_bar_legacy.py', '_event_refresh_edge', {})
+    edge = method('daemon_controller.py', '_event_refresh_edge', {})
     apply = method('_status_bar_production.py', 'applyTranscriptFallbackBatch_',
                    dict(TranscriptFallbackBatch=SimpleNamespace))
     for change in ('start', 'stop', 'ask', 'detail'):
@@ -103,7 +103,7 @@ def test_transcript_lifecycle_edges_bypass_coalescing_while_detail_changes_do_no
 def test_success_logs_use_debug_and_do_not_write_stdout(caplog, capsys):
     import logging
 
-    debug = method('status_bar_legacy.py', 'log_status_bar_debug', {})
+    debug = method('daemon_controller.py', 'log_status_bar_debug', {})
     debug('quiet success')
     assert not caplog.records
     with caplog.at_level(logging.DEBUG, logger='jrbar.status'):

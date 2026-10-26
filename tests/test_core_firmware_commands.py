@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from jrbar import core_runtime, firmware_hold, status_bar_legacy
+from jrbar import core_runtime, daemon_controller, firmware_hold
 from jrbar.core_server import CommandError
 from jrbar.firmware_update import DeviceRef
 from tests.firmware_fakes import pro_status
@@ -80,7 +80,7 @@ def test_the_service_is_built_from_the_daemons_own_devices(daemon, tmp_path: Pat
     root.mkdir()
     (root / "STATUS.TXT").write_text(pro_status("1.0.2"))
     controller.status_bar_devices = lambda remember=True: [
-        SimpleNamespace(device_id=status_bar_legacy.VIRTUAL_DEVICE_ID, name="Screen Bar", root=tmp_path, connected=True),
+        SimpleNamespace(device_id=daemon_controller.VIRTUAL_DEVICE_ID, name="Screen Bar", root=tmp_path, connected=True),
         SimpleNamespace(device_id="SPP-000901", name="SidePulse Pro", root=root, connected=True),
     ]
     reply = controller._core_dispatch("firmware_status", {})

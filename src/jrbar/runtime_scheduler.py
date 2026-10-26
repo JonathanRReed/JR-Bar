@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum
 from typing import Final, Protocol
 
+from .daemon_loop import TimerFactory
+
 MAX_RUNTIME_PENDING_KEYS: Final = 32
 MAX_RUNTIME_KEY_BYTES: Final = 128
 MAX_RUNTIME_METRIC_COUNT: Final = 10_000
@@ -164,39 +166,6 @@ class _TimerFactory(Protocol):
     def register_timer(self, timer: object, *, common_modes: bool) -> None: ...
 
 
-class _LazyAppKitTimerFactory:
-    """Import Foundation only when the main-thread registry creates a timer."""
-
-    def create_timer(
-        self,
-        *,
-        delay: float,
-        interval: float | None,
-        target: object,
-        selector: str,
-        user_info: RuntimeFeature,
-    ) -> object:
-        from Foundation import NSDate, NSTimer
-
-        repeats = interval is not None
-        timer_interval = float(interval) if interval is not None else delay
-        timer = NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
-            timer_interval,
-            target,
-            selector,
-            user_info,
-            repeats,
-        )
-        if repeats and abs(delay - timer_interval) > 1e-9:
-            timer.setFireDate_(NSDate.dateWithTimeIntervalSinceNow_(delay))
-        return timer
-
-    def register_timer(self, timer: object, *, common_modes: bool) -> None:
-        from Foundation import NSDefaultRunLoopMode, NSRunLoop, NSRunLoopCommonModes
-
-        mode = NSRunLoopCommonModes if common_modes else NSDefaultRunLoopMode
-        NSRunLoop.mainRunLoop().addTimer_forMode_(timer, mode)
-
 
 def _assert_main_thread() -> None:
     if threading.current_thread() is not threading.main_thread():
@@ -248,7 +217,7 @@ class AppKitTimerRegistry:
         ):
             raise ValueError("invalid AppKit timer factory")
         self._handlers = copied_handlers
-        self._factory = timer_factory or _LazyAppKitTimerFactory()
+        self._factory = timer_factory or TimerFactory()
         self._assert_main = assert_main_thread
         self._monotonic = monotonic
         self._entries: dict[RuntimeFeature, _TimerEntry] = {}

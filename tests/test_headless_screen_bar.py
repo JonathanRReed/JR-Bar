@@ -155,13 +155,13 @@ def test_the_flags_the_controller_reconciles_after_pushing_still_publish() -> No
 
 
 def test_the_screen_bar_identity_the_controller_and_daemon_share() -> None:
-    from jrbar import status_bar_legacy
+    from jrbar import daemon_controller
 
     assert VIRTUAL_DEVICE_ID == "virtual:status-bar"
     assert VIRTUAL_DEVICE_NAME == "Screen Bar"
     assert LED_COUNT == 8
-    assert status_bar_legacy.VIRTUAL_DEVICE_ID == VIRTUAL_DEVICE_ID
-    assert status_bar_legacy.LED_COUNT == LED_COUNT
+    assert daemon_controller.VIRTUAL_DEVICE_ID == VIRTUAL_DEVICE_ID
+    assert daemon_controller.LED_COUNT == LED_COUNT
 
 
 def test_the_python_bars_drawing_modules_are_not_packaged() -> None:

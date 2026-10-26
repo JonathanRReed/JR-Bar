@@ -173,11 +173,11 @@ def test_liveness_candidates_do_not_retain_old_idle_or_completed_rows(monkeypatc
 
 def production_reap():
     # Execute the production method without importing its native UI host.
-    path = Path(__file__).parents[1] / "src/jrbar/status_bar_legacy.py"
+    path = Path(__file__).parents[1] / "src/jrbar/daemon_controller.py"
     tree = ast.parse(path.read_text())
     method = next(node for node in ast.walk(tree)
                   if isinstance(node, ast.FunctionDef) and node.name == "reap_dead_agent_processes")
-    namespace = {"__name__": "jrbar.status_bar_legacy", "__package__": "jrbar",
+    namespace = {"__name__": "jrbar.daemon_controller", "__package__": "jrbar",
                  "time": __import__("time"), "log_status_bar": lambda _: None,
                  "stale_after_seconds_for": lambda _: 300,
                  "expire_after_seconds_for": lambda _: 7200}

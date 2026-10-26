@@ -76,6 +76,7 @@ from .state_paths import default_state_dir
 
 CORE_VERSION: Final = __version__
 HOUSEKEEPING_SECONDS: Final = 1.0
+HOOK_BATCH_SECONDS: Final = 0.04
 SUPERVISION_SECONDS: Final = 2.0
 EXTRAS_TTL_SECONDS: Final = 30.0
 # How long after a session's last event the daemon keeps re-reading a
@@ -330,6 +331,7 @@ _VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
     ),
     "lights": (
         ("now",),
+        ("generation",),
         # A duration that grows every second, not a stamp: a client that
         # prints it as received shows the value of the last broadcast.
         ("surfaces", "*", "why_detail", "seconds_in_state"),
@@ -582,7 +584,7 @@ NSApp: Any = None
 def _timer_api():
     if NSTimer is not None:
         return NSTimer
-    from Foundation import NSTimer as timer
+    from .daemon_loop import Timer as timer
 
     return timer
 
@@ -590,9 +592,9 @@ def _timer_api():
 def _application():
     if NSApp is not None:
         return NSApp
-    from AppKit import NSApp as application
+    from .daemon_loop import application
 
-    return application
+    return application()
 
 
 def _schedule_timer(interval: float, target, selector: str, repeats: bool):
@@ -2127,7 +2129,7 @@ def _cmd_list_lid_presets(self, args):
     """Every lid look for Effect Studio's Lid moments, drawn for the Pro and
     the Dot, with the one each transition plays now."""
     from . import lid_presets
-    from .status_bar_legacy import lid_accent_color
+    from .daemon_controller import lid_accent_color
 
     return lid_presets.lid_presets_document(self.settings, accent=lid_accent_color(self))
 
@@ -2529,7 +2531,12 @@ def _usage_history_warm_later(self) -> None:
         try:
             while self.settings.token_history_enabled and not service.stopping.is_set():
                 from .core_usage_history import HISTORY_PROVIDERS
-                service.warm(HISTORY_PROVIDERS)
+
+                selected = set(self.settings.usage_graph_providers)
+                snapshot = getattr(self, "last_snapshot", None)
+                if snapshot is not None:
+                    selected.update(status.provider for status in snapshot.statuses)
+                service.warm(provider for provider in HISTORY_PROVIDERS if provider in selected)
                 if service.stopping.wait(60.0):
                     return
         except Exception as error:
@@ -3253,7 +3260,7 @@ def _firmware_service_of(self):
     Built on first use; it does nothing until a command asks."""
     service = getattr(self, "_jrbar_firmware", None)
     if service is None:
-        from . import status_bar_legacy as legacy
+        from . import daemon_controller as legacy
         from .device_writer import discover_devices
         from .firmware_update import DeviceRef, FirmwareService
 
@@ -3546,6 +3553,13 @@ def _cmd_presence(self, args):
     from . import core_power
 
     return core_power.set_presence(self, args)
+
+
+@command("environment")
+def _cmd_environment(self, args):
+    from .core_environment import report
+
+    return report(self, args)
 
 
 # --- light controls that lived only in the legacy window (jrbar.core_lights) ---
@@ -4727,7 +4741,7 @@ def _cmd_deck_plan_keymap(self, args):
 
 @command("deck_apply_keymap", main_thread=False)
 def _cmd_deck_apply_keymap(self, args):
-    from .creator_micro_setup_controller import SetupPreview, begin_creator_micro_apply
+    from .creator_micro_setup_runtime import SetupPreview, begin_creator_micro_apply
 
     profile, layer, include_auxiliary = _deck_plan_args(args)
     layers = _deck_layers_arg(args)
@@ -4748,7 +4762,7 @@ def _cmd_deck_apply_keymap(self, args):
 
 @command("deck_restore_keymap", main_thread=False)
 def _cmd_deck_restore_keymap(self, args):
-    from .creator_micro_setup_controller import begin_creator_micro_restore
+    from .creator_micro_setup_runtime import begin_creator_micro_restore
 
     # The confirmation is the app's; the daemon never runs the alert.
     result = self._core_deck_run_setup(lambda: begin_creator_micro_restore(self, confirm=lambda: True))
@@ -4953,10 +4967,7 @@ def _freeze_launch_heap() -> None:
 
 def build_headless_controller_class() -> type:
     """Subclass the composed production controller for headless service."""
-    import objc
-    from AppKit import NSApplicationActivationPolicyAccessory
-
-    from . import status_bar_legacy as legacy
+    from . import daemon_controller as legacy
 
     base = legacy.StatusBarController
     cached = _CLASS_CACHE.get(base)
@@ -4965,6 +4976,48 @@ def build_headless_controller_class() -> type:
 
     class JRCoreHeadlessController(base):
         headless = True
+
+        def schedule_event_refresh(self, *, urgent: bool = False) -> None:
+            if urgent:
+                self._event_refresh_urgent = True
+            if self.event_refresh_pending or getattr(self, "_runtime_termination_started", False):
+                return
+            self.event_refresh_pending = True
+            try:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_("coreArmEventRefresh:", None, False)
+            except Exception:
+                self.event_refresh_pending = False
+
+        def coreArmEventRefresh_(self, _payload):
+            if self._core_event_refresh_timer is None:
+                try:
+                    self._core_event_refresh_timer = _schedule_timer(HOOK_BATCH_SECONDS, self, "coreFlushEventRefresh:", False)
+                except Exception:
+                    self.event_refresh_pending = False
+                    raise
+
+        def coreFlushEventRefresh_(self, _timer):
+            self._core_event_refresh_timer = None
+            if self.event_refresh_pending:
+                self.refreshFromEvent_(None)
+            else:
+                self._event_refresh_urgent = False
+
+        def _install_dnd_environment_observers(self):
+            from .core_environment import EnvironmentFallback
+
+            self._core_environment_fallback = EnvironmentFallback(self)
+
+        def _remove_dnd_environment_observers(self):
+            fallback = getattr(self, "_core_environment_fallback", None)
+            if fallback is not None:
+                fallback.close()
+            super()._remove_dnd_environment_observers()
+
+        def _install_accessibility_display_observer(self):
+            self._apply_accessibility_display_preferences(
+                legacy.refresh_accessibility_display_preferences(self._accessibility_display_preferences)
+            )
 
         # -- settings with a generation --------------------------------------
 
@@ -5021,7 +5074,7 @@ def build_headless_controller_class() -> type:
         # -- construction ----------------------------------------------------
 
         def init(self):
-            self = objc.super(JRCoreHeadlessController, self).init()
+            self = super().init()
             if self is None:
                 return None
             self.notification_client = HeadlessNotificationClient()
@@ -5083,6 +5136,7 @@ def build_headless_controller_class() -> type:
             # look: the file is set aside only if the next look finds it
             # unchanged (an editor's save may still be in progress).
             self._core_settings_unsettled: tuple[int, int] | None = None
+            self._core_settings_watcher = None
             # The last refusal logged, so one that can never succeed is said
             # once, not on every refresh.
             self._core_settings_refusal: str | None = None
@@ -5096,6 +5150,7 @@ def build_headless_controller_class() -> type:
             # holds live hooks behind it (hook_pending).
             self._core_backlog_gate: threading.Event | None = None
             self._core_housekeeping_timer = None
+            self._core_event_refresh_timer = None
             self._core_supervision_timer = None
             self._core_last_stage_event = 0
             # Linked Pro + Dot: the Dot request riding on the Pro's worker
@@ -5196,7 +5251,6 @@ def build_headless_controller_class() -> type:
 
         def _core_launch(self) -> None:
             self._core_launch_started = time.monotonic()
-            _application().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
             self.load_operator_local_state()
             self.trim_oversized_state_logs()
             legacy.log_status_bar("core: launching headless")
@@ -5253,6 +5307,14 @@ def build_headless_controller_class() -> type:
             # The Screen Bar is the app's; the daemon only computes its program.
             self.virtual_status_device.hide()
             self._core_pending_drainer.start()
+            from .integration_settings import default_integration_settings_path
+            from .provider_browser_consent import default_browser_consent_path
+            from .provider_usage_settings import default_provider_usage_settings_path
+            from .settings import settings_file_path
+            from .settings_watch import SettingsWatcher
+
+            self._core_settings_watcher = SettingsWatcher((settings_file_path(), default_integration_settings_path(),
+                default_browser_consent_path(), default_provider_usage_settings_path()))
             self._core_housekeeping_timer = _schedule_timer(HOUSEKEEPING_SECONDS, self, "coreHousekeepingTick:", True)
             self._core_start_watchdog()
             if os.environ.get("JRBAR_SUPERVISED") == "1":
@@ -5288,7 +5350,6 @@ def build_headless_controller_class() -> type:
                 return
             self._core_watchdog = watchdog
 
-        @objc.IBAction
         def coreWatchdogPong_(self, _payload) -> None:
             watchdog = self._core_watchdog
             if watchdog is not None:
@@ -5358,7 +5419,7 @@ def build_headless_controller_class() -> type:
                 return None
             self._core_stop_server()
             try:
-                return objc.super(JRCoreHeadlessController, self).applicationWillTerminate_(notification)
+                return super().applicationWillTerminate_(notification)
             finally:
                 self._core_quit_flush()
 
@@ -5421,25 +5482,27 @@ def build_headless_controller_class() -> type:
             legacy.log_status_bar(f"core: quit: strips off: {', '.join(written) or 'none mounted'}")
             return written
 
-        @objc.IBAction
         def quit_(self, _sender):
             self.closed_lid_awake.release()
             self.keep_awake.release()
             _application().terminate_(self)
 
-        @objc.IBAction
         def coreQuit_(self, _sender):
             self.quit_(None)
 
-        @objc.IBAction
         def coreSupervisionTick_(self, _timer):
             if os.getppid() == 1:
                 legacy.log_status_bar("core: supervisor vanished; exiting")
                 self.quit_(None)
 
-        @objc.IBAction
         def coreHousekeepingTick_(self, _timer):
             now = time.monotonic()
+            fallback = getattr(self, "_core_environment_fallback", None)
+            if fallback is not None:
+                try:
+                    fallback.tick(self._core is not None and self._core.environment_reporter_connected)
+                except Exception:
+                    legacy.log_status_bar(f"core: native environment fallback failed: {traceback.format_exc(limit=3)}")
             expired = [name for name, preview in self._core_previews.items() if preview.until_monotonic <= now]
             for name in expired:
                 self._core_previews.pop(name, None)
@@ -5455,7 +5518,9 @@ def build_headless_controller_class() -> type:
             if now - self._core_deck_probe_at >= DECK_PROBE_SECONDS:
                 self._core_deck_probe_now()
             try:
-                self._core_seal_watch()
+                watcher = self._core_settings_watcher
+                if watcher is None or watcher.changed(now=now):
+                    self._core_seal_watch()
             except Exception:
                 legacy.log_status_bar(f"core: settings seal watch failed: {traceback.format_exc(limit=3)}")
 
@@ -5522,11 +5587,9 @@ def build_headless_controller_class() -> type:
                 controller.last_attempt_monotonic = 0.0
             return bool(done)
 
-        @objc.IBAction
         def corePublishState_(self, _payload):
             self._core_publish_state()
 
-        @objc.IBAction
         def coreClientsChanged_(self, count):
             try:
                 clients = int(count)
@@ -5551,7 +5614,6 @@ def build_headless_controller_class() -> type:
             # Banners are the app's: the ledger and ask events carry the facts.
             return False
 
-        @objc.IBAction
         def hooksUpdated_(self, payload):
             self.hooks_update_in_flight = False
             if not payload.get("ok"):
@@ -5563,7 +5625,6 @@ def build_headless_controller_class() -> type:
 
         # -- emission seams ----------------------------------------------------
 
-        @objc.IBAction
         def refresh_(self, sender):
             if scene_leases.leases(self).expire():
                 self._core_publish_settings()
@@ -5602,7 +5663,7 @@ def build_headless_controller_class() -> type:
             # build, per admitted tick.
             self._core_in_refresh = True
             try:
-                result = objc.super(JRCoreHeadlessController, self).refresh_(sender)
+                result = super().refresh_(sender)
             finally:
                 self._core_in_refresh = False
             if getattr(self, "_core", None) is None:
@@ -5666,7 +5727,7 @@ def build_headless_controller_class() -> type:
             return bool(value and value > 0)
 
         def record_activity_entries(self, entries) -> None:
-            objc.super(JRCoreHeadlessController, self).record_activity_entries(entries)
+            super().record_activity_entries(entries)
             if getattr(self, "_core", None) is None:
                 return
             for entry in entries or ():
@@ -5697,7 +5758,7 @@ def build_headless_controller_class() -> type:
         def apply_escalation(self, *, allow_refresh: bool = False) -> None:
             previous_stage = getattr(self, "escalation_last_stage", 0)
             previous_chimed = getattr(self, "escalation_chimed", False)
-            objc.super(JRCoreHeadlessController, self).apply_escalation(allow_refresh=allow_refresh)
+            super().apply_escalation(allow_refresh=allow_refresh)
             if getattr(self, "_core", None) is None:
                 return
             stage = getattr(self, "escalation_last_stage", 0)
@@ -5715,7 +5776,7 @@ def build_headless_controller_class() -> type:
                 self._core_publish_state()
 
         def _dnd_projection_changed(self, projection) -> None:
-            objc.super(JRCoreHeadlessController, self)._dnd_projection_changed(projection)
+            super()._dnd_projection_changed(projection)
             self._core_publish_state()
 
         # -- power: the lease, the thermal governor, sleep on release -----------
@@ -5730,7 +5791,7 @@ def build_headless_controller_class() -> type:
                 core_power.before_keep_awake_sync(self)
             except Exception:
                 legacy.log_status_bar(f"core: power environment failed: {traceback.format_exc(limit=3)}")
-            objc.super(JRCoreHeadlessController, self).sync_keep_awake(mode)
+            super().sync_keep_awake(mode)
             try:
                 core_power.after_keep_awake_sync(self)
             except Exception:
@@ -5739,7 +5800,7 @@ def build_headless_controller_class() -> type:
         def low_power_active(self, battery_snapshot) -> bool:
             """The charge threshold, or the time left: a fast drain at 20% can
             be closer to empty than a slow one at 8% (jrbar.core_power)."""
-            if objc.super(JRCoreHeadlessController, self).low_power_active(battery_snapshot):
+            if super().low_power_active(battery_snapshot):
                 return True
             try:
                 from . import core_power
@@ -5754,7 +5815,7 @@ def build_headless_controller_class() -> type:
             """The legacy stage, adjusted for whether anyone can see it: held
             at the light on a call, past the invisible menu-bar pulse while the
             screen is locked (jrbar.presence, signals.presence_escalation_stage)."""
-            stage = objc.super(JRCoreHeadlessController, self).current_escalation_stage()
+            stage = super().current_escalation_stage()
             try:
                 from . import core_power
 
@@ -5771,7 +5832,7 @@ def build_headless_controller_class() -> type:
                 legacy.log_status_bar(f"core: presence expiry failed: {traceback.format_exc(limit=3)}")
 
         def sync_virtual_status_device(self, *args, **kwargs) -> None:
-            objc.super(JRCoreHeadlessController, self).sync_virtual_status_device(*args, **kwargs)
+            super().sync_virtual_status_device(*args, **kwargs)
             self._core_publish_lights()
 
         def _core_new_linked_sync(self):
@@ -5785,7 +5846,7 @@ def build_headless_controller_class() -> type:
             return LinkedSync(DeviceClocks(path))
 
         def _core_note_hardware_write(self, command, result) -> None:
-            objc.super(JRCoreHeadlessController, self)._apply_hardware_write_result(command, result)
+            super()._apply_hardware_write_result(command, result)
             try:
                 request = getattr(result, "request", None)
                 write = getattr(result, "write", None)
@@ -6343,7 +6404,7 @@ def build_headless_controller_class() -> type:
             # Not the linked write path (no role drives it, or the role
             # could not plan): a queued re-anchor is spent here too.
             self._core_linked_drop_force(request)
-            return objc.super(JRCoreHeadlessController, self)._sync_hardware_device(request)
+            return super()._sync_hardware_device(request)
 
         def _core_linked_check_reanchor(self, request):
             """The closed loop's re-anchor while Check sync holds the Dot, on
@@ -6613,7 +6674,7 @@ def build_headless_controller_class() -> type:
                 # until the next coupled write lands clean, the Dot keeps
                 # its own anchor in the lights document.
                 self._core_linked_pair_ok = False
-                return objc.super(JRCoreHeadlessController, self)._submit_hardware_write_requests(requests, now)
+                return super()._submit_hardware_write_requests(requests, now)
             command = self._hardware_write_command(pro, now)
             self._core_linked_companion = (command.key, command.generation, dot)
             # The Dot's own pending command (from an unlinked refresh) must
@@ -6628,7 +6689,7 @@ def build_headless_controller_class() -> type:
                     self._hardware_write_worker.submit(self._hardware_write_command(request, now))
 
         def _execute_hardware_write_command(self, command):
-            result = objc.super(JRCoreHeadlessController, self)._execute_hardware_write_command(command)
+            result = super()._execute_hardware_write_command(command)
             companion = self._core_linked_companion
             if companion is None or companion[0] != command.key or companion[1] != command.generation:
                 return result
@@ -6869,7 +6930,7 @@ def build_headless_controller_class() -> type:
                 self._core_deck_setup_done.set()
 
         def _core_apply_setup_result(self, result) -> None:
-            from .creator_micro_setup_controller import SetupPreview, SetupResult
+            from .creator_micro_setup_runtime import SetupPreview, SetupResult
 
             self._creator_micro_setup_busy = False
             if (
@@ -7099,7 +7160,7 @@ def build_headless_controller_class() -> type:
         def _core_deck_inspect(self):
             """The inspected keymap (a ``SetupPreview``), reading the device
             when the cached one is older than ``DECK_INSPECTION_TTL_SECONDS``."""
-            from .creator_micro_setup_controller import SetupPreview, begin_creator_micro_inspection
+            from .creator_micro_setup_runtime import SetupPreview, begin_creator_micro_inspection
 
             cached = self._core_deck_inspection
             if cached is not None and time.monotonic() - cached[0] < DECK_INSPECTION_TTL_SECONDS:
@@ -7454,6 +7515,10 @@ def build_headless_controller_class() -> type:
             )
 
         def _core_stop_server(self) -> None:
+            watcher = getattr(self, "_core_settings_watcher", None)
+            self._core_settings_watcher = None
+            if watcher is not None:
+                watcher.close()
             watchdog = getattr(self, "_core_watchdog", None)
             self._core_watchdog = None
             if watchdog is not None:
@@ -7472,7 +7537,7 @@ def build_headless_controller_class() -> type:
                     serve_server.server_close()
                 except Exception:
                     pass
-            for name in ("_core_housekeeping_timer", "_core_supervision_timer"):
+            for name in ("_core_housekeeping_timer", "_core_supervision_timer", "_core_event_refresh_timer"):
                 timer = getattr(self, name, None)
                 setattr(self, name, None)
                 if timer is not None:
@@ -7512,7 +7577,6 @@ def build_headless_controller_class() -> type:
                 raise box.error
             return box.result
 
-        @objc.IBAction
         def runCoreCommand_(self, box):
             spec = _MAIN_THREAD_COMMANDS.get(box.name)
             self._core_command_in_flight = box.name
@@ -7528,7 +7592,6 @@ def build_headless_controller_class() -> type:
             finally:
                 self._core_command_in_flight = None
 
-        @objc.IBAction
         def runCoreCallable_(self, box):
             try:
                 box.result = box.callable()
@@ -8016,7 +8079,6 @@ def build_headless_controller_class() -> type:
             except Exception:
                 pass
 
-        @objc.IBAction
         def coreProcessTableRefreshed_(self, _payload) -> None:
             """A newer process table landed: rows that were waiting for their
             pid in it are looked up again on the next state build."""
@@ -8895,7 +8957,7 @@ def build_headless_controller_class() -> type:
                 # (completion, failure, calendar...) renders at the SIGNAL
                 # plan -- no backlight term, cutting through idle, sleep and
                 # night dims -- times its style's intensity, the way the
-                # bar's own render does (status_bar_legacy
+                # bar's own render does (daemon_controller
                 # ``_sync_hardware_device``). The ambient code played an
                 # idle-time completion at ~25% beside a full-bright strip.
                 # The mirrored N over the strip's signal plan is that
@@ -9001,6 +9063,14 @@ def build_headless_controller_class() -> type:
                 dot_link=self._core_dot_link(dot_connected, strip_connected, dot_role),
                 auto_dim=auto_dim,
             )
+            from .write_health import health_document
+
+            document["generation"] = self._core_lights_generation + 1
+            document["device_write_health"] = {
+                device.device_id: health_document(str(device.target.parent))
+                for device in devices
+                if device.device_id != legacy.VIRTUAL_DEVICE_ID and device.target is not None
+            }
             receipts = self._core_device_receipts(devices)
             if receipts:
                 document["device_receipts"] = receipts
@@ -9249,7 +9319,7 @@ def build_headless_controller_class() -> type:
 
 
 def _install_log_mirror(get_server: Callable[[], CoreServer | None]) -> None:
-    from . import status_bar_legacy as legacy
+    from . import daemon_controller as legacy
 
     original = legacy.log_status_bar
 
@@ -9273,7 +9343,7 @@ def build_core_parser() -> argparse.ArgumentParser:
 
 def run_core(argv: list[str] | None = None) -> int:
     args = build_core_parser().parse_args(argv)
-    from . import status_bar_legacy as legacy_module
+    from . import daemon_controller as legacy_module
 
     # First of all: take the secret the supervising app put on our stdin pipe
     # (or note that there is none) before anything can start a child that
@@ -9333,15 +9403,14 @@ def run_core(argv: list[str] | None = None) -> int:
         print("jrbar core: another JR-Bar (core or status bar) already owns the event socket; exiting.", file=sys.stderr)
         return 2
 
-    from AppKit import NSApplication
-
     from .application_composition import compose_status_bar_application
+    from .daemon_loop import application as daemon_application
     from .migration import run_startup_migration
 
     run_startup_migration()
     compose_status_bar_application()
     controller_class = build_headless_controller_class()
-    application = NSApplication.sharedApplication()
+    application = daemon_application()
     # Before the controller loads the settings: every read of settings.json in
     # this process goes through the seal (settings_seal.py).
     from .settings import install_document_seal, settings_file_path

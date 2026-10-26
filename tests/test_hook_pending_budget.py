@@ -557,6 +557,6 @@ def test_the_launch_bounds_its_drain_and_hands_the_ingress_the_hold(
 
 def test_the_legacy_ingress_start_hands_the_service_the_launch_hold() -> None:
     """The service the daemon builds reads the hold the launch made."""
-    source = (Path(__file__).resolve().parents[1] / "src" / "jrbar" / "status_bar_legacy.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "src" / "jrbar" / "daemon_controller.py").read_text()
     start = source.split("def start_hook_ingress(self)", 1)[1].split("\n    def ", 1)[0]
     assert 'hold_until=getattr(self, "_core_backlog_gate", None)' in start

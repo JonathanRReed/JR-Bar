@@ -1,6 +1,6 @@
 """Stable production layer for JR-Bar's historical AppKit controller.
 
-The retained controller in ``status_bar_legacy`` remains the compatibility
+The retained controller in ``daemon_controller`` remains the compatibility
 runtime while production boundaries are extracted into small, testable
 modules, and ``JRStatusBarController`` is the production subclass of it.
 ``jrbar.status_bar`` is the public name that forwards to both. Runtime
@@ -13,7 +13,7 @@ from __future__ import annotations
 import threading
 import time
 
-from . import status_bar_legacy as _legacy
+from . import daemon_controller as _legacy
 from .ambient_effect_consumer import (
     active_hardware_ambient_presentation,
     active_screen_bar_ambient_presentation,
@@ -42,7 +42,7 @@ from .why_light_runtime import project_current_why_light_context
 EVENT_COALESCE_SECONDS = _legacy.EVENT_REFRESH_FLOOR_SECONDS
 FULL_REFRESH_HEARTBEAT_SECONDS = _legacy.STATUS_BAR_REFRESH_SECONDS
 
-_LegacyStatusBarController = _legacy._AppKitStatusBarController
+_LegacyStatusBarController = _legacy._DaemonController
 
 
 def _terminate_controller(controller, notification, *, legacy_terminate=None):
@@ -233,7 +233,6 @@ else:
             except Exception:
                 return
 
-        @_legacy.objc.IBAction
         def applyBatteryObservation_(self, observation) -> None:
             if not isinstance(observation, BatteryObservation):
                 return
@@ -274,7 +273,6 @@ else:
             except Exception:
                 return
 
-        @_legacy.objc.IBAction
         def applyTranscriptFallbackBatch_(self, batch) -> None:
             if not isinstance(batch, TranscriptFallbackBatch):
                 return
@@ -368,7 +366,6 @@ else:
             except Exception:
                 return
 
-        @_legacy.objc.IBAction
         def applyIntakeProbeResult_(self, result) -> None:
             if not isinstance(result, IntakeProbeResult):
                 return
@@ -457,7 +454,6 @@ else:
             except Exception:
                 return
 
-        @_legacy.objc.IBAction
         def applyLedgerPublishResult_(self, result) -> None:
             if not isinstance(result, LedgerPublishResult):
                 return
@@ -698,7 +694,6 @@ else:
                 }
             )
 
-        @_legacy.objc.IBAction
         def refresh_(self, sender):
             # Any completed refresh satisfies pending event wake-ups, no
             # matter which path invoked it; without this, a dropped
@@ -775,7 +770,6 @@ else:
                     except Exception:
                         pass
 
-        @_legacy.objc.IBAction
         def refreshFromEvent_(self, _sender):
             self.event_refresh_pending = False
             now = time.monotonic()
@@ -804,7 +798,6 @@ else:
             self._last_event_refresh_at = now
             self.refresh_(None)
 
-        @_legacy.objc.IBAction
         def trailingRefreshFire_(self, _timer):
             self._trailing_refresh_timer = None
             self._last_event_refresh_at = time.monotonic()

@@ -790,3 +790,14 @@ persistent hour/day/model index and shared range views. JR-Bar retains its
 own transcript parsers, guarded resume offsets, Codex lineage rules and
 pricing. SQLite transactions update deduplicated records and buckets together.
 No upstream code or assets were copied.
+
+### Process launch identity, 2026-10-26
+
+Reviewed Apple's [XNU process-argument query](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_sysctl.c),
+commit `f6217f891ac0bb64f3d375211650a4c1ff8ca1ea`, under APSL 2.0,
+and the [Darwin ps command reader](https://github.com/apple-oss-distributions/adv_cmds/blob/6bed8737a34dbb54782a18f47dccf933a9967a12/ps/print.c),
+commit `6bed8737a34dbb54782a18f47dccf933a9967a12`, under its BSD licence.
+The query returns the top of the argument area when the buffer is short,
+so JR-Bar queries the required size before decoding the saved launch path.
+It keeps that path separate from libproc's resolved executable and erases
+the transient argument buffer. No source code was copied.

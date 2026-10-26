@@ -1,0 +1,84 @@
+{
+  "duration_seconds": 60.0,
+  "sessions": 3,
+  "tracing": true,
+  "cpu_percent": 2.8954433333333327,
+  "cpu_seconds": 1.7372659999999998,
+  "rss_mean_mb": 132.21794181034483,
+  "rss_max_mb": 143.1875,
+  "heap_max_mb": 43.8379545211792,
+  "messages_per_minute": {
+    "state_delta": 21.0,
+    "log": 16.0,
+    "event": 9.0,
+    "lights": 22.0
+  },
+  "bytes_per_minute": {
+    "state_delta": 30765.0,
+    "log": 2384.0,
+    "event": 2159.0,
+    "lights": 53504.0
+  },
+  "loop_max_ms": 6.339541985653341,
+  "loop_samples": 58,
+  "loop_over_250ms": 0,
+  "framework_modules": [],
+  "hook_admissions": {
+    "HookIngressDisposition.ACCEPTED": 54
+  },
+  "max_visible_sessions": 3,
+  "errors": [],
+  "source_sha256": "fd8ed1c26bb4032c1388ab162dbb29b96022d35a024b4eed9faaf9b73bb92241",
+  "spawn_counts": {
+    "touch": 1
+  },
+  "framework_images": [],
+  "blocked_probe_attempts": {
+    "ioreg": 12,
+    "caffeinate": 31
+  },
+  "startup_ready_seconds": 3.567448083020281,
+  "performance": {
+    "metrics": {
+      "hardware_render": {
+        "count": 40,
+        "p50_ms": 4.023,
+        "p95_ms": 29.916,
+        "max_ms": 62.181,
+        "outcomes": {
+          "ok": 40
+        }
+      },
+      "refresh": {
+        "count": 45,
+        "p50_ms": 6.917,
+        "p95_ms": 43.072,
+        "max_ms": 111.729,
+        "outcomes": {
+          "ok": 45
+        }
+      },
+      "refresh_skipped": {
+        "count": 3,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "max_ms": 0.0,
+        "outcomes": {
+          "noop": 3
+        }
+      }
+    },
+    "cpu": {
+      "user_s": 6.464,
+      "system_s": 0.64,
+      "percent_since_last": null
+    },
+    "frames": {
+      "state_generation": 47,
+      "lights_generation": 34,
+      "state_per_minute": 21,
+      "lights_per_minute": 22
+    }
+  },
+  "source_commit": "f9bf20ede8ad59752babcac8ae31f96cff5c44e1"
+}

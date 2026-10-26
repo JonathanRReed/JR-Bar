@@ -116,7 +116,7 @@ def test_escalation_urgency_calls_the_stage_reader__and_2_more() -> None:
         path.read_text(encoding="utf-8")
         for path in (
             *STATUS_BAR_FILES,
-            ROOT / "src" / "jrbar" / "status_bar_legacy.py",
+            ROOT / "src" / "jrbar" / "daemon_controller.py",
         )
     )
 

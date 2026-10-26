@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 from test_jrbar import isolate_controller
 
+from jrbar.daemon_controller import StatusBarDevice
 from jrbar.settings import AgentMonitorSettings
-from jrbar.status_bar_legacy import StatusBarDevice
 
 
 def _device() -> StatusBarDevice:

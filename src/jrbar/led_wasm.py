@@ -57,11 +57,11 @@ class RawSdLedWasmController:
     def __init__(self, led_count: int = 8, wasm_bytes: bytes | None = None):
         self.led_count = 2 if int(led_count) == 2 else 8
         try:
-            from JavaScriptCore import JSContext
+            from .javascript_runtime import JavaScriptContext
         except Exception as exc:  # pragma: no cover - exercised off macOS/PyObjC.
             raise LedWasmUnavailableError("JavaScriptCore is unavailable.") from exc
 
-        self.context = JSContext.alloc().init()
+        self.context = JavaScriptContext()
         wasm_base64 = base64.b64encode(wasm_bytes or load_packaged_wasm()).decode("ascii")
         self.context.evaluateScript_(_javascript_controller(wasm_base64))
         exception = self.context.exception()

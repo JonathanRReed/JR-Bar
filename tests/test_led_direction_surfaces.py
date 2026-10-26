@@ -32,7 +32,7 @@ def _comet() -> str:
 
 
 def _devices(controller):
-    from jrbar.status_bar_legacy import StatusBarDevice
+    from jrbar.daemon_controller import StatusBarDevice
 
     pro = StatusBarDevice(PRO, "SidePulse", Path("/Volumes/SidePulse"), Path("/Volumes/SidePulse/LEDS.LED"), True, "agent")
     dot = StatusBarDevice(DOT, "SidePulse Dot", Path("/Volumes/PulseDot"), Path("/Volumes/PulseDot/LEDS.LED"), True, "agent")

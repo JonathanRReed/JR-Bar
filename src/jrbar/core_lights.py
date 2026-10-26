@@ -179,7 +179,7 @@ def augment_lights_cues(controller: Any, document: dict[str, Any]) -> None:
 
 
 def _burn_targets(controller: Any, device: object) -> list[Any]:
-    from . import status_bar_legacy as legacy
+    from . import daemon_controller as legacy
 
     # The command runs off the main thread (an SD write can take seconds);
     # the device inventory is the controller's, so it is read there.

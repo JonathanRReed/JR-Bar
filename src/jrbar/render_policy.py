@@ -34,7 +34,7 @@ def runtime_render_environment(
     """Read public ProcessInfo power state with a fail-open fallback."""
     if process_info is None:
         try:
-            from Foundation import NSProcessInfo
+            from .native_process_info import ProcessInfo as NSProcessInfo
 
             process_info = NSProcessInfo.processInfo()
         except Exception:

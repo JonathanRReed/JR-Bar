@@ -403,6 +403,23 @@ def test_a_scan_thread_whose_priority_cannot_be_lowered_still_scans() -> None:
     assert service.document("claude", "30d", budget=0.0)["pending"] is False
 
 
+def test_warming_reuses_fresh_results_and_refreshes_when_they_age():
+    calls = []
+    clock = _Clock()
+    threads = _Threads()
+    service = _service(lambda provider, days: calls.append((provider, days)) or [], clock=clock, threads=threads)
+    service.warm(("claude",))
+    threads.settle()
+    clock.now += 59
+    service.warm(("claude",))
+    threads.settle()
+    assert calls == [("claude", 30)]
+    clock.now += 1
+    service.warm(("claude",))
+    threads.settle()
+    assert calls == [("claude", 30), ("claude", 30)]
+
+
 def test_a_scan_that_leaves_transcripts_unread_carries_on_pass_by_pass() -> None:
     now = datetime.now()
     gates = [threading.Event() for _ in range(3)]

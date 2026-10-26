@@ -429,11 +429,11 @@ def vscode_link_handled(*, monotonic: Callable[[], float] = time.monotonic) -> b
     if cached is not None and now - cached[0] < _VSCODE_HANDLER_TTL_SECONDS:
         return cached[1]
     try:
-        from AppKit import NSWorkspace
-        from Foundation import NSURL
+        from .native_applications import Workspace as NSWorkspace
+        from .native_applications import url
 
         handled = (
-            NSWorkspace.sharedWorkspace().URLForApplicationToOpenURL_(NSURL.URLWithString_("vscode://"))
+            NSWorkspace.sharedWorkspace().URLForApplicationToOpenURL_(url("vscode://"))
             is not None
         )
     except Exception:

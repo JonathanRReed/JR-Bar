@@ -316,7 +316,7 @@ def _interval_for(
 def _machine_is_constrained() -> bool:
     """Low Power Mode or serious thermal pressure, best effort."""
     try:
-        from Foundation import NSProcessInfo
+        from .native_process_info import ProcessInfo as NSProcessInfo
 
         info = NSProcessInfo.processInfo()
         if bool(info.isLowPowerModeEnabled()):

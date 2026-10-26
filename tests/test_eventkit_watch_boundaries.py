@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -98,7 +97,7 @@ def fake_eventkit(monkeypatch):
     monkeypatch.setattr(reminders_watch, "_eventkit", lambda: eventkit)
     monkeypatch.setattr(calendar_watch, "_shared_store", lambda: store)
     monkeypatch.setattr(reminders_watch, "_shared_store", lambda: store)
-    monkeypatch.setitem(sys.modules, "Foundation", SimpleNamespace(NSDate=FakeDate))
+    monkeypatch.setattr("jrbar.native_eventkit.Date", FakeDate)
     monkeypatch.setattr("time.time", lambda: NOW)
     yield store, status
     calendar_watch.forget_app_calendar_facts()
@@ -155,8 +154,8 @@ def test_invalid_windows_never_reach_eventkit(invalid, fake_eventkit):
 
 
 @pytest.mark.parametrize("watch", [calendar_watch, reminders_watch])
-def test_foundation_setup_failures_use_unavailable_contract(watch, monkeypatch):
-    monkeypatch.setitem(sys.modules, "Foundation", None)
+def test_native_date_setup_failures_use_unavailable_contract(watch, monkeypatch):
+    monkeypatch.setattr("jrbar.native_eventkit.Date", None)
     error = watch.CalendarUnavailableError if watch is calendar_watch else watch.RemindersUnavailableError
     with pytest.raises(error):
         if watch is calendar_watch:

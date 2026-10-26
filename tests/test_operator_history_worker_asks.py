@@ -24,10 +24,10 @@ _CLAUDE = SourceKey("claude", "hooks", "global", "live_agent_events")
 
 def _status_bar():
     try:
-        from jrbar import status_bar_legacy
+        from jrbar import daemon_controller
     except SystemExit as exit_:
         pytest.skip(str(exit_))
-    return status_bar_legacy
+    return daemon_controller
 
 
 def _snapshot(*asks: tuple[str | None, str]):

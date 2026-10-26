@@ -36,6 +36,7 @@ public enum CoreCodec {
     private enum CoreFrame: Decodable {
         case hello(CoreHello)
         case state(CoreState)
+        case stateDelta(CoreStateDelta)
         case lights(CoreLights)
         case event(CoreEvent)
         case settings(CoreSettings)
@@ -57,6 +58,7 @@ public enum CoreCodec {
                 switch type {
                 case "hello": self = .hello(try CoreHello(from: decoder))
                 case "state": self = .state(try CoreState(from: decoder))
+                case "state_delta": self = .stateDelta(try CoreStateDelta(from: decoder))
                 case "lights": self = .lights(try CoreLights(from: decoder))
                 case "event": self = .event(try CoreEvent(from: decoder))
                 case "settings": self = .settings(try CoreSettings(from: decoder))
@@ -73,6 +75,7 @@ public enum CoreCodec {
             switch self {
             case .hello(let payload): return .hello(payload)
             case .state(let payload): return .state(payload)
+            case .stateDelta(let payload): return .stateDelta(payload)
             case .lights(let payload): return .lights(payload)
             case .event(let payload): return .event(payload)
             case .settings(let payload): return .settings(payload)

@@ -34,6 +34,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from itertools import pairwise
 from typing import Final
 
@@ -121,6 +122,7 @@ _CURVES: Final[dict[str, Callable[[float], float]]] = {
 _FIT_EASINGS: Final = ("linear", "cosine", "ease", "ease-in", "ease-out", "ease-in-out")
 
 
+@lru_cache(maxsize=4096)
 def curve_weight(easing: str | None, fraction: float) -> float:
     """How far a transition has got toward its target, 0..1, the way the
     firmware plays it. A bare duration is ``ease``; ``none`` is already
@@ -132,6 +134,12 @@ def curve_weight(easing: str | None, fraction: float) -> float:
     if name == "pulse":
         return (1.0 - math.cos(2.0 * math.pi * position)) / 2.0
     return _CURVES.get(name, _CURVES["ease"])(position)
+
+
+_FIT_WEIGHTS: Final = tuple(
+    (easing, tuple(curve_weight(easing, sample / 24.0) for sample in range(1, 24)))
+    for easing in _FIT_EASINGS
+)
 
 
 # --- colour helpers ----------------------------------------------------------
@@ -270,14 +278,15 @@ def _fit(curve: _Curve, t0: float, t1: float) -> tuple[str, float, RGB, RGB]:
     whole = abs(t0 - curve.begin) < 1e-6 and abs(t1 - curve.end) < 1e-6
     if whole or curve.easing == "linear" or start == end:
         return (curve.easing if whole else "linear"), 0.0, start, end  # type: ignore[return-value]
+    truth = tuple(curve.at(t0 + (t1 - t0) * (sample / 24.0)) for sample in range(1, 24))
+    red, green, blue = start
+    dr, dg, db = (end[index] - start[index] for index in range(3))
     best = ("linear", float("inf"))
-    for easing in _FIT_EASINGS:
+    for easing, weights in _FIT_WEIGHTS:
         error = 0.0
-        for sample in range(1, 24):
-            fraction = sample / 24.0
-            truth = curve.at(t0 + (t1 - t0) * fraction)
-            guess = _mix(start, end, curve_weight(easing, fraction))  # type: ignore[arg-type]
-            error = max(error, max(abs(x - y) for x, y in zip(truth, guess)))
+        for actual, weight in zip(truth, weights):
+            error = max(error, abs(actual[0] - (red + dr * weight)),
+                        abs(actual[1] - (green + dg * weight)), abs(actual[2] - (blue + db * weight)))
             if error >= best[1]:
                 break
         if error < best[1]:

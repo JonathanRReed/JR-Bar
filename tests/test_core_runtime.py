@@ -446,6 +446,30 @@ def test_headless_fixture_keeps_workers_inert_after_scenario_reset(headless, mon
     assert not ran.is_set(), "a scenario reset must not start real daemon workers"
 
 
+def test_parallel_hook_hints_share_one_bounded_refresh_and_keep_urgency(headless, monkeypatch):
+    controller = headless
+    arms = []
+    observed = []
+    monkeypatch.setattr(controller, "performSelectorOnMainThread_withObject_waitUntilDone_",
+        lambda selector, payload, wait: getattr(controller, selector.replace(":", "_"))(payload))
+    monkeypatch.setattr(core_runtime, "_schedule_timer", lambda delay, target, selector, repeats: arms.append(
+        (delay, target, selector, repeats)) or object())
+    controller.event_refresh_pending = False
+    controller._core_event_refresh_timer = None
+    controller.refreshFromEvent_ = lambda _: observed.append(controller._event_refresh_urgent)
+    controller.schedule_event_refresh()
+    controller.schedule_event_refresh(urgent=True)
+    controller.schedule_event_refresh()
+    assert len(arms) == 1 and arms[0][0] <= 0.05 and arms[0][3] is False
+    assert observed == []
+    controller.coreFlushEventRefresh_(None)
+    assert observed == [True]
+    assert controller._core_event_refresh_timer is None
+    controller.event_refresh_pending = False
+    controller.coreFlushEventRefresh_(None)
+    assert observed == [True], "a refresh that already covered the hints owes no second pass"
+
+
 def test_the_daemons_screen_bar_is_the_headless_one_that_draws_nothing(headless) -> None:
     from jrbar.headless_screen_bar import HeadlessScreenBar
 
@@ -527,8 +551,8 @@ def test_ready_comes_before_the_pad_the_agents_and_the_peers(headless, monkeypat
     """'core: ready' means the socket answers; what the first client does
     not need starts one run-loop pass later, each step on its own, and the
     pass logs one launch timing line."""
+    from jrbar import daemon_controller as legacy
     from jrbar import optional_integration_runtime
-    from jrbar import status_bar_legacy as legacy
 
     lines: list[str] = []
     monkeypatch.setattr(legacy, "log_status_bar", lines.append)
@@ -1671,7 +1695,7 @@ def test_effect_commands_read_and_write_the_real_stores__and_2_more(headless, mo
 @pytest.fixture
 def provider_motion_assignment(headless, monkeypatch, tmp_path):
     from jrbar import core_effects, effect_assignment_store, effect_pack_store
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
     from jrbar.effect_assignment_store import EffectAssignmentCache
     from jrbar.effect_registry import EFFECT_REGISTRY
     from jrbar.settings import save_settings
@@ -1689,7 +1713,7 @@ def provider_motion_assignment(headless, monkeypatch, tmp_path):
 
 
 def test_failed_provider_motion_save_keeps_the_warning_truthful(provider_motion_assignment, monkeypatch):
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
     from jrbar.settings import load_settings, save_settings
 
     controller, target = provider_motion_assignment
@@ -1715,7 +1739,7 @@ def test_failed_provider_motion_save_keeps_the_warning_truthful(provider_motion_
 
 
 def test_failed_motion_reset_keeps_its_assignment_for_retry(provider_motion_assignment, monkeypatch):
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
     from jrbar.settings import load_settings, save_settings
 
     controller, target = provider_motion_assignment
@@ -1938,9 +1962,9 @@ def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
     the Pro's command: one submission, the Dot written right after the Pro
     from the same presentation, both results applied on the main thread,
     the skew measured, and the lights document saying so."""
+    from jrbar.daemon_controller import HardwareWriteRequest, HardwareWriteResult, StatusBarDevice
     from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
-    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult, StatusBarDevice
 
     controller = headless
     pro_device = StatusBarDevice("sidepulse:pro:1", "SidePulse", Path("/Volumes/SidePulse"), Path("/Volumes/SidePulse/LEDS.LED"), True, "agent")
@@ -2028,9 +2052,9 @@ def test_the_skew_is_a_diagnostic_and_never_rotates_the_dot(headless) -> None:
     write (79 times in one day's log). The gap is still measured and
     published for old apps, from the writes' own I/O stamps -- and nothing
     reads it to plan anything."""
+    from jrbar.daemon_controller import HardwareWriteRequest, HardwareWriteResult
     from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
-    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
 
     controller = headless
     pro, dot = _pro_and_dot(controller)
@@ -2098,7 +2122,7 @@ def test_quitting_turns_every_mounted_strip_off_pro_and_dot(headless, monkeypatc
     unmounted device and the Screen Bar are skipped, and one failing
     volume does not stop the other."""
     from jrbar import device_writer
-    from jrbar.status_bar_legacy import StatusBarDevice
+    from jrbar.daemon_controller import StatusBarDevice
 
     controller = headless
     controller.applicationDidFinishLaunching_(None)
@@ -2145,9 +2169,9 @@ def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> 
     live bug: an ambient "binary heartbeat" write landed on the Dot right
     after the linked write and left it on a solid colour at full brightness.
     Operator previews still reach the Dot."""
+    from jrbar.daemon_controller import HardwareWriteRequest, HardwareWriteResult, StatusBarDevice
     from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
-    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult, StatusBarDevice
 
     controller = headless
     pro_device = StatusBarDevice("sidepulse:pro:1", "SidePulse", Path("/Volumes/SidePulse"), Path("/Volumes/SidePulse/LEDS.LED"), True, "agent")
@@ -2234,9 +2258,9 @@ def test_a_finished_finite_cue_re_arms_the_live_program_on_either_device(headles
     import time as _time
     from pathlib import Path as _Path
 
+    from jrbar.daemon_controller import HardwareWriteRequest, HardwareWriteResult, StatusBarDevice
     from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
-    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult, StatusBarDevice
 
     controller = headless
     for device_id, name, volume, cue in (
@@ -2306,9 +2330,9 @@ def test_the_dots_role_decides_what_it_plays(headless) -> None:
     because linked mode had taken its render path away."""
     from pathlib import Path as _Path
 
+    from jrbar.daemon_controller import HardwareWriteRequest, StatusBarDevice
     from jrbar.device_writer import leds_addressed_beyond
     from jrbar.models import AgentMode
-    from jrbar.status_bar_legacy import HardwareWriteRequest, StatusBarDevice
 
     controller = headless
     controller.settings = controller.settings.with_devices_linked(True)
@@ -2364,7 +2388,7 @@ def test_the_dots_role_decides_what_it_plays(headless) -> None:
 def _pro_and_dot(controller, *, second_strip: bool = False):
     """A connected SidePulse + PulseDot (+ a second strip on demand) and the
     plumbing ``_core_build_lights`` needs to describe them."""
-    from jrbar.status_bar_legacy import StatusBarDevice
+    from jrbar.daemon_controller import StatusBarDevice
 
     pro = StatusBarDevice("sidepulse:pro:1", "SidePulse", Path("/Volumes/SidePulse"), Path("/Volumes/SidePulse/LEDS.LED"), True, "agent")
     dot = StatusBarDevice("sidepulse:dot:1", "SidePulse Dot", Path("/Volumes/PulseDot"), Path("/Volumes/PulseDot/LEDS.LED"), True, "agent")
@@ -2389,9 +2413,9 @@ def test_strip_unmount_forgets_the_program_the_dot_was_replaying(headless) -> No
     last program forever. The inventory seam in ``refresh_`` now forgets
     it, drops the departed device's anchor, and clears the Dot's dedupe
     identity so its next request falls through to its own display."""
+    from jrbar.daemon_controller import HardwareWriteRequest, HardwareWriteResult
     from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
-    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
 
     controller = headless
     pro, dot = _pro_and_dot(controller)
@@ -2439,7 +2463,7 @@ def test_disconnect_forgets_the_devices_cached_led_count(headless, tmp_path) -> 
     departed device leaves behind must be re-read, or a Dot swapped in for
     a Pro at the same mount is trusted on the Pro's serial."""
     from jrbar import led_status
-    from jrbar.status_bar_legacy import StatusBarDevice
+    from jrbar.daemon_controller import StatusBarDevice
 
     root = tmp_path / "SidePulse"
     root.mkdir()
@@ -2470,9 +2494,9 @@ def test_the_dot_rides_only_the_followed_strip__and_2_more(headless) -> None:
     inventory order -- the one the lights document calls ``hardware`` --
     and the second strip's writes neither carry the Dot nor overwrite the
     program it replays."""
+    from jrbar.daemon_controller import HardwareWriteRequest, HardwareWriteResult
     from jrbar.led_status import LedDisplayState, LedStatusWrite
     from jrbar.models import AgentMode
-    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
 
     controller = headless
     pro, strip2, dot = _pro_and_dot(controller, second_strip=True)
@@ -2513,8 +2537,8 @@ def test_the_dot_rides_only_the_followed_strip__and_2_more(headless) -> None:
     ``devices_linked`` alone -- even for a batch that never coupled the
     pair, where the two are provably not running from one clock. Only a
     clean coupled write earns the shared anchor."""
+    from jrbar.daemon_controller import HardwareWriteRequest
     from jrbar.models import AgentMode
-    from jrbar.status_bar_legacy import HardwareWriteRequest
 
     controller = headless
     pro, dot = _pro_and_dot(controller)
@@ -2681,12 +2705,12 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     import re
     import time as _time
 
+    from jrbar.daemon_controller import StatusBarDevice
     from jrbar.dot_role import replace_brightness_line as apply_brightness_line
     from jrbar.led_status import (
         apply_strip_transform_to_program,
         delivered_brightness,
     )
-    from jrbar.status_bar_legacy import StatusBarDevice
 
     controller = headless
     pro, _dot = _pro_and_dot(controller)
@@ -2811,14 +2835,14 @@ def test_linked_screen_bar_keeps_a_signals_cut_through(headless) -> None:
     ambient code."""
     import time as _time
 
-    from jrbar.dot_role import replace_brightness_line as apply_brightness_line
-    from jrbar.led_status import style_to_program
-    from jrbar.signals import PATTERN_BREATHE, SignalStyle
-    from jrbar.status_bar_legacy import (
+    from jrbar.daemon_controller import (
         LED_DISPLAY_AGENT,
         LED_DISPLAY_COMPLETION,
         StatusBarDevice,
     )
+    from jrbar.dot_role import replace_brightness_line as apply_brightness_line
+    from jrbar.led_status import style_to_program
+    from jrbar.signals import PATTERN_BREATHE, SignalStyle
 
     controller = headless
     pro, _dot = _pro_and_dot(controller)
@@ -2964,8 +2988,8 @@ def test_linked_screen_bar_mirrors_a_lone_dot(headless) -> None:
 def _calibration_devices(controller, *, stored_gains=(1.0, 0.38, 1.0), with_dot=True):
     """A strip (and Dot) with real dry-run controllers, so the preview's
     write path runs end to end and the exact bytes stay inspectable."""
+    from jrbar.daemon_controller import StatusBarDevice
     from jrbar.led_status import AgentLedController
-    from jrbar.status_bar_legacy import StatusBarDevice
 
     pro = StatusBarDevice(
         "sidepulse:pro:1", "SidePulse", Path("/Volumes/SidePulse"),
@@ -2998,7 +3022,7 @@ def _calibration_devices(controller, *, stored_gains=(1.0, 0.38, 1.0), with_dot=
 
 @pytest.mark.parametrize("failure", ["io", "refused"])
 def test_failed_calibration_apply_keeps_the_previous_profile_and_preview(headless, monkeypatch, tmp_path, failure):
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
     from jrbar.settings import SettingsWriteRefusedError, load_settings, save_settings
 
     controller = headless
@@ -3040,7 +3064,7 @@ def test_failed_calibration_apply_keeps_the_previous_profile_and_preview(headles
 
 
 def test_calibration_apply_waits_for_an_older_settings_write(headless, monkeypatch, tmp_path):
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
     from jrbar.settings import load_settings, save_settings
 
     controller = headless
@@ -3183,8 +3207,8 @@ def test_calibration_preview_drives_the_given_gains_once__and_2_more(headless) -
     assert controller._core_previews["hardware"].until_monotonic - time.monotonic() > 550
 
     # A live request that slipped in anyway must not repaint over the hold.
+    from jrbar.daemon_controller import HardwareWriteRequest
     from jrbar.models import AgentMode
-    from jrbar.status_bar_legacy import HardwareWriteRequest
 
     request = HardwareWriteRequest(pro, AgentMode.WORKING, None, (), None, 0.5)
     result = controller._sync_hardware_device(request)
@@ -3301,7 +3325,7 @@ def test_dot_companion_preview_lights_the_strip_with_its_stored_profile__and_2_m
     preview must take the code-domain transform to the ``screen_bar``
     surface -- never the strip boundary, never the physical ``hardware``
     surface."""
-    from jrbar.status_bar_legacy import StatusBarDevice
+    from jrbar.daemon_controller import StatusBarDevice
 
     controller = headless
     controller.applicationDidFinishLaunching_(None)
@@ -4334,7 +4358,7 @@ def test_set_setting_replies_before_its_save_and_its_refresh__and_2_more(headles
     refresh (which could wait on ``ps``) before it answered. Now the
     settings document goes out, the save is queued and the refresh runs
     after the reply."""
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
 
     controller = headless
     controller.applicationDidFinishLaunching_(None)
@@ -4373,7 +4397,7 @@ def test_set_setting_replies_before_its_save_and_its_refresh__and_2_more(headles
 
 
 def test_failed_settings_save_retries_the_latest_change_and_flushes_at_quit(headless, monkeypatch) -> None:
-    from jrbar import status_bar_legacy as legacy
+    from jrbar import daemon_controller as legacy
 
     controller = headless
     controller.applicationDidFinishLaunching_(None)
@@ -4902,8 +4926,8 @@ def test_quiet_this_run_snoozes_one_row_not_its_family(headless) -> None:
 def _tmp_pair(controller, tmp_path: Path):
     """A real Pro and a real Dot on scratch volumes: the controllers write
     through the whole boundary (gate, timing, firmware check, fsync)."""
+    from jrbar.daemon_controller import StatusBarDevice
     from jrbar.led_status import AgentLedController
-    from jrbar.status_bar_legacy import StatusBarDevice
 
     devices = []
     for device_id, name, volume in (
@@ -4932,8 +4956,8 @@ def _tmp_pair(controller, tmp_path: Path):
 
 def _coupled(controller, submitted, pro, dot, write):
     """One coupled batch whose strip write is ``write``."""
+    from jrbar.daemon_controller import HardwareWriteRequest, HardwareWriteResult
     from jrbar.models import AgentMode
-    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
 
     pro_request = HardwareWriteRequest(pro, AgentMode.WORKING, None, (), None, 0.5)
     dot_request = HardwareWriteRequest(dot, AgentMode.WORKING, None, (), None, 0.5)
@@ -5072,8 +5096,8 @@ def test_a_strip_reassert_restarts_the_pair_on_one_loop__and_1_more(headless, tm
     bar_anchor = controller._core_build_lights()["surfaces"]["screen_bar"]["anchor"]
     assert bar_anchor == pytest.approx(mono_to_epoch(reassert.applied_at))
     controller._core_linked.request_force("reanchor")
+    from jrbar.daemon_controller import HardwareWriteRequest
     from jrbar.models import AgentMode
-    from jrbar.status_bar_legacy import HardwareWriteRequest
 
     controller._sync_hardware_device(HardwareWriteRequest(dot, AgentMode.WORKING, None, (), None, 0.5))
     assert controller._core_build_lights()["surfaces"]["screen_bar"]["anchor"] == bar_anchor
@@ -5255,9 +5279,9 @@ def test_a_completed_event_carries_how_long_and_what_it_last_said(headless) -> N
 
 @pytest.mark.parametrize("source_gains", [(1.0, 1.0, 1.0), (1.0, 0.38, 1.0)])
 def test_linked_screen_bar_carries_delivered_morning_palette(headless, source_gains):
+    from jrbar.daemon_controller import StatusBarDevice
     from jrbar.dot_role import replace_brightness_line
     from jrbar.led_status import apply_strip_transfer_to_program
-    from jrbar.status_bar_legacy import StatusBarDevice
 
     controller = headless
     pro, dot = _pro_and_dot(controller)

@@ -106,22 +106,18 @@ def _ioreg_brightness_fraction() -> float | None:
 
 def _main_display_id() -> int:
     try:
-        from Quartz import CGMainDisplayID
+        from .native_displays import main_display_id
 
-        return int(CGMainDisplayID())
+        return main_display_id()
     except Exception as exc:
         raise DisplayBrightnessUnavailableError(str(exc)) from exc
 
 
 def _display_state(display_id: int) -> tuple[bool, bool, bool]:
     try:
-        from Quartz import CGDisplayIsActive, CGDisplayIsAsleep, CGDisplayIsBuiltin
+        from .native_displays import display_state
 
-        return (
-            bool(CGDisplayIsActive(display_id)),
-            bool(CGDisplayIsAsleep(display_id)),
-            bool(CGDisplayIsBuiltin(display_id)),
-        )
+        return display_state(display_id)
     except Exception as exc:
         raise DisplayBrightnessUnavailableError(str(exc)) from exc
 

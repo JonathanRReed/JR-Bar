@@ -105,8 +105,8 @@ class Rig:
     def plan(self) -> dict[str, Any]:
         """One refresh's hardware writes, run to completion, plus the lights
         frame: what each device now holds and what the Screen Bar is sent."""
+        from jrbar.daemon_controller import HardwareWriteRequest
         from jrbar.models import AgentMode
-        from jrbar.status_bar_legacy import HardwareWriteRequest
 
         controller = self.controller
         devices = [
@@ -154,7 +154,7 @@ def _status(provider: str, mode, index: int):
 
 @pytest.fixture
 def rig(headless_daemon, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:  # noqa: F811
-    from jrbar import status_bar_legacy
+    from jrbar import daemon_controller
     from jrbar.battery import BatterySnapshot
     from jrbar.device_writer import DeviceCandidate
     from jrbar.models import AgentMode
@@ -186,7 +186,7 @@ def rig(headless_daemon, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig
 
     controller._hardware_write_worker = SimpleNamespace(submit=run_now, discard_pending_prefix=lambda prefix: None)
     # The display backlight, for auto-brightness: a dim room.
-    monkeypatch.setattr(status_bar_legacy.display_brightness, "auto_led_brightness", lambda: 40)
+    monkeypatch.setattr(daemon_controller.display_brightness, "auto_led_brightness", lambda: 40)
     statuses = (_status("claude", AgentMode.WORKING, 1), _status("codex", AgentMode.WAITING_FOR_INPUT, 2))
     battery = BatterySnapshot(percent=64)
     return Rig(controller, tmp_path, pro, dot, statuses, battery)
@@ -405,11 +405,11 @@ def check_screen_bar_offset(rig: Rig) -> None:
 
 
 def check_screen_bar_min_glow(rig: Rig) -> None:
-    from jrbar import status_bar_legacy
+    from jrbar import daemon_controller
 
     settings = rig.controller.settings.with_device_display(
-        status_bar_legacy.VIRTUAL_DEVICE_ID, "agent", name="Screen Bar", path=status_bar_legacy.VIRTUAL_DEVICE_ID
-    ).with_device_brightness(status_bar_legacy.VIRTUAL_DEVICE_ID, 10)
+        daemon_controller.VIRTUAL_DEVICE_ID, "agent", name="Screen Bar", path=daemon_controller.VIRTUAL_DEVICE_ID
+    ).with_device_brightness(daemon_controller.VIRTUAL_DEVICE_ID, 10)
     rig.controller.settings = settings
     rig.set("virtual_status_device_enabled", True)
     _changes(rig, "screen_bar_min_glow", 0.8, field="bar", before=0.25)

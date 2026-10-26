@@ -46,13 +46,15 @@ MAX_TOKEN_LENGTH = 4096
 
 
 def _clipboard_text() -> str:
-    try:
-        from AppKit import NSPasteboard, NSPasteboardTypeString
+    import os
 
-        value = NSPasteboard.generalPasteboard().stringForType_(
-            NSPasteboardTypeString
-        )
-        return str(value or "")
+    if os.environ.get("JRBAR_TESTING") == "1" or "PYTEST_CURRENT_TEST" in os.environ:
+        return ""
+    try:
+        import subprocess
+
+        result = subprocess.run(["/usr/bin/pbpaste"], capture_output=True, text=True, timeout=2, check=False)
+        return result.stdout if result.returncode == 0 else ""
     except Exception:
         return ""
 
@@ -69,9 +71,9 @@ def plausible_token(text: str) -> bool:
 
 def _open_url(url: str) -> None:
     try:
-        from AppKit import NSURL, NSWorkspace
+        import subprocess
 
-        NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
+        subprocess.Popen(["/usr/bin/open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 

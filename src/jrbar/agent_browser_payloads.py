@@ -18,7 +18,7 @@ from .navigation_policy import OperatorActionKind
 from .provider_facts import WorkKey
 
 # The snooze presets a payload may name. core_runtime maps a snooze length in
-# seconds onto one of them and status_bar_legacy turns it into a wake time.
+# seconds onto one of them and daemon_controller turns it into a wake time.
 _SNOOZE_PRESET_KEYS: Final = frozenset({"15-minutes", "1-hour", "tomorrow"})
 
 

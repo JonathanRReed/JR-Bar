@@ -316,7 +316,7 @@ def test_the_deck_reads_the_snapshot_the_state_was_built_from(headless) -> None:
 def test_a_reveal_press_logs_the_receipt_and_never_the_session_title(headless, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
     import dataclasses
 
-    from jrbar import deck_control_center, status_bar_legacy
+    from jrbar import daemon_controller, deck_control_center
 
     controller = headless
     controller.applicationDidFinishLaunching_(None)
@@ -330,7 +330,7 @@ def test_a_reveal_press_logs_the_receipt_and_never_the_session_title(headless, m
         lambda target, identity, revision: DeckActionReceipt("navigation_requested", True),
     )
     lines: list[str] = []
-    monkeypatch.setattr(status_bar_legacy, "log_status_bar", lines.append)
+    monkeypatch.setattr(daemon_controller, "log_status_bar", lines.append)
 
     reply = controller._core_dispatch("deck_press", {"index": slot})
 
@@ -575,7 +575,8 @@ class _FakeRuntime:
 def deck_live(headless, monkeypatch: pytest.MonkeyPatch):  # noqa: F811
     """The daemon with real threads, an approved fake pad and an inert
     output runtime, so setup operations run end to end."""
-    from jrbar import creator_micro_setup_controller, optional_integration_runtime
+    from jrbar import creator_micro_setup_runtime as creator_micro_setup_controller
+    from jrbar import optional_integration_runtime
     from jrbar.integration_settings import IntegrationSettings, save_integration_settings
 
     monkeypatch.setattr(threading, "Thread", REAL_THREAD)

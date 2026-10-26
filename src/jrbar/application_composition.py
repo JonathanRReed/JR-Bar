@@ -27,9 +27,9 @@ def compose_status_bar_application() -> ApplicationCompositionReceipt:
     global _receipt
 
     from . import _status_bar_production as production
+    from . import daemon_controller as legacy
     from . import provider_usage_status_bar as provider_host
     from . import status_bar as public_status_bar
-    from . import status_bar_legacy as legacy
     from .ambient_effect_runtime import install_ambient_effect_runtime
 
     if _receipt is not None and legacy.StatusBarController is _receipt.final_controller:

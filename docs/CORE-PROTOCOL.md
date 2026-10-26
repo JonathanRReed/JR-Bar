@@ -2238,7 +2238,76 @@ while the answer is still delivered.
   (`stale_ask`, `stale_request`, `unsupported`, `not_frontmost`, `busy`, …).
 
 ### subscribe
-Optional; protocol 1 always sends everything. Reserved.
+Optional. A daemon advertising `state_slices` accepts
+`subscribe {state_slices: true}` on that connection. The reply echoes the
+mode. The greeting always includes a full `state`; after subscription,
+changes arrive as `state_delta` instead. Clients that do not subscribe keep
+receiving full states. An app connected to an older daemon uses full states.
+
+```json
+{"t":"state_delta","v":1,"generation":42,"base_generation":40,"now":1792968000,"slices":{"sessions":{"generation":8,"value":[]},"asks":{"generation":3,"value":[]}}}
+```
+
+Each top-level state field except `t`, `v`, `generation` and `now` is a
+slice. A delta contains only changed slices, each with its own increasing
+generation and a complete replacement value. `null` removes an optional
+field. A removed collection is sent as an empty collection. The frame's
+generation orders the combined state, so related changes apply together.
+The existing volatile-field comparison also governs slice changes.
+
+The `sessions` slice may instead contain `changes`, `removed`, and `order`.
+`changes` maps session ids to changed row fields; a new id carries a complete
+row. `removed` lists ids to drop. `order` gives the complete resulting id
+order. A null row field clears that field. These edits apply to the last
+snapshot sent to that connection, so a reconnect or a delayed greeting
+cannot borrow another client's baseline.
+
+An object slice may use `patch` instead of `value`. It is a list of edits
+with a `path` of object keys and either `value` or `remove: true`. Arrays
+are replaced as values. Null is a value; only `remove` deletes a key.
+Edits apply in order to that slice's previous value. A client rejects a
+patch whose path does not exist, and reconnects for a full snapshot.
+
+Every delta carries `base_generation`, the generation of the previous
+state transmitted to that connection, after coalescing. Generations need
+not be consecutive. Before applying any slices, a client requires this
+baseline to equal its current state generation. A missing or mismatched
+baseline rejects the whole delta and reconnects for a full snapshot.
+This catches skipped and reordered object patches and roster edits.
+
+A client needs a full state before applying deltas. It ignores deltas
+older than that state and repeated slice generations. A reconnect resets
+slice generations and receives a full state before taking live changes.
+Coalescing compares against the last state sent, so an intermediate change
+cannot disappear from the next delta. An unreadable delta makes state
+untrusted just as an unreadable full state does.
+
+LED write counters and timings travel in `lights.device_write_health`, a
+dictionary keyed by device id. Slice subscribers do not receive
+`devices[].write_health`. Full states retain that field for older clients.
+The lights generation advances independently of the state slices.
+
+### environment
+
+`environment` is an app-authenticated command. The native app reports
+workspace sleep, display sleep, session activation, accessibility display
+preferences and the frontmost application identifier. `event` is one of
+`wake`, `sleep`, `screens_wake`, `screens_sleep`, `session_active`,
+`session_inactive`, `clock`, `timezone`, `accessibility`, or `snapshot`.
+The four accessibility flags are booleans in `accessibility`; the optional
+`frontmost` is a bundle identifier. A snapshot also supplies `display_asleep`
+and `session_active`. These are local sensor readings. The daemon applies
+the existing DND and presentation policies. The app already owns these
+workspace observations. Until a connected app successfully reports all four
+accessibility flags, the daemon keeps a native workspace fallback for
+accessibility changes, sleep/wake, display sleep, session and clock edges.
+A two-second startup grace lets a capable app report before the fallback
+loads AppKit. Without a report, including with a 0.9.17.2 app or no app,
+the fallback reads the actual flags and pumps native notifications. Before
+that first reading, unavailable flags remain conservative. A valid report
+stops native observations; losing that reporting connection restores them.
+Native fallback mode loads AppKit through its C ABI, without PyObjC or any
+window. Once loaded, the framework remains resident until daemon exit.
 
 ## Hook shim
 

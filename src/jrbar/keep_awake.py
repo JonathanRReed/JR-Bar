@@ -396,7 +396,7 @@ THERMAL_RESUME_SECONDS = 300.0
 def read_thermal_state() -> int | None:
     """``NSProcessInfo.thermalState`` as 0-3, or None when unreadable."""
     try:
-        from Foundation import NSProcessInfo
+        from .native_process_info import ProcessInfo as NSProcessInfo
 
         value = int(NSProcessInfo.processInfo().thermalState())
     except Exception:
@@ -433,7 +433,7 @@ def parse_pmset_low_power(text: str) -> bool | None:
 def _process_info_low_power() -> bool | None:
     """``NSProcessInfo.isLowPowerModeEnabled``, or None without Foundation."""
     try:
-        from Foundation import NSProcessInfo
+        from .native_process_info import ProcessInfo as NSProcessInfo
 
         return bool(NSProcessInfo.processInfo().isLowPowerModeEnabled())
     except Exception:

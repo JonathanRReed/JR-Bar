@@ -188,7 +188,7 @@ def test_outer_device_worker_start_failure_allows_retry(threads, tmp_path, stage
     logs = []
     scope = {"threading": keep_awake.threading, "time": SimpleNamespace(monotonic=lambda: 0),
              "log_status_bar": logs.append}
-    poke = method("status_bar_legacy.py", "poke_led_devices", scope)
+    poke = method("daemon_controller.py", "poke_led_devices", scope)
     target = tmp_path / "synthetic-device" / "LEDS.LED"
     host = SimpleNamespace(_keepalive_poke_in_flight=False, status_keepalive_targets=lambda: [target],
                            agent_led_controllers_by_device={}, _keepalive_fresh_read=lambda *_args: True,

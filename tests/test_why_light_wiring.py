@@ -386,7 +386,7 @@ class WhyLightWiringTests(unittest.TestCase):
 
         self.controller._production_force_refresh = True
         self.controller._production_refresh_active = False
-        refresh = self.controller.__class__.refresh_.callable
+        refresh = self.controller.__class__.refresh_
         with (
             patch.object(self.controller, "_observe_refresh_state", return_value=delta),
             patch.dict(

@@ -107,7 +107,7 @@ def test_source_tree_is_parseable__and_2_more() -> None:
         }
         if module_name == "jrbar.status_bar":
             # The final facade delegates through _status_bar_production, which
-            # in turn owns the direct status_bar_legacy import. Validate the
+            # in turn owns the direct daemon_controller import. Validate the
             # complete chain instead of requiring the historical implementation
             # to be imported directly from the public entrypoint.
             public_imports = _relative_imports(modules[module_name])
@@ -117,7 +117,7 @@ def test_source_tree_is_parseable__and_2_more() -> None:
             assert "_status_bar_production" in public_imports, (
                 f"{script}: public status-bar facade is not delegated"
             )
-            assert "status_bar_legacy" in production_imports, (
+            assert "daemon_controller" in production_imports, (
                 f"{script}: retained status-bar runtime is not delegated"
             )
         else:

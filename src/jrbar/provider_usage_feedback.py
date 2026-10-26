@@ -35,13 +35,9 @@ _reset_sound = None
 
 
 def _play_reset_sound() -> bool:
-    global _reset_sound
-    from AppKit import NSSound
+    from .native_sound import play_reset_sound
 
-    sound = NSSound.soundNamed_("Glass")
-    # Held, so a sound that is still playing is not released under itself.
-    _reset_sound = sound
-    return bool(sound is not None and sound.play())
+    return play_reset_sound()
 
 
 def _start_sound_thread(job: Callable[[], None]) -> None:

@@ -1339,7 +1339,7 @@ class AgentMonitorSettings:
     def with_quota_alert_thresholds(self, thresholds) -> AgentMonitorSettings:
         # Honoured since 2026-09-10: the native Settings window edits the
         # two steppers over the socket, and the crossing detector
-        # (status_bar_legacy.track_quota_thresholds) consumes the tuple.
+        # (daemon_controller.track_quota_thresholds) consumes the tuple.
         # normalize_quota_thresholds keeps the values sane (0 < x <= 100,
         # sorted, deduplicated, at most four) and falls back to 90/95 for
         # anything unusable, including an empty list.

@@ -56,8 +56,8 @@ def test_four_second_expiry_admits_unchanged_state_and_publishes_normal_lighting
     dynamic = method("_status_bar_production.py", "_dynamic_display_requires_refresh", production_scope)
     production_refresh = method("_status_bar_production.py", "refresh_", production_scope)
     expiry_scope = {"ResolvedGlance": ResolvedGlance}
-    retire = method("status_bar_legacy.py", "_retire_elapsed_ui_deadlines", expiry_scope)
-    expiry = method("status_bar_legacy.py", "_finite_ui_deadline_fired", expiry_scope)
+    retire = method("daemon_controller.py", "_retire_elapsed_ui_deadlines", expiry_scope)
+    expiry = method("daemon_controller.py", "_finite_ui_deadline_fired", expiry_scope)
 
     class Controller:
         settings = SimpleNamespace(devices=(), led_display="agent", quota_alerts_enabled=True)
@@ -127,15 +127,21 @@ def test_four_second_expiry_admits_unchanged_state_and_publishes_normal_lighting
 
     core_scope = {
         "scene_leases": scene_leases,
-        "objc": SimpleNamespace(super=lambda _class, instance: SimpleNamespace(
-            refresh_=lambda sender: production_refresh(instance, sender))),
         "JRCoreHeadlessController": Controller,
         "legacy": SimpleNamespace(VIRTUAL_DEVICE_ID="virtual", log_status_bar=lambda *_args: None),
         "_provider_updates_of": lambda *_args: SimpleNamespace(tick=lambda: None),
         "_diff_ask_episodes": lambda *_args: (), "device_transitions": device_transitions,
     }
-    Controller.refresh_ = method("core_runtime.py", "refresh_", core_scope)
-    controller = Controller()
+    Controller.refresh_ = lambda instance, sender: production_refresh(instance, sender)
+    core_scope["Controller"] = Controller
+    refresh_node = next(node for node in ast.walk(ast.parse((ROOT / "core_runtime.py").read_text()))
+                        if isinstance(node, ast.FunctionDef) and node.name == "refresh_")
+    wrapper = ast.ClassDef(name="Headless", bases=[ast.Name(id="Controller", ctx=ast.Load())], keywords=[],
+        body=[refresh_node], decorator_list=[], type_params=[], lineno=refresh_node.lineno - 1,
+        col_offset=0, end_lineno=refresh_node.end_lineno + 1, end_col_offset=0)
+    module = ast.fix_missing_locations(ast.Module(body=[wrapper], type_ignores=[]))
+    exec(compile(module, "core_runtime.py", "exec", flags=__future__.annotations.compiler_flag), core_scope)
+    controller = core_scope["Headless"]()
     controller._observe_refresh_state()
     update_capacity_limit_alert(controller, SimpleNamespace(all_rows=()), wall_now=1000,
                                 monotonic_now=20, signal_kind="quota")

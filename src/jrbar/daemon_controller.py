@@ -14,36 +14,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-try:
-    import objc
-    from AppKit import (
-        NSImage,
-        NSStatusBar,
-        NSWorkspace,
-        NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
-        NSWorkspaceDidWakeNotification,
-        NSWorkspaceScreensDidSleepNotification,
-        NSWorkspaceScreensDidWakeNotification,
-        NSWorkspaceSessionDidBecomeActiveNotification,
-        NSWorkspaceSessionDidResignActiveNotification,
-        NSWorkspaceWillSleepNotification,
-    )
-    from Foundation import (
-        NSURL,
-        NSDefaultRunLoopMode,
-        NSNotificationCenter,
-        NSObject,
-        NSRunLoop,
-        NSRunLoopCommonModes,
-        NSSystemClockDidChangeNotification,
-        NSSystemTimeZoneDidChangeNotification,
-        NSTimer,
-    )
-except ImportError as exc:  # pragma: no cover - only exercised on non-macOS setups.
-    raise SystemExit(
-        "The status-bar app requires PyObjC/AppKit:\n"
-        "  python3 -m pip install pyobjc-framework-Cocoa"
-    ) from exc
+from .daemon_loop import DaemonObject as NSObject, Timer as NSTimer, DaemonLoop as NSRunLoop
+from .core_environment import Workspace as NSWorkspace, EnvironmentCenter as NSNotificationCenter
+
 
 from . import (
     auto_dim as auto_dim_module,
@@ -518,6 +491,20 @@ from .usage_view import (
     source_text_for_coverage,
 )
 from .usage_refresh_workers import UsageRefreshWorkerOwner
+
+
+NSDefaultRunLoopMode = "default"
+NSRunLoopCommonModes = "common"
+NSStatusBar = None
+NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification = "NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification"
+NSWorkspaceDidWakeNotification = "NSWorkspaceDidWakeNotification"
+NSWorkspaceScreensDidSleepNotification = "NSWorkspaceScreensDidSleepNotification"
+NSWorkspaceScreensDidWakeNotification = "NSWorkspaceScreensDidWakeNotification"
+NSWorkspaceSessionDidBecomeActiveNotification = "NSWorkspaceSessionDidBecomeActiveNotification"
+NSWorkspaceSessionDidResignActiveNotification = "NSWorkspaceSessionDidResignActiveNotification"
+NSWorkspaceWillSleepNotification = "NSWorkspaceWillSleepNotification"
+NSSystemClockDidChangeNotification = "NSSystemClockDidChangeNotification"
+NSSystemTimeZoneDidChangeNotification = "NSSystemTimeZoneDidChangeNotification"
 
 
 def _capacity_source_keys_by_provider():
@@ -1614,7 +1601,7 @@ class StatusBarController(NSObject):
     def init(self):
         # Production facades rebind the StatusBarController name to a
         # subclass. objc.super must see the class that defined this init.
-        self = objc.super(_AppKitStatusBarController, self).init()
+        self = super(_DaemonController, self).init()
         if self is None:
             return None
 
@@ -2194,7 +2181,6 @@ class StatusBarController(NSObject):
             False,
         )
 
-    @objc.IBAction
     def applyAccessibilityDisplayOptions_(self, payload) -> None:
         if (
             type(payload) is not tuple
@@ -2251,7 +2237,6 @@ class StatusBarController(NSObject):
             self.notification_client = client
         return client
 
-    @objc.IBAction
     def failureSignalExpired_(self, _timer):
         self.failure_signal_timer = None
         self.failure_signal_timer_deadline = None
@@ -2645,7 +2630,6 @@ class StatusBarController(NSObject):
             click_target_agent_id=None,
         )
 
-    @objc.IBAction
     def refresh_(self, _sender):
         _t_start = time.monotonic()
         _t_ingest = _t_snapshot = _t_start
@@ -2886,7 +2870,6 @@ class StatusBarController(NSObject):
             self._remote_peers_refresh_running = False
             log_status_bar("remote_peers refresh could not start")
 
-    @objc.IBAction
     def applyRemotePeerRefresh_(self, result) -> None:
         self._remote_peers_refresh_running = False
         if type(result) is not PeerRefreshResult:
@@ -2936,7 +2919,6 @@ class StatusBarController(NSObject):
         if changed:
             self.refresh_(None)
 
-    @objc.IBAction
     def refreshRemotePeers_(self, _sender):
         if not self.settings.remote_peers.enabled:
             self.stop_remote_peer_timer()
@@ -3194,7 +3176,6 @@ class StatusBarController(NSObject):
         NSRunLoop.currentRunLoop().addTimer_forMode_(timer, NSDefaultRunLoopMode)
         timers[refresh_key] = timer
 
-    @objc.IBAction
     def capacityRefreshRetry_(self, timer):
         refresh_key = timer.userInfo()
         if type(refresh_key) is not RefreshSourceKey:
@@ -3230,7 +3211,6 @@ class StatusBarController(NSObject):
             {refresh_key.source: generation},
         )
 
-    @objc.IBAction
     def capacityRefreshDeadline_(self, timer):
         """Expire only the exact source generation owned by this timer."""
         user_info = timer.userInfo()
@@ -3548,7 +3528,6 @@ class StatusBarController(NSObject):
             "capacityResetBoundary:",
         )
 
-    @objc.IBAction
     def capacityResetBoundary_(self, timer):
         if timer is not getattr(self, "_capacity_reset_timer", None):
             return
@@ -4009,7 +3988,6 @@ class StatusBarController(NSObject):
             False,
         )
 
-    @objc.IBAction
     def applyUsageSummary_(self, payload):
         if (
             getattr(self, "_runtime_termination_started", False)
@@ -5355,15 +5333,6 @@ class StatusBarController(NSObject):
             # only takes the sound.
             grant = self.interrupt_grant(signals_module.INTERRUPT_ESCALATION)
             # Headless: the app plays the chime from the escalation_stage event.
-            if grant.audible and not getattr(self, "headless", False):
-                try:
-                    from AppKit import NSSound
-
-                    sound = NSSound.soundNamed_("Glass")
-                    if sound is not None:
-                        sound.play()
-                except Exception:
-                    pass
             if grant.banner_allowed:
                 state = getattr(self, "current_operator_state", None)
                 if type(state) is CanonicalOperatorState:
@@ -5667,7 +5636,6 @@ class StatusBarController(NSObject):
             banner_allowed=grant.banner_allowed,
         )
 
-    @objc.typedSelector(b"v@:@@@?")
     def userNotificationCenter_willPresentNotification_withCompletionHandler_(
         self,
         _center,
@@ -5676,7 +5644,6 @@ class StatusBarController(NSObject):
     ) -> None:
         completion_handler(NOTIFICATION_FOREGROUND_PRESENTATION_OPTIONS)
 
-    @objc.typedSelector(b"v@:@@@?")
     def userNotificationCenter_didReceiveNotificationResponse_withCompletionHandler_(
         self,
         _center,
@@ -6397,7 +6364,6 @@ class StatusBarController(NSObject):
                 f"asks: expired unanswered {status.provider} {str(status.session_id)[:8]}"
             )
 
-    @objc.IBAction
     def pollLiveness_(self, _timer):
         """Five-second liveness check, off the main thread.
 
@@ -6491,7 +6457,6 @@ class StatusBarController(NSObject):
             # refreshes directly -- "grok doesn't update until claude acts".
             self.event_refresh_pending = False
 
-    @objc.IBAction
     def refreshFromEvent_(self, _sender):
         self.event_refresh_pending = False
         # Time floor: event_refresh_pending only dedups events that pile
@@ -6515,7 +6480,6 @@ class StatusBarController(NSObject):
         self._last_event_refresh_at = now
         self.refresh_(None)
 
-    @objc.IBAction
     def trailingRefreshFire_(self, _timer):
         self._trailing_refresh_timer = None
         self._last_event_refresh_at = time.monotonic()
@@ -6531,7 +6495,6 @@ class StatusBarController(NSObject):
         except Exception:
             log_status_bar("tool tint wake not scheduled")
 
-    @objc.IBAction
     def armToolTintWake_(self, delay) -> None:
         # One wake at a time: each render the floor holds re-arms it for
         # the time that is left.
@@ -6540,7 +6503,6 @@ class StatusBarController(NSObject):
         )
         self.performSelector_withObject_afterDelay_("toolTintWake:", None, float(delay))
 
-    @objc.IBAction
     def toolTintWake_(self, _sender) -> None:
         self.schedule_event_refresh()
 
@@ -6810,7 +6772,6 @@ class StatusBarController(NSObject):
         NSRunLoop.currentRunLoop().addTimer_forMode_(timer, NSRunLoopCommonModes)
         self.mailbox_boundary_timer = timer
 
-    @objc.IBAction
     def mailboxBoundary_(self, timer) -> None:
         token = timer.userInfo()
         if not self.mailbox_boundary_schedule.callback_due(
@@ -6967,7 +6928,6 @@ class StatusBarController(NSObject):
             )
         self._enqueue_operator_history_events(tuple(rows))
 
-    @objc.IBAction
     def applyOperatorHistoryPersistenceFailure_(self, _payload) -> None:
         log_status_bar("operator history: could not be saved")
 
@@ -8543,7 +8503,6 @@ class StatusBarController(NSObject):
             False,
         )
 
-    @objc.IBAction
     def applyScreenBarSync_(self, payload):
         self.sync_virtual_status_device(
             payload["mode"],
@@ -8701,7 +8660,6 @@ class StatusBarController(NSObject):
             False,
         )
 
-    @objc.IBAction
     def drainRuntimeWorker_(self, drain) -> None:
         if callable(drain):
             drain()
@@ -10146,36 +10104,8 @@ class StatusBarController(NSObject):
         if inputs is not None:
             self.reconcile_presentation_timers(inputs)
 
-    @objc.IBAction
     def peekTick_(self, _timer):
-        window = getattr(self.virtual_status_device, "window", None)
-        if window is None:
-            self._peek_hits = 0
-            return
-        from AppKit import NSEvent
-
-        location = NSEvent.mouseLocation()
-        frame = window.frame()
-        inside = (
-            frame.origin.x <= location.x <= frame.origin.x + frame.size.width
-            and frame.origin.y <= location.y <= frame.origin.y + frame.size.height
-        )
-        now = time.monotonic()
-        peek_deadline = getattr(self, "peek_until", 0.0)
-        peeking = now < peek_deadline
-        if peek_deadline > 0.0 and not peeking:
-            self.peek_until = 0.0
-            self.refresh_(None)
-        if inside:
-            self._peek_hits = getattr(self, "_peek_hits", 0) + 1
-            if self._peek_hits == 3 and not peeking:
-                self.peek_until = now + 4.0
-                self.refresh_(None)
-        else:
-            self._peek_hits = 0
-            if peeking:
-                self.peek_until = 0.0
-                self.refresh_(None)
+        return None
 
     def peek_program(self, brightness: float, led_count: int = 8) -> str:
         """Withhold legacy capacity: nothing peeks onto the strip today."""
@@ -10463,7 +10393,6 @@ class StatusBarController(NSObject):
             False,
         )
 
-    @objc.IBAction
     def restoreLedDisplay_(self, token_value):
         restore_led_display(self, token_value)
 
@@ -11076,7 +11005,7 @@ def _canonical_operator_actions(state, target):
     return result
 
 
-_AppKitStatusBarController = StatusBarController
+_DaemonController = StatusBarController
 
 
 def validate_lid_animation(animation: LedAnimationSetting) -> None:
@@ -11360,25 +11289,7 @@ _symbol_image_cache: dict[tuple[str, str], object] = {}
 
 
 def image_for_symbol(symbol: str, description: str):
-    # SF-symbol lookups hit the system symbol catalog every call, and the
-    # menu rebuild asks for the same dozen symbols on every signature
-    # change. Symbols are static; cache them for the process lifetime.
-    key = (symbol, description)
-    cached = _symbol_image_cache.get(key)
-    if cached is not None:
-        return cached
-    try:
-        image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
-            symbol,
-            description,
-        )
-        if image is not None:
-            image.setTemplate_(True)
-    except Exception:
-        image = None
-    if image is not None:
-        _symbol_image_cache[key] = image
-    return image
+    return None
 
 
 def log_status_bar_debug(message: str) -> None:
@@ -11397,22 +11308,13 @@ def log_status_bar(message: str) -> None:
 
 
 def open_url(url: str) -> None:
-    ns_url = NSURL.URLWithString_(url)
-    if ns_url is not None:
-        NSWorkspace.sharedWorkspace().openURL_(ns_url)
+    subprocess.Popen(["/usr/bin/open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def frontmost_terminal_bundle_identifier() -> str | None:
-    """Return the exact frontmost application identity, if AppKit exposes one."""
-    try:
-        application = NSWorkspace.sharedWorkspace().frontmostApplication()
-        bundle_identifier = application.bundleIdentifier() if application is not None else None
-    except Exception:
-        return None
-    if type(bundle_identifier) is not str:
-        return None
-    value = bundle_identifier.strip()
-    return value or None
+    from .core_environment import frontmost_bundle
+
+    return frontmost_bundle()
 
 
 def open_terminal_command(

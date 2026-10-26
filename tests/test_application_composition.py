@@ -13,7 +13,7 @@ APPLICATION_COMPOSITION = SRC / "application_composition.py"
 STATUS_BAR = SRC / "status_bar.py"
 PRODUCTION_STATUS_BAR = SRC / "_status_bar_production.py"
 PROVIDER_USAGE_STATUS_BAR = SRC / "provider_usage_status_bar.py"
-STATUS_BAR_LEGACY = SRC / "status_bar_legacy.py"
+STATUS_BAR_LEGACY = SRC / "daemon_controller.py"
 
 
 def _tree(path: Path) -> ast.Module:
@@ -165,7 +165,7 @@ def guarded_start(self, *args, **kwargs):
 
 threading.Thread.start = guarded_start
 
-from jrbar import status_bar_legacy as legacy
+from jrbar import daemon_controller as legacy
 
 controller_before = legacy.StatusBarController
 

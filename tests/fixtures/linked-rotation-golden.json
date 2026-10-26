@@ -1,0 +1,170 @@
+[
+  {
+    "program": "brightness 180\n#000000\n#FF8040 2000ms ease\n#000000 1000ms ease-out\nrepeat",
+    "phase_ms": 1.0,
+    "led_count": 2,
+    "rotated": "brightness 180\noff 15ms none\n#FF8040 2s ease\n#000000 1s ease-out\noff 1ms none\nrepeat"
+  },
+  {
+    "program": "brightness 180\n#000000\n#FF8040 2000ms ease\n#000000 1000ms ease-out\nrepeat",
+    "phase_ms": 125.5,
+    "led_count": 2,
+    "rotated": "brightness 180\n#1E0F08 118ms linear\n#5E2F18 236ms linear\n#8D4723 177ms linear\n#B1592C 177ms linear\n#D36A35 236ms linear\n#F67C3E 473ms ease-out\n#FF8040 473ms ease-out\n#000000 1s ease-out\n#000000\n#0A0502 110ms ease-in\nrepeat"
+  },
+  {
+    "program": "brightness 180\n#000000\n#FF8040 2000ms ease\n#000000 1000ms ease-out\nrepeat",
+    "phase_ms": 333.0,
+    "led_count": 2,
+    "rotated": "brightness 180\n#824121 281ms linear\n#9B4E27 105ms linear\n#AF582C 105ms linear\n#CF6834 210ms linear\n#E47239 210ms linear\n#F2793D 211ms linear\n#FF8040 561ms ease-out\n#000000 1s ease-out\n#000000\n#341A0D 317ms ease-in\nrepeat"
+  },
+  {
+    "program": "brightness 180\n#000000\n#FF8040 2000ms ease\n#000000 1000ms ease-out\nrepeat",
+    "phase_ms": 666.25,
+    "led_count": 2,
+    "rotated": "brightness 180\n#A7542A 113ms linear\n#BB5E2F 112ms linear\n#D86D36 225ms linear\n#EB763B 225ms linear\n#F77C3E 225ms linear\n#FF8040 450ms ease-out\n#000000 1s ease-out\n#000000\n#552B15 434ms ease-in\n#8F4824 216ms linear\nrepeat"
+  },
+  {
+    "program": "brightness 180\n#000000\n#FF8040 2000ms ease\n#000000 1000ms ease-out\nrepeat",
+    "phase_ms": 999.0,
+    "led_count": 2,
+    "rotated": "brightness 180\n#FB7E3F 678ms ease-out\n#FF8040 339ms ease\n#000000 1s ease-out\n#000000\n#371C0E 328ms ease-in\n#66331A 164ms linear\n#874422 123ms linear\n#A25129 123ms linear\n#B85D2E 122ms linear\n#CA6633 123ms linear\nrepeat"
+  },
+  {
+    "program": "brightness 180\n#000000\n#FF8040 2000ms ease\n#000000 1000ms ease-out\nrepeat",
+    "phase_ms": 1555.75,
+    "led_count": 2,
+    "rotated": "brightness 180\n#FF8040 460ms ease\n#000000 1s ease-out\n#000000\n#3B1D0F 342ms ease-in\n#6C361B 171ms linear\n#8D4723 129ms linear\n#A8552A 128ms linear\n#D06834 257ms linear\n#E27139 171ms linear\n#F77C3E 342ms linear\nrepeat"
+  },
+  {
+    "program": "brightness 180\n#000000\n#FF8040 2000ms ease\n#000000 1000ms ease-out\nrepeat",
+    "phase_ms": 2400.0,
+    "led_count": 2,
+    "rotated": "brightness 180\noff 616ms ease-out\n#000000\n#FF8040 2s ease\n#B35A2D 192ms linear\n#72391D 192ms linear\nrepeat"
+  },
+  {
+    "program": "brightness 220\n0:#000000; 1:#104020\n0:#FF2060 1500ms pulse; 1:#2288EE 2000ms cosine\nrepeat",
+    "phase_ms": 1.0,
+    "led_count": 2,
+    "rotated": "brightness 220\n#000000 #104020 15ms none\n0:#FF2060 1500ms pulse; 1:#2288EE 2s cosine\n#000000 #104020 1ms none\nrepeat"
+  },
+  {
+    "program": "brightness 220\n0:#000000; 1:#104020\n0:#FF2060 1500ms pulse; 1:#2288EE 2000ms cosine\nrepeat",
+    "phase_ms": 125.5,
+    "led_count": 2,
+    "rotated": "brightness 220\n#26050E 80ms linear; 1:#104225 80ms ease-in\n#49091C 80ms linear; 1:#114329 80ms ease-in\n#C4194A #134B3F 240ms linear\n#FF2060 240ms ease-out; 1:#165660 240ms linear\n#801030 375ms ease-in; 1:#1B6B9B 375ms linear\n#400818 #1C72AE 125ms linear\noff 250ms ease-out; 1:#2288EE 750ms ease-out\n0:#000000; 1:#104020\n#0D0205 110ms ease-in; 1:#104122 110ms\nrepeat"
+  },
+  {
+    "program": "brightness 220\n0:#000000; 1:#104020\n0:#FF2060 1500ms pulse; 1:#2288EE 2000ms cosine\nrepeat",
+    "phase_ms": 333.0,
+    "led_count": 2,
+    "rotated": "brightness 220\n#AD1641 #12493A 145ms linear\n#CE1A4E #134C42 72ms linear\n#FF2060 216ms ease-out; 1:#165660 216ms linear\n#801030 375ms ease-in; 1:#1B6B9B 375ms linear\n#400818 #1C72AE 125ms linear\n#1E040B #1D76BA 83ms linear\noff 167ms ease-out; 1:#2288EE 667ms ease-out\n0:#000000; 1:#104020\n#160308 #104123 141ms ease-in\n#2F0612 70ms linear; 1:#104226 70ms ease-in\n#610C24 106ms linear; 1:#11442D 106ms ease-in\nrepeat"
+  },
+  {
+    "program": "brightness 220\n0:#000000; 1:#104020\n0:#FF2060 1500ms pulse; 1:#2288EE 2000ms cosine\nrepeat",
+    "phase_ms": 666.25,
+    "led_count": 2,
+    "rotated": "brightness 220\n#FF2060 100ms ease-out; 1:#165660 100ms linear\n#E11C55 167ms ease-in; 1:#185F7A 167ms linear\n#BF1848 #196487 83ms linear\n#801030 #1B6B9B 125ms linear\n#400818 #1C72AE 125ms linear\n#1E040B #1D76BA 83ms linear\noff 167ms ease-out; 1:#2288EE 667ms ease-out\n0:#000000; 1:#104020\n#1D040B #104123 163ms ease-in\n#3D0817 #114327 81ms linear\n#BA1746 #134A3D 244ms linear\n#DC1C53 #134D46 81ms linear\n#F41F5C #145151 81ms linear\nrepeat"
+  },
+  {
+    "program": "brightness 220\n0:#000000; 1:#104020\n0:#FF2060 1500ms pulse; 1:#2288EE 2000ms cosine\nrepeat",
+    "phase_ms": 999.0,
+    "led_count": 2,
+    "rotated": "brightness 220\n#861133 #1B6A99 129ms linear\n#3B0716 #1D72B0 148ms linear\noff 222ms ease-out; 1:#1F7DCE 222ms linear\noff 74ms; 1:#2080D6 74ms linear\noff 444ms; 1:#2288EE 444ms ease-out\n0:#000000; 1:#104020\n#1E040B #104124 167ms ease-in\n#400818 83ms linear; 1:#114328 83ms ease-in\n#7F1030 #124631 125ms linear\n#BF1848 #134B3E 125ms linear\n#E11C55 #144E48 83ms linear\n#FF2060 167ms ease-out; 1:#165660 167ms linear\n#C7194B 233ms ease-in; 1:#196384 233ms linear\nrepeat"
+  },
+  {
+    "program": "brightness 220\n0:#000000; 1:#104020\n0:#FF2060 1500ms pulse; 1:#2288EE 2000ms cosine\nrepeat",
+    "phase_ms": 1555.75,
+    "led_count": 2,
+    "rotated": "brightness 220\noff 460ms; 1:#2288EE 460ms ease-out\n0:#000000; 1:#104020\n#FF2060 750ms cosine; 1:#165660 750ms ease-in\n#E11C55 167ms ease-in; 1:#185F7A 167ms linear\n#BF1848 #196487 83ms linear\n#801030 #1B6B9B 125ms linear\n#3A0716 #1D72B0 138ms linear\n#010000 208ms ease-out; 1:#1F7CCC 208ms linear\noff 69ms; 1:#207FD4 69ms linear\nrepeat"
+  },
+  {
+    "program": "brightness 220\n0:#000000; 1:#104020\n0:#FF2060 1500ms pulse; 1:#2288EE 2000ms cosine\nrepeat",
+    "phase_ms": 2400.0,
+    "led_count": 2,
+    "rotated": "brightness 220\n#BD1847 #134A3E 127ms linear\n#E01C54 #134E48 85ms linear\n#FF2060 170ms ease-out; 1:#165660 170ms linear\n#801030 375ms ease-in; 1:#1B6B9B 375ms linear\n#400818 #1C72AE 125ms linear\n#1E040B #1D76BA 83ms linear\noff 167ms ease-out; 1:#2288EE 667ms ease-out\n0:#000000; 1:#104020\n#1D040B #104123 163ms ease-in\n#3D0817 #114328 82ms linear\n#7C102F #114631 123ms linear\nrepeat"
+  },
+  {
+    "program": "#000000\n#80FF20 1800ms ease-in\n#2080FF 2300ms ease-in-out\nrepeat",
+    "phase_ms": 1.0,
+    "led_count": 2,
+    "rotated": "off 15ms none\n#80FF20 1800ms ease-in\n#2080FF 2300ms ease-in-out\noff 1ms none\nrepeat"
+  },
+  {
+    "program": "#000000\n#80FF20 1800ms ease-in\n#2080FF 2300ms ease-in-out\nrepeat",
+    "phase_ms": 125.5,
+    "led_count": 2,
+    "rotated": "#152905 500ms ease-in\n#254A09 250ms linear\n#458911 376ms linear\n#61C018 282ms linear\n#80FF20 282ms linear\n#2080FF 2300ms ease-in-out\n#000000\n#010200 110ms\nrepeat"
+  },
+  {
+    "program": "#000000\n#80FF20 1800ms ease-in\n#2080FF 2300ms ease-in-out\nrepeat",
+    "phase_ms": 333.0,
+    "led_count": 2,
+    "rotated": "#0F1D04 185ms linear\n#193306 186ms linear\n#264C0A 185ms linear\n#356A0D 185ms linear\n#57AE16 371ms linear\n#80FF20 371ms linear\n#2080FF 2300ms ease-in-out\n#000000\n#060D02 317ms ease-in\nrepeat"
+  },
+  {
+    "program": "#000000\n#80FF20 1800ms ease-in\n#2080FF 2300ms ease-in-out\nrepeat",
+    "phase_ms": 666.25,
+    "led_count": 2,
+    "rotated": "#2B560B 288ms linear\n#448711 287ms linear\n#60BF18 287ms linear\n#80FF20 288ms linear\n#2080FF 2300ms ease-in-out\n#000000\n#172E06 650ms ease-in\nrepeat"
+  },
+  {
+    "program": "#000000\n#80FF20 1800ms ease-in\n#2080FF 2300ms ease-in-out\nrepeat",
+    "phase_ms": 999.0,
+    "led_count": 2,
+    "rotated": "#54A715 409ms linear\n#69D11A 204ms linear\n#80FF20 204ms linear\n#2080FF 2300ms ease-in-out\n#000000\n#2F5D0C 983ms ease-in\nrepeat"
+  },
+  {
+    "program": "#000000\n#80FF20 1800ms ease-in\n#2080FF 2300ms ease-in-out\nrepeat",
+    "phase_ms": 1555.75,
+    "led_count": 2,
+    "rotated": "#80FF20 260ms linear\n#2080FF 2300ms ease-in-out\n#000000\n#63C519 1540ms ease-in\nrepeat"
+  },
+  {
+    "program": "#000000\n#80FF20 1800ms ease-in\n#2080FF 2300ms ease-in-out\nrepeat",
+    "phase_ms": 2400.0,
+    "led_count": 2,
+    "rotated": "#63D962 286ms linear\n#50BF91 286ms linear\n#369DCC 381ms linear\n#2C90E3 191ms linear\n#2587F3 191ms linear\n#2080FF 381ms ease-out\n#000000\n#80FF20 1800ms ease-in\n#7AF82D 389ms ease-in\n#73EE3E 195ms linear\nrepeat"
+  },
+  {
+    "program": "#000000\n#FFFFFF 1000ms linear\n#000000 1800ms ease\nrepeat",
+    "phase_ms": 1.0,
+    "led_count": 2,
+    "rotated": "off 15ms none\n#FFFFFF 1s linear\n#000000 1800ms ease\noff 1ms none\nrepeat"
+  },
+  {
+    "program": "#000000\n#FFFFFF 1000ms linear\n#000000 1800ms ease\nrepeat",
+    "phase_ms": 125.5,
+    "led_count": 2,
+    "rotated": "#FFFFFF 890ms linear\n#000000 1800ms ease\n#000000\n#1C1C1C 110ms linear\nrepeat"
+  },
+  {
+    "program": "#000000\n#FFFFFF 1000ms linear\n#000000 1800ms ease\nrepeat",
+    "phase_ms": 333.0,
+    "led_count": 2,
+    "rotated": "#FFFFFF 683ms linear\n#000000 1800ms ease\n#000000\n#515151 317ms linear\nrepeat"
+  },
+  {
+    "program": "#000000\n#FFFFFF 1000ms linear\n#000000 1800ms ease\nrepeat",
+    "phase_ms": 666.25,
+    "led_count": 2,
+    "rotated": "#FFFFFF 350ms linear\n#000000 1800ms ease\n#000000\n#A6A6A6 650ms linear\nrepeat"
+  },
+  {
+    "program": "#000000\n#FFFFFF 1000ms linear\n#000000 1800ms ease\nrepeat",
+    "phase_ms": 999.0,
+    "led_count": 2,
+    "rotated": "#FFFFFF 17ms linear\n#000000 1800ms ease\n#000000\n#FBFBFB 983ms linear\nrepeat"
+  },
+  {
+    "program": "#000000\n#FFFFFF 1000ms linear\n#000000 1800ms ease\nrepeat",
+    "phase_ms": 1555.75,
+    "led_count": 2,
+    "rotated": "#616161 105ms linear\n#4B4B4B 105ms linear\n#2A2A2A 210ms linear\n#151515 210ms linear\n#090909 210ms linear\noff 420ms ease-out\n#000000\n#FFFFFF 1s linear\n#D0D0D0 270ms ease-in\n#7C7C7C 270ms linear\nrepeat"
+  },
+  {
+    "program": "#000000\n#FFFFFF 1000ms linear\n#000000 1800ms ease\nrepeat",
+    "phase_ms": 2400.0,
+    "led_count": 2,
+    "rotated": "off 416ms ease\n#000000\n#FFFFFF 1s linear\n#C5C5C5 307ms ease-in\n#939393 154ms linear\n#727272 115ms linear\n#575757 116ms linear\n#2F2F2F 231ms linear\n#171717 231ms linear\n#080808 230ms linear\nrepeat"
+  }
+]

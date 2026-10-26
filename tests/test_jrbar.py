@@ -12774,7 +12774,7 @@ class SnoozeScopeControllerTests(unittest.TestCase):
         store's timezone-correct resolver (wired 2026-08-26)."""
         from datetime import datetime as _datetime
 
-        from jrbar import status_bar_legacy
+        from jrbar import daemon_controller
         from jrbar.agent_browser_payloads import (
             AgentBrowserActionPayload,
             OperatorActionKind,
@@ -12784,7 +12784,7 @@ class SnoozeScopeControllerTests(unittest.TestCase):
         published = []
         self.controller.mailbox_preferences = ()
         self.controller._publish_mailbox_preferences = published.append
-        with patch.object(status_bar_legacy, "_family_work_key", lambda _state, _work_key: key):
+        with patch.object(daemon_controller, "_family_work_key", lambda _state, _work_key: key):
             handled = self.controller._apply_preference_action(
                 AgentBrowserActionPayload(
                     work_key=key,

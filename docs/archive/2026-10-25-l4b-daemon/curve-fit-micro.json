@@ -1,0 +1,59 @@
+{
+  "runs": [
+    {
+      "side": "before",
+      "cpu_seconds": 9.422852,
+      "rotations": 140
+    },
+    {
+      "side": "after",
+      "cpu_seconds": 1.1225090000000009,
+      "rotations": 140
+    },
+    {
+      "side": "before",
+      "cpu_seconds": 9.389821000000001,
+      "rotations": 140
+    },
+    {
+      "side": "after",
+      "cpu_seconds": 1.221301999999998,
+      "rotations": 140
+    },
+    {
+      "side": "before",
+      "cpu_seconds": 9.407897000000002,
+      "rotations": 140
+    },
+    {
+      "side": "after",
+      "cpu_seconds": 1.160027999999997,
+      "rotations": 140
+    },
+    {
+      "side": "before",
+      "cpu_seconds": 9.490537000000003,
+      "rotations": 140
+    },
+    {
+      "side": "after",
+      "cpu_seconds": 1.1743020000000044,
+      "rotations": 140
+    },
+    {
+      "side": "before",
+      "cpu_seconds": 9.493535000000001,
+      "rotations": 140
+    },
+    {
+      "side": "after",
+      "cpu_seconds": 1.2005520000000018,
+      "rotations": 140
+    }
+  ],
+  "byte_identical_cases": 28,
+  "clock": "process CPU",
+  "warmups": 1,
+  "reference_sha256": "ee1d10a089b1917d951145d1fd09156683357990b4bf6a98c95aa6420c67f20a",
+  "curve_cache": "CacheInfo(hits=2795229, misses=634231, maxsize=4096, currsize=4096)"
+}
