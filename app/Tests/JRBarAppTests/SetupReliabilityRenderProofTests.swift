@@ -6,6 +6,10 @@ import Testing
 @MainActor
 @Suite("Setup reliability render proof")
 struct SetupReliabilityRenderProofTests {
+    init() throws {
+        if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" { try U5Proof.pinDefaultAccent() }
+    }
+
     @Test(.enabled(if: WindowsRenderProofTests.enabled), .timeLimit(.minutes(2)))
     func aPermissionRequestDisablesOnlyItsRow() async throws {
         var resume: CheckedContinuation<Void, Never>?
@@ -47,19 +51,17 @@ struct SetupReliabilityRenderProofTests {
     }
 
     @Test(.enabled(if: WindowsRenderProofTests.enabled))
-    func failedFinishShowsSaveFailureAndRetryButtons() throws {
+    func failedFinishShowsSaveFailureAndRetryButtons() async throws {
         let store = SetupStore(model: SetupModel(), load: { SetupState() }, persist: { _ in
             throw CocoaError(.fileWriteNoPermission)
         })
-        store.goNext()
-        store.skip()
-        store.skip()
-        store.goNext()
+        for _ in SetupStore.Step.allCases.dropLast() { store.goNext() }
         #expect(store.step == .done)
         #expect(!store.finish())
         #expect(store.persistenceFailure != nil)
-        try WindowsRenderProofTests.write("setup-finish-save-failure", size: SetupWindowController.contentSize) {
-            SetupView(store: store)
+        for dark in [false, true] {
+            try await DesignFixBProof.write(SetupView(store: store), name: "setup-finish-save-failure", title: "Welcome to JR-Bar",
+                                            size: SetupWindowController.contentSize, dark: dark)
         }
     }
 }

@@ -8,6 +8,10 @@ import Testing
 @MainActor
 @Suite("Provider credential render proof")
 struct ProviderCredentialRenderProofTests {
+    init() throws {
+        if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" { try U5Proof.pinDefaultAccent() }
+    }
+
     nonisolated static let enabled = ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1"
 
     @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 to write Factory credential PNGs"))
@@ -111,9 +115,16 @@ struct ProviderCredentialRenderProofTests {
     }
 
     @Test(.enabled(if: Self.enabled, "set JRBAR_RENDER_PROOF=1 for the Factory usage card"))
-    func factoryUsageCard() throws {
-        let path = try #require(ProcessInfo.processInfo.environment["JRBAR_FACTORY_PROOF_FIXTURE"])
-        let usage = try JSONDecoder().decode(CoreUsage.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+    func factoryUsageCard() async throws {
+        let usage: CoreUsage
+        if let path = ProcessInfo.processInfo.environment["JRBAR_FACTORY_PROOF_FIXTURE"] {
+            usage = try JSONDecoder().decode(CoreUsage.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        } else {
+            var synthetic = try UsageHistoryScopeTests.factoryUsageFixture()
+            synthetic.providers[0].windows[2].usedPct = 81
+            for index in 3..<6 { synthetic.providers[0].windows[index].detail = true }
+            usage = synthetic
+        }
         let provider = try #require(usage.providers.first)
         #expect(provider.id == "factory")
         #expect(provider.windows.count == 6)
@@ -136,22 +147,28 @@ struct ProviderCredentialRenderProofTests {
             ?? "/tmp/jrbar-factory-credential-proof", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for dark in [false, true] {
-            try write(ProviderUsageSwitchRow(row: connectedRow, model: ProviderUsageSwitchesModel(), core: core).padding(20),
+            try await writeKey(ProviderUsageSwitchRow(row: connectedRow, model: ProviderUsageSwitchesModel(), core: core).padding(20),
                 name: "factory-connected-row-\(dark ? "dark" : "light")",
                 size: CGSize(width: 580, height: 210), dark: dark, directory: directory)
-            try write(UsageProviderDetail(provider: provider, store: store, showCost: true).padding(20),
+            try await writeKey(UsageProviderDetail(provider: provider, store: store, showCost: true).padding(20),
                 name: "factory-usage-card-\(dark ? "dark" : "light")",
                 size: CGSize(width: 820, height: 880), dark: dark, directory: directory)
             let disabled = CoreProviderUsage(id: "factory", state: "disabled")
-            try write(UsageProviderDetail(provider: disabled, store: store, showCost: true).padding(20),
+            try await writeKey(UsageProviderDetail(provider: disabled, store: store, showCost: true).padding(20),
                 name: "factory-usage-off-card-\(dark ? "dark" : "light")",
                 size: CGSize(width: 820, height: 460), dark: dark, directory: directory)
             let missing = CoreProviderUsage(id: "factory", state: "needs_sign_in", action: "Add Factory API key",
                                              reason: "authentication_required")
-            try write(UsageProviderDetail(provider: missing, store: store, showCost: true).padding(20),
+            try await writeKey(UsageProviderDetail(provider: missing, store: store, showCost: true).padding(20),
                 name: "factory-key-needed-card-\(dark ? "dark" : "light")",
                 size: CGSize(width: 820, height: 460), dark: dark, directory: directory)
         }
+    }
+
+    private func writeKey(_ view: some View, name: String, size: CGSize, dark: Bool, directory: URL) async throws {
+        let bitmap = try await DesignFixBProof.snapshot(view, title: "Factory usage", size: size, dark: dark)
+        let png = try #require(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: directory.appendingPathComponent("\(name).png"))
     }
 
     private func write(_ view: some View, name: String, size: CGSize, dark: Bool, directory: URL) throws {

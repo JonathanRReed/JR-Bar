@@ -9,6 +9,10 @@ import Testing
 @MainActor
 @Suite("Studio workspace render proofs", .serialized, .timeLimit(.minutes(3)))
 struct StudioWorkspaceRenderProofTests {
+    init() throws {
+        if ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1" { try U5Proof.pinDefaultAccent() }
+    }
+
     struct Programs: Decodable {
         let plan: StudioLightPlan
         let previews: [String: StudioFleetPreview]
@@ -98,6 +102,7 @@ struct StudioWorkspaceRenderProofTests {
                     store.mode = mode
                     try await render(EffectStudioView(store: store), name: "studio-\(mode.rawValue)", dark: dark, directory: directory)
                 }
+                try await render(StudioDevicesPage(store: store), name: "studio-device-behavior", dark: dark, directory: directory)
                 store.mode = .mix
                 store.lightsStudio.scenario = .ask
                 await store.lightsStudio.refreshPreviews()
@@ -164,7 +169,7 @@ struct StudioWorkspaceRenderProofTests {
         try await render(EffectStudioView(store: store), name: "studio-orphaned-assignments", dark: dark, directory: directory)
         store.mode = .mix
         store.lightsStudio.scenario = .live
-        for (state, program) in [("idle", "#334455"), ("classic", "#0088FF 1s pulse\nrepeat"), ("ask", "#FF8800 1s pulse\nrepeat")] {
+        for (state, program) in [("idle", "#334455"), ("classic", "#0088FF"), ("ask", "#FF8800 1s pulse\nrepeat")] {
             store.lightsStudio.requestPlan = {
                 StudioLightPlan(mixes: programs.plan.mixes, devices: [
                     StudioLightPlan.Device(device: "virtual:status-bar", ledCount: 8, requestedMix: "classic", played: state,
@@ -210,62 +215,8 @@ struct StudioWorkspaceRenderProofTests {
     }
 
     private func render<V: View>(_ view: V, name: String, dark: Bool, directory: URL, width: CGFloat = 1160) async throws {
-        let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
-        NSApplication.shared.setActivationPolicy(.regular)
-        let content = view.tint(.blue).accentColor(.blue).environment(\.colorScheme, dark ? .dark : .light)
-            .environment(\.controlActiveState, .key).environment(\.renderSnapshot, true)
-            .jrbarAccessibility(reduceMotion: true).frame(width: width, height: 860)
-            .background(JRBarTokens.Ink.window)
-        let host = NSHostingView(rootView: content)
-        host.appearance = appearance
-        let window = StudioProofWindow(contentRect: NSRect(x: -10000, y: -10000, width: width, height: 860),
-                                       styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = appearance
-        window.contentView = host
-        defer { window.close() }
-        try WindowPresenter.renderProofKey(window)
-        if !window.isKeyWindow { runUntilKey(window) }
-        host.frame = NSRect(x: 0, y: 0, width: width, height: 860)
-        await Task.yield()
-        host.layoutSubtreeIfNeeded()
-        window.displayIfNeeded()
-        CATransaction.flush()
-        try #require(window.isKeyWindow)
-        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let png = try #require(bitmap.representation(using: .png, properties: [:]))
-        try png.write(to: directory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
+        try await DesignFixBProof.write(view, name: name, title: "Studio",
+                                        size: CGSize(width: width, height: 860), dark: dark)
     }
 
-    private func runUntilKey(_ window: NSWindow) {
-        let observer = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: nil) { _ in
-            MainActor.assumeIsolated { NSApp.stop(nil) }
-        }
-        let loop = CFRunLoopGetMain()
-        CFRunLoopPerformBlock(loop, CFRunLoopMode.defaultMode.rawValue) {
-            MainActor.assumeIsolated { try? WindowPresenter.renderProofKey(window) }
-        }
-        let timeout = DispatchWorkItem { @Sendable in
-            let main = CFRunLoopGetMain()
-            CFRunLoopPerformBlock(main, CFRunLoopMode.defaultMode.rawValue) {
-                MainActor.assumeIsolated {
-                    NSApp.stop(nil)
-                    if let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0,
-                                                    windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) {
-                        NSApp.postEvent(wake, atStart: true)
-                    }
-                }
-            }
-            CFRunLoopWakeUp(main)
-        }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2, execute: timeout)
-        NSApp.run()
-        timeout.cancel()
-        NotificationCenter.default.removeObserver(observer)
-    }
-}
-
-private final class StudioProofWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
 }
