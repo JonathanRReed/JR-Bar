@@ -33,6 +33,23 @@ struct WindowPresenterTests {
         #expect(throws: WindowPresenter.Refusal.self) { try WindowPresenter.live.validateDesktop() }
     }
 
+    @Test("key render proofs require their explicit opt-in")
+    func keyProofRequiresOptIn() {
+        guard ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] != "1" else { return }
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 100, height: 100),
+                              styleMask: [.borderless], backing: .buffered, defer: true)
+        #expect(throws: WindowPresenter.Refusal.self) { try WindowPresenter.renderProofKey(window) }
+        #expect(!window.isVisible && !window.isKeyWindow)
+    }
+
+    @Test("key render proofs refuse a visible desktop frame")
+    func keyProofCannotAppearOnScreen() {
+        let window = NSWindow(contentRect: NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 100, height: 100),
+                              styleMask: [.borderless], backing: .buffered, defer: true)
+        #expect(throws: WindowPresenter.Refusal.self) { try WindowPresenter.renderProofKey(window) }
+        #expect(!window.isVisible && !window.isKeyWindow)
+    }
+
     @Test("motion accepts an injected presenter without ordering its panel")
     func injectedPresenter() {
         let panel = NSPanel()
