@@ -1,0 +1,4 @@
+#000000 0ms; 0:#164880 0ms
+0:#000000 244ms cosine; 1:#164880 488ms pulse; 2:#164880 488ms pulse 122ms; 3:#164880 488ms pulse 244ms; 4:#164880 488ms pulse 366ms; 5:#164880 488ms pulse 488ms; 6:#164880 488ms pulse 610ms; 7:#164880 244ms 854ms
+7:#000000 244ms cosine; 6:#164880 488ms pulse; 5:#164880 488ms pulse 122ms; 4:#164880 488ms pulse 244ms; 3:#164880 488ms pulse 366ms; 2:#164880 488ms pulse 488ms; 1:#164880 488ms pulse 610ms; 0:#164880 244ms 854ms
+repeat
