@@ -500,6 +500,26 @@ def _shares(agents, settings, count, mode, warnings=None):
     return _checked(lines, count)
 
 
+def _handover_steps(steps):
+    """Fade into a turn's seed instead of painting over the previous provider."""
+    if not steps:
+        raise CannotFit("the provider turn has no steps")
+    first, *rest = steps
+    if isinstance(first, PaintStep):
+        if any(segment.timing.easing == "pulse" for segment in first.segments):
+            # A pulse returns to its starting pixels. Give it its own dark
+            # start instead of retaining the previous provider's colour.
+            return [PaintStep((WholeBar("off", Timing(400, "cosine")),)), first, *rest]
+        if step_duration_ms(first) == 0:
+            first = PaintStep(tuple(replace(segment, timing=Timing(400, "cosine"))
+                                    for segment in first.segments))
+        elif any(segment.timing.easing == "none" for segment in first.segments):
+            seed = PaintStep(tuple(replace(segment, timing=Timing(400, "cosine"))
+                                   for segment in first.segments))
+            return [seed, first, *rest]
+    return [first, *rest]
+
+
 def _cycle(agents, settings, count, warnings):
     from . import colors as c
     from .motion_shapes import _number, _whole, shade
@@ -529,10 +549,31 @@ def _cycle(agents, settings, count, warnings):
         turns.append((animation.steps, duration, repeats))
 
     def render_turns():
+        from .linked_sync import playback_span_ms
+
         lines = []
         for steps, duration, repeats in turns:
-            scale = 4000 / max(1, duration * repeats)
-            for step in steps * repeats:
+            turn = _handover_steps(steps * repeats)
+            # The entry fade belongs to the four-second hold. Reserve its
+            # time and the firmware frames consumed by later seed paints.
+            entry = turn[0]
+            fixed = sum(playback_span_ms(step) for step in turn[1:] if step_duration_ms(step) == 0)
+            entry_ms = max(400, round(step_duration_ms(turn[0]) *
+                (4000 - fixed) / max(1, duration * repeats))) if isinstance(entry, PaintStep) else 0
+            if isinstance(entry, PaintStep) and step_duration_ms(entry) > 0:
+                ratio = entry_ms / step_duration_ms(entry)
+                entry = PaintStep(tuple(replace(segment, timing=replace(segment.timing,
+                    duration_ms=round(segment.timing.effective_duration_ms * ratio),
+                    delay_ms=(round(segment.timing.delay_ms * ratio)
+                              if segment.timing.delay_ms is not None else None)))
+                    for segment in entry.segments))
+                turn[0] = entry
+            moving = sum(step_duration_ms(step) for step in turn[1:])
+            scale = (4000 - entry_ms - fixed) / max(1, moving)
+            for index, step in enumerate(turn):
+                if index == 0:
+                    lines.append(render_step(step))
+                    continue
                 if isinstance(step, PaintStep):
                     step = PaintStep(tuple(replace(segment, timing=replace(segment.timing,
                         duration_ms=max(0, round(segment.timing.effective_duration_ms * scale)),
@@ -713,13 +754,15 @@ def _library_effect(agents, settings, count, warnings):
                for problem in problems):
             raise CannotFit("the library effect is invalid")
         previous = None
+        turn = []
         for step in animation.steps:
             if isinstance(step, RepeatStep):
                 continue
             if isinstance(step, RollStep) and step == previous:
                 continue
-            lines.append(render_step(step))
+            turn.append(step)
             previous = step
+        lines.extend(render_step(step) for step in _handover_steps(turn))
     return _checked(lines, count), effect.label
 
 

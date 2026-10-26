@@ -70,6 +70,15 @@ def expected_played(mix, animation, variant, providers, count):
             if animation not in retained and not retained_extreme and not retained_glint:
                 return expected_played("cycle", animation, variant, providers, count)
     if mix == "cycle":
+        if providers == 4 and (animation == "heartbeat" or (count == 8 and animation == "frontier")):
+            return "alternate"  # Pulse entry frames also consume program lines.
+        # Four Dot turns with seed fades exhaust the text budget even
+        # after reducing each provider to one complete motion cycle.
+        if count == 2 and providers == 4 and (
+            (animation == "kitt" and variant == "default")
+            or (animation == "scanner" and variant == "default")
+        ):
+            return "alternate"
         over_budget = count == 8 and (
             animation in CYCLE_TOO_LARGE
             or (animation in {"ember", "ripple"} and providers >= 3)
