@@ -294,7 +294,7 @@ else
     skip packaging "--$MODE reuses the artifacts already in build/ and dist/"
 fi
 
-version="$("$PYTHON" scripts/validate_release_version.py)"
+version="$("$PYTHON" scripts/validate_release_version.py --require-changelog)"
 arch="$(/usr/bin/uname -m)"
 contract() {
     "$PYTHON" scripts/release_artifact_contract.py \

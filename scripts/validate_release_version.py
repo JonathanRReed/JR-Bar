@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate that source, package metadata, changelog, and an optional tag agree."""
+"""Validate source versions, and require release notes for publication or a tag."""
 
 from __future__ import annotations
 
@@ -42,16 +42,16 @@ def changelog_has_release(text: str, version: str) -> bool:
     return heading.search(text) is not None
 
 
-def validate(tag: str | None = None) -> str:
+def validate(tag: str | None = None, *, require_changelog: bool = False) -> str:
     project = pyproject_version()
     package = package_version()
     if package != project:
         raise RuntimeError(f"version mismatch: pyproject={project!r}, package={package!r}")
     if tag is not None and tag != f"v{project}":
         raise RuntimeError(f"tag {tag!r} must equal v{project}")
-    if not CHANGELOG.is_file() or not changelog_has_release(
+    if (require_changelog or tag is not None) and (not CHANGELOG.is_file() or not changelog_has_release(
         CHANGELOG.read_text(encoding="utf-8"), project
-    ):
+    )):
         raise RuntimeError(f"CHANGELOG.md has no release section for {project}")
     return project
 
@@ -59,8 +59,9 @@ def validate(tag: str | None = None) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", help="Release tag, including the leading v.")
+    parser.add_argument("--require-changelog", action="store_true", help="Require matching release notes.")
     args = parser.parse_args()
-    print(validate(args.tag))
+    print(validate(args.tag, require_changelog=args.require_changelog))
     return 0
 
 

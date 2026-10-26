@@ -41,7 +41,7 @@ if [ "$head_sha" != "$(git rev-parse origin/main)" ]; then
     exit 2
 fi
 
-version="$("$PYTHON" scripts/validate_release_version.py)"
+version="$("$PYTHON" scripts/validate_release_version.py --require-changelog)"
 tag="v$version"
 if git rev-parse "$tag" >/dev/null 2>&1 || \
    git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then

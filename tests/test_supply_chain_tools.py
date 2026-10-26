@@ -135,7 +135,7 @@ def test_release_version_accepts_descriptive_text_after_exact_heading(
         changelog_heading="## 0.5.0: Coalescence",
     )
 
-    assert validate_release_version.validate() == "0.5.0"
+    assert validate_release_version.validate(require_changelog=True) == "0.5.0"
 
 
 def test_release_version_rejects_a_similar_version_heading(tmp_path: Path, monkeypatch) -> None:
@@ -147,7 +147,21 @@ def test_release_version_rejects_a_similar_version_heading(tmp_path: Path, monke
         )
 
         with pytest.raises(RuntimeError, match=r"no release section for 0\.5\.0"):
-            validate_release_version.validate()
+            validate_release_version.validate(require_changelog=True)
+
+
+def test_source_version_builds_without_release_notes_but_publication_and_tags_fail(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    _configure_release_version_fixture(tmp_path, monkeypatch, changelog_heading="## 0.4.0")
+    assert validate_release_version.validate() == "0.5.0"
+    for kwargs in ({"require_changelog": True}, {"tag": "v0.5.0"}):
+        with pytest.raises(RuntimeError, match=r"no release section for 0\.5\.0"):
+            validate_release_version.validate(**kwargs)
+    validate_release_version.CHANGELOG.unlink()
+    assert validate_release_version.validate() == "0.5.0"
+    with pytest.raises(RuntimeError, match=r"no release section for 0\.5\.0"):
+        validate_release_version.validate(require_changelog=True)
 
 
 def test_secret_scanner_detects_high_confidence_tokens_without_echoing_them__and_1_more(tmp_path: Path,) -> None:
