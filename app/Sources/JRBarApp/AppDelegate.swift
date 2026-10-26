@@ -166,7 +166,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         let core = CoreModel()
         if let lockNotice { core.appendLocalLog(level: "supervisor", lockNotice) }
-        let store = PanelStore(core: core, screenBarShown: appState.showScreenBar)
+        let providerList = ProviderListStore(core: core, legacy: appState.menuBarProviders)
+        let store = PanelStore(core: core, providerList: providerList, screenBarShown: appState.showScreenBar)
         // The daemon first. It takes seconds to be ready, and every
         // surface below is built in the meantime rather than before it
         // is spawned: that construction used to hold the spawn back a
@@ -179,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let feed = isolatedPreview == nil ? LEDFeed() : nil
         let monitor = isolatedPreview == nil ? AgentStateMonitor() : nil
         let panel = PanelController(store: store)
-        let settingsStore = SettingsStore(core: core)
+        let settingsStore = SettingsStore(core: core, providerList: providerList)
         settingsStore.seal = sealCoordinator
         let settingsWindow = SettingsWindowController(store: settingsStore)
         self.settingsStore = settingsStore
@@ -193,13 +194,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self.persistAppState()
             self.refreshIconStyle()
         }
-        settingsStore.menuBarProviders = appState.menuBarProviders
-        settingsStore.onSetMenuBarProviders = { [weak self] value in
+        providerList.onPresentationChange = { [weak self] in
             guard let self else { return }
-            self.appState.menuBarProviders = value
-            self.persistAppState()
+            if self.appState.menuBarProviders != .init() {
+                self.appState.menuBarProviders = .init()
+                self.persistAppState()
+            }
             self.refreshIconStyle()
         }
+        providerList.onRowsChange = { [weak self] in self?.refreshIconStyle() }
         // Toys: the fun-first page. Its state lives in `app-state.json`
         // like the rest of the app's remembered facts, so the delegate
         // stays the file's only writer and the store just hands back
@@ -1625,7 +1628,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     private func coreDidChange() {
         guard let core, let statusItem else { return }
+        store?.providerList.synchronize()
         let changes = coreRefresh.take(core)
+        if core.isLive, !changes.intersection([.settings, .connection]).isEmpty, let providerList = store?.providerList {
+            Task { await providerList.refresh() }
+        }
         let media = store?.media.flatMap { $0.playing ? $0.bundleIdentifier : nil }
         let mediaChanged = store?.media != lastRefreshMedia
         lastRefreshMedia = store?.media
@@ -1771,14 +1778,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// per provider shown in the panel, in that order), the ring's primary
     /// window and the label's aggregate counts.
     private func refreshIconStyle() {
-        guard let core, let statusItem else { return }
+        guard let core, let statusItem, let store else { return }
         let document = core.settings.map { SettingsDocument($0.document) }
         // App state supplies the launch-time style before the first core frame.
         statusItem.iconStyle = StatusIconStyle(setting: appState.menuBarIconStyle)
         let preferred = document?.strings("usage_graph_providers") ?? []
         let usage = core.isLive ? core.usage : []
-        let iconUsage = appState.menuBarProviders.arranged(
-            Self.meteredProviders(preferred: preferred, usage: usage), provider: { $0.id })
+        let iconUsage = store.providerList.arranged(
+            Self.meteredProviders(preferred: preferred, usage: usage), provider: { $0.id }, surface: .menuBar)
         let primary = iconUsage.first
         let window = primary?.windows.first { $0.name.lowercased() == "5h" } ?? primary?.windows.first
         // A window with no reading draws no ring at all: an empty ring is
@@ -1815,10 +1822,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// `maxMeters` the rest become "+n". A stale figure is drawn faint,
     /// and a window whose reset has passed is drawn unread.
     private func refreshMeters(preferred: [String], usage: [CoreProviderUsage]) {
-        guard let statusItem else { return }
+        guard let statusItem, let store else { return }
         let document = core?.settings.map { SettingsDocument($0.document) }
-        let shown = appState.menuBarProviders.arranged(
-            Self.meteredProviders(preferred: preferred, usage: usage), provider: { $0.id })
+        let shown = store.providerList.arranged(
+            Self.meteredProviders(preferred: preferred, usage: usage), provider: { $0.id }, surface: .menuBar)
         let cap = StatusIconRenderer.maxMeters
         let now = Date().timeIntervalSince1970
         statusItem.meters = shown.prefix(cap).map { provider in
@@ -1857,7 +1864,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// the panel can never disagree about who leads.
     private func refreshSessionDots() {
         guard let statusItem, let store else { return }
-        let rows = appState.menuBarProviders.arranged(store.rows, provider: { $0.style.id })
+        let rows = store.providerList.arranged(store.rows, provider: { $0.style.id }, surface: .menuBar)
         let now = Date()
         statusItem.sessionDots = rows.map { row in
             // A snoozed ask still owns its dot but draws it dim and still:

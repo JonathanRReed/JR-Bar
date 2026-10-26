@@ -1557,6 +1557,7 @@ struct MenuBarProviderPicker: View {
             }
         }
         .padding(.vertical, 6)
+        .disabled(store.providerList.writingPresentation)
     }
 
     private func move(_ index: Int, by offset: Int, ids: [String]) {

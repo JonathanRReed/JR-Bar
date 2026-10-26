@@ -20,7 +20,7 @@ struct LaunchOrderTests {
     func supervisorFirst() throws {
         let launch = try Self.launchSource()
         let supervise = try #require(launch.range(of: "startCoreSupervision(core: core, store: store)"))
-        for surface in ["StatusItemController()", "ScreenBarController(", "SettingsStore(core: core)",
+        for surface in ["StatusItemController()", "ScreenBarController(", "SettingsStore(core: core,",
                         "ToysStore(core: core", "UtilitiesStore(core: core"] {
             let built = try #require(launch.range(of: surface), "\(surface) is no longer built at launch")
             #expect(supervise.lowerBound < built.lowerBound, "\(surface) is built before the daemon is spawned")

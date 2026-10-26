@@ -1335,6 +1335,13 @@ def _cmd_set_setting(self, args):
         raise CommandError("invalid_path", f"cannot write {path!r}")
     if not set_path(document, path, args.get("value")):
         raise CommandError("invalid_path", f"cannot write {path!r}")
+    if split_path(path)[0] == "provider_display":
+        from .provider_display import provider_display
+
+        try:
+            provider_display(document.get("provider_display"))
+        except ValueError as error:
+            raise CommandError("invalid_value", str(error)) from error
     generation = _apply_settings_document(self, document, touched=[path])
     value, _ = get_path(self.settings.to_dict(), path)
     return {"generation": generation, "path": path, "value": value}

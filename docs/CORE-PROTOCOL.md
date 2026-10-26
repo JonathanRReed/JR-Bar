@@ -1673,6 +1673,21 @@ never costs the rest of the file):
   start, each admitted hook records an `error` with detail `did not start hook
   worker`. Work that never started does not spend its cooldown. A later event
   can retry; the failed event is not replayed automatically.
+- `provider_display` (default null): shared app presentation preferences,
+  `{order: [provider_id], hidden: [provider_id]}`. `order` ranks both the
+  menu bar and panel; unlisted providers keep their incoming order after
+  listed providers. `hidden` affects only the menu bar. Panel visibility
+  remains the per-instance `panel_hidden` option. Write the whole object
+  with `set_setting` so one drag changes one shared order atomically.
+  Both lists contain unique lowercase provider ids, at most 128 entries
+  each and 64 characters per id. Unknown ids survive for future providers.
+  Socket writes require app authentication. The value is reviewed unsealed
+  because it grants no capability. Invalid writes return `invalid_value`.
+  Null allows a one-time
+  import of the app's former `menuBarProviders` preferences; once imported,
+  the daemon owns the value. These choices never enable tracking, grant
+  usage consent, install hooks or make outbound requests.
+
 - `provider_status_feeds_enabled` (default false): the provider status
   pages (`status.anthropic.com`, `status.openai.com`, `status.cursor.com`)
   are asked, every 10 minutes and only for a provider whose source was

@@ -96,6 +96,7 @@ let package = Package(
         .target(
             name: "JRBarUI",
             dependencies: ["JRBarCore"],
+            exclude: ["README.md"],
             linkerSettings: [.linkedFramework("AppKit")]
         ),
         .executableTarget(
