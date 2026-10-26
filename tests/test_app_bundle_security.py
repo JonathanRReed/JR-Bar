@@ -934,6 +934,7 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     # JR-Bar.app copies leave Launch Services, so a jrbar:// link can only
     # reach the one in ~/Applications. They stay on disk.
     assert event_log.read_text().splitlines() == [
+        "build_headless_hidapi.py",
         "prepare_sparkle.py",
         "build-app.sh 0.5.0",
         "build.sh hook",
@@ -1012,6 +1013,15 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert "verify_daemon_runtime.py" in steps
     assert "package_sparkle_archive.py" not in steps
     assert "package_macos_artifact.py" not in steps
+
+    event_log.write_text("")
+    broken_hid = subprocess.run(
+        ["/bin/bash", str(packaging_dir / "build_macos_pkg.sh")],
+        capture_output=True, text=True, timeout=60,
+        env=dict(environment, PACKAGE_TEST_FAIL_AT="build_headless_hidapi.py"),
+    )
+    assert broken_hid.returncode == 97, broken_hid.stderr
+    assert "build-app.sh 0.5.0" not in event_log.read_text().splitlines()
 
     # No history to count and no override: the builder refuses rather than
     # stamp a build number that could sort behind a shipped one. A marketing

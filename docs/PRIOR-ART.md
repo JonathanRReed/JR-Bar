@@ -810,3 +810,21 @@ The daemon acknowledges only the two sleep requests that require it, then
 closes the notifier, notification port and connection in the documented
 order. CoreGraphics display and session declarations were checked against
 the local macOS SDK. No source code was copied.
+
+
+## Headless HID backend
+
+JR-Bar compiles its existing `hidapi==0.14.0.post4` dependency from the
+reviewed source archive, SHA-256
+`48fce253e526d17b663fbf9989c71c7ef7653ced5f4be65f1437c313fb3dbdf6`.
+The Darwin implementation studied is
+[HIDAPI commit d3013f0](https://github.com/libusb/hidapi/blob/d3013f0af3f4029d82872c1a9487ea461a56dee4/mac/hid.c),
+under its BSD 3-Clause licence. The Python wrapper and its generated C
+come from the pinned cython-hidapi archive. Its licence files remain in
+the rebuilt wheel and the packaged notices.
+
+`packaging/build_headless_hidapi.py` replaces the Darwin backend's
+`NSAppKitVersionNumber` comparison with Clang's macOS availability check
+and removes the AppKit linker flag. It keeps the same OS threshold,
+Python binding and HID operations. It builds the archive's generated C
+without adding Cython to the release build environment.

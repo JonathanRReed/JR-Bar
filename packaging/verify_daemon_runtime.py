@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from jrbar._packaging_native import NATIVE_STEPS
 from jrbar._packaging_probe import FORBIDDEN_MODULES, forbidden_images
 
 CORE_HELPER = Path("Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core")
@@ -16,8 +17,10 @@ CORE_HELPER = Path("Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core")
 
 def check_receipt(receipt):
     errors = []
-    if receipt.get("schema") != 1 or receipt.get("frozen") is not True or receipt.get("socket_ready") is not True:
+    if receipt.get("schema") != 2 or receipt.get("frozen") is not True or receipt.get("socket_ready") is not True:
         errors.append("frozen daemon did not open its isolated core socket")
+    if receipt.get("doctor_appkit_loaded") is not False:
+        errors.append("doctor did not confirm AppKit is absent")
     samples = receipt.get("samples")
     if not isinstance(samples, list) or len(samples) != 4 or any(
         not isinstance(sample, dict) or sample.get("fallback_active") is not True
@@ -35,6 +38,22 @@ def check_receipt(receipt):
         errors.append("Python module inventory is missing")
     elif any(name.split(".")[0] in FORBIDDEN_MODULES for name in modules):
         errors.append("daemon imported GUI Python bridges")
+    steps = receipt.get("native_steps")
+    if (not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps)
+            or [step.get("name") for step in steps] != list(NATIVE_STEPS)):
+        errors.append("native entry point coverage is missing")
+    else:
+        for step in steps:
+            images, modules = step.get("images"), step.get("modules")
+            module = step["name"] if step["name"] == "hid" else "jrbar." + step["name"]
+            if (step.get("error") is not None or not isinstance(images, list) or not images
+                    or not all(isinstance(name, str) for name in images)
+                    or not isinstance(modules, list) or not modules or not all(isinstance(name, str) for name in modules)):
+                errors.append(f"native probe failed: {step['name']}")
+            elif module not in modules:
+                errors.append(f"native probe did not import: {step['name']}")
+            elif forbidden_images(images) or any(name.split(".")[0] in FORBIDDEN_MODULES for name in modules):
+                errors.append(f"native probe loaded GUI code: {step['name']}")
     return errors
 
 
