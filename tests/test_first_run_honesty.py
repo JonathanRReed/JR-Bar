@@ -641,7 +641,7 @@ class IntakeRefreshTests(unittest.TestCase):
         # The daemon's hooksUpdated_ is the one the install thread lands on.
         from jrbar import core_runtime
 
-        hooks_updated = core_runtime.build_headless_controller_class().hooksUpdated_.callable
+        hooks_updated = core_runtime.build_headless_controller_class().hooksUpdated_
         with patch.object(self.status_bar, "probe_providers", side_effect=_probe):
             self.controller.refresh_intake_report()
             hooks_updated(

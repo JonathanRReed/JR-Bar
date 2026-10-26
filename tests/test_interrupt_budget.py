@@ -639,7 +639,9 @@ def test_the_escalation_chime_asks_the_gate_rather_than_re_deriving_it(
         controller.escalation_chimed = False
         controller.escalation_last_stage = 0
         controller.apply_escalation()
-        assert sounds == ["Glass"], "and it honours a grant"
+        assert asked == [signals.INTERRUPT_ESCALATION, signals.INTERRUPT_ESCALATION]
+        assert controller.escalation_chimed
+        assert sounds == [], "the native app owns audio delivery"
 
 
 class _FrozenMonotonic:
