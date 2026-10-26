@@ -244,12 +244,14 @@ struct ShortcutRow: View {
     /// Present for shortcuts with their own switch (the panel and shelf
     /// keys, the menu-bar keys); an app action is on while it has a key.
     var isOn: Binding<Bool>? = nil
+    var registrationFailed = false
     var center: HotkeyCenter = .shared
     let onChange: (HotkeyChord?) -> Void
     var onTakeOver: ((String) -> Void)?
 
     /// The registry's word for this id, when it has one worth saying.
     private var statusLine: String? {
+        if registrationFailed { return "\(chord?.displayString ?? "Shortcut") is taken by another app." }
         switch center.status(of: id) {
         case .active, .inactive:
             return subtitle
@@ -261,6 +263,7 @@ struct ShortcutRow: View {
     }
 
     private var isProblem: Bool {
+        if registrationFailed { return true }
         switch center.status(of: id) {
         case .refused, .conflict: return true
         default: return false

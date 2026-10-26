@@ -18,7 +18,6 @@ final class PanelController {
     static let gapBelowStatusItem: CGFloat = 5
 
     private let store: PanelStore
-    private let studioHotkey: PanelHotkey
     private let panel: FloatingPanel
     private let hosting: NSHostingView<PanelView>
     private let backdrop: NSView
@@ -40,9 +39,6 @@ final class PanelController {
 
     init(store: PanelStore) {
         self.store = store
-        studioHotkey = PanelHotkey(id: PanelHotkey.studioID, title: "Open Studio", defaultChord: PanelHotkey.studioDefault)
-        studioHotkey.onPress = { [weak store] in store?.openEffects() }
-        studioHotkey.setEnabled(!WindowPresenter.isTestProcess)
         hosting = DiagnosedHostingView(rootView: PanelView(store: store))
         // The window is sized from `PanelLayout`, never from the view: the
         // hosting view just fills whatever frame the window has.

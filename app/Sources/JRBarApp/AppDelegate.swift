@@ -48,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// The shelf's own summon key (⌃⌥D) — a second Carbon registration
     /// through the same `PanelHotkey` plumbing, its own signature.
     private var shelfHotkey: PanelHotkey?
+    private var studioHotkey: PanelHotkey?
     private var checkForUpdatesItem: NSMenuItem?
     private var wasLive = false
     /// Speaks each new ask once to VoiceOver.
@@ -335,6 +336,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             settingsStore?.shelfHotkeyRegistrationFailed = shelfHotkey?.registrationFailed ?? false
         }
         self.shelfHotkey = shelfHotkey
+        let studioHotkey = PanelHotkey(id: PanelHotkey.studioID, title: "Open Studio", defaultChord: PanelHotkey.studioDefault)
+        studioHotkey.onPress = { [weak store] in store?.openEffects() }
+        studioHotkey.setEnabled(settingsStore.studioHotkeyEnabled)
+        settingsStore.studioHotkeyRegistrationFailed = studioHotkey.registrationFailed
+        settingsStore.onStudioHotkeyChange = { [weak studioHotkey, weak settingsStore] on in
+            studioHotkey?.setEnabled(on)
+            settingsStore?.studioHotkeyRegistrationFailed = studioHotkey?.registrationFailed ?? false
+        }
+        self.studioHotkey = studioHotkey
         statusItem.onToggleScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
         store.onToggleScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
         store.onQuit = { NSApp.terminate(nil) }
@@ -1097,6 +1107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         utilitiesStore?.save()
         Self.shutdownLog.notice("cleanup.persistence.end")
         hotkey?.unregister()
+        studioHotkey?.unregister()
         panel?.close()
         interaction?.stop()
         screenBar?.hide()

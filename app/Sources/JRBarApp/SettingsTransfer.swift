@@ -67,7 +67,7 @@ struct SettingsBundle: Equatable, Sendable {
     /// The panel's and the shelf's switches are spelled out: their
     /// owners are main-actor types; a test holds the spellings to them.
     nonisolated static let preferenceKeys: Set<String> = [
-        "panelHotkeyEnabled", "shelfHotkeyEnabled",
+        "panelHotkeyEnabled", "shelfHotkeyEnabled", "studioHotkeyEnabled",
         SparkleUpdater.channelDefaultsKey, SparkleUpdater.automaticChecksDefaultsKey,
         SystemTogglesStore.awakeDisplayDefaultsKey, SystemTogglesStore.stripDefaultsKey,
     ]
